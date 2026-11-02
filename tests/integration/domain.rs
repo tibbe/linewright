@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::collections::BTreeSet;
@@ -445,17 +444,16 @@ fn the_tracking_issues_to_label_at_startup_are_the_open_spec_change_ones_with_ti
         labels: vec![],
         ..issue
     };
+    let cut_stopped_before_its_label = unlabeled(Issue {
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(70),
+        }),
+        ..tracking(8, &[(80, true)])
+    });
     let snapshot = snapshot(
         vec![
             unlabeled(tracking(1, &[(10, true)])),
-            // A spec change's issue whose cut stopped before its label is
-            // a cut to discard.
-            unlabeled(Issue {
-                filed: Some(Filed::SpecChange {
-                    spec_change: Number(70),
-                }),
-                ..tracking(8, &[(80, true)])
-            }),
+            cut_stopped_before_its_label,
             tracking(2, &[(20, true)]),
             unlabeled(Issue {
                 open: false,
@@ -1106,6 +1104,7 @@ fn linewrights_ended_pull_request_read_again_is_held_as_read_or_dropped() {
 
 #[test_log::test]
 fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
+    let edited_to_close_2_and_3_not_1 = open_pull(20, LINEWRIGHT, &[2, 3], &[]);
     let snapshot = Snapshot {
         issues: vec![
             closed_by(ticket(1, "One"), 20, LINEWRIGHT),
@@ -1114,8 +1113,7 @@ fn a_pull_request_read_frees_the_other_issues_it_closes_or_closed_while_open() {
             closed_by(ticket(4, "Four"), 22, LINEWRIGHT),
         ],
         pulls: vec![
-            // Edited not to close #1, and to close #2 besides #3.
-            open_pull(20, LINEWRIGHT, &[2, 3], &[]),
+            edited_to_close_2_and_3_not_1,
             open_pull(22, LINEWRIGHT, &[4], &[]),
         ],
         ..snapshot(vec![], vec![])

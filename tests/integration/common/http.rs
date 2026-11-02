@@ -24,8 +24,7 @@ pub async fn status_and_body(response: axum::response::Response) -> (u16, String
 }
 
 /// Sends a request for `path` over `stream`, with `host` as its `Host`, or
-/// none, and gives the answer as soon as its head arrives, as an event
-/// stream's body does not end.
+/// none, and gives the answer as soon as its head arrives.
 pub async fn send_over(
     stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     method: hyper::Method,

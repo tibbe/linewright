@@ -1109,7 +1109,7 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
     );
 }
 
-/// #793: an open issue Linewright worked, whose status label a person
+/// An open issue Linewright worked, whose status label a person
 /// removed, with no run in flight and no open pull request closing it.
 #[test_log::test]
 fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone() {

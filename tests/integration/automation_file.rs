@@ -1,4 +1,3 @@
-// comments: pending
 use std::time::Duration;
 
 use crate::common;
@@ -37,7 +36,6 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
     let automation: Automation = parse(&name("weekly"), SPEC_EXAMPLE).unwrap();
 
     assert_eq!(automation.name.to_string(), "weekly");
-    // 2026-10-01 is a Thursday: the next Monday 06:00 UTC is the 5th.
     assert_eq!(
         automation.schedule.next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
@@ -81,7 +79,6 @@ fn the_schedule_is_in_utc() {
         automation
             .schedule
             .next_after(utc("2026-10-01T03:00:00+02:00")),
-        // 01:00 UTC: 02:30 UTC is the same day.
         Some(utc("2026-10-01T02:30:00Z"))
     );
     assert_eq!(automation.max_issues, 1);
@@ -272,9 +269,9 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
 #[test_log::test]
 fn the_last_scheduled_runs_the_previous_version_recorded_are_loaded() {
     let work_dir = tempfile::tempdir().unwrap();
-    // Where the previous version recorded them.
+    let recorded_by_the_previous_version = work_dir.path().join("workflow-runs.json");
     std::fs::write(
-        work_dir.path().join("workflow-runs.json"),
+        recorded_by_the_previous_version,
         r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
     )
     .unwrap();

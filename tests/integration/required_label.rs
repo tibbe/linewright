@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::*;
@@ -133,8 +132,6 @@ async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
     let mut world = world(Some(REQUIRED), false).await;
     merged_spec_change(&world).await;
     world.poll().await;
-    // The spec change's issue cannot carry the missing label, so it is
-    // assigned by hand to be designed.
     let issue = world.store.issues()[0].number;
     world
         .store
@@ -207,7 +204,6 @@ async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
 async fn a_missing_required_label_leaves_the_draft_pull_request_and_spec_gap_without_it() {
     let mut world = world(Some(REQUIRED), false).await;
     implement_with_gap(&world);
-    // Claimed only with the label, which the repository then lacks.
     world.store.open_issue(
         "maintainer",
         "Gadgets",

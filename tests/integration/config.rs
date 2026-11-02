@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -875,7 +874,6 @@ fn a_webhook_address_without_the_secret_is_an_error_naming_the_secret() {
     )
     .unwrap_err();
     let file = resolve(&[], &[], Some("webhook-address = \"127.0.0.1:9000\"\n")).unwrap_err();
-    // The default only with the secret set.
     let the_default = resolve(&["--webhook-address", "0.0.0.0:8080"], &[], None).unwrap_err();
 
     for error in [flag, env, file, the_default] {

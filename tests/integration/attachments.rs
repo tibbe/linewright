@@ -1,4 +1,3 @@
-// comments: pending
 //! Finding, judging and rewriting the attachments a result's Markdown
 //! refers to, "Attachments" in docs/specs/runs.md, against a real
 //! attachments directory.
@@ -385,7 +384,6 @@ fn a_file_behind_a_symlinked_directory_is_refused() {
 fn a_dot_dot_escape_from_the_directory_is_refused() {
     let record = Record::new();
     let dir = record.path();
-    // The session's record, which holds the attachments directory.
     fs::write(record.dir.path().join("../notes.txt"), "notes").unwrap();
     let refusal = record
         .resolve(&format!("[notes]({dir}/../notes.txt)"))

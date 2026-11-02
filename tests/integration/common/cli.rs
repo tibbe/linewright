@@ -10,8 +10,8 @@ pub fn socket_dir_in(runtime_dir: &Path) -> std::path::PathBuf {
     linewright::api::socket_dir(Some(runtime_dir.to_path_buf()), Path::new("/unused"), 0)
 }
 
-/// A world whose work dir is `REPO`'s in a temporary directory, the one
-/// `lw_in` is given.
+/// A world whose work dir is `REPO`'s in a temporary directory, and that
+/// directory.
 pub async fn world_in_work_dir() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let world = World::with(|config| config.work_dir = work_dir.path().join(REPO)).await;

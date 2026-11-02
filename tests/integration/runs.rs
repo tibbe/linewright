@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::collections::BTreeMap;
@@ -145,7 +144,6 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
         )
         .await
         .unwrap();
-    // Brought up to date without a session: nothing conflicts.
     world.poll().await;
 
     let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();

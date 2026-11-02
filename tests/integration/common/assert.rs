@@ -11,13 +11,10 @@ pub struct Log(Arc<Mutex<Vec<u8>>>);
 impl Log {
     /// Captures what this thread logs until the guard is dropped, as well as
     /// writing it to the test's output. A `#[tokio::test]` runs every task on
-    /// its one thread.
-    ///
-    /// While just one subscriber exists, tracing caches whether a log line is
-    /// wanted from the subscriber of the thread that first reaches it, so
-    /// another test's thread would turn this one's lines off. The global one
-    /// each test's `test_log` attribute installs makes it ask each thread's
-    /// own.
+    /// its one thread. It needs a global subscriber besides, such as each
+    /// test's `test_log` attribute installs, for tracing to ask each thread's
+    /// own whether a line is wanted
+    /// (<https://docs.rs/tracing-core/latest/tracing_core/callsite/index.html#registering-callsites>).
     pub fn capture() -> (Log, tracing::subscriber::DefaultGuard) {
         let log = Log::default();
         let writer = log.clone();

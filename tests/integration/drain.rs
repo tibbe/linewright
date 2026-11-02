@@ -18,7 +18,7 @@ struct Served {
 
 impl Served {
     /// Serves `world`'s repository with a factory of its own that waits out
-    /// the usage limit, as `serve` does, and waits for its first poll.
+    /// the usage limit, and waits for its first poll.
     async fn start(world: World) -> Served {
         let factory = Factory::start(
             world.store.clone(),

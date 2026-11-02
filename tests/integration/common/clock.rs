@@ -1,4 +1,3 @@
-// comments: pending
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -9,7 +8,7 @@ use linewright::domain::Timestamp;
 /// The time the functional core is asked at.
 pub const NOW: &str = "2026-10-01T12:00:30Z";
 
-/// 2026-10-01 is a Thursday.
+/// The `Timestamp` the RFC 3339 `time` names.
 pub fn at(time: &str) -> Timestamp {
     DateTime::parse_from_rfc3339(time)
         .unwrap()
@@ -44,7 +43,8 @@ impl FakeClock {
     }
 
     pub async fn next_sleep(&self) -> Timestamp {
-        // No timeout: under paused time it would fire while git runs.
+        // A timeout here would fire while git runs: paused time auto-advances
+        // (<https://docs.rs/tokio/latest/tokio/time/fn.pause.html>).
         self.slept.lock().await.recv().await.unwrap()
     }
 }

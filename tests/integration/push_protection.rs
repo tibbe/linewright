@@ -21,9 +21,10 @@ const FOUND: &str = "GitHub Personal Access Token in the commit \
                      `8479b4565e1a22d92de1bb6edb317cdc4dc64212`, at \
                      `tests/integration/push_protection.rs:22`";
 
-/// Commits a fake token to `src/config.rs`. The token is put together here,
-/// so that this file holds no text GitHub's push protection takes for one.
+/// Commits a fake token to `src/config.rs`.
 fn commit_token(dir: &Path) {
+    // Whole, the token would trip GitHub's push protection on this file
+    // (<https://docs.github.com/en/code-security/secret-scanning/introduction/about-push-protection>).
     let token = ["ghp_", "1wR8sX3kQ9vT2mZ7pL4nB6yC0dF5gH8jK2aE"].concat();
     commit_in(
         dir,

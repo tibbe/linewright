@@ -31,8 +31,8 @@ use super::harness::{ScriptedHarness, failed_session, subject_file};
 
 pub const LINEWRIGHT: &str = "factory";
 
-/// Opens an issue `author` filed, which Linewright then labeled `labels`, as
-/// it labels an issue it triages or hands back: it has worked it.
+/// Opens an issue `author` filed, which Linewright then labeled `labels`, so
+/// that Linewright has worked it.
 pub fn open_issue_linewright_labeled(
     store: &LocalStore,
     author: &str,
@@ -367,8 +367,7 @@ const IMPLEMENTED_MESSAGE: &str = "Do the ticket";
 const IMPLEMENTED_TITLE: &str = "Do it";
 const IMPLEMENTED_BODY: &str = "Does it.";
 
-/// The file each implement run the tests script adds to, for the subject
-/// named `subject`.
+/// The file an implement run adds to for the subject named `subject`.
 pub(super) fn implemented_file(subject: &str) -> String {
     format!("src/{subject}.txt")
 }
@@ -528,8 +527,7 @@ pub fn open_ticket(world: &World, title: &str) -> Number {
     )
 }
 
-/// A store under `dir` whose default branch, `main`, holds only `files`,
-/// for a test of a reader of the repository that needs no factory.
+/// A store under `dir` whose default branch, `main`, holds only `files`.
 pub async fn store_holding(dir: &Path, files: &[(&str, &str)]) -> LocalStore {
     let store = LocalStore::create(
         dir,
@@ -602,7 +600,7 @@ impl World {
 
     /// Runs the implement stage on a ticket, as [`implement`] scripts it,
     /// returning the ticket and the pull request it opened: what
-    /// [`World::ticket_in_review`] writes, for a test of the stage itself.
+    /// [`World::ticket_in_review`] writes.
     pub async fn implement_a_ticket(&mut self) -> (Number, Number) {
         implement(self);
         let ticket = open_ticket(self, "Do the thing");

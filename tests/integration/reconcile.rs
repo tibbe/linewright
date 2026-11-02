@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 use common::{LINEWRIGHT, REQUIRED, closed_by, policy, sub_issue};
 
@@ -168,8 +167,6 @@ fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
 #[test_log::test]
 fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
     let mut asked = labeled_at(labeled(issue(1), label::NEEDS_INFO), label::NEEDS_INFO, 1);
-    // Assigning someone already assigned changes nothing, so GitHub records
-    // only the maintainer's assignment.
     asked = assigned_by(asked, "reporter", "maintainer", 0);
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
 
@@ -325,8 +322,6 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
                 issue: Number(1),
                 label: older,
             };
-            // The claim is the first row that holds, then the start; the
-            // older label is removed only where no row before it holds.
             let follow = match newer {
                 StatusLabel::NeedsTriage => vec![claim(1), triage(1)],
                 StatusLabel::ReadyForAgent => {
@@ -346,7 +341,6 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
 
 #[test_log::test]
 fn of_several_status_labels_all_but_the_newest_are_removed() {
-    // `needs-triage` was applied before the events read, so it is the oldest.
     let issue = labeled(
         labeled(
             labeled_both(StatusLabel::NeedsInfo, StatusLabel::ReadyForHuman),
@@ -463,14 +457,8 @@ fn removing_a_claimed_issues_status_label_lets_go_of_it() {
 
 #[test_log::test]
 fn an_issue_with_no_status_label_whose_triage_run_is_live_is_held_until_the_run_ends() {
-    // As a triage run leaves it between removing `needs-triage` and adding
-    // its outcome, with a person asked beside Linewright.
-    let world = snapshot(vec![assigned_by(
-        claimed(issue(1)),
-        "reporter",
-        LINEWRIGHT,
-        1,
-    )]);
+    let mid_triage_with_a_person_asked = assigned_by(claimed(issue(1)), "reporter", LINEWRIGHT, 1);
+    let world = snapshot(vec![mid_triage_with_a_person_asked]);
 
     let decided = decisions(
         &world,
@@ -1335,7 +1323,6 @@ fn linewrights_pull_request_it_was_never_assigned_to_is_claimed_and_worked() {
             fix_ci(2, 20)
         ]
     );
-    // Its run holds it, to be claimed once the run ends.
     let decided = decisions(
         &world,
         &runs,
@@ -1522,13 +1509,14 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
 
 #[test_log::test]
 fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
-    // Read closed with its branch, then reopened; read open with its branch,
-    // then closed; held with its branch, then left out of the snapshot.
     let mut world = snapshot(vec![ticket(1), closed(ticket(2))]);
+    let read_closed_then_reopened = ticket_branch(1, closed_unpulled(1));
+    let read_open_then_closed = ticket_branch(2, BranchIssue::Held);
+    let held_then_left_out = ticket_branch(3, BranchIssue::Held);
     world.ticket_branches = vec![
-        ticket_branch(1, closed_unpulled(1)),
-        ticket_branch(2, BranchIssue::Held),
-        ticket_branch(3, BranchIssue::Held),
+        read_closed_then_reopened,
+        read_open_then_closed,
+        held_then_left_out,
     ];
 
     assert_eq!(deleted_branches(decide(&world)), ["2-gadgets"]);
@@ -1830,17 +1818,17 @@ fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
 
 #[test_log::test]
 fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_stall_kept() {
-    // As a hand-back stopped after adding `ready-for-human` leaves it.
-    let handed_back = assigned_by(
+    let hand_back_stopped_after_ready_for_human = assigned_by(
         labeled_both(StatusLabel::ReadyForAgent, StatusLabel::ReadyForHuman),
         LINEWRIGHT,
         LINEWRIGHT,
         0,
     );
-    let world = snapshot(vec![labeled(handed_back, label::STALLED)]);
+    let world = snapshot(vec![labeled(
+        hand_back_stopped_after_ready_for_human,
+        label::STALLED,
+    )]);
 
-    // Letting go is the first row that holds, before removing the older
-    // label.
     assert_eq!(decide(&world), vec![let_go(1)]);
 }
 
@@ -2844,8 +2832,6 @@ fn a_ticket_whose_pull_request_merged_waits_for_github_to_close_it_until_labeled
 
     assert_eq!(at(&merged, 10), vec![]);
     assert_eq!(at(&unclaimed, 10), vec![]);
-    // Labeled as it merged, the merge is not since the label: the issue is
-    // not done (`docs/specs/repository.md`, State).
     assert_eq!(at(&labeled_as_it_merged, 10), vec![implement(2)]);
     assert_eq!(at(&relabeled, 10), vec![implement(2)]);
 }
@@ -2980,8 +2966,6 @@ fn a_designed_issue_with_only_sub_issues_a_person_added_is_implemented() {
 
 #[test_log::test]
 fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
-    // Labeled designed, and yet to let go of its status label and of
-    // Linewright.
     let cutting = claimed(labeled(
         cut_issue(9, &[(10, false)]),
         label::READY_FOR_AGENT,
@@ -3238,11 +3222,11 @@ fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_having_had_a
 
 #[test_log::test]
 fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
-    // Five ticks, 13:00 to 17:00, since the last scheduled run at 12:30.
-    let world = automations(&["hourly"], &[("hourly", 30)], &[]);
+    let last_run_at_12_30 = automations(&["hourly"], &[("hourly", 30)], &[]);
+    let five_ticks_later = 310;
 
     assert_eq!(
-        scheduled(&world, 310),
+        scheduled(&last_run_at_12_30, five_ticks_later),
         vec![
             Action::RunAutomation(Box::new(hourly("hourly"))),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly", 310)])),
@@ -3252,11 +3236,14 @@ fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
 
 #[test_log::test]
 fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
-    // The run in flight started at 12:30; 13:00 and 14:00 tick meanwhile.
-    let running = automations(&["hourly"], &[("hourly", 30)], &["hourly"]);
+    let running_since_12_30 = automations(&["hourly"], &[("hourly", 30)], &["hourly"]);
     let ended = automations(&["hourly"], &[("hourly", 30)], &[]);
+    let after_ticks_at_13_00_and_14_00 = 130;
 
-    assert_eq!(scheduled(&running, 130), vec![]);
+    assert_eq!(
+        scheduled(&running_since_12_30, after_ticks_at_13_00_and_14_00),
+        vec![]
+    );
     assert_eq!(
         scheduled(&ended, 131),
         vec![
@@ -3268,23 +3255,22 @@ fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
 
 #[test_log::test]
 fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
-    // A ceiling of 4: two pipeline runs and one automation run in flight, a
-    // ticket to implement, and two automations due.
     let world = snapshot(vec![
         claimed(ticket(1)),
         claimed(ticket(8)),
         claimed(ticket(9)),
     ]);
-    let busy = [live(8, WorkKind::Implement), live(9, WorkKind::Implement)];
-    let due = automations(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
+    let two_pipeline_runs = [live(8, WorkKind::Implement), live(9, WorkKind::Implement)];
+    let one_running_and_two_due =
+        automations(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
     let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
         reconcile(
             &world,
-            &busy,
+            &two_pipeline_runs,
             &Memory::default(),
-            &due,
+            &one_running_and_two_due,
             t(70),
             &policy(),
             &[]
@@ -3294,9 +3280,9 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
     assert_eq!(
         reconcile(
             &quieter,
-            &busy,
+            &two_pipeline_runs,
             &Memory::default(),
-            &due,
+            &one_running_and_two_due,
             t(70),
             &policy(),
             &[]
@@ -3770,11 +3756,11 @@ fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_r
             ("weekly", 70),
         ])),
     ];
-    // `hourly` ran before the drain began; `daily` is first seen.
-    let recorded = last_scheduled_runs(&[("hourly", 10), ("weekly", 10)]);
+    let hourly_ran_before_the_drain_and_daily_unseen =
+        last_scheduled_runs(&[("hourly", 10), ("weekly", 10)]);
 
     assert_eq!(
-        held_back_by_drain(rest, &recorded),
+        held_back_by_drain(rest, &hourly_ran_before_the_drain_and_daily_unseen),
         vec![
             let_go(12),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[
@@ -4044,7 +4030,6 @@ fn handed_back_issues(actions: &[Action]) -> Vec<u64> {
 
 #[test_log::test]
 fn a_pull_request_closing_two_issues_is_worked_while_both_wait_for_it_whatever_their_labels() {
-    // An issue in review is not let go of, whatever its label.
     for label in [label::READY_FOR_AGENT, label::READY_FOR_HUMAN] {
         let world = pull_closing_42_and_12(label);
 
@@ -4495,7 +4480,6 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
     );
     let fixing = [live_on_pull(20, WorkKind::FixCi)];
 
-    // An issue in review is not let go of.
     for world in [unlabeled, unassigned] {
         assert_eq!(at(&world, 10), vec![fix_ci.clone()]);
         assert_eq!(
@@ -5000,8 +4984,7 @@ fn linewright_assigned_to_an_open_pull_request_it_did_not_open_lets_go_of_it_wit
 
 /// `docs/specs/repository.md`, Steering and Working an item: Linewright
 /// assigned to a merged pull request it does not take up neither comments on
-/// it nor unassigns itself. Which merged pull requests it takes up is
-/// `lifecycle::merged_row`'s, tested on its own.
+/// it nor unassigns itself.
 #[test_log::test]
 fn linewright_assigned_to_a_merged_pull_request_it_does_not_take_up_leaves_it_as_it_is() {
     let mut code = merged(31, &["src/main.rs"]);

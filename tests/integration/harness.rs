@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::path::Path;
@@ -60,12 +59,8 @@ async fn until_said(record: &Path, text: &str) {
 }
 
 /// Runs `session` on `harness` and times it out once it has streamed `said`,
-/// returning the error it ends with.
-///
-/// A session can take long to start on a loaded machine, so the deadline is
-/// set far off and comes, with the clock paused, only once the session has
-/// spoken. Pausing the clock means a test may call this at most once, on the
-/// default current-thread runtime.
+/// returning the error it ends with. A test may call this at most once, on
+/// the default current-thread runtime.
 async fn timed_out_once_said(
     harness: ClaudeCode,
     mut session: SessionSpec,
@@ -99,8 +94,8 @@ fn settings(args: &[String]) -> Value {
     flag_value(args, "--settings").map_or(Value::Null, |s| serde_json::from_str(s).unwrap())
 }
 
-/// `globset` stands in for Claude Code's own matcher, which also treats
-/// parentheses as special.
+/// The `claudeMdExcludes` the settings in `args` give, as `globset` globs
+/// whose `*` does not match `/`.
 fn instruction_excludes(args: &[String]) -> globset::GlobSet {
     let mut excludes = globset::GlobSetBuilder::new();
     for pattern in settings(args)["claudeMdExcludes"].as_array().unwrap() {
@@ -523,7 +518,6 @@ async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_s
     for args in turn_args(dir.path()) {
         assert_eq!(flag_value(&args, "--model"), Some("opus"));
         assert_eq!(flag_value(&args, "--effort"), Some("high"));
-        // The settings Linewright passes outrank the repository's.
         let passed = settings(&args);
         assert_eq!(
             (&passed["model"], &passed["effortLevel"]),
@@ -531,7 +525,6 @@ async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_s
         );
     }
     let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
-    // The harness ranks the variable above every other choice of effort.
     assert_eq!(
         session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
         Some("high")
@@ -638,11 +631,9 @@ async fn every_turn_leaves_out_the_skills_the_harness_ships() {
     harness.start(&triage_session(dir.path())).await.unwrap();
 
     let overrides = &settings(&turn_args(dir.path())[0])["skillOverrides"];
-    // The skills Claude Code ships that turning off bundled skills keeps.
-    assert_eq!(
-        overrides,
-        &json!({ "design": "off", "doctor": "off", "plugin-authoring": "off" })
-    );
+    let kept_by_turning_off_bundled_skills =
+        json!({ "design": "off", "doctor": "off", "plugin-authoring": "off" });
+    assert_eq!(overrides, &kept_by_turning_off_bundled_skills);
     assert_eq!(
         [
             "linewright:triage",
@@ -1027,7 +1018,7 @@ async fn a_secret_that_holds_another_is_redacted_whole() {
     assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }
 
-/// So the SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
+/// The SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
 /// drains, does not also end the sessions in flight.
 #[test_log::test(tokio::test)]
 async fn a_session_runs_in_a_process_group_of_its_own() {
@@ -1069,7 +1060,8 @@ fn has_ended(pid: rustix::process::Pid) -> bool {
 }
 
 /// Without a subreaper, which only Linux has, a process whose parent has
-/// exited is beyond reach.
+/// exited is beyond reach
+/// (<https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html>).
 #[cfg(target_os = "linux")]
 #[test_log::test(tokio::test)]
 async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {

@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use chrono::TimeDelta;
@@ -455,7 +454,7 @@ async fn unassigning_linewright_during_triage_cancels_it_and_it_posts_nothing() 
     assert_eq!(issue.assignees, []);
 }
 
-/// The titles of the spec changes' issues `world`'s store has.
+/// The spec changes' issues `world`'s store has.
 fn spec_change_issues(world: &World) -> Vec<Number> {
     world
         .store
@@ -1568,12 +1567,9 @@ async fn an_issue_is_worked_from_needs_triage_to_in_review_and_handed_back_when_
         asks_written(&in_review),
         [
             "label needs-triage",
-            // Claimed, then triaged: the new status label before the old
-            // one is removed.
             "assign Linewright",
             "label ready-for-agent",
             "unlabel needs-triage",
-            // Designed, built as it is.
             "label linewright:designed",
         ]
     );
@@ -1593,8 +1589,6 @@ async fn an_issue_is_worked_from_needs_triage_to_in_review_and_handed_back_when_
     assert_eq!(
         asks_written(&handed_back)[5..],
         [
-            // The design is the issue's own, so it goes first, then the
-            // status label, then the assignment.
             "unlabel linewright:designed",
             "label ready-for-human",
             "unlabel ready-for-agent",
@@ -1667,8 +1661,7 @@ fn script_next_run(
     next
 }
 
-/// Relabels the handed-back ticket `ready-for-agent`, and designs it again:
-/// the hand-back took its design with it.
+/// Relabels the handed-back ticket `ready-for-agent`, and designs it again.
 async fn relabeled_and_designed_again(world: &World, ticket: Number) {
     relabel_ready_for_agent(world, ticket);
     world.designed_on_the_issue(ticket).await;
@@ -2591,8 +2584,6 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
         linewright_assigned(&world, pr).await,
         "a failure after Linewright is reassigned is retried, not handed back"
     );
-    // Its stall is cleared only once no row before that one holds, and the
-    // merge's does.
     assert_eq!(world.store.pull_labels(pr), ["linewright:stalled"]);
 
     world.store.accept_merges(pr);
@@ -2786,8 +2777,6 @@ async fn implemented_with_pushes_refused(output: &str) -> (World, linewright::do
 
 #[test_log::test(tokio::test)]
 async fn a_hand_back_says_nothing_of_a_secret_the_sessions_work_printed() {
-    // A hook the session left in its clone can print one as Linewright
-    // pushes.
     let mut world = World::with(|config| {
         config.secrets = secrets_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
     })

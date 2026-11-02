@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::rejected;
@@ -70,6 +69,13 @@ fn the_repositorys_settings_decide_how_a_branch_is_updated_and_merged() {
 #[test_log::test]
 fn the_configs_update_branch_and_merge_method_win_over_the_repositorys() {
     let merging_by = |merge_method| Some(AutoMerge { merge_method });
+    let without_auto_merge_unchecked_against_the_rule = (
+        &[Rebase][..],
+        Some(UpdateMethod::Merge),
+        None,
+        UpdateRule::Always(UpdateMethod::Merge),
+        Rebase,
+    );
     for (allowed, update_method, auto_merge, update_rule, merge_method) in [
         (
             &[Merge, Squash, Rebase][..],
@@ -106,15 +112,7 @@ fn the_configs_update_branch_and_merge_method_win_over_the_repositorys() {
             UpdateRule::RebaseOnConflict,
             Rebase,
         ),
-        // Without auto-merge, the merge method is not checked against the
-        // update-branch rule.
-        (
-            &[Rebase],
-            Some(UpdateMethod::Merge),
-            None,
-            UpdateRule::Always(UpdateMethod::Merge),
-            Rebase,
-        ),
+        without_auto_merge_unchecked_against_the_rule,
     ] {
         let case = format!("allowing {allowed:?}, {update_method:?}, {auto_merge:?}");
         let settings = read(false, allowed)

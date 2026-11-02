@@ -1,7 +1,6 @@
-// comments: pending
 //! Creation Methods: each writes into the fakes the state a stage leaves,
 //! with the scripts the stage's sessions answered with, so that a later
-//! stage answers as they would. `front_door` checks each against its stage.
+//! stage answers as they would.
 
 use chrono::TimeDelta;
 use linewright::domain::{CheckState, Login, Number, Requirement};
@@ -484,8 +483,7 @@ impl World {
 
     /// What design leaves of `issue`, labeled `ready-for-agent` and not
     /// claimed, designed on the issue as [`design_issues`] scripts each
-    /// design. A stall it carries stays, since the design run's row holds
-    /// before the one that clears it.
+    /// design. A stall it carries stays.
     pub async fn designed_on_the_issue(&self, issue: Number) {
         design_issues(self);
         self.store.assign(issue).await.unwrap();
@@ -669,7 +667,6 @@ impl World {
         self.rework_asked(pr);
         rework_timing_out_with_edits(self);
         let branch = self.store.snapshot_pull(pr).await.head_ref;
-        // One push of both commits, as the rework pushes them.
         let work = tempfile::tempdir().unwrap();
         let clone = work.path().join("clone");
         let identity = self.store.identity().await.unwrap();

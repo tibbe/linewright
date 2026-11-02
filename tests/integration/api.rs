@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::os::unix::fs::PermissionsExt;
@@ -20,7 +19,6 @@ use tokio_util::sync::CancellationToken;
 /// directory holding nothing but what a test writes there.
 fn sources(work_dir: RepoWorkDir) -> Sources {
     let clock = Arc::new(FakeClock::new());
-    // Kept open by the receivers `Sources` holds.
     let (_, served) = tokio::sync::watch::channel(None);
     let (_, polling) = tokio::sync::watch::channel(None);
     Sources {
@@ -207,8 +205,10 @@ async fn a_claim_is_held_until_the_api_stops_and_then_can_be_taken_again() {
         "the second claim was taken"
     );
     assert!(!api::socket_path(&dir, REPO).exists());
-    // A process another test forks holds a copy of the lock until it runs
-    // its program, so the lock may stay taken for a moment.
+    // A child forked by another test shares the lock until it execs and its
+    // close-on-exec copy closes
+    // (<https://man7.org/linux/man-pages/man2/flock.2.html>,
+    // <https://man7.org/linux/man-pages/man2/open.2.html>, `O_CLOEXEC`).
     eventually(|| api::claim(&dir, REPO).is_ok()).await;
 }
 
@@ -227,7 +227,6 @@ fn left_by_a_killed_serve(runtime_dir: &Path) -> std::path::PathBuf {
     let dir = private_socket_dir(runtime_dir);
     let socket = api::socket_path(&dir, REPO);
     drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
-    // The kernel released its lock as it was killed.
     std::fs::write(socket.with_extension("lock"), "").unwrap();
     dir
 }
@@ -262,12 +261,12 @@ async fn a_socket_a_dead_serve_left_behind_does_not_block_a_new_one() {
 async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = private_socket_dir(runtime_dir.path());
-    let lock = std::fs::File::create(api::socket_path(&dir, REPO).with_extension("lock")).unwrap();
-    // As `drain` looks, held for longer.
-    lock.lock_shared().unwrap();
+    let held_as_drain_looks =
+        std::fs::File::create(api::socket_path(&dir, REPO).with_extension("lock")).unwrap();
+    held_as_drain_looks.lock_shared().unwrap();
     let looked = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(50)).await;
-        drop(lock);
+        drop(held_as_drain_looks);
     });
 
     let claimed = tokio::task::spawn_blocking(move || api::claim(&dir, REPO))

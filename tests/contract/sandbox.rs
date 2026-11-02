@@ -1,4 +1,3 @@
-// comments: pending
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,27 +25,22 @@ pub type Contract = fn(Sandbox) -> BoxFuture<'static, Result<()>>;
 /// as its search and timeline indexes do.
 const GITHUB_LAG: Duration = Duration::from_secs(20);
 
-/// How long a contract on GitHub may run, at the longest. The sweep leaves
-/// alone what was written to since, as a contract of another run, such as a
-/// trial nextest runs in a process of its own, may still be using it.
+/// How long a contract on GitHub may run, at the longest.
 const LONGEST_CONTRACT: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
 
 /// What starts the name of everything a contract makes, after the number of
-/// a branch named for a ticket, so that the sweep closes nothing else, even
-/// in a repository that is not a sandbox.
+/// a branch named for a ticket.
 const MARK: &str = "contract-";
 
-/// Held by a contract while it merges into the default branch: GitHub
-/// refuses a merge when the default branch moved since it worked out
-/// whether the pull request merges, which merges at the same time would
-/// keep doing.
+/// Held by a contract while it merges into the default branch. GitHub works
+/// out again whether a pull request merges once the default branch moves
+/// (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
 static MERGING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// The repository the local store stands in for.
 const LOCAL_REPO: &str = "contract/sandbox";
 
-/// Who Linewright acts as on the local store: not GitHub's account, so that
-/// no contract can pass by assuming it.
+/// Who Linewright acts as on the local store.
 const LOCAL_LINEWRIGHT: &str = "contract-linewright";
 
 /// Who made the local store's first commit, as the sandbox's owner made its
@@ -62,7 +56,7 @@ pub struct Sandbox {
     /// wrote.
     lag: Duration,
     run: String,
-    /// Kept by the [`Made`] too, as it holds the local store.
+    /// The contract's own directory, which holds the local store.
     scratch: Arc<TempDir>,
     clones: AtomicUsize,
     made: Arc<Mutex<Vec<Thing>>>,
@@ -80,7 +74,7 @@ pub struct Opened {
     pub pr: Number,
 }
 
-/// A commit for [`Sandbox::push_branch`] or [`commit`] to make.
+/// A commit to make: its message and its files.
 pub struct NewCommit<'a> {
     pub message: &'a str,
     /// Each file it writes, with what it holds.
@@ -92,7 +86,7 @@ pub struct NewCommit<'a> {
 /// bytes.
 pub const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
 
-/// What a contract made that the harness closes or deletes once it ends.
+/// Something a contract made, to close or delete once it ends.
 #[derive(Debug)]
 enum Thing {
     Branch(String),
@@ -100,8 +94,8 @@ enum Thing {
     Pull(Number),
 }
 
-/// What a contract made, for the harness to close or delete once it ends,
-/// whether it passed or not, so that the next run's sweep has little to do.
+/// What a contract made, to close or delete once it ends, whether it passed
+/// or not.
 pub struct Made {
     store: Arc<dyn Store>,
     things: Arc<Mutex<Vec<Thing>>>,
@@ -160,7 +154,7 @@ impl Sandbox {
         }
     }
 
-    /// What the contract makes, for the harness to clean up after it.
+    /// What the contract makes, to clean up after it.
     pub fn made(&self) -> Made {
         Made {
             store: self.store.clone(),
@@ -179,17 +173,13 @@ impl Sandbox {
     }
 
     /// `name`, made unique to this contract's run, for the title of an
-    /// issue or pull request or the name of a branch or label, which earlier
-    /// runs in the same sandbox may have left behind. Everything a contract
-    /// makes is named so, for the sweep to find.
+    /// issue or pull request or the name of a branch or label.
     pub fn unique(&self, name: &str) -> String {
         format!("{MARK}{name}-{}", self.run)
     }
 
-    /// The first answer `check` gives without failing: on GitHub, which
-    /// may answer a read with what it held before a write, it is asked again
-    /// until it passes or [`GITHUB_LAG`] has passed; the local store answers
-    /// at once, so it is asked once.
+    /// The first answer `check` gives without failing, asked again on GitHub
+    /// until [`GITHUB_LAG`] has passed and once on the local store.
     pub async fn eventually<T, F, Fut>(&self, mut check: F) -> Result<T>
     where
         F: FnMut() -> Fut,
@@ -269,9 +259,8 @@ impl Sandbox {
         Ok(Pushed { name, head })
     }
 
-    /// Pushes `clone` to `branch` as [`Store::push`], asked again on GitHub,
-    /// which refuses a push now and then while the repository is busy, such
-    /// as with the other contracts' pushes and merges.
+    /// Pushes `clone` to `branch` as [`Store::push`], asked again on GitHub
+    /// while it refuses.
     pub async fn push(&self, clone: &Path, branch: &str, mode: PushMode) -> Result<()> {
         self.eventually(async || Ok(self.store().push(clone, branch, mode.clone()).await?))
             .await
@@ -332,8 +321,7 @@ impl Sandbox {
         Ok((issue, opened))
     }
 
-    /// Waits until #`pr` lists `issue` as the one it closes: GitHub links the
-    /// issue moments after the pull request opens.
+    /// Waits until #`pr` lists `issue` as the one it closes.
     pub async fn linked(&self, pr: Number, issue: Number) -> Result<()> {
         self.eventually(async || {
             let pull = self.store().pull(pr).await?;
@@ -342,7 +330,7 @@ impl Sandbox {
         .await
     }
 
-    /// Has the harness close the issue #`issue` once the contract ends.
+    /// Closes the issue #`issue` once the contract ends.
     pub fn made_issue(&self, issue: Number) {
         self.made
             .lock()
@@ -350,7 +338,7 @@ impl Sandbox {
             .push(Thing::Issue(issue));
     }
 
-    /// Has the harness close #`pr`, if it is open, once the contract ends.
+    /// Closes #`pr`, if it is open, once the contract ends.
     pub fn made_pull(&self, pr: Number) {
         self.made
             .lock()
@@ -358,7 +346,7 @@ impl Sandbox {
             .push(Thing::Pull(pr));
     }
 
-    /// Has the harness delete `branch` once the contract ends.
+    /// Deletes `branch` once the contract ends.
     pub fn made_branch(&self, branch: &str) {
         let mut made = self.made.lock().expect("not poisoned");
         made.push(Thing::Branch(branch.to_string()));
@@ -411,14 +399,12 @@ impl Made {
 /// The label `name`, meaning `description`.
 pub fn label(name: &str, description: &'static str) -> Label {
     Label {
-        // A contract's labels are few, and live as long as the run.
         name: name.to_string().leak(),
         description,
     }
 }
 
-/// Windows that leave out what earlier runs closed, which piles up in the
-/// sandbox.
+/// Windows that leave out what earlier runs closed.
 pub fn recent() -> Windows {
     let hour = chrono::TimeDelta::hours(1);
     Windows::at(chrono::Utc::now(), hour, hour)
@@ -428,10 +414,7 @@ pub fn recent() -> Windows {
 /// `github`, and deletes the pull requests' branches, of earlier runs: those
 /// Linewright opened, titled by [`Sandbox::unique`] and not written to for
 /// [`LONGEST_CONTRACT`]. Then deletes the branches named by
-/// [`Sandbox::unique`] not committed to for as long, which a contract
-/// stopped before its cleanup leaves without a pull request. GitHub deletes
-/// neither issues nor pull requests, so closed ones are left for good, and
-/// the contracts read snapshots over windows that leave them out.
+/// [`Sandbox::unique`] not committed to for as long.
 pub async fn sweep(github: &GitHub) -> Result<()> {
     let linewright = github.linewright();
     let before = chrono::Utc::now() - LONGEST_CONTRACT;
@@ -493,8 +476,8 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
 }
 
 /// Whether the open issue or pull request `item`, as GitHub's REST API gives
-/// it, is one a contract left that the sweep closes: opened by `linewright`,
-/// titled by [`Sandbox::unique`] and not written to since `before`.
+/// it, is one a contract left: opened by `linewright`, titled by
+/// [`Sandbox::unique`] and not written to since `before`.
 fn left_over(item: &Value, linewright: &Login, before: Timestamp) -> bool {
     let opener = item["user"]["login"].as_str().map(Login::new);
     let updated: Option<Timestamp> = item["updated_at"].as_str().and_then(|at| at.parse().ok());

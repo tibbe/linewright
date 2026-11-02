@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use linewright::store::local::LocalStore;
 use linewright::webhook::{Listener, Pending};
 use serde_json::json;
 
-/// A poll interval no test waits out: what such a test sees, deliveries did.
+/// A poll interval no test waits out.
 const NEVER: Duration = Duration::from_hours(1);
 
 struct Served {
@@ -42,7 +41,6 @@ async fn serve(world: World, poll_interval: Duration) -> Served {
     let polled = store.snapshots_taken();
     let serving = Serving::start(factory, poll_interval, pending);
     eventually(|| store.snapshots_taken() > polled).await;
-    // The store counts the snapshot before `serve` publishes it.
     eventually(|| serving.served.borrow().is_some()).await;
     Served {
         store,
@@ -75,18 +73,22 @@ fn claimed(store: &LocalStore, issue: Number) -> bool {
     issue.assignees.contains(&Login::new(LINEWRIGHT))
 }
 
-#[test_log::test(tokio::test)]
-async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
-    let world = World::new().await;
-    implement(&world);
-    // Designed, so that its run is the implement scripted above and leaves
-    // Linewright assigned: a design would hand it back at once.
-    let issue = world.store.open_issue(
+/// Scripts each implement run as [`implement`] does, and opens a designed
+/// issue, whose run leaves Linewright assigned.
+fn designed_issue(world: &World) -> Number {
+    implement(world);
+    world.store.open_issue(
         "maintainer",
         "Do the thing",
         "Please.",
         &["linewright:designed"],
-    );
+    )
+}
+
+#[test_log::test(tokio::test)]
+async fn an_issue_labeled_ready_for_agent_is_claimed_on_the_delivery() {
+    let world = World::new().await;
+    let issue = designed_issue(&world);
     let served = serve(world, NEVER).await;
 
     served
@@ -161,18 +163,9 @@ async fn polls_go_on_at_the_poll_interval_while_deliveries_arrive() {
 async fn a_failed_read_for_a_delivery_is_logged_and_the_next_poll_catches_up() {
     let (log, _guard) = Log::capture();
     let world = World::new().await;
-    implement(&world);
-    // Designed, so that its run is the implement scripted above and leaves
-    // Linewright assigned: a design would hand it back at once.
-    let issue = world.store.open_issue(
-        "maintainer",
-        "Do the thing",
-        "Please.",
-        &["linewright:designed"],
-    );
+    let issue = designed_issue(&world);
     let served = serve(world, Duration::from_millis(200)).await;
 
-    // Polls read no single item, so only the delivery's read fails.
     served.store.fail_item_reads("GitHub is down");
     served
         .store
