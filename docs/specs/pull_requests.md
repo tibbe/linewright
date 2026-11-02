@@ -78,7 +78,8 @@ Its state is GitHub's: a draft, or ready for review.
 - **Its checks.** The check runs and commit statuses on its head.
 - **A round.** A round starts when Linewright opens the pull request, when a
   rework run on it ends and when Linewright is assigned to it again.
-- **Ready to merge.** A PR is ready to merge when no person holds its merge
+- **Ready to merge.** A PR is ready to merge when it is ready for review, its
+  checks have passed, it has no feedback, no person holds its merge
   ([Merging](#merging)), it has everything the repository requires before a
   merge and, with `auto-merge` off, a person has approved it.
 
@@ -118,7 +119,9 @@ A branch is brought up to date with the default branch where a row of
 holds, and by every fix-ci run.
 
 - **Which runs.** An update run does only that. A rework run starts with it
-  where one of those rows holds. A fix-ci run always starts with it.
+  where the branch conflicts with the default branch or cannot be merged by a
+  method the repository allows, as those rows give. A fix-ci run always starts
+  with it.
 - **Merge or rebase.** By default an update merges the default branch into
   the branch, so reviewed history stays as it is, unless the branch would then
   not be mergeable by every method the repository allows; then the branch is

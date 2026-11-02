@@ -115,13 +115,13 @@ module pull_request {
   ]
   pure val ROWS = 15
 
-  /// P ## Working a pull request "Ready to merge": "no person holds its
-  /// merge", "it has everything the repository requires before a merge" and,
-  /// with auto-merge off, "a person has approved it"; being behind is its own
-  /// fact.
-  /// That no check of it is running or has failed is the row's place.
+  /// P ## Working a pull request "Ready to merge": "it is ready for review",
+  /// "no person holds its merge", "it has everything the repository requires
+  /// before a merge" and, with auto-merge off, "a person has approved it";
+  /// being behind is its own fact. That "its checks have passed" and "it has
+  /// no feedback" is the row's place in the table.
   pure def readyToMerge(x: Pr, am: bool): bool =
-    not(x.held) and x.github != "blocks" and (am or x.approved)
+    not(x.draft) and not(x.held) and x.github != "blocks" and (am or x.approved)
 
   /// The first row that holds, from 0.
   pure def firstRow(x: Pr, am: bool): int = {
@@ -227,15 +227,19 @@ module pull_request {
   /// finish" hands it back; otherwise it pushes, or finds nothing to push.
   /// "Feedback posted while a run works goes to its session before the run
   /// pushes". P ## Keeping up to date "Which runs": an update or a fix-ci run
-  /// brings the branch up to date; a rework run does where an update row held
-  /// as it started, read as it may or may not have.
+  /// brings the branch up to date; a rework run does "where the branch
+  /// conflicts with the default branch or cannot be merged by a method the
+  /// repository allows", as it started, read as it may or may not have, and
+  /// never for being behind.
   action runEnds: bool = {
     nondet end = Set("push", "nothing", "cannot finish").oneOf()
     // an update may leave it as unmergeable by a method as it was
     nondet repaired = Set(true, false).oneOf()
     nondet reworkUpdated = Set(true, false).oneOf()
     val updated = inFlight != "rework" or reworkUpdated
-    val done = if (updated) { ...pr, behind: false, conflict: false } else pr
+    val done =
+      if (inFlight == "rework") { if (reworkUpdated) { ...pr, conflict: false } else pr }
+      else { ...pr, behind: false, conflict: false }
     // a rework run that ends done answers the feedback it was given; read the
     // old way, any push did
     val answered = if (FEEDBACK_UNTIL_REWORK_DONE) inFlight == "rework" else end == "push"
