@@ -1,16 +1,18 @@
-// comments: pending
 const MAX_LINES: usize = 50;
 
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
 pub fn failed_step_output(log: &str) -> String {
-    // The log starts with a byte order mark.
-    let log = log.trim_start_matches('\u{feff}');
+    let log = log.trim_start_matches(BYTE_ORDER_MARK);
     let lines: Vec<&str> = log.lines().map(untimestamped).collect();
     let shown = failed_step(&lines).unwrap_or(&lines);
     shown[shown.len().saturating_sub(MAX_LINES)..].join("\n")
 }
 
-/// <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands>.
-/// In a composite action this finds the failing sub-step.
+/// The lines of the step that failed, from its start to its last error, as
+/// the workflow commands mark them
+/// (<https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands>):
+/// in a composite action, of the sub-step that failed.
 fn failed_step<'a>(lines: &'a [&'a str]) -> Option<&'a [&'a str]> {
     let is_error = |l: &&str| l.starts_with("##[error]");
     let is_step = |l: &&str| l.starts_with("##[group]Run ");

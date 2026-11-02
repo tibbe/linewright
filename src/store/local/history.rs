@@ -1,6 +1,5 @@
-// comments: pending
-//! The only writer of the local store's history: every commit it makes to its
-//! repository and every ref it moves there.
+//! The local store's history: the commits it writes to its repository and
+//! the refs it moves there.
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -22,12 +21,14 @@ pub struct NewCommit<'a> {
     pub removed: &'a [&'a str],
 }
 
-/// Writes `commit` and moves its branch to it, returning the commit.
+/// Writes `commit` and moves its branch to it, returning the commit. Like a
+/// push without force, it fails rather than move the branch other than
+/// forward.
 pub async fn write_commit(repo: &Path, commit: NewCommit<'_>) -> Result<String> {
     let branch = branch_ref(commit.branch);
     let default_branch = branch_ref(commit.default_branch);
-    // One process for both tips: `rev-parse --verify` takes one revision.
-    // A pattern also matches the refs below it, so only exact names count.
+    // A pattern also matches the refs below it:
+    // <https://git-scm.com/docs/git-for-each-ref#Documentation/git-for-each-ref.txt-pattern>
     let tips = git::git(
         repo,
         &[
@@ -43,8 +44,6 @@ pub async fn write_commit(repo: &Path, commit: NewCommit<'_>) -> Result<String> 
             .find_map(|line| line.strip_prefix(refname)?.strip_prefix(' '))
     };
     let parent = tip(&branch).or_else(|| tip(&default_branch));
-    // Without `--force`, fast-import refuses to move the branch other than
-    // forward, as a push would.
     let id = git::git_input(
         repo,
         &["fast-import", "--quiet", "--date-format=now"],
@@ -141,7 +140,6 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
         pr,
     } = merge;
     let by = Signature::of(by);
-    // GitHub commits merge commits and squashes as itself.
     let github = Signature {
         name: "GitHub",
         email: Cow::Borrowed("noreply@github.com"),
@@ -338,7 +336,6 @@ pub async fn replay(repo: &Path, onto: &str, head: &str, committer: &str) -> Res
     )
     .await?;
     let picks = picks(&log, onto)?;
-    // One rev-parse gives the tip's commit and tree and every parent's tree.
     let mut revs = vec![
         "rev-parse".to_string(),
         format!("{onto}^{{commit}}"),

@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -64,8 +63,7 @@ struct State {
     snapshots_taken: usize,
     items_read: usize,
     unreadable: Option<String>,
-    /// Fails the reads of single items, as a refresh makes, but not
-    /// snapshots.
+    /// Fails the reads of single items, but not snapshots.
     items_unreadable: Option<String>,
     pushes_refused: Option<String>,
     attachments_refused: Option<AttachRefusal>,
@@ -152,8 +150,6 @@ impl Paused {
 
     /// Lets the paused store call return.
     pub fn release(self) {
-        // The call is gone only if the store was dropped, and then there is
-        // nothing to release.
         let _ = self.release.send(Released::Ok);
     }
 
@@ -256,9 +252,9 @@ impl LocalStore {
     pub async fn create(root: &Path, seed: Seed, clock: Arc<dyn Clock>) -> Result<LocalStore> {
         tokio::fs::create_dir_all(root).await?;
         let root = root.canonicalize()?;
-        // Refs in a reftable rather than a file each under `refs/heads/`: on
-        // a case-insensitive file system, as macOS's are by default, the
-        // files would make `1-Gadgets` and `1-gadgets` the same branch.
+        // Loose refs are files, and macOS's file systems are case-insensitive
+        // by default: <https://git-scm.com/docs/git-init#Documentation/git-init.txt---ref-formatformat>,
+        // <https://support.apple.com/guide/disk-utility/file-system-formats-dsku19ed921c/mac>
         git::git(
             &root,
             &[
@@ -645,8 +641,8 @@ impl LocalStore {
         Ok(())
     }
 
-    // The branch rules and GitHub's working out of whether a pull request
-    // merges are no writes to it, so they leave when it was last updated.
+    /// Has the branch rules block the pull request's merge until `requires`
+    /// is met, leaving when it was last updated as it was.
     pub fn block_merge(&self, pr: Number, requires: Vec<Requirement>) {
         if let Some(record) = self.state().pulls.get_mut(&pr) {
             record.blocked = Some(requires);
@@ -732,8 +728,9 @@ impl LocalStore {
     }
 
     /// Pauses the store call that next makes `write`, once the write is
-    /// applied, until the returned [`Paused`] is released. One pause is set
-    /// at a time: a second replaces the first.
+    /// applied, until the returned [`Paused`] is released. A refused push or
+    /// upload pauses too, before it returns its refusal. One pause is set at a
+    /// time: a second replaces the first.
     pub fn pause_after(&self, write: Write) -> Paused {
         let (reached, on_reached) = oneshot::channel();
         let (release, released) = oneshot::channel();
@@ -765,7 +762,6 @@ impl LocalStore {
             return Ok(());
         };
         let _ = pause.reached.send(());
-        // A dropped `Paused` releases the call as well.
         match pause.released.await {
             Ok(Released::Failed) => bail!("the store call failed after {:?}", pause.after),
             Ok(Released::Ok) | Err(_) => Ok(()),
@@ -937,8 +933,7 @@ impl LocalStore {
         self.state().unreadable = Some(reason.into());
     }
 
-    /// Fails the reads of single items, as a refresh makes, while
-    /// snapshots go on.
+    /// Fails the reads of single items, while snapshots go on.
     pub fn fail_item_reads(&self, reason: &str) {
         self.state().items_unreadable = Some(reason.into());
     }
@@ -1102,8 +1097,6 @@ impl LocalStore {
             (state.pull(number)?.clone(), default_branch)
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
-        // Whether the head contains the default branch, which both its
-        // mergeability and its rebaseability start from.
         let up_to_date = match record.state {
             PullState::Open { .. } => git::git(
                 &self.repository(),
@@ -1802,7 +1795,6 @@ impl Store for LocalStore {
                     })
                 })
                 .collect();
-            // Each pull request, with among which a snapshot holds it.
             let pulls: Vec<(Number, Option<PullHeld>)> = state
                 .pulls
                 .values()
@@ -2060,9 +2052,7 @@ impl Store for LocalStore {
     async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>> {
         let repository = self.repository();
         // Each entry is `<mode> <type> <object>\t<name>`
-        // (<https://git-scm.com/docs/git-ls-tree#_output_format>). A
-        // directory the branch lacks lists nothing; only a branch that
-        // doesn't exist fails, and is checked for once it has.
+        // (<https://git-scm.com/docs/git-ls-tree#_output_format>).
         let prefix = format!("{dir}/");
         let listing =
             match git::git(&repository, &["ls-tree", "-r", "-z", branch, "--", &prefix]).await {
@@ -2094,7 +2084,6 @@ impl Store for LocalStore {
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
         let refused = self.state().pushes_refused.clone();
         if let Some(output) = refused {
-            // A refused push pauses as well, before GitHub's refusal returns.
             self.paused(Write::Push {
                 branch: branch.into(),
             })
@@ -2135,8 +2124,6 @@ impl Store for LocalStore {
     ) -> Result<String, AttachError> {
         let refused = self.state().attachments_refused.clone();
         if let Some(refusal) = refused {
-            // A refused upload pauses as well, before GitHub's refusal
-            // returns.
             self.paused(Write::Attach { name: name.into() }).await?;
             return Err(match refusal {
                 AttachRefusal::File(reason) => AttachError::RefusedFile { reason },
@@ -2386,7 +2373,8 @@ impl Store for LocalStore {
         if self.rev(&head_ref).await? != head {
             bail!("the head of {pr} is no longer {head}");
         }
-        // GitHub merges no pull request that conflicts, by any method.
+        // GitHub merges no pull request that conflicts, by any method:
+        // <https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/addressing-merge-conflicts/about-merge-conflicts>
         if self.pull_view(pr).await?.mergeability == Mergeability::Conflicting {
             bail!("{pr} has merge conflicts");
         }
