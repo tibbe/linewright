@@ -304,11 +304,15 @@ pub fn rework_starts_with_update(facts: &Facts) -> bool {
     }) == Row::Update
 }
 
-/// Ready to merge, but for being behind: no person holds its merge, GitHub
-/// requires no review it has not had and, with `auto-merge` off, a person
-/// has approved it.
+/// Ready to merge, but for being behind: it is ready for review, no person
+/// holds its merge, GitHub requires no review it has not had and, with
+/// `auto-merge` off, a person has approved it. It reads neither its checks
+/// nor its feedback.
 fn ready_to_merge(facts: &Facts) -> bool {
-    !facts.held && !facts.review_required && (facts.auto_merge.is_some() || facts.approved)
+    !facts.draft
+        && !facts.held
+        && !facts.review_required
+        && (facts.auto_merge.is_some() || facts.approved)
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

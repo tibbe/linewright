@@ -302,6 +302,16 @@ fn a_branch_behind_is_not_brought_up_to_date_while_something_else_keeps_it_from_
 }
 
 #[test_log::test]
+fn a_draft_behind_and_otherwise_ready_to_merge_is_marked_ready_first() {
+    let draft = Facts {
+        draft: true,
+        ..behind()
+    };
+
+    assert_eq!(row(&draft), Row::MarkReady);
+}
+
+#[test_log::test]
 fn a_rework_run_updates_where_an_update_row_holds_with_its_feedback_set_aside() {
     let feedback = |facts: Facts| Facts {
         feedback: true,
