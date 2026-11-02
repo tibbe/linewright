@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::path::Path;
@@ -95,7 +94,6 @@ impl Answering {
         } = world;
         let ends = factory.ends();
         let since = clock.now();
-        // As `common::config` has it.
         let work_dir = dir.path().join("work");
         let serving = Serving::start(factory, poll_interval, pending);
         let sources = Sources {
@@ -151,7 +149,6 @@ impl Answering {
             }
             within(STOPPING, "the web UI stops", ui.stop()).await;
             within(STOPPING, "the API stops", api.stop()).await;
-            // Kept until `serve` exits.
             drop((runtime_dir, _dir));
             end
         })
@@ -168,8 +165,7 @@ impl Answering {
 }
 
 /// How long a test gives one `lw` to answer: more than the 5s `lw` asks a
-/// serve that hangs up again for, and less than `eventually_async` waits, so a
-/// hung `lw` in it is named.
+/// serve that hangs up again for, and less than `eventually_async` waits.
 const ANSWERING: Duration = Duration::from_secs(8);
 /// How long a test gives a part of serve to stop.
 const STOPPING: Duration = Duration::from_secs(30);
@@ -294,7 +290,6 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
         "{}",
         output.stdout
     );
-    // To a pipe.
     assert!(!output.stdout.contains('\x1b'), "{:?}", output.stdout);
     answering.stop().await;
 }
@@ -332,13 +327,10 @@ async fn status_shows_the_polls_failed_since_the_last_that_succeeded_with_the_la
     answering.clock.advance(chrono::TimeDelta::minutes(5));
     store.fail_reads("GitHub refused ghp_sekrit");
     polls_failed(&answering, 2).await;
-    // No poll follows a drain.
     answering.serving.drain();
 
     let text = answering.lw(&["status"]).await;
 
-    // The fake clock ticks a second at each reading, so the times are
-    // checked to the minute.
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     let line = text.stdout.lines().nth(3).unwrap_or_default();
     let (since, last) = line
@@ -782,8 +774,8 @@ impl Watching {
             .await
             .expect("it exits")
             .unwrap();
-        // What it printed last.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let to_print_what_it_printed_last = Duration::from_millis(50);
+        tokio::time::sleep(to_print_what_it_printed_last).await;
         let stderr = self.stderr.lock().unwrap().clone();
         (status.code(), self.shown(), stderr)
     }
@@ -820,8 +812,10 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
-    // The marker, the start event and the first Bash call, with its result.
-    agent.writes(&turn[..4].concat());
+    let through_the_first_bash_result = turn[..4].concat();
+    let the_second_bash_call = turn[4..6].concat();
+    let its_result = &turn[6];
+    agent.writes(&through_the_first_bash_result);
     eventually_async(|| async {
         answering
             .lw(&["logs", "1"])
@@ -839,8 +833,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     follow.shows("→ exit 0, 19 lines\n").await;
     json.shows("\"exit 0, 19 lines\"").await;
     let so_far = follow.shown();
-    // The second Bash call, its result still to come.
-    agent.writes(&turn[4..6].concat());
+    agent.writes(&the_second_bash_call);
     follow.shows("2>&1) → running\n").await;
     json.shows("\"running\"").await;
     let before_its_result = follow.shown();
@@ -848,7 +841,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         .lw(&["logs", "1", "--json", "--verbose"])
         .await
         .stdout;
-    agent.writes(&turn[6]);
+    agent.writes(its_result);
     follow.shows("2>&1) → exit 2\n").await;
     json.shows("\"exit 2\"").await;
     let ended = answering
@@ -879,9 +872,6 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
         "{shown}"
     );
-    // `docs/specs/monitoring.md`, logs, Following in JSON and Running in
-    // JSON: the second call's objects, as it ran and once it returned, are
-    // those `logs --json` gave it then, but for when its end was.
     let second_call = |lines: &str| -> Vec<serde_json::Value> {
         json_objects(lines)
             .into_iter()
@@ -1034,11 +1024,11 @@ async fn logs_reads_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
 #[test_log::test(tokio::test)]
 async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_as_it_stops() {
     let (agent, answering, runtime_dir) = triage_under_way().await;
-    // Asked for the transcript so far, then to follow it.
+    let the_request_to_follow = 2;
     let stopped = stops_as_asked(
         runtime_dir.path(),
         answering.runtime_dir.path(),
-        Stops::AtRequest(2),
+        Stops::AtRequest(the_request_to_follow),
     );
 
     let follow = follow_through(&answering, runtime_dir.path());
@@ -1323,7 +1313,6 @@ async fn drain_of_serve_stopping_says_so_and_waits_for_it_to_exit() {
         ..
     } = answering;
     ends.on(Event::Signal(Signal::Quit));
-    // Its runs cancelled, `serve` answers until it exits.
     within(STOPPING, "serving stops", serving.finished()).await;
     drop(agent);
 
@@ -1360,7 +1349,9 @@ async fn drain_returns_once_serve_has_exited_though_another_has_started_since() 
     within(STOPPING, "the API stops", api.stop()).await;
     let claimed = within(STOPPING, "the socket is claimed again", async {
         loop {
-            // A process another test forks may hold the lock a moment.
+            // A process another test forks holds the lock until it closes
+            // the inherited descriptor:
+            // https://man7.org/linux/man-pages/man2/flock.2.html
             match api::claim(&socket_dir_in(runtime_dir.path()), REPO) {
                 Ok(claimed) => return claimed,
                 Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
@@ -1425,9 +1416,9 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
     let dir = socket_dir_in(&runtime_dir);
     let socket = api::socket_path(&dir, REPO);
-    // Half a request, which `serve` waits for the rest of as it stops.
-    let mut open = tokio::net::UnixStream::connect(&socket).await.unwrap();
-    open.write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n")
+    let mut half_a_request = tokio::net::UnixStream::connect(&socket).await.unwrap();
+    half_a_request
+        .write_all(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n")
         .await
         .unwrap();
     let drain = Watching::start(&runtime_dir, &["drain"]);
@@ -1449,12 +1440,12 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
     })
     .await;
 
-    // Four times as long as `drain` waits between asking.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let four_times_drains_wait_between_asking = Duration::from_secs(2);
+    tokio::time::sleep(four_times_drains_wait_between_asking).await;
     let while_stopping = drain.shown();
     let claimed_while_stopping = api::claim(&dir, REPO);
     assert!(socket.exists());
-    drop(open);
+    drop(half_a_request);
     let (code, shown, stderr) = drain.exits().await;
     let claimed = api::claim(&dir, REPO);
 

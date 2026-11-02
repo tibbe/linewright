@@ -1,4 +1,3 @@
-// comments: pending
 //! The page's script, run against stand-ins for the browser and for htmx:
 //! the hooks it gives htmx, as htmx 4 calls them.
 
@@ -290,64 +289,43 @@ async fn after_each(page: &str, steps: &[&str]) -> Vec<String> {
 
 #[test_log::test(tokio::test)]
 async fn the_tip_hides_once_the_pointer_has_left_the_trigger_and_the_tip() {
-    let tips = after_each(
-        TWO_TRIGGERS,
-        &[
-            "point(null, first);",
-            "point(first, link);",
-            "point(link, first); elapse();",
-            "point(first, tip); elapse();",
-            "point(tip, link); elapse();",
-            "point(link, elsewhere);",
-            "point(elsewhere, first); elapse();",
-            "point(first, elsewhere); elapse();",
-        ],
-    )
-    .await;
+    let steps = [
+        ("point(null, first);", "first"),
+        ("point(first, link);", "first"),
+        ("point(link, first); elapse();", "first"),
+        ("point(first, tip); elapse();", "first"),
+        ("point(tip, link); elapse();", "first"),
+        ("point(link, elsewhere);", "first"),
+        ("point(elsewhere, first); elapse();", "first"),
+        ("point(first, elsewhere); elapse();", "-"),
+    ];
 
-    assert_eq!(
-        tips,
-        [
-            "first", // onto the trigger
-            "first", // onto an element in it
-            "first", // back, a move within it
-            "first", // onto the tip
-            "first", // back onto the trigger
-            "first", // off both, until a short delay passes
-            "first", // back before it passed
-            "-",     // off both for the delay
-        ]
-    );
+    let tips = after_each(TWO_TRIGGERS, &steps.map(|(step, _)| step)).await;
+
+    assert_eq!(tips, steps.map(|(_, tip)| tip));
 }
 
 #[test_log::test(tokio::test)]
 async fn one_tip_shows_on_hover_or_keyboard_focus_until_focus_moves() {
-    let tips = after_each(
-        TWO_TRIGGERS,
-        &[
-            r#"fire("focusin", { target: link });"#,
+    let steps = [
+        (r#"fire("focusin", { target: link });"#, "-"),
+        (
             r#"link.focusVisible = true; fire("focusin", { target: link });"#,
-            "point(null, second);",
-            r#"fire("focusout", { target: link });"#,
-            r#"fire("focusin", { target: link });"#,
+            "first",
+        ),
+        ("point(null, second);", "second"),
+        (r#"fire("focusout", { target: link });"#, "second"),
+        (r#"fire("focusin", { target: link });"#, "first"),
+        (
             "point(null, elsewhere); point(elsewhere, null); elapse();",
-            r#"fire("focusout", { target: link });"#,
-        ],
-    )
-    .await;
+            "first",
+        ),
+        (r#"fire("focusout", { target: link });"#, "-"),
+    ];
 
-    assert_eq!(
-        tips,
-        [
-            "-",      // focus by the pointer
-            "first",  // keyboard focus
-            "second", // the pointer on another trigger takes its place
-            "second", // focus leaving another trigger
-            "first",  // keyboard focus again
-            "first",  // the pointer moving elsewhere
-            "-",      // focus leaving the trigger
-        ]
-    );
+    let tips = after_each(TWO_TRIGGERS, &steps.map(|(step, _)| step)).await;
+
+    assert_eq!(tips, steps.map(|(_, tip)| tip));
 }
 
 #[test_log::test(tokio::test)]
@@ -378,77 +356,53 @@ page(summary, uncutSummary);
 #[test_log::test(tokio::test)]
 async fn escape_hides_the_tip_until_the_pointer_leaves_the_trigger_or_focus_moves() {
     let escape = r#"fire("keydown", { key: "Escape" });"#;
-    let tips = after_each(
-        TWO_TRIGGERS,
-        &[
-            "point(null, first);",
-            r#"fire("keydown", { key: "Enter" });"#,
-            escape,
-            "point(first, link);",
-            "point(link, first);",
-            "point(first, elsewhere); elapse();",
-            "point(elsewhere, first);",
-            escape,
+    let steps = [
+        ("point(null, first);", "first"),
+        (r#"fire("keydown", { key: "Enter" });"#, "first"),
+        (escape, "-"),
+        ("point(first, link);", "-"),
+        ("point(link, first);", "-"),
+        ("point(first, elsewhere); elapse();", "-"),
+        ("point(elsewhere, first);", "first"),
+        (escape, "-"),
+        (
             r#"link.focusVisible = true; fire("focusin", { target: link });"#,
-            escape,
-            r#"fire("focusout", { target: link });"#,
-            "point(first, elsewhere); point(elsewhere, first);",
-        ],
-    )
-    .await;
+            "first",
+        ),
+        (escape, "-"),
+        (r#"fire("focusout", { target: link });"#, "-"),
+        ("point(first, elsewhere); point(elsewhere, first);", "first"),
+    ];
 
-    assert_eq!(
-        tips,
-        [
-            "first", // hovered
-            "first", // another key
-            "-",     // Escape
-            "-",     // moves within the trigger
-            "-",     // and back
-            "-",     // the pointer leaves
-            "first", // and comes back
-            "-",     // Escape
-            "first", // focus moves
-            "-",     // Escape
-            "-",     // focus moves off
-            "first", // the pointer leaves and comes back
-        ]
-    );
+    let tips = after_each(TWO_TRIGGERS, &steps.map(|(step, _)| step)).await;
+
+    assert_eq!(tips, steps.map(|(_, tip)| tip));
 }
 
 #[test_log::test(tokio::test)]
 async fn a_trigger_an_update_brings_shows_its_tip_and_one_it_takes_away_hides_it() {
     let update = r#"fire("htmx:sse:after:message", { detail: { message: { id: "" } } });"#;
-    let tips = after_each(
-        "page();",
-        &[
+    let steps = [
+        (
             r#"var card = node({ "data-tip-cut": "" }, "A long title"); card.cut = true; page(card);"#,
-            "point(null, card);",
-            r#"card.text = "A longer title";"#,
-            update,
-            "card.cut = false;",
-            update,
-            "card.cut = true; point(card, null); point(null, card);",
-            "card.remove();",
-            update,
-        ],
-    )
-    .await;
-
-    assert_eq!(
-        tips,
-        [
             "-",
-            "A long title",
-            "A long title",   // until the update
-            "A longer title", // re-read
+        ),
+        ("point(null, card);", "A long title"),
+        (r#"card.text = "A longer title";"#, "A long title"),
+        (update, "A longer title"),
+        ("card.cut = false;", "A longer title"),
+        (update, "-"),
+        (
+            "card.cut = true; point(card, null); point(null, card);",
             "A longer title",
-            "-", // no longer cut
-            "A longer title",
-            "A longer title",
-            "-", // gone
-        ]
-    );
+        ),
+        ("card.remove();", "A longer title"),
+        (update, "-"),
+    ];
+
+    let tips = after_each("page();", &steps.map(|(step, _)| step)).await;
+
+    assert_eq!(tips, steps.map(|(_, tip)| tip));
 }
 
 #[test_log::test(tokio::test)]
@@ -502,8 +456,6 @@ const placed = () =>
     )
     .await;
 
-    // The tip is 120 wide and 28 high, 8 above the box: above it from a
-    // top of 36, and from 8 off each side of the 1000-wide viewport.
     assert_eq!(
         tips.iter().step_by(2).collect::<Vec<_>>(),
         [
@@ -588,19 +540,19 @@ fn times(datetimes: &[&str]) -> String {
 #[test_log::test(tokio::test)]
 async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days_with_its_absolute_time_in_the_tip()
  {
-    // Each as old, as of `NOW`, as its comment says.
-    let datetimes = [
-        "2026-10-23T11:59:01Z", // 59 s
-        "2026-10-23T11:59:00Z", // 1 min
-        "2026-10-23T11:00:01Z", // 59 min 59 s
-        "2026-10-23T11:00:00Z", // 1 h
-        "2026-10-22T12:01:00Z", // 23 h 59 min
-        "2026-10-22T12:00:00Z", // 1 day
-        "2026-10-21T13:00:00Z", // 47 h, two calendar days back
-        "2026-09-23T12:00:00Z", // 30 days
-        "2026-09-23T11:59:59Z", // 30 days and 1 s
-        "2025-09-12T10:00:00Z", // a past year
+    let ages_as_of_now: [(&str, &str); 10] = [
+        ("59 s", "2026-10-23T11:59:01Z"),
+        ("1 min", "2026-10-23T11:59:00Z"),
+        ("59 min 59 s", "2026-10-23T11:00:01Z"),
+        ("1 h", "2026-10-23T11:00:00Z"),
+        ("23 h 59 min", "2026-10-22T12:01:00Z"),
+        ("1 day", "2026-10-22T12:00:00Z"),
+        ("47 h, two calendar days back", "2026-10-21T13:00:00Z"),
+        ("30 days", "2026-09-23T12:00:00Z"),
+        ("30 days and 1 s", "2026-09-23T11:59:59Z"),
+        ("a past year", "2025-09-12T10:00:00Z"),
     ];
+    let datetimes = ages_as_of_now.map(|(_, datetime)| datetime);
 
     let shown = on_the_page(
         &times(&datetimes),
@@ -675,8 +627,6 @@ async fn a_future_time_reads_as_its_absolute_time_with_no_tip() {
 
 #[test_log::test(tokio::test)]
 async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
-    // 45 s, 1 min 43 s, 3 h 2 min 7 s, 1 day 0 h 5 min 9 s and none, settled,
-    // then 3 h 2 min 7 s of a run in flight.
     let page = times(&["PT45S", "PT103S", "PT10927S", "PT86709S", "PT0S"])
         + r#"time({ dataset: { since: "2026-10-23T08:57:53Z" } });"#;
 

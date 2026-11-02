@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::{
@@ -327,6 +326,12 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
     let code_owner = || Requirement::CodeOwnerReview {
         owners: vec!["maintainer".into()],
     };
+    let undecided_but_blocked_on_an_approval =
+        reviewed(41, 31, &[Passed], blocked(Requirement::Approval), false);
+    let approved_but_not_by_a_code_owner = decided(
+        reviewed(43, 33, &[Passed], blocked(code_owner()), false),
+        Approved,
+    );
     let pulls = vec![
         reviewed(11, 1, &[Failed, Pending], Conflicting, true),
         reviewed(12, 2, &[Failed, Pending], Conflicting, true),
@@ -341,15 +346,12 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
         decided(reviewed(18, 8, &[Passed], Clean, false), ChangesRequested),
         decided(reviewed(19, 9, &[Passed], Clean, false), ReviewRequired),
         decided(reviewed(20, 10, &[Passed], Clean, false), Approved),
-        reviewed(41, 31, &[Passed], blocked(Requirement::Approval), false),
+        undecided_but_blocked_on_an_approval,
         decided(
             reviewed(42, 32, &[Passed], blocked(code_owner()), false),
             ChangesRequested,
         ),
-        decided(
-            reviewed(43, 33, &[Passed], blocked(code_owner()), false),
-            Approved,
-        ),
+        approved_but_not_by_a_code_owner,
         reviewed(44, 34, &[Failed], blocked(code_owner()), false),
     ];
     let view = with_runs(view(issues, pulls), &["11/rework-1"]);
@@ -390,11 +392,8 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
             review(18, Some(Stop::ChangesRequested)),
             review(19, Some(Stop::ReviewRequired)),
             review(20, Some(Stop::Approved)),
-            // GitHub decides no review where the rules require a code
-            // owner's review but no approvals; the blocked merge says so.
             review(41, Some(Stop::ReviewRequired)),
             review(42, Some(Stop::ChangesRequested)),
-            // Approved, but not yet by a code owner.
             review(43, Some(Stop::ReviewRequired)),
             review(44, Some(Stop::ChecksFailed)),
         ]
@@ -455,6 +454,13 @@ fn closed_as(number: u64, reason: IssueCloseReason) -> ClosedItem {
 
 #[test_log::test]
 fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
+    let linewrights_closing_an_issue_on_the_board =
+        merged(11, &[1], "factory", "2026-09-28T12:00:00Z");
+    let linewrights_closing_no_issue_on_the_board =
+        merged(40, &[98], "factory", "2026-09-30T12:00:00Z");
+    let someone_elses = merged(41, &[], "someone", "2026-09-30T12:00:00Z");
+    let linewrights_merged_before_the_done_window_opened =
+        merged(42, &[], "factory", "2026-09-20T12:00:00Z");
     let mut closed_pull = closed_issue(30, "2026-09-29T12:00:00Z", None);
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
@@ -473,14 +479,10 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
             ],
         ),
         vec![
-            // Linewright's, closing #1, which is on the board.
-            merged(11, &[1], "factory", "2026-09-28T12:00:00Z"),
-            // Linewright's, closing no issue on the board.
-            merged(40, &[98], "factory", "2026-09-30T12:00:00Z"),
-            // Someone else's.
-            merged(41, &[], "someone", "2026-09-30T12:00:00Z"),
-            // Linewright's, merged before the Done window opened.
-            merged(42, &[], "factory", "2026-09-20T12:00:00Z"),
+            linewrights_closing_an_issue_on_the_board,
+            linewrights_closing_no_issue_on_the_board,
+            someone_elses,
+            linewrights_merged_before_the_done_window_opened,
         ],
     );
 
@@ -565,7 +567,6 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         closed_by: vec![merged_into(11, "main", "2026-09-30T10:00:00Z")],
         ..ready()
     };
-    // Its status label removed, it is done all the same.
     let unlabeled = Issue {
         number: Number(2),
         labels: vec![],
@@ -647,36 +648,36 @@ fn with_work(
 #[test_log::test]
 fn a_closed_issue_entered_done_when_its_first_closing_pull_request_since_it_was_last_opened_merged_or_else_when_it_closed()
  {
+    let merged_before_it_closed_with_a_later_merge_closing_it = with_work(
+        closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
+        vec![],
+        vec![
+            merged_into(11, "main", "2026-09-26T12:00:00Z"),
+            merged_into(12, "main", "2026-09-28T11:59:00Z"),
+        ],
+    );
+    let merged_reopened_then_closed_by_a_person = with_work(
+        closed_issue(2, "2026-09-27T12:00:00Z", None),
+        vec![reopened("2026-09-26T12:00:00Z")],
+        vec![merged_into(21, "main", "2026-09-25T12:00:00Z")],
+    );
+    let merged_into_another_branch_then_closed_by_a_person = with_work(
+        closed_issue(3, "2026-09-27T13:00:00Z", None),
+        vec![],
+        vec![merged_into(31, "release", "2026-09-25T12:00:00Z")],
+    );
+    let merged_before_the_done_window_opened_closed_within_it = with_work(
+        closed_issue(4, "2026-09-28T12:00:00Z", Some(41)),
+        vec![],
+        vec![merged_into(41, "main", "2026-09-20T12:00:00Z")],
+    );
     let view = with_closed(
         view(vec![], vec![]),
         vec![
-            // Merged before it closed, with a later merge closing it.
-            with_work(
-                closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
-                vec![],
-                vec![
-                    merged_into(11, "main", "2026-09-26T12:00:00Z"),
-                    merged_into(12, "main", "2026-09-28T11:59:00Z"),
-                ],
-            ),
-            // Merged, reopened, then closed by a person.
-            with_work(
-                closed_issue(2, "2026-09-27T12:00:00Z", None),
-                vec![reopened("2026-09-26T12:00:00Z")],
-                vec![merged_into(21, "main", "2026-09-25T12:00:00Z")],
-            ),
-            // Merged into another branch, then closed by a person.
-            with_work(
-                closed_issue(3, "2026-09-27T13:00:00Z", None),
-                vec![],
-                vec![merged_into(31, "release", "2026-09-25T12:00:00Z")],
-            ),
-            // Merged before the Done window opened, closed within it.
-            with_work(
-                closed_issue(4, "2026-09-28T12:00:00Z", Some(41)),
-                vec![],
-                vec![merged_into(41, "main", "2026-09-20T12:00:00Z")],
-            ),
+            merged_before_it_closed_with_a_later_merge_closing_it,
+            merged_reopened_then_closed_by_a_person,
+            merged_into_another_branch_then_closed_by_a_person,
+            merged_before_the_done_window_opened_closed_within_it,
         ],
     );
 
@@ -1242,7 +1243,6 @@ fn an_item_not_cut_into_tickets_heads_a_lane_of_its_own_with_itself_as_its_one_c
 
     let board = board(&view, &[], at(NOW));
 
-    // Latest changed first: the pull request, the issue.
     assert_eq!(
         heads(&board),
         [
@@ -1317,18 +1317,25 @@ fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_i
         ],
         vec![],
     );
-    let recorded = [
-        // #2: handed back by its last run.
-        recorded("2/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
-        // #3: handed back, then triaged again, which asked for a decision.
+    let handed_back_by_its_last_run =
+        recorded("2/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack);
+    let (handed_back, then_triaged_again_asking_for_a_decision) = (
         recorded("3/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
         recorded("3/triage-1", "2026-10-01T11:00:00Z", Ending::Done),
-        // #4: a triage that asked for a decision.
-        recorded("4/triage-1", "2026-10-01T10:00:00Z", Ending::Done),
-        // #6: triaged again after its pull request closed unmerged.
-        recorded("6/triage-1", "2026-10-01T11:00:00Z", Ending::Done),
-        // #7: the hand-back of another item.
-        recorded("8/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+    );
+    let a_triage_asking_for_a_decision =
+        recorded("4/triage-1", "2026-10-01T10:00:00Z", Ending::Done);
+    let triaged_again_after_its_pull_request_closed_unmerged =
+        recorded("6/triage-1", "2026-10-01T11:00:00Z", Ending::Done);
+    let the_hand_back_of_another_item =
+        recorded("8/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack);
+    let recorded = [
+        handed_back_by_its_last_run,
+        handed_back,
+        then_triaged_again_asking_for_a_decision,
+        a_triage_asking_for_a_decision,
+        triaged_again_after_its_pull_request_closed_unmerged,
+        the_hand_back_of_another_item,
     ];
 
     let board = board(&view, &recorded, at(NOW));
@@ -1595,7 +1602,6 @@ fn a_card_in_triage_entered_its_column_when_needs_triage_was_applied_or_the_issu
                     },
                 ],
             ),
-            // Created 2026-09-30T09:00:00Z, with no event read.
             labeled(3, &["needs-triage"]),
         ],
         vec![],
@@ -1833,22 +1839,20 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
         ..working
     };
 
-    assert_eq!(
-        statuses(&board(&needing, &handed_back, at(NOW)), [1, 2, 3, 4, 5]),
-        [
-            // Stalled.
-            (1, Some(Failed)),
-            // Asked.
-            (2, Some(WaitingForAPerson)),
-            // Handed back.
-            (3, Some(WaitingForAPerson)),
-            // Decision needed.
-            (4, Some(WaitingForAPerson)),
-            // Triage: nothing but the time.
-            (5, None),
-        ]
-    );
-    // Blocked, assigned to alice, nothing but the time, unassigned.
+    let needing_a_person = board(&needing, &handed_back, at(NOW));
+    for (line, number, status) in [
+        ("stalled", 1, Some(Failed)),
+        ("asked", 2, Some(WaitingForAPerson)),
+        ("handed back", 3, Some(WaitingForAPerson)),
+        ("decision needed", 4, Some(WaitingForAPerson)),
+        ("triage, nothing but the time", 5, None),
+    ] {
+        assert_eq!(
+            card(&needing_a_person, number).status(),
+            status,
+            "#{number}: {line}"
+        );
+    }
     assert_eq!(
         statuses(&board(&ready(), &[], at(NOW)), [1, 2, 3, 4]),
         [(1, None), (2, None), (3, None), (4, None)]
@@ -1890,6 +1894,8 @@ fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
         labels: vec![label::STALLED.into()],
         ..reviewed(41, 40, &[Passed], Clean, false)
     };
+    let own_card_with_checks_failed = pull(30, &[98], &[Fails]);
+    let own_card_approved = decided(pull(31, &[97], &[Passed]), Approved);
     let pulls = vec![
         reviewed(11, 1, &[Fails, Pending], Conflicting, true),
         reviewed(12, 2, &[Fails, Pending], Conflicting, true),
@@ -1905,45 +1911,30 @@ fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
         decided(reviewed(19, 9, &[Passed], Clean, false), ReviewRequired),
         decided(reviewed(20, 10, &[Passed], Clean, false), Approved),
         stalled,
-        // Pull requests closing no issue on the board, cards of their own.
-        pull(30, &[98], &[Fails]),
-        decided(pull(31, &[97], &[Passed]), Approved),
+        own_card_with_checks_failed,
+        own_card_approved,
     ];
     let view = with_runs(view(issues, pulls), &["11/rework-1"]);
 
     let board = board(&view, &[], at(NOW));
 
-    assert_eq!(
-        statuses(&board, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 40, 30, 31]),
-        [
-            // A run in flight.
-            (1, Some(InFlight)),
-            // Checks failed.
-            (2, Some(Failed)),
-            // Checks running.
-            (3, Some(InFlight)),
-            // Conflicts.
-            (4, Some(Failed)),
-            // Behind main.
-            (5, None),
-            // Draft.
-            (6, None),
-            // Nothing stops it.
-            (7, None),
-            // Changes requested.
-            (8, Some(WaitingForAPerson)),
-            // Review required.
-            (9, Some(WaitingForAPerson)),
-            // Approved.
-            (10, None),
-            // Stalled.
-            (40, Some(Failed)),
-            // Checks failed, on the pull request's own card.
-            (30, Some(Failed)),
-            // Approved, on the pull request's own card.
-            (31, None),
-        ]
-    );
+    for (stop, number, status) in [
+        ("a run in flight", 1, Some(InFlight)),
+        ("checks failed", 2, Some(Failed)),
+        ("checks running", 3, Some(InFlight)),
+        ("conflicts", 4, Some(Failed)),
+        ("behind main", 5, None),
+        ("draft", 6, None),
+        ("nothing", 7, None),
+        ("changes requested", 8, Some(WaitingForAPerson)),
+        ("review required", 9, Some(WaitingForAPerson)),
+        ("approved", 10, None),
+        ("stalled", 40, Some(Failed)),
+        ("checks failed, on its own card", 30, Some(Failed)),
+        ("approved, on its own card", 31, None),
+    ] {
+        assert_eq!(card(&board, number).status(), status, "#{number}: {stop}");
+    }
 }
 
 #[test_log::test]
@@ -2123,15 +2114,17 @@ fn with_no_required_label_a_closed_issue_linewright_never_worked_is_not_on_the_b
 
 #[test_log::test]
 fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a_card_of_its_own() {
-    // As in a snapshot taken before Linewright read the pull requests
-    // closing a closed issue.
-    let view = requiring_label(with_merged(
+    let read_before_the_pull_requests_closing_a_closed_issue = requiring_label(with_merged(
         with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]),
         vec![merged(10, &[1], "factory", "2026-09-30T11:59:00Z")],
     ));
 
     assert_eq!(
-        placed(&board(&view, &[], at(NOW))),
+        placed(&board(
+            &read_before_the_pull_requests_closing_a_closed_issue,
+            &[],
+            at(NOW)
+        )),
         [(10, Column::Done, 10)]
     );
 }
@@ -2567,6 +2560,7 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
     };
     let mut theirs = unassigned(pull(15, &[5], &[Failed]));
     theirs.author = Login::new("alice");
+    let closing_no_issue_on_the_board = unassigned(pull(16, &[99], &[Failed]));
     let pulls = vec![
         unassigned(pull(11, &[1], &[Failed])),
         unassigned(pull(12, &[2], &[Failed])),
@@ -2576,19 +2570,22 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
         },
         unassigned(pull(14, &[4], &[Failed])),
         theirs,
-        // Closes no issue on the board, so it is a card of its own.
-        unassigned(pull(16, &[99], &[Failed])),
+        closing_no_issue_on_the_board,
     ];
     let issues = (1..=5).map(|n| assigned(ticket(n, "Reviewed"))).collect();
     let view = with_runs(view(issues, pulls), &["12/rework-1"]);
+    let (handed_back, then_worked_again) = (
+        recorded("14/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
+        recorded("14/rework-1", "2026-10-01T11:00:00Z", Ending::Done),
+    );
+    let the_issues_own_run_not_its_pull_requests =
+        recorded("4/implement-1", "2026-10-01T11:30:00Z", Ending::HandedBack);
     let recorded = [
         recorded("11/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
         recorded("13/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
-        // #14: handed back, then worked again.
-        recorded("14/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
-        recorded("14/rework-1", "2026-10-01T11:00:00Z", Ending::Done),
-        // #4's own run: not one on its pull request.
-        recorded("4/implement-1", "2026-10-01T11:30:00Z", Ending::HandedBack),
+        handed_back,
+        then_worked_again,
+        the_issues_own_run_not_its_pull_requests,
         recorded("16/rework-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
     ];
 
@@ -2627,24 +2624,24 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
 /// opened or given a status label (`docs/specs/repository.md`, State).
 #[test_log::test]
 fn a_card_in_done_is_closed_in_the_pull_request_whose_merge_made_it_done() {
+    let merged_labeled_again_then_merged_again = with_work(
+        closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
+        vec![labeling("ready-for-agent", "2026-09-27T12:00:00Z")],
+        vec![
+            merged_into(11, "main", "2026-09-26T12:00:00Z"),
+            merged_into(12, "main", "2026-09-28T11:59:00Z"),
+        ],
+    );
+    let merged_labeled_again_then_closed_by_a_person = with_work(
+        closed_issue(2, "2026-09-28T12:00:00Z", None),
+        vec![labeling("needs-triage", "2026-09-27T12:00:00Z")],
+        vec![merged_into(21, "main", "2026-09-26T12:00:00Z")],
+    );
     let view = with_closed(
         view(vec![], vec![]),
         vec![
-            // Merged, labeled again, then merged again.
-            with_work(
-                closed_issue(1, "2026-09-28T12:00:00Z", Some(12)),
-                vec![labeling("ready-for-agent", "2026-09-27T12:00:00Z")],
-                vec![
-                    merged_into(11, "main", "2026-09-26T12:00:00Z"),
-                    merged_into(12, "main", "2026-09-28T11:59:00Z"),
-                ],
-            ),
-            // Merged, labeled again, then closed by a person.
-            with_work(
-                closed_issue(2, "2026-09-28T12:00:00Z", None),
-                vec![labeling("needs-triage", "2026-09-27T12:00:00Z")],
-                vec![merged_into(21, "main", "2026-09-26T12:00:00Z")],
-            ),
+            merged_labeled_again_then_merged_again,
+            merged_labeled_again_then_closed_by_a_person,
         ],
     );
 

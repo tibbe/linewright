@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 mod automations;
@@ -38,8 +37,8 @@ struct Web {
     dir: tempfile::TempDir,
 }
 
-/// The work directory of `REPO` under `dir`, as `sources` has it, where its
-/// runs keep their records.
+/// The work directory of `REPO` under `dir`, where its runs keep their
+/// records.
 fn work_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
     dir.path().join("work").join(REPO)
 }
@@ -60,7 +59,6 @@ fn sources(
         deliveries: None,
         clock: clock.clone(),
         work_dir: linewright::runs::RepoWorkDir {
-            // As `common::config` has it, under the repository's name.
             base: dir.path().join("work"),
             repo: REPO.parse().unwrap(),
         },
@@ -222,7 +220,6 @@ impl Pages {
         };
         let served = Some(linewright::api::Served::new(view, store.clone()));
         let (served, served_receiver) = tokio::sync::watch::channel(served);
-        // Kept open by the receivers `Sources` holds.
         let (_, polling) = tokio::sync::watch::channel(Some(polling));
         let since = clock.now();
         let sources = Sources {
