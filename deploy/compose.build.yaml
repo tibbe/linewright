@@ -1,3 +1,4 @@
+# comments: pending
 # Builds the images `compose.yaml` runs, as CI does from each commit on
 # `main` (`.github/workflows/docker.yml`):
 #

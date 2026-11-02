@@ -1,3 +1,4 @@
+// comments: pending
 //! The attachments a session's result refers to in the Markdown Linewright
 //! posts (`docs/specs/runs.md`, "Attachments"): finding the references,
 //! judging their paths, refusing secrets and rewriting each path to its

@@ -1,3 +1,4 @@
+// comments: pending
 //! Which items Linewright manages (`GLOSSARY.md`, **Managed**), and for
 //! each its state and what its card says beyond it, or why Linewright
 //! leaves it alone: every view of the items asks here, and decides it

@@ -1,3 +1,4 @@
+# comments: pending
 name: CI
 
 on:
@@ -38,6 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: scripts/check css
+
+  comments:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/check comments
 
   # On macOS too, so the code only macOS builds, under
   # `cfg(not(target_os = "linux"))`, is linted.
@@ -147,7 +155,7 @@ jobs:
 
   ci:
     if: always()
-    needs: [fmt, markdown, compose, css, clippy, test, doc, changes, base-image, deploy-images, binaries]
+    needs: [fmt, markdown, compose, css, comments, clippy, test, doc, changes, base-image, deploy-images, binaries]
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:

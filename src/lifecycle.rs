@@ -1,3 +1,4 @@
+// comments: pending
 //! An item's state (`docs/specs/repository.md`, State): the first row of
 //! its table that holds, derived from what GitHub shows and the run in
 //! flight on the item. Every view of an item's state asks here, and the

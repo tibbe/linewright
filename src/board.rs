@@ -1,3 +1,4 @@
+// comments: pending
 //! The board (`docs/specs/design_system.md`, The board, Cards): every managed
 //! item as a card in a column, in a lane per piece of work, from `serve`'s
 //! view and the time alone.

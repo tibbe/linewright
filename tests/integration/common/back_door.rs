@@ -1,3 +1,4 @@
+// comments: pending
 //! Creation Methods: each writes into the fakes the state a stage leaves,
 //! with the scripts the stage's sessions answered with, so that a later
 //! stage answers as they would. `front_door` checks each against its stage.

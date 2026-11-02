@@ -1,3 +1,4 @@
+// comments: pending
 //! The board (`docs/specs/design_system.md`, The board): the managed items
 //! as cards, in a lane per piece of work and a column per stage.
 

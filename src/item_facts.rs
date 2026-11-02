@@ -1,3 +1,4 @@
+// comments: pending
 //! The item page's facts about #N (`docs/specs/design_system.md`, The item
 //! page): its state and its card, what Linewright waits for
 //! and the items it relates to, from what `explain` answers of it, the view

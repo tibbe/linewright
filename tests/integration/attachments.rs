@@ -1,3 +1,4 @@
+// comments: pending
 //! Finding, judging and rewriting the attachments a result's Markdown
 //! refers to, "Attachments" in docs/specs/runs.md, against a real
 //! attachments directory.

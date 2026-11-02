@@ -1,3 +1,4 @@
+# comments: pending
 [global]
 enable = ["MD013"]
 exclude = [".agents", ".claude"]

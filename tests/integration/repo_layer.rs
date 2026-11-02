@@ -1,3 +1,4 @@
+// comments: pending
 //! Which of the repository's files under `.linewright/` Linewright can use,
 //! as `RepoLayer` reads them (docs/specs/repository.md, "Linewright's
 //! files"). `repository_files.rs` checks that they reach the runs.

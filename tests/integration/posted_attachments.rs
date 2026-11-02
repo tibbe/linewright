@@ -1,3 +1,4 @@
+// comments: pending
 //! The attachments a session's result refers to, uploaded and posted in
 //! place of their paths: docs/specs/runs.md, "Attachments".
 
