@@ -1,3 +1,4 @@
+# comments: pending
 # https://nexte.st/docs/configuration/reference/
 [profile.default]
 # A test that runs longer than this fails, so that a slow one is noticed

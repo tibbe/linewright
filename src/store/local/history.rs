@@ -1,3 +1,4 @@
+// comments: pending
 //! The only writer of the local store's history: every commit it makes to its
 //! repository and every ref it moves there.
 

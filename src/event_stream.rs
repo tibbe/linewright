@@ -2,7 +2,10 @@
 //! proxy in front unbuffered, unchanged and uncached (docs/specs/operation.md,
 //! Running: Behind a proxy).
 
-#![allow(clippy::disallowed_types)]
+#![allow(
+    clippy::disallowed_types,
+    reason = "every event stream's response is built here, from `Sse`"
+)]
 
 use std::convert::Infallible;
 use std::time::Duration;

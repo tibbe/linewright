@@ -1,3 +1,4 @@
+// comments: pending
 //! The automations page (`docs/specs/design_system.md`, The automations page):
 //! each automation file that does not parse, then a row per automation.
 

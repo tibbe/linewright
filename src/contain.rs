@@ -1,3 +1,4 @@
+// comments: pending
 //! `lw contain -- PROGRAM ARGS…`: the wrapper [`crate::child::Contained`]
 //! runs a program in, so that nothing the program starts outlives it. Once
 //! the program exits, or `serve` closes the control socket, it ends every

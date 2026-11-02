@@ -1,6 +1,7 @@
-// `test_log::test` puts its setup before each test's body, so a `use` at the
-// top of a test comes after a statement the test never wrote.
-#![allow(clippy::items_after_statements)]
+#![allow(
+    clippy::items_after_statements,
+    reason = "`test_log::test` puts its setup before each test's body, so a `use` at the top of a test comes after a statement the test never wrote"
+)]
 
 mod api;
 mod apply;
@@ -11,6 +12,7 @@ mod automation_schedule;
 mod board;
 mod briefs;
 mod closed_items;
+mod comment_check;
 mod committed_secrets;
 mod common;
 mod config;

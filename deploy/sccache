@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# comments: pending
 # Stands in for sccache, which builds here run as their RUSTC_WRAPPER, so that
 # its server always has a temporary directory that lasts.
 #

@@ -1,3 +1,4 @@
+// comments: pending
 //! Running a session's setup command in its clone, as the session starts
 //! (`docs/specs/runs.md`, Setup): in a process group of its own, its output
 //! on one pipe, redacted line by line into the session's record, and its

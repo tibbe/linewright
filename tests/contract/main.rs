@@ -1,3 +1,4 @@
+// comments: pending
 //! The store's contracts: each promise of the `Store` trait, checked against
 //! a fresh local store and, when `LINEWRIGHT_CONTRACT_REPO` names a sandbox
 //! repository, against the GitHub store on it, so that the local store stays

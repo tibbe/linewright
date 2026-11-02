@@ -1,3 +1,4 @@
+// comments: pending
 //! Linewright's secrets: the values of the variables it reads a credential
 //! from and of those the `secrets` setting names, and the credentials the
 //! table of sessions' variables passes (`docs/specs/operation.md`,

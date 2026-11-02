@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# comments: pending
 
 ARG DEBIAN_RELEASE=trixie
 # To bump a pin, change its version here and its two sha256s in the tools

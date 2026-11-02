@@ -1,3 +1,4 @@
+/* comments: pending */
 /* The web UI's stylesheet (docs/specs/web/design_system.md), which
    `scripts/check css` builds into assets/linewright.css with Tailwind's
    standalone CLI. Tailwind writes the classes it finds in the sources below

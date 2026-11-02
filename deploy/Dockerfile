@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# comments: pending
 
 # Playwright MCP and Playwright, as the lockfile pins them. npm, with the
 # hundreds of packages Debian splits it into, stays in this stage.

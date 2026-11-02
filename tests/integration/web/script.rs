@@ -1,3 +1,4 @@
+// comments: pending
 //! The page's script, run against stand-ins for the browser and for htmx:
 //! the hooks it gives htmx, as htmx 4 calls them.
 

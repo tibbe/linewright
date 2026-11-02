@@ -1,3 +1,4 @@
+// comments: pending
 //! How `serve` ends, on the signals it is sent and the drains `lw drain`
 //! asks for (`docs/specs/operation.md`, "Stopping").
 
