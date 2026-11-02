@@ -437,8 +437,8 @@ check_model() {
   return "$status"
 }
 
-stages=("fmt markdown compose css comments" "clippy" "test doc")
-named_only="model-quotes model-quick model"
+stages=("fmt markdown compose css comments model-quotes" "clippy" "test doc")
+named_only="model-quick model"
 
 usage() {
   echo "usage: scripts/check [NAME...]"
