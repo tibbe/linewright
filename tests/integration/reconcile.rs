@@ -2145,7 +2145,7 @@ fn a_pull_request_behind_is_brought_up_to_date_once_a_person_has_approved_it() {
 }
 
 #[test_log::test]
-fn a_rework_run_starts_with_an_update_only_where_an_update_run_would_start() {
+fn a_rework_run_starts_with_an_update_only_where_the_branch_conflicts_or_cannot_be_merged() {
     let commented = |mergeability| {
         let mut pr = ready(pull(20, 2));
         pr.mergeability = mergeability;
@@ -2172,7 +2172,7 @@ fn a_rework_run_starts_with_an_update_only_where_an_update_run_would_start() {
         at(&in_review(commented(Mergeability::Behind)), 10),
         reworking(false)
     );
-    assert_eq!(at(&in_review(approved), 10), reworking(true));
+    assert_eq!(at(&in_review(approved), 10), reworking(false));
 }
 
 fn not_rebaseable() -> Pull {

@@ -54,6 +54,24 @@ pub enum Branch {
     Mergeable,
 }
 
+impl Branch {
+    /// A row that starts an update run for the branch's state holds: it
+    /// conflicts, or it cannot be merged and no run has ended on it since its
+    /// last push.
+    fn needs_update(self) -> bool {
+        match self {
+            Branch::Conflicting
+            | Branch::Unmergeable {
+                ended_since_push: false,
+            } => true,
+            Branch::Unmergeable {
+                ended_since_push: true,
+            }
+            | Branch::Mergeable => false,
+        }
+    }
+}
+
 /// Its checks: the check runs and commit statuses on its head.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Checks {
@@ -225,15 +243,8 @@ pub fn row(facts: &Facts) -> Row {
     if facts.feedback {
         return Row::Rework;
     }
-    match facts.branch {
-        Branch::Conflicting
-        | Branch::Unmergeable {
-            ended_since_push: false,
-        } => return Row::Update,
-        Branch::Unmergeable {
-            ended_since_push: true,
-        }
-        | Branch::Mergeable => {}
+    if facts.branch.needs_update() {
+        return Row::Update;
     }
     match &facts.checks {
         Checks::NoneAppeared { within_grace: true } => return Row::WaitForChecks,
@@ -295,13 +306,11 @@ pub fn row(facts: &Facts) -> Row {
 }
 
 /// Whether a rework run on a pull request with `facts` starts by bringing
-/// its branch up to date: a row that starts an update run holds once its
-/// feedback is set aside.
+/// its branch up to date: where the branch conflicts with the default branch,
+/// or cannot be merged by a method the repository allows and no run has ended
+/// on it since its last push. Being behind plays no part.
 pub fn rework_starts_with_update(facts: &Facts) -> bool {
-    row(&Facts {
-        feedback: false,
-        ..facts.clone()
-    }) == Row::Update
+    facts.branch.needs_update()
 }
 
 /// Ready to merge, but for being behind: it is ready for review, no person

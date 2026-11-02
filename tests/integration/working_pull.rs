@@ -312,31 +312,23 @@ fn a_draft_behind_and_otherwise_ready_to_merge_is_marked_ready_first() {
 }
 
 #[test_log::test]
-fn a_rework_run_updates_where_an_update_row_holds_with_its_feedback_set_aside() {
+fn a_rework_run_updates_only_where_the_branch_conflicts_or_cannot_be_merged() {
     let feedback = |facts: Facts| Facts {
         feedback: true,
         ..facts
     };
+    let unmergeable = |ended_since_push| Facts {
+        branch: Branch::Unmergeable { ended_since_push },
+        ..mergeable()
+    };
 
-    assert!(rework_starts_with_update(&feedback(behind())));
     assert!(rework_starts_with_update(&feedback(Facts {
         branch: Branch::Conflicting,
         checks: failing(),
         ..green_draft()
     })));
-    assert!(rework_starts_with_update(&feedback(Facts {
-        branch: Branch::Unmergeable {
-            ended_since_push: false
-        },
-        ..mergeable()
-    })));
-    assert!(!rework_starts_with_update(&feedback(Facts {
-        held: true,
-        ..behind()
-    })));
-    assert!(!rework_starts_with_update(&feedback(Facts {
-        checks: failing(),
-        ..behind()
-    })));
+    assert!(rework_starts_with_update(&feedback(unmergeable(false))));
+    assert!(!rework_starts_with_update(&feedback(unmergeable(true))));
+    assert!(!rework_starts_with_update(&feedback(behind())));
     assert!(!rework_starts_with_update(&feedback(mergeable())));
 }
