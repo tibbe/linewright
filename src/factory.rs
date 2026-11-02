@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::{BTreeSet, HashMap};
 
 use std::path::PathBuf;
@@ -187,7 +186,7 @@ struct Kept {
     taken_at: Timestamp,
     read_at: HashMap<Item, Timestamp>,
     /// Linewright's files in the repository, as the last reconcile read
-    /// them: the runs it starts work from them.
+    /// them.
     repo: Arc<RepoLayer>,
 }
 
@@ -328,9 +327,7 @@ impl Factory {
     }
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
-        // Reap first: a run that ends during the snapshot stays live for this
-        // poll, so the snapshot cannot miss what it wrote.
-        self.reap();
+        self.reap_before_reading();
         let shell = &self.shell;
         let now = shell.clock.now();
         let windows = shell.policy.windows(now);
@@ -365,9 +362,7 @@ impl Factory {
         let Some(mut kept) = self.kept.clone() else {
             return self.cycle().await;
         };
-        // Reap first, as a poll does: a run that ends during the reads stays
-        // live for this refresh.
-        self.reap();
+        self.reap_before_reading();
         let shell = &self.shell;
         let now = shell.clock.now();
         let windows = shell.policy.windows(now);
@@ -384,7 +379,6 @@ impl Factory {
         read.extend(read_all(snapshot, shell, named, windows).await?);
         let others = snapshot.closed_by_pulls_read(&read);
         read.extend(read_all(snapshot, shell, others, windows).await?);
-        // Hold the closed items a snapshot taken now would.
         let linewright = &shell.policy.linewright;
         let tickets = snapshot.unheld_closed_tickets(linewright);
         read.extend(
@@ -419,12 +413,10 @@ impl Factory {
         let draining = ends.draining();
         let mut failed = None;
         while !stopping.is_cancelled() {
-            // The poll reads what deliveries named before it as well.
             pending.take();
             let poll = match self.cycle().await {
                 Ok(_) => Poll::Succeeded,
                 Err(e) => {
-                    // Redacted as recorded, as the same text is logged.
                     let error = self.shell.secrets.redaction().apply(&format!("{e:#}"));
                     error!(error, "poll failed");
                     Poll::Failed {
@@ -442,7 +434,6 @@ impl Factory {
             }));
             publish.served.send_replace(self.served(next_poll_at));
             loop {
-                // A run waiting out the usage limit is still in the set.
                 if self.memory.drained(self.runs.len()) {
                     info!("drained: no run is in flight");
                     return ServeEnd::Drained;
@@ -453,7 +444,6 @@ impl Factory {
                     () = draining.cancelled(), if self.memory.drain.is_none() => {
                         self.note_drain();
                     }
-                    // Turns the drain into a stop, which the loop then takes.
                     () = ends.deadline_passed(clock.as_ref()) => {}
                     subjects = pending.next() => {
                         if let Err(e) = self.refresh(subjects).await {
@@ -463,9 +453,6 @@ impl Factory {
                             );
                         }
                     }
-                    // Taken as they come, as the next poll would take them,
-                    // so the view counts the runs in flight and the usage
-                    // limit as they are.
                     Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
                         self.finished(result);
                     }
@@ -582,9 +569,8 @@ impl Factory {
                 break;
             }
             self.note_drain();
-            if !planned_draining && self.memory.drain.is_some() {
-                // Begun since the plan was made: the rest of the plan is
-                // taken as the drain has it.
+            let drain_begun_since_the_plan = !planned_draining && self.memory.drain.is_some();
+            if drain_begun_since_the_plan {
                 let rest = actions.split_off(next);
                 actions.extend(held_back_by_drain(rest, &self.last_scheduled_runs));
                 planned_draining = true;
@@ -651,7 +637,6 @@ impl Factory {
             begin_automation(shell, name, StartedBy::Hand)?,
             cancel.clone(),
         );
-        // A stop cancels the run, unless it is applying its result.
         let stopping = self.ends.stopping();
         let stop = async {
             stopping.cancelled().await;
@@ -710,7 +695,9 @@ impl Factory {
         self.settle().await;
     }
 
-    fn reap(&mut self) {
+    /// Takes in the runs that have ended and the usage limits reported, so
+    /// that a run that ends during the read that follows stays live for it.
+    fn reap_before_reading(&mut self) {
         while let Some(result) = self.runs.try_join_next_with_id() {
             self.finished(result);
         }
@@ -788,8 +775,6 @@ impl Factory {
             .ended_runs
             .extend(ended.as_ref().and_then(Recorded::ended_on_pull));
         match run.subject {
-            // Reading the issue again reads what the run wrote: the issue,
-            // and the pull requests that close it.
             Subject::Issue(issue) => {
                 self.written.insert(Item::Issue(issue));
             }
@@ -797,6 +782,41 @@ impl Factory {
                 self.written.insert(Item::Pull(pr));
             }
         }
+    }
+
+    /// Opens the issue that takes up the spec change `pr`, then, if
+    /// `let_go`, unassigns `pr`: stopped between the two, it leaves `pr`
+    /// assigned, to be let go of at the next poll. The kept snapshot holds
+    /// the issue from then on.
+    async fn take_up_spec_change(
+        &mut self,
+        snapshot: &Snapshot,
+        pr: Number,
+        let_go: bool,
+    ) -> Result<()> {
+        let store = self.shell.store.clone();
+        let spec_change = snapshot
+            .merged_pull(pr)
+            .with_context(|| format!("the snapshot holds no merged pull request {pr}"))?;
+        let required = self.shell.creation_label().await?;
+        let new = apply::filing::spec_change_issue(spec_change, required.as_deref());
+        let issue = store.create_issue(new).await?;
+        info!(
+            pr = pr.0,
+            issue = issue.0,
+            "took up a spec change: opened its issue"
+        );
+        change_kept_snapshot(&mut self.kept, |latest| {
+            latest.spec_change_issues.push(SpecChangeIssue {
+                number: issue,
+                spec_change: pr,
+            });
+        });
+        self.written.insert(Item::Issue(issue));
+        if let_go {
+            store.unassign(pr).await?;
+        }
+        Ok(())
     }
 
     async fn execute(&mut self, action: &Action, kept: &Kept) -> Result<()> {
@@ -859,12 +879,7 @@ impl Factory {
                     issue = issue.0,
                     "letting go: its label does not ask for Linewright"
                 );
-                // Commented first, so that a stop between the two leaves
-                // the issue assigned, to be let go of at the next poll.
-                if let Some(comment) = comment {
-                    store.comment(*issue, comment).await?;
-                }
-                store.unassign(*issue).await?;
+                comment_and_let_go(store.as_ref(), *issue, comment.as_deref()).await?;
             }
             Action::Relabel { issue, to } => {
                 info!(issue = issue.0, %to, "relabeling");
@@ -880,40 +895,10 @@ impl Factory {
             }
             Action::UnassignFromPull { pr, comment } => {
                 info!(pr = pr.0, "letting go of a pull request it did not open");
-                // Commented first, so that a stop between the two leaves it
-                // assigned, to be let go of at the next poll.
-                store.comment(*pr, comment).await?;
-                store.unassign(*pr).await?;
+                comment_and_let_go(store.as_ref(), *pr, Some(comment)).await?;
             }
             Action::OpenSpecChangeIssue { pr, let_go } => {
-                let spec_change = snapshot
-                    .merged_pull(*pr)
-                    .with_context(|| format!("the snapshot holds no merged pull request {pr}"))?;
-                let required = self.shell.creation_label().await?;
-                let new = apply::filing::spec_change_issue(spec_change, required.as_deref());
-                let issue = store.create_issue(new).await?;
-                info!(
-                    pr = pr.0,
-                    issue = issue.0,
-                    "took up a spec change: opened its issue"
-                );
-                // A refresh before the next poll decides on the kept snapshot,
-                // which must hold the issue, so that the spec change is not
-                // taken up twice; it reads the issue in, too.
-                if let Some(latest) = &mut self.kept {
-                    Arc::make_mut(&mut latest.snapshot)
-                        .spec_change_issues
-                        .push(SpecChangeIssue {
-                            number: issue,
-                            spec_change: *pr,
-                        });
-                }
-                self.written.insert(Item::Issue(issue));
-                // The issue first, so that a stop between the two leaves the
-                // spec change assigned, to be let go of at the next poll.
-                if *let_go {
-                    store.unassign(*pr).await?;
-                }
+                self.take_up_spec_change(snapshot, *pr, *let_go).await?;
             }
             Action::RemoveStatusLabel { issue, label } => {
                 info!(issue = issue.0, %label, "removing a status label");
@@ -972,31 +957,11 @@ impl Factory {
                     .await?;
             }
             Action::DiscardCut(discarding) => {
-                let Discard {
-                    issue,
-                    pulls,
-                    tickets,
-                } = discarding;
-                warn!(issue = issue.0, "discarding a cut to design it again");
-                let notes = discarding.notes();
-                // A ticket whose pull request is closed is left alone while
-                // its cut is discarded, so a discard stopped in between does
-                // not hand it back.
-                for pr in pulls {
-                    store.comment(*pr, &notes.on_pull).await?;
-                    store.close_pull(*pr).await?;
-                }
-                for ticket in discarding.open_tickets() {
-                    discard(store.as_ref(), ticket, &notes.on_ticket).await?;
-                }
-                if let Some(ParentNote { issue: on, note }) = &notes.on_issue {
-                    store.comment(*on, note).await?;
-                }
-                // The tickets leave the sub-issues last, so that a discard
-                // that stops part way is found again on the next poll.
-                for ticket in tickets {
-                    store.remove_sub_issue(*issue, ticket.number).await?;
-                }
+                warn!(
+                    issue = discarding.issue.0,
+                    "discarding a cut to design it again"
+                );
+                discard_cut(store.as_ref(), discarding).await?;
             }
             Action::DeleteBranch { branch } => {
                 info!(
@@ -1004,13 +969,9 @@ impl Factory {
                     "deleting the branch of a closed ticket"
                 );
                 store.delete_branch(branch.as_str()).await?;
-                // A refresh before the next poll decides on the kept
-                // snapshot, which must not hold the branch any more.
-                if let Some(latest) = &mut self.kept {
-                    Arc::make_mut(&mut latest.snapshot)
-                        .ticket_branches
-                        .retain(|b| b.name != *branch);
-                }
+                change_kept_snapshot(&mut self.kept, |latest| {
+                    latest.ticket_branches.retain(|b| b.name != *branch);
+                });
             }
             Action::RecordLastScheduledRuns(last_scheduled_runs) => {
                 self.last_scheduled_runs = last_scheduled_runs.clone();
@@ -1024,7 +985,6 @@ impl Factory {
                 let repo = kept.repo.clone();
                 let handle = self.runs.spawn({
                     let (automation, cancel) = (automation.clone(), cancel.clone());
-                    // A run that fails is logged; there is nothing to hand back.
                     async move {
                         let _ = run_and_log(&shell, &repo, &automation, running, cancel).await;
                     }
@@ -1103,6 +1063,53 @@ async fn run_and_log(
     }
 }
 
+/// Makes `change` to the snapshot in `kept`, if any.
+fn change_kept_snapshot(kept: &mut Option<Kept>, change: impl FnOnce(&mut Snapshot)) {
+    if let Some(kept) = kept {
+        change(Arc::make_mut(&mut kept.snapshot));
+    }
+}
+
+/// Comments `comment`, if any, on `number`, then unassigns Linewright from
+/// it: stopped between the two, it leaves `number` assigned, to be let go of
+/// at the next poll.
+async fn comment_and_let_go(
+    store: &dyn Store,
+    number: Number,
+    comment: Option<&str>,
+) -> Result<()> {
+    if let Some(comment) = comment {
+        store.comment(number, comment).await?;
+    }
+    store.unassign(number).await
+}
+
+/// Discards a cut: closes its pull requests, then its open tickets, then
+/// removes its tickets from the sub-issues. Stopped part way, it hands no
+/// ticket back, and the next poll finds the discard again.
+async fn discard_cut(store: &dyn Store, discarding: &Discard) -> Result<()> {
+    let Discard {
+        issue,
+        pulls,
+        tickets,
+    } = discarding;
+    let notes = discarding.notes();
+    for pr in pulls {
+        store.comment(*pr, &notes.on_pull).await?;
+        store.close_pull(*pr).await?;
+    }
+    for ticket in discarding.open_tickets() {
+        discard(store, ticket, &notes.on_ticket).await?;
+    }
+    if let Some(ParentNote { issue: on, note }) = &notes.on_issue {
+        store.comment(*on, note).await?;
+    }
+    for ticket in tickets {
+        store.remove_sub_issue(*issue, ticket.number).await?;
+    }
+    Ok(())
+}
+
 /// Closes `issue`, of a cut discarded, as not planned, saying why in `note`.
 async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
     store.comment(issue, note).await?;
@@ -1112,8 +1119,7 @@ async fn discard(store: &dyn Store, issue: Number, note: &str) -> Result<()> {
 /// Labels `linewright:designed` the open spec changes' tracking issues
 /// Linewright filed before a tracking issue carried it, which it would
 /// otherwise take for cuts to discard, and reads them into `snapshot` again.
-/// Run once after startup, before anything is reconciled; one already
-/// labeled is left as it is.
+/// One already labeled is left as it is.
 async fn label_old_tracking_issues(
     snapshot: &mut Snapshot,
     shell: &Shell,
