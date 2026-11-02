@@ -5041,3 +5041,69 @@ fn linewright_assigned_to_a_merged_pull_request_it_does_not_take_up_leaves_it_as
 
     assert_eq!(decide(&world), []);
 }
+
+fn awaiting_the_environment() -> Memory {
+    Memory {
+        awaits_environment: true,
+        ended_runs: fixed_twice(),
+        ..Memory::default()
+    }
+}
+
+#[test_log::test]
+fn while_awaiting_the_environment_no_run_starts_and_no_automation_runs_but_other_actions_are_taken()
+{
+    let (world, live, automations) = work_of_every_kind();
+    let policy = Policy {
+        max_runs: 10,
+        ..policy()
+    };
+
+    let actions = reconcile(
+        &world,
+        &live,
+        &awaiting_the_environment(),
+        &automations,
+        t(70),
+        &policy,
+        &[],
+    );
+
+    let (handed_back, others) = pull_hand_backs_apart(actions);
+    assert_eq!(others, sessionless_actions());
+    assert_eq!(handed_back.len(), 1);
+}
+
+#[test_log::test]
+fn while_awaiting_the_environment_work_waits_for_a_build_to_succeed() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+
+    assert_eq!(
+        waits(&world, &[], &awaiting_the_environment(), 10, &policy()).remove(&Number(1)),
+        Some(vec![Wait::Environment])
+    );
+}
+
+#[test_log::test]
+fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the_ceiling() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+    let mut limited = awaiting_the_environment();
+    limited.hold_until(t(150));
+    let mut drained = limited.clone();
+    drained.drain = Some(Drain { since: t(5) });
+    let busy = [2, 3, 4, 5].map(|n| live(n, WorkKind::Implement));
+
+    let wait_of = |live: &[LiveRun], memory: &Memory| {
+        waits(&world, live, memory, 10, &policy()).remove(&Number(1))
+    };
+
+    assert_eq!(wait_of(&[], &drained), Some(vec![Wait::Drain]));
+    assert_eq!(
+        wait_of(&[], &limited),
+        Some(vec![Wait::UsageLimit { resets_at: t(150) }])
+    );
+    assert_eq!(
+        wait_of(&busy, &awaiting_the_environment()),
+        Some(vec![Wait::Environment])
+    );
+}

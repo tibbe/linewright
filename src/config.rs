@@ -22,7 +22,7 @@ use crate::web;
 use crate::webhook::{self, Webhooks};
 use crate::work_settings::{
     Effort, EnvLayers, MAINTENANCE, Maintenance, Partial, PipelineSettings, RepoSettings,
-    RepositorySetting, SETUP, StageSetting, StageTable, WorkSettings,
+    RepositorySetting, SETUP, Setup, SetupPartial, StageSetting, StageTable, WorkSettings,
 };
 
 #[derive(Parser, Debug)]
@@ -307,9 +307,20 @@ pub struct Settings {
     /// agent's first prompt, run by `bash` [default: none]
     #[arg(long, global = true, value_name = "COMMAND")]
     pub maintenance: Option<String>,
-    /// Refused, naming `--maintenance`.
+    /// Refused, naming `--setup-command` and `--maintenance`.
     #[arg(long, global = true, hide = true, value_name = "COMMAND")]
     pub setup: Option<String>,
+    /// The command that builds the environment, the repository made ready
+    /// for agents' work once, that every agent session's clone starts
+    /// from, run by `bash` [default: none]
+    #[arg(long, global = true, value_name = "COMMAND")]
+    pub setup_command: Option<String>,
+    /// How old the environment grows before it is built again [default: 24h]
+    #[arg(long, global = true, value_name = "DURATION")]
+    pub setup_max_age: Option<String>,
+    /// How long a build of the environment may run [default: 60m]
+    #[arg(long, global = true, value_name = "DURATION")]
+    pub setup_timeout: Option<String>,
     /// How often an unparseable result goes back to its session [default: 1]
     #[arg(long, global = true)]
     pub result_retries: Option<String>,
@@ -393,6 +404,9 @@ impl Settings {
             ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
             ("maintenance", &self.maintenance),
+            (SETUP_COMMAND, &self.setup_command),
+            (SETUP_MAX_AGE, &self.setup_max_age),
+            (SETUP_TIMEOUT, &self.setup_timeout),
             ("result-retries", &self.result_retries),
             ("ci-grace", &self.ci_grace),
             ("ci-timeout", &self.ci_timeout),
@@ -467,8 +481,15 @@ const fn stage_entry(setting: StageSetting) -> (&'static str, Form) {
     (setting.name(), stage_form(setting))
 }
 
-/// The operator's settings, each with its form.
-const SETTINGS: [(&str, Form); 27] = [
+/// The `setup` table's settings.
+const SETUP_COMMAND: &str = "setup.command";
+const SETUP_MAX_AGE: &str = "setup.max-age";
+const SETUP_TIMEOUT: &str = "setup.timeout";
+
+/// The operator's settings, each with its form. A setting whose name holds
+/// a dot is a key of the table named before the dot
+/// (`docs/specs/operation.md`, Configuration, A table of settings).
+const SETTINGS: [(&str, Form); 30] = [
     ("repo", VALUE),
     ("poll-interval", VALUE),
     ("webhook-address", VALUE),
@@ -487,6 +508,9 @@ const SETTINGS: [(&str, Form); 27] = [
     ("secrets", list(VARIABLE_NAME)),
     stage_entry(StageSetting::Repository(RepositorySetting::SessionTimeout)),
     (MAINTENANCE, VALUE),
+    (SETUP_COMMAND, VALUE),
+    (SETUP_MAX_AGE, VALUE),
+    (SETUP_TIMEOUT, VALUE),
     ("result-retries", VALUE),
     ("ci-grace", VALUE),
     ("ci-timeout", VALUE),
@@ -503,6 +527,62 @@ fn form(key: &str) -> Option<Form> {
     SETTINGS
         .iter()
         .find_map(|&(setting, form)| (setting == key).then_some(form))
+}
+
+/// The keys of the table of settings `table`, such as `command` for
+/// `setup.command`: none when `table` is no table of settings.
+fn table_keys(table: &str) -> Vec<&'static str> {
+    SETTINGS
+        .iter()
+        .filter_map(|&(setting, _)| setting.strip_prefix(table)?.strip_prefix('.'))
+        .collect()
+}
+
+/// `value`, of the table of settings `table`, as each setting it sets by
+/// its name, `table.key`, and the text its flag takes.
+fn settings_table(table: &str, value: toml::Value) -> Result<Vec<(String, String)>> {
+    let keys = table_keys(table);
+    let holds = format!("`{}`", keys.join("`, `"));
+    let toml::Value::Table(entries) = value else {
+        let maintenance = if table == SETUP {
+            format!("; the command each session starts with is `{MAINTENANCE}`")
+        } else {
+            String::new()
+        };
+        bail!(
+            "the setting `{table}` is {value}, not a table: `{table}` is a table holding {holds}, \
+             such as `[{table}]`{maintenance}"
+        );
+    };
+    entries
+        .into_iter()
+        .map(|(key, entry)| {
+            if !keys.contains(&key.as_str()) {
+                bail!("`[{table}]` has an unknown setting `{key}`: it holds {holds}");
+            }
+            let name = format!("{table}.{key}");
+            let Some(Form::Text(form)) = form(&name) else {
+                unreachable!("a table's settings are held as text");
+            };
+            let text = setting_value(&name, form, entry)?;
+            Ok((name, text))
+        })
+        .collect()
+}
+
+/// Sets the setting `name` of the `setup` table in `setup` to `text`.
+fn set_setup(setup: &mut SetupPartial, name: &str, text: String) -> Result<()> {
+    let duration = |given: &str| {
+        humantime::parse_duration(given)
+            .with_context(|| format!("the setting `{name}` is {given:?}"))
+    };
+    match name {
+        SETUP_COMMAND => setup.command = Some(Setup::from(text)),
+        SETUP_MAX_AGE => setup.max_age = Some(duration(&text)?),
+        SETUP_TIMEOUT => setup.timeout = Some(duration(&text)?),
+        other => unreachable!("`{other}` is not a setting of the `setup` table"),
+    }
+    Ok(())
 }
 
 /// An operator's layer a setting is set in, highest first
@@ -699,22 +779,19 @@ impl Config {
             tables: file_tables,
             stages,
         } = read_file(settings.config.as_deref(), cwd)?;
-        let variable = |key: &str| {
-            env(&format!(
-                "LINEWRIGHT_{}",
-                key.to_uppercase().replace('-', "_")
-            ))
-        };
+        let variable = |key: &str| env(&variable_name(key));
         if settings.setup.is_some() {
             return Err(ResolveError::CommandLine(setup_is_not_a_command(
                 &format!("--{SETUP}"),
-                &format!("--{MAINTENANCE}"),
+                &flag_name(SETUP_COMMAND),
+                &flag_name(MAINTENANCE),
             )));
         }
         if variable(SETUP).is_some() {
             return Err(ResolveError::Elsewhere(setup_is_not_a_command(
-                "LINEWRIGHT_SETUP",
-                "LINEWRIGHT_MAINTENANCE",
+                &variable_name(SETUP),
+                &variable_name(SETUP_COMMAND),
+                &variable_name(MAINTENANCE),
             )));
         }
         let flags = settings.flags();
@@ -956,6 +1033,16 @@ impl Config {
             |key: &str| value_of(key).filter(|entry| entry.layer != OperatorLayer::File);
         let in_file = |key: &str| value_of(key).filter(|entry| entry.layer == OperatorLayer::File);
         let text = |entry: Option<Entry>| entry.map(|entry| entry.value);
+        let setup = |pick: &dyn Fn(&str) -> Option<Entry>| {
+            let mut setup = SetupPartial::default();
+            for key in table_keys(SETUP) {
+                let name = format!("{SETUP}.{key}");
+                if let Some(entry) = pick(&name) {
+                    set_setup(&mut setup, &name, entry.value).map_err(|e| refused(&name, e))?;
+                }
+            }
+            Ok::<_, ResolveError>(setup)
+        };
         let work = WorkSettings {
             flags_and_env: Partial {
                 model: text(flag_or_env("model")),
@@ -969,9 +1056,11 @@ impl Config {
             },
             pipeline_flags_and_env: PipelineSettings {
                 maintenance: text(flag_or_env(MAINTENANCE)).map(Maintenance::from),
+                setup: setup(&flag_or_env)?,
             },
             pipeline_file: PipelineSettings {
                 maintenance: text(in_file(MAINTENANCE)).map(Maintenance::from),
+                setup: setup(&in_file)?,
             },
             stages,
             env_layers: EnvLayers {
@@ -1062,9 +1151,22 @@ fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, Resolv
 const STAGE: &str = "stage";
 
 /// The error for `setup` given as a command, as `setup` names it where it
-/// was given and `maintenance` names the setting there.
-fn setup_is_not_a_command(setup: &str, maintenance: &str) -> anyhow::Error {
-    anyhow!("`{setup}` is not a command: the command each session starts with is `{maintenance}`")
+/// was given, and `command` and `maintenance` name those settings there.
+fn setup_is_not_a_command(setup: &str, command: &str, maintenance: &str) -> anyhow::Error {
+    anyhow!(
+        "`{setup}` is not a setting: the setup command is `{command}`, and the command each \
+         session starts with is `{maintenance}`"
+    )
+}
+
+/// The flag of the setting `key`, its dots as `-`.
+fn flag_name(key: &str) -> String {
+    format!("--{}", key.replace('.', "-"))
+}
+
+/// The environment variable of the setting `key`, its dots and `-` as `_`.
+fn variable_name(key: &str) -> String {
+    format!("LINEWRIGHT_{}", key.to_uppercase().replace(['-', '.'], "_"))
 }
 
 /// The error for the whole-pipeline setting `key` set `at` a place that
@@ -1084,7 +1186,7 @@ impl Owner {
     /// The setting `key` names in a stage's table, `at`, in this owner's
     /// file.
     fn stage_setting(self, key: &str, at: &str) -> Result<StageSetting> {
-        if key == MAINTENANCE {
+        if key == MAINTENANCE || key == SETUP {
             return Err(only_the_whole_pipelines_error(key, at));
         }
         match self {
@@ -1168,10 +1270,11 @@ fn settings_in(path: &Path, text: &str) -> Result<FileSettings> {
                 stage_tables(value, Owner::Operator).with_context(|| path.display().to_string())?;
             continue;
         }
-        if key == SETUP {
-            return Err(
-                setup_is_not_a_command(SETUP, MAINTENANCE).context(path.display().to_string())
-            );
+        if !table_keys(&key).is_empty() {
+            let entries =
+                settings_table(&key, value).with_context(|| path.display().to_string())?;
+            settings.top.extend(entries);
+            continue;
         }
         let Some(form) = form(&key) else {
             bail!("{} has an unknown setting `{key}`", path.display());
@@ -1211,9 +1314,14 @@ impl RepoSettings {
                     let text = setting_value(MAINTENANCE, Text::Value, value)?;
                     pipeline.maintenance = Some(Maintenance::from(text));
                 }
-                SETUP => return Err(setup_is_not_a_command(SETUP, MAINTENANCE)),
+                SETUP => {
+                    for (name, text) in settings_table(SETUP, value)? {
+                        set_setup(&mut pipeline.setup, &name, text)?;
+                    }
+                }
                 key => {
-                    let holds = format!("{}, `{MAINTENANCE}`", RepositorySetting::keys());
+                    let holds =
+                        format!("{}, `{MAINTENANCE}`, `{SETUP}`", RepositorySetting::keys());
                     let setting = repository_setting(key, "the repository's file", &holds)?;
                     set_session(&mut top, setting, value)?;
                 }

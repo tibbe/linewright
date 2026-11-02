@@ -248,6 +248,9 @@ pub struct Memory {
     pub usage_limit: Option<UsageLimit>,
     /// Set from when a drain of `serve` begins until it exits.
     pub drain: Option<Drain>,
+    /// Set while there is a setup command and no environment
+    /// (`docs/specs/sessions.md`, Environment).
+    pub awaits_environment: bool,
 }
 
 impl Memory {
@@ -608,6 +611,8 @@ pub enum Wait {
     },
     /// Ends only with a restart of `serve`.
     Drain,
+    /// Ends once a build of the environment succeeds.
+    Environment,
     Blocker {
         issue: Number,
     },
@@ -720,6 +725,7 @@ pub fn decisions(
     let (room, held) = match (memory.drain, usage_limit) {
         (Some(_), _) => (0, Held::Drain),
         (None, Some(UsageLimit { resets_at })) => (0, Held::UsageLimit { resets_at }),
+        (None, None) if memory.awaits_environment => (0, Held::Environment),
         (None, None) => (
             policy.max_runs.saturating_sub(in_flight),
             Held::Ceiling {
@@ -1092,6 +1098,7 @@ struct Plan<'a> {
 enum Held {
     UsageLimit { resets_at: Timestamp },
     Drain,
+    Environment,
     Ceiling { in_flight: usize, max_runs: usize },
 }
 
@@ -1185,6 +1192,7 @@ impl Plan<'_> {
         let wait = match self.held {
             Held::UsageLimit { resets_at } => Wait::UsageLimit { resets_at },
             Held::Drain => Wait::Drain,
+            Held::Environment => Wait::Environment,
             Held::Ceiling {
                 in_flight,
                 max_runs,
