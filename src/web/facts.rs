@@ -28,6 +28,8 @@ pub(super) enum Piece<Words = Html> {
         pull_request: bool,
         heading: Words,
     },
+    /// Markup of its own, such as a build of the environment's.
+    Markup(Html),
 }
 
 impl<Words> Fact<Words> {
@@ -55,6 +57,7 @@ impl<Words> Fact<Words> {
                                 pull_request,
                                 heading: draw(heading),
                             },
+                            Piece::Markup(markup) => Piece::Markup(markup),
                         })
                         .collect()
                 })

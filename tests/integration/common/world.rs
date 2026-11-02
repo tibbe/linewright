@@ -748,6 +748,7 @@ pub struct Serving {
     handle: JoinHandle<ServeEnd>,
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
     pub polling: tokio::sync::watch::Receiver<Option<Polling>>,
+    pub environment: linewright::api::EnvironmentLink,
 }
 
 impl Serving {
@@ -758,7 +759,7 @@ impl Serving {
     ) -> Serving {
         let stopping = factory.stopping();
         let draining = factory.draining();
-        let (publish, served, polling) = Publish::new();
+        let (publish, served, polling, environment) = Publish::new();
         let handle = tokio::spawn(async move {
             let end = factory.serve(poll_interval, &pending, &publish).await;
             factory.stop().await;
@@ -770,6 +771,7 @@ impl Serving {
             handle,
             served,
             polling,
+            environment,
         }
     }
 

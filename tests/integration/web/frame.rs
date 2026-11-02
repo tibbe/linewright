@@ -5,7 +5,7 @@ use linewright::repo_files::{FileError, Unusable};
 use linewright::status::View;
 
 /// Each hold's words, and where it links.
-fn holds(html: &Html) -> Vec<(String, String)> {
+pub(super) fn holds(html: &Html) -> Vec<(String, String)> {
     select(html, "#holds .alert")
         .into_iter()
         .map(|alert| {
@@ -452,14 +452,14 @@ async fn a_file_of_the_repositorys_linewright_cannot_use_is_a_problem_linking_to
 /// A fact of the server page, as a reader reads it, with the colour of its
 /// value's status, such as `error`, if it shows one.
 #[derive(Debug, PartialEq, Eq)]
-struct ServerFact {
-    label: String,
-    value: String,
-    tone: Option<String>,
+pub(super) struct ServerFact {
+    pub(super) label: String,
+    pub(super) value: String,
+    pub(super) tone: Option<String>,
 }
 
 /// The server page's facts, in order.
-fn server_facts(html: &Html) -> Vec<ServerFact> {
+pub(super) fn server_facts(html: &Html) -> Vec<ServerFact> {
     let labels = select(html, "#server dl > dt");
     let values = select(html, "#server dl > dd");
     assert_eq!(labels.len(), values.len(), "{}", html.html());

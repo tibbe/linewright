@@ -22,6 +22,7 @@ mod drain;
 mod ending;
 mod environment;
 mod environment_lifecycle;
+mod environment_shown;
 mod explain;
 mod fix_brief;
 mod front_door;

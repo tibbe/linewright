@@ -2,6 +2,7 @@ use crate::common;
 
 mod automations;
 mod board;
+mod environment;
 mod frame;
 mod item;
 mod run;
@@ -63,6 +64,7 @@ fn sources(
             repo: REPO.parse().unwrap(),
         },
         ends: linewright::ending::Ends::new(),
+        environment: linewright::api::EnvironmentLink::default(),
     }
 }
 
@@ -96,6 +98,7 @@ impl Web {
         let stopping = CancellationToken::new();
         let sources = Sources {
             deliveries: Some(listener.tally()),
+            environment: serving.environment.clone(),
             ..sources(
                 &dir,
                 &clock,

@@ -4,7 +4,9 @@
 
 mod kept;
 pub mod lifecycle;
+pub mod shown;
 
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
@@ -12,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
+use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{info, warn};
 
@@ -27,8 +30,23 @@ use crate::store::Store;
 use crate::transcript::MaintenanceEnded;
 use crate::work_settings::SetupSettings;
 
+pub use kept::BuildId;
 use kept::{BuildRecord, Builds, Built};
 use lifecycle::{Basis, Effect, Event, Fingerprint, State};
+
+/// The environment's directory in a repository's work directory
+/// `work_dir`.
+pub fn dir(work_dir: &Path) -> PathBuf {
+    work_dir.join("environment")
+}
+
+/// Why a `config.toml` Linewright cannot use holds the builds.
+fn unusable_config() -> String {
+    format!(
+        "`{}` cannot be used, which holds the builds",
+        crate::repo_files::CONFIG
+    )
+}
 
 /// What a build needs of Linewright.
 pub struct Builder {
@@ -137,6 +155,118 @@ pub struct Environment {
     /// started.
     failure: Option<String>,
     source: Source,
+    /// Whether there is a setup command, as last kept.
+    kept_setup: Option<bool>,
+    tally: BuildTally,
+}
+
+/// How many builds have started since Linewright started, and how the
+/// latest of them ended: what a rebuild asked of `serve` waits for.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BuildTally {
+    pub started: Tallied,
+    pub ended: BTreeMap<Tallied, BuildEnded>,
+}
+
+/// A build by its place among those started since Linewright started,
+/// counting from 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Tallied(u64);
+
+impl Tallied {
+    #[must_use]
+    fn next(self) -> Tallied {
+        Tallied(self.0 + 1)
+    }
+}
+
+impl std::fmt::Display for Tallied {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// How many of the latest builds' ends a [`BuildTally`] keeps.
+const TALLIED: usize = 32;
+
+impl BuildTally {
+    fn end(&mut self, build: Tallied, ended: BuildEnded) {
+        self.ended.insert(build, ended);
+        while self.ended.len() > TALLIED {
+            self.ended.pop_first();
+        }
+    }
+}
+
+/// How a build asked for ended.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum BuildEnded {
+    /// It replaced the environment with one built from `commit`.
+    Succeeded {
+        commit: String,
+    },
+    Failed {
+        error: String,
+    },
+    /// It never started, for `reason`.
+    NotStarted {
+        reason: String,
+    },
+}
+
+/// What `lw environment rebuild` says, a line each.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum RebuildSaid {
+    Taken(RebuildTaken),
+    Ended(BuildEnded),
+}
+
+impl RebuildSaid {
+    pub fn render(&self) -> String {
+        let said = match self {
+            RebuildSaid::Taken(RebuildTaken::Started { .. }) => "the build starts now".into(),
+            RebuildSaid::Taken(RebuildTaken::Queued { .. }) => {
+                "the build starts once the one in progress ends".into()
+            }
+            RebuildSaid::Taken(RebuildTaken::NoSetupCommand) => "there is no setup command".into(),
+            RebuildSaid::Taken(RebuildTaken::Refused { reason }) => {
+                format!("no build starts: {reason}")
+            }
+            RebuildSaid::Ended(BuildEnded::Succeeded { commit }) => format!(
+                "the build succeeded: the environment is built from `{}`",
+                shown::short(commit)
+            ),
+            RebuildSaid::Ended(BuildEnded::Failed { error }) => {
+                format!("the build failed: {error}")
+            }
+            RebuildSaid::Ended(BuildEnded::NotStarted { reason }) => {
+                format!("the build never started: {reason}")
+            }
+        };
+        format!("rebuild: {said}\n")
+    }
+}
+
+/// What became of a request to build the environment now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "rebuild", rename_all = "kebab-case")]
+pub enum RebuildTaken {
+    /// The build, the `build`th since `serve` started, starts now.
+    Started {
+        build: Tallied,
+    },
+    /// The build, the `build`th since `serve` started, starts once the one
+    /// in progress ends.
+    Queued {
+        build: Tallied,
+    },
+    NoSetupCommand,
+    /// No build starts, for `reason`.
+    Refused {
+        reason: String,
+    },
 }
 
 /// How a build ended, for [`Environment::ended`].
@@ -170,6 +300,8 @@ impl Environment {
             building: None,
             failure: None,
             source: Source::default(),
+            kept_setup: None,
+            tally: BuildTally::default(),
         })
     }
 
@@ -194,12 +326,69 @@ impl Environment {
         }
     }
 
-    /// Builds the environment again, as asked: once the build in progress
-    /// ends, if there is one.
-    pub fn rebuild(&mut self) {
-        if self.setup.active().is_some() && !self.holds.any() {
-            self.on(Event::Triggered, None);
+    /// Builds the environment again, as asked of `serve`: once the build in
+    /// progress ends, if there is one.
+    pub fn rebuild(&mut self) -> RebuildTaken {
+        if self.setup.active().is_none() {
+            return RebuildTaken::NoSetupCommand;
         }
+        if let Some(reason) = self.held_because() {
+            return RebuildTaken::Refused { reason };
+        }
+        info!("a rebuild of the environment was asked for");
+        self.on(Event::Triggered, None);
+        match self.state {
+            State::Building { queued: true } | State::Rebuilding { queued: true } => {
+                RebuildTaken::Queued {
+                    build: self.tally.started.next(),
+                }
+            }
+            State::None
+            | State::Ready
+            | State::Building { queued: false }
+            | State::Rebuilding { queued: false } => RebuildTaken::Started {
+                build: self.tally.started,
+            },
+        }
+    }
+
+    /// Why builds are held, if they are.
+    fn held_because(&self) -> Option<String> {
+        let Holds {
+            prepared,
+            draining,
+            unusable,
+        } = self.holds;
+        if draining {
+            Some("`serve` is draining, and a drain starts no build".into())
+        } else if unusable {
+            Some(unusable_config())
+        } else if prepared {
+            Some("the environment was prepared for this run".into())
+        } else {
+            None
+        }
+    }
+
+    /// Builds the environment now, with the `setup` table `read`, and waits
+    /// for the build, as `lw environment rebuild` without `serve` does.
+    /// `None` without a setup command; `Err` when builds are held.
+    pub async fn rebuild_now(&mut self, read: SetupRead) -> Result<Option<BuildEnded>> {
+        if self.take_read(read).is_none() {
+            return Ok(None);
+        }
+        if let Some(reason) = self.held_because() {
+            bail!("no build starts: {reason}");
+        }
+        self.on(Event::Triggered, None);
+        let build = self.tally.started;
+        self.settle().await;
+        Ok(self.tally.ended.get(&build).cloned())
+    }
+
+    /// The builds started since Linewright started, and how they ended.
+    pub fn tally(&self) -> &BuildTally {
+        &self.tally
     }
 
     /// Whether sessions can start: with no setup command, or from an
@@ -227,6 +416,9 @@ impl Environment {
             Ok(Ok(built)) => {
                 info!(commit = built.commit, "the environment was built");
                 self.failure = None;
+                let commit = built.commit.clone();
+                self.tally
+                    .end(self.tally.started, BuildEnded::Succeeded { commit });
                 self.on(Event::Succeeded, Some(built));
             }
             Ok(Err(why)) => self.failed(why),
@@ -237,6 +429,9 @@ impl Environment {
 
     fn failed(&mut self, why: String) {
         warn!(error = why, "the build of the environment failed");
+        let error = why.clone();
+        self.tally
+            .end(self.tally.started, BuildEnded::Failed { error });
         self.failure = Some(why);
         self.on(Event::Failed, None);
     }
@@ -252,7 +447,18 @@ impl Environment {
     /// A drain began: no build starts any more.
     pub fn drain(&mut self) {
         self.holds.draining = true;
-        self.state = lifecycle::unqueued(self.state);
+        self.unqueue("a drain started no more builds");
+    }
+
+    /// Starts no build queued, which ends as not started for `reason`.
+    fn unqueue(&mut self, reason: &str) {
+        let unqueued = lifecycle::unqueued(self.state);
+        if unqueued != self.state {
+            let reason = reason.to_string();
+            self.tally
+                .end(self.tally.started.next(), BuildEnded::NotStarted { reason });
+        }
+        self.state = unqueued;
     }
 
     /// `serve` exits: the build in progress, if any, is abandoned.
@@ -290,15 +496,32 @@ impl Environment {
         match read {
             SetupRead::Unusable => {
                 self.holds.unusable = true;
-                self.state = lifecycle::unqueued(self.state);
+                self.unqueue(&unusable_config());
             }
             SetupRead::Given(given) => {
                 self.holds.unusable = false;
                 self.setup = std::mem::replace(&mut self.setup, Setup::Unset).after(given);
+                self.keep_setup();
             }
         }
         self.publish();
         self.setup.active().cloned()
+    }
+
+    /// Keeps whether there is a setup command, for what is shown of the
+    /// environment, when it changed.
+    fn keep_setup(&mut self) {
+        let given = self.setup.active().is_some();
+        if self.kept_setup == Some(given) {
+            return;
+        }
+        match self.builds.keep_setup_given(given) {
+            Ok(()) => self.kept_setup = Some(given),
+            Err(e) => warn!(
+                error = format!("{e:#}"),
+                "keeping whether there is a setup command failed"
+            ),
+        }
     }
 
     /// The event a poll with `settings` brings.
@@ -348,6 +571,7 @@ impl Environment {
     }
 
     fn start_build(&mut self) {
+        self.tally.started = self.tally.started.next();
         let settings = self
             .setup
             .last()

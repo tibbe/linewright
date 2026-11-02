@@ -31,6 +31,9 @@ const BUILDS: &str = "builds";
 const STATE: &str = "state.json";
 /// The file the builds' lock is held on, in the environment's directory.
 const LOCK: &str = "lock";
+/// Whether the latest poll gave a setup command, in the environment's
+/// directory.
+const SETUP: &str = "setup.json";
 
 /// The builds of one repository's environment, under its directory.
 #[derive(Clone, Debug)]
@@ -40,7 +43,21 @@ pub struct Builds {
 
 /// A build's number, counting up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct BuildId(u64);
+pub struct BuildId(pub(super) u64);
+
+impl std::fmt::Display for BuildId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::str::FromStr for BuildId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(text: &str) -> Result<BuildId, std::num::ParseIntError> {
+        text.parse().map(BuildId)
+    }
+}
 
 /// The build that is the environment, as the state file names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,12 +113,17 @@ impl BuildRecord {
         std::fs::write(dir.join(RECORD), text).context("writing the build's record")
     }
 
-    fn read(dir: &Path) -> Option<BuildRecord> {
+    pub fn read(dir: &Path) -> Option<BuildRecord> {
         let text = std::fs::read_to_string(dir.join(RECORD)).ok()?;
         serde_json::from_str(&text).ok()
     }
 
-    fn failed(&self) -> bool {
+    /// Whether its command ended, or an error ended it before.
+    pub fn has_ended(&self) -> bool {
+        self.error.is_some() || self.line.ended.is_some()
+    }
+
+    pub fn failed(&self) -> bool {
         self.error.is_some()
             || self
                 .line
@@ -142,6 +164,51 @@ impl Builds {
         .context("locking the environment")?
     }
 
+    /// Whether a build holds the lock, in any process.
+    pub fn is_building(&self) -> Result<bool> {
+        let file = match File::open(self.dir.join(LOCK)) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(e).context("opening the environment's lock"),
+        };
+        match file.try_lock_shared() {
+            Ok(()) => Ok(false),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+            Err(std::fs::TryLockError::Error(e)) => {
+                Err(e).context("looking at the environment's lock")
+            }
+        }
+    }
+
+    /// Whether the latest poll gave a setup command, `None` before the
+    /// first.
+    pub fn setup_given(&self) -> Option<bool> {
+        let text = std::fs::read_to_string(self.dir.join(SETUP)).ok()?;
+        serde_json::from_str::<SetupGiven>(&text)
+            .ok()
+            .map(|given| given.setup_command)
+    }
+
+    /// Keeps whether the latest poll gave a setup command.
+    pub fn keep_setup_given(&self, setup_command: bool) -> Result<()> {
+        std::fs::create_dir_all(&self.dir).context("creating the environment's directory")?;
+        let text = serde_json::to_string(&SetupGiven { setup_command })
+            .expect("whether there is a setup command serializes");
+        let partial = self.dir.join(format!("{SETUP}.new"));
+        std::fs::write(&partial, text)
+            .and_then(|()| std::fs::rename(&partial, self.dir.join(SETUP)))
+            .context("keeping whether there is a setup command")
+    }
+
+    /// The record of each build kept, by number.
+    pub fn records(&self) -> Result<Vec<(BuildId, BuildRecord)>> {
+        Ok(self
+            .listed()?
+            .into_iter()
+            .filter_map(|id| Some((id, BuildRecord::read(&self.build_dir(id))?)))
+            .collect())
+    }
+
     /// The builds there are, by number.
     fn listed(&self) -> Result<Vec<BuildId>> {
         let dir = self.dir.join(BUILDS);
@@ -165,7 +232,7 @@ impl Builds {
     }
 
     /// The build the state file names, if its clone is there.
-    fn named(&self) -> Option<Built> {
+    pub fn named(&self) -> Option<Built> {
         let text = match std::fs::read_to_string(self.dir.join(STATE)) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
@@ -235,6 +302,11 @@ impl Builds {
             .context("writing the environment's state")?;
         std::fs::rename(&partial, self.dir.join(STATE)).context("replacing the environment's state")
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct SetupGiven {
+    setup_command: bool,
 }
 
 /// Creates the directory of a build, `dir`.

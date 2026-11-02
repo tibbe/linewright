@@ -21,7 +21,7 @@ use crate::domain::{
     Timestamp, UpdateMethod, Windows, label,
 };
 use crate::ending::Ends;
-use crate::environment::{self, Environment, SetupRead};
+use crate::environment::{self, BuildEnded, Environment, SetupRead};
 use crate::harness::{Harness, UsageLimit};
 use crate::pull_records::PullRecords;
 use crate::reconcile::{
@@ -261,7 +261,7 @@ impl Factory {
             None => PullRecordsFile::Missing,
         };
         let environment = Environment::open(
-            config.work_dir.join("environment"),
+            environment::dir(&config.work_dir),
             environment::Builder {
                 store: store.clone(),
                 harness: harness.clone(),
@@ -442,6 +442,7 @@ impl Factory {
         let stopping = ends.stopping();
         let draining = ends.draining();
         let mut failed = None;
+        let mut asked = publish.environment.asked.lock().await;
         while !stopping.is_cancelled() {
             pending.take();
             let poll = match self.cycle().await {
@@ -463,6 +464,7 @@ impl Factory {
                 failed: failed.clone(),
             }));
             publish.served.send_replace(self.served(next_poll_at));
+            publish.environment.tally(self.environment.tally());
             loop {
                 if self.memory.drained(self.runs.len()) {
                     info!("drained: no run is in flight");
@@ -488,6 +490,9 @@ impl Factory {
                         self.finished(result);
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
+                    Some(reply) = asked.recv() => {
+                        let _ = reply.send(self.environment.rebuild());
+                    }
                     end = self.environment.next_build_end(), if self.environment.is_building() => {
                         self.environment.ended(end);
                         let subjects: [webhook::Subject; 0] = [];
@@ -500,6 +505,7 @@ impl Factory {
                     }
                 }
                 publish.served.send_replace(self.served(next_poll_at));
+                publish.environment.tally(self.environment.tally());
             }
         }
         self.environment.exit().await;
@@ -657,6 +663,15 @@ impl Factory {
         let repo = self.read_repo_files().await?;
         let read = self.setup_read(&repo);
         self.environment.prepare(read, self.shell.clock.now()).await
+    }
+
+    /// Builds the environment now and waits for the build, as
+    /// `lw environment rebuild` does without `serve`: `None` without a setup
+    /// command.
+    pub async fn rebuild_environment(&mut self) -> Result<Option<BuildEnded>> {
+        let repo = self.read_repo_files().await?;
+        let read = self.setup_read(&repo);
+        self.environment.rebuild_now(read).await
     }
 
     /// Linewright's files on the default branch as they are now, each that
