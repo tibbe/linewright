@@ -403,7 +403,8 @@ for path in sys.argv[1:]:
             if all(p in spec for p in parts if p):
                 continue
             number = max(n for at, n in starts if at <= m.start())
-            print(f'{path}:{number}: "{re.sub(r"\s+", " ", m.group(1))}" is not in the spec')
+            quote = re.sub(r"\s+", " ", m.group(1))
+            print(f'{path}:{number}: "{quote}" is not in the spec')
             status = 1
 sys.exit(status)
 EOF
