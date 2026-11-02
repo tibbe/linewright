@@ -79,8 +79,9 @@ Automations sit beside the pipeline.
 repository, its runs and their transcripts, and takes the operator's requests
 of it, such as a drain.
 
-- **Clients.** While `serve` runs, the monitoring commands and `drain` ask it
-  through the API ([Commands](monitoring.md#commands)).
+- **Clients.** While `serve` runs, the monitoring commands, `drain` and
+  `environment rebuild` ask it through the API
+  ([Commands](monitoring.md#commands)).
 
 | aspect | decision |
 |---|---|

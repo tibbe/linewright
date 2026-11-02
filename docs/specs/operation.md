@@ -34,6 +34,8 @@ The command is `lw`.
 | `serve`               | poll until drained or stopped (see [Stopping](#stopping))                |
 | `once`                | one poll cycle, then exit                                                |
 | `drain`               | tell `serve` to drain (see [Stopping](#stopping))                        |
+| `environment`         | show the environment and its builds (see [Monitoring](monitoring.md))    |
+| `environment rebuild` | build the environment now (see [Environment](sessions.md#environment))   |
 | `status`              | show what Linewright is doing (see [Monitoring](monitoring.md))          |
 | `explain N`           | show where an item stands and why (see [Monitoring](monitoring.md))      |
 | `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
@@ -82,8 +84,8 @@ once.
 
 Every setting is a key in the operator's TOML config file (`--config`, default
 `linewright.toml` in the working directory); some are also keys in the
-repository's file ([The repository's file](#the-repositorys-file)).
-Each place a setting is set is a layer, highest first: flag, environment, the
+repository's file ([The repository's file](#the-repositorys-file)). Each place a
+setting is set is a layer, highest first: flag, environment variable, the
 repository's file, the operator's file, default.
 
 | setting                                      | default                                     |
@@ -105,7 +107,10 @@ repository's file, the operator's file, default.
 | `session-pass-env` (variable names)          | none                                        |
 | `secrets` (variable names)                   | none                                        |
 | `session-timeout`                            | 60m                                         |
-| `setup` (a command, [Setup](runs.md#setup))  | none                                        |
+| `setup.command` ([Environment](sessions.md#environment)) | none                            |
+| `setup.max-age`                              | 24h                                         |
+| `setup.timeout`                              | 60m                                         |
+| `maintenance` (a command, [Maintenance](runs.md#maintenance)) | none                       |
 | `result-retries`                             | 1                                           |
 | `ci-grace`                                   | 5m                                          |
 | `ci-timeout`                                 | 6h                                          |
@@ -126,6 +131,10 @@ repository's file, the operator's file, default.
   per entry and split at the first `=`, such as `--session-env NAME=value`,
   and has no environment variable. An entry without `=`, or a name given
   twice in one layer, is an error at startup.
+- **A table of settings.** A setting whose name holds a dot, such as
+  `setup.command`, is a key in a table of the config file, `[setup]` with
+  `command` in it. Its flag and environment variable name it with the dot as
+  a `-`: `--setup-command` and `LINEWRIGHT_SETUP_COMMAND`.
 - **A stage's table.** Its entries are settings, so it is a key only.
 - **A wrong value.** A setting whose value is not one it takes, such as an
   `effort` outside its levels or an unknown key in a stage's table, is an
@@ -138,9 +147,9 @@ repository's file, the operator's file, default.
   secret, `ui-hosts` with `ui-address` empty, `merge-method` without
   `auto-merge`.
 - **Model and effort.** A model or effort set for a session wins over what the
-  session's environment and the harness's own settings say. Linewright sets no
-  model or effort for a session's sub-agents.
-- **Credentials come from the environment only.** They are the environment
+  session's environment variables and the harness's own settings say. Linewright
+  sets no model or effort for a session's sub-agents.
+- **Credentials come from environment variables only.** They are the environment
   variables their tools already use, so an existing setup is picked up:
   `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`. The
   webhook secret has no such variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and
@@ -156,7 +165,7 @@ repository's file, the operator's file, default.
 ## Stage settings
 
 A stage's sessions take the session settings, `model`, `effort`,
-`session-timeout`, `setup`, `session-env` and `session-pass-env`, from the
+`session-timeout`, `session-env` and `session-pass-env`, from the
 whole pipeline and from the stage's own tables, which are layers above every
 whole-pipeline layer ([Configuration](#configuration)).
 
@@ -171,7 +180,8 @@ on its default branch, the same TOML as the operator's file.
 
 - **Its keys.** The session settings ([Stage settings](#stage-settings))
   except `session-env` and `session-pass-env`, for the whole pipeline and in
-  stage tables. Any other key is an error: the rest of the settings are the
+  stage tables, and the `setup` table and `maintenance`, for the whole
+  pipeline. Any other key is an error: the rest of the settings are the
   operator's.
 - **When it is read, and a file with an error.** As for every file of
   Linewright's in the repository
@@ -209,8 +219,8 @@ Linewright keeps secrets out of what it keeps, logs, posts or pushes.
   startup, naming its variable; an empty one is ignored.
 - **A secret** is a credential Linewright reads
   ([Configuration](#configuration)) or passes to a session
-  ([Environment](sessions.md#environment)), or the value of a variable
-  `secrets` names.
+  ([Environment variables](sessions.md#environment-variables)), or the value of
+  a variable `secrets` names.
 - **The `secrets` setting.** `secrets` names the variables whose values are
   secrets; a name ending in `*` names every variable with that prefix. A name
   without `*` whose variable is unset or empty is an error at startup.
@@ -252,7 +262,7 @@ image the operator builds with those in it.
 - A value built from other variables, such as a `PATH` with a directory
   added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
-  `max-runs`, in the repository's file.
+  `max-runs`, in the repository's file, other than the `setup` table.
 - Layers of skills: the repository or the operator replacing Linewright's
   skills.
 - How Linewright is released (`docs/releasing.md`).

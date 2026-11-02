@@ -61,9 +61,11 @@ in `prompts/` ([Prompts](operation.md#prompts)).
 - **When they are read.** As a run starts, from the default branch as it is
   then, so that a change takes effect once merged and every run on a branch
   works from the same files whatever the branch holds; the automation files
-  are read at each poll instead ([Automations](automations.md)).
+  ([Automations](automations.md)) and the `setup` table of `config.toml`
+  ([Environment](sessions.md#environment)) are read at each poll instead.
 - **A file with an error.** A file under `.linewright/` that Linewright
-  cannot use holds the runs it could change. A file that is not one of
+  cannot use holds the runs it could change, and `config.toml` the builds of
+  the environment too. A file that is not one of
   Linewright's, hidden files aside, could be meant for any run, so it holds
   every one. The items wait, and `status` and `explain` name the file and
   the error, until the default branch fixes it. An automation file with an

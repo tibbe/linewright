@@ -26,11 +26,11 @@ Setting the webhook secret turns webhooks on.
   misconfigured one shows as deliveries that never arrive, or that arrive and
   are refused, which the webhook's Recent Deliveries on GitHub and
   Linewright's log both show.
-- **The secret.** The webhook and Linewright share a secret, with which
-  GitHub signs each delivery. The secret is a credential, so it comes from
-  the environment only, as `LINEWRIGHT_WEBHOOK_SECRET`; Linewright does not
-  accept deliveries without one. A delivery whose signature is missing or
-  does not match is refused and logged, and its response does not say why.
+- **The secret.** The webhook and Linewright share a secret, with which GitHub
+  signs each delivery. The secret is a credential, so it comes from environment
+  variables only, as `LINEWRIGHT_WEBHOOK_SECRET`; Linewright does not accept
+  deliveries without one. A delivery whose signature is missing or does not
+  match is refused and logged, and its response does not say why.
 - **Listening.** `serve` then also listens for deliveries on the
   `webhook-address` setting, a host and port (default `0.0.0.0:8080`).
   `once`, `status` and the other commands do not listen.
