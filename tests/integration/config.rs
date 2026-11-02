@@ -11,8 +11,8 @@ use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, RepoSettings, RunKind, SessionSettings, Setting, Setup, Split, StageSet,
-    TimeoutSetting,
+    Effort, Environments, Maintenance, RepoSettings, RunKind, SessionSettings, Setting, Split,
+    StageSet, TimeoutSetting,
 };
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -469,8 +469,8 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     let sources = |config| session(config).sources();
     assert_eq!(
         (
-            sources(&from_flag)[&Setting::SessionPassEnv],
-            sources(&from_flag)[&Setting::SessionEnv]
+            sources(&from_flag)[&Setting::SESSION_PASS_ENV],
+            sources(&from_flag)[&Setting::SESSION_ENV]
         ),
         (
             Source::Layer(Layer::Linewright),
@@ -479,8 +479,8 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     );
     assert_eq!(
         (
-            sources(&from_variable)[&Setting::SessionPassEnv],
-            sources(&from_variable)[&Setting::SessionEnv]
+            sources(&from_variable)[&Setting::SESSION_PASS_ENV],
+            sources(&from_variable)[&Setting::SESSION_ENV]
         ),
         (
             Source::Layer(Layer::Operator),
@@ -489,8 +489,8 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
     );
     assert_eq!(
         (
-            sources(&set_in_file)[&Setting::SessionPassEnv],
-            sources(&set_in_file)[&Setting::SessionEnv]
+            sources(&set_in_file)[&Setting::SESSION_PASS_ENV],
+            sources(&set_in_file)[&Setting::SESSION_ENV]
         ),
         (
             Source::Layer(Layer::Linewright),
@@ -1469,80 +1469,117 @@ fn help_lists_the_ui_address_with_its_default() {
 }
 
 #[test_log::test]
-fn setup_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
-    let setup = |args: &[&str], env: &[(&str, &str)], file| {
-        session(&resolve(args, env, file).unwrap()).setup
+fn maintenance_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
+    let maintenance = |args: &[&str], env: &[(&str, &str)], file| {
+        session(&resolve(args, env, file).unwrap()).maintenance
     };
-    let file = Some("setup = \"make deps\"\n");
-    let command = |text: &str| Setup::from(text.to_string());
+    let file = Some("maintenance = \"make deps\"\n");
+    let command = |text: &str| Maintenance::from(text.to_string());
 
     assert_eq!(
-        setup(&[], &[], None),
-        Sourced::new(Setup::Empty, Layer::Linewright)
+        maintenance(&[], &[], None),
+        Sourced::new(Maintenance::Empty, Layer::Linewright)
     );
     assert_eq!(
-        setup(&[], &[], file),
+        maintenance(&[], &[], file),
         Sourced::new(command("make deps"), Layer::Operator)
     );
     assert_eq!(
-        setup(&[], &[("LINEWRIGHT_SETUP", "npm ci")], file).value,
+        maintenance(&[], &[("LINEWRIGHT_MAINTENANCE", "npm ci")], file).value,
         command("npm ci")
     );
     assert_eq!(
-        setup(
-            &["--setup", "cargo fetch"],
-            &[("LINEWRIGHT_SETUP", "npm ci")],
+        maintenance(
+            &["--maintenance", "cargo fetch"],
+            &[("LINEWRIGHT_MAINTENANCE", "npm ci")],
             file
         )
         .value,
         command("cargo fetch")
     );
-    assert_eq!(setup(&["--setup", ""], &[], file).value, Setup::Empty);
     assert_eq!(
-        session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::SETUP],
+        maintenance(&["--maintenance", ""], &[], file).value,
+        Maintenance::Empty
+    );
+    assert_eq!(
+        session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::Maintenance],
         Source::Layer(Layer::Operator)
     );
 }
 
 #[test_log::test]
-fn a_stages_setup_replaces_the_whole_pipelines_and_an_empty_one_runs_nothing() {
-    let config = resolve(
-        &[],
-        &[],
-        Some(
-            "setup = \"make deps\"\n\n[stage.implement]\nsetup = \"make all\"\n\n\
-             [stage.design]\nsetup = \"\"\n",
-        ),
-    )
-    .unwrap();
+fn the_repositorys_maintenance_ranks_below_the_operators_flag_and_variable_and_above_the_operators_file()
+ {
+    let repo = "maintenance = \"npm ci\"\n";
+    let maintenance = |args: &[&str], env: &[(&str, &str)]| {
+        let config = resolve(args, env, Some("maintenance = \"make deps\"\n")).unwrap();
+        repo_session(&config, repo, WorkKind::Implement).maintenance
+    };
 
     assert_eq!(
-        stage_session(&config, WorkKind::Implement).setup,
-        Sourced::new(Setup::from("make all".to_string()), Layer::Operator)
+        maintenance(&[], &[]),
+        Sourced::new(Maintenance::from("npm ci".to_string()), Layer::Repository)
     );
     assert_eq!(
-        stage_session(&config, WorkKind::Design).setup,
-        Sourced::new(Setup::Empty, Layer::Operator)
+        maintenance(&[], &[("LINEWRIGHT_MAINTENANCE", "cargo fetch")]),
+        Sourced::new(
+            Maintenance::from("cargo fetch".to_string()),
+            Layer::Operator
+        )
     );
     assert_eq!(
-        stage_session(&config, WorkKind::Triage).setup.value,
-        Setup::from("make deps".to_string())
+        maintenance(&["--maintenance", ""], &[]),
+        Sourced::new(Maintenance::Empty, Layer::Operator)
     );
 }
 
 #[test_log::test]
-fn the_repositorys_file_sets_setup_for_the_whole_pipeline_and_in_its_stage_tables() {
-    let config = resolve(&[], &[], Some("setup = \"make deps\"\n")).unwrap();
-    let repo = "setup = \"npm ci\"\n\n[stage.update]\nsetup = \"\"\n";
+fn maintenance_in_a_stages_table_or_front_matter_is_an_error_naming_it_the_whole_pipelines() {
+    let operators = resolve(
+        &[],
+        &[],
+        Some("[stage.implement]\nmaintenance = \"make all\"\n"),
+    )
+    .unwrap_err();
+    let repositorys = format!(
+        "{:#}",
+        RepoSettings::parse("[stage.implement]\nmaintenance = \"make all\"\n").unwrap_err()
+    );
+    let front_matter = format!(
+        "{:#}",
+        automation::parse(
+            &"weekly".parse().unwrap(),
+            "---\non:\n  schedule: \"0 9 * * 1\"\nmaintenance: make lint\n---\nLook around.\n",
+        )
+        .unwrap_err()
+    );
 
-    assert_eq!(
-        repo_session(&config, repo, WorkKind::Rework).setup,
-        Sourced::new(Setup::from("npm ci".to_string()), Layer::Repository)
+    for error in [operators, repositorys, front_matter] {
+        assert!(error.contains("`maintenance`"), "{error}");
+        assert!(error.contains("whole pipeline's"), "{error}");
+    }
+}
+
+#[test_log::test]
+fn setup_as_a_command_is_an_error_saying_to_use_maintenance() {
+    let operators_file = resolve(&[], &[], Some("setup = \"npm ci\"\n")).unwrap_err();
+    let flag = resolve_blaming(&["--setup", "npm ci"], &[], None).unwrap_err();
+    let variable = resolve(&[], &[("LINEWRIGHT_SETUP", "npm ci")], None).unwrap_err();
+    let repositorys = format!(
+        "{:#}",
+        RepoSettings::parse("setup = \"npm ci\"\n").unwrap_err()
     );
-    assert_eq!(
-        repo_session(&config, repo, WorkKind::Update).setup,
-        Sourced::new(Setup::Empty, Layer::Repository)
-    );
+
+    assert!(matches!(flag, ResolveError::CommandLine(_)), "{flag}");
+    for (error, setup, maintenance) in [
+        (operators_file, "`setup`", "`maintenance`"),
+        (flag.to_string(), "`--setup`", "`--maintenance`"),
+        (variable, "`LINEWRIGHT_SETUP`", "`LINEWRIGHT_MAINTENANCE`"),
+        (repositorys, "`setup`", "`maintenance`"),
+    ] {
+        assert!(error.contains(setup), "{error}");
+        assert!(error.contains(maintenance), "{error}");
+    }
 }
 
 #[test_log::test]
@@ -1556,38 +1593,28 @@ fn an_unknown_key_in_a_stages_table_is_refused_with_the_keys_it_holds() {
 
     assert!(error.contains("`setup-command`"), "{error}");
     assert!(
-        error.contains(
-            "`model`, `effort`, `session-timeout`, `setup`, `session-env`, `session-pass-env`"
-        ),
+        error.contains("`model`, `effort`, `session-timeout`, `session-env`, `session-pass-env`"),
         "{error}"
     );
 }
 
 #[test_log::test]
-fn an_automations_setup_comes_before_the_stages_and_the_pipelines() {
-    let config = resolve(&["--setup", "make deps"], &[], None).unwrap();
-    let parse = |front: &str| {
-        automation::parse(
-            &"weekly".parse().unwrap(),
-            &format!("---\non:\n  schedule: \"0 9 * * 1\"\n{front}---\nLook around.\n"),
-        )
-        .unwrap()
-    };
-    let setup = |automation| {
-        config
-            .work
-            .for_run(
-                RunKind::Automation(&automation),
-                &RepoSettings::parse("setup = \"npm ci\"\n").unwrap(),
-                &Environments::default(),
-            )
-            .setup
-    };
+fn an_automations_front_matter_holds_no_maintenance_so_it_runs_the_whole_pipelines() {
+    let config = resolve(&["--maintenance", "make deps"], &[], None).unwrap();
+    let automation = automation::parse(
+        &"weekly".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook around.\n",
+    )
+    .unwrap();
+
+    let settings = config.work.for_run(
+        RunKind::Automation(&automation),
+        &RepoSettings::parse("maintenance = \"npm ci\"\n").unwrap(),
+        &Environments::default(),
+    );
 
     assert_eq!(
-        setup(parse("setup: make lint\n")),
-        Sourced::new(Setup::from("make lint".to_string()), Layer::Repository)
+        settings.maintenance,
+        Sourced::new(Maintenance::from("make deps".to_string()), Layer::Operator)
     );
-    assert_eq!(setup(parse("setup: \"\"\n")).value, Setup::Empty);
-    assert_eq!(setup(parse("")).value, Setup::from("make deps".to_string()));
 }

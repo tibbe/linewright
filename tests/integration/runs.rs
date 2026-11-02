@@ -867,7 +867,7 @@ fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_s
                     (Setting::MODEL, Source::Harness),
                     (Setting::EFFORT, Source::Harness),
                     (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Linewright)),
-                    (Setting::SessionEnv, Source::Layer(Layer::Linewright)),
+                    (Setting::SESSION_ENV, Source::Layer(Layer::Linewright)),
                 ]),
                 prompts: BTreeMap::from([("rework.md".to_string(), Layer::Linewright)]),
             },

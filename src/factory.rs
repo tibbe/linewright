@@ -48,7 +48,7 @@ pub struct FactoryConfig {
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
     pub result_retries: u32,
-    /// The `bash` that runs the setup command.
+    /// The `bash` that runs the maintenance command.
     pub bash: PathBuf,
     /// The operator's settings for sessions.
     pub work: WorkSettings,

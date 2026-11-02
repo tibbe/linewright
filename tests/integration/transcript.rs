@@ -1,7 +1,8 @@
 use linewright::domain::Timestamp;
 use linewright::runs::{RunId, Started, StartedBy};
 use linewright::transcript::{
-    self, After, Follower, SessionRecord, SetupRecord, SetupStatus, Transcript, Verbosity,
+    self, After, Follower, MaintenanceRecord, MaintenanceStatus, SessionRecord, Transcript,
+    Verbosity,
 };
 use serde_json::json;
 
@@ -17,8 +18,8 @@ fn recorded() -> SessionRecord {
         brief: Some("/linewright:implement\n\n# Your task\n\nShip gh.\n".into()),
         followups: vec!["Your answer did not parse as the result.\n\nSend it again.\n".into()],
         ran: None,
-        setup_output: None,
-        setup: None,
+        maintenance_output: None,
+        maintenance: None,
     }
 }
 
@@ -813,60 +814,60 @@ fn time(at: &str) -> Timestamp {
     at.parse().unwrap()
 }
 
-/// The record of a session whose setup command `command` started at
+/// The record of a session whose maintenance command `command` started at
 /// `start`, then, if it has, ended as `ended` gives, `(status, seconds)`,
 /// having written `output`.
 fn setting_up(
     start: &str,
     command: &str,
-    ended: Option<(SetupStatus, f64)>,
+    ended: Option<(MaintenanceStatus, f64)>,
     output: &str,
 ) -> SessionRecord {
     let start = time(start);
-    let mut events = transcript::setup_started(start, command) + "\n";
-    let mut setup_output = None;
+    let mut events = transcript::maintenance_started(start, command) + "\n";
+    let mut maintenance_output = None;
     if let Some((status, seconds)) = ended {
         let at = start
             + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
-        events += &(transcript::setup_ended(at, status, seconds) + "\n");
-        setup_output = Some(output.to_string());
+        events += &(transcript::maintenance_ended(at, status, seconds) + "\n");
+        maintenance_output = Some(output.to_string());
     }
     SessionRecord {
         output: events,
-        setup_output,
+        maintenance_output,
         ..SessionRecord::default()
     }
 }
 
-/// The recorded session after a setup command that succeeded, then one
-/// whose setup command failed, so that it never started.
+/// The recorded session after a maintenance command that succeeded, then one
+/// whose maintenance command failed, so that it never started.
 fn after_setting_up() -> [SessionRecord; 2] {
     let set_up = setting_up(
         "2026-10-13T10:08:56Z",
         "npm ci",
-        Some((SetupStatus::Exited(0), 12.4)),
+        Some((MaintenanceStatus::Exited(0), 12.4)),
         "added 3 packages\nin 12s\n",
     );
     [
         SessionRecord {
             output: set_up.output.clone() + &recorded().output,
             ..SessionRecord {
-                setup_output: set_up.setup_output,
+                maintenance_output: set_up.maintenance_output,
                 ..recorded()
             }
         },
         setting_up(
             "2026-10-13T10:20:00Z",
             "npm ci",
-            Some((SetupStatus::Exited(1), 3.0)),
+            Some((MaintenanceStatus::Exited(1), 3.0)),
             "npm ERR! missing lockfile\n",
         ),
     ]
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Times and Setup.
+/// `docs/specs/design_system.md`, Transcripts, Times and Maintenance.
 #[test_log::test]
-fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only_in_full_or_when_it_failed()
+fn a_maintenance_command_is_its_sessions_first_entry_at_its_start_with_its_output_only_in_full_or_when_it_failed()
  {
     let transcript = of(&after_setting_up());
 
@@ -879,7 +880,7 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
         [
             "run: 105/implement-1",
             "session 1: started 2026-10-13 10:08:56 UTC",
-            " 0:00  setup: npm ci → exit 0, 12s",
+            " 0:00  maintenance: npm ci → exit 0, 12s",
         ]
     );
     assert!(compact[3].starts_with(" 0:15  Bash(ls;"), "{compact:#?}");
@@ -887,7 +888,7 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
         compact[compact.len() - 3..],
         [
             "session 2: started 2026-10-13 10:20:00 UTC",
-            " 0:00  setup: npm ci → exit 1, 3s",
+            " 0:00  maintenance: npm ci → exit 1, 3s",
             "         npm ERR! missing lockfile",
         ]
     );
@@ -895,7 +896,7 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
     assert_eq!(
         full[2..5],
         [
-            " 0:00  setup: npm ci → exit 0, 12s",
+            " 0:00  maintenance: npm ci → exit 0, 12s",
             "         added 3 packages",
             "         in 12s",
         ]
@@ -904,7 +905,7 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
 }
 
 #[test_log::test]
-fn a_setup_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_cancelled() {
+fn a_maintenance_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_cancelled() {
     let shown = |status| {
         let record = setting_up(
             "2026-10-13T10:00:00Z",
@@ -917,22 +918,22 @@ fn a_setup_command_shows_how_it_ended_and_its_output_unless_it_succeeded_or_was_
     };
 
     assert_eq!(
-        shown(SetupStatus::Signalled(9)),
-        " 0:00  setup: make deps → signal 9, 1m 1s\n         fetching"
+        shown(MaintenanceStatus::Signalled(9)),
+        " 0:00  maintenance: make deps → signal 9, 1m 1s\n         fetching"
     );
     assert_eq!(
-        shown(SetupStatus::TimedOut),
-        " 0:00  setup: make deps → timed out, 1m 1s\n         fetching"
+        shown(MaintenanceStatus::TimedOut),
+        " 0:00  maintenance: make deps → timed out, 1m 1s\n         fetching"
     );
     assert_eq!(
-        shown(SetupStatus::Cancelled),
-        " 0:00  setup: make deps → cancelled, 1m 1s"
+        shown(MaintenanceStatus::Cancelled),
+        " 0:00  maintenance: make deps → cancelled, 1m 1s"
     );
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running.
 #[test_log::test]
-fn a_setup_command_shows_running_until_it_ends() {
+fn a_maintenance_command_shows_running_until_it_ends() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
     let transcript = Transcript {
         in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
@@ -948,13 +949,13 @@ fn a_setup_command_shows_running_until_it_ends() {
         shown,
         "run: 105/implement-1\n\
          session 1: started 2026-10-13 10:00:00 UTC\n \
-         0:00  setup: npm ci → running\n"
+         0:00  maintenance: npm ci → running\n"
     );
 }
 
-/// `docs/specs/monitoring.md`, logs, Setup.
+/// `docs/specs/monitoring.md`, logs, Maintenance.
 #[test_log::test]
-fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ended() {
+fn json_gives_a_maintenance_command_with_its_account_and_output_null_until_it_has_ended() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
     let [succeeded, failed] = after_setting_up();
 
@@ -968,7 +969,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
     assert_eq!(
         json(&[running], Verbosity::Compact)[2],
         json!({
-            "type": "setup",
+            "type": "maintenance",
             "session": 1,
             "at": "2026-10-13T10:00:00Z",
             "elapsed_seconds": 0,
@@ -985,7 +986,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
         assert_eq!(
             lines[2],
             json!({
-                "type": "setup",
+                "type": "maintenance",
                 "session": 1,
                 "at": "2026-10-13T10:08:56Z",
                 "elapsed_seconds": 0,
@@ -1001,7 +1002,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
             [
                 json!({"type": "session", "session": 2, "started_at": "2026-10-13T10:20:00Z"}),
                 json!({
-                    "type": "setup",
+                    "type": "maintenance",
                     "session": 2,
                     "at": "2026-10-13T10:20:00Z",
                     "elapsed_seconds": 0,
@@ -1017,7 +1018,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
     let timed_out = setting_up(
         "2026-10-13T10:00:00Z",
         "sleep 9",
-        Some((SetupStatus::TimedOut, 1.0)),
+        Some((MaintenanceStatus::TimedOut, 1.0)),
         "",
     );
     let timed_out = transcript::json_lines(&of(&[timed_out]), Verbosity::Compact);
@@ -1032,7 +1033,7 @@ fn json_gives_a_setup_command_with_its_account_and_output_null_until_it_has_ende
             Verbosity::Compact,
             false
         ),
-        " 0:00  setup: sleep 9 → timed out, 1s\n"
+        " 0:00  maintenance: sleep 9 → timed out, 1s\n"
     );
 }
 
@@ -1081,11 +1082,11 @@ fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_
 
 /// `docs/specs/monitoring.md`, logs, Running in JSON.
 #[test_log::test]
-fn a_setup_line_ended_in_part_does_not_read() {
+fn a_maintenance_line_ended_in_part_does_not_read() {
     let line = |ended| {
         serde_json::from_value::<transcript::Line>(with_keys(
             json!({
-                "type": "setup",
+                "type": "maintenance",
                 "session": 1,
                 "at": "2026-10-13T10:00:00Z",
                 "elapsed_seconds": 0,
@@ -1109,12 +1110,12 @@ fn a_setup_line_ended_in_part_does_not_read() {
 
 /// `docs/specs/design_system.md`, Transcripts, Followed.
 #[test_log::test]
-fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_account() {
+fn following_shows_a_maintenance_command_as_it_starts_and_again_at_its_end_with_its_account() {
     let [succeeded, failed] = after_setting_up();
     let started = succeeded.output.find('\n').unwrap() + 1;
     let ended = started + succeeded.output[started..].find('\n').unwrap() + 1;
     let running = SessionRecord {
-        setup_output: None,
+        maintenance_output: None,
         ..written(&succeeded, started)
     };
     let follow = |after| {
@@ -1142,9 +1143,12 @@ fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_ac
     assert_eq!(text(&before), "run: 105/implement-1\n");
     assert_eq!(
         text(&once_started),
-        "session 1: started 2026-10-13 10:08:56 UTC\n 0:00  setup: npm ci → running\n"
+        "session 1: started 2026-10-13 10:08:56 UTC\n 0:00  maintenance: npm ci → running\n"
     );
-    assert_eq!(text(&all[3..4]), " 0:12  setup: npm ci → exit 0, 12s\n");
+    assert_eq!(
+        text(&all[3..4]),
+        " 0:12  maintenance: npm ci → exit 0, 12s\n"
+    );
     assert!(
         text(&all[4..5]).starts_with(" 0:15  Bash(ls;"),
         "{}",
@@ -1153,8 +1157,8 @@ fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_ac
     assert_eq!(
         text(&rest[rest.len() - 3..]),
         "session 2: started 2026-10-13 10:20:00 UTC\n \
-         0:00  setup: npm ci → running\n \
-         0:03  setup: npm ci → exit 1, 3s\n         \
+         0:00  maintenance: npm ci → running\n \
+         0:03  maintenance: npm ci → exit 1, 3s\n         \
          npm ERR! missing lockfile\n"
     );
     let at_once = follow(None).end(&[succeeded.clone(), failed.clone()]);
@@ -1166,28 +1170,30 @@ fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_ac
     assert_eq!(after_read, all[3..]);
 }
 
-/// A session recorded before a setup command's start and end were: its
+/// A session recorded before a maintenance command's start and end were: its
 /// record holds `setup.json`, written once the command ended.
-fn recorded_before_setup_events(status: SetupStatus, output: &str) -> SessionRecord {
+fn recorded_before_maintenance_events(status: MaintenanceStatus, output: &str) -> SessionRecord {
     SessionRecord {
-        setup: Some(SetupRecord {
+        maintenance: Some(MaintenanceRecord {
             command: "npm ci".into(),
             status,
             duration_seconds: 12.4,
         }),
-        setup_output: Some(output.into()),
+        maintenance_output: Some(output.into()),
         ..SessionRecord::default()
     }
 }
 
 #[test_log::test]
-fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
+fn a_maintenance_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
     let succeeded = SessionRecord {
         output: recorded().output,
-        ..recorded_before_setup_events(SetupStatus::Exited(0), "added 3 packages\n")
+        ..recorded_before_maintenance_events(MaintenanceStatus::Exited(0), "added 3 packages\n")
     };
-    let failed =
-        recorded_before_setup_events(SetupStatus::Exited(1), "npm ERR! missing lockfile\n");
+    let failed = recorded_before_maintenance_events(
+        MaintenanceStatus::Exited(1),
+        "npm ERR! missing lockfile\n",
+    );
 
     let shown = transcript::render(
         &of(&[succeeded.clone(), failed.clone()]),
@@ -1208,7 +1214,7 @@ fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
         shown[1..4],
         [
             "session 1: started 2026-10-13 10:09:08 UTC",
-            "       setup: npm ci → exit 0, 12s",
+            "       maintenance: npm ci → exit 0, 12s",
             " 0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines",
         ]
     );
@@ -1216,7 +1222,7 @@ fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
         shown[shown.len() - 3..],
         [
             "session 2",
-            "       setup: npm ci → exit 1, 12s",
+            "       maintenance: npm ci → exit 1, 12s",
             "         npm ERR! missing lockfile",
         ]
     );
@@ -1225,18 +1231,27 @@ fn a_setup_command_recorded_before_its_start_and_end_were_shows_with_no_time() {
     assert_eq!(followed[followed.len() - 3..], shown[shown.len() - 3..]);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Followed: a setup command's
+/// `docs/specs/design_system.md`, Transcripts, Followed: a maintenance command's
 /// output shows once it has ended, however its end is read.
 #[test_log::test]
-fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside_the_end() {
+fn a_maintenance_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside_the_end() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join(transcript::OUTPUT);
-    let ended =
-        transcript::setup_ended(time("2026-10-13T10:00:03Z"), SetupStatus::Exited(1), 3.0) + "\n";
-    std::fs::write(dir.path().join(transcript::SETUP_OUTPUT), "npm ERR!\n").unwrap();
+    let ended = transcript::maintenance_ended(
+        time("2026-10-13T10:00:03Z"),
+        MaintenanceStatus::Exited(1),
+        3.0,
+    ) + "\n";
+    std::fs::write(
+        dir.path().join(transcript::MAINTENANCE_OUTPUT),
+        "npm ERR!\n",
+    )
+    .unwrap();
     std::fs::write(
         &output,
-        transcript::setup_started(time("2026-10-13T10:00:00Z"), "npm ci") + "\n" + &ended[..5],
+        transcript::maintenance_started(time("2026-10-13T10:00:00Z"), "npm ci")
+            + "\n"
+            + &ended[..5],
     )
     .unwrap();
     let mut record = SessionRecord::read(dir.path()).unwrap();
@@ -1248,10 +1263,10 @@ fn a_setup_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside
 
     record.read_more(dir.path()).unwrap();
 
-    assert_eq!(record.setup_output.as_deref(), Some("npm ERR!\n"));
+    assert_eq!(record.maintenance_output.as_deref(), Some("npm ERR!\n"));
     assert!(
         transcript::render(&of(&[record]), Verbosity::Compact, false)
-            .ends_with(" 0:00  setup: npm ci → exit 1, 3s\n         npm ERR!\n")
+            .ends_with(" 0:00  maintenance: npm ci → exit 1, 3s\n         npm ERR!\n")
     );
 }
 

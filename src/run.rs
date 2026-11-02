@@ -46,14 +46,14 @@ use crate::store::{
 use crate::tracking::FiledTicket;
 use crate::transcript;
 use crate::work_settings::{
-    Environments, RunKind, SessionSettings, Setup, SetupCommand, WorkSettings,
+    Environments, Maintenance, MaintenanceCommand, RunKind, SessionSettings, WorkSettings,
 };
 use crate::working_pull::feedback;
 
 pub(crate) struct Shell {
     pub store: Arc<dyn Store>,
     pub harness: Arc<dyn Harness>,
-    /// The `bash` that runs the setup command.
+    /// The `bash` that runs the maintenance command.
     pub bash: PathBuf,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
@@ -644,7 +644,7 @@ async fn write_hand_back(
 
 /// A run's clone, removed when dropped.
 struct Workspace {
-    /// What the setup command left running, ended before the clone is
+    /// What the maintenance command left running, ended before the clone is
     /// removed.
     leftovers: Option<bash_command::Leftovers>,
     /// `None` once dropped.
@@ -1001,13 +1001,13 @@ struct Opened<'a> {
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
-    /// When the session times out, its setup command included.
+    /// When the session times out, its maintenance command included.
     deadline: tokio::time::Instant,
 }
 
 /// Opens the session of `purpose` in `ws`, with its record and its
-/// attachments directory, registered with the run, and runs its setup
-/// command (docs/specs/runs.md, "Setup"). The command's output is under the
+/// attachments directory, registered with the run, and runs its maintenance
+/// command (docs/specs/runs.md, "Maintenance"). The command's output is under the
 /// session whether or not the agent starts, and its time counts against the
 /// session's timeout.
 async fn open_session<'a>(
@@ -1023,8 +1023,8 @@ async fn open_session<'a>(
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
     let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
-    if let Setup::Command(command) = &settings.setup.value {
-        set_up(shell, ctx, command, &record, deadline, ws).await?;
+    if let Maintenance::Command(command) = &settings.maintenance.value {
+        run_maintenance(shell, ctx, command, &record, deadline, ws).await?;
     }
     Ok(Opened {
         settings,
@@ -1039,14 +1039,14 @@ async fn open_session<'a>(
     })
 }
 
-/// Runs the setup `command` in `ws`, which keeps what it leaves running,
+/// Runs the maintenance `command` in `ws`, which keeps what it leaves running,
 /// until the session's `deadline`, with its start and end in the session's
 /// transcript in `record` and its output beside it. It fails as the session
 /// would end.
-async fn set_up(
+async fn run_maintenance(
     shell: &Shell,
     ctx: &Ctx,
-    command: &SetupCommand,
+    command: &MaintenanceCommand,
     record: &Path,
     deadline: tokio::time::Instant,
     ws: &mut Workspace,
@@ -1063,9 +1063,9 @@ async fn set_up(
     writeln!(
         transcript,
         "{}",
-        transcript::setup_started(started_at, &redaction.apply(command.as_str()))
+        transcript::maintenance_started(started_at, &redaction.apply(command.as_str()))
     )
-    .context("writing the setup command's start")
+    .context("writing the maintenance command's start")
     .map_err(infra)?;
     let request = bash_command::Request {
         command: command.as_str(),
@@ -1076,12 +1076,12 @@ async fn set_up(
             settings.effort_set(),
         ),
         deadline,
-        log: &record.join(transcript::SETUP_OUTPUT),
+        log: &record.join(transcript::MAINTENANCE_OUTPUT),
     };
     let (ran, leftovers) =
         bash_command::run(&shell.bash, request, redaction, ctx.cancel.cancelled())
             .await
-            .context("running the setup command")
+            .context("running the maintenance command")
             .map_err(infra)?;
     ws.leftovers = Some(leftovers);
     let ended_at =
@@ -1089,22 +1089,22 @@ async fn set_up(
     writeln!(
         transcript,
         "{}",
-        transcript::setup_ended(ended_at, ran.status, ran.duration.as_secs_f64())
+        transcript::maintenance_ended(ended_at, ran.status, ran.duration.as_secs_f64())
     )
-    .context("writing the setup command's end")
+    .context("writing the maintenance command's end")
     .map_err(infra)?;
-    set_up_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
+    maintenance_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
 }
 
-/// Why the session ends after the setup command ran in `dir` as `ran`, if
-/// it does (docs/specs/runs.md, "Setup", Failing): a command still running
+/// Why the session ends after the maintenance command ran in `dir` as `ran`, if
+/// it does (docs/specs/runs.md, "Maintenance", Failing): a command still running
 /// at the session's deadline is the session timing out.
-fn set_up_failure(
+fn maintenance_failure(
     ran: &bash_command::Ran,
     dir: &Path,
     settings: &SessionSettings,
 ) -> Option<Failure> {
-    let log_tail = || LogTail::setup(&scrub(&ran.output, dir));
+    let log_tail = || LogTail::maintenance(&scrub(&ran.output, dir));
     let failed = match ran.status {
         bash_command::Status::Exited(0) => return None,
         bash_command::Status::Exited(code) => format!("exited with status {code}"),
@@ -1118,7 +1118,7 @@ fn set_up_failure(
         bash_command::Status::Cancelled => return Some(Failure::Cancelled),
     };
     Some(Failure::Infrastructure {
-        error: anyhow::anyhow!("the setup command {failed}"),
+        error: anyhow::anyhow!("the maintenance command {failed}"),
         note: String::new(),
         log_tail: log_tail(),
     })
@@ -1823,9 +1823,9 @@ async fn update_branch(
 }
 
 /// Works `pr`, of `ticket`, at `task`, bringing the branch up to date first
-/// for an update or a fix-ci and for a rework that asks for it. The setup
+/// for an update or a fix-ci and for a rework that asks for it. The maintenance
 /// command runs on the branch as it was cloned, before any update
-/// (docs/specs/runs.md, "Setup").
+/// (docs/specs/runs.md, "Maintenance").
 /// Feedback that arrives while the session works goes to it before anything
 /// is pushed, for as long as it keeps coming within the session's time.
 async fn pull_work(

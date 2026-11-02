@@ -29,8 +29,8 @@ use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, EntryLine, FollowedLine, Header, Line, Made, SetupEnded, SetupLine, Stamped, ToolLine,
-    Under, Verbosity,
+    self, EntryLine, FollowedLine, Header, Line, Made, MaintenanceEnded, MaintenanceLine, Stamped,
+    ToolLine, Under, Verbosity,
 };
 
 /// A change to the page's transcript that a line of it makes.
@@ -85,8 +85,8 @@ struct SessionView {
     own: Vec<usize>,
     /// Each call's entry, by the ID the agent gives it.
     calls: HashMap<String, usize>,
-    /// Its setup command's entry, once its line has come.
-    setup: Option<usize>,
+    /// Its maintenance command's entry, once its line has come.
+    maintenance: Option<usize>,
 }
 
 struct EntryView {
@@ -141,7 +141,7 @@ impl RunView {
                     entries: vec![],
                     own: vec![],
                     calls: HashMap::new(),
-                    setup: None,
+                    maintenance: None,
                 });
                 let added = self.sessions.last().expect("just pushed");
                 vec![Patch::Append {
@@ -172,15 +172,15 @@ impl RunView {
                 }
                 session.calls.insert(call.tool_use_id.clone(), i);
             }
-            EntryLine::Setup { .. } => {
-                if let Some(known) = session.setup {
+            EntryLine::Maintenance { .. } => {
+                if let Some(known) = session.maintenance {
                     session.entries[known].what = stamped.what.clone();
                     return vec![Patch::Replace {
                         id: entry_id(session, known),
                         html: entry_html(session, known, verbose),
                     }];
                 }
-                session.setup = Some(i);
+                session.maintenance = Some(i);
             }
             EntryLine::Brief { .. }
             | EntryLine::FollowUp { .. }
@@ -318,13 +318,18 @@ fn ran_html(ran: Option<&Ran>) -> String {
     )
 }
 
-/// A setup command's line, opening to its output once it has ended, open
+/// A maintenance command's line, opening to its output once it has ended, open
 /// from the start when it failed, and with `verbose`.
-fn setup_html(stamp: &str, command: &str, ended: Option<&SetupEnded>, verbose: bool) -> String {
+fn maintenance_html(
+    stamp: &str,
+    command: &str,
+    ended: Option<&MaintenanceEnded>,
+    verbose: bool,
+) -> String {
     let command = html::escape(&transcript::shown_command(command));
     let Some(ended) = ended else {
         let running = status_html(Tone::InProgress, "running");
-        return format!(r#"<div class="line">{stamp} setup: {command} → {running}</div>"#);
+        return format!(r#"<div class="line">{stamp} maintenance: {command} → {running}</div>"#);
     };
     let account = if ended.status.failed() {
         status_html(Tone::Failure, &ended.account())
@@ -345,7 +350,7 @@ fn setup_html(stamp: &str, command: &str, ended: Option<&SetupEnded>, verbose: b
         )
     };
     format!(
-        r#"<details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} setup: {command} → {account}</span></summary>{output}</details>"#
+        r#"<details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} maintenance: {command} → {account}</span></summary>{output}</details>"#
     )
 }
 
@@ -378,7 +383,7 @@ fn shown(what: &EntryLine, verbose: bool) -> bool {
         EntryLine::Message { .. }
         | EntryLine::FollowUp { .. }
         | EntryLine::Tool(_)
-        | EntryLine::Setup { .. } => true,
+        | EntryLine::Maintenance { .. } => true,
         EntryLine::Brief { .. }
         | EntryLine::Thinking { .. }
         | EntryLine::Context { .. }
@@ -411,9 +416,9 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
     let stamp = stamp_html(&id, entry.stamp);
     let (kind, body) = match &entry.what {
         EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
-        EntryLine::Setup(SetupLine { command, ended }) => (
-            "setup",
-            setup_html(&stamp, command, ended.as_ref(), verbose),
+        EntryLine::Maintenance(MaintenanceLine { command, ended }) => (
+            "maintenance",
+            maintenance_html(&stamp, command, ended.as_ref(), verbose),
         ),
         EntryLine::Message { text } => ("message", line_html(&stamp, "", text)),
         EntryLine::Thinking { text } => ("thinking", line_html(&stamp, "thinking: ", text)),

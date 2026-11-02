@@ -1,5 +1,5 @@
-//! The setup command, run in each session's clone before the session starts
-//! (`docs/specs/runs.md`, Setup).
+//! The maintenance command, run in each session's clone before the agent's
+//! first prompt (`docs/specs/runs.md`, Maintenance).
 
 use crate::common;
 
@@ -12,7 +12,6 @@ use linewright::domain::Number;
 use linewright::reconcile::WorkKind;
 use linewright::runs::Ending;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
-use linewright::work_settings::{Partial, Setup, StageTable};
 use serde_json::json;
 
 const CONFIG: &str = ".linewright/config.toml";
@@ -53,7 +52,7 @@ fn open_for_triage(world: &World) -> linewright::domain::Number {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_repositorys_setup_runs_in_the_clones_root_and_the_sessions_environment_before_the_session_starts()
+async fn the_repositorys_maintenance_runs_in_the_clones_root_with_the_sessions_environment_variables_before_the_session_starts()
  {
     let mut world = World::with(|config| {
         let session_env = SessionEnv::new(
@@ -65,7 +64,7 @@ async fn the_repositorys_setup_runs_in_the_clones_root_and_the_sessions_environm
     .await;
     commit_config(
         &world,
-        r#"setup = '''printf '%s %s\n' "$GREETING" "$TMPDIR" > made.txt; cat README.md >> made.txt'''"#,
+        r#"maintenance = '''printf '%s %s\n' "$GREETING" "$TMPDIR" > made.txt; cat README.md >> made.txt'''"#,
     )
     .await;
     let seen = Arc::new(Mutex::new(vec![]));
@@ -91,22 +90,7 @@ async fn the_repositorys_setup_runs_in_the_clones_root_and_the_sessions_environm
     );
 }
 
-fn setup(command: &str) -> Setup {
-    Setup::from(command.to_string())
-}
-
-/// The operator's stage table setting `setup`.
-fn stage_setup(setup: Option<Setup>) -> StageTable {
-    StageTable {
-        settings: Partial {
-            setup,
-            ..Partial::default()
-        },
-        ..StageTable::default()
-    }
-}
-
-/// A directory outside every clone, where setup commands leave marks.
+/// A directory outside every clone, where maintenance commands leave marks.
 fn marks() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -121,14 +105,16 @@ fn lines_of(marks: &Path, name: &str) -> Vec<String> {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_setup_command_that_fails_twice_hands_the_item_back_with_the_end_of_its_output() {
+async fn a_maintenance_command_that_fails_twice_hands_the_item_back_with_the_end_of_its_output() {
     let marks = marks();
     let command = format!(
         "echo ran >> '{}/runs'; echo 'npm ERR! missing lockfile'; exit 3",
         marks.path().display()
     );
-    let mut world =
-        World::with(|config| config.work.flags_and_env.setup = Some(setup(&command))).await;
+    let mut world = World::with(|config| {
+        maintaining_with(config, &command);
+    })
+    .await;
     let read = triage_reading(&world, "README.md");
     let issue = open_for_triage(&world);
 
@@ -146,16 +132,16 @@ async fn a_setup_command_that_fails_twice_hands_the_item_back_with_the_end_of_it
     assert!(comment.contains("status 3"), "{comment}");
     assert!(
         comment.contains(
-            "<summary>The end of the setup command's output</summary>\n\n```\nnpm ERR! missing lockfile\n```"
+            "<summary>The end of the maintenance command's output</summary>\n\n```\nnpm ERR! missing lockfile\n```"
         ),
         "{comment}"
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn the_setup_commands_time_counts_against_its_sessions_timeout() {
+async fn the_maintenance_commands_time_counts_against_its_sessions_timeout() {
     let mut world = World::with(|config| {
-        config.work.flags_and_env.setup = Some(setup("sleep 2"));
+        maintaining_with(config, "sleep 2");
         config.work.flags_and_env.session_timeout = Some(Duration::from_secs(10));
     })
     .await;
@@ -182,14 +168,14 @@ async fn the_setup_commands_time_counts_against_its_sessions_timeout() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_setup_command_that_outlasts_its_sessions_timeout_is_the_session_timing_out() {
+async fn a_maintenance_command_that_outlasts_its_sessions_timeout_is_the_session_timing_out() {
     let marks = marks();
     let command = format!(
         "echo ran >> '{}/runs'; echo 'fetching...'; sleep 30",
         marks.path().display()
     );
     let mut world = World::with(|config| {
-        config.work.flags_and_env.setup = Some(setup(&command));
+        maintaining_with(config, &command);
         config.work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
     })
     .await;
@@ -212,34 +198,34 @@ async fn a_setup_command_that_outlasts_its_sessions_timeout_is_the_session_timin
     );
     assert!(!comment.contains("failed twice"), "{comment}");
     assert!(
-        comment.contains("<summary>The end of the setup command's output</summary>"),
+        comment.contains("<summary>The end of the maintenance command's output</summary>"),
         "{comment}"
     );
     assert!(comment.contains("fetching..."), "{comment}");
 }
 
 /// A world whose ticket's pull request the default branch has moved past,
-/// in conflict with it or not, and whose update runs' setup command
-/// appends to `ran` in `marks` what the ticket's file holds.
-async fn moved_past_setting_up(conflicting: bool, marks: &Path) -> (World, Number) {
-    let command = format!("cat src/issue-*.txt >> '{}/ran'", marks.display());
-    crate::pipeline::moved_past_with(
-        Repository::default(),
-        |config| {
-            config
-                .work
-                .stages
-                .insert(WorkKind::Update, stage_setup(Some(setup(&command))));
-        },
-        conflicting,
+/// in conflict with it or not, and whose repository's maintenance command,
+/// set from then on, appends to `ran` in `marks` what the ticket's file
+/// holds.
+async fn moved_past_maintaining(conflicting: bool, marks: &Path) -> (World, Number) {
+    let moved_past =
+        crate::pipeline::moved_past_with(Repository::default(), |_| {}, conflicting).await;
+    commit_config(
+        &moved_past.0,
+        &format!(
+            "maintenance = \"cat src/issue-*.txt >> '{}/ran'\"\n",
+            marks.display()
+        ),
     )
-    .await
+    .await;
+    moved_past
 }
 
 #[test_log::test(tokio::test)]
-async fn an_update_with_a_conflict_runs_the_setup_command_on_the_branch_before_updating_it() {
+async fn an_update_with_a_conflict_runs_the_maintenance_command_on_the_branch_before_updating_it() {
     let marks = marks();
-    let (mut world, _) = moved_past_setting_up(true, marks.path()).await;
+    let (mut world, _) = moved_past_maintaining(true, marks.path()).await;
 
     world.poll().await;
 
@@ -272,12 +258,14 @@ fn running(pid: &str) -> bool {
 }
 
 #[test_log::test(tokio::test)]
-async fn cancelling_a_run_during_its_setup_command_ends_the_command_at_once() {
+async fn cancelling_a_run_during_its_maintenance_command_ends_the_command_at_once() {
     let marks = marks();
     let pid = marks.path().join("pid");
     let command = format!("echo $$ > '{}'; exec sleep 60", pid.display());
-    let mut world =
-        World::with(|config| config.work.flags_and_env.setup = Some(setup(&command))).await;
+    let mut world = World::with(|config| {
+        maintaining_with(config, &command);
+    })
+    .await;
     implement(&world);
     let ticket = open_ticket(&world, "Do the thing");
     let started = std::time::Instant::now();
@@ -298,15 +286,17 @@ async fn cancelling_a_run_during_its_setup_command_ends_the_command_at_once() {
 }
 
 #[test_log::test(tokio::test)]
-async fn what_the_setup_command_leaves_running_is_ended_once_the_run_ends() {
+async fn what_the_maintenance_command_leaves_running_is_ended_once_the_run_ends() {
     let marks = marks();
     let pid = marks.path().join("pid");
     let command = format!(
         "(while true; do echo still here; sleep 0.05; done) & echo $! > '{}'",
         pid.display()
     );
-    let mut world =
-        World::with(|config| config.work.flags_and_env.setup = Some(setup(&command))).await;
+    let mut world = World::with(|config| {
+        maintaining_with(config, &command);
+    })
+    .await;
     let during = Arc::new(Mutex::new(vec![]));
     world.harness.on(WorkKind::Triage, {
         let (during, pid) = (during.clone(), pid.clone());
@@ -342,17 +332,20 @@ async fn gone(pid: &str) -> bool {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_automations_run_whose_setup_command_fails_fails_with_the_end_of_its_output() {
+async fn an_automations_run_whose_maintenance_command_fails_fails_with_the_end_of_its_output() {
     let world = World::new().await;
     world
         .store
         .commit(
             "maintainer",
             "main",
-            &[(
-                ".linewright/automations/look.md",
-                "---\non:\n  schedule: \"0 0 1 1 *\"\nsetup: echo 'no such tool'; exit 127\n---\nLook.\n",
-            )],
+            &[
+                (
+                    ".linewright/automations/look.md",
+                    "---\non:\n  schedule: \"0 0 1 1 *\"\n---\nLook.\n",
+                ),
+                (CONFIG, "maintenance = \"echo 'no such tool'; exit 127\"\n"),
+            ],
             "Add an automation",
         )
         .await
@@ -368,7 +361,7 @@ async fn an_automations_run_whose_setup_command_fails_fails_with_the_end_of_its_
     let error = format!("{error:#}");
     assert!(error.contains("status 127"), "{error}");
     assert!(
-        error.contains("The end of the setup command's output:\nno such tool"),
+        error.contains("The end of the maintenance command's output:\nno such tool"),
         "{error}"
     );
     assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
@@ -378,7 +371,7 @@ async fn an_automations_run_whose_setup_command_fails_fails_with_the_end_of_its_
 async fn a_bash_that_does_not_start_hands_back_after_a_retry_without_a_tail() {
     let mut world = World::with(|config| {
         config.bash = "/nowhere/bash".into();
-        config.work.flags_and_env.setup = Some(setup("true"));
+        maintaining_with(config, "true");
     })
     .await;
     let issue = open_for_triage(&world);

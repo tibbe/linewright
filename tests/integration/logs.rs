@@ -239,24 +239,24 @@ async fn following_a_run_that_has_ended_shows_its_transcript_and_exits() {
     }
 }
 
-/// `world_in_work_dir`'s, with `setup` the setup command of every stage
+/// `world_in_work_dir`'s, with `maintenance` the maintenance command of every session
 /// and `secrets` Linewright's secrets.
-async fn world_setting_up_with(setup: &str, secrets: Secrets) -> (World, tempfile::TempDir) {
+async fn world_maintaining_with(maintenance: &str, secrets: Secrets) -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
         config.secrets = secrets;
-        setting_up_with(config, setup);
+        maintaining_with(config, maintenance);
     })
     .await;
     (world, work_dir)
 }
 
-/// `docs/specs/monitoring.md`, logs, Setup.
+/// `docs/specs/monitoring.md`, logs, Maintenance.
 #[test_log::test(tokio::test)]
-async fn logs_shows_the_setup_command_a_session_ran() {
+async fn logs_shows_the_maintenance_command_a_session_ran() {
     let (mut world, work_dir) =
-        world_setting_up_with("echo 'added 3 packages'", Secrets::default()).await;
+        world_maintaining_with("echo 'added 3 packages'", Secrets::default()).await;
     implement_as_recorded(&world);
     world.store.open_issue(
         "maintainer",
@@ -271,7 +271,7 @@ async fn logs_shows_the_setup_command_a_session_ran() {
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout.lines().nth(2),
-        Some(" 0:00  setup: echo 'added 3 packages' → exit 0, 0s"),
+        Some(" 0:00  maintenance: echo 'added 3 packages' → exit 0, 0s"),
         "{}",
         output.stdout
     );
@@ -279,8 +279,8 @@ async fn logs_shows_the_setup_command_a_session_ran() {
 
 /// `docs/specs/operation.md`, Secrets.
 #[test_log::test(tokio::test)]
-async fn logs_shows_a_secret_in_the_setup_command_redacted() {
-    let (mut world, work_dir) = world_setting_up_with(
+async fn logs_shows_a_secret_in_the_maintenance_command_redacted() {
+    let (mut world, work_dir) = world_maintaining_with(
         "echo 'token npm_s3cr3t' > /dev/null",
         secrets_of(&[("NPM_TOKEN", "npm_s3cr3t")]),
     )
@@ -300,7 +300,7 @@ async fn logs_shows_a_secret_in_the_setup_command_redacted() {
     assert!(
         output
             .stdout
-            .contains("setup: echo 'token [redacted]' > /dev/null")
+            .contains("maintenance: echo 'token [redacted]' > /dev/null")
             && !output.stdout.contains("npm_s3cr3t"),
         "{}",
         output.stdout

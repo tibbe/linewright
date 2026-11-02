@@ -1420,7 +1420,7 @@ mod tests {
                 "model": "operator",
                 "effort": "harness",
                 "session-timeout": "linewright",
-                "setup": "linewright",
+                "maintenance": "linewright",
                 "session-env": "linewright",
                 "session-pass-env": "linewright",
             })

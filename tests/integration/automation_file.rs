@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use linewright::automation::{
     self, Automation, AutomationName, LastScheduledRuns, Unparsed, parse,
 };
-use linewright::work_settings::{Effort, Partial, Setup};
+use linewright::work_settings::{Effort, Partial};
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -155,7 +155,7 @@ fn a_leftover_timeout_does_not_parse_naming_the_key() {
 }
 
 #[test_log::test]
-fn the_front_matter_takes_the_session_settings_the_repositorys_file_takes() {
+fn the_front_matter_takes_model_effort_and_session_timeout() {
     let automation = parse(
         &name("weekly"),
         "---
@@ -164,7 +164,6 @@ on:
 model: opus
 effort: high
 session-timeout: 15m
-setup: make deps
 ---
 Look.
 ",
@@ -177,7 +176,6 @@ Look.
             model: Some("opus".to_string()),
             effort: Some(Effort::High),
             session_timeout: Some(Duration::from_mins(15)),
-            setup: Some(Setup::from("make deps".to_string())),
         }
     );
 }
