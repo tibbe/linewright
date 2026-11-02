@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::HashMap;
 use std::fmt::{self, Write as _};
 use std::num::NonZeroU64;
@@ -37,14 +36,13 @@ pub struct View {
     pub polls: Polls,
     /// Holds the usage limit last refused for, whether or not it has reset.
     pub memory: Memory,
-    /// The pipeline's runs in flight, as the reconcile step counts them: a
-    /// cut that ended since the snapshot was taken counts too.
+    /// The pipeline's runs in flight, a cut that ended since the snapshot
+    /// was taken among them.
     pub live: Vec<LiveRun>,
     pub in_flight: Vec<InFlight>,
     pub automations: AutomationFiles,
     pub last_scheduled_runs: LastScheduledRuns,
-    /// The files of the repository's Linewright cannot use, as the last
-    /// reconcile read them.
+    /// The files of the repository's Linewright cannot use, as last read.
     pub unusable: Vec<Unusable>,
 }
 
@@ -148,7 +146,7 @@ pub struct Polls {
 }
 
 /// The last poll that succeeded, `None` before the first, and the next
-/// poll, as `status` shows them.
+/// poll.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PollsShown {
     pub last: Option<Timestamp>,
@@ -208,7 +206,7 @@ impl FailedPolls {
     }
 }
 
-/// An open managed item, as `status` lists it.
+/// An open managed item, as listed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Listed {
     pub number: Number,
@@ -285,7 +283,7 @@ pub struct UnparsedAutomation {
     pub reason: String,
 }
 
-/// A drain under way, as `status` shows it.
+/// A drain under way, as shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DrainShown {
     pub since: Timestamp,
@@ -661,7 +659,8 @@ pub(crate) fn describe_next_run(schedule: Schedule) -> Phrase {
 }
 
 /// An item's state in the States words (`docs/specs/design_system.md`,
-/// States), then what `detail` and `tickets` say beyond it.
+/// States), then what `detail` and `tickets` say beyond it: nothing beyond
+/// the state of a pull request that was merged or closed unmerged.
 pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&Tickets>) -> Phrase {
     let beyond = match detail {
         Some(Detail::InReview(review)) => {
@@ -672,7 +671,6 @@ pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&T
             author,
         }) => Some(Phrase::from(*pull_request).text(format!(", opened by {author}"))),
         Some(Detail::PullRequest { review, .. }) => Some(review.describe().into()),
-        // A pull request's state says how it ended.
         Some(Detail::Ended {
             ended: Ended::Merged | Ended::ClosedUnmerged,
             ..

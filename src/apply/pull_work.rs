@@ -10,8 +10,7 @@ use crate::reconcile::WorkKind;
 use crate::results::ThreadReply;
 use crate::working_pull::Feedback;
 
-/// The writes of a finished pull request run, which the run makes in field
-/// order.
+/// The writes of a finished pull request run, in the order they are made.
 #[derive(Debug, PartialEq, Eq)]
 pub struct PullWorkWrites {
     /// The pull request's new description, if the session gave one.

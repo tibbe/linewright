@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -180,8 +179,7 @@ pub mod label {
     /// See [`super::HandBackKind::Stall`].
     pub const STALLED: &str = "linewright:stalled";
     /// What [`DESIGNED`] was called before an earlier release: read as it,
-    /// so that no spec change processed before the upgrade is taken up
-    /// again; never set.
+    /// never set.
     pub const SPEC_PROCESSED: &str = "linewright:spec-processed";
 
     pub const ANSWERS: [(&str, &str); 2] = [
@@ -827,9 +825,9 @@ impl Issue {
     }
 
     /// Whether it is a tracking issue (docs/specs/design.md, "Cutting"): it
-    /// carries `linewright:designed` and has tickets cut from it. An issue
-    /// cut into tickets is labeled designed last, so one with tickets but no
-    /// label is a cut that stopped part way, and no tracking issue yet.
+    /// carries `linewright:designed` and has tickets cut from it. One with
+    /// tickets but no label is a cut that stopped part way, and no tracking
+    /// issue yet.
     pub fn is_tracking(&self, linewright: &Login) -> bool {
         is_tracking(&self.labels, &self.sub_issues, linewright)
     }
@@ -903,8 +901,7 @@ impl Issue {
     /// Whether `linewright` may manage it (`docs/specs/repository.md`,
     /// Managed items): it has worked it, as [`Issue::worked_by`] tells with
     /// `closing`, or it asks for Linewright's work, as
-    /// [`Issue::asks_for_work`] tells with `marking`. Whether it is managed
-    /// is `managed::classify`'s to decide.
+    /// [`Issue::asks_for_work`] tells with `marking`.
     pub fn candidate(&self, linewright: &Login, closing: &[ClosingPull], marking: Marking) -> bool {
         self.signs(closing).candidate(linewright, marking)
     }
@@ -1221,7 +1218,7 @@ pub struct PullSigns<'a> {
 /// Among which pull requests a snapshot holds an open one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PullHeld {
-    /// Linewright's own, which reconcile acts on ([`Snapshot::pulls`]).
+    /// Linewright's own ([`Snapshot::pulls`]).
     Linewrights,
     /// A person's that Linewright may manage ([`Snapshot::peoples_pulls`]).
     Peoples,
@@ -1647,10 +1644,10 @@ pub struct Snapshot {
     pub default_branch: String,
     pub issues: Vec<Issue>,
     /// Linewright's open pull requests, and those of its closed ones that
-    /// close an issue it holds. Reconcile acts on these as Linewright's own.
+    /// close an issue it holds.
     pub pulls: Vec<Pull>,
     /// Other people's open pull requests that Linewright may manage
-    /// ([`Pull::held`]). Reconcile does not act on them.
+    /// ([`Pull::held`]).
     #[serde(default)]
     pub peoples_pulls: Vec<Pull>,
     pub merged: Vec<MergedPull>,
@@ -1661,8 +1658,6 @@ pub struct Snapshot {
     /// it holds and Linewright's pull requests closed without merging that
     /// close one, whenever they closed, and the pull requests Linewright
     /// worked closed without merging within the Done window, whoever opened
-    /// them, for the board's Done column (`docs/specs/design_system.md`,
-    /// "The board"), which keeps only those worked. The reconcile ignores
     /// them.
     #[serde(default)]
     pub closed: Vec<ClosedItem>,
@@ -2322,7 +2317,6 @@ impl Snapshot {
             if unkept.is_empty() {
                 return;
             }
-            // A tracking issue dropped can leave its tickets unkept.
             self.closed.retain(|item| !unkept.contains(&item.number));
         }
     }
@@ -2330,9 +2324,7 @@ impl Snapshot {
     /// The open issues `linewright` filed as a spec change's tracking issue,
     /// before a spec change had an issue of its own, with tickets cut from
     /// them, that lack `linewright:designed`: those it filed before a
-    /// tracking issue carried the label, which Linewright labels at startup
-    /// so that their cuts are not discarded. A spec change's issue without
-    /// the label is a cut to discard, as any issue's is.
+    /// tracking issue carried the label.
     pub fn unlabeled_tracking_issues(&self, linewright: &Login) -> Vec<Number> {
         self.issues
             .iter()
@@ -2347,8 +2339,7 @@ impl Snapshot {
     }
 
     /// The closed tickets of the tracking issues it holds, open or closed,
-    /// that it does not yet hold among the closed items, which a store reads
-    /// after the rest.
+    /// that it does not yet hold among the closed items.
     pub fn unheld_closed_tickets(&self, linewright: &Login) -> BTreeSet<Number> {
         self.held_tickets(linewright)
             .filter(|ticket| !ticket.is_open())
@@ -2357,10 +2348,9 @@ impl Snapshot {
             .collect()
     }
 
-    /// Linewright's pull requests closed without merging that close the
-    /// closed tickets of the tracking issues it holds, that it does not yet
-    /// hold among the closed items, which a store reads after those tickets
-    /// ([`Snapshot::unheld_closed_tickets`]).
+    /// Linewright's pull requests closed without merging that close a ticket
+    /// of a tracking issue it holds, as the ticket's closed item tells, and
+    /// that it does not yet hold among the closed items.
     pub fn unheld_closing_pulls(&self, linewright: &Login) -> BTreeSet<Number> {
         let tickets: BTreeSet<Number> = self
             .held_tickets(linewright)
@@ -2574,9 +2564,9 @@ mod tests {
 
         assert!(held("2026-09-30T12:00:00Z", "2026-09-30T12:00:00Z"));
         assert!(held("2026-09-26T12:00:00Z", "2026-09-26T12:00:00Z"));
-        // Merged before both windows, designed within the Done window.
-        assert!(held("2026-09-20T12:00:00Z", "2026-09-26T12:00:00Z"));
-        assert!(!held("2026-09-20T12:00:00Z", "2026-09-22T12:00:00Z"));
+        let before_both_windows = "2026-09-20T12:00:00Z";
+        assert!(held(before_both_windows, "2026-09-26T12:00:00Z"));
+        assert!(!held(before_both_windows, "2026-09-22T12:00:00Z"));
     }
 
     #[test_log::test]

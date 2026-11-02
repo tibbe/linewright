@@ -1,4 +1,3 @@
-// comments: pending
 //! The Working a pull request table (`docs/specs/pull_requests.md`): the
 //! facts its rows read about a pull request Linewright opened ([`facts`]),
 //! and the first row that holds ([`row`]).
@@ -130,8 +129,6 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
         {
             Verdict::NotReported
         }
-        // Not rebaseable, a merge by rebase is tried and fails: the update
-        // row comes first, and failed merges hand it back.
         (Mergeability::Clean, _) => Verdict::Allows,
         (Mergeability::Blocked { requires }, _) => Verdict::Blocks {
             requires: requires.clone(),
@@ -140,7 +137,6 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
                 .last_commented(pr.number)
                 .is_some_and(|at| at > round_start),
         },
-        // Behind and conflicting have a fact of their own, read first.
         (Mergeability::Unknown | Mergeability::Behind | Mergeability::Conflicting, _) => {
             Verdict::NotReported
         }
@@ -169,7 +165,7 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
 }
 
 /// A row of the Working a pull request table. Rows that do the same share a
-/// variant, and the order of [`row`]'s branches keeps them apart.
+/// variant.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Row {
     Rework,
@@ -328,9 +324,7 @@ pub fn feedback<'a>(
 }
 
 /// It cannot be merged by a method the repository allows: GitHub reports it
-/// not rebaseable, and the repository allows rebase. Whether the update run
-/// rebases it is [`rebases_to_repair`](crate::reconcile::rebases_to_repair)'s
-/// to say.
+/// not rebaseable, and the repository allows rebase.
 fn unmergeable(pr: &Pull, policy: &Policy) -> bool {
     pr.rebaseability == Rebaseability::NotRebaseable
         && policy.allowed_merge_methods.contains(MergeMethod::Rebase)
@@ -367,8 +361,11 @@ fn restarted_at(pr: &Pull, linewright: &Login) -> Option<Timestamp> {
     restarted
 }
 
-/// The inline comments submitted with an approval are made no later than it,
-/// so they don't hold the merge.
+/// Whether a person holds `pr`'s merge: someone other than Linewright has
+/// commented or reviewed and has not approved since. The inline comments
+/// submitted with an approval, which GitHub dates no later than it
+/// (<https://docs.github.com/en/rest/pulls/reviews#submit-a-review-for-a-pull-request>),
+/// do not hold it.
 fn is_held(pr: &Pull, linewright: &Login) -> bool {
     let comments = pr
         .comments

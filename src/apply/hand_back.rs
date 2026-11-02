@@ -103,8 +103,8 @@ pub struct HandBackWrites {
 }
 
 /// What handing `item` back for `hand_back` writes on it. An issue's own
-/// design goes with it, so that the next attempt designs it again, while a
-/// ticket keeps the design of the item it was cut from
+/// design goes with it, while a ticket keeps the design of the item it was
+/// cut from
 /// (docs/specs/repository.md, "Handing back"). A pull request's comment
 /// says that assigning `linewright` again tries again.
 pub fn hand_back(item: HandedBack<'_>, hand_back: &HandBack, linewright: &Login) -> HandBackWrites {
@@ -133,10 +133,7 @@ pub fn hand_back(item: HandedBack<'_>, hand_back: &HandBack, linewright: &Login)
     }
 }
 
-/// Whether `hand_back` labels its item a stall. The label goes on while
-/// Linewright is still assigned: an item left so by a stop asks for the
-/// work it stalled on, and the stall is cleared as it is worked again,
-/// unless the item is let go of instead (docs/specs/repository.md,
+/// Whether `hand_back` labels its item a stall (docs/specs/repository.md,
 /// "Stalls").
 fn stalls(hand_back: &HandBack) -> bool {
     match hand_back.kind {

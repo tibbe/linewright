@@ -1,4 +1,3 @@
-// comments: pending
 //! The item page's facts about #N (`docs/specs/design_system.md`, The item
 //! page): its state and its card, what Linewright waits for
 //! and the items it relates to, from what `explain` answers of it, the view
@@ -44,7 +43,8 @@ pub enum StateFact {
         card: Card,
     },
     /// A tracking issue: its state, and when its lane finished, if it
-    /// finished, on the board or off it.
+    /// finished: on the board, its lane's finish time; off it, once it is
+    /// closed, the later of its tickets' finish and its own closing.
     Tracking {
         state: Option<State>,
         finished: Option<Timestamp>,
@@ -92,7 +92,6 @@ pub fn item_facts(
     now: Timestamp,
 ) -> ItemFacts {
     let number = answer.number();
-    // A managed item's card, on the board or off it.
     let card_of = |item: Number| -> Option<(Column, Card)> {
         if let Some((column, card)) = board.card(item) {
             return Some((column, card.clone()));
@@ -167,9 +166,6 @@ pub fn item_facts(
                 card: card.clone(),
             }
         }
-        // A tracking issue has no card: its lane's finish time while it is
-        // on the board; off it, once it is closed, the later of its
-        // tickets' and its own.
         (Answer::LeftAlone(_) | Answer::Managed(_), _) => StateFact::Tracking {
             state: answer.state(),
             finished: lane.and_then(Lane::finished).or_else(|| {

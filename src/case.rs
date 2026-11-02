@@ -1,4 +1,3 @@
-// comments: pending
 use std::path::Path;
 use std::sync::Arc;
 
@@ -247,8 +246,12 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `out` ends up holding the store's final state as files and every
-/// session's record under `sessions/`.
+/// Replays the case in `case_dir` until nothing is left to do, failing if
+/// that takes more than 500 polls or `out` is not empty. A case's issue opens labeled `ready-for-agent` when Linewright
+/// wrote it and `needs-triage` otherwise, with only the comments people
+/// wrote. The replay gives CI no grace and schedules no automations. `out`
+/// ends up holding the store's final state as files and every session's
+/// record under `sessions/`.
 pub async fn replay(
     case_dir: &Path,
     out: &Path,
@@ -302,9 +305,6 @@ pub async fn replay(
             comments,
             ..
         } => {
-            // A ticket the factory wrote is already briefed; anything else
-            // starts at triage. The factory's own comments are its output,
-            // not the case.
             let entry = if *author == case.linewright {
                 label::READY_FOR_AGENT
             } else {
@@ -316,9 +316,7 @@ pub async fn replay(
             }
         }
     }
-    // The implementer's own run of the repository's checks stands in for CI.
     config.ci_grace = chrono::TimeDelta::zero();
-    // Automations, whose agents read GitHub, are not captured or replayed.
     config.schedule_automations = false;
     config.work_dir = out.canonicalize()?;
     let mut factory = Factory::start(store.clone(), harness, clock, config).await?;

@@ -5,7 +5,7 @@ use crate::domain::{Issue, Login, StatusLabel, addressed_to, label};
 use crate::results::{TriageOutcome, TriageResult};
 use crate::store::Categories;
 
-/// The writes of a triage result, which the run makes in field order.
+/// The writes of a triage result, in the order they are made.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Triage {
     /// The people to assign; none means no assignment.

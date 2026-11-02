@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 
 use std::sync::LazyLock;
@@ -111,7 +110,6 @@ impl TryFrom<RawIssueWork> for IssueWork {
         if raw.tickets.is_empty() {
             return Ok(IssueWork::AsItIs);
         }
-        // The schema requires a `comment` with tickets.
         Ok(IssueWork::Cut(Cut {
             tickets: raw.tickets.try_into()?,
             comment: raw.comment.unwrap_or_default().trim().to_string(),
@@ -262,6 +260,9 @@ impl TryFrom<Vec<TicketDraft>> for Tickets {
     }
 }
 
+/// `drafts` ordered so that every ticket comes after those blocking it,
+/// keeping their order wherever that already holds, or why they cannot be:
+/// a repeated id, a blocker that is not a ticket, or a cycle.
 fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
     let mut by_id = BTreeMap::new();
     for ticket in drafts {
@@ -277,7 +278,6 @@ fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
             ));
         }
     }
-    // Kahn's algorithm, keeping the session's order among unblocked tickets.
     let mut placed: BTreeMap<&str, usize> = BTreeMap::new();
     let mut ordered = vec![];
     while ordered.len() < drafts.len() {
@@ -501,8 +501,7 @@ impl ResultSchema {
         ResultSchema::Automation,
     ];
 
-    /// Its file name and text, embedded from the spec so the binary checks
-    /// the spec's file and nothing else.
+    /// Its file name and text, as the spec's file holds them.
     fn file(self) -> (&'static str, &'static str) {
         match self {
             ResultSchema::Triage => (
@@ -631,7 +630,6 @@ fn branch_outcome<'a>(
 fn mismatch(schema: &Schema, value: &Value) -> Option<String> {
     let mut lines = vec![];
     for error in schema.validator.iter_errors(value) {
-        // The top-level `oneOf` picks a branch by `outcome`.
         let (ValidationErrorKind::OneOfNotValid { context }, true) =
             (error.kind(), error.instance_path().is_empty())
         else {
@@ -728,20 +726,34 @@ fn is_object(text: &str) -> bool {
 /// The content of the last fenced code block in `text`, whatever its info
 /// string ([CommonMark](https://spec.commonmark.org/0.31.2/#fenced-code-blocks)).
 fn last_fenced_block(text: &str) -> Option<&str> {
+    #[derive(Clone, Copy)]
+    struct OpenFence {
+        fence_char: char,
+        fence_len: usize,
+        content_start: usize,
+    }
+
     let mut last = None;
-    // The open fence's character and length, and where its content starts.
-    let mut open: Option<(char, usize, usize)> = None;
+    let mut open: Option<OpenFence> = None;
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
         let fence = line.trim_start();
         let fence_char = fence.chars().next().filter(|c| *c == '`' || *c == '~');
         let fence_len = fence_char.map_or(0, |c| fence.chars().take_while(|x| *x == c).count());
         match (open, fence_char) {
-            (None, Some(c)) if fence_len >= 3 => open = Some((c, fence_len, offset + line.len())),
-            (Some((c, len, start)), Some(d))
-                if c == d && fence_len >= len && fence[fence_len..].trim().is_empty() =>
+            (None, Some(c)) if fence_len >= 3 => {
+                open = Some(OpenFence {
+                    fence_char: c,
+                    fence_len,
+                    content_start: offset + line.len(),
+                });
+            }
+            (Some(opened), Some(d))
+                if opened.fence_char == d
+                    && fence_len >= opened.fence_len
+                    && fence[fence_len..].trim().is_empty() =>
             {
-                last = Some(&text[start..offset]);
+                last = Some(&text[opened.content_start..offset]);
                 open = None;
             }
             _ => {}
