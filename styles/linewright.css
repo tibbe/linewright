@@ -1,7 +1,4 @@
-/* comments: pending */
-/* The web UI's stylesheet (docs/specs/web/design_system.md), which
-   `scripts/check css` builds into assets/linewright.css with Tailwind's
-   standalone CLI. Tailwind writes the classes it finds in the sources below
+/* Tailwind writes the classes it finds in the sources below
    (https://tailwindcss.com/docs/detecting-classes-in-source-files), and
    daisyUI, vendored beside this file as its standalone install says
    (https://daisyui.com/docs/install/standalone/), its components and
@@ -24,36 +21,31 @@
   themes: false;
 }
 
-/* Linewright's own light and dark themes (docs/specs/web/design_system.md,
-   Colour scheme): daisyUI's `light` and `dark` with the Colour scheme's
-   roles, Page as `base-100`, Lane as `base-200`, Border as `base-300`, Text
-   as `base-content`, and Card, which is lighter than the Page and so is no
-   `base-*`, as `--card`, and Muted text as `--muted`. Each is a step of
-   Radix Slate
+/* Each colour but white is a step of Radix Slate
    (https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale),
    copied from `@radix-ui/colors`' `slate.css` and `slate-dark.css`. */
 @plugin "./daisyui-theme.mjs" {
   name: "light";
   default: true;
   color-scheme: light;
-  --color-base-100: #f9f9fb; /* Slate 2 */
-  --color-base-200: #f0f0f3; /* Slate 3 */
-  --color-base-300: #d9d9e0; /* Slate 6 */
-  --color-base-content: #1c2024; /* Slate 12 */
-  --card: #ffffff; /* white */
-  --muted: #60646c; /* Slate 11 */
+  --color-base-100: #f9f9fb;
+  --color-base-200: #f0f0f3;
+  --color-base-300: #d9d9e0;
+  --color-base-content: #1c2024;
+  --card: #ffffff;
+  --muted: #60646c;
 }
 
 @plugin "./daisyui-theme.mjs" {
   name: "dark";
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: #212225; /* Slate dark 3 */
-  --color-base-200: #18191b; /* Slate dark 2 */
-  --color-base-300: #363a3f; /* Slate dark 6 */
-  --color-base-content: #edeef0; /* Slate dark 12 */
-  --card: #2e3135; /* Slate dark 5 */
-  --muted: #b0b4ba; /* Slate dark 11 */
+  --color-base-100: #212225;
+  --color-base-200: #18191b;
+  --color-base-300: #363a3f;
+  --color-base-content: #edeef0;
+  --card: #2e3135;
+  --muted: #b0b4ba;
 }
 
 /* The Card colour as Tailwind's `bg-card`, and Muted text as `text-muted`
@@ -64,10 +56,6 @@
   --color-muted: var(--muted);
 }
 
-/* The page's gutter, as `px-page` and `mx-page`: the inset of everything in
-   the content from its edge, the same on every page (templates/layout.html).
-   Widening it must keep the board fitting at the width
-   docs/specs/web/design_system.md, Board, sets. */
 @theme {
   --spacing-page: 1rem;
 }
@@ -82,19 +70,11 @@
   }
 }
 
-/* What daisyUI has no component for: the scroll box of a page that fills
-   the viewport (templates/layout.html), the tail of the page's tooltip, the
-   link to an item on GitHub beside the link to its page, the board's lane
-   heads, a status among a page's facts, and the run page's transcript,
-   which the server writes as `logs` shows it. */
 @layer components {
   .scroll-box {
     @apply min-h-0 flex-1 overflow-auto;
   }
 
-  /* The page's script moves the tip of the page's tooltip inside the
-     viewport with daisyUI's `--tt-trans`; its tail stays over the trigger
-     (assets/linewright.js). */
   #tip::after {
     --tt-trans: -50%;
   }
@@ -105,13 +85,6 @@
     font-size: 0.8em;
   }
 
-  /* A name cut to fit (docs/specs/design_system.md, Layout;
-     docs/specs/web/design_system.md, Layout), as `html::titled` marks it,
-     on one line (`name-cut-1`) or two (`name-cut-2`), applied to the
-     element that holds it. Each is a flex row in which only the page link
-     holding the title may shrink, so that the cut falls on the title. A
-     holder is no daisyUI component, such as `card-title`, whose layout its
-     own utilities layer would put over this. */
   .name-cut-1,
   .name-cut-2 {
     @apply gap-0;
@@ -126,8 +99,6 @@
     @apply inline-flex items-baseline;
   }
 
-  /* As an item of its own, a lane head's tail would lose the space it
-     starts with. */
   .name-cut-1 > * {
     @apply whitespace-pre;
   }
@@ -136,16 +107,10 @@
     @apply flex min-w-0 shrink items-baseline gap-x-[0.25em] whitespace-nowrap;
   }
 
-  /* Clamped, not kept on one line by `nowrap`, so that its smallest width
-     is its longest word, as wrapping text's is, and a table cell holding it
-     can narrow. */
   .name-cut-1 .title {
     @apply min-w-0 line-clamp-1 whitespace-normal;
   }
 
-  /* The link to GitHub is the row's next item after the clamped page
-     link, at the end of its last line, and a leading icon is beside the
-     first line. */
   .name-cut-2 {
     @apply flex items-start;
   }
@@ -166,24 +131,10 @@
     @apply mt-[calc((1lh-1em)/2)] mr-[0.25em];
   }
 
-  /* A lane's head, unfinished or finished, sticky under the board's column
-     heads while the reader is in its lane, in its lane's colour so that it
-     reads as part of it while stuck (templates/board.html). It fills its
-     lane from border to border, padding its own sides as the lane's cells
-     do, and its top corners follow the lane's, the lane's radius less its
-     border. While it is stuck partway down its lane, those corners uncover
-     nothing, as their radius, `--radius-box` less `--lane-border`, is less
-     than the cells' inset from the lane's border, `--lane-padding`: check
-     this when any of them changes. */
   .board .lane-head {
     @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) rounded-t-[calc(var(--radius-box)-var(--lane-border))] bg-base-200 px-(--lane-padding) pt-2 font-semibold;
   }
 
-  /* A card status on the board (docs/specs/web/design_system.md, Board):
-     a card's left edge and its icon in its colour, each reading `--tone`,
-     which the card's `Tone::accent` class sets (templates/board.html). The
-     edge is an inset shadow, which the card's `shadow-sm` draws with its
-     own, as its `border` utilities would override a border here. */
   .board .card.toned {
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
@@ -192,23 +143,14 @@
     @apply text-(--tone);
   }
 
-  /* A status among a page's facts (docs/specs/design_system.md, Facts):
-     its icon and words in the colour of `--tone`, which its `Tone::accent`
-     class sets (templates/macros.html, `status_text`). */
   .status-text {
     @apply text-(--tone);
   }
 
-  /* A status's icon, before its words on the board and among the facts. */
   :is(.board .toned, .status-text) svg.icon {
     @apply mr-1 inline-block align-[-0.125em];
   }
 
-  /* An item among a page's facts, as its card is (docs/specs/design_system.md,
-     The item page): its card status's icon in the colour of `--tone`, which
-     its `Tone::accent` class sets, and its pull request icon, before its
-     heading, and a space after it, before the next on its line
-     (templates/macros.html, `facts`). */
   .related-item svg {
     @apply mr-1 inline-block align-[-0.125em];
   }
@@ -226,7 +168,6 @@
     @apply bg-warning/20;
   }
 
-  /* Secondary text (docs/specs/web/design_system.md, Colour scheme). */
   .transcript :is(.thinking, .context, .event, .other, .brief) .text {
     @apply text-muted;
   }

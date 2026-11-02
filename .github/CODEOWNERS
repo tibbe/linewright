@@ -1,7 +1,3 @@
-# comments: pending
-# Changes to these files need a human's review: agents must not merge them
-# themselves.
-
 /docs/ @tibbe
 /briefs/ @tibbe
 /GLOSSARY.md @tibbe

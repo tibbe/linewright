@@ -1,27 +1,6 @@
 #!/usr/bin/env bash
-# Starts Playwright MCP, the agent sessions' headless browser, which Claude
-# Code runs from /etc/claude-code/managed-mcp.json and speaks MCP with on
-# stdin and stdout. Its options:
+# Playwright MCP's options:
 # https://github.com/microsoft/playwright-mcp#configuration
-#
-# - --browser chromium: Playwright's own Chromium, installed in the image. The
-#   default, Google Chrome, has no Linux arm64 build.
-# - --headless: the container has no display. Playwright MCP picks headless
-#   here anyway; the flag keeps a change of default from undoing it.
-# - --no-sandbox: the service drops every capability, sets no-new-privileges
-#   and keeps Docker's default seccomp profile, which leaves Chromium no
-#   sandbox it can start. The pages are the agent's own code, which already
-#   runs unsandboxed in this container. Playwright also turns the sandbox off
-#   by default here; the flag keeps a change of default from undoing it.
-# - --isolated: keeps the browser profile in memory, off the read-only root
-#   and out of the session's cache.
-# - --output-dir: screenshots taken without a filename, and the like, go to
-#   the session's TMPDIR, which Linewright deletes when the session ends. By
-#   default they go to .playwright-mcp in the clone, where an agent could
-#   commit them.
-#
-# Playwright already passes Chromium --disable-dev-shm-usage (chromiumSwitches
-# in playwright-core), so Docker's 64 MB /dev/shm is enough.
 exec node "$NODE_PATH/@playwright/mcp/cli.js" \
   --browser chromium --headless --no-sandbox --isolated \
   --output-dir "${TMPDIR:-/tmp}/playwright-mcp" "$@"

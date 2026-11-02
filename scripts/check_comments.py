@@ -1,12 +1,10 @@
 """`scripts/check comments`: prints `path:line: <why>` for every comment block
 in the tracked files that is not one of the four kinds CODING_STANDARDS.md
-allows, and `path: <why>` for every file whose pending mark is stale, and exits
-with 1 if it printed anything."""
+allows, and exits with 1 if it printed anything."""
 
 import os, re, subprocess, sys
 from collections import namedtuple
 
-MARK = "comments: pending"
 VENDORED_OR_MODEL = re.compile(
     r"^docs/model/|^assets/htmx\.min\.js$|^assets/hx-sse\.js$|^styles/daisyui(-theme)?\.mjs$"
 )
@@ -409,25 +407,12 @@ def violations(path, lang, src, comments):
     return found
 
 
-def pending_mark(lang, comments):
-    top = 2 if comments and comments[0].line == 1 and directive(lang, comments[0]) else 1
-    for comment in comments:
-        if comment.line == top and not comment.trailing and comment.text.strip() == MARK:
-            return comment
-    return None
-
-
 def outcome(path, src):
     """What the check reports for the file at `path` holding `src`."""
     lang = language(path, src)
     if VENDORED_OR_MODEL.search(path) or lang is None:
         return []
-    comments = lang.lex(src)
-    mark = pending_mark(lang, comments)
-    found = violations(path, lang, src, [c for c in comments if c is not mark])
-    if mark:
-        return [] if found else [f"{path}: no longer breaks the comment rules; remove its pending mark"]
-    return found
+    return violations(path, lang, src, lang.lex(src))
 
 
 def main():

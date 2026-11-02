@@ -1,20 +1,7 @@
-# comments: pending
-# Builds the images `compose.yaml` runs, as CI does from each commit on
-# `main` (`.github/workflows/docker.yml`):
-#
-#   LINEWRIGHT_COMMIT=$(git rev-parse HEAD) LINEWRIGHT_TAG=sha-... \
-#     docker compose -f compose.yaml -f compose.build.yaml build
-#
-# `LINEWRIGHT_COMMIT` is the commit the images are built from, which the
-# binary reports and the images' labels name.
-
 x-labels: &labels
   org.opencontainers.image.source: https://github.com/tibbe/linewright
   org.opencontainers.image.revision: ${LINEWRIGHT_COMMIT:?the commit the images are built from}
 
-# The agents' user: a uid no user on a host is likely to have, so the files
-# they write on a host's disk are no one else's, in the group `users` (100 on
-# Debian and Unraid), so the host's users can read them.
 x-user: &user
   LINEWRIGHT_UID: "10001"
   LINEWRIGHT_GID: "100"
@@ -38,8 +25,6 @@ services:
 
   proxy:
     build:
-      # Built from source, as the image Stripe publishes,
-      # ghcr.io/stripe/smokescreen, is not public.
       dockerfile_inline: |
         FROM golang:1.26-alpine AS build
         ARG SMOKESCREEN_VERSION=v0.1.0

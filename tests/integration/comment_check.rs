@@ -1,6 +1,5 @@
 //! `scripts/check comments`: every comment is one of the four kinds
-//! `CODING_STANDARDS.md` allows, and a file marked `comments: pending` still
-//! breaks the rules.
+//! `CODING_STANDARDS.md` allows.
 
 use std::path::Path;
 use std::process::Command;
@@ -175,27 +174,6 @@ fn what_only_looks_like_a_comment_inside_a_string_passes() {
             ("styles/app.css", css),
         ]),
         Vec::<String>::new()
-    );
-}
-
-#[test_log::test]
-fn a_file_marked_pending_is_skipped_until_it_no_longer_breaks_the_rules() {
-    assert_eq!(
-        reports(&[
-            (
-                "src/dirty.rs",
-                "// comments: pending\n// Narrates.\nfn f() {}\n"
-            ),
-            (
-                "src/clean.rs",
-                "// comments: pending\n/// One.\nfn f() {}\n"
-            ),
-            (
-                "run",
-                "#!/usr/bin/env bash\n# comments: pending\n# Narrates.\necho\n"
-            ),
-        ]),
-        ["src/clean.rs: no longer breaks the comment rules; remove its pending mark"]
     );
 }
 

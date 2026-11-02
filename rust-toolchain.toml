@@ -1,6 +1,3 @@
-# The toolchain for development and CI: pinned, so a new release's warnings
-# and formatting land in a deliberate upgrade, not in an unrelated change
-# (https://doc.rust-lang.org/cargo/guide/continuous-integration.html).
 [toolchain]
 channel = "1.99.1"
 profile = "minimal"
