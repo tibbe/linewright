@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# comments: pending
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -11,26 +10,11 @@ true | 1) fix=false ;;
 *) fix=true ;;
 esac
 
-# The tools below are fetched from their releases and checked against these
-# hashes, so this is the one place their versions are set: rumdl
-# (https://github.com/rvben/rumdl), Docker Compose
-# (https://github.com/docker/compose), which validates a compose file without
-# a Docker daemon, and cargo-nextest (https://nexte.st), which names and kills
-# a hung test, and Tailwind's standalone CLI
-# (https://tailwindcss.com/docs/installation/tailwind-cli), which builds the
-# web UI's stylesheet.
 rumdl_version=0.2.79
 compose_version=5.6.0
 nextest_version=0.9.148
 tailwind_version=4.3.3
 
-# The model of the spec (docs/model) is checked with Quint
-# (https://quint-lang.org), which npm installs from the model's lockfile,
-# checking each package's integrity hash. Quint compiles a model to TLA+ with
-# Apalache (https://github.com/apalache-mc/apalache) and checks it with the
-# TLC in Apalache's release, which needs Java 21, here Temurin's
-# (https://adoptium.net), and runs a model's scenarios on its Rust evaluator
-# (https://github.com/quint-co/quint). The versions are Quint's own pins.
 apalache_version=0.62.4
 quint_evaluator_version=v0.7.1
 temurin_version=21.0.13+9
@@ -49,8 +33,6 @@ has_sha256() {
 install_tool() {
   local dir=$1 name=$2 url=$3 sha=$4 member=${5:-} tmp
   tmp="$(mktemp -d)"
-  # Renamed into place, so a check running at the same time never sees half
-  # a binary.
   if curl -fsSL -o "$tmp/download" "$url" &&
     has_sha256 "$tmp/download" "$sha" &&
     if [ -n "$member" ]; then
@@ -77,8 +59,6 @@ no_release() {
 install_tree() {
   local dir=$1 member=$2 url=$3 sha=$4 tmp
   tmp="$(mktemp -d)"
-  # Moved into place whole, so a check running at the same time never sees
-  # half of it.
   if curl -fsSL -o "$tmp/download" "$url" &&
     has_sha256 "$tmp/download" "$sha" &&
     mkdir "$tmp/tree" && tar -xzf "$tmp/download" -C "$tmp/tree" &&
@@ -218,8 +198,8 @@ quint() {
       "$sha" quint_evaluator || return 1
   fi
   bin="$(java21)" || return 1
-  # Apalache writes its output under the directory it runs in, so Quint runs
-  # in a scratch one, and is given absolute paths.
+  # Apalache writes its output under the directory it runs in:
+  # https://apalache-mc.org/docs/apalache/running.html#4-detailed-output
   tmp="$(mktemp -d)"
   (cd "$tmp" && QUINT_HOME="$home" PATH="$bin:$PATH" "$dir/node_modules/.bin/quint" "$@")
   status=$?
@@ -235,15 +215,12 @@ check_markdown() {
   if $fix; then
     rumdl check --fix .
   else
-    # rumdl itself is not on the PATH.
     rumdl check . 2>&1 | sed "s/^Run \`rumdl fmt\`/Run \`scripts\/check markdown\`/"
   fi
 }
 
-# The web UI's stylesheet, built from styles/linewright.css with daisyUI, is
-# committed, so that a cargo build needs no other toolchain. Outside CI it is
-# rebuilt; in CI it fails when the committed one is not what the sources
-# build.
+# Outside CI, builds assets/linewright.css from styles/linewright.css; in CI,
+# fails when assets/linewright.css is not what styles/linewright.css builds.
 check_css() {
   local built output status=0
   if $fix; then
@@ -251,8 +228,6 @@ check_css() {
     return
   fi
   built="$(mktemp)"
-  # Tailwind reports on success too, so its output is shown only when it
-  # fails.
   if ! output="$(tailwind --input styles/linewright.css --output "$built" --minify 2>&1)"; then
     echo "$output"
     status=1
@@ -264,48 +239,31 @@ check_css() {
   return "$status"
 }
 
-# The deployment's compose files against the compose specification: their
-# keys, types and references between services, networks and volumes, alone
-# as a host runs them and with the builds CI runs. Its `.env` and override
-# are the host's, so neither is read, and the commit CI builds from is not
-# set, so the build file is not interpolated.
+# Fails when the deployment's compose files, alone and with the builds, break
+# the compose specification, reading neither a host's `.env` nor its override.
 check_compose() {
   compose -f deploy/compose.yaml config --quiet --no-env-resolution &&
     compose -f deploy/compose.yaml -f deploy/compose.build.yaml config \
       --quiet --no-env-resolution --no-interpolate
 }
 
-# Outside CI, clippy's machine-applicable suggestions are applied and
-# formatted first, with warnings allowed, since under `deny` cargo would skip
-# the crates that depend on one with warnings left
-# (https://doc.rust-lang.org/cargo/reference/config.html#buildwarnings), and
-# their warnings would go unfixed. Then the check runs as in CI and reports,
-# and fails on, what is left. The fix pass's own output and status are
-# dropped, since the check repeats any error or warning in it.
+# Outside CI, first applies and formats clippy's machine-applicable
+# suggestions. Fails on what clippy then reports.
 check_clippy() {
   local args=(--all-targets --locked --quiet)
   if $fix; then
+    # Under `deny`, cargo skips the crates that depend on one with warnings:
+    # https://doc.rust-lang.org/cargo/reference/config.html#buildwarnings
     CARGO_BUILD_WARNINGS=allow cargo clippy --fix --allow-dirty --allow-staged \
       "${args[@]}" >/dev/null 2>&1 || true
     check_fmt
   fi
   cargo clippy "${args[@]}"
 }
-# An override in .config/nextest.toml that matches no test, such as one
-# left behind by a rename, would silently stop applying, so each must match
-# one.
-#
-# The tests run the git binary that the `git` on the path runs. A `git` on
-# the path may be a stub that finds another git on every run, as macOS's
-# /usr/bin/git does with xcrun, which takes twice as long as the git command
-# itself, and the tests run git hundreds of times each. git's install puts
-# a `git` in the directory `git --exec-path` names, which holds only git and
-# its helpers, so putting it first on the path shadows nothing else.
-#
-# Every test is `#[test_log::test]`, around `#[tokio::test]` where it is
-# async, so that a failing test's output shows what was logged up to the
-# failure. Outside CI a bare `#[test]` or `#[tokio::test]` is rewritten; in CI
-# it fails the check.
+# Runs the tests, with the git binary that the `git` on the path runs. Fails
+# on an override in .config/nextest.toml that matches no test, and on a test
+# that is not `#[test_log::test]`, around `#[tokio::test]` where it is async,
+# which outside CI it rewrites instead.
 check_test() {
   local filter status=0 exec_path bare
   if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
@@ -334,8 +292,6 @@ check_test() {
 }
 check_doc() { cargo doc --no-deps --locked --quiet; }
 
-# The models of the spec in docs/model, and what `scripts/check model MODEL
-# [NAME...]` was given.
 models="pipeline cut spec_change pull_request"
 model_args=()
 
@@ -343,8 +299,7 @@ model_args=()
 # scenario (`run`) with `quint test`, a `temporal` property with TLC, and any
 # other definition as an invariant with TLC. A row's witness
 # (`rowNUnreached`) holds when TLC finds a state that violates it, where the
-# row is the first that holds. S6_noFlap reads a ghost only `initFlaps`
-# keeps, so it is checked from there.
+# row is the first that holds. S6_noFlap is checked from `initFlaps`.
 check_property() {
   local file=$1 name=$2 args output
   if grep -qE "^\s*run $name\b" "$file"; then
@@ -395,7 +350,7 @@ check_one_model() {
 
 # The checks of every model that take minutes, not hours: its scenarios, its
 # invariants and, for Working a pull request, each row's witness. It leaves
-# out S6's flaps and the temporal properties, most of the full run.
+# out S6's flaps and the temporal properties.
 check_model-quick() {
   local name file status=0 row
   for name in $models; do
@@ -412,10 +367,9 @@ check_model-quick() {
   return "$status"
 }
 
-# Each clause the model's comments quote is still in the spec, so that a
-# changed clause shows where the model is to change with it. A quote may
-# elide with "...", and leave out the spec's parenthetical links and code.
-# Whitespace and Markdown's emphasis, code and links are not compared.
+# Fails on a clause the model's comments quote that is not in the spec. A
+# quote may elide with "...", and leave out the spec's parenthetical links and
+# code. Whitespace and Markdown's emphasis, code and links are not compared.
 check_model-quotes() {
   python3 -I - docs/model/*.qnt <<'EOF'
 import glob, re, sys
@@ -430,7 +384,6 @@ spec = plain(" ".join(open(f).read() for f in spec_files))
 comment = re.compile(r"\s*(?:///?|/\*\*|\*(?!/))\s?(.*)")
 status = 0
 for path in sys.argv[1:]:
-    # Each run of comment lines is one text, so a quote may wrap.
     runs, run = [], []
     for number, line in enumerate(open(path), 1):
         m = comment.match(line)
@@ -458,9 +411,7 @@ EOF
 
 # Fails on every comment that is not one of the four kinds CODING_STANDARDS.md
 # allows, in every tracked file but Markdown, the spec's model, vendored files
-# and files without comments. A file whose top holds the pending mark,
-# `comments: pending`, is skipped while it still breaks the rules, and fails
-# once it no longer does.
+# and files without comments.
 check_comments() {
   python3 -I scripts/check_comments.py
 }
@@ -486,9 +437,6 @@ check_model() {
 }
 
 stages=("fmt markdown compose css comments" "clippy" "test doc")
-# Run only when named, not by CI: the model takes about two hours, and its
-# quick checks about eight minutes. The model's quotes are to join the first
-# stage once the model quotes the spec as it now reads.
 named_only="model-quotes model-quick model"
 
 usage() {
@@ -532,8 +480,6 @@ log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 for i in "${!stages[@]}"; do
   for name in ${stages[$i]}; do
-    # The tests print only what failed, was slow or hung, and as it happens,
-    # so a hang still names its test.
     if [ "$name" = test ]; then
       if check_test; then
         passed="$passed $name"

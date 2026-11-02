@@ -1,7 +1,6 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
-{#- The classes of a card that shows a card status in `tone`, which the
-    stylesheet's rules for it read. -#}
+{#- The classes of a card that shows a card status in `tone`. -#}
 {%- macro toned(tone) -%}
 {%- if let Some(tone) = tone %} toned {{ tone.accent() }}{% endif -%}
 {%- endmacro -%}
@@ -33,29 +32,9 @@
 {%- endmacro -%}
 {%- block main -%}
 <section id="board" class="scroll-box @container">
-{#- Six columns, never cut, with a lane per piece of work as rows under
-    them; the finished lanes folded, under one fold, after the rest. Each
-    fold has an id, so that the stream's updates keep it as the reader left
-    it.
-    The board is the page's scroll box, so that its heads stick as it
-    scrolls either way. Each lane is a block of its own rather than
-    part of one grid, because a grid item sticks only within its grid area:
-    https://developer.mozilla.org/en-US/docs/Web/CSS/position#sticky -#}
-{#- The board's columns share its width, each at least 200px
-    (`docs/specs/web/design_system.md`, Board). Every grid on the board
-    takes them from `--columns`, so that the column heads and each lane's
-    cells line up. The board is as wide as the grids at their narrowest,
-    six columns and the five `gap-2` gaps between them, and the lane's
-    inset on each side, so that the lane heads span the cells under them.
-    Each lane and its cards are as `docs/specs/web/design_system.md`,
-    Board, has them. The lane pads only its bottom: its head and its cells
-    each pad their own sides by `--lane-padding`, so that the head fills the
-    lane from border to border. `--lane-inset` is the distance from a lane
-    box's outer edge to its head's text and its cells, that padding and the
-    lane's border, and the column heads are inset by it, so that they stay
-    over the cells. The lane has no top padding, as its head's own gives the
-    space above its text, and no `overflow`, which would stop its head
-    sticking. -#}
+{#- A sticky box stays within its containing block, and sticks to the
+    scrollport of its nearest scroll container:
+    https://drafts.csswg.org/css-position/#stickypos-insets -#}
 <div class="board min-w-[calc(6*200px+5*--spacing(2)+2*var(--lane-inset))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem] [--lane-padding:--spacing(2)] [--lane-border:1px] [--lane-inset:calc(var(--lane-padding)+var(--lane-border))]">
 <div class="sticky top-0 z-20 grid h-(--column-heads) grid-cols-(--columns) items-center gap-2 bg-base-100 px-(--lane-inset)">
 {%- for column in board.columns %}

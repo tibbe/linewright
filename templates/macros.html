@@ -1,13 +1,11 @@
 {#- A status as a daisyUI badge in its tone's colour, holding the tone's
-    icon and its words, so that it is never told by colour alone. The words
-    are one element, so that the badge's flex layout keeps them together. -#}
+    icon and its words, so that it is never told by colour alone. -#}
 {%- macro status(tone, word) -%}
 <span class="tone badge badge-sm h-auto min-h-5 {{ tone.colour() }}">{% call icon(tone) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
-    the tone's icon and its words in its colour, with nothing behind them.
-    The stylesheet colours both from the `--tone` its accent sets. -#}
+    the tone's icon and its words in its colour, with nothing behind them. -#}
 {%- macro status_text(tone, words) -%}
 <span class="status-text {{ tone.accent() }}">{% call icon(tone) %}{% endcall %}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
@@ -15,9 +13,7 @@
 {#- A page's facts (`docs/specs/web/design_system.md`, Facts), drawn as a
     board card is, their labels in a column of their own in Muted text, and
     each line of a value a block of its own. An item among them is shown as
-    its card is, its card status's icon in place of its line. The labels
-    and values are the cells of the card's grid, so it pads itself in place
-    of a `card-body`. -#}
+    its card is, its card status's icon in place of its line. -#}
 {%- macro facts(facts) -%}
 <dl class="{% call card_look() %}{% endcall %} grid w-fit grid-cols-[max-content_1fr] gap-x-6 gap-y-2 p-4">
 {%- for fact in facts %}
@@ -43,7 +39,7 @@
 {%- endmacro -%}
 
 {#- The classes of a board card's look (`docs/specs/web/design_system.md`,
-    Board), which the facts share (Facts). -#}
+    Board). -#}
 {%- macro card_look() -%}
 card card-sm border border-base-300 bg-card shadow-sm
 {%- endmacro -%}
@@ -93,8 +89,8 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- endmacro -%}
 
 {#- What a run is of, as the Item column of a list of runs names it
-    (`docs/specs/design_system.md`, Lists of runs). An automation is not a
-    name, so in a cut name's holder its link is cut on its own. -#}
+    (`docs/specs/design_system.md`, Lists of runs). An automation, being no
+    name, is cut on its own in a cut name's holder. -#}
 {%- macro item_cell(item) -%}
 {%- match item -%}
 {%- when crate::web::runs_table::ItemCell::Item(item) -%}

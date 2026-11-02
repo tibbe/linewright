@@ -1,8 +1,5 @@
 # syntax=docker/dockerfile:1
-# comments: pending
 
-# Playwright MCP and Playwright, as the lockfile pins them. npm, with the
-# hundreds of packages Debian splits it into, stays in this stage.
 FROM runtime AS playwright
 USER root
 RUN apt-get update \
@@ -10,8 +7,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/playwright
 COPY deploy/playwright/package.json deploy/playwright/package-lock.json ./
-# Fails the build unless the one playwright installed is the version
-# @playwright/mcp uses, so the browser installed below is the one it drives.
 RUN npm ci --no-audit --no-fund \
     && test ! -e node_modules/@playwright/mcp/node_modules \
     && node -e ' \
@@ -24,28 +19,18 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev curl procps nodejs \
     && rm -rf /var/lib/apt/lists/*
-# A headless Chromium that sessions drive through Playwright MCP, to see the
-# pages they serve on localhost. The browser is the revision the pinned
-# Playwright expects, read-only to the agents. Both of its builds are
-# installed: Playwright MCP runs the full Chromium, and a script's
-# chromium.launch() with no channel runs the headless shell.
 COPY --link --from=playwright /opt/playwright /opt/playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     NODE_PATH=/opt/playwright/node_modules
-# fonts-dejavu-core: without it, Chromium resolves the generic monospace and
-# system-ui families to WenQuanYi Zen Hei, one of the CJK fonts --with-deps
-# installs, so Latin text set in them renders in a CJK font.
 RUN ln -s "$NODE_PATH/playwright/cli.js" /usr/local/bin/playwright \
     && playwright install --with-deps chromium \
     && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=755 deploy/playwright-mcp /usr/local/bin/playwright-mcp
-# Takes exclusive control of MCP: in this image, a repository's .mcp.json,
-# plugins' servers and --mcp-config don't load.
+# Takes exclusive control of MCP, so that a repository's .mcp.json, plugins'
+# servers and --mcp-config don't load:
 # https://code.claude.com/docs/en/mcp#managed-mcp-configuration
 COPY deploy/managed-mcp.json /etc/claude-code/managed-mcp.json
-# sccache, so each session's fresh clone compiles the dependencies from the
-# cache that earlier sessions filled, not from scratch.
 ARG SCCACHE_VERSION=0.18.0 TARGETARCH
 RUN <<EOF
 set -eu

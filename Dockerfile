@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
-# comments: pending
 
 ARG DEBIAN_RELEASE=trixie
-# To bump a pin, change its version here and its two sha256s in the tools
-# stages, gh's from
+# The sha256s in the tools stages are gh's from
 # https://github.com/cli/cli/releases/download/v<version>/gh_<version>_checksums.txt
 # and Claude Code's from
 # https://downloads.claude.ai/claude-code-releases/<version>/manifest.json
@@ -14,8 +12,6 @@ FROM rust:1-slim-${DEBIAN_RELEASE} AS build
 WORKDIR /src
 COPY rust-toolchain.toml ./
 RUN rustup toolchain install
-# The commit the binary is built from, which it reports: the build context
-# has no `.git` to read it from.
 ARG LINEWRIGHT_COMMIT
 RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
@@ -30,9 +26,6 @@ RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     cargo build --release --locked \
     && cp target/release/lw /usr/local/bin/lw
 
-# gh's apt repository keeps only its newest release and Claude Code's only
-# its newest few, so a pin there breaks once newer ones come out. Their
-# releases stay downloadable, each architecture's checked by its sha256.
 FROM scratch AS tools-amd64
 ARG GH_VERSION CLAUDE_CODE_VERSION
 ADD --checksum=sha256:e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d \
@@ -56,7 +49,6 @@ RUN --mount=type=bind,from=tools,source=/gh.deb,target=/tmp/gh.deb \
         bash ca-certificates git jq python3 ripgrep tini /tmp/gh.deb \
     && rm -rf /var/lib/apt/lists/*
 COPY --link --from=tools /claude /usr/local/bin/claude
-# Fails the build when a pin did not take effect.
 ARG GH_VERSION CLAUDE_CODE_VERSION
 RUN gh --version | grep -qF "gh version ${GH_VERSION} " \
     && claude --version | grep -qF "${CLAUDE_CODE_VERSION} "

@@ -1,29 +1,21 @@
-// comments: pending
-// Linewright's own script for the web UI (docs/specs/design_system.md): it
-// says since when the page lost `serve`, shows times and durations in the
-// page's language and the reader's time zone, keeping them up, keeps a run's
-// transcript at its latest entry while the reader is there, keeps each
-// fold as the reader opened or closed it through updates, and shows the
-// page's tooltip. htmx's
-// `hx-sse` extension keeps the page up from its event stream:
-// https://four.htmx.org/extensions/hx-sse (htmx 4.0.0).
+/**
+ * The web UI's script (docs/specs/design_system.md): it says since when the
+ * page lost `serve`, shows times and durations in the page's language and the
+ * reader's time zone, keeping them up, keeps a run's transcript at its latest
+ * entry while the reader is there, keeps each fold as the reader opened or
+ * closed it through updates, and shows the page's tooltip.
+ */
 (() => {
   "use strict";
 
-  // An update morphs the page into the server's, but for whether a fold is
-  // open, which is the reader's until they open the page again. The hook is
-  // htmx's `htmx:before:morph:attr` event:
+  // A hook that returns false keeps the attribute from being morphed:
   // https://four.htmx.org/docs/extension-authoring-guide#event-hooks
   htmx.registerExtension("linewright-folds", {
     htmx_before_morph_attr: (element, detail) =>
       !(element.tagName === "DETAILS" && detail.attrName === "open"),
   });
 
-  // Every time and duration reads in the page's language, as the words
-  // around it do, and in the reader's time zone.
   const lang = document.documentElement.lang;
-  // "1 day ago", never "yesterday": the days are whole days back, not
-  // calendar days.
   const relative = new Intl.RelativeTimeFormat(lang, { numeric: "always" });
   const absolute = new Intl.DateTimeFormat(lang, {
     year: "numeric",
@@ -41,9 +33,11 @@
     day: "numeric",
   });
 
-  // A past time `at` as of `now` in words, rounded down: `just now`, then
-  // minutes, hours or days up to 30 days, then its date, with its year where
-  // that is not this year's.
+  /**
+   * A past time `at` as of `now` in words, rounded down: `just now`, then
+   * minutes, hours or days up to 30 days, then its date, with its year where
+   * that is not this year's.
+   */
   function ago(at, now) {
     const seconds = Math.floor((now - at) / 1000);
     if (seconds < 60) return "just now";
@@ -54,17 +48,16 @@
     return `on ${(thisYear ? dateThisYear : dateWithYear).format(at)}`;
   }
 
-  // A duration in narrow units, balanced into days, hours, minutes and
-  // seconds, of which it shows the two largest that are not zero (`1d 5m`).
-  // Where the browser lacks Intl.DurationFormat, a duration keeps the
-  // server's text.
   const durations = Intl.DurationFormat && new Intl.DurationFormat(lang, { style: "narrow" });
-  // `durations` writes nothing for a duration of zero, which reads `0s`.
   const zeroDuration = Intl.DurationFormat &&
     new Intl.DurationFormat(lang, { style: "narrow", secondsDisplay: "always" });
-  // A settled duration, as the server writes one: `datetime="PT{seconds}S"`.
+  /** A settled duration's `time`, whose `datetime` is `PT{seconds}S`. */
   const settledDuration = '[datetime^="PT"]';
 
+  /**
+   * `seconds` in narrow units, balanced into days, hours, minutes and
+   * seconds, of which it shows the two largest that are not zero (`1d 5m`).
+   */
   function duration(seconds) {
     if (seconds === 0) return zeroDuration.format({ seconds: 0 });
     const balanced = {
@@ -77,9 +70,12 @@
     return durations.format(Object.fromEntries(largest));
   }
 
-  // A past time relative, with the absolute time in the page's tooltip; a
-  // future one absolute, with no tip; a settled duration from its seconds,
-  // and a running one as long as it has run.
+  /**
+   * Shows a past time relative, with the absolute time in the page's tooltip;
+   * a future one absolute, with no tip; and, where the browser has
+   * Intl.DurationFormat, a settled duration from its seconds and a running one
+   * as long as it has run.
+   */
   function tick() {
     const now = Date.now();
     for (const time of document.querySelectorAll(`time[datetime]:not(${settledDuration})`)) {
@@ -109,8 +105,6 @@
   const lost = document.getElementById("lost");
   let lostSince = null;
 
-  // The run page's transcript stays at the bottom until the reader scrolls
-  // up, and then offers to jump to the latest entry.
   const latest = document.getElementById("latest");
   const atBottom = () =>
     window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
@@ -121,7 +115,10 @@
     window.scrollTo(0, document.documentElement.scrollHeight);
   }
 
-  // `entries`: whether the message added to the transcript.
+  /**
+   * Brings the page up to date after a message, `entries` whether it added
+   * to the transcript.
+   */
   function swapped(entries) {
     tick();
     refreshTip();
@@ -142,7 +139,7 @@
     });
   }
 
-  // An entry linked to opens the folds that hold it.
+  /** Opens the folds that hold the entry linked to, and scrolls to it. */
   function reveal() {
     const target = location.hash && document.getElementById(location.hash.slice(1));
     if (!target) return;
@@ -152,10 +149,12 @@
     target.scrollIntoView();
   }
 
-  // A message whose event ID differs from the last one's added entries to
-  // the transcript.
+  /**
+   * The event ID of the last message; a message with a different ID added
+   * entries to the transcript.
+   */
   let lastEntryId = "";
-  // Whether the extension has taken over the page's event stream.
+  /** Whether the `hx-sse` extension has taken over the page's event stream. */
   let streaming = false;
 
   function lose() {
@@ -178,9 +177,8 @@
     lastEntryId = id;
     swapped(entries);
   });
-  // The extension reconnects only a stream it has taken over, so a page
-  // whose first connection failed, such as one loaded from the cache while
-  // `serve` was down, asks again itself.
+  // hx-sse reconnects only a stream that connected once (`sse.reconnect`):
+  // https://four.htmx.org/extensions/hx-sse
   document.body.addEventListener("htmx:finally:request", (event) => {
     if (event.target !== document.body || streaming) return;
     lose();
@@ -189,27 +187,25 @@
     }, 5000);
   });
 
-  // The page's one tooltip, `#tip`, shows the tip of one trigger at a time:
-  // an element with `data-tip`, which always shows it, or `data-tip-cut`,
-  // which shows its `data-tip`, or else its text, only while it or an element
-  // in it is cut. It shows on hover and on keyboard focus, over the page,
-  // until the pointer leaves it or focus moves, and Escape hides it
-  // (`docs/specs/design_system.md`, Layout; WCAG 1.4.13,
-  // https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
-  // Its listeners are the document's, so a trigger that an update brings
-  // works as one the page loaded with.
+  /**
+   * The page's one tooltip, which shows the tip of one trigger at a time: an
+   * element with `data-tip`, which always shows it, or `data-tip-cut`, which
+   * shows its `data-tip`, or else its text, only while it or an element in it
+   * is cut. It shows on hover and on keyboard focus, over the page, until the
+   * pointer leaves it or focus moves, and Escape hides it
+   * (`docs/specs/design_system.md`, Layout; WCAG 1.4.13,
+   * https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
+   */
   const tip = document.getElementById("tip");
-  // The trigger whose tip shows, if any.
+  /** The trigger whose tip shows, if any. */
   let shownFor = null;
-  // The trigger whose tip Escape hid, until the pointer leaves it or focus
-  // moves.
+  /** The trigger whose tip Escape hid, until the pointer leaves it or focus moves. */
   let dismissed = null;
-  // The pending hide after the pointer left the trigger and the tip.
+  /** The pending hide after the pointer left the trigger and the tip. */
   let leaving = null;
-  // How long the pointer may be off the trigger and the tip before the tip
-  // hides, so that it can cross the gap between them.
+  /** How long, in milliseconds, the pointer may be off the trigger and the tip before the tip hides. */
   const leaveDelay = 100;
-  // How near the viewport's edges the tip may come.
+  /** How near, in pixels, the viewport's edges the tip may come. */
   const edge = 8;
 
   const isCut = (element) =>
@@ -217,9 +213,11 @@
       (cut) => cut.scrollWidth > cut.clientWidth || cut.scrollHeight > cut.clientHeight,
     );
 
-  // The trigger that shows for `target`: of the triggers it is in, the
-  // outermost cut text, which shows all its triggers hold, or else the
-  // innermost that always shows.
+  /**
+   * The trigger that shows for `target`: of the triggers it is in, the
+   * outermost cut text, which shows all its triggers hold, or else the
+   * innermost that always shows.
+   */
   function triggerOf(target) {
     let innermost = null;
     let outermostCut = null;
@@ -233,9 +231,7 @@
     return outermostCut || innermost;
   }
 
-  // The cut text that `focused` holds, if any, which shows for it on
-  // keyboard focus: a finished lane's `summary` takes focus itself, and its
-  // head's text is in it.
+  /** The cut text that `focused` holds, if any, which shows for it on keyboard focus. */
   const cutIn = (focused) =>
     [...focused.querySelectorAll("*")].find(
       (element) => element.hasAttribute("data-tip-cut") && isCut(element),
@@ -244,14 +240,15 @@
   const textOf = (trigger) =>
     trigger.getAttribute("data-tip") ?? trigger.textContent.replace(/\s+/g, " ").trim();
 
-  // While its tip shows, a trigger whose tip is in neither its text nor its
-  // label, such as a past time, is described by it, so that assistive tech
-  // reads it too: https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/
-  // Cut text holds its whole text, and a labelled trigger its tip.
+  /**
+   * Whether `trigger`'s tip is in neither its text nor its label, so that
+   * the tip describes it while it shows:
+   * https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/
+   */
   const describes = (trigger) =>
     !trigger.hasAttribute("data-tip-cut") && !trigger.hasAttribute("aria-label");
 
-  // `shownFor` becomes `trigger`, or none.
+  /** Makes `trigger`, or none, the trigger whose tip shows. */
   function showFor(trigger) {
     if (shownFor && shownFor !== trigger) shownFor.removeAttribute("aria-describedby");
     shownFor = trigger;
@@ -282,10 +279,12 @@
     place();
   }
 
-  // Where the tip goes for a trigger whose box is `box`, drawn by daisyUI
-  // above it as `drawn`, its width, height and distance from the box's
-  // bottom, in a viewport `viewportWidth` wide: below the box where there is
-  // no room above, and `shift` along it to stay inside the viewport.
+  /**
+   * Where the tip goes for a trigger whose box is `box`, drawn by daisyUI
+   * above it as `drawn`, its width, height and distance from the box's
+   * bottom, in a viewport `viewportWidth` wide: below the box where there is
+   * no room above, and `shift` along it to stay inside the viewport.
+   */
   function placement(box, drawn, viewportWidth) {
     const below = box.bottom - drawn.bottom - drawn.height < 0;
     const left = box.left + box.width / 2 - drawn.width / 2;
@@ -294,8 +293,7 @@
     return { below, shift };
   }
 
-  // Lays the tip's box over its trigger's, so that daisyUI draws the tip
-  // over the trigger as `placement` says.
+  /** Places the tip at its trigger as `placement` says. */
   function place() {
     if (!shownFor) return;
     const box = shownFor.getBoundingClientRect();
@@ -323,8 +321,10 @@
     if (shift) tip.style.setProperty("--tt-trans", `calc(-50% + ${shift}px)`);
   }
 
-  // After an update, the tip hides if its trigger is gone or no longer
-  // shows, and otherwise shows what the trigger now holds where it now is.
+  /**
+   * Hides the tip if its trigger is gone or no longer shows, and otherwise
+   * shows what the trigger now holds where it now is.
+   */
   function refreshTip() {
     if (!shownFor) return;
     const trigger = shownFor.isConnected && triggerOf(shownFor);
@@ -332,7 +332,7 @@
     else hide();
   }
 
-  // Whether `node` is on the tip or on the trigger it shows for.
+  /** Whether `node` is on the tip or on the trigger it shows for. */
   const onShown = (node) => node === tip || (shownFor && shownFor.contains(node));
 
   document.addEventListener("pointerover", (event) => {

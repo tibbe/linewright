@@ -1,16 +1,5 @@
 #!/usr/bin/env bash
-# comments: pending
-# Stands in for sccache, which builds here run as their RUSTC_WRAPPER, so that
-# its server always has a temporary directory that lasts.
-#
-# The first sccache command starts a server in the background that does the
-# compiling for every later one, and the server makes its temporary files in
-# that first command's TMPDIR. Linewright gives each agent session its own
-# TMPDIR and deletes it when the session ends, so a server started from a
-# session fails every compile after that.
-#
-# It must not run under /bin/sh: dash, the image's /bin/sh, drops variables
-# whose names are not shell identifiers, such as cargo's
-# CARGO_BIN_EXE_fake-claude, and the build then fails.
+# The sccache server keeps the TMPDIR of the command that started it:
+# https://github.com/mozilla/sccache/issues/837
 mkdir -p "$SCCACHE_DIR/tmp"
 TMPDIR=$SCCACHE_DIR/tmp exec /usr/local/libexec/sccache "$@"

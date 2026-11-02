@@ -1,9 +1,5 @@
-# comments: pending
 name: linewright
 
-# The images CI builds from `main` with `compose.build.yaml`, each tagged
-# `main` and `sha-` with the commit's first seven characters;
-# `LINEWRIGHT_TAG` picks one, `main` by default.
 services:
   proxy:
     image: ghcr.io/tibbe/linewright-proxy:${LINEWRIGHT_TAG:-main}
@@ -16,12 +12,10 @@ services:
   linewright:
     image: ghcr.io/tibbe/linewright-self:${LINEWRIGHT_TAG:-main}
     restart: unless-stopped
-    # Twice the default session-timeout.
     stop_grace_period: 2h
     env_file: .env
     environment:
       LINEWRIGHT_WORK_DIR: /data
-      # Answering outside the container, for `ui-relay`.
       LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
       CLAUDE_CONFIG_DIR: /home/linewright/.claude
       XDG_CACHE_HOME: /tmp/cache
@@ -32,7 +26,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs:
-      # Executable: the agents' builds and tests run files they write there.
       - /tmp:exec,size=1g
     pids_limit: 1024
     logging:
@@ -47,20 +40,12 @@ services:
     depends_on:
       proxy:
         condition: service_started
-        # Replacing `proxy` first stops linewright, so that it drains while
-        # its runs can still reach the network (Compose v2.35 or later).
         restart: true
-    # Never on `npm-proxy`: the agents must not reach the reverse proxy.
     networks: [fenced]
 
-  # Relays webhook deliveries from the reverse proxy to linewright, which
-  # stays on `fenced` alone. It forwards to linewright's default
-  # webhook-address, 0.0.0.0:8080, and nowhere else, so it opens no way out
-  # of `fenced`.
   webhook-relay:
     image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:linewright:8080"]
-    # Replaced after linewright, so deliveries reach it while it drains.
     depends_on: [linewright]
     restart: unless-stopped
     cap_drop: [ALL]
@@ -69,18 +54,11 @@ services:
     networks:
       fenced:
       npm-proxy:
-        # The name the reverse proxy reaches it by, unique on the shared
-        # network.
         aliases: [linewright-webhook]
 
-  # Publishes the web UI on the host's loopback, and to the reverse proxy:
-  # Docker publishes no port of a container on `fenced` alone, which is
-  # internal. It forwards to linewright's ui-address and nowhere else, so it
-  # opens no way out of `fenced`.
   ui-relay:
     image: ghcr.io/tibbe/linewright-webhook-relay:${LINEWRIGHT_TAG:-main}
     command: ["TCP-LISTEN:8081,fork,reuseaddr", "TCP:linewright:8081"]
-    # Replaced after linewright, so the UI reaches it while it drains.
     depends_on: [linewright]
     restart: unless-stopped
     cap_drop: [ALL]
@@ -99,8 +77,6 @@ networks:
     driver_opts:
       com.docker.network.bridge.gateway_mode_ipv4: isolated
       com.docker.network.bridge.gateway_mode_ipv6: isolated
-  # The Docker network `proxy`, which Nginx Proxy Manager is on, created
-  # outside this project.
   npm-proxy:
     name: proxy
     external: true

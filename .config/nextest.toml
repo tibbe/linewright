@@ -1,9 +1,5 @@
-# comments: pending
 # https://nexte.st/docs/configuration/reference/
 [profile.default]
-# A test that runs longer than this fails, so that a slow one is noticed
-# when it is written. The budget only comes down: lower it as the slowest
-# tests get faster.
 slow-timeout = { period = "8s", terminate-after = 1 }
 global-timeout = "5m"
 status-level = "leak"
@@ -11,9 +7,5 @@ final-status-level = "leak"
 failure-output = "immediate"
 fail-fast = false
 
-# Shared CI runners are slower and more variable, so tests a change didn't
-# touch go past the 8s budget there. In CI the limit only catches a stuck
-# test. A local run, an agent's included, keeps the budget, since that is
-# where a slow test is written.
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }

@@ -1,6 +1,5 @@
-{#- comments: pending -#}
 {%- import "macros.html" as ui -%}
-{#- In the rail, a link's label is under its icon. -#}
+{#- A navigation link, its label under its icon in the rail. -#}
 {%- macro nav_link(href, icon, label) -%}
 <li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ href }}">{% call ui::nav_icon(icon) %}{% endcall %}<span>{{ label }}</span></a></li>
 {%- endmacro -%}
@@ -17,21 +16,6 @@
 <script src="{{ page.assets.script }}" defer></script>
 </head>
 <body class="bg-base-100 text-base-content" hx-sse:connect="{{ page.events }}" hx-swap="none">
-{#- The navigation is a daisyUI drawer: a sidebar at the left from `2xl`,
-    where the board fits beside it; a rail of the links' icons with their
-    labels under them from `lg`; and a menu behind a button below that
-    (`docs/specs/web/design_system.md`, Navigation). The breakpoints are the
-    same on every page (`docs/specs/design_system.md`, Navigation).
-    A page that fills the viewport does not scroll as a whole: its `main` is
-    a flex column, the content above its `.scroll-box` keeps its height, and
-    the box takes the rest and scrolls on both axes, so that what is sticky
-    in it sticks to the box's top as it scrolls either way
-    (`docs/specs/design_system.md`, Tables and Layout).
-    Everything in the content is inset from its edge by the page's gutter,
-    the same on every page, so that titles and alerts line up from page to
-    page; filling the viewport changes only how a page uses its height.
-    The content is a stacking context of its own, so that what sticks in it
-    stays under the navigation. -#}
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
 <div class="drawer-content isolate min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
@@ -53,11 +37,6 @@
 <div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
 <nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
-{#- The repository is its owner's GitHub avatar beside its name, and in
-    the rail the avatar alone, with its name in the page's tooltip
-    (`docs/specs/web/design_system.md`, Navigation). There the name is
-    hidden text, so cut, the link's accessible name, and the avatar is
-    decorative; in the sidebar the name is whole and no tip shows. -#}
 <a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-6 rounded-full lg:max-2xl:size-8"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
 <ul class="menu w-full p-0">
 {%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
@@ -68,13 +47,6 @@
 </nav>
 </div>
 </div>
-{#- The page's one tooltip, which its script lays over the trigger it shows
-    the tip of: a daisyUI `tooltip` drawn from its `data-tip`, as a popover
-    in the top layer, so that no overflow clips it and no sticky head covers
-    it. Its box overrides the UA's `[popover]` styles and never takes the
-    trigger's pointer; its tip does, so the pointer can move onto it
-    (`docs/specs/design_system.md`, Layout). No region holds it, so no update
-    morphs it. -#}
 <div id="tip" popover="manual" role="tooltip" class="tooltip tooltip-open tooltip-top fixed inset-auto m-0 overflow-visible border-0 bg-transparent p-0 pointer-events-none not-open:hidden before:pointer-events-auto after:pointer-events-auto" data-tip=""></div>
 </body>
 </html>
