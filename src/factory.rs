@@ -21,13 +21,14 @@ use crate::domain::{
     Timestamp, UpdateMethod, Windows, label,
 };
 use crate::ending::Ends;
+use crate::environment::{self, Environment, SetupRead};
 use crate::harness::{Harness, UsageLimit};
 use crate::pull_records::PullRecords;
 use crate::reconcile::{
     Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Policy, Subject,
     Work, held_back_by_drain, reconcile, requirements_note,
 };
-use crate::repo_files::{RepoLayer, Unusable, holding};
+use crate::repo_files::{self, RepoLayer, Unusable, holding};
 use crate::run::{self, AutomationEnd, Cancellation, Shell};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
@@ -156,6 +157,7 @@ pub struct Factory {
     automation_files: AutomationFiles,
     memory: Memory,
     pull_records_file: PullRecordsFile,
+    environment: Environment,
     kept: Option<Kept>,
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
@@ -258,6 +260,19 @@ impl Factory {
             },
             None => PullRecordsFile::Missing,
         };
+        let environment = Environment::open(
+            config.work_dir.join("environment"),
+            environment::Builder {
+                store: store.clone(),
+                harness: harness.clone(),
+                bash: config.bash.clone(),
+                clock: clock.clone(),
+                redaction: config.secrets.redaction().clone(),
+                given: config.environments.pipeline.clone(),
+                default_branch: settings.default_branch.clone(),
+            },
+        )
+        .await?;
         let shell = Shell {
             policy: Policy {
                 linewright: identity.login.clone(),
@@ -288,6 +303,7 @@ impl Factory {
             waits_out_usage_limit: config.waits_out_usage_limit,
             secrets: config.secrets,
             report_refusal,
+            environment: environment.source(),
         };
         Ok(Factory {
             shell: Arc::new(shell),
@@ -304,6 +320,7 @@ impl Factory {
                 ..Memory::default()
             },
             pull_records_file,
+            environment,
             kept: None,
             written: BTreeSet::new(),
             labeled_old_tracking_issues: false,
@@ -341,6 +358,7 @@ impl Factory {
             self.labeled_old_tracking_issues = true;
         }
         let repo = self.read_repo_files().await?;
+        self.poll_environment(&repo);
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
@@ -359,6 +377,17 @@ impl Factory {
         &mut self,
         subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
     ) -> Result<Vec<Action>> {
+        self.read_and_reconcile(subjects, false).await
+    }
+
+    /// [`Factory::refresh`]'s, but reconciling `always`, even when it reads
+    /// nothing: once a build of the environment ends, the runs it held
+    /// start.
+    async fn read_and_reconcile(
+        &mut self,
+        subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
+        always: bool,
+    ) -> Result<Vec<Action>> {
         let Some(mut kept) = self.kept.clone() else {
             return self.cycle().await;
         };
@@ -373,7 +402,7 @@ impl Factory {
             .flat_map(|subject| subject.into().items(snapshot))
             .filter(|item| !read.contains(item))
             .collect();
-        if read.is_empty() && named.is_empty() {
+        if read.is_empty() && named.is_empty() && !always {
             return Ok(vec![]);
         }
         read.extend(read_all(snapshot, shell, named, windows).await?);
@@ -394,6 +423,7 @@ impl Factory {
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
         kept.repo = self.read_repo_files().await?;
+        self.poll_environment(&kept.repo);
         self.written.clear();
         Ok(self.reconcile(kept, vec![], now).await)
     }
@@ -436,6 +466,7 @@ impl Factory {
             loop {
                 if self.memory.drained(self.runs.len()) {
                     info!("drained: no run is in flight");
+                    self.environment.exit().await;
                     return ServeEnd::Drained;
                 }
                 tokio::select! {
@@ -457,10 +488,21 @@ impl Factory {
                         self.finished(result);
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
+                    end = self.environment.next_build_end(), if self.environment.is_building() => {
+                        self.environment.ended(end);
+                        let subjects: [webhook::Subject; 0] = [];
+                        if let Err(e) = self.read_and_reconcile(subjects, true).await {
+                            error!(
+                                error = format!("{e:#}"),
+                                "acting on the environment's build failed; the next poll catches up"
+                            );
+                        }
+                    }
                 }
                 publish.served.send_replace(self.served(next_poll_at));
             }
         }
+        self.environment.exit().await;
         ServeEnd::Stop
     }
 
@@ -472,6 +514,7 @@ impl Factory {
         self.memory.drain = Some(Drain {
             since: self.shell.clock.now(),
         });
+        self.environment.drain();
         let runs: Vec<String> = self
             .live
             .values()
@@ -544,6 +587,7 @@ impl Factory {
             info!(%resets_at, "usage limit reset; sessions start again");
         }
         self.note_drain();
+        self.memory.awaits_environment = !self.environment.ready();
         let live = self.live_runs();
         let automations = Automations {
             defined,
@@ -585,6 +629,36 @@ impl Factory {
         actions
     }
 
+    /// The `setup` table as `repo` gives it.
+    fn setup_read(&self, repo: &RepoLayer) -> SetupRead {
+        let unusable = repo
+            .unusable
+            .iter()
+            .any(|unusable| unusable.file.path == repo_files::CONFIG);
+        if unusable {
+            SetupRead::Unusable
+        } else {
+            SetupRead::Given(self.shell.work.setup(&repo.settings))
+        }
+    }
+
+    /// Gives the environment the `setup` table `repo` holds.
+    fn poll_environment(&mut self, repo: &RepoLayer) {
+        let read = self.setup_read(repo);
+        self.environment.poll(read, self.shell.clock.now());
+    }
+
+    /// Makes the environment ready for a run without `serve`
+    /// (`docs/specs/sessions.md`, Building, Without `serve`): it is used when
+    /// no trigger applies to it, and otherwise built first. `Err` names the
+    /// build that failed when no environment can be had; the runs that
+    /// would start a session are then held.
+    pub async fn prepare_environment(&mut self) -> Result<()> {
+        let repo = self.read_repo_files().await?;
+        let read = self.setup_read(&repo);
+        self.environment.prepare(read, self.shell.clock.now()).await
+    }
+
     /// Linewright's files on the default branch as they are now, each that
     /// cannot be used logged.
     async fn read_repo_files(&self) -> Result<Arc<RepoLayer>> {
@@ -606,7 +680,12 @@ impl Factory {
         Ok(Arc::new(repo))
     }
 
-    pub async fn run_automation(&self, name: &AutomationName) -> Result<()> {
+    /// Runs the automation `name` once, now, from the environment, which is
+    /// prepared first.
+    pub async fn run_automation(&mut self, name: &AutomationName) -> Result<()> {
+        self.prepare_environment()
+            .await
+            .with_context(|| format!("the automation `{name}` cannot run"))?;
         let shell = &self.shell;
         let branch = &shell.settings.default_branch;
         let path = name.path();
@@ -682,13 +761,21 @@ impl Factory {
         }
     }
 
+    /// Waits until no run is in flight and no build is in progress.
     pub async fn settle(&mut self) {
-        while !self.is_idle() {
-            self.next_finished().await;
+        loop {
+            if !self.is_idle() {
+                self.next_finished().await;
+            } else if self.environment.is_building() {
+                self.environment.settle().await;
+            } else {
+                return;
+            }
         }
     }
 
     pub async fn stop(mut self) {
+        self.environment.exit().await;
         for entry in self.live.values() {
             entry.cancel();
         }

@@ -26,6 +26,7 @@ use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
     Timestamp, Windows, label,
 };
+use crate::environment;
 use crate::git::{self, Updated, WorkState};
 use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
@@ -70,6 +71,8 @@ pub(crate) struct Shell {
     pub waits_out_usage_limit: bool,
     pub secrets: Secrets,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
+    /// What each session's clone starts from.
+    pub environment: environment::Source,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -1006,10 +1009,11 @@ struct Opened<'a> {
 }
 
 /// Opens the session of `purpose` in `ws`, with its record and its
-/// attachments directory, registered with the run, and runs its maintenance
-/// command (docs/specs/runs.md, "Maintenance"). The command's output is under the
-/// session whether or not the agent starts, and its time counts against the
-/// session's timeout.
+/// attachments directory, registered with the run, copies the environment
+/// into its clone (docs/specs/sessions.md, "Environment"), and runs its
+/// maintenance command (docs/specs/runs.md, "Maintenance"). The command's
+/// output is under the session whether or not the agent starts, and its
+/// time counts against the session's timeout.
 async fn open_session<'a>(
     shell: &Shell,
     ctx: &'a Ctx,
@@ -1023,6 +1027,13 @@ async fn open_session<'a>(
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
     let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
+    if let Some(lease) = shell.environment.lease() {
+        lease
+            .copy_into(&ws.dir)
+            .await
+            .context("copying the environment into the clone")
+            .map_err(infra)?;
+    }
     if let Maintenance::Command(command) = &settings.maintenance.value {
         run_maintenance(shell, ctx, command, &record, deadline, ws).await?;
     }

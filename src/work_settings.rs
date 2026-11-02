@@ -18,6 +18,12 @@ use crate::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 /// `session-timeout`'s default.
 pub const SESSION_TIMEOUT: Duration = Duration::from_mins(60);
 
+/// `setup.max-age`'s default.
+pub const SETUP_MAX_AGE: Duration = Duration::from_hours(24);
+
+/// `setup.timeout`'s default.
+pub const SETUP_TIMEOUT: Duration = Duration::from_mins(60);
+
 /// How hard the harness thinks: the `effort` setting's levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -179,8 +185,8 @@ impl Setting {
 /// The key of the `maintenance` setting.
 pub const MAINTENANCE: &str = "maintenance";
 
-/// `maintenance`'s other name: a run's record may name it so, and a
-/// config file may not.
+/// The key of the `setup` table, and `maintenance`'s other name: a run's
+/// record may name `maintenance` so.
 pub const SETUP: &str = "setup";
 
 /// A run's record may name `maintenance` as [`SETUP`].
@@ -241,6 +247,56 @@ impl From<String> for Maintenance {
     }
 }
 
+/// The `setup` table's `command`: the setup command the environment is
+/// built with (`docs/specs/sessions.md`, Environment).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Setup {
+    /// Builds no environment. Set in a layer, it wins over a command set
+    /// below it.
+    Empty,
+    Command(SetupCommand),
+}
+
+/// A setup command, never empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetupCommand(String);
+
+impl SetupCommand {
+    /// `None` for an empty `text`.
+    pub fn new(text: String) -> Option<SetupCommand> {
+        (!text.is_empty()).then_some(SetupCommand(text))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// An empty string is [`Setup::Empty`].
+impl From<String> for Setup {
+    fn from(text: String) -> Setup {
+        SetupCommand::new(text).map_or(Setup::Empty, Setup::Command)
+    }
+}
+
+/// The `setup` table one layer sets, `None` where it sets a key not.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetupPartial {
+    pub command: Option<Setup>,
+    pub max_age: Option<Duration>,
+    pub timeout: Option<Duration>,
+}
+
+/// What the environment is built with, when there is a setup command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetupSettings {
+    pub command: SetupCommand,
+    /// The environment grown older than this is built again.
+    pub max_age: Duration,
+    /// A build still running after this long fails.
+    pub timeout: Duration,
+}
+
 /// The session settings one layer sets, `None` where it sets none: those a
 /// stage's table and an automation's front matter can set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -255,6 +311,7 @@ pub struct Partial {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PipelineSettings {
     pub maintenance: Option<Maintenance>,
+    pub setup: SetupPartial,
 }
 
 /// A stage's table in the operator's file.
@@ -363,7 +420,8 @@ pub enum RunKind<'a> {
 /// The environment each session is given.
 #[derive(Clone, Debug, Default)]
 pub struct Environments {
-    pipeline: Arc<Given>,
+    /// The whole pipeline's, which a build of the environment is given too.
+    pub pipeline: Arc<Given>,
     /// The stages whose tables add to `session-env` or `session-pass-env`.
     stages: BTreeMap<WorkKind, Arc<Given>>,
 }
@@ -572,6 +630,31 @@ impl WorkSettings {
             environment: staged_environment.unwrap_or(&environments.pipeline).clone(),
             env_layers: self.env_layers.with(table),
         }
+    }
+
+    /// The `setup` table, each key from the first layer that sets it: the
+    /// flags and environment, the repository's file, the operator's file,
+    /// and the default. `None` without a setup command.
+    pub fn setup(&self, repo: &RepoSettings) -> Option<SetupSettings> {
+        let layers = [
+            &self.pipeline_flags_and_env.setup,
+            &repo.pipeline.setup,
+            &self.pipeline_file.setup,
+        ];
+        let first = |get: fn(&SetupPartial) -> Option<Duration>, default| {
+            layers
+                .iter()
+                .find_map(|layer| get(layer))
+                .unwrap_or(default)
+        };
+        let Setup::Command(command) = layers.iter().find_map(|layer| layer.command.clone())? else {
+            return None;
+        };
+        Some(SetupSettings {
+            command,
+            max_age: first(|layer| layer.max_age, SETUP_MAX_AGE),
+            timeout: first(|layer| layer.timeout, SETUP_TIMEOUT),
+        })
     }
 
     /// Splits `environment` by what each stage's sessions are given: the

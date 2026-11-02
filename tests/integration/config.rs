@@ -11,8 +11,8 @@ use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, Maintenance, RepoSettings, RunKind, SessionSettings, Setting, Split,
-    StageSet, TimeoutSetting,
+    Effort, Environments, Maintenance, RepoSettings, RunKind, SessionSettings, Setting,
+    SetupCommand, SetupSettings, Split, StageSet, TimeoutSetting,
 };
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -1561,25 +1561,185 @@ fn maintenance_in_a_stages_table_or_front_matter_is_an_error_naming_it_the_whole
 }
 
 #[test_log::test]
-fn setup_as_a_command_is_an_error_saying_to_use_maintenance() {
-    let operators_file = resolve(&[], &[], Some("setup = \"npm ci\"\n")).unwrap_err();
+fn setup_as_a_flag_or_variable_is_an_error_naming_setup_command_and_maintenance() {
     let flag = resolve_blaming(&["--setup", "npm ci"], &[], None).unwrap_err();
     let variable = resolve(&[], &[("LINEWRIGHT_SETUP", "npm ci")], None).unwrap_err();
+
+    assert!(matches!(flag, ResolveError::CommandLine(_)), "{flag}");
+    for (error, named) in [
+        (
+            flag.to_string(),
+            ["`--setup`", "`--setup-command`", "`--maintenance`"],
+        ),
+        (
+            variable,
+            [
+                "`LINEWRIGHT_SETUP`",
+                "`LINEWRIGHT_SETUP_COMMAND`",
+                "`LINEWRIGHT_MAINTENANCE`",
+            ],
+        ),
+    ] {
+        for name in named {
+            assert!(error.contains(name), "{error}");
+        }
+    }
+}
+
+#[test_log::test]
+fn setup_as_a_plain_value_is_an_error_saying_it_is_a_table_holding_command() {
+    let operators_file = resolve(&[], &[], Some("setup = \"npm ci\"\n")).unwrap_err();
     let repositorys = format!(
         "{:#}",
         RepoSettings::parse("setup = \"npm ci\"\n").unwrap_err()
     );
 
-    assert!(matches!(flag, ResolveError::CommandLine(_)), "{flag}");
-    for (error, setup, maintenance) in [
-        (operators_file, "`setup`", "`maintenance`"),
-        (flag.to_string(), "`--setup`", "`--maintenance`"),
-        (variable, "`LINEWRIGHT_SETUP`", "`LINEWRIGHT_MAINTENANCE`"),
-        (repositorys, "`setup`", "`maintenance`"),
-    ] {
-        assert!(error.contains(setup), "{error}");
-        assert!(error.contains(maintenance), "{error}");
+    for error in [operators_file, repositorys] {
+        assert!(
+            error.contains("`setup` is a table holding `command`"),
+            "{error}"
+        );
+        assert!(error.contains("`maintenance`"), "{error}");
     }
+}
+
+#[track_caller]
+fn setup_of(config: &Config, repo: &str) -> Option<SetupSettings> {
+    config.work.setup(&RepoSettings::parse(repo).unwrap())
+}
+
+#[track_caller]
+fn setup(command: &str, max_age: Duration, timeout: Duration) -> SetupSettings {
+    SetupSettings {
+        command: SetupCommand::new(command.to_string()).unwrap(),
+        max_age,
+        timeout,
+    }
+}
+
+#[test_log::test]
+fn the_setup_table_is_a_table_in_the_file_and_flags_and_variables_named_with_a_dash() {
+    let file = Some("[setup]\ncommand = \"make deps\"\nmax-age = \"12h\"\n");
+    let setup_with = |args: &[&str], env: &[(&str, &str)], given| {
+        setup_of(&resolve(args, env, given).unwrap(), "")
+    };
+
+    assert_eq!(setup_with(&[], &[], None), None);
+    assert_eq!(
+        setup_with(&[], &[], file),
+        Some(setup(
+            "make deps",
+            Duration::from_hours(12),
+            Duration::from_mins(60)
+        ))
+    );
+    assert_eq!(
+        setup_with(
+            &["--setup-command", "npm ci", "--setup-max-age", "2h"],
+            &[("LINEWRIGHT_SETUP_TIMEOUT", "10m")],
+            file
+        ),
+        Some(setup(
+            "npm ci",
+            Duration::from_hours(2),
+            Duration::from_mins(10)
+        ))
+    );
+    assert_eq!(
+        setup_with(&[], &[("LINEWRIGHT_SETUP_COMMAND", "cargo fetch")], None),
+        Some(setup(
+            "cargo fetch",
+            Duration::from_hours(24),
+            Duration::from_mins(60)
+        ))
+    );
+}
+
+#[test_log::test]
+fn the_repositorys_setup_table_ranks_below_the_operators_flags_and_variables_and_above_the_operators_file()
+ {
+    let file = Some("[setup]\ncommand = \"make deps\"\ntimeout = \"5m\"\n");
+    let repo = "[setup]\ncommand = \"npm ci\"\nmax-age = \"1h\"\n";
+
+    assert_eq!(
+        setup_of(&resolve(&[], &[], file).unwrap(), repo),
+        Some(setup(
+            "npm ci",
+            Duration::from_hours(1),
+            Duration::from_mins(5)
+        ))
+    );
+    assert_eq!(
+        setup_of(
+            &resolve(&[], &[("LINEWRIGHT_SETUP_COMMAND", "cargo fetch")], file).unwrap(),
+            repo
+        ),
+        Some(setup(
+            "cargo fetch",
+            Duration::from_hours(1),
+            Duration::from_mins(5)
+        ))
+    );
+    assert_eq!(
+        setup_of(
+            &resolve(&[], &[], file).unwrap(),
+            "[setup]\ncommand = \"\"\n"
+        ),
+        None
+    );
+}
+
+#[test_log::test]
+fn setup_in_a_stages_table_or_front_matter_is_an_error_naming_it_the_whole_pipelines() {
+    let operators = resolve(
+        &[],
+        &[],
+        Some("[stage.implement]\nsetup = { command = \"make\" }\n"),
+    )
+    .unwrap_err();
+    let repositorys = format!(
+        "{:#}",
+        RepoSettings::parse("[stage.implement.setup]\ncommand = \"make\"\n").unwrap_err()
+    );
+    let front_matter = format!(
+        "{:#}",
+        automation::parse(
+            &"weekly".parse().unwrap(),
+            "---\non:\n  schedule: \"0 9 * * 1\"\nsetup:\n  command: make\n---\nLook around.\n",
+        )
+        .unwrap_err()
+    );
+
+    for error in [operators, repositorys, front_matter] {
+        assert!(error.contains("`setup`"), "{error}");
+        assert!(error.contains("whole pipeline's"), "{error}");
+    }
+}
+
+#[test_log::test]
+fn an_unknown_key_in_the_setup_table_is_refused_with_the_keys_it_holds() {
+    let operators = resolve(&[], &[], Some("[setup]\nscript = \"make\"\n")).unwrap_err();
+    let repositorys = format!(
+        "{:#}",
+        RepoSettings::parse("[setup]\nscript = \"make\"\n").unwrap_err()
+    );
+
+    for error in [operators, repositorys] {
+        assert!(error.contains("`script`"), "{error}");
+        assert!(error.contains("`command`, `max-age`, `timeout`"), "{error}");
+    }
+}
+
+#[test_log::test]
+fn a_setup_duration_that_does_not_parse_is_an_error_naming_it() {
+    let operators = resolve(&[], &[], Some("[setup]\nmax-age = \"soon\"\n")).unwrap_err();
+    let repositorys = format!(
+        "{:#}",
+        RepoSettings::parse("[setup]\ntimeout = \"later\"\n").unwrap_err()
+    );
+
+    assert!(operators.contains("`setup.max-age`"), "{operators}");
+    assert!(repositorys.contains("`setup.timeout`"), "{repositorys}");
 }
 
 #[test_log::test]

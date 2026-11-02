@@ -560,9 +560,16 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         }
         Command::Once => {
             let mut factory = start(&config, OnUsageLimit::End, Ends::new()).await?;
+            let prepared = factory.prepare_environment().await;
+            if let Err(e) = &prepared {
+                error!(
+                    error = format!("{e:#}"),
+                    "no session starts: there is no environment"
+                );
+            }
             factory.cycle().await?;
             factory.settle().await;
-            Ok(())
+            prepared
         }
         Command::Automation {
             command: AutomationCommand::Run { name },

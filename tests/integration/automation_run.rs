@@ -35,7 +35,7 @@ async fn with_automation(name: &str, text: &str) -> World {
 
 #[test_log::test(tokio::test)]
 async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
-    let world = with_automation(
+    let mut world = with_automation(
         "weekly",
         "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: low\n---\nLook.\n",
     )
@@ -125,7 +125,7 @@ fn three_issues() -> String {
 
 #[test_log::test(tokio::test)]
 async fn a_run_files_only_the_first_max_issues_issues() {
-    let world = with_automation("weekly", CAPPED).await;
+    let mut world = with_automation("weekly", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
 
     world
@@ -140,7 +140,7 @@ async fn a_run_files_only_the_first_max_issues_issues() {
 
 #[test_log::test(tokio::test)]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
-    let world = with_automation("weekly", CAPPED).await;
+    let mut world = with_automation("weekly", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
@@ -161,7 +161,7 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
 
 #[test_log::test(tokio::test)]
 async fn an_unknown_automation_fails_naming_its_file() {
-    let world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly", WEEKLY).await;
 
     let error = format!(
         "{:#}",
@@ -182,7 +182,7 @@ async fn an_unknown_automation_fails_naming_its_file() {
 
 #[test_log::test(tokio::test)]
 async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
-    let world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
         Err(SessionError::TimedOut {
             log_tail: String::new(),
@@ -210,7 +210,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
 
 #[test_log::test(tokio::test)]
 async fn a_session_that_fails_fails_the_run() {
-    let world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
         Err(SessionError::Failed {
             reason: "it crashed".into(),
@@ -232,7 +232,7 @@ async fn a_session_that_fails_fails_the_run() {
 
 #[test_log::test(tokio::test)]
 async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
-    let world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly", WEEKLY).await;
     world
         .harness
         .on_automation(|_| Ok("I looked; all is well.".into()));
@@ -265,7 +265,7 @@ fn the_command_that_runs_one_now_is_named_after_automations() {
 
 #[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
-    let world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly", WEEKLY).await;
     world
         .harness
         .on_automation(|_| refused_for_the_usage_limit());

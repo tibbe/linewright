@@ -148,6 +148,22 @@ fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
 }
 
 #[test_log::test]
+fn without_an_environment_work_held_back_waits_for_a_build_to_succeed() {
+    let awaiting = View {
+        memory: linewright::reconcile::Memory {
+            awaits_environment: true,
+            ..linewright::reconcile::Memory::default()
+        },
+        ..view(vec![ticket(42, "Add invoices")], vec![])
+    };
+
+    assert_eq!(
+        text(&awaiting, 42)[3],
+        "waiting for: the environment, until a build succeeds"
+    );
+}
+
+#[test_log::test]
 fn while_draining_work_held_back_waits_for_the_drain() {
     let draining = View {
         memory: draining_since("2026-10-01T11:59:00Z"),

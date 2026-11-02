@@ -361,7 +361,7 @@ async fn status_json_prints_the_api_answer_as_it_is() {
 
 #[test_log::test(tokio::test)]
 async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
-    let world = with_ticket_and_automation().await;
+    let mut world = with_ticket_and_automation().await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world
         .factory

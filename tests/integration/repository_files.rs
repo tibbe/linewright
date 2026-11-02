@@ -156,7 +156,7 @@ async fn a_config_with_a_key_of_the_operators_holds_every_run_until_the_default_
 
 #[test_log::test(tokio::test)]
 async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file() {
-    let world = World::new().await;
+    let mut world = World::new().await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     commit_on(
         &world,

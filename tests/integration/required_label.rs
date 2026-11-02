@@ -244,7 +244,7 @@ async fn filing_automation(
     required: Option<&str>,
     label_exists: bool,
 ) -> (World, Vec<Vec<String>>) {
-    let world = world(required, label_exists).await;
+    let mut world = world(required, label_exists).await;
     world
         .store
         .commit(

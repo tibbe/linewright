@@ -704,6 +704,7 @@ pub(crate) fn describe_wait(wait: &Wait) -> Phrase {
         Wait::Drain => Phrase::from("the drain, until ")
             .code("serve")
             .text(" restarts"),
+        Wait::Environment => "the environment, until a build succeeds".into(),
         Wait::Blocker { issue } => Phrase::from(*issue).text(", which blocks it"),
         Wait::Assignee { assignee } => format!("{assignee}, who is assigned to it").into(),
         Wait::ClosingPullRequest { pull_request } => {

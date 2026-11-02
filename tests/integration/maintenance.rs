@@ -333,7 +333,7 @@ async fn gone(pid: &str) -> bool {
 
 #[test_log::test(tokio::test)]
 async fn an_automations_run_whose_maintenance_command_fails_fails_with_the_end_of_its_output() {
-    let world = World::new().await;
+    let mut world = World::new().await;
     world
         .store
         .commit(

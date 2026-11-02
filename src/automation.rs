@@ -14,7 +14,7 @@ use crate::domain::Timestamp;
 use crate::records;
 use crate::repo_files;
 use crate::store::Store;
-use crate::work_settings::{MAINTENANCE, Partial, RepositorySetting};
+use crate::work_settings::{MAINTENANCE, Partial, RepositorySetting, SETUP};
 
 pub const DIR: &str = repo_files::linewright_path!("/automations");
 
@@ -247,7 +247,7 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
         serde_yaml_ng::from_str(front).context("the front matter is not an automation's")?;
     let mut session = Partial::default();
     for (key, value) in front.session {
-        if key == MAINTENANCE {
+        if key == MAINTENANCE || key == SETUP {
             return Err(config::only_the_whole_pipelines_error(
                 &key,
                 "the front matter",
