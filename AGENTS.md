@@ -40,9 +40,12 @@ approval.
 
 ## Checks
 
-- Every check CI runs, fixing what it can: `scripts/check`
+- Every check CI runs: `scripts/check`
 - Only the named checks (`scripts/check --help` lists them):
   `scripts/check NAME...`
+- Fix what the checks report where a tool can, such as formatting and the
+  generated files (`scripts/fix --help` lists them): `scripts/fix`, or
+  `scripts/fix NAME...`
 
 ## Area guides
 

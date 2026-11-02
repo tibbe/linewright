@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# shellcheck source=scripts/lib.sh
+. scripts/lib.sh
+
+fix_fmt() { cargo fmt; }
+
+fix_markdown() { rumdl check --fix .; }
+
+# Builds assets/linewright.css from styles/linewright.css.
+fix_css() {
+  tailwind --input styles/linewright.css --output assets/linewright.css --minify
+}
+
+# Makes every test `#[test_log::test]`, around `#[tokio::test]` where it is
+# async.
+fix_test() {
+  local bare
+  if bare="$(grep -rlE --include='*.rs' "$test_attribute" src tests)"; then
+    # shellcheck disable=SC2086 # one path per line, none with spaces
+    perl -pi -e 's/^([ \t]*)#\[test\][ \t]*$/$1#[test_log::test]/;
+      s/^([ \t]*)#\[tokio::test(\(.*\))?\][ \t]*$/$1#[test_log::test(tokio::test$2)]/' $bare
+  fi
+}
+
+# Applies clippy's machine-applicable suggestions, then formats them.
+fix_clippy() {
+  # Under `deny`, cargo skips the crates that depend on one with warnings:
+  # https://doc.rust-lang.org/cargo/reference/config.html#buildwarnings
+  CARGO_BUILD_WARNINGS=allow cargo clippy --fix --allow-dirty --allow-staged \
+    --all-targets --locked --quiet >/dev/null 2>&1 || true
+  cargo fmt
+}
+
+stages="fmt markdown css test clippy"
+
+usage() {
+  echo "usage: scripts/fix [NAME...]"
+  echo "Fixes what scripts/check reports where a tool can, or only the named: $stages."
+  echo "fmt formats the Rust; markdown fixes what rumdl can; css builds the web UI's"
+  echo "stylesheet; test makes every test #[test_log::test]; clippy applies clippy's"
+  echo "machine-applicable suggestions, then formats. scripts/check then reports"
+  echo "what is left."
+}
+
+if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
+  usage
+  exit 0
+fi
+if [ $# -gt 0 ]; then
+  for name in "$@"; do
+    if ! declare -F "fix_$name" >/dev/null; then
+      usage >&2
+      exit 2
+    fi
+  done
+  stages="$*"
+fi
+
+for name in $stages; do
+  if ! "fix_$name"; then
+    printf '✗ %s\n' "$name"
+    exit 1
+  fi
+done
+echo "fixed: $stages (${SECONDS}s)"
