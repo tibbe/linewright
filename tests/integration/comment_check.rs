@@ -20,11 +20,13 @@ fn reports(files: &[(&str, &str)]) -> Vec<String> {
     }
     git(dir, &["add", "--all"]);
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    std::fs::copy(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/check"),
-        dir.join("scripts/check"),
-    )
-    .unwrap();
+    for script in ["scripts/check", "scripts/check_comments.py"] {
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(script),
+            dir.join(script),
+        )
+        .unwrap();
+    }
     let output = Command::new("bash")
         .args([dir.join("scripts/check").as_os_str(), "comments".as_ref()])
         .output()
@@ -82,6 +84,19 @@ fn a_comment_in_toml_or_yaml_fails() {
             format!("Cargo.toml:2: {NOT_ALLOWED}"),
             format!("ci.yml:1: {NOT_ALLOWED}"),
         ]
+    );
+}
+
+#[test_log::test]
+fn a_python_comment_fails_and_a_docstring_or_string_does_not() {
+    let python = "#!/usr/bin/env python3\n\
+                  \"\"\"The module. # not a comment\"\"\"\n\
+                  a = '# no' + \"# no\" + r'\\\\' # Narrates.\n\
+                  # https://example.com\n";
+
+    assert_eq!(
+        reports(&[("scripts/x.py", python)]),
+        [format!("scripts/x.py:3: {NOT_ALLOWED}")]
     );
 }
 
