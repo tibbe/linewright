@@ -1,4 +1,3 @@
-// comments: pending
 use super::*;
 
 use linewright::prompts::Readers;
@@ -128,9 +127,12 @@ async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show(
             "{path}: {}",
             tip.html()
         );
-        // No region holds it, so no update morphs it away.
         let parent = ElementRef::wrap(tip.parent().unwrap()).unwrap();
-        assert_eq!(parent.value().name(), "body", "{path}");
+        assert_eq!(
+            parent.value().name(),
+            "body",
+            "{path}: no region holds the tip, so no update morphs it away"
+        );
     }
 }
 
@@ -192,8 +194,6 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
         "only the rail hides the name: {}",
         name.html()
     );
-    // The page's script shows the tip while the name is cut, which the
-    // rail's `sr-only` does and the sidebar does not.
     assert_eq!(repo.attr("data-tip"), Some("owner/widgets"));
     assert_eq!(repo.attr("data-tip-cut"), Some(""));
     assert_eq!(
@@ -242,9 +242,6 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         }),
         "{facts:?}"
     );
-    // `docs/specs/design_system.md`, Facts and Type: the facts are labels
-    // in Muted text beside their values, drawn as a card is, and a hold's
-    // status is its icon and words in its colour, with no badge behind it.
     assert_eq!(
         select(&server, "#server dl.card").len(),
         1,
@@ -381,7 +378,6 @@ async fn a_failed_poll_is_a_problem_on_every_page_until_a_poll_succeeds() {
 
     let alert = select(&shown, ".alert")[0];
     assert!(has_classes(alert, &["alert-error"]), "{}", alert.html());
-    // Pages that need a poll that succeeded say so, under the same frame.
     for path in ["/", "/runs", "/automations", "/server", "/items/1"] {
         let (_, body) = web.get(path).await;
         let held = holds(&Html::parse_document(&body));
@@ -523,7 +519,6 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
         "{facts:?}"
     );
     assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
-    // `docs/specs/web/design_system.md`, Facts: drawn as a card is.
     let cards = classes(&html, "#server dl.card");
     assert!(
         cards.len() == 1
@@ -539,8 +534,6 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
         "{cards:?}"
     );
     assert!(select(&html, "#server table").is_empty(), "{}", html.html());
-    // The times are `<time>` elements, which the page's script shows past
-    // ones relative and future ones absolute.
     assert_eq!(select(&html, "#server time[datetime]").len(), 4);
     assert!(
         !html.html().contains("automation weekly"),

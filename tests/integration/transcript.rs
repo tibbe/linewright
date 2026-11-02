@@ -1,4 +1,3 @@
-// comments: pending
 use linewright::domain::Timestamp;
 use linewright::runs::{RunId, Started, StartedBy};
 use linewright::transcript::{
@@ -97,7 +96,6 @@ fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follo
             .filter(|line| line.contains("  event: {") && line.contains(kind))
             .count()
     };
-    // Each turn's start and end, and the sub-agent's.
     assert_eq!(events(r#""subtype":"init""#), 2);
     assert_eq!(events(r#""type":"result""#), 2);
     assert_eq!(events(r#""subtype":"task_notification""#), 1);
@@ -407,8 +405,6 @@ fn following_shows_each_entry_once_it_is_written_and_each_tool_call_when_made_an
     }
     shown.extend(follower.end(&[record]));
 
-    // The first Bash call, written on the third line, shows as running,
-    // then again once its result is written, on the fourth.
     assert_eq!(
         at_each_line[..4],
         [
@@ -664,9 +660,7 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
     };
     let assistant = |parent, content| message("assistant", parent, content);
     let user = |parent, content| message("user", parent, content);
-    // A sub-agent and a command started in parallel; the sub-agent starts
-    // one of its own, and the results come back out of order.
-    let events = [
+    let parallel_calls_with_a_nested_one_returning_out_of_order = [
         json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
         assistant(
             None,
@@ -700,7 +694,10 @@ fn json_ties_each_tool_call_and_sub_agent_object_to_the_agents_call_ids() {
         user(None, vec![result("a1", "Clean.")]),
     ];
     let record = SessionRecord {
-        output: events.iter().map(|event| format!("{event}\n")).collect(),
+        output: parallel_calls_with_a_nested_one_returning_out_of_order
+            .iter()
+            .map(|event| format!("{event}\n"))
+            .collect(),
         ..SessionRecord::default()
     };
     let summaries = |lines: Vec<serde_json::Value>| -> Vec<String> {
@@ -803,9 +800,6 @@ fn an_entry_that_says_no_time_shows_the_time_of_the_one_the_agent_wrote_before_i
     );
     let followed = text(&follower.end(&[recorded()]));
 
-    // The sub-agent's start, which says no time, written just after the
-    // call that started the sub-agent at 2:00, and before the sub-agent's
-    // work at 2:02.
     let started = |text: &str| {
         text.lines()
             .find(|line| line.contains("event: {\"description\":\"Standards review\""))
@@ -888,7 +882,6 @@ fn a_setup_command_is_its_sessions_first_entry_at_its_start_with_its_output_only
             " 0:00  setup: npm ci → exit 0, 12s",
         ]
     );
-    // The agent's first call, at 10:09:11, counts from the setup's start.
     assert!(compact[3].starts_with(" 0:15  Bash(ls;"), "{compact:#?}");
     assert_eq!(
         compact[compact.len() - 3..],
@@ -1076,8 +1069,6 @@ fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_
     assert_eq!(objects.len(), 2, "{objects:#?}");
     assert_eq!(objects[0]["account"], "running");
     assert_eq!(objects[..1], snapshot(&running));
-    // Its end is stamped with when it ended (`docs/specs/design_system.md`,
-    // Transcripts, Followed).
     let unstamped = |line: &serde_json::Value| {
         let mut line = line.clone();
         let fields = line.as_object_mut().unwrap();
@@ -1166,12 +1157,8 @@ fn following_shows_a_setup_command_as_it_starts_and_again_at_its_end_with_its_ac
          0:03  setup: npm ci → exit 1, 3s\n         \
          npm ERR! missing lockfile\n"
     );
-    // Read at once, it shows the same lines, made at the same points; the
-    // run's header counts the sessions it was first read with.
     let at_once = follow(None).end(&[succeeded.clone(), failed.clone()]);
     assert_eq!(all[1..], at_once[1..]);
-    // From a line, or from where a transcript was read to, it shows the
-    // lines after it.
     let after_running =
         follow(Some(After::Line(all[2].made))).end(&[succeeded.clone(), failed.clone()]);
     assert_eq!(after_running, all[3..]);

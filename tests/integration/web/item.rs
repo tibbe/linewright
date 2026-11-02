@@ -1,4 +1,3 @@
-// comments: pending
 use super::*;
 
 use linewright::domain::{Check, CheckState, Issue, Linked, Number, Parent, Pull, label};
@@ -37,9 +36,6 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
 
     let html = pages.page("/items/1").await;
 
-    // `docs/specs/design_system.md`, The item page, Facts and Cards: the
-    // facts are labels beside their values, drawn as a card is; the state
-    // is the column and the card's line; the waits are plain text.
     assert_eq!(select(&html, "#item dl.card").len(), 1, "{}", html.html());
     assert_in_muted_text(&html, "#item dt");
     assert_eq!(
@@ -343,7 +339,6 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .find(|(id, _)| id == "item")
         .map(|(_, html)| item_facts(&html))
         .expect("the item's region");
-    // What a poll after the delivery reads, which the page shows too.
     assert_ne!(fact(&item, "State"), fact(&before, "State"));
     assert_eq!(item, item_facts(&web.page("/items/1").await));
     web.stop().await;
@@ -416,8 +411,6 @@ async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
 
     let html = pages.page("/items/3").await;
 
-    // `docs/specs/design_system.md`, Navigation: named by its number and
-    // its title, linking to its page and to GitHub.
     assert_eq!(
         fact(&item_facts(&html), "Waiting for"),
         "#2: Fix the parser, which blocks it"
@@ -430,7 +423,6 @@ async fn the_item_page_names_a_blocker_it_waits_for_by_its_number_and_title() {
         links,
         ["/items/2", "https://github.com/owner/widgets/issues/2"]
     );
-    // A card's line names it by its number alone.
     assert_eq!(
         fact(&item_facts(&html), "State"),
         "Waiting for Linewright · blocked by #2 · 2026-09-30 09:00:00 UTC"

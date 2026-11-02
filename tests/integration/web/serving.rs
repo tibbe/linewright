@@ -1,4 +1,3 @@
-// comments: pending
 use super::*;
 
 /// The pages of #1, ready for Linewright.
@@ -142,13 +141,9 @@ async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached
     assert_passes_through_a_proxy(response.headers());
 }
 
-// The keep-alive is a comment line (WHATWG HTML, 9.2.6), sent once a stream
-// has been quiet for 15 seconds (docs/specs/operation.md, Running: Behind a
-// proxy).
 #[test_log::test(tokio::test)]
 async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
     let pages = pages().await;
-    // Paused once serving, so that time moves on only when nothing else can.
     tokio::time::pause();
     let response = pages.response("/events/items/1").await;
     let mut body = response.into_body();
@@ -165,8 +160,11 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
     let second_after = sent.elapsed();
 
     assert!(regions.starts_with("data: "), "{regions}");
+    // An event stream's comment line:
+    // https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation
     assert_eq!([first, second], [":\n\n", ":\n\n"]);
-    // Tokio's timer rounds each deadline up to the next millisecond.
+    // Tokio's timer works in milliseconds:
+    // https://docs.rs/tokio/latest/tokio/time/fn.sleep.html
     let tick = Duration::from_millis(1);
     let quiet = Duration::from_secs(15);
     assert!(

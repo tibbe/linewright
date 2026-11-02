@@ -1,4 +1,3 @@
-// comments: pending
 use super::*;
 
 use linewright::transcript::{SetupStatus, setup_ended, setup_started};
@@ -184,7 +183,6 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
 
     let html = pages.page("/runs/1/implement-1").await;
 
-    // As `lw logs 1` prints them.
     assert_eq!(
         cut(&transcript_shown(&html, false), 100),
         [
@@ -238,7 +236,6 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
         text(select_in(agent_call, "summary")[0]),
         "2:00 Agent(Standards review) → done, 2 tool uses, 16s 1 entry"
     );
-    // Its prompt is context, which `logs` hides, and one tool call.
     let work: Vec<String> = entry_lines_in(agent_call)
         .into_iter()
         .map(|(_, line)| line)
@@ -257,7 +254,6 @@ async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_to
         .into_iter()
         .find(|stamp| text(*stamp) == "0:03")
         .unwrap();
-    // The session started at 10:09:08, and the entry 3 seconds after.
     assert_eq!(stamp.attr("data-tip"), Some("2026-10-13 10:09:11 UTC"));
     assert_eq!(select(&html, "[title]").len(), 0);
 }
@@ -273,7 +269,6 @@ async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everyth
 
     let verbose = pages.page(&verbose_path).await;
 
-    // As `lw logs 1 --verbose` prints them.
     assert_eq!(
         cut(&transcript_shown(&verbose, true), 40),
         [
@@ -432,8 +427,10 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let agent = world.harness.hold();
     let web = Web::start(world).await;
     let turn = crate::local_api::turn_1();
-    // The marker, the start event and the first Bash call, with its result.
-    agent.writes(&turn[..4].concat());
+    let through_the_first_bash_result = turn[..4].concat();
+    let the_second_bash_call = turn[4..6].concat();
+    let its_result = &turn[6];
+    agent.writes(&through_the_first_bash_result);
     let read = web
         .eventually_page("/runs/1/triage-1", |html| {
             entry_lines(html)
@@ -448,10 +445,9 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     );
     let mut events = stream_with_ids(&web, &events_path, None).await;
 
-    // The second Bash call, its result still to come.
-    agent.writes(&turn[4..6].concat());
+    agent.writes(&the_second_bash_call);
     let made = transcript_events(&mut events, |sent| !sent.is_empty()).await;
-    agent.writes(&turn[6]);
+    agent.writes(its_result);
     let returned = transcript_events(&mut events, |sent| !sent.is_empty()).await;
     agent.writes(&turn[7..].concat());
     drop(agent);
@@ -495,8 +491,6 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let replaced = select(account, "details.call");
     assert!(replaced[0].attr("open").is_some());
     assert!(text(select_in(replaced[0], "summary")[0]).ends_with("2>&1) → exit 2"));
-    // The account of a call that did not fail keeps its fold as the reader
-    // left it.
     let accounts: Vec<Vec<(String, String)>> = rest
         .iter()
         .map(|(_, data)| {
@@ -515,7 +509,6 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     };
     assert!(accounts.contains(&replaced_line("s1-e6")), "{accounts:?}");
 
-    // Followed in pieces, the page is as it reads whole.
     let followed: Vec<(String, String)> = [made, returned, rest.clone()].concat();
     let mut shown = entry_lines(&read);
     for (_, data) in &followed {
@@ -544,7 +537,6 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     whole_sorted.sort();
     assert_eq!(shown_sorted, whole_sorted);
 
-    // Resumed after its first event, the stream sends the rest, once.
     let first = followed[0].0.clone();
     let mut resumed = stream_with_ids(&web, &events_path, Some(&first)).await;
     let again = transcript_events(&mut resumed, |sent| sent.len() >= followed.len() - 1).await;
@@ -604,7 +596,6 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
         "/items/1".to_string(),
         format!("https://github.com/{REPO}/issues/1"),
     ];
-    // As the runs page's Item cell names the run's item.
     assert_eq!((row[2].as_str(), &cell_links), ("#1: Ship gh", &links));
     assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
 }

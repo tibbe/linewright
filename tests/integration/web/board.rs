@@ -1,4 +1,3 @@
-// comments: pending
 use super::*;
 
 use linewright::domain::{
@@ -289,7 +288,6 @@ async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_
     );
 }
 
-// Paused, so that the stream samples the view at once.
 #[test_log::test(tokio::test(start_paused = true))]
 async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_those_a_new_view_changes()
  {
@@ -412,7 +410,6 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         .map(text)
         .collect();
     assert_eq!(summaries, ["2 finished lanes"]);
-    // A time the page's script shows relative.
     let finished: Vec<&str> = select(&html, "#lane-5 > summary time")
         .into_iter()
         .filter_map(|time| time.attr("datetime"))
@@ -468,8 +465,8 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
         ]
     );
     let times = select(&html, "#board time[datetime]");
-    // Each card's, and the finished lane's.
-    assert_eq!(times.len(), 4);
+    let each_cards_and_the_finished_lanes = 4;
+    assert_eq!(times.len(), each_cards_and_the_finished_lanes);
     for time in times {
         assert_eq!(time.attr("tabindex"), Some("0"), "{}", time.html());
     }
@@ -522,6 +519,10 @@ fn icons(element: ElementRef) -> Vec<String> {
         .map(|icon| icon.html())
         .collect()
 }
+
+/// An issue no card on the board stands for, so that a pull request closing
+/// it is a card of its own.
+const OFF_THE_BOARD: u64 = 9;
 
 /// `docs/specs/web/design_system.md`, Status: waiting for a person is
 /// `warning`.
@@ -619,10 +620,9 @@ async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
             let title = text(select_in(card, "h3")[0]);
             let toned = has_classes(card, &["toned"]);
             let waiting = has_classes(card, &[WAITING_FOR_A_PERSON]);
-            // Before its line.
-            let icons = select_in(card, ".line > svg.icon:first-child").len();
+            let icons_before_its_line = select_in(card, ".line > svg.icon:first-child").len();
             let faded = has_classes(card, &["opacity-75"]);
-            (title, toned, waiting, icons, faded)
+            (title, toned, waiting, icons_before_its_line, faded)
         })
         .collect();
     cards.sort();
@@ -729,8 +729,6 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
         .filter_map(|a| a.attr("href"))
         .collect();
     assert_eq!(links, ["/items/2"]);
-    // `docs/specs/design_system.md`, Cards: handed back is waiting for a
-    // person.
     assert_eq!(
         toned(&html, WAITING_FOR_A_PERSON),
         ["#3: Do another thing", "#5: Do a third thing"]
@@ -895,8 +893,7 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
         vec![
             blocked(11, 1),
             linewrights_pull(12, &[2], &[CheckState::Pending]),
-            // Closes no issue on the board, so it is a card of its own.
-            blocked(13, 9),
+            blocked(13, OFF_THE_BOARD),
         ],
     ))
     .await;
@@ -911,8 +908,6 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
             "In review: #2: Do another thing | #12 · checks running",
         ]
     );
-    // `docs/specs/design_system.md`, Cards: "review required" is waiting for
-    // a person.
     assert_eq!(
         toned(&html, WAITING_FOR_A_PERSON),
         ["#13: Pull 13", "#1: Do the thing"]
@@ -1000,8 +995,11 @@ async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_
     };
     let pages = Pages::of(view(
         vec![let_go],
-        // Closes no issue on the board, so it is a card of its own.
-        vec![linewrights_pull(5, &[9], &[CheckState::Pending])],
+        vec![linewrights_pull(
+            5,
+            &[OFF_THE_BOARD],
+            &[CheckState::Pending],
+        )],
     ))
     .await;
 
@@ -1093,8 +1091,7 @@ async fn cards_say_not_marked_for_linewright_blocked_by_and_unassigned_in_the_ca
                 &[LINEWRIGHT],
             ),
         ],
-        // Closes no issue on the board, so it is a card of its own.
-        vec![open_pull(5, LINEWRIGHT, &[9], &[])],
+        vec![open_pull(5, LINEWRIGHT, &[OFF_THE_BOARD], &[])],
     );
     board.policy.require_label = Some("linewright".into());
     let pages = Pages::of(board).await;
