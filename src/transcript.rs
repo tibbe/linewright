@@ -41,17 +41,7 @@ pub struct SetupRecord {
 }
 
 /// How a setup command ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SetupStatus {
-    /// It exited with this status.
-    Exited(i32),
-    /// A signal ended it, this one.
-    Signalled(i32),
-    /// Its session's deadline passed while it ran.
-    TimedOut,
-    Cancelled,
-}
+pub use crate::bash_command::Status as SetupStatus;
 
 impl SetupStatus {
     /// Whether the command failed (`docs/specs/runs.md`, Setup, Failing):
