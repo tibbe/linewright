@@ -165,7 +165,7 @@ impl Answering {
 }
 
 /// How long a test gives one `lw` to answer: more than the 5s `lw` asks a
-/// serve that hangs up again for, and less than `eventually_async` waits.
+/// serve that hangs up again for.
 const ANSWERING: Duration = Duration::from_secs(8);
 /// How long a test gives a part of serve to stop.
 const STOPPING: Duration = Duration::from_secs(30);
@@ -236,7 +236,7 @@ async fn send(
     send_over(stream, method, Some(host), resource).await
 }
 
-/// A world whose work dir is `REPO`'s, as `serve`'s API reads it.
+/// A world whose work dir is `REPO`'s.
 async fn with_ticket_and_automation() -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     open_issue_linewright_labeled(
@@ -799,11 +799,39 @@ fn gathered(
     gathered
 }
 
-pub(crate) fn turn_1() -> Vec<String> {
-    include_str!("fixtures/transcript/turn-1.jsonl")
+/// The recorded first turn of #1's triage, in the pieces a test writes it in.
+pub(crate) struct Turn1 {
+    /// The marker, the start event and the first Bash call, with its result.
+    pub(crate) through_the_first_bash_result: String,
+    /// The second Bash call, without its result.
+    pub(crate) the_second_bash_call: String,
+    /// The second Bash call's result.
+    pub(crate) its_result: String,
+    /// Everything after the second Bash call's result.
+    pub(crate) the_rest: String,
+}
+
+impl Turn1 {
+    /// Everything after the first Bash call's result.
+    fn after_the_first_bash_result(&self) -> String {
+        [&self.the_second_bash_call, &self.its_result, &self.the_rest]
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+}
+
+pub(crate) fn turn_1() -> Turn1 {
+    let lines: Vec<String> = include_str!("fixtures/transcript/turn-1.jsonl")
         .lines()
         .map(|line| format!("{line}\n"))
-        .collect()
+        .collect();
+    Turn1 {
+        through_the_first_bash_result: lines[..4].concat(),
+        the_second_bash_call: lines[4..6].concat(),
+        its_result: lines[6].clone(),
+        the_rest: lines[7..].concat(),
+    }
 }
 
 #[test_log::test(tokio::test)]
@@ -812,10 +840,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
-    let through_the_first_bash_result = turn[..4].concat();
-    let the_second_bash_call = turn[4..6].concat();
-    let its_result = &turn[6];
-    agent.writes(&through_the_first_bash_result);
+    agent.writes(&turn.through_the_first_bash_result);
     eventually_async(|| async {
         answering
             .lw(&["logs", "1"])
@@ -833,7 +858,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     follow.shows("→ exit 0, 19 lines\n").await;
     json.shows("\"exit 0, 19 lines\"").await;
     let so_far = follow.shown();
-    agent.writes(&the_second_bash_call);
+    agent.writes(&turn.the_second_bash_call);
     follow.shows("2>&1) → running\n").await;
     json.shows("\"running\"").await;
     let before_its_result = follow.shown();
@@ -841,14 +866,14 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         .lw(&["logs", "1", "--json", "--verbose"])
         .await
         .stdout;
-    agent.writes(its_result);
+    agent.writes(&turn.its_result);
     follow.shows("2>&1) → exit 2\n").await;
     json.shows("\"exit 2\"").await;
     let ended = answering
         .lw(&["logs", "1", "--json", "--verbose"])
         .await
         .stdout;
-    agent.writes(&turn[7..].concat());
+    agent.writes(&turn.the_rest);
     follow.shows(" 2:59  {\"outcome\"").await;
     drop(agent);
     let (code, shown, _) = follow.exits().await;
@@ -952,7 +977,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     let answering = Answering::start(world, false).await;
     let runtime_dir = answering.runtime_dir.path();
     let turn = turn_1();
-    agent.writes(&turn[..4].concat());
+    agent.writes(&turn.through_the_first_bash_result);
     eventually_async(|| async {
         answering
             .lw(&["logs", "1"])
@@ -963,7 +988,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     .await;
 
     let first = events(runtime_dir, "/api/logs/follow?item=1", None, Some(2)).await;
-    agent.writes(&turn[4..].concat());
+    agent.writes(&turn.after_the_first_bash_result());
     drop(agent);
     let resumed = events(
         runtime_dir,
@@ -1033,7 +1058,7 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_unanswered_
 
     let follow = follow_through(&answering, runtime_dir.path());
     stopped.await.unwrap();
-    agent.writes(&turn_1()[4..].concat());
+    agent.writes(&turn_1().after_the_first_bash_result());
     drop(agent);
 
     shows_the_rest_once_serve_stops(&answering, follow).await;
@@ -1053,11 +1078,11 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as
     let follow = follow_through(&answering, runtime_dir.path());
     follow.shows("→ exit 0, 19 lines\n").await;
     let turn = turn_1();
-    agent.writes(&turn[4..6].concat());
+    agent.writes(&turn.the_second_bash_call);
     follow.shows("→ running\n").await;
     stopping.cancel();
     stopped.await.unwrap();
-    agent.writes(&turn[6..].concat());
+    agent.writes(&format!("{}{}", turn.its_result, turn.the_rest));
     drop(agent);
 
     shows_the_rest_once_serve_stops(&answering, follow).await;
@@ -1068,7 +1093,7 @@ async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     let world = with_issue_for_triage().await;
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
-    agent.writes(&turn_1()[..4].concat());
+    agent.writes(&turn_1().through_the_first_bash_result);
     eventually_async(|| async {
         answering
             .lw(&["logs", "1"])
@@ -1163,7 +1188,7 @@ async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
-    agent.writes(&turn[..4].concat());
+    agent.writes(&turn.through_the_first_bash_result);
     eventually_async(|| async {
         answering
             .lw(&["logs", "1"])

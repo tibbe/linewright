@@ -4,8 +4,8 @@ use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::status::View;
 use serde_json::json;
 
-/// A world working under `work/REPO`, where the web UI reads the runs, with
-/// the automation files `files` on the default branch.
+/// A world working under `work/REPO`, with the automation files `files` on
+/// the default branch.
 async fn with_automations(files: &[(&str, &str)]) -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     let files: Vec<(String, &str)> = files

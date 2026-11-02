@@ -427,10 +427,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let agent = world.harness.hold();
     let web = Web::start(world).await;
     let turn = crate::local_api::turn_1();
-    let through_the_first_bash_result = turn[..4].concat();
-    let the_second_bash_call = turn[4..6].concat();
-    let its_result = &turn[6];
-    agent.writes(&through_the_first_bash_result);
+    agent.writes(&turn.through_the_first_bash_result);
     let read = web
         .eventually_page("/runs/1/triage-1", |html| {
             entry_lines(html)
@@ -445,11 +442,11 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     );
     let mut events = stream_with_ids(&web, &events_path, None).await;
 
-    agent.writes(&the_second_bash_call);
+    agent.writes(&turn.the_second_bash_call);
     let made = transcript_events(&mut events, |sent| !sent.is_empty()).await;
-    agent.writes(its_result);
+    agent.writes(&turn.its_result);
     let returned = transcript_events(&mut events, |sent| !sent.is_empty()).await;
-    agent.writes(&turn[7..].concat());
+    agent.writes(&turn.the_rest);
     drop(agent);
     web.eventually_page("/runs?item=1", |html| {
         has_run(&runs_shown(html), "done", "1/triage-1")

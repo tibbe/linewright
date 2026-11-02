@@ -25,7 +25,7 @@ function setInterval() {}
 function setTimeout() {}
 "#;
 
-/// The script the board serves, as its page names it.
+/// The script the board serves.
 async fn served_script() -> String {
     let pages = Pages::of(view(vec![], vec![])).await;
     let html = pages.page("/").await;
@@ -118,7 +118,6 @@ function adopt(parent, children) {
   }
 }
 function page(...elements) { adopt(root, elements); }
-// An element 100 by 20 at (450, 300), which is cut where `cut` says so.
 function node(attributes, ...children) {
   const element = {
     attributes,
@@ -186,7 +185,6 @@ var tip = {
   contains(other) { return other === this; },
 };
 document.getElementById = (id) => (id === "tip" ? tip : null);
-// The tip as daisyUI draws it, 120 by 28, 8px above the box it is laid over.
 var drawn = { width: 120, height: 28 };
 function getComputedStyle(element, pseudo) {
   if (element !== tip || pseudo !== "::before") return {};
@@ -197,7 +195,6 @@ function getComputedStyle(element, pseudo) {
   };
 }
 function shown() { return tip.open ? tip.dataset.tip : "-"; }
-// The pointer moving from `from` onto `to`, as the browser sends it.
 function point(from, to) {
   if (from) fire("pointerout", { target: from, relatedTarget: to });
   if (to) fire("pointerover", { target: to, relatedTarget: from });
@@ -540,19 +537,18 @@ fn times(datetimes: &[&str]) -> String {
 #[test_log::test(tokio::test)]
 async fn a_past_time_reads_in_words_rounded_down_then_as_its_date_past_30_days_with_its_absolute_time_in_the_tip()
  {
-    let ages_as_of_now: [(&str, &str); 10] = [
-        ("59 s", "2026-10-23T11:59:01Z"),
-        ("1 min", "2026-10-23T11:59:00Z"),
-        ("59 min 59 s", "2026-10-23T11:00:01Z"),
-        ("1 h", "2026-10-23T11:00:00Z"),
-        ("23 h 59 min", "2026-10-22T12:01:00Z"),
-        ("1 day", "2026-10-22T12:00:00Z"),
-        ("47 h, two calendar days back", "2026-10-21T13:00:00Z"),
-        ("30 days", "2026-09-23T12:00:00Z"),
-        ("30 days and 1 s", "2026-09-23T11:59:59Z"),
-        ("a past year", "2025-09-12T10:00:00Z"),
+    let datetimes = [
+        "2026-10-23T11:59:01Z",
+        "2026-10-23T11:59:00Z",
+        "2026-10-23T11:00:01Z",
+        "2026-10-23T11:00:00Z",
+        "2026-10-22T12:01:00Z",
+        "2026-10-22T12:00:00Z",
+        "2026-10-21T13:00:00Z",
+        "2026-09-23T12:00:00Z",
+        "2026-09-23T11:59:59Z",
+        "2025-09-12T10:00:00Z",
     ];
-    let datetimes = ages_as_of_now.map(|(_, datetime)| datetime);
 
     let shown = on_the_page(
         &times(&datetimes),
