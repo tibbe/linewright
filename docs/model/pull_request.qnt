@@ -208,7 +208,8 @@ module pull_request {
 
   /// The run in flight ends: R ## Working an item, "a run on it cannot
   /// finish" hands it back; otherwise it pushes, or finds nothing to push.
-  /// "Feedback during a run goes to its session before the run pushes", and
+  /// "Feedback posted while a run works goes to its session before the run
+  /// pushes", and
   /// every run first brings the branch up to date.
   action runEnds: bool = {
     nondet end = Set("push", "nothing", "cannot finish").oneOf()

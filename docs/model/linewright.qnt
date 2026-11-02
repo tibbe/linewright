@@ -313,10 +313,11 @@ module linewright {
     else if (state == "open" and itsOwnPr) Set("claim", "pr")
     else Set()
 
-  /// R ## Steering: a run is cancelled when a person "changes an issue's
-  /// status label" to one that does not ask for it, "closes an item, or merges
-  /// a pull request", or "unassigns Linewright". A3: ready-for-agent asks for
-  /// both the design and the implement run.
+  /// R ## Steering: a person "changes or removes the issue's status label" |
+  /// "cancels a run the label no longer asks for"; "closes the issue",
+  /// "merges or closes a pull request" or "unassigns Linewright" | "cancels a
+  /// run on it". A3: ready-for-agent asks for both the design and the
+  /// implement run.
   pure def asksForRun(w: World, i: int, stage: str): bool = {
     val x = it(w, i)
     if (PRS.contains(i)) x.lw and x.open
@@ -456,12 +457,11 @@ module linewright {
       // open | "a pull request Linewright opened, that it may claim" |
       // "assigns itself"; "Claiming": "It claims a pull request it opened" (A7).
       (x.byLw and x.open and claimsOnItsOwn(w, p), opt("claim", p, "")),
-      // open | "a pull request Linewright opened and is assigned to, for
-      // which Pull requests asks for a fix-ci, rework or update run or a
-      // merge" | "starts that run, or merges it"; P ## Rework: "A comment
-      // or review from anyone other than Linewright, posted after Linewright's
-      // last push, starts a rework run"; P ## Merging: "with it, Linewright
-      // merges each green PR it opened."
+      // open | "a pull request Linewright opened and is assigned to, whose
+      // first row of Working a pull request that holds does more than wait" |
+      // "does what that row gives": here only its rework row, "feedback has
+      // come" | "starts a rework run", and, with auto-merge, its merge row;
+      // pull_request.qnt models that table in full.
       (x.byLw and x.open and x.lw and x.feedback, opt("start run", p, "pr")),
       (x.byLw and x.open and x.lw and w.autoMerge, opt("merge", p, "")),
       // R ## Steering, open | "assigns Linewright to any other pull request it
@@ -514,9 +514,9 @@ module linewright {
   /// R ## Assignment "Handing back": "it labels an issue ready-for-human,
   /// unassigns itself from the item, removes linewright:designed where the
   /// design is the item's own, and says why in a comment." "Stalls": "A stall
-  /// labels the item linewright:stalled as well". R ## Writes "Order":
-  /// "linewright:designed before the status label and the status label before
-  /// the assignment".
+  /// labels the item linewright:stalled as well". R ## Writes "Among them":
+  /// "linewright:designed comes first, then the status label, then the
+  /// assignment".
   pure def handBackWrites(w: World, i: int, stall: bool): List[Write] = {
     val x = it(w, i)
     List(comment(i))
@@ -701,9 +701,9 @@ module linewright {
     ws.foldl(w, (acc, wt) => { ...acc, items: applyWrite(acc, wt, 1000) })
 
   /// What S5 compares of an item: its state and, while it is open, what it
-  /// asks for: linewright:designed and Linewright's assignment. "A closed item
-  /// keeps its labels and assignees" (R "While assigned"), and asks for
-  /// nothing.
+  /// asks for: linewright:designed and Linewright's assignment. A closed item
+  /// asks for nothing: R ## Managed items "Asking for its work": "An open item
+  /// Linewright is assigned to" (A11).
   pure def sig(w: World, i: int): Sig =
     if (it(w, i).open) { state: stateOf(w, i), designed: it(w, i).designed, lw: it(w, i).lw }
     else { state: stateOf(w, i), designed: false, lw: false }
@@ -868,8 +868,8 @@ module linewright {
   }
 
   /// GitHub closes the issues a merged pull request closes, some time after
-  /// the merge (R ## Working an item, row "in review": "nothing: GitHub closes
-  /// the issue").
+  /// the merge; R ## State has the issue done from the merge: "has had a pull
+  /// request that closes it merge into the default branch".
   action githubCloses: bool = all {
     ghPending.size() > 0,
     nondet pi = ghPending.oneOf()
@@ -972,8 +972,9 @@ module linewright {
       mergedSince: false, noSince: false }), ghPending),
   }
   /// T ## Answers: "A reply is a comment from anyone other than Linewright
-  /// posted after its question" (A10); P ## Rework: "A comment or review from anyone
-  /// other than Linewright, posted after Linewright's last push".
+  /// posted after its question" (A10); P ## Rework: "A comment or review from
+  /// anyone other than Linewright is feedback until a rework run that was given
+  /// it ends done": the run's done outcome is the push write, which clears it.
   action personComments(i: int): bool = {
     val x = items.get(i)
     all {
@@ -994,8 +995,9 @@ module linewright {
     SUB_ISSUE_PARENTS.contains(items.get(c).parent),
     personMoves(items.setBy(c, x => { ...x, parent: 0, parentByLw: false }), ghPending),
   }
-  /// R ## Steering, "closes a pull request Linewright opened, without
-  /// merging"; P "Closed without merging": "the maintainer's no".
+  /// R ## Steering, open | "merges or closes a pull request"; P ## The pull
+  /// request "Closed without merging": "A PR Linewright opened that a person
+  /// closes without merging is the maintainer's no".
   action personClosesPr(p: int): bool = {
     val x = items.get(p)
     all {
