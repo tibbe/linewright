@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -32,7 +31,10 @@ pub struct ClaudeCode {
 }
 
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
-/// Docs: <https://code.claude.com/docs/en/settings#environment-variables>.
+/// Without it Claude Code picks the operator's `$SHELL`. It still sources
+/// the host's `~/.bashrc`, if there is one, and has no switch to stop that,
+/// so a session is not insulated from it. Docs:
+/// <https://code.claude.com/docs/en/settings#environment-variables>.
 const SHELL: &str = "CLAUDE_CODE_SHELL";
 /// Ranked above every other choice of effort, `--effort` and the settings
 /// included: <https://code.claude.com/docs/en/model-config#adjust-effort-level>.
@@ -117,13 +119,7 @@ fn set_for_session<'a>(
         .filter_map(|own| {
             let value = match own {
                 Own::TemporaryDirectory => Some(scratch.as_os_str()),
-                // Claude Code otherwise picks the operator's `$SHELL`. It
-                // still sources the host's `~/.bashrc`, if there is one,
-                // and has no switch to stop that, so a session is not
-                // insulated from it.
                 Own::Shell => Some(bash.as_os_str()),
-                // Every session runs the Claude Code the operator
-                // installed.
                 Own::NoUpdates => Some(OsStr::new("1")),
                 Own::Effort => effort.map(|effort| OsStr::new(effort.name())),
                 Own::GhToken | Own::GithubToken => github_token.map(OsStr::new),
@@ -198,13 +194,17 @@ impl RateLimitEvent {
 /// the repository's cannot choose another:
 /// <https://code.claude.com/docs/en/model-config>. `effortLevel` does not
 /// take `max`, which `--effort` and the variable set alone.
+///
+/// `clone` is the clone's real path, as Claude Code matches `CLAUDE.md`
+/// files by their absolute paths:
+/// <https://code.claude.com/docs/en/memory#exclude-specific-claude-md-files>.
 fn isolation_args(clone: &Path, model: Option<&str>, effort: Option<Effort>) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
         let pattern = escape_glob(dir.to_string_lossy().trim_end_matches('/'));
         excludes.push(format!("{pattern}/*.md"));
-        // A clone under this `.claude` keeps its own instructions.
-        if !clone.starts_with(dir.join(".claude")) {
+        let clone_is_under_its_claude_dir = clone.starts_with(dir.join(".claude"));
+        if !clone_is_under_its_claude_dir {
             excludes.push(format!("{pattern}/.claude/**"));
         }
     }
@@ -256,8 +256,10 @@ const UNUSED_TOOLS: [&str; 17] = [
     "ShareOnboardingGuide",
 ];
 
-/// `path` as a glob that matches it alone. Claude Code's globs treat
-/// parentheses as special too, so `globset::escape` won't do.
+/// `path` as a `claudeMdExcludes` glob that matches it alone:
+/// <https://code.claude.com/docs/en/memory#exclude-specific-claude-md-files>.
+/// Claude Code's globs treat parentheses as special too, so
+/// `globset::escape` won't do.
 fn escape_glob(path: &str) -> String {
     path.chars()
         .map(|c| match c {
@@ -326,9 +328,10 @@ impl ClaudeCode {
             .collect()
     }
 
-    /// Each line is redacted as it comes, and what the turn answers once
-    /// more: its result is text of its own, such as JSON, that can hold a
-    /// secret escaped once more than the line does.
+    /// A turn of `session`, with all it keeps and answers redacted. The
+    /// output it keeps is redacted line by line, and the turn or error it
+    /// answers once more: a result is text of its own, such as JSON, that
+    /// can hold a secret escaped once more than its line does.
     async fn turn(
         &self,
         spec: &SessionSpec,
@@ -347,7 +350,6 @@ impl ClaudeCode {
         session: Session<'_>,
         prompt: &str,
     ) -> Result<Turn, SessionError> {
-        // Claude Code matches `CLAUDE.md` files by their real path.
         let clone = std::fs::canonicalize(&spec.dir).unwrap_or_else(|_| spec.dir.clone());
         let mut command = child::contained(&self.container, &self.program);
         command
@@ -463,9 +465,6 @@ impl ClaudeCode {
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
         let Ok((result, refusal, underway, status)) = outcome else {
-            // So that nothing of the session is left running once its run
-            // goes on to hand the work back. On a result or a crash, `wait`
-            // has returned only once all the turn started has ended.
             child.end().await;
             return Err(SessionError::TimedOut {
                 log_tail: log.tail(),

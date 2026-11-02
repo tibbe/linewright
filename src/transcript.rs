@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
@@ -129,7 +128,6 @@ impl SetupEnded {
 
     /// How it ended and how long it ran, as its line shows them.
     pub(crate) fn account(&self) -> String {
-        // Whole seconds, as durations show.
         let seconds = std::time::Duration::try_from_secs_f64(self.duration_seconds)
             .map_or(0, |duration| duration.as_secs());
         Phrase::from(format!("{}, ", self.status.account()))
@@ -267,28 +265,27 @@ impl SessionRecord {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         }
-        // The harness writes UTF-8, so what is read up to a character still
-        // being written keeps its length.
-        if let Err(e) = std::str::from_utf8(&added)
-            && e.error_len().is_none()
-        {
-            added.truncate(e.valid_up_to());
-        }
-        // The line a read stopped in is whole only once a later read ends
-        // it.
-        let unread = self.output.rfind('\n').map_or(0, |end| end + 1);
+        drop_character_being_written(&mut added);
+        let partial_line_start = self.output.rfind('\n').map_or(0, |end| end + 1);
         self.output.push_str(&String::from_utf8_lossy(&added));
-        // The setup command's output is whole once it is said to have
-        // ended, so what says so is read first.
-        if self.setup_output.is_none()
-            && (self.setup.is_some()
-                || whole_lines(&self.output[unread..])
-                    .lines()
-                    .any(says_setup_ended))
-        {
+        let setup_ended = self.setup.is_some()
+            || whole_lines(&self.output[partial_line_start..])
+                .lines()
+                .any(says_setup_ended);
+        if self.setup_output.is_none() && setup_ended {
             self.setup_output = Some(read(SETUP_OUTPUT)?.unwrap_or_default());
         }
         Ok(())
+    }
+}
+
+/// `bytes` of UTF-8 without the character they end part-way through, if
+/// any.
+fn drop_character_being_written(bytes: &mut Vec<u8>) {
+    if let Err(e) = std::str::from_utf8(bytes)
+        && e.error_len().is_none()
+    {
+        bytes.truncate(e.valid_up_to());
     }
 }
 
@@ -521,8 +518,8 @@ impl Parser {
             self.begin_turn(Some(marker.started_at), prompt);
             return;
         }
-        if self.session.turns.is_empty() {
-            // Recorded before turns were marked.
+        let recorded_before_turns_were_marked = self.session.turns.is_empty();
+        if recorded_before_turns_were_marked {
             self.begin_turn(None, Prompt::Brief(record.brief.clone()));
         }
         self.event(event);
@@ -600,8 +597,6 @@ impl Parser {
 
     fn event(&mut self, event: Value) {
         let turn = self.session.turns.len() - 1;
-        // An event that does not say when it happened happened after the
-        // one before it, as the agent wrote them, wherever its entry is.
         let at = timestamp(&event["timestamp"]).or(self.last_at);
         self.last_at = at;
         let parent = event["parent_tool_use_id"]
@@ -630,9 +625,10 @@ impl Parser {
                         }),
                         _ => What::Other(block),
                     };
-                    // A thinking block can hold only a signature.
-                    if !matches!(&what, What::Message(t) | What::Thinking(t) if t.trim().is_empty())
-                    {
+                    // A thinking block can hold only a signature:
+                    // <https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display>.
+                    let blank = matches!(&what, What::Message(t) | What::Thinking(t) if t.trim().is_empty());
+                    if !blank {
                         self.push(turn, parent, Entry { at, what });
                     }
                 }
@@ -670,9 +666,8 @@ impl Parser {
                     };
                     self.push(turn, parent, Entry { at, what });
                 }
-                // Beside more than one result, it is not known whose the
-                // details are.
-                if results > 1 && !event["tool_use_result"].is_null() {
+                let several_results = results > 1;
+                if several_results && !event["tool_use_result"].is_null() {
                     let details = serde_json::json!({"tool_use_result": event["tool_use_result"]});
                     let what = What::Other(details);
                     self.push(turn, parent, Entry { at, what });
@@ -687,8 +682,6 @@ impl Parser {
                     Some("task_notification") => {
                         if let Some((ended, call)) = self.call(&event["tool_use_id"]) {
                             call.background = event["status"].as_str().map(str::to_string);
-                            // Only a call that has returned shows how it
-                            // went on in the background.
                             if call.result.is_some() {
                                 self.touched.push(Touch::Ended(Place::Turn(ended), at));
                             }
@@ -1217,10 +1210,9 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
         sessions: transcript.sessions.len(),
     })];
     for (i, session) in transcript.sessions.iter().enumerate() {
-        // Of a run in flight, the session it is in shows once a line of it
-        // has been read, as following it does.
         let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        if current && session.setup.is_none() && session.turns.is_empty() {
+        let nothing_read = session.setup.is_none() && session.turns.is_empty();
+        if current && nothing_read {
             continue;
         }
         let mut stamper = Stamper::new(i + 1, session.started_at);
@@ -1509,8 +1501,6 @@ impl Follower {
             followed.parser.recorded_setup(record);
             for line in complete.lines() {
                 followed.parser.line(line, record);
-                // Its header gives when it started, which its first line
-                // says, unless it showed before.
                 followed.open(&mut shown);
                 let read = ReadTo {
                     session,
@@ -1526,11 +1516,7 @@ impl Follower {
                 followed.show(self.verbosity, &mut shown);
             }
             followed.bytes_read += complete.len();
-            // A setup command recorded before its start was shows with no
-            // line of the output.
             followed.show(self.verbosity, &mut shown);
-            // A session that ended having shown nothing shows as a
-            // transcript shows it: its header.
             if whole {
                 followed.open(&mut shown);
             }
@@ -1586,7 +1572,6 @@ impl Followed {
         let session = &self.parser.session;
         for touch in std::mem::take(&mut self.parser.touched) {
             let stamper = open(&mut self.stamper, self.number, session, lines);
-            // Shown before it started, it times its entries from its start.
             stamper.started(started_at(session));
             let (place, ended_at) = match touch {
                 Touch::Turn(turn) => {

@@ -1,4 +1,3 @@
-// comments: pending
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,7 +56,7 @@ pub(crate) struct Shell {
     pub bash: PathBuf,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
-    /// The operator's settings for sessions, which each run resolves.
+    /// The operator's settings for sessions.
     pub work: WorkSettings,
     pub environments: Environments,
     /// The operator's layer of the prompts.
@@ -73,7 +72,7 @@ pub(crate) struct Shell {
 }
 
 /// The label each issue and pull request Linewright files carries, if the
-/// repository has it: read once in a run, when it first files one.
+/// repository has it.
 struct RequiredLabel<'a> {
     shell: &'a Shell,
     read: tokio::sync::OnceCell<Option<String>>,
@@ -179,7 +178,7 @@ pub(crate) struct Cancellation(Arc<Cancel>);
 
 #[derive(Default)]
 struct Cancel {
-    /// Fired once the phase is cancelled, for what the run awaits.
+    /// Fired once the phase is cancelled.
     token: CancellationToken,
     phase: Mutex<Phase>,
 }
@@ -250,11 +249,7 @@ impl Cancellation {
     }
 
     fn phase(&self) -> std::sync::MutexGuard<'_, Phase> {
-        // A phase is set whole, so one a panic left is still sound.
-        self.0
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        lock_set_whole(&self.0.phase)
     }
 }
 
@@ -333,8 +328,6 @@ fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> 
         Pushed::Refused(reason) => Err(Failure::HandBack(hand_back::refused_push(
             branch, &reason, again,
         ))),
-        // Only an update that needed no session pushes without one to send
-        // it back to, and its commits GitHub already took.
         Pushed::Protected(secrets) => Err(infra(anyhow::anyhow!(
             "GitHub's push protection refused the push over a secret: {secrets}"
         ))),
@@ -342,10 +335,10 @@ fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> 
     }
 }
 
-/// Pushes a session's finished result to `branch`, as the first write of
-/// applying it. A push GitHub's push protection refuses over a secret sends
-/// the result back to its session, and one GitHub refuses for a missing
-/// permission is handed back with how to `again`.
+/// Pushes a session's finished result to `branch`. A push GitHub's push
+/// protection refuses over a secret sends the result back to its session,
+/// and one GitHub refuses for a missing permission is handed back with how
+/// to `again`.
 async fn push_result(
     shell: &Shell,
     ctx: &Ctx,
@@ -384,9 +377,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             {
                 retries += 1;
                 let error = shell.secrets.redaction().apply(&format!("{e:#}"));
-                // The retry is a new session, so a cancel can stop it again,
-                // and one that came while the attempt applied its result
-                // stops it now.
                 if ctx.cancel.back_to_session().is_err() {
                     info!(subject = ?subject, error, "run cancelled; not retried");
                     return Ending::Cancelled;
@@ -430,8 +420,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
         }
     }
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
-    // Git's output, as Linewright pushes, can come from hooks the session
-    // left in its clone.
     let posted = |text: &str| {
         shell
             .secrets
@@ -502,8 +490,7 @@ async fn attempt(
     pull_work(shell, ctx, &ticket, pull(*pr)?, task).await
 }
 
-/// The snapshot may leave out an issue a run reads, such as the ticket of a
-/// pull request it works or a ticket's parent.
+/// Issue `number`, from `snapshot` if it holds it, or else from the store.
 async fn snapshot_or_store_issue<'a>(
     shell: &Shell,
     snapshot: &'a Snapshot,
@@ -618,7 +605,8 @@ pub(crate) async fn ask(store: &dyn Store, number: Number, asks: &Asks) -> Resul
     Ok(())
 }
 
-/// `snapshot` holds the issue handed back, if it is one, as it was read.
+/// Hands `item` back for `hand_back`. `snapshot` holds the issue handed
+/// back, if it is one, as it was read.
 pub(crate) async fn hand_back(
     shell: &Shell,
     snapshot: &Snapshot,
@@ -649,7 +637,7 @@ async fn write_hand_back(
     ask(&*shell.store, n, &asks).await
 }
 
-/// A run's clone, removed when dropped: the run is done with it then.
+/// A run's clone, removed when dropped.
 struct Workspace {
     /// What the setup command left running, ended before the clone is
     /// removed.
@@ -674,8 +662,6 @@ impl Workspace {
             .context("creating a clone directory")
             .map_err(infra)?;
         let dir = temp.path().join("repo");
-        // The clone is removed when the run ends, so the maintenance git
-        // starts after a commit, a merge or a fetch would only cost time.
         let config = [
             ("user.name", shell.identity.name.as_str()),
             ("user.email", shell.identity.email.as_str()),
@@ -711,14 +697,13 @@ impl Drop for Workspace {
         let Some(leftovers) = self.leftovers.take() else {
             return;
         };
-        // Ending them waits out a grace, which the run's task does not.
-        let end = move || {
+        let end_after_grace = move || {
             leftovers.end();
             drop(temp);
         };
         match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => drop(runtime.spawn_blocking(end)),
-            Err(_) => end(),
+            Ok(runtime) => drop(runtime.spawn_blocking(end_after_grace)),
+            Err(_) => end_after_grace(),
         }
     }
 }
@@ -869,8 +854,6 @@ where
                     .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
                     .unwrap_or_else(|| turn.message.clone());
                 record(spec, "result.json", &json);
-                // The session may end as the run is cancelled, too late to
-                // stop it.
                 ctx.cancel.begin_applying().map_err(in_session)?;
                 match begin(result).await {
                     Ok(written) => return Ok((written, turn)),
@@ -878,9 +861,6 @@ where
                         return Err(Unbegun::Begun(failure));
                     }
                     Err(refused) => {
-                        // A cancel that came while applying cancels the run
-                        // now, rather than send the result back or end it
-                        // otherwise.
                         ctx.cancel.back_to_session().map_err(in_session)?;
                         refused
                     }
@@ -888,8 +868,6 @@ where
             }
             Err(rejection) => Refused::Untouched(rejection),
         };
-        // What the first writes refused as they wrote the work, they would
-        // refuse again of the work as the session left it.
         let (rejection, unbegun): (_, fn(Failure) -> Unbegun) = match refused {
             Refused::Untouched(rejection) => (rejection, Unbegun::InSession),
             Refused::Writing(rejection) => (rejection, Unbegun::Begun),
@@ -988,7 +966,7 @@ async fn take_turn(
     }
 }
 
-/// What the session committed stays in the clone for the caller to keep.
+/// The output of `turn`, unless the run is cancelled first.
 async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, Failure> {
     tokio::select! {
         biased;
@@ -1022,11 +1000,11 @@ struct Opened<'a> {
     deadline: tokio::time::Instant,
 }
 
-/// Opens the session of `purpose` in `ws`: makes its record and its
-/// attachments directory, registers it with the run, sets its deadline and
-/// runs its setup command (docs/specs/runs.md, "Setup"), so that the
-/// command's output is under the session whether or not the agent starts,
-/// and its time counts against the session's timeout.
+/// Opens the session of `purpose` in `ws`, with its record and its
+/// attachments directory, registered with the run, and runs its setup
+/// command (docs/specs/runs.md, "Setup"). The command's output is under the
+/// session whether or not the agent starts, and its time counts against the
+/// session's timeout.
 async fn open_session<'a>(
     shell: &Shell,
     ctx: &'a Ctx,
@@ -1150,9 +1128,9 @@ impl Opened<'_> {
 }
 
 /// Uploads each attachment `result`'s posted Markdown refers to in `dir`
-/// and puts its URL in place of its path, as the first write of applying
-/// it (docs/specs/runs.md, "Attachments"). A reference or a file the
-/// session can fix sends the result back to it.
+/// and puts its URL in place of its path (docs/specs/runs.md,
+/// "Attachments"). A reference or a file the session can fix sends the
+/// result back to it.
 async fn post_attachments(
     shell: &Shell,
     ctx: &Ctx,
@@ -1248,6 +1226,9 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
+/// Writes `result`'s triage of `issue`, commenting before labeling: stopped
+/// between the two, it leaves no status label without the comment it stands
+/// on.
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
     let store = &shell.store;
     let writes = triage::triage(
@@ -1266,8 +1247,6 @@ async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Re
             );
         }
     }
-    // Posted before the labeling, so that a stop between the two leaves no
-    // status label without the comment it stands on.
     store.comment(issue.number, &writes.comment).await?;
     match &writes.category {
         CategoryChange::IssueType(category) => store.set_issue_type(issue.number, category).await?,
@@ -1445,7 +1424,11 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
 }
 
 /// Files `cut`, made from the design of `tracking_issue`, and publishes
-/// `design` with its tickets there.
+/// `design` with its tickets there. It readies the tickets last, once every
+/// edge between them exists, so that no poll sees a ticket unblocked before
+/// its blockers are linked, and the design is on the tracking issue
+/// (docs/specs/implementation.md, "What the implementer reads"). It labels
+/// each designed as it readies it.
 async fn file_cut(
     shell: &Shell,
     tracking_issue: Number,
@@ -1459,14 +1442,6 @@ async fn file_cut(
     store
         .comment(tracking_issue, &published.design_comment)
         .await?;
-    // Tickets get `ready-for-agent` only once every edge exists, so no poll
-    // sees a ticket unblocked before its blockers are linked; once the design
-    // is on the tracking issue, so that their implementers read it
-    // (docs/specs/implementation.md, "What the implementer reads"); and only
-    // once they are designed, so that none is taken for an issue to design.
-    // A stop before then leaves the item undesigned, and its cut is discarded
-    // with these tickets, ready or not (docs/specs/design.md, "Discarding a
-    // cut").
     for ticket in &filed {
         ask(&**store, ticket.number, &published.ticket_asks).await?;
     }
@@ -1474,8 +1449,7 @@ async fn file_cut(
 }
 
 /// Files `tickets` as sub-issues of `tracking_issue`, each linked to the
-/// tickets blocking it, and returns them in order, not yet ready:
-/// [`file_cut`] readies them.
+/// tickets blocking it, and returns them in order, not yet ready.
 async fn file_tickets_under(
     shell: &Shell,
     tracking_issue: Number,
@@ -1508,8 +1482,8 @@ async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch:
 /// Keeps the work of a run on a pull request that stopped before it finished
 /// on the pull request's branch, unless its session changed nothing since
 /// the clone stood at `before`, the pull request closed or the work holds a
-/// secret: docs/specs/runs.md, "Ending". The push leases the branch at `start`, so commits others pushed
-/// since are not overwritten.
+/// secret: docs/specs/runs.md, "Ending". The push leases the branch at
+/// `start`, so commits others pushed since are not overwritten.
 async fn keep_unfinished_pull_work(
     shell: &Shell,
     dir: &Path,
@@ -1519,7 +1493,6 @@ async fn keep_unfinished_pull_work(
 ) -> Kept {
     let kept = async {
         let changed = git::work_state(dir).await? != *before;
-        // GitHub is asked only of work there is to keep.
         let open = changed && still_open(shell, pr.number).await?;
         if !pull_work::keeps_work(changed, open) {
             return Ok(Kept::Nothing);
@@ -1592,6 +1565,11 @@ fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
     kept
 }
 
+/// Implements `ticket` on `branch`, from `branch` as the clone holds it if
+/// it exists there, whatever the snapshot holds. A finished result files
+/// its spec gaps before it opens the pull request (docs/specs/repository.md,
+/// Writes, "Order"), and a failure to assign the pull request is only
+/// logged.
 async fn implement(
     shell: &Shell,
     ctx: &Ctx,
@@ -1603,9 +1581,6 @@ async fn implement(
         kind: WorkKind::Implement,
     };
     let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    // Where the run starts: docs/specs/implementation.md, "Working a
-    // ticket". The clone, not the snapshot, says whether the branch exists: a
-    // snapshot taken before an earlier run pushed it does not hold it.
     let upstream = shell.upstream();
     let start = git::check_out_branch(&ws.dir, &branch, &upstream)
         .await
@@ -1633,8 +1608,6 @@ async fn implement(
                 &problem,
             )));
         }
-        // One log of the branch's commits says both whether it has any and
-        // which are unfinished.
         let commits = git::commits_past(dir, base, "HEAD").await?;
         if commits.is_empty() {
             return Err(Rejection::retry(prompts::loose_ends(
@@ -1661,9 +1634,6 @@ async fn implement(
         kept: keep_unfinished_work(shell, &ws.dir, &upstream, &branch).await,
         try_again: TryAgain::Relabel,
     };
-    // A finished result is pushed as it begins applying, after its
-    // attachments, so that one GitHub refuses over a secret goes back to its
-    // session.
     let (filed_gaps, attachments) = (&ticket.filed_gaps(), &attachments);
     let begin = |mut result: ImplementResult| async {
         drop_filed_gaps(&mut result, filed_gaps);
@@ -1697,9 +1667,6 @@ async fn implement(
             spec_gaps,
         } => {
             let required = shell.required_label();
-            // Opening the pull request puts the ticket in review, which
-            // changes what it asks for, so the gaps go first
-            // (docs/specs/repository.md, Writes, "Order").
             file_spec_gaps(shell, &spec_gaps, ticket.number(), &required)
                 .await
                 .map_err(apply)?;
@@ -1712,8 +1679,6 @@ async fn implement(
                 ))
                 .await
                 .map_err(apply)?;
-            // A pull request Linewright was never assigned to is claimed by
-            // the next poll, so a failed assignment needs no hand-back.
             if let Err(e) = store.assign(pr).await {
                 warn!(
                     pr = pr.0,
@@ -1747,15 +1712,13 @@ async fn implement(
     }
 }
 
-/// Files `gaps` for `item`, labeled `required` as well, those already filed
-/// dropped from them by [`drop_filed_gaps`].
+/// Files `gaps` for `item`, labeled `required` as well.
 async fn file_spec_gaps(
     shell: &Shell,
     gaps: &[SpecGap],
     item: Number,
     required: &RequiredLabel<'_>,
 ) -> Result<()> {
-    // The label is read only to file a gap.
     if gaps.is_empty() {
         return Ok(());
     }
@@ -1826,6 +1789,10 @@ async fn update_branch(
     })
 }
 
+/// Works `pr`, of `ticket`, at `task`. The setup command runs on the branch
+/// as it was cloned, before it is updated (docs/specs/runs.md, "Setup").
+/// Feedback that arrives while the session works goes to it before anything
+/// is pushed, for as long as it keeps coming within the session's time.
 async fn pull_work(
     shell: &Shell,
     ctx: &Ctx,
@@ -1833,7 +1800,6 @@ async fn pull_work(
     pr: &Pull,
     task: Task<'_>,
 ) -> Result<(), Failure> {
-    // The sessions are kept with the ticket's, as a case captures them.
     let subject = Subject::Issue(ticket.number());
     let kind = match task {
         Task::Rework => WorkKind::Rework,
@@ -1844,10 +1810,6 @@ async fn pull_work(
     let purpose = Purpose::Work { subject, kind };
     let mut ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
     let start = git::head(&ws.dir).await.map_err(infra)?;
-    // The setup command runs on the branch as it was cloned, before the
-    // update (docs/specs/runs.md, "Setup"). An update run starts a session
-    // only on a conflict, so it updates first, and on a conflict aborts the
-    // update to run the command, then updates again.
     if let Task::Update = task {
         let conflict = update_branch(shell, pr, &ws.dir).await?;
         let Some(PullTask::Update(conflict)) =
@@ -1882,10 +1844,8 @@ async fn pull_work(
     };
     let dir = &ws.dir;
     let upstream = shell.upstream();
-    // A rebase that stopped on a conflict has not yet replayed the branch's
-    // unfinished commits.
-    let tip = if conflict.is_some() { &start } else { "HEAD" };
-    let left_unfinished = git::unfinished_commits(dir, &upstream, tip)
+    let own_commits_tip = if conflict.is_some() { &start } else { "HEAD" };
+    let left_unfinished = git::unfinished_commits(dir, &upstream, own_commits_tip)
         .await
         .map_err(infra)?;
     let (mut spec, attachments) = opened.spec(|attachments| {
@@ -1954,10 +1914,6 @@ async fn pull_work(
         if !matches!(result, PullWorkResult::Done { .. }) {
             return Ok((result, pr_now, read_at));
         }
-        // Feedback posted after the snapshot the brief came from would be
-        // older than the push that follows, so it goes to the session before
-        // anything is pushed, for as long as it keeps coming within the
-        // session's time.
         let mut shown = lock(shown);
         let arrived = late(&feedback(&pr_now, linewright, ctx.reworked), shown.until);
         if arrived.is_empty() {
@@ -1974,8 +1930,6 @@ async fn pull_work(
             &arrived,
         )))
     };
-    // A finished result is pushed as it begins applying, after its
-    // attachments, as for an implement run.
     let (start, lease) = (&start, &lease);
     let (filed_gaps, attachments) = (&ticket.filed_gaps(), &attachments);
     let begin = |(mut result, pr_now, read_at): (PullWorkResult, Pull, Timestamp)| async move {
@@ -2021,8 +1975,6 @@ async fn pull_work(
             record_pull_work(shell, pr.number, &writes)
                 .await
                 .map_err(apply)?;
-            // The session saw the feedback up to the last read; what came
-            // after is for the next rework.
             if kind == WorkKind::Rework {
                 ctx.run.answered(read_at);
             }
@@ -2057,8 +2009,13 @@ struct Shown {
 }
 
 fn lock(shown: &Mutex<Shown>) -> std::sync::MutexGuard<'_, Shown> {
-    // Each field is set whole, so what a panic left is still sound.
-    shown
+    lock_set_whole(shown)
+}
+
+/// Locks `mutex`, even if a panic poisoned it: what it holds is set whole,
+/// so what a panic left is still sound.
+fn lock_set_whole<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -2088,7 +2045,7 @@ pub(crate) enum AutomationEnd {
     UsageLimit(UsageLimit),
 }
 
-/// An automation run has no issue to hand back, so a run that fails is an error.
+/// Runs `automation`, and ends its run. A run that fails is an error.
 pub(crate) async fn automation(
     shell: &Shell,
     automation: &Automation,
@@ -2177,7 +2134,6 @@ async fn record_automation(
     automation: &Automation,
     result: &AutomationResult,
 ) -> Result<()> {
-    // The label is read only to file an issue.
     if result.issues.is_empty() {
         return Ok(());
     }

@@ -39,8 +39,7 @@ pub struct SessionSpec {
     pub effort: Option<Effort>,
     /// A session starts from these alone, and what the harness sets itself.
     pub environment: Arc<Given>,
-    /// When the session times out, across all its turns. A run that waits
-    /// out the usage limit moves it on by the wait.
+    /// When the session times out, across all its turns.
     pub deadline: tokio::time::Instant,
     /// Told what the harness reports of the session as each turn runs, so
     /// that a turn that never returns has still told it.
@@ -185,6 +184,7 @@ impl SessionError {
     }
 }
 
+/// Runs sessions' turns. A turn returns only once all it started has ended.
 #[async_trait]
 pub trait Harness: Send + Sync {
     /// The whole environment a session starts from, given `given`, its
