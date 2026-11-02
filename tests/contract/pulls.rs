@@ -1,4 +1,3 @@
-// comments: pending
 //! Pull requests, as Linewright opens, readies and closes them and reads
 //! them back.
 
@@ -40,8 +39,9 @@ async fn opened(sandbox: &Sandbox, what: &str) -> Result<Opened> {
     sandbox.open_pull(branch, what).await
 }
 
-/// `pull`, but for whether it merges or rebases, which GitHub works out
-/// when asked, so that two reads may differ on it.
+/// `pull`, with whether it merges or rebases unknown, which GitHub works out
+/// in the background
+/// (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
 fn worked_out(pull: &Pull) -> Pull {
     Pull {
         mergeability: Mergeability::Unknown,
@@ -50,8 +50,7 @@ fn worked_out(pull: &Pull) -> Pull {
     }
 }
 
-/// The pull request #`pr`, once its head is `head`: GitHub moves a pull
-/// request's head moments after a push.
+/// The pull request #`pr`, once its head is `head`.
 async fn at(sandbox: &Sandbox, pr: Number, head: &str) -> Result<Pull> {
     sandbox
         .eventually(async || {
@@ -140,7 +139,6 @@ async fn a_pull_request_marked_ready_is_no_longer_a_draft(sandbox: Sandbox) -> R
 
     sandbox.store().mark_ready(pr).await?;
 
-    // GitHub may answer a read with the pull request as it was.
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -154,7 +152,6 @@ async fn a_closed_pull_request_reads_back_closed_unmerged(sandbox: Sandbox) -> R
 
     sandbox.store().close_pull(pr).await?;
 
-    // GitHub may answer a read with the pull request as it was.
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -170,8 +167,6 @@ async fn a_closed_pull_request_reads_back_closed_unmerged(sandbox: Sandbox) -> R
                 &peoples,
                 &PeoplesPullRead::default(),
             )?;
-            // Unlike an open one, a snapshot holds it only while it closes a
-            // ticket.
             let read = sandbox.store().linewright_pull(pr).await?;
             equal("Linewright's pull request", &read, &None)?;
             match sandbox.store().any_item(pr).await? {
@@ -222,7 +217,6 @@ async fn a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_it
 async fn a_pull_request_lists_the_issues_it_closes(sandbox: Sandbox) -> Result<()> {
     let (issue, Opened { pr, .. }) = sandbox.open_pull_closing_an_issue("closes").await?;
 
-    // GitHub links the issue moments after the pull request opens.
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -269,7 +263,6 @@ async fn a_push_to_a_pull_requests_branch_is_listed_with_who_pushed_it(
 
     let linewright = sandbox.store().identity().await?.login;
     at(&sandbox, pr, &head).await?;
-    // GitHub lists a push moments after it.
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -292,7 +285,6 @@ async fn a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does(
     sandbox.store().assign(pr).await?;
 
     let linewright = sandbox.store().identity().await?.login;
-    // GitHub writes the assignments to the timeline moments after.
     sandbox
         .eventually(async || {
             let read = sandbox

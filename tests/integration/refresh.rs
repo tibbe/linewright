@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::*;
@@ -78,7 +77,6 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
     )
     .await
     .unwrap();
-    // Stopped, it decides without acting, leaving the store as it found it.
     poller.stopping().cancel();
     let polled = poller.cycle().await.unwrap();
     let refreshed = world
@@ -188,7 +186,6 @@ async fn spec_change(world: &World) -> Number {
 #[test_log::test(tokio::test)]
 async fn a_commit_names_the_open_pull_request_a_run_opened_since_the_poll_whose_head_it_is() {
     let mut world = World::new().await;
-    // The poll that started the run that opened it took its snapshot first.
     let (issue, pr) = world.ticket_in_review().await;
     world
         .store

@@ -41,8 +41,7 @@ fn hand_back_of(kind: HandBackKind, reason: &str, log_tail: Option<LogTail>) -> 
     }
 }
 
-/// The tail of a log of `of` whose last lines are `text`, made as the
-/// tests below check it is.
+/// The tail of a log of `of` whose last lines are `text`.
 fn log(of: Logged, text: &str) -> LogTail {
     match of {
         Logged::Session => LogTail::session(text),

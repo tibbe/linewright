@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::ffi::{OsStr, OsString};
@@ -165,8 +164,9 @@ async fn a_replayed_spec_change_leaves_its_tickets_pull_requests_and_session_rec
     assert!(out.join("sessions/issue-3").is_dir());
 }
 
-/// Returns the fake's directory, which is also Claude Code's config
-/// directory.
+/// Replays a case made in `dir`, with `env`, with a Claude Code that finds
+/// nothing to build, returning the fake's directory, which is also Claude
+/// Code's config directory.
 fn replay_with_fake_claude(dir: &Path, env: &[(&str, &str)]) -> std::path::PathBuf {
     let bin = case_with_fake_claude(dir);
     replay_with(dir, &bin, env);
@@ -213,8 +213,7 @@ fn replay_output(
         .unwrap()
 }
 
-/// Each value holds `s3cr3t`, so that none is found in any form, escaped
-/// or not.
+/// Credentials whose values each hold `s3cr3t`.
 const CREDENTIALS: [(&str, &str); 5] = [
     ("GH_TOKEN", "gh-s3cr3t"),
     ("GITHUB_TOKEN", "github-s3cr3t"),
@@ -244,7 +243,6 @@ fn a_replayed_session_that_prints_linewrights_credentials_leaves_them_redacted()
     spec_change_case(dir.path(), &[]);
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
-    // What the session saw when it ran `env`.
     let env: String = CREDENTIALS
         .iter()
         .map(|(variable, value)| format!("{variable}={value} "))
@@ -347,10 +345,10 @@ fn a_replayed_session_leaves_redacted_the_variables_secrets_names_and_none_that_
 #[test_log::test]
 fn a_replayed_session_leaves_a_secret_of_1_to_5_characters_in_what_it_said_and_warns_of_it() {
     let dir = tempfile::tempdir().unwrap();
+    let five_characters_in_ten_bytes = "ééééé";
     let env = [
         ("LINEWRIGHT_SECRETS", "PIN,LONG_PIN"),
-        // Five characters in ten bytes.
-        ("PIN", "ééééé"),
+        ("PIN", five_characters_in_ten_bytes),
         ("LONG_PIN", "s3cr3t"),
         ("ANTHROPIC_API_KEY", "12345"),
     ];
@@ -538,8 +536,8 @@ async fn a_replay_runs_no_automations() {
     harness.on(WorkKind::Design, {
         let clock = clock.clone();
         move |_| {
-            // Past the automation's next tick, while the replay goes on.
-            clock.advance(TimeDelta::hours(2));
+            let past_the_automations_next_tick = TimeDelta::hours(2);
+            clock.advance(past_the_automations_next_tick);
             Ok(json!({"outcome": "designed", "design": "A gadget store.", "tickets": [{"id": "a", "title": "Gadgets", "body": "Build gadgets.", "blocked_by": []}], "comment": "One slice."}).to_string())
         }
     });

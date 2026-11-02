@@ -1,4 +1,3 @@
-// comments: pending
 //! Issues, as Linewright opens and changes them and reads them back.
 
 use anyhow::{Result, bail, ensure};
@@ -106,7 +105,6 @@ async fn a_created_issue_reads_back_as_linewright_opened_it(sandbox: Sandbox) ->
         .await?;
 
     let linewright = linewright(&sandbox).await?;
-    // GitHub writes the labeling to the timeline after the issue.
     let issue = sandbox
         .eventually(async || {
             let issue = held(&sandbox, number).await?;
@@ -203,13 +201,13 @@ async fn a_removed_label_is_off_the_issue_with_its_removal_recorded(
         .eventually(async || {
             let issue = held(&sandbox, number).await?;
             equal("the labels", &issue.labels.len(), &0)?;
-            // GitHub may record the labeling again after the removal, the
-            // issue still unlabeled.
             match labelings(&issue, &label)[..] {
-                [IssueEvent::Labeled { .. }, ref after @ ..]
-                    if after
-                        .iter()
-                        .any(|event| matches!(event, IssueEvent::Unlabeled { .. })) =>
+                [
+                    IssueEvent::Labeled { .. },
+                    ref then_maybe_labeled_again @ ..,
+                ] if then_maybe_labeled_again
+                    .iter()
+                    .any(|event| matches!(event, IssueEvent::Unlabeled { .. })) =>
                 {
                     Ok(())
                 }
@@ -469,8 +467,6 @@ async fn a_sub_issue_and_its_parent_name_each_other_with_who_added_it(
         added_by: Some(linewright.clone()),
         state: SubIssueState::Open,
     };
-    // GitHub writes the add to the parent's timeline after the sub-issue, so
-    // until then who added it is not yet known.
     let sub_issues = held(&sandbox, parent).await?.sub_issues;
     let unknown = SubIssue {
         added_by: None,

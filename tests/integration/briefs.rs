@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 
 use crate::common;
@@ -107,6 +106,7 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
 
 #[test_log::test]
 fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_skipped() {
+    let directory_at_a_prompts_path = ("rework.md/x".to_string(), Blob::Text("Ours.".into()));
     let (layer, unusable) = PromptLayer::parse(
         Layer::Repository,
         listing(&[
@@ -125,8 +125,7 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
             (".DS_Store".to_string(), Blob::Binary),
             ("parts/x/y.md".to_string(), Blob::Text("Too deep.".into())),
             ("parts/.cache/x".to_string(), Blob::Binary),
-            // A directory at a prompt's path.
-            ("rework.md/x".to_string(), Blob::Text("Ours.".into())),
+            directory_at_a_prompts_path,
         ]),
     );
 
@@ -224,7 +223,6 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
         prompt.starts_with("Our own: - Repository: `owner/widgets`"),
         "{prompt}"
     );
-    // The contract Linewright reads is filled in.
     assert!(
         prompt.contains(
             "\n\n## Output\n\nEnd your session with a final message that is a single JSON \

@@ -1,4 +1,3 @@
-// comments: pending
 //! Branches, as Linewright clones, pushes and deletes them.
 
 use anyhow::{Result, bail, ensure};
@@ -172,7 +171,6 @@ async fn a_deleted_branch_is_gone(sandbox: Sandbox) -> Result<()> {
 
     sandbox.store().delete_branch(&pushed.name).await?;
 
-    // GitHub may answer a read with the branch it just deleted.
     sandbox
         .eventually(async || {
             let read = sandbox

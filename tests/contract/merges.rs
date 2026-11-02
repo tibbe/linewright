@@ -1,4 +1,3 @@
-// comments: pending
 //! Merges, as Linewright merges pull requests, and the merged pull requests
 //! and their changes read back.
 
@@ -92,9 +91,8 @@ fn file(sandbox: &Sandbox, what: &str) -> String {
     format!("{}.txt", sandbox.unique(what))
 }
 
-/// Merges #`pr`, at `head`, with `method`. GitHub works out whether a pull
-/// request merges after it opens or its head moves, and refuses to merge
-/// it until then, so it is asked again.
+/// Merges #`pr`, at `head`, with `method`, once GitHub has worked out
+/// whether it merges.
 async fn merge(sandbox: &Sandbox, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
     let _merging = sandbox.merging().await;
     sandbox
@@ -110,8 +108,7 @@ async fn merge(sandbox: &Sandbox, pr: Number, head: &str, method: MergeMethod) -
 }
 
 /// Whether the repository doesn't allow `method`, checking then that it
-/// refuses a merge with it: a contract on a method it doesn't allow checks
-/// only that.
+/// refuses a merge with it.
 async fn refused_unless_allowed(sandbox: &Sandbox, method: MergeMethod) -> Result<bool> {
     let settings = sandbox.store().settings().await?;
     if settings.allowed_merge_methods.contains(method) {
@@ -398,8 +395,8 @@ async fn a_pull_request_that_conflicts_is_refused_merging_even_by_a_rebase_that_
     .await?;
     move_on(&sandbox, "built-on-same", &[(&path, b"thing\n")]).await?;
     move_on(&sandbox, "built-on-more", &[(&path, b"thing\nmore\n")]).await?;
-    // GitHub refuses any merge until it has worked out whether the pull
-    // request merges, so the refusal checked is the one for its conflict.
+    // GitHub works out whether a pull request merges in a background job
+    // (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -447,7 +444,6 @@ async fn a_merge_is_refused_once_the_head_has_moved(sandbox: Sandbox) -> Result<
     sandbox
         .push(&clone, &branch.name, PushMode::Lease { expected })
         .await?;
-    // GitHub moves the head moments after the push.
     sandbox
         .eventually(async || {
             let pull = sandbox.store().pull(pr).await?;
@@ -549,8 +545,6 @@ async fn a_merged_pull_request_reads_back_merged_with_its_files(sandbox: Sandbox
         }
         other => bail!("any item is {other:?}"),
     }
-    // A snapshot holds it among the merged pull requests only, as it closes
-    // no ticket.
     let read = sandbox.store().linewright_pull(pr).await?;
     equal("Linewright's pull request", &read, &None)
 }
@@ -560,7 +554,6 @@ async fn a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_clo
 ) -> Result<()> {
     let (issue, Opened { branch, pr }) = sandbox.open_pull_closing_an_issue("merge-closes").await?;
     sandbox.store().mark_ready(pr).await?;
-    // A merge before GitHub links the issue closes nothing.
     sandbox.linked(pr, issue).await?;
     let method = sandbox.merge_method().await?;
 

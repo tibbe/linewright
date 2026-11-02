@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use std::sync::{Arc, Mutex};
@@ -69,8 +68,6 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
         .await
         .unwrap();
 
-    // The session ran in a clone of the default branch, with the
-    // automation's settings, and is recorded under its name.
     assert_eq!(
         given.lock().unwrap().clone(),
         Some((true, Some("opus".to_string()), Some(Effort::Low)))
@@ -246,8 +243,11 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
         .await;
 
     assert!(error.is_err());
-    // The first answer and one follow-up, the test factory's `result-retries`.
-    assert_eq!(world.harness.automation_prompts().len(), 2);
+    let the_first_answer_and_one_follow_up = 2;
+    assert_eq!(
+        world.harness.automation_prompts().len(),
+        the_first_answer_and_one_follow_up
+    );
 }
 
 #[test_log::test]
@@ -260,7 +260,6 @@ fn the_help_says_how_to_run_one_now() {
 #[test_log::test]
 fn the_command_that_runs_one_now_is_named_after_automations() {
     assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_ok());
-    // The command's old name, which the spec gives no alias.
     assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_err());
 }
 
@@ -272,8 +271,6 @@ async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
         .on_automation(|_| refused_for_the_usage_limit());
     let (log, _guard) = Log::capture();
 
-    // A run that waited for the reset would never return: the fake clock
-    // stands still.
     world
         .factory
         .run_automation(&"weekly".parse().unwrap())

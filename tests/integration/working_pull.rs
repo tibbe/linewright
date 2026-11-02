@@ -92,7 +92,8 @@ fn a_failed_check_hands_it_back_once_ci_attempts_fix_ci_runs_have_ended_this_rou
     );
 }
 
-/// GitHub blocks the merge until a code owner reviews it.
+/// GitHub blocking the merge until a code owner reviews it, and whether
+/// Linewright `commented` on that.
 fn blocked(commented: bool) -> Verdict {
     Verdict::Blocks {
         requires: vec![Requirement::CodeOwnerReview {

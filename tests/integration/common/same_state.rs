@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -14,8 +13,7 @@ use super::files::git_in;
 /// through the back door, hold the same state, field for field: the
 /// repository's labels, every issue and pull request as a snapshot holds
 /// them, and every branch's commits and files. Timestamps are compared by
-/// their order and commits by author, message and tree, since the fake clock
-/// ticks on every read and a commit's id depends on its time.
+/// their order and commits by author, message and tree.
 pub async fn assert_same_state(front: &LocalStore, back: &LocalStore) {
     let (front, back) = (state(front).await, state(back).await);
     if let Some(difference) = first_difference("", &front, &back) {
@@ -24,8 +22,7 @@ pub async fn assert_same_state(front: &LocalStore, back: &LocalStore) {
 }
 
 /// The state `store` holds, each timestamp replaced by its place in the
-/// order of them all. The local store numbers its items 1, 2, … in the order
-/// it makes them, so an item's number already is its place in that order.
+/// order of them all.
 async fn state(store: &LocalStore) -> Value {
     let repo = store.repository();
     let labels: Map<String, Value> = Store::labels(store)
@@ -125,11 +122,10 @@ fn commit(repo: &Path, id: &str) -> Value {
 }
 
 /// The first field at or under `path` where `front` and `back` differ,
-/// with the value each holds there.
+/// with the value each holds there. Two objects differ at a field both hold
+/// before they differ at one only one holds.
 fn first_difference(path: &str, front: &Value, back: &Value) -> Option<String> {
     match (front, back) {
-        // The fields both hold first, so that two events of different kinds
-        // differ at a field they share rather than at one only one has.
         (Value::Object(front), Value::Object(back)) => {
             let every = front.keys().chain(back.keys()).collect::<BTreeSet<_>>();
             front

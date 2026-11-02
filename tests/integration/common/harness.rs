@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
@@ -188,9 +187,8 @@ impl ScriptedHarness {
             session: &session,
             followup,
         };
-        // A script may block, waiting for its test to let it go on. On a
-        // multi-threaded runtime it gives up its worker meanwhile, else the
-        // tasks queued on that worker wait with it.
+        // A blocking script would stall the tasks queued on its worker
+        // (<https://docs.rs/tokio/latest/tokio/task/fn.block_in_place.html>).
         let flavor = tokio::runtime::Handle::current().runtime_flavor();
         let message = if flavor == tokio::runtime::RuntimeFlavor::MultiThread {
             tokio::task::block_in_place(|| script(&call))
@@ -250,9 +248,7 @@ pub enum Stopped {
     Merge,
 }
 
-/// The update `dir`'s clone is stopped in, if any. One process says where
-/// each of git's markers would be: `rev-parse` prints a line per
-/// `--git-path`.
+/// The update `dir`'s clone is stopped in, if any.
 fn stopped_in(dir: &Path) -> Option<Stopped> {
     let output = Command::new("git")
         .arg("-C")
@@ -366,9 +362,8 @@ pub fn fake_claude_turning(dir: &Path, turn: Vec<Step>) -> std::path::PathBuf {
     )
 }
 
-/// The one fake `claude`, as `dir/claude`, carrying out `scenario`: a
-/// symlink to it, which is not a new program for the OS to check on its
-/// first run, and a scenario it finds beside it, as `dir/claude.json`.
+/// The one fake `claude`, as `dir/claude`, carrying out `scenario`, which it
+/// finds beside it, as `dir/claude.json`.
 pub fn fake_claude_running(dir: &Path, scenario: &Scenario) -> std::path::PathBuf {
     let program = dir.join("claude");
     std::fs::write(

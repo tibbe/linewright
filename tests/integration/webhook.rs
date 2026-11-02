@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::*;
@@ -149,10 +148,10 @@ fn assert_each_accepted(log: &Log) {
 #[test_log::test(tokio::test)]
 async fn a_form_encoded_delivery_is_verified_against_its_body_as_sent() {
     let payload = r#"{"issue":{"number":7}}"#;
+    let over_the_payload_not_the_body = Some(signature(payload));
     let deliveries = [
         (None, "no signature"),
-        // Over the payload rather than the body that carries it.
-        (Some(signature(payload)), "does not match"),
+        (over_the_payload_not_the_body, "does not match"),
     ];
 
     for (signature, reason) in deliveries {

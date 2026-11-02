@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::*;
@@ -131,20 +130,19 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         fresh_view(&view, read, now)
     });
     view.in_flight = vec![in_flight("5/implement-1", "2026-10-01T11:50:00Z")];
-    // A snapshot holds a person's pull request Linewright worked, closed
-    // unmerged, among its closed items.
+    let persons_pull_linewright_worked_closed_unmerged = ClosedItem {
+        number: Number(62),
+        title: "Pull 62".into(),
+        closed_at: at("2026-10-01T10:00:00Z"),
+        updated_at: at("2026-10-01T10:00:00Z"),
+        kind: ClosedKind::Pull {
+            closes: vec![],
+            author: Some(Login::new("alice")),
+        },
+    };
     std::sync::Arc::make_mut(&mut view.snapshot)
         .closed
-        .push(ClosedItem {
-            number: Number(62),
-            title: "Pull 62".into(),
-            closed_at: at("2026-10-01T10:00:00Z"),
-            updated_at: at("2026-10-01T10:00:00Z"),
-            kind: ClosedKind::Pull {
-                closes: vec![],
-                author: Some(Login::new("alice")),
-            },
-        });
+        .push(persons_pull_linewright_worked_closed_unmerged);
     let board = board(&view, &[], now);
     let expected = [
         (1, Shown::Card(Column::InReview)),
@@ -178,8 +176,6 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
 
     for (read, (number, shown)) in items.iter().zip(expected) {
         let number = Number(number);
-        // The view does not hold an item it leaves out, such as a person's
-        // pull request Linewright has not worked.
         let closed;
         let held = match held(&view.snapshot, number) {
             Some(held) => held,

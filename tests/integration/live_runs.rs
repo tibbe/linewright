@@ -1,4 +1,3 @@
-// comments: pending
 //! A poll made while a run is part way through writing its result leaves
 //! the items the run writes to it, and the next poll after the run ends
 //! decides from what it wrote.
@@ -93,9 +92,8 @@ async fn an_implement_runs_pull_request_is_left_to_it_through_a_poll_part_way() 
         .pulls()
         .last()
         .expect("the run opened its pull request");
-    // Past the grace for CI to report, so that with no CI the pull request
-    // is ready to be marked ready.
-    world.clock.advance(TimeDelta::minutes(6));
+    let past_the_grace_for_ci_to_report = TimeDelta::minutes(6);
+    world.clock.advance(past_the_grace_for_ci_to_report);
 
     let actions = world.factory.cycle().await.unwrap();
 
@@ -105,7 +103,6 @@ async fn an_implement_runs_pull_request_is_left_to_it_through_a_poll_part_way() 
     world.factory.settle().await;
     assert_eq!(world.store.pull_assignees(pr), [Login::new(LINEWRIGHT)]);
     assert!(world.store.pull_labels(pr).contains(&REQUIRED.to_string()));
-    // The poll after the run finds the pull request claimed.
     assert_eq!(
         world.factory.cycle().await.unwrap(),
         [Action::MarkReady { pr }]

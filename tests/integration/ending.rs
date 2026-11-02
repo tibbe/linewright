@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::{Log, at};
@@ -20,7 +19,7 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
     let stopping_at_deadline = Ending::Stopping {
         by: StopBy::Deadline,
     };
-    let table = [
+    let from_serving = [
         (Ending::Serving, terminate, draining, Step::Drain),
         (Ending::Serving, interrupt, draining, Step::Drain),
         (Ending::Serving, drain, draining, Step::Drain),
@@ -31,7 +30,8 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             Step::Drain,
         ),
         (Ending::Serving, quit, stopping, Step::Stop),
-        // The latest `drain` sets the deadline.
+    ];
+    let the_latest_drain_sets_the_deadline = [
         (draining, drain, draining, Step::SetDeadline),
         (draining, drain_by(one), draining_by(one), Step::SetDeadline),
         (
@@ -41,6 +41,8 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             Step::SetDeadline,
         ),
         (draining_by(one), drain, draining, Step::SetDeadline),
+    ];
+    let draining_stops = [
         (draining, terminate, stopping, Step::Stop),
         (draining, interrupt, stopping, Step::Stop),
         (draining, quit, stopping, Step::Stop),
@@ -51,7 +53,8 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             stopping_at_deadline,
             Step::Stop,
         ),
-        // A deadline replaced before it passed, or passed once stopping.
+    ];
+    let a_deadline_replaced_or_passed_once_stopping = [
         (
             draining_by(other),
             Event::Deadline(one),
@@ -70,6 +73,8 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
             stopping,
             Step::PassedUnheeded,
         ),
+    ];
+    let once_stopping = [
         (stopping, drain, stopping, Step::Nothing),
         (stopping, drain_by(one), stopping, Step::Nothing),
         (stopping, terminate, Ending::Exited, Step::Exit),
@@ -77,7 +82,13 @@ fn the_signals_drain_and_its_deadline_take_serve_from_serving_to_draining_stoppi
         (stopping, quit, Ending::Exited, Step::Exit),
     ];
 
-    for (state, event, next, step) in table {
+    for (state, event, next, step) in from_serving
+        .into_iter()
+        .chain(the_latest_drain_sets_the_deadline)
+        .chain(draining_stops)
+        .chain(a_deadline_replaced_or_passed_once_stopping)
+        .chain(once_stopping)
+    {
         assert_eq!(state.on(event), (next, step), "{state:?} on {event:?}");
     }
 }

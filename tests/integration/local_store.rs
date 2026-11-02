@@ -1,4 +1,3 @@
-// comments: pending
 use crate::common;
 
 use common::*;
@@ -270,11 +269,10 @@ async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach()
         .await
         .unwrap();
 
-    // `sha256sum` of `the bytes`.
-    let expected =
+    let named_by_the_sha256_of_the_bytes =
         "../attachments/ed589341c9fd5da96aaff4c5efa008226282a716186608d5a032ac75895a9c2f.png";
-    assert_eq!(first, expected);
-    assert_eq!(second, expected);
+    assert_eq!(first, named_by_the_sha256_of_the_bytes);
+    assert_eq!(second, named_by_the_sha256_of_the_bytes);
     let root = world.dir.path().join("store");
     let kept: Vec<_> = std::fs::read_dir(root.join("attachments"))
         .unwrap()

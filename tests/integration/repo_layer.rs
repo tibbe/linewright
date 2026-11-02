@@ -1,7 +1,6 @@
-// comments: pending
 //! Which of the repository's files under `.linewright/` Linewright can use,
 //! as `RepoLayer` reads them (docs/specs/repository.md, "Linewright's
-//! files"). `repository_files.rs` checks that they reach the runs.
+//! files").
 
 use crate::common;
 
@@ -22,15 +21,15 @@ fn holding_every_run(path: &str, error: &str) -> Unusable {
 
 #[test_log::test]
 fn a_file_that_is_not_one_of_linewrights_holds_every_run() {
+    let linewrights_own = ".linewright/prompts/parts/facts.md";
+    let where_an_earlier_release_kept_them = ".linewright/briefs/prompts/triage.md";
     let files = [
         ".linewright/prompts/implment.md",
         ".linewright/prompts/parts/x/y.md",
-        // Linewright's own, which no layer overrides.
-        ".linewright/prompts/parts/facts.md",
+        linewrights_own,
         ".linewright/prompts/outputs/implement.md",
         ".linewright/notes.txt",
-        // Where an earlier release kept the repository's prompts.
-        ".linewright/briefs/prompts/triage.md",
+        where_an_earlier_release_kept_them,
     ]
     .into_iter()
     .map(|path| (path.to_string(), Blob::Text("Implement it.\n".into())))

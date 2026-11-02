@@ -1,10 +1,7 @@
-// comments: pending
 //! The store's contracts: each promise of the `Store` trait, checked against
 //! a fresh local store and, when `LINEWRIGHT_CONTRACT_REPO` names a sandbox
 //! repository, against the GitHub store on it, so that the local store stays
 //! faithful to GitHub (`CODING_STANDARDS.md`, "A fake, against its adapter").
-//! The daily `store-contract` automation runs them against GitHub
-//! (`.linewright/automations/store-contract.md`).
 //!
 //! Each contract is a trial per store, `local::<area>::<contract>` and
 //! `github::<area>::<contract>`. Without a sandbox the GitHub trials are
@@ -60,7 +57,6 @@ fn main() -> ExitCode {
     let args = Arguments::from_args();
     let runtime = Arc::new(Runtime::new().expect("the contracts have a runtime"));
     let named = std::env::var(REPO_VARIABLE).ok().filter(|r| !r.is_empty());
-    // Listing runs nothing, so it reaches nothing.
     let reached = match &named {
         Some(repo) if !args.list => match runtime.block_on(reach(repo)) {
             Ok(reached) => Some(Arc::new(reached)),
@@ -106,9 +102,6 @@ async fn reach(repo: &str) -> Result<Reached> {
         .context("set GH_TOKEN or GITHUB_TOKEN to the token of the sandbox's account")?;
     let github = GitHub::connect(&repo, token).await?;
     github.identity().await?;
-    // The contracts check only what they make, so they run whatever earlier
-    // runs left, and a sweep that fails, such as on a rate limit, is not an
-    // unreachable sandbox.
     if let Err(error) = sandbox::sweep(&github).await {
         eprintln!("cannot close what earlier runs left open in {repo}: {error:#}");
     }

@@ -1,4 +1,3 @@
-// comments: pending
 //! The attachments a session's result refers to, uploaded and posted in
 //! place of their paths: docs/specs/runs.md, "Attachments".
 
@@ -13,7 +12,7 @@ use serde_json::json;
 /// What a session saves as its screenshot.
 const SHOT: &str = "PNG bytes";
 
-/// Where the local store keeps [`SHOT`], from `sha256sum` of it.
+/// Where the local store keeps [`SHOT`], named by its SHA-256.
 const KEPT_SHOT: &str =
     "../attachments/9698103cd397cda6f9807a2e2bf51935727f47a62d9b6d4f82e54ef60c6ba831.png";
 
@@ -62,7 +61,6 @@ async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body
 
     world.poll().await;
 
-    // The prompt names the directory the session saves its attachments in.
     assert_eq!(*named.lock().unwrap(), Some(true));
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(

@@ -49,7 +49,7 @@
 //!   releases it; the `Gate` tells when one has `begun`.
 //! - `gate`: a `Gate` and the `Gatepost` a session's script `wait`s at.
 //! - `store_holding`: a store whose default branch holds only the files
-//!   given, for a test that needs no factory.
+//!   given.
 //! - `HOURLY`: an automation file that runs on the hour; the fake clock starts
 //!   at 12:00.
 //! - `Serving`: a factory serving in the background.
@@ -64,7 +64,7 @@
 //! # `back_door`: Creation Methods
 //!
 //! Each writes into the fakes the state a stage leaves, with the scripts its
-//! sessions answered with; `front_door` checks it against the stage.
+//! sessions answered with.
 //!
 //! - `World`:
 //!   - `issue_triaged_for_the_maintainer`, `issue_asking_its_reporter`: an

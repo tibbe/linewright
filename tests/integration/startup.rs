@@ -1,9 +1,11 @@
-// comments: pending
 use crate::common;
 
 use common::*;
 use linewright::domain::{MergeMethod, UpdateMethod, label};
 use linewright::factory::SessionToken;
+
+/// A variable that fails every connection to GitHub at once.
+const GITHUB_UNREACHABLE: (&str, &str) = ("HTTPS_PROXY", "http://127.0.0.1:1");
 
 #[test_log::test(tokio::test)]
 async fn with_auto_merge_settings_it_cannot_merge_with_stop_startup() {
@@ -36,10 +38,9 @@ async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
     assert!(started[0].contains("merge_method=merge"), "{}", started[0]);
 }
 
-/// Returns whether it succeeded and what it wrote to stderr. It gets a
-/// runtime directory of its own and serves the web UI on a port the system
-/// chooses, so that `serve`s run by tests at the same time don't claim the
-/// same socket or port.
+/// Runs `lw` with `args` and `env`, `path` as its path, a runtime directory
+/// of its own and the web UI on a port the system chooses. Returns whether
+/// it succeeded and what it wrote to stderr.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let (status, stderr) = lw_with_status(path, args, env);
     (status.success(), stderr)
@@ -108,8 +109,7 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
             ("MY_SECRET", "hunter2"),
             ("LC_ALL", "C"),
             ("DISABLE_UPDATES", "0"),
-            // Fails the connection to GitHub at once, after the log.
-            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+            GITHUB_UNREACHABLE,
         ],
     );
 
@@ -121,9 +121,7 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
     let withheld: Vec<&str> = withheld.split(' ').collect();
     assert!(withheld.contains(&"MY_SECRET"), "{log}");
     assert!(!withheld.contains(&"LC_ALL"), "{log}");
-    // Linewright sets it for every session.
     assert!(!withheld.contains(&"DISABLE_UPDATES"), "{log}");
-    // The session is given Linewright's token.
     assert!(!withheld.contains(&"GH_TOKEN"), "{log}");
     assert!(!log.contains("hunter2"), "{log}");
 }
@@ -154,8 +152,7 @@ fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
             ("GH_TOKEN", "linewright-token"),
             ("DEPLOY_KEY", "hunter2"),
             ("MY_SECRET", "hunter3"),
-            // Fails the connection to GitHub at once, after the log.
-            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+            GITHUB_UNREACHABLE,
         ],
     );
 
@@ -208,11 +205,7 @@ fn startup_logs_the_names_but_not_the_values_session_env_sets() {
             "FLAGGED=value-5",
             "once",
         ],
-        &[
-            ("GH_TOKEN", "linewright-token"),
-            // Fails the connection to GitHub at once, after the log.
-            ("HTTPS_PROXY", "http://127.0.0.1:1"),
-        ],
+        &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
     );
 
     let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
@@ -261,9 +254,7 @@ fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_namin
             ("GH_TOKEN", "linewright-token"),
             ("LINEWRIGHT_SECRETS", "NPM_*,AWS_SECRET_ACCESS_KEY"),
             ("NPM_TOKEN", "npm-token"),
-            // Fails the connection to GitHub at once, should startup get
-            // that far.
-            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+            GITHUB_UNREACHABLE,
         ];
         env.extend(value.map(|value| ("AWS_SECRET_ACCESS_KEY", value)));
 
@@ -290,8 +281,7 @@ fn secrets_naming_a_prefix_no_variable_has_is_no_error_at_startup() {
         &[
             ("GH_TOKEN", "linewright-token"),
             ("LINEWRIGHT_SECRETS", "UNSET_PREFIX_*"),
-            // Fails the connection to GitHub at once, after the secrets.
-            ("HTTPS_PROXY", "http://127.0.0.1:1"),
+            GITHUB_UNREACHABLE,
         ],
     );
 
@@ -374,7 +364,6 @@ fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
         serve_with_status(&["--config", config.to_str().unwrap()], &[no_ui]).1,
     ];
 
-    // Past the settings, to what is missing from the empty path.
     for error in errors {
         assert!(error.contains("`git` is not on the path"), "{error}");
     }
@@ -425,7 +414,6 @@ fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
     let address = taken.local_addr().unwrap().to_string();
 
     let empty = tempfile::tempdir().unwrap();
-    // Without a token, startup would fail at its first call to GitHub.
     let (succeeded, error) = lw(
         empty.path(),
         &["--repo", "owner/name", "--ui-address", &address, "serve"],
@@ -509,7 +497,6 @@ fn once_does_not_listen_even_with_the_secret() {
         &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")],
     );
 
-    // It goes on to the startup checks, which fail here for want of `git`.
     assert!(!succeeded, "{error}");
     assert!(error.contains("`git` is not on the path"), "{error}");
 }
@@ -970,7 +957,6 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
     link_from_path(bin.path(), "git");
     link_from_path(bin.path(), "bash");
     let started = bin.path().join("claude.started");
-    // Startup waits on `claude --version`, which hangs.
     fake_claude_running(
         bin.path(),
         &Scenario {
