@@ -293,9 +293,8 @@ pub enum AnyItem {
 }
 
 /// Whether a snapshot holds open `issue`: whether `linewright` may manage it
-/// ([`Issue::candidate`]), with the pull requests GitHub says close it. A store
-/// does not know the required label, so it counts every issue marked, and
-/// `managed::classify` leaves one that is not alone.
+/// ([`Issue::candidate`]) as an issue marked for Linewright, whatever its
+/// labels, with the pull requests GitHub says close it.
 pub fn holds(issue: &Issue, linewright: &Login) -> bool {
     issue.open && issue.candidate(linewright, &issue.closed_by, Marking::Marked)
 }
@@ -416,8 +415,7 @@ pub trait Store: Send + Sync {
     async fn create_label(&self, label: &label::Label) -> Result<()>;
     /// Sets the description of the label the repository spells `name`.
     async fn describe_label(&self, name: &str, description: &str) -> Result<()>;
-    /// Whether the repository has the label `name`. Adding a label by name
-    /// can create it, so a label Linewright must not create is checked first.
+    /// Whether the repository has the label `name`.
     async fn label_exists(&self, name: &str) -> Result<bool>;
 
     /// The facts one poll reconciles, with the merged pull requests and
@@ -503,6 +501,9 @@ pub trait Store: Send + Sync {
     async fn mark_ready(&self, pr: Number) -> Result<()>;
     /// Closes the pull request unmerged.
     async fn close_pull(&self, pr: Number) -> Result<()>;
+    /// Requests a review of the pull request from `reviewers`, and succeeds
+    /// without requesting any when GitHub refuses the request, as it does for
+    /// a reviewer who is not a collaborator.
     async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()>;
     /// Merges the pull request into the default branch with `method`, as
     /// Linewright, if its head is still the commit `head`.

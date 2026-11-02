@@ -1,4 +1,3 @@
-// comments: pending
 //! <https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit>,
 //! <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#exceeding-the-rate-limit>
 
@@ -10,11 +9,11 @@ use serde::Deserialize;
 
 pub const RETRIES: u32 = 5;
 
-/// The shortest wait: GitHub asks for at least a minute when it gives no
-/// time, and a reset time is only as good as the clocks agree.
+/// The shortest wait, which GitHub asks for when it gives no time.
 const MINIMUM: Duration = Duration::from_mins(1);
 
-/// `retries` is how many times it was tried again already.
+/// How long to wait before trying a request again, if its response says it
+/// was rate limited. `retries` is how many times it was tried again already.
 pub fn wait(
     status: StatusCode,
     headers: &HeaderMap,
@@ -29,7 +28,6 @@ pub fn wait(
         StatusCode::FORBIDDEN => {
             spent || headers.contains_key("retry-after") || says_rate_limit(body)
         }
-        // GraphQL reports a limit as an error in a successful response.
         StatusCode::OK => graphql_rate_limited(body),
         _ => false,
     };

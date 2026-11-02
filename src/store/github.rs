@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::path::Path;
@@ -51,8 +50,7 @@ pub struct GitHub {
     viewer: Viewer,
     /// The repository's numeric id, read once.
     repository_id: Arc<tokio::sync::OnceCell<u64>>,
-    /// The issues Linewright manages, which each snapshot keeps up to date
-    /// and reads in full.
+    /// The issues Linewright manages.
     index: Arc<tokio::sync::Mutex<Option<ManagedIndex>>>,
 }
 
@@ -90,10 +88,9 @@ macro_rules! comment_fields {
     };
 }
 
-/// Who added each sub-issue, which tells the tickets Linewright cut
-/// ([`SubIssue::added_by`]), read as [`GqlSubIssueAdded`]s: in a timeline of
-/// their own, so that no other event crowds them out. GitHub writes an add
-/// there a moment after the sub-issue, so a read in between has no adder.
+/// Who added each sub-issue ([`SubIssue::added_by`]), read as
+/// [`GqlSubIssueAdded`]s. GitHub writes an add a moment after the sub-issue,
+/// so a read in between has no adder.
 macro_rules! sub_issue_adds {
     () => {
         "subIssueAdds: timelineItems(last: 100, itemTypes: [SUB_ISSUE_ADDED_EVENT]) { nodes { ... on SubIssueAddedEvent { actor { __typename login } subIssue { number } } } }"
@@ -473,16 +470,15 @@ struct Viewer {
     id: u64,
 }
 
+/// An HTTP client that trusts the certificate authorities of the host's
+/// store alone (`docs/specs/operation.md`, "Certificate authorities").
+fn client_trusting_the_host_store_alone() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder().user_agent("linewright").build()
+}
+
 impl GitHub {
     pub async fn connect(repo: &Repo, token: String) -> Result<GitHub> {
-        // Follows "Certificate authorities" in docs/specs/operation.md:
-        // reqwest's `rustls` feature verifies through the platform's
-        // verifier, which reads the host's store alone. A feature or call
-        // that adds roots, such as `webpki-roots`, `tls_certs_merge` or
-        // `add_root_certificate`, would break it.
-        let http = reqwest::Client::builder()
-            .user_agent("linewright")
-            .build()?;
+        let http = client_trusting_the_host_store_alone()?;
         let mut github = GitHub {
             http,
             api: API.into(),
@@ -703,8 +699,8 @@ impl GitHub {
         .await
     }
 
-    /// Passed through the environment so the token never lands in a clone's
-    /// configuration.
+    /// The environment that has git authenticate to GitHub with the token,
+    /// which no clone's configuration holds.
     fn git_env(&self) -> Vec<(String, String)> {
         let basic = base64::engine::general_purpose::STANDARD
             .encode(format!("x-access-token:{}", self.token));
@@ -768,7 +764,7 @@ impl GitHub {
         Ok(())
     }
 
-    /// The repository's numeric id, which the upload of an attachment names.
+    /// The repository's numeric id.
     async fn repository_id(&self) -> Result<u64> {
         #[derive(Deserialize)]
         struct Id {
@@ -776,7 +772,6 @@ impl GitHub {
         }
         self.repository_id
             .get_or_try_init(|| async {
-                // Read for `attach`, which is not retried.
                 let repo: Id = self
                     .rest_once(Method::GET, &self.repo_path(""), None)
                     .await?;
@@ -903,7 +898,8 @@ impl GitHub {
     /// The pull requests closed without merging that Linewright worked,
     /// whoever opened them, among those updated since `since`.
     async fn closed_pulls(&self, since: Timestamp) -> Result<Vec<ClosedItem>> {
-        // Fifty pull requests with two connections each cost 101 requests,
+        // <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>:
+        // fifty pull requests with two connections each cost 101 requests,
         // which rounds to 1 point.
         let query = concat!(
             "query($owner: String!, $name: String!, $cursor: String) {
@@ -932,8 +928,6 @@ impl GitHub {
             let page = data.repository.pull_requests;
             let mut older = false;
             for pr in page.nodes {
-                // Closing updates a pull request, so ordering by update time
-                // finds everything closed since the cutoff.
                 older |= pr.updated_at < since;
                 closed.extend(pr.into_closed(&self.linewright()));
             }
@@ -944,10 +938,8 @@ impl GitHub {
         }
     }
 
-    /// What tells which to read in full ([`GqlOpenPull`]): the full fields
-    /// cost points per pull request, so only Linewright's, and the people's
-    /// it may manage, are read in full. Fifty pull requests with two
-    /// connections each cost 101 requests, which rounds to 1 point.
+    /// Every open pull request, with what tells whether to read it in full
+    /// ([`GqlOpenPull`]).
     async fn open_pulls(&self) -> Result<Vec<GqlOpenPull>> {
         let query = concat!(
             "query($owner: String!, $name: String!, $cursor: String) {
@@ -1015,8 +1007,6 @@ impl GitHub {
                 let issue = if held.contains(&name.issue()) {
                     BranchIssue::Held
                 } else {
-                    // No issue, as when the number is a pull request's, names
-                    // no ticket.
                     let Some(read) = self.gql_issue(name.issue()).await? else {
                         continue;
                     };
@@ -1060,7 +1050,8 @@ impl GitHub {
 
     /// The pull requests merged into `base` that `windows` holds.
     async fn merged_within(&self, base: &str, windows: Windows) -> Result<Vec<MergedPull>> {
-        // Twenty-five pull requests with the five connections of
+        // <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>:
+        // twenty-five pull requests with the five connections of
         // `MergedFields` each cost 126 requests, which rounds to 1 point.
         let query = "query($owner: String!, $name: String!, $base: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
@@ -1084,8 +1075,6 @@ impl GitHub {
             let page = data.repository.pull_requests;
             let mut older = false;
             for pr in page.nodes {
-                // Merging updates a pull request, so ordering by update time
-                // finds everything merged since the cutoff.
                 if pr.updated_at < windows.read_since() {
                     older = true;
                     continue;
@@ -1107,7 +1096,6 @@ impl GitHub {
         base: &str,
         windows: Windows,
     ) -> Result<Option<MergedPull>> {
-        // Before `merged_of`, so that files are read only for those held.
         match pr.held_merged_at(base, windows) {
             Some(merged_at) => Ok(Some(self.merged_of(pr, merged_at).await?)),
             None => Ok(None),
@@ -1268,8 +1256,8 @@ impl GitHub {
         Ok(pr.into_pull(pushes, &rules))
     }
 
-    /// Classic branch protection is readable by admins only; its required
-    /// checks show only once reported, as required.
+    /// What the rulesets on `branch` require: nothing when GitHub does not
+    /// give them.
     async fn branch_rules(&self, branch: &str) -> BranchRules {
         let rules: Result<Vec<Value>> = self
             .rest(
@@ -1281,8 +1269,6 @@ impl GitHub {
         match rules {
             Ok(rules) => BranchRules::from_rules(&rules),
             Err(e) => {
-                // What the rules require is then read only where GitHub
-                // reports it elsewhere.
                 tracing::warn!(
                     branch,
                     error = format!("{e:#}"),
@@ -1312,7 +1298,8 @@ impl GitHub {
         if self.branch_rules(branch).await.linear_history {
             return true;
         }
-        // Classic branch protection is readable by admins only.
+        // Classic branch protection is readable by admins only:
+        // <https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection>
         let protection: Result<Value> = self
             .rest(
                 Method::GET,
@@ -1623,7 +1610,7 @@ enum TreeEntryKind {
 }
 
 /// The path of each file in `tree`. A truncated tree is an error, not a
-/// partial list, so that no file under it goes unseen.
+/// partial list.
 fn files_listed(tree: GitTree) -> Result<Vec<String>> {
     if tree.truncated {
         bail!("the tree is too large for GitHub to list whole");
@@ -1936,8 +1923,8 @@ struct Fragment {
 }
 
 // `orderByState` lists the open pull requests that close an issue before the
-// closed and merged ones, so that these do not crowd them out of the first
-// page.
+// closed and merged ones:
+// <https://docs.github.com/en/graphql/reference/objects#issue>
 const ISSUE_FIELDS: Fragment = Fragment {
     name: "IssueFields",
     text: concat!(
@@ -1952,7 +1939,6 @@ const ISSUE_FIELDS: Fragment = Fragment {
   blockedBy(first: 50) { nodes { number state } }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true, orderByState: true) { nodes { number state isDraft mergedAt closedAt updatedAt baseRefName author { __typename login } } }
   ",
-    // Only an issue's status labels need their removals.
     assignment_timeline!(unlabelings),
     "
   ",
@@ -2001,7 +1987,7 @@ struct GqlClosingPull {
     author: Option<Actor>,
 }
 
-/// What a closed issue carries for the board, with the closer of its
+/// What a closed issue carries, with the closer of its
 /// latest closing: the pull request whose merge closed it, a commit, or none
 /// when a person closed it
 /// (<https://docs.github.com/en/graphql/reference/objects#closedevent>).
@@ -2171,9 +2157,10 @@ fn managed_closed(issues: Vec<GqlClosedIssue>, linewright: &Login) -> Vec<Closed
         .collect()
 }
 
-/// What [`GitHub::closed_pulls_numbered`] reads of a pull request: with
-/// what tells whether Linewright worked it. Twenty with the two connections
-/// each cost 40 requests, which comes to 1 point, the least a query costs.
+/// A closed pull request read by number, with what tells whether Linewright
+/// worked it. Twenty with the two connections each cost 40 requests, which
+/// comes to 1 point, the least a query costs
+/// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_PULL_FIELDS: Fragment = Fragment {
     name: "ClosedPullFields",
     text: concat!(
@@ -2271,8 +2258,6 @@ impl GqlFactsIssue {
         ManagedFacts {
             filed: Filed::read(&author, &self.title, &self.body, linewright),
             labels: self.labels.nodes.into_iter().map(|l| l.name).collect(),
-            // Who added them is not read: whether Linewright may manage the
-            // issue does not turn on it.
             sub_issues: sub_issues(self.sub_issues, None),
             work: WorkFacts {
                 author: Some(author),
@@ -2330,8 +2315,6 @@ impl ManagedIndex {
             (false, Some(at)) => {
                 self.closed.insert(number, at);
             }
-            // As [`GqlClosedIssue::into_closed`], one GitHub gives no time
-            // it closed is left out.
             (false, None) => {}
         }
     }
@@ -2378,10 +2361,6 @@ const WATERMARK_OVERLAP: chrono::TimeDelta = chrono::TimeDelta::minutes(1);
 ///   rebuilt from every open issue and the closed ones updated since
 ///   `read_since`;
 /// - otherwise only the issues updated since its watermark are read.
-///
-/// Closing, labeling and assigning update an issue, so the issues updated
-/// since the watermark hold every change to what tells whether Linewright
-/// manages it.
 ///
 /// [`IssueFilters`]: https://docs.github.com/en/graphql/reference/input-objects#issuefilters
 async fn refreshed<F, Fut>(
@@ -2847,7 +2826,8 @@ impl GqlContext {
     ///
     /// A check run's conclusion is its verdict, whatever its status says:
     /// GitHub sometimes still reports a run that has concluded as
-    /// `IN_PROGRESS` (#549).
+    /// `IN_PROGRESS`, as for `css` on
+    /// <https://github.com/tibbe/linewright/pull/543>.
     fn check(&self) -> Check {
         match self {
             GqlContext::CheckRun {
@@ -2890,9 +2870,11 @@ impl GqlPull {
         self.state == "OPEN" && !self.is_cross_repository
     }
 
-    /// GitHub reports no review decision when the rules require a code
-    /// owner's review but no approvals, so the rules say that review is
-    /// needed then.
+    /// What merging the pull request still requires under `rules`: the code
+    /// owners' review where it is requested and GitHub decides a review is
+    /// required or `rules` require it, otherwise an approval where GitHub
+    /// decides a review is required or changes were requested; and each
+    /// required check that has not passed.
     fn requirements(&self, rules: &BranchRules) -> Vec<Requirement> {
         let mut requires = vec![];
         match (self.review_decision, self.code_owner_review()) {
@@ -2926,8 +2908,8 @@ impl GqlPull {
         requires
     }
 
-    /// Names the code owners only when they are all users: a team can't be
-    /// named, and naming only the users would leave out the team's members.
+    /// The code owners' review requested, if any, naming the code owners
+    /// only when they are all users.
     fn code_owner_review(&self) -> Option<Requirement> {
         let code_owners: Vec<Option<String>> = self
             .review_requests
@@ -2957,7 +2939,8 @@ impl GqlPull {
             (_, "BLOCKED") => Mergeability::Blocked {
                 requires: self.requirements(rules),
             },
-            // GitHub reports no merge state for a draft.
+            // A draft's merge state is `DRAFT`, which says nothing of whether it
+            // merges: <https://docs.github.com/en/graphql/reference/enums#mergestatestatus>
             ("UNKNOWN", _) | (_, "UNKNOWN" | "DRAFT") => Mergeability::Unknown,
             _ => Mergeability::Clean,
         };
@@ -3339,8 +3322,6 @@ impl Store for GitHub {
             pulls,
             peoples_pulls,
         };
-        // An unfinished lane holds its closed tickets, and Linewright's pull
-        // requests closing them, whenever they closed.
         let tickets = snapshot.unheld_closed_tickets(&linewright);
         for ticket in self.closed_issues_numbered(&tickets).await? {
             snapshot.put_closed(ticket);
@@ -3359,7 +3340,6 @@ impl Store for GitHub {
     }
 
     async fn any_item(&self, number: Number) -> Result<Option<AnyItem>> {
-        // GitHub resolves no issue for a pull request's number.
         if let Some(issue) = self.gql_issue(number).await? {
             let linewright = self.linewright();
             let open = issue.state == IssueState::Open;
@@ -3405,7 +3385,6 @@ impl Store for GitHub {
         if !self.by_linewright(pr.author.as_ref()) {
             return Ok(None);
         }
-        // Must match what the snapshot holds.
         let mut held = pr.state == "OPEN";
         let closes: Vec<u64> = pr
             .closing_issues_references
@@ -3479,7 +3458,6 @@ impl Store for GitHub {
         if !holds(&issue, &linewright) {
             return Ok(IssueRead::LeftOut { open: true });
         }
-        // Must match what the snapshot holds.
         let mut pulls = vec![];
         for pr in issue.closed_by.iter().filter(|p| p.author == linewright) {
             pulls.push(self.pull(pr.number).await?);
@@ -3598,10 +3576,11 @@ impl Store for GitHub {
                 continue;
             }
             let failure = if node["__typename"] == "CheckRun" {
-                // A GitHub Actions check run's id is its job's id. Other
-                // apps' check runs have no log Linewright can read.
-                let actions = node["checkSuite"]["app"]["slug"] == "github-actions";
-                let log = match node["databaseId"].as_u64().filter(|_| actions) {
+                let run_by_github_actions = node["checkSuite"]["app"]["slug"] == "github-actions";
+                let log = match node["databaseId"]
+                    .as_u64()
+                    .filter(|_| run_by_github_actions)
+                {
                     Some(job) => Some(CheckLog {
                         step_output: self.failed_step_output(job).await.unwrap_or_default(),
                         full: Some(JobLog {
@@ -3693,7 +3672,8 @@ impl Store for GitHub {
         let answer = self.answer_retried(Method::GET, &resource, None).await?;
         let status = answer.status;
         // GitHub answers 404 for a branch or path it does not have, and 422
-        // for a path that is not a tree.
+        // for a path that is not a tree:
+        // <https://docs.github.com/en/rest/git/trees#get-a-tree>
         if status == StatusCode::NOT_FOUND || status == StatusCode::UNPROCESSABLE_ENTITY {
             return Ok(vec![]);
         }
@@ -3803,12 +3783,11 @@ impl Store for GitHub {
         .await
     }
 
-    /// GitHub leaves out anyone it cannot assign, without an error
-    /// (<https://docs.github.com/en/rest/issues/assignees#add-assignees-to-an-issue>),
-    /// or refuses the request as invalid; one at a time, a refusal is the
-    /// person's alone.
     async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>> {
         let mut refused = vec![];
+        // GitHub leaves out anyone it cannot assign, without an error, or
+        // refuses the whole request as invalid:
+        // <https://docs.github.com/en/rest/issues/assignees#add-assignees-to-an-issue>
         for person in people {
             let assigned = match self
                 .change_assignees(Method::POST, issue, std::slice::from_ref(person))
@@ -4001,8 +3980,8 @@ impl Store for GitHub {
                 Some(json!({"reviewers": reviewers})),
             )
             .await?;
-        // A reviewer who is not a collaborator cannot be requested; the
-        // review request is a courtesy, not the outcome.
+        // A reviewer who is not a collaborator cannot be requested:
+        // <https://docs.github.com/en/rest/pulls/review-requests#request-reviewers-for-a-pull-request>
         if answer.status == StatusCode::UNPROCESSABLE_ENTITY {
             tracing::warn!(pr = pr.0, body = answer.body, "review request refused");
             return Ok(());
@@ -4018,8 +3997,6 @@ impl Store for GitHub {
     }
 
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()> {
-        // Not retried: a merge that fails is tried again by the next poll
-        // (repository.md, **Stalls**).
         self.rest_once::<Value>(
             Method::PUT,
             &self.repo_path(&format!("/pulls/{}/merge", pr.0)),
@@ -4236,7 +4213,7 @@ mod tests {
     /// `fixtures/pull-check-run-concluded-in-progress.json` is `PullFields`
     /// as GitHub returned it for <https://github.com/tibbe/linewright/pull/543>,
     /// whose `css` check run finished with a conclusion but is still
-    /// reported `IN_PROGRESS` (#549).
+    /// reported `IN_PROGRESS`.
     fn concluded_in_progress() -> Value {
         serde_json::from_str(include_str!(
             "fixtures/pull-check-run-concluded-in-progress.json"
@@ -4353,8 +4330,7 @@ mod tests {
 
     #[test_log::test]
     fn a_branchs_rules_give_its_required_checks_and_whether_a_code_owners_review_is_required() {
-        // As `GET /repos/tibbe/linewright/rules/branches/main` returns them.
-        let rules: Vec<Value> = serde_json::from_value(json!([
+        let linewright_main_rules_from_github: Vec<Value> = serde_json::from_value(json!([
             {"type": "deletion", "ruleset_source_type": "Repository",
              "ruleset_source": "tibbe/linewright", "ruleset_id": 1},
             {"type": "pull_request", "ruleset_source_type": "Repository",
@@ -4377,7 +4353,7 @@ mod tests {
         ]))
         .unwrap();
 
-        let rules = BranchRules::from_rules(&rules);
+        let rules = BranchRules::from_rules(&linewright_main_rules_from_github);
 
         assert_eq!(rules.checks, ["check"]);
         assert!(rules.code_owner_review);
@@ -5454,9 +5430,9 @@ mod tests {
             )
         };
 
-        // The maintainer's account standing in for Linewright's.
+        let maintainer_as_linewright = "tibbe";
         assert_eq!(
-            closed("2026-10-18T07:00:00Z", "tibbe"),
+            closed("2026-10-18T07:00:00Z", maintainer_as_linewright),
             [ClosedItem {
                 number: Number(321),
                 title: "Restore the to-tickets skill to upstream, then make it non-interactive"
@@ -5469,7 +5445,7 @@ mod tests {
                 },
             }]
         );
-        assert_eq!(closed("2026-10-18T08:00:00Z", "tibbe"), []);
+        assert_eq!(closed("2026-10-18T08:00:00Z", maintainer_as_linewright), []);
         assert_eq!(closed("2026-10-18T07:00:00Z", "tibbe-bot"), []);
     }
 
@@ -5480,11 +5456,11 @@ mod tests {
     /// rest.
     #[test_log::test]
     fn pull_requests_closed_unmerged_that_linewright_only_commented_on_are_not_held() {
-        // `babakks` standing in for Linewright.
+        let maintainer_as_linewright = "babakks";
         let closed = closed_pulls_held(
             include_str!("fixtures/closed-pulls-commented.json"),
             "2026-10-01T00:00:00Z",
-            "babakks",
+            maintainer_as_linewright,
         );
 
         assert_eq!(closed, []);
@@ -5501,11 +5477,11 @@ mod tests {
         let page: Page<GqlOpenPull> =
             serde_json::from_str(include_str!("fixtures/open-pulls-listed.json")).unwrap();
 
-        // `babakks` standing in for Linewright.
+        let maintainer_as_linewright = Login::new("babakks");
         let held: BTreeMap<u64, Option<PullHeld>> = page
             .nodes
             .into_iter()
-            .map(|pr| (pr.number, pr.held(&Login::new("babakks"))))
+            .map(|pr| (pr.number, pr.held(&maintainer_as_linewright)))
             .collect();
 
         let of = |numbers: &[u64]| -> Vec<Option<PullHeld>> {
@@ -5625,9 +5601,9 @@ mod tests {
     fn an_open_issue_linewright_only_commented_on_is_not_indexed() {
         let mut index = ManagedIndex::default();
 
-        // `mislav` standing in for Linewright.
+        let maintainer_as_linewright = Login::new("mislav");
         for issue in facts_page(include_str!("fixtures/managed-facts-commented.json")) {
-            index.keep(issue, &Login::new("mislav"));
+            index.keep(issue, &maintainer_as_linewright);
         }
 
         assert_eq!(
@@ -5645,8 +5621,8 @@ mod tests {
         let page: Page<GqlClosedIssue> =
             serde_json::from_str(include_str!("fixtures/closed-issues-commented.json")).unwrap();
 
-        // `BagToad` standing in for Linewright.
-        let closed = managed_closed(page.nodes, &Login::new("BagToad"));
+        let maintainer_as_linewright = Login::new("BagToad");
+        let closed = managed_closed(page.nodes, &maintainer_as_linewright);
 
         let held: Vec<Number> = closed.iter().map(|item| item.number).collect();
         assert_eq!(held, []);
@@ -6341,10 +6317,10 @@ mod retry_tests {
         let blocked_by: Vec<ListedIssueId> =
             serde_json::from_str(include_str!("fixtures/blocked-by.json")).unwrap();
 
-        // #903's id.
-        assert!(linked_already(&sub_issues(), 6_142_173_193));
-        // #743's.
-        assert!(!linked_already(&sub_issues(), 6_080_099_910));
-        assert!(linked_already(&blocked_by, 6_080_099_910));
+        let issue_903_id = 6_142_173_193;
+        let issue_743_id = 6_080_099_910;
+        assert!(linked_already(&sub_issues(), issue_903_id));
+        assert!(!linked_already(&sub_issues(), issue_743_id));
+        assert!(linked_already(&blocked_by, issue_743_id));
     }
 }
