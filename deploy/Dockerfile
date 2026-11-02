@@ -29,8 +29,12 @@ RUN apt-get update \
 COPY --link --from=playwright /opt/playwright /opt/playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     NODE_PATH=/opt/playwright/node_modules
+# fonts-dejavu-core: without it, Chromium resolves the generic monospace and
+# system-ui families to WenQuanYi Zen Hei, one of the CJK fonts --with-deps
+# installs, so Latin text set in them renders in a CJK font.
 RUN ln -s "$NODE_PATH/playwright/cli.js" /usr/local/bin/playwright \
     && playwright install --with-deps --no-shell chromium \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 COPY --chmod=755 deploy/playwright-mcp /usr/local/bin/playwright-mcp
 # Takes exclusive control of MCP: in this image, a repository's .mcp.json,
