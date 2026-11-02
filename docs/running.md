@@ -33,12 +33,14 @@ automation in `.linewright/automations/NAME.md` once, now.
 
 Every setting is a flag, a `LINEWRIGHT_<FLAG>` environment variable or a key
 in `linewright.toml`, except `session-env`, which has no variable;
-`lw --help` lists them with their defaults.
+`lw --help` lists them with their defaults. A setting in a table, such as
+`command` in `[setup]`, is the flag `--setup-command` and the variable
+`LINEWRIGHT_SETUP_COMMAND`.
 
 ### Stage settings
 
-`model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`),
-`session-timeout` and `setup` are for the whole pipeline, and a stage's table in
+`model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
+`session-timeout` are for the whole pipeline, and a stage's table in
 `linewright.toml` can set its own for its sessions. Without a `model` or
 `effort`, Claude Code chooses. A stage's `session-pass-env` and `session-env`
 add their variables to the whole pipeline's for that stage's sessions only,
@@ -60,29 +62,70 @@ session-pass-env = ["DEPLOY_KEY"]
 A model or effort Linewright sets wins over `ANTHROPIC_MODEL`,
 `CLAUDE_CODE_EFFORT_LEVEL` and the repository's Claude Code settings.
 
-The repository can set `model`, `effort`, `session-timeout` and `setup` too,
-for the whole pipeline and in stage tables, in `.linewright/config.toml` on its
-default branch. Its settings win over your file, and your flags and variables
-win over its whole-pipeline settings.
+The repository can set `model`, `effort` and `session-timeout` too, for the
+whole pipeline and in stage tables, and `[setup]` and `maintenance` for the
+whole pipeline, in `.linewright/config.toml` on its default branch. Its settings
+win over your file, and your flags and variables win over its whole-pipeline
+settings.
 
 An automation's front matter takes the same settings as the repository's file,
 such as `session-timeout: 15m`, and they win over the whole pipeline's for its
 runs.
 
-### The setup command
+### The environment
 
-`setup` is a command that prepares each session's clone before the session
-starts, such as by installing dependencies. `bash` runs it in the root of the
-clone, with nothing on its standard input, in the session's environment (see
-[Variables your build needs](#variables-your-build-needs)). An empty one runs
-nothing, and wins over one set lower down.
+Instead of every session installing the project's dependencies, Linewright can
+make the repository ready once, in the environment, and start every session's
+clone from it. The setup command builds the environment, and the maintenance
+command runs in each session's clone to bring it up to date with its branch.
 
 ```toml
-setup = "npm ci"
+maintenance = "npm install"
 
-[stage.triage]
-setup = ""
+[setup]
+command = "npm ci"
+max-age = "24h"
+timeout = "60m"
 ```
+
+`maintenance` goes before `[setup]`: a key after a table's header belongs to
+that table. Neither can be set in a stage's table or an automation's front
+matter. Without a setup command there is no environment, and each session's
+clone is a plain clone of its branch.
+
+- **The setup command** runs with `bash` in the root of a clone of the default
+  branch at its head, with nothing on its standard input and the sessions'
+  variables (see [Variables your build needs](#variables-your-build-needs)).
+  A build that runs past `timeout` (60m unless set) fails. Processes it leaves
+  running end when it ends: only its files are kept, so start services, such
+  as a database, in the maintenance command.
+- **What a session's clone gets.** A copy of every file git ignores in the
+  environment, such as `node_modules` or `.venv`, made copy-on-write where the
+  filesystem supports it; tracked files come from the session's branch. What
+  the setup command writes outside its clone, such as in `~/.cache`, isn't
+  copied, but sessions on the same host see it anyway. A copied file that
+  holds the environment's absolute path, such as a script in a Python virtual
+  environment, needs the maintenance command to fix it, as `uv sync` does.
+- **When it is rebuilt.** When the setup command, or a variable it gets from
+  `session-pass-env` or `session-env`, changes; once it is older than
+  `max-age` (24h unless set); and on `lw environment rebuild`. A build
+  replaces the environment only once it succeeds, so sessions keep starting
+  from the last good one meanwhile. Until a first build succeeds, runs that
+  need a session wait.
+- **A build that fails** shows in `lw status` and `lw environment`; the last
+  good environment stays in use, and the next change, `max-age` or
+  `lw environment rebuild` builds again.
+- **Draining** waits for runs, not builds, and starts none; an environment
+  survives restarts.
+
+### The maintenance command
+
+`maintenance` is a command each session starts with, which brings its clone
+up to date with its branch and ready for the agent, such as by installing
+what its branch changes or starting a database. `bash` runs it in the root of
+the clone, with nothing on its standard input, in the session's environment
+variables (see [Variables your build needs](#variables-your-build-needs)).
+Keep it quick when nothing has changed: every session runs it.
 
 - **Its timeout** is the session's, `session-timeout`.
 - **A command that fails**, exiting with a non-zero status, keeps its session
@@ -91,7 +134,7 @@ setup = ""
 - **What it leaves running**, such as a dev server, ends when the run is done
   with the clone: Linewright sends its process group SIGTERM, then SIGKILL. A
   process that leaves the group, or a container it starts, outlives the run.
-- **Its output** is kept with the run, redacted, in `setup.log` in the
+- **Its output** is kept with the run, redacted, in `maintenance.log` in the
   session's directory under `sessions/` in the work directory.
 
 ### Prompts
@@ -219,8 +262,9 @@ sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `lw status` shows what the running `serve` is doing and what holds it back.
 `lw explain N` shows where issue or pull request #N stands and what Linewright
 waits for before it acts on it next, or why it leaves the item alone. `lw runs`
-lists the runs, and `lw logs N` shows a run's transcript, with `--follow` as
-it happens. `lw help COMMAND` has each one's options; each takes `--json`.
+lists the runs, and `lw logs N` shows a run's transcript, with `--follow` as it
+happens. `lw environment` shows the environment and its builds' output.
+`lw help COMMAND` has each one's options; each takes `--json`.
 
 The commands talk to `serve` over a Unix socket that only its user can open,
 under `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in the temporary

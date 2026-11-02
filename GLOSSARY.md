@@ -34,8 +34,7 @@ _Avoid_: agent runtime, runtime, scaffold, engine, CLI, binary, coding agent,
 coding tool, framework, platform, assistant
 
 **Session**:
-Linewright's work in one clone for a run: its setup command, then an agent's
-work in one context, from its first prompt to its last.
+Linewright's work in one clone for a run, by an agent in one context.
 _Avoid_: conversation, task
 
 **Transcript**:
@@ -56,16 +55,27 @@ _Avoid_: instructions, brief
 A file a session makes for Linewright to post with the Markdown of its result.
 _Avoid_: artifact, asset, media
 
+**Environment**:
+The repository made ready for agents' work, such as with its dependencies
+installed, that sessions' clones start from.
+_Avoid_: snapshot, prebuild, prebuilt workspace, cached container, cache,
+template
+
 **Setup command**:
-The command a session starts with, which prepares its clone for the agent,
-such as by installing dependencies.
-_Avoid_: setup script, setup steps, setup hook, init script, install script,
-bootstrap, provisioning, lifecycle script, post-create command, pre-start
-hook, build script
+The command that makes the environment ready, such as by installing
+dependencies.
+_Avoid_: setup script, install command, initialize command, init task,
+on-create command, update-content command
+
+**Maintenance command**:
+The command that makes a session's clone ready for its agent, such as by
+starting services.
+_Avoid_: maintenance script, setup script, setup steps, start command,
+session-start hook, post-create command, post-start command, pre-start hook
 
 **Session setting**:
 A setting that shapes the sessions of a stage or an automation, such as its
-model or its setup command.
+model or its timeout.
 
 ### Work
 

@@ -42,9 +42,10 @@ same host.
 | `explain N` | where issue or pull request #N stands and why     |
 | `runs [N]`  | the runs, all or #N's                             |
 | `logs N`    | the transcript of #N's run                        |
+| `environment` | the environment and its builds' output          |
 
-- **Without `serve`.** `status` and `explain` need it running; `runs` and
-  `logs` work either way.
+- **Without `serve`.** `status` and `explain` need it running; `runs`,
+  `logs` and `environment` work either way.
 - **Access.** File permissions: only `serve`'s user can open the socket.
 - **The socket's path.** Derived from the repository, in a short per-user
   directory such as `$XDG_RUNTIME_DIR`.
@@ -70,6 +71,7 @@ order:
 | the usage limit and when it resets             | while one is in force  |
 | a file of the repository's Linewright cannot use, and its error ([Linewright's files](repository.md#linewrights-files)) | while there is one |
 | the drain, since when, and its deadline if set | while one is under way |
+| the environment: the commit it was built from and when, a build in progress and since when, and the latest build if it failed, with when ([Environment](sessions.md#environment)) | with a setup command |
 | the runs in flight out of `max-runs`           | always                 |
 | the time of the last webhook delivery accepted | with webhooks on       |
 | the webhook deliveries refused since `serve` started | with webhooks on |
@@ -85,8 +87,8 @@ order:
   - its state ([States](design_system.md#states)), whether it is stalled,
     and when `serve` last read it;
   - each thing Linewright waits for before it acts on #N next, naming what
-    ends the wait, such as "the usage limit, until 14:30 UTC" or "the drain,
-    until `serve` restarts";
+    ends the wait, such as "the usage limit, until 14:30 UTC", "the drain,
+    until `serve` restarts" or "the environment, until a build succeeds";
   - its run in flight;
   - its latest three past runs, as `runs N` lists them.
 - **An item Linewright leaves.** For an item that is not managed,
@@ -138,10 +140,25 @@ that started a session.
 - **Running in JSON.** Read without following, `logs --json` gives an entry
   still running as one object with what it holds so far and null for the
   rest.
-- **Setup.** In `logs --json`, the setup command's object holds the command,
-  its exit status, how long it ran and its output, even where the transcript
-  as text wouldn't show the output.
+- **Maintenance.** In `logs --json`, the maintenance command's object holds
+  the command, its exit status, how long it ran and its output, even where
+  the transcript as text wouldn't show the output.
 - **No session.** For a run that started no session, `logs` says so.
+
+## environment
+
+`environment` shows the environment as `status` does, then the output of its
+latest build and, when that one succeeded, of the latest that failed
+([Environment](sessions.md#environment)).
+
+- **A build.** Each build shows its command, when it started, its exit
+  status, how long it ran and its output, as a transcript shows its
+  maintenance command ([Transcripts](design_system.md#transcripts)).
+- **`--follow`.** It shows a build in progress so far, then follows it, and
+  ends when the build ends.
+- **`--json`.** Each build is an object as the maintenance command's is in
+  `logs --json`, with the commit it built from.
+- **No setup command.** `environment` says there is none.
 
 ## Output
 

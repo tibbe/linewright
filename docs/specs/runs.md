@@ -43,24 +43,26 @@ has no item.
   fresh and in its own clone, or in none where its work needs no agent, such as
   an update without a conflict.
 
-## Setup
+## Maintenance
 
-A session starts with its setup command, which prepares the session's clone
-before the agent's first prompt.
+A session starts with its maintenance command, which brings the session's
+clone up to date with its branch and ready for the agent, before the agent's
+first prompt.
 
-- **The command.** The `setup` setting
-  ([Stage settings](operation.md#stage-settings)), run by `bash` in the root of
-  the clone, with nothing on its standard input, in the session's environment
-  ([Environment](sessions.md#environment)). With an empty
+- **The command.** The `maintenance` setting
+  ([Configuration](operation.md#configuration)), run by `bash` in the root of
+  the clone, with nothing on its standard input, with the session's
+  environment variables
+  ([Environment variables](sessions.md#environment-variables)). With an empty
   one, the session starts with the agent's first prompt.
 - **When.** On the branch as the clone checked it out, before any update of
   the branch with the default branch
   ([Keeping up to date](pull_requests.md#keeping-up-to-date)).
-- **Failing.** A setup command that exits with a non-zero status ends its
+- **Failing.** A maintenance command that exits with a non-zero status ends its
   session, as an infrastructure failure
   ([Ending](#ending)).
-- **What it leaves running.** Processes the setup command leaves running end
-  once the run is done with the clone.
+- **What it leaves running.** Processes the maintenance command leaves running
+  end once the run is done with the clone.
 - **Its output** is kept with the session's transcript
   ([Transcripts](design_system.md#transcripts)).
 
@@ -210,4 +212,4 @@ tickets.
 - Resuming, after a restart, a session that was waiting out the usage limit.
 - Slowing down as the usage limit approaches, before a session is refused.
 - A teardown command, run as a clone is removed to release what lives outside
-  it, such as a container its setup command started.
+  it, such as a container its maintenance command started.

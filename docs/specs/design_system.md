@@ -100,12 +100,12 @@ An item's state ([State](repository.md#state)) is shown in these words.
   as the lines read, the exit status or, for a sub-agent, the count of its
   tool calls and how long it ran. A sub-agent's work shows under the call that
   started it.
-- **Setup.** A session's first entry is its setup command
-  ([Setup](runs.md#setup)): a line with the command, its exit status and how
-  long it ran, then its output, which shows only in full or when the command
-  failed. An empty one shows nothing.
-- **Running.** A tool call and the setup command are entries that run: each
-  shows `running` in place of its account until it ends.
+- **Maintenance.** A session's first entry is its maintenance command
+  ([Maintenance](runs.md#maintenance)): a line with the command, its exit status
+  and how long it ran, then its output, which shows only in full or when the
+  command failed. An empty one shows nothing.
+- **Running.** A tool call and the maintenance command are entries that run:
+  each shows `running` in place of its account until it ends.
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -177,6 +177,7 @@ when `ui-address` is empty.
 | a poll that failed since the last that succeeded | the server page |
 | an automation file that does not parse   | the automations page |
 | a file of the repository's Linewright cannot use | the server page |
+| with a setup command, no environment yet, or its latest build failed | the server page |
 | an automation whose last run failed      | that run         |
 
 ### The board
@@ -336,7 +337,7 @@ came from.
   and "(it started no session)" for a run that ended without one, and under
   them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
 - **Folding.** An entry that runs opens on click to the rest of it, a tool
-  call's full input and result or the setup command's output, and one that
+  call's full input and result or the maintenance command's output, and one that
   failed starts open. A sub-agent's work starts folded to the line of the
   call that started it, with the count of its entries.
 - **Verbose.** A switch, set once for the page, shows the transcripts in full,
@@ -361,6 +362,10 @@ row per automation.
 
 The server page shows the facts about Linewright itself ([Facts](#facts)).
 
+- **Builds.** A build of the environment shows as a transcript's maintenance
+  command does, and opens the same way ([The run page](#the-run-page)); a
+  build in progress is followed.
+
 | Fact                                                            | Shown                  |
 | --------------------------------------------------------------- | ---------------------- |
 | since when `serve` has run                                      | always                 |
@@ -369,6 +374,7 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 | the usage limit and when it resets                              | while one is in force  |
 | a file of the repository's Linewright cannot use, and its error | while there is one     |
 | the drain, since when, and its deadline if set                  | while one is under way |
+| the environment and its builds, as `environment` shows them ([Monitoring](monitoring.md)) | with a setup command |
 | the runs in flight out of `max-runs`                            | always                 |
 | the time of the last webhook delivery accepted                  | with webhooks on       |
 | the webhook deliveries refused since `serve` started            | with webhooks on       |
