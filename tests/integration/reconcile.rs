@@ -1963,6 +1963,7 @@ fn rework(issue: u64, pr: u64) -> Action {
     Action::Start(Work::Rework {
         issue: Number(issue),
         pr: Number(pr),
+        update: false,
     })
 }
 
@@ -2118,14 +2119,60 @@ fn update(issue: u64, pr: u64) -> Action {
 }
 
 #[test_log::test]
-fn a_pull_request_behind_or_in_conflict_with_the_default_branch_is_brought_up_to_date() {
-    let mut behind = ready(pull(20, 2));
-    behind.mergeability = Mergeability::Behind;
+fn a_pull_request_in_conflict_with_the_default_branch_is_brought_up_to_date() {
     let mut conflicting = ready(pull(20, 2));
     conflicting.mergeability = Mergeability::Conflicting;
+    conflicting.checks = vec![check("test", CheckState::Pending)];
 
-    assert_eq!(at(&in_review(behind), 10), vec![update(2, 20)]);
     assert_eq!(at(&in_review(conflicting), 10), vec![update(2, 20)]);
+}
+
+#[test_log::test]
+fn a_pull_request_behind_is_brought_up_to_date_once_a_person_has_approved_it() {
+    let mut behind = ready(pull(20, 2));
+    behind.mergeability = Mergeability::Behind;
+    let mut approved = behind.clone();
+    approved.reviews = vec![review("reviewer", ReviewState::Approved, "", 4)];
+    let mut by_linewright = behind.clone();
+    by_linewright.reviews = vec![review(LINEWRIGHT, ReviewState::Approved, "", 4)];
+    let mut changes_requested = approved.clone();
+    changes_requested.review_decision = Some(ReviewDecision::ChangesRequested);
+
+    assert_eq!(at(&in_review(behind), 10), vec![]);
+    assert_eq!(at(&in_review(by_linewright), 10), vec![]);
+    assert_eq!(at(&in_review(approved), 10), vec![update(2, 20)]);
+    assert_eq!(at(&in_review(changes_requested), 10), vec![]);
+}
+
+#[test_log::test]
+fn a_rework_run_starts_with_an_update_only_where_an_update_run_would_start() {
+    let commented = |mergeability| {
+        let mut pr = ready(pull(20, 2));
+        pr.mergeability = mergeability;
+        pr.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+        pr
+    };
+    let reworking = |update| {
+        vec![Action::Start(Work::Rework {
+            issue: Number(2),
+            pr: Number(20),
+            update,
+        })]
+    };
+    let mut approved = commented(Mergeability::Behind);
+    approved
+        .reviews
+        .push(review("maintainer", ReviewState::Approved, "", 5));
+
+    assert_eq!(
+        at(&in_review(commented(Mergeability::Conflicting)), 10),
+        reworking(true)
+    );
+    assert_eq!(
+        at(&in_review(commented(Mergeability::Behind)), 10),
+        reworking(false)
+    );
+    assert_eq!(at(&in_review(approved), 10), reworking(true));
 }
 
 fn not_rebaseable() -> Pull {
@@ -2201,9 +2248,9 @@ fn a_pull_request_whose_rebaseability_is_not_known_yet_waits_rather_than_startin
 }
 
 #[test_log::test]
-fn a_pull_request_behind_is_brought_up_to_date_though_a_run_has_ended_since_its_last_push() {
+fn a_pull_request_in_conflict_is_brought_up_to_date_though_a_run_has_ended_since_its_last_push() {
     let mut pr = not_rebaseable();
-    pr.mergeability = Mergeability::Behind;
+    pr.mergeability = Mergeability::Conflicting;
 
     assert_eq!(
         after_runs(&in_review(pr), &[done(20, WorkKind::Update, 5)], 10),
@@ -3456,13 +3503,13 @@ fn with_a_required_label_a_reopened_ticket_is_claimed_again_only_if_labeled_but_
 fn with_a_required_label_work_already_started_carries_on_unlabeled() {
     let mut failing = pull(20, 2);
     failing.checks = vec![check("test", CheckState::Failed)];
-    let mut behind = pull(21, 3);
-    behind.mergeability = Mergeability::Behind;
+    let mut conflicting = pull(21, 3);
+    conflicting.mergeability = Mergeability::Conflicting;
     let mut green = pull(22, 4);
     green.checks = vec![check("test", CheckState::Passed)];
     green.state = PullState::Open { draft: false };
     let mut world = in_review(failing);
-    for pr in [behind, green] {
+    for pr in [conflicting, green] {
         world.issues.push(in_review(pr.clone()).issues.remove(0));
         world.pulls.push(pr);
     }

@@ -38,6 +38,9 @@ pub struct Seed {
     pub linewright: Login,
     pub issue_types: Option<Vec<String>>,
     pub linear_history: bool,
+    /// The branch rules require a pull request's branch up to date with the
+    /// default branch before it merges.
+    pub requires_up_to_date: bool,
     pub allowed_merge_methods: MergeMethods,
 }
 
@@ -53,6 +56,7 @@ struct State {
     linewright: Login,
     issue_types: Option<Vec<String>>,
     linear_history: bool,
+    requires_up_to_date: bool,
     allowed_merge_methods: MergeMethods,
     /// Each label by name, with its description: `None` for one created by
     /// labeling an item, as GitHub gives it none.
@@ -278,6 +282,7 @@ impl LocalStore {
                 linewright: seed.linewright,
                 issue_types: seed.issue_types,
                 linear_history: seed.linear_history,
+                requires_up_to_date: seed.requires_up_to_date,
                 allowed_merge_methods: seed.allowed_merge_methods,
                 labels: BTreeMap::new(),
                 next_number: 1,
@@ -1091,10 +1096,14 @@ impl LocalStore {
     }
 
     async fn pull_view(&self, number: Number) -> Result<Pull> {
-        let (record, default_branch) = {
+        let (record, default_branch, requires_up_to_date) = {
             let state = self.state();
             let default_branch = state.default_branch.clone();
-            (state.pull(number)?.clone(), default_branch)
+            (
+                state.pull(number)?.clone(),
+                default_branch,
+                state.requires_up_to_date,
+            )
         };
         let head_sha = self.rev(&record.head_ref).await.unwrap_or_default();
         let up_to_date = match record.state {
@@ -1117,11 +1126,13 @@ impl LocalStore {
                 let found = self
                     .mergeability(&default_branch, &record.head_ref, up_to_date)
                     .await?;
-                match &record.blocked {
-                    Some(requires) if found == Mergeability::Clean => Mergeability::Blocked {
+                match (found, &record.blocked) {
+                    (Mergeability::Conflicting, _) => Mergeability::Conflicting,
+                    (_, Some(requires)) => Mergeability::Blocked {
                         requires: requires.clone(),
                     },
-                    Some(_) | None => found,
+                    (Mergeability::Behind, None) if !requires_up_to_date => Mergeability::Clean,
+                    (found, None) => found,
                 }
             }
             PullState::Merged { .. } | PullState::Closed { .. } => Mergeability::Clean,
@@ -1174,6 +1185,8 @@ impl LocalStore {
         })
     }
 
+    /// How `head` merges into the default branch by git alone: `Behind`
+    /// wherever it is behind, whatever the branch rules require.
     /// `up_to_date` says whether `head` contains the default branch.
     async fn mergeability(
         &self,

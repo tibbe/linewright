@@ -3,7 +3,8 @@ use crate::common;
 use common::*;
 use linewright::clock::Clock;
 use linewright::domain::{
-    Assignment, CheckState, IssueCloseReason, Login, Number, Pull, ReviewState, Timestamp, Windows,
+    Assignment, CheckState, IssueCloseReason, Login, Mergeability, Number, Pull, Requirement,
+    ReviewState, Timestamp, Windows,
 };
 use linewright::store::Store;
 
@@ -282,5 +283,60 @@ async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach()
     assert_eq!(
         std::fs::read_to_string(root.join("issues").join(&first)).unwrap(),
         "the bytes"
+    );
+}
+
+/// A world, requiring branches up to date where `requires_up_to_date`, whose
+/// pull request the default branch has moved past without a conflict.
+async fn moved_past(requires_up_to_date: bool) -> (World, Number) {
+    let mut world = World::with_repository(
+        Repository {
+            requires_up_to_date,
+            ..Repository::default()
+        },
+        |_| {},
+    )
+    .await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Other work",
+            "",
+            &[("src/other.txt", "other\n")],
+        )
+        .await
+        .unwrap();
+    (world, pr)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_pull_request_behind_is_reported_behind_only_where_the_repository_requires_it_up_to_date()
+{
+    let (lax, lax_pr) = moved_past(false).await;
+    let (strict, strict_pr) = moved_past(true).await;
+
+    assert_eq!(
+        snapshot_pull(&lax, lax_pr).await.mergeability,
+        Mergeability::Clean
+    );
+    assert_eq!(
+        snapshot_pull(&strict, strict_pr).await.mergeability,
+        Mergeability::Behind
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_merge_blocked_by_a_missing_requirement_is_reported_blocked_rather_than_behind() {
+    let (world, pr) = moved_past(true).await;
+
+    world.store.block_merge(pr, vec![Requirement::Approval]);
+
+    assert_eq!(
+        snapshot_pull(&world, pr).await.mergeability,
+        Mergeability::Blocked {
+            requires: vec![Requirement::Approval]
+        }
     );
 }

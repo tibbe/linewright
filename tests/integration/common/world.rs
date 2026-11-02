@@ -5,7 +5,8 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::OperatorPrompts;
 use linewright::domain::{
-    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, Windows, label,
+    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows,
+    label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::{Subject, WorkKind};
@@ -97,6 +98,8 @@ pub struct World {
 
 pub struct Repository {
     pub linear_history: bool,
+    /// Its rules require branches up to date before a merge.
+    pub requires_up_to_date: bool,
     pub allowed_merge_methods: MergeMethods,
     /// GitHub tokens that cannot read the repository.
     pub unreadable_by: Vec<&'static str>,
@@ -117,6 +120,7 @@ impl Default for Repository {
     fn default() -> Repository {
         Repository {
             linear_history: false,
+            requires_up_to_date: false,
             allowed_merge_methods: MergeMethods::all(),
             unreadable_by: vec![],
             labels: vec![],
@@ -138,6 +142,7 @@ pub async fn local_store(
             linewright: Login::new(LINEWRIGHT),
             issue_types: None,
             linear_history: repository.linear_history,
+            requires_up_to_date: repository.requires_up_to_date,
             allowed_merge_methods: repository.allowed_merge_methods.clone(),
         },
         clock,
@@ -537,6 +542,7 @@ pub async fn store_holding(dir: &Path, files: &[(&str, &str)]) -> LocalStore {
             linewright: Login::new(LINEWRIGHT),
             issue_types: None,
             linear_history: false,
+            requires_up_to_date: false,
             allowed_merge_methods: MergeMethods::all(),
         },
         Arc::new(FakeClock::new()),
@@ -595,6 +601,27 @@ impl World {
         self.factory
             .run_automation(&"hourly".parse().unwrap())
             .await
+            .unwrap();
+    }
+
+    /// Has Linewright mark its draft `pr` ready once no CI reports within
+    /// `ci-grace`, then moves the default branch on past it without a
+    /// conflict and has the maintainer approve it: behind, and ready to
+    /// merge but for that.
+    pub async fn approve_behind(&mut self, pr: Number) {
+        self.clock.advance(TimeDelta::minutes(6));
+        self.poll().await;
+        self.store
+            .merge_change(
+                "maintainer",
+                "Other work",
+                "",
+                &[("src/other.txt", "other\n")],
+            )
+            .await
+            .unwrap();
+        self.store
+            .review_as("maintainer", pr, ReviewState::Approved, "", &[])
             .unwrap();
     }
 

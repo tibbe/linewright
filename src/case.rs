@@ -29,6 +29,10 @@ pub struct Case {
     /// Every method in cases captured before it was recorded.
     #[serde(default = "MergeMethods::all")]
     pub allowed_merge_methods: MergeMethods,
+    /// The branch rules require branches up to date before a merge. Never
+    /// captured: Linewright reads it from GitHub only as its merge state.
+    #[serde(default)]
+    pub requires_up_to_date: bool,
     pub base: String,
     pub event: Event,
 }
@@ -172,6 +176,7 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
             }
         },
         allowed_merge_methods: settings.allowed_merge_methods,
+        requires_up_to_date: false,
         base,
         event,
     };
@@ -277,6 +282,7 @@ pub async fn replay(
                 linewright: case.linewright.clone(),
                 issue_types: case.issue_types.clone(),
                 linear_history: case.update_method == UpdateMethod::Rebase,
+                requires_up_to_date: case.requires_up_to_date,
                 allowed_merge_methods: case.allowed_merge_methods.clone(),
             },
             clock.clone(),

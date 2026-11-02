@@ -1,17 +1,20 @@
 use linewright::domain::{MergeMethod, Requirement};
-use linewright::working_pull::{Branch, Checks, Facts, Row, Verdict, row};
+use linewright::working_pull::{Branch, Checks, Facts, Row, Verdict, row, updates};
 
 /// A green draft with nothing else to do: only marking it ready holds.
 fn green_draft() -> Facts {
     Facts {
         feedback: false,
         branch: Branch::Mergeable,
+        behind: false,
         checks: Checks::Green,
         fix_ci_runs: 0,
         ci_attempts: 2,
         draft: true,
         auto_merge: None,
         held: false,
+        review_required: false,
+        approved: false,
         failed_merges: vec![],
         verdict: Verdict::NotReported,
     }
@@ -25,7 +28,7 @@ fn failing() -> Checks {
 fn feedback_starts_a_rework_run_before_any_other_row() {
     let facts = Facts {
         feedback: true,
-        branch: Branch::Behind,
+        branch: Branch::Conflicting,
         checks: failing(),
         fix_ci_runs: 2,
         ..green_draft()
@@ -35,9 +38,9 @@ fn feedback_starts_a_rework_run_before_any_other_row() {
 }
 
 #[test_log::test]
-fn a_branch_behind_or_in_conflict_starts_an_update_run_before_the_checks_are_read() {
+fn a_branch_in_conflict_starts_an_update_run_before_the_checks_are_read() {
     let facts = Facts {
-        branch: Branch::Behind,
+        branch: Branch::Conflicting,
         checks: failing(),
         fix_ci_runs: 2,
         ..green_draft()
@@ -228,4 +231,100 @@ fn a_merge_github_allows_is_made_with_auto_merges_method_after_one_failed_merge(
             method: MergeMethod::Rebase
         }
     );
+}
+
+/// A pull request ready for review that GitHub reports behind, with
+/// `auto-merge` on and nothing else keeping it from being ready to merge.
+fn behind() -> Facts {
+    Facts {
+        behind: true,
+        verdict: Verdict::NotReported,
+        ..mergeable()
+    }
+}
+
+#[test_log::test]
+fn a_branch_behind_starts_an_update_run_once_that_alone_keeps_it_from_being_ready_to_merge() {
+    let approved = Facts {
+        auto_merge: None,
+        approved: true,
+        ..behind()
+    };
+
+    assert_eq!(row(&behind()), Row::Update);
+    assert_eq!(row(&approved), Row::Update);
+}
+
+#[test_log::test]
+fn a_branch_behind_is_not_brought_up_to_date_before_its_checks_pass() {
+    let running = Facts {
+        checks: Checks::Running {
+            names: vec!["test".into()],
+            past_timeout: false,
+        },
+        ..behind()
+    };
+    let failing = Facts {
+        checks: failing(),
+        ..behind()
+    };
+
+    assert_eq!(row(&running), Row::WaitForChecks);
+    assert_eq!(
+        row(&failing),
+        Row::FixCi {
+            failing: vec!["test".into()]
+        }
+    );
+}
+
+#[test_log::test]
+fn a_branch_behind_is_not_brought_up_to_date_while_something_else_keeps_it_from_being_ready_to_merge()
+ {
+    let held = Facts {
+        held: true,
+        ..behind()
+    };
+    let review_required = Facts {
+        review_required: true,
+        ..behind()
+    };
+    let unapproved_without_auto_merge = Facts {
+        auto_merge: None,
+        ..behind()
+    };
+
+    assert_eq!(row(&held), Row::WaitForReview);
+    assert_eq!(row(&review_required), Row::WaitForMergeState);
+    assert_eq!(row(&unapproved_without_auto_merge), Row::WaitForReview);
+}
+
+#[test_log::test]
+fn a_rework_run_updates_where_an_update_row_holds_with_its_feedback_set_aside() {
+    let feedback = |facts: Facts| Facts {
+        feedback: true,
+        ..facts
+    };
+
+    assert!(updates(&feedback(behind())));
+    assert!(updates(&feedback(Facts {
+        branch: Branch::Conflicting,
+        checks: failing(),
+        ..green_draft()
+    })));
+    assert!(updates(&feedback(Facts {
+        branch: Branch::Unmergeable {
+            ended_since_push: false
+        },
+        ..mergeable()
+    })));
+    assert!(!updates(&feedback(Facts {
+        held: true,
+        ..behind()
+    })));
+    assert!(!updates(&feedback(Facts {
+        checks: failing(),
+        ..behind()
+    })));
+    assert!(!updates(&feedback(mergeable())));
 }

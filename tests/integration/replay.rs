@@ -79,6 +79,7 @@ fn spec_change_case_allowing(
         issue_types: None,
         update_method: UpdateMethod::Merge,
         allowed_merge_methods: allowed_merge_methods.iter().copied().collect(),
+        requires_up_to_date: false,
         base,
         event: Event::SpecChange {
             number: Number(41),

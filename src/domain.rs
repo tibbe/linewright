@@ -958,6 +958,10 @@ pub enum PullState {
 #[serde(rename_all = "kebab-case")]
 pub enum Mergeability {
     Clean,
+    /// Behind the default branch where the repository requires it up to
+    /// date, with nothing else it requires missing: GitHub reports `Blocked`
+    /// instead while something else is, and `Conflicting` over both
+    /// (<https://docs.github.com/en/graphql/reference/enums#mergestatestatus>).
     Behind,
     Conflicting,
     Blocked {

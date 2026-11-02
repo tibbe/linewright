@@ -2137,20 +2137,19 @@ async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_say
 }
 
 #[test_log::test(tokio::test)]
-async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date() {
-    let mut world = World::new().await;
+async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date_once_that_alone_keeps_it_from_merging()
+ {
+    let mut world = World::with_repository(
+        Repository {
+            requires_up_to_date: true,
+            ..Repository::default()
+        },
+        |_| {},
+    )
+    .await;
     let (_, pr) = world.ticket_in_review().await;
     let before = world.store.snapshot_pull(pr).await.head_sha;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
+    world.approve_behind(pr).await;
 
     world.poll().await;
 
@@ -2300,6 +2299,38 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
     assert_eq!(
         world.harness.prompts(WorkKind::Update),
         Vec::<String>::new()
+    );
+    assert_eq!(merges(&world, &view.head_ref), 0);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_rework_run_on_a_branch_merely_behind_leaves_it_behind() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .merge_change(
+            "maintainer",
+            "Other work",
+            "",
+            &[("src/other.txt", "other\n")],
+        )
+        .await
+        .unwrap();
+    let before = world.store.snapshot_pull(pr).await.head_sha;
+    world.rework_asked(pr);
+
+    world.poll().await;
+
+    let view = world.store.snapshot_pull(pr).await;
+    assert_ne!(view.head_sha, before, "the rework was pushed");
+    assert!(
+        world
+            .store
+            .file(&view.head_ref, "src/other.txt")
+            .await
+            .is_err(),
+        "the default branch's change is not merged in"
     );
     assert_eq!(merges(&world, &view.head_ref), 0);
 }
