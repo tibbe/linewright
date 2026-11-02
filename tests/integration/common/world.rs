@@ -108,6 +108,14 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// One whose rules require branches up to date before a merge.
+    pub fn requiring_up_to_date() -> Repository {
+        Repository {
+            requires_up_to_date: true,
+            ..Repository::default()
+        }
+    }
+
     pub fn allowing(methods: impl IntoIterator<Item = MergeMethod>) -> Repository {
         Repository {
             allowed_merge_methods: methods.into_iter().collect(),
@@ -604,13 +612,9 @@ impl World {
             .unwrap();
     }
 
-    /// Has Linewright mark its draft `pr` ready once no CI reports within
-    /// `ci-grace`, then moves the default branch on past it without a
-    /// conflict and has the maintainer approve it: behind, and ready to
-    /// merge but for that.
-    pub async fn approve_behind(&mut self, pr: Number) {
-        self.clock.advance(TimeDelta::minutes(6));
-        self.poll().await;
+    /// Merges a change to `src/other.txt` into the default branch, which no
+    /// pull request of Linewright's conflicts with.
+    pub async fn move_default_branch_on(&self) {
         self.store
             .merge_change(
                 "maintainer",
@@ -620,6 +624,16 @@ impl World {
             )
             .await
             .unwrap();
+    }
+
+    /// Has Linewright mark its draft `pr` ready once no CI reports within
+    /// `ci-grace`, then moves the default branch on past it without a
+    /// conflict and has the maintainer approve it: behind, and ready to
+    /// merge but for that.
+    pub async fn approve_behind(&mut self, pr: Number) {
+        self.clock.advance(TimeDelta::minutes(6));
+        self.poll().await;
+        self.move_default_branch_on().await;
         self.store
             .review_as("maintainer", pr, ReviewState::Approved, "", &[])
             .unwrap();

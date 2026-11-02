@@ -133,13 +133,9 @@ async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_
 #[test_log::test(tokio::test)]
 async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     let work_dir = tempfile::tempdir().unwrap();
-    let mut world = World::with_repository(
-        Repository {
-            requires_up_to_date: true,
-            ..Repository::default()
-        },
-        |config| config.work_dir = work_dir.path().join(REPO),
-    )
+    let mut world = World::with_repository(Repository::requiring_up_to_date(), |config| {
+        config.work_dir = work_dir.path().join(REPO);
+    })
     .await;
     let (_, pr) = world.implement_a_ticket().await;
     world.approve_behind(pr).await;

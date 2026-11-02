@@ -1,7 +1,6 @@
 //! The Working a pull request table (`docs/specs/pull_requests.md`): the
 //! facts its rows read about a pull request Linewright opened ([`facts`]),
 //! and the first row that holds ([`row`]).
-//! [`updates`] says whether a rework run starts with an update.
 
 use crate::domain::{
     Assignment, CheckState, Comment, Login, MergeMethod, Mergeability, Pull, PullState,
@@ -13,14 +12,13 @@ use crate::reconcile::{EndedRun, Memory, Policy, WorkKind};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each is a fact of its own that rows of the table read, in any combination"
+    reason = "each is a fact of its own that a different row of the table reads"
 )]
 pub struct Facts {
     /// Feedback has come: see [`feedback`].
     pub feedback: bool,
     pub branch: Branch,
-    /// GitHub reports it [`Mergeability::Behind`]. Never for a draft, whose
-    /// merge state GitHub doesn't report.
+    /// GitHub reports it [`Mergeability::Behind`].
     pub behind: bool,
     pub checks: Checks,
     /// Fix-ci runs that have ended on it this round, however they ended.
@@ -159,7 +157,7 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
     Facts {
         feedback: !feedback(pr, linewright, memory.rework_answered_until(pr.number)).is_empty(),
         branch,
-        behind: !draft && pr.mergeability == Mergeability::Behind,
+        behind: pr.mergeability == Mergeability::Behind,
         checks,
         fix_ci_runs: ended
             .iter()
@@ -299,7 +297,7 @@ pub fn row(facts: &Facts) -> Row {
 /// Whether a rework run on a pull request with `facts` starts by bringing
 /// its branch up to date: a row that starts an update run holds once its
 /// feedback is set aside.
-pub fn updates(facts: &Facts) -> bool {
+pub fn rework_starts_with_update(facts: &Facts) -> bool {
     row(&Facts {
         feedback: false,
         ..facts.clone()
@@ -308,8 +306,7 @@ pub fn updates(facts: &Facts) -> bool {
 
 /// Ready to merge, but for being behind: no person holds its merge, GitHub
 /// requires no review it has not had and, with `auto-merge` off, a person
-/// has approved it. GitHub reports it behind only while nothing else it
-/// requires is missing.
+/// has approved it.
 fn ready_to_merge(facts: &Facts) -> bool {
     !facts.held && !facts.review_required && (facts.auto_merge.is_some() || facts.approved)
 }

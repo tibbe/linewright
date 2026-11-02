@@ -287,27 +287,18 @@ async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach()
 }
 
 /// A world, requiring branches up to date where `requires_up_to_date`, whose
-/// pull request the default branch has moved past without a conflict.
+/// pull request, ready for review, the default branch has moved past without
+/// a conflict.
 async fn moved_past(requires_up_to_date: bool) -> (World, Number) {
-    let mut world = World::with_repository(
-        Repository {
-            requires_up_to_date,
-            ..Repository::default()
-        },
-        |_| {},
-    )
-    .await;
+    let repository = if requires_up_to_date {
+        Repository::requiring_up_to_date()
+    } else {
+        Repository::default()
+    };
+    let mut world = World::with_repository(repository, |_| {}).await;
     let (_, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
+    world.store.mark_ready(pr).await.unwrap();
+    world.move_default_branch_on().await;
     (world, pr)
 }
 

@@ -14,6 +14,7 @@ contracts![
     an_opened_pull_request_is_a_draft_of_linewrights_into_the_default_branch,
     a_snapshot_holds_an_open_pull_request_of_linewrights,
     a_pull_request_marked_ready_is_no_longer_a_draft,
+    a_draft_reads_with_whether_it_merges_unknown,
     a_closed_pull_request_reads_back_closed_unmerged,
     a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_its_closed_ticket,
     a_pull_request_lists_the_issues_it_closes,
@@ -132,6 +133,18 @@ async fn a_snapshot_holds_an_open_pull_request_of_linewrights(sandbox: Sandbox) 
             }
         })
         .await
+}
+
+async fn a_draft_reads_with_whether_it_merges_unknown(sandbox: Sandbox) -> Result<()> {
+    let Opened { pr, .. } = opened(&sandbox, "draft-merge-state").await?;
+
+    let pull = sandbox.store().pull(pr).await?;
+
+    equal(
+        "whether it merges",
+        &pull.mergeability,
+        &Mergeability::Unknown,
+    )
 }
 
 async fn a_pull_request_marked_ready_is_no_longer_a_draft(sandbox: Sandbox) -> Result<()> {
