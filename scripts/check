@@ -336,7 +336,7 @@ check_one_model() {
   if [ "$(basename "$file")" = pull_request.qnt ]; then
     check_property "$file" invariants || status=1
     quint verify --backend=tlc --temporal=crashSafety,progress "$file" || status=1
-    for row in $(seq 0 13); do
+    for row in $(seq 0 14); do
       check_property "$file" "row${row}Unreached" || status=1
     done
   else
@@ -356,7 +356,7 @@ check_model-quick() {
   for name in $models; do
     file="$PWD/docs/model/$name.qnt"
     if [ "$name" = pull_request ]; then
-      for row in $(seq 0 13); do
+      for row in $(seq 0 14); do
         check_property "$file" "row${row}Unreached" || status=1
       done
     else

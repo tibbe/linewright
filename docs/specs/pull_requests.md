@@ -17,9 +17,10 @@ to review again; the maintainer approves and merges.
    me nothing.
 3. As an operator, I want my review comments addressed and answered where I
    wrote them, so that review is a conversation with the branch.
-4. As an operator, I want branches kept up to date with the default branch and
-   mergeable by every method my repository allows, rewriting history only when
-   they must, so that I pick how to merge and my review is not disturbed.
+4. As an operator, I want branches kept mergeable by every method my
+   repository allows and brought up to date with the default branch only when
+   merging needs it, rewriting history only when they must, so that I pick how
+   to merge, my review is not disturbed and CI does not rerun for nothing.
 5. As an operator, I want to merge myself, so that nothing lands without me.
 6. As an operator, I want closing a PR to mean rejection, so that the factory
    does not redo what I refused.
@@ -59,13 +60,14 @@ Its state is GitHub's: a draft, or ready for review.
 | State | When | Linewright | State after |
 | --- | --- | --- | --- |
 | any | feedback has come ([Rework](#rework)) | starts a rework run | unchanged |
-| any | GitHub reports it behind the default branch, or in conflict with it | starts an update run ([Keeping up to date](#keeping-up-to-date)) | unchanged |
-| any | it cannot be merged by a method the repository allows, and no run has ended on it since its last push | starts an update run | unchanged |
+| any | it conflicts with the default branch | starts an update run ([Keeping up to date](#keeping-up-to-date)) | unchanged |
+| any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged |
 | any | none of its checks has appeared, and its last push was less than `ci-grace` ago | waits for its checks | unchanged |
 | any | a check is still running `ci-timeout` after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged |
 | any | a check is still running | waits for its checks | unchanged |
 | any | a check failed, and fewer than `ci-attempts` fix-ci runs have ended on it this round | starts a fix-ci run ([CI](#ci)) | unchanged |
 | any | a check failed | hands it back, naming the failing checks | unchanged |
+| any | it is behind the default branch, the repository requires it up to date to merge, and that alone keeps it from being ready to merge | starts an update run | unchanged |
 | draft | otherwise | marks it ready for review | ready for review |
 | ready for review | `auto-merge` is off, or a person holds its merge ([Merging](#merging)) | waits for review | ready for review |
 | ready for review | two merges of it have failed this round | hands it back with GitHub's reason | ready for review |
@@ -76,6 +78,9 @@ Its state is GitHub's: a draft, or ready for review.
 - **Its checks.** The check runs and commit statuses on its head.
 - **A round.** A round starts when Linewright opens the pull request, when a
   rework run on it ends and when Linewright is assigned to it again.
+- **Ready to merge.** A PR is ready to merge when no person holds its merge
+  ([Merging](#merging)), it has everything the repository requires before a
+  merge and, with `auto-merge` off, a person has approved it.
 
 ## CI
 
@@ -94,7 +99,8 @@ A comment or review from anyone other than Linewright is feedback until a
 rework run that was given it ends done ([Ending](runs.md#ending)); a review
 that only approves is not feedback.
 
-- **The run.** It brings the branch up to date, addresses the comments,
+- **The run.** It brings the branch up to date where it must be
+  ([Keeping up to date](#keeping-up-to-date)), addresses the comments,
   pushes, replies in each thread and re-requests review from the people whose
   comments it addressed.
 - **Resolving threads.** A reply that asks to resolve its thread resolves it
@@ -107,9 +113,12 @@ that only approves is not feedback.
 
 ## Keeping up to date
 
-Every run first brings the branch up to date with the default branch, and
-an update run does only that.
+A branch is brought up to date with the default branch where a row of
+[Working a pull request](#working-a-pull-request) that starts an update run
+holds, and by every fix-ci run.
 
+- **Which runs.** An update run does only that. A rework run starts with it
+  where one of those rows holds. A fix-ci run always starts with it.
 - **Merge or rebase.** By default an update merges the default branch into
   the branch, so reviewed history stays as it is, unless the branch would then
   not be mergeable by every method the repository allows; then the branch is
@@ -150,7 +159,7 @@ A fix, rework or update session is sent `fix-ci.md`, `rework.md` or
 | `{{description}}`  | its description                                                                                                                     |
 | `{{ticket}}`       | the issue the pull request closes, as the implementer is given its ticket ([Implementation](implementation.md#the-session))       |
 | `{{unfinished}}`   | the unfinished commits on the branch, or nothing                                                                                    |
-| `{{conflict}}`     | where the update stopped and the files in conflict; for a fix or a rework, nothing unless the update it starts with stopped         |
+| `{{conflict}}`     | where the update stopped and the files in conflict; for a fix or a rework, nothing unless it starts with an update that stopped     |
 | `{{failures}}`     | a fix's alone: each failing check, as under [CI](#ci)                                                                               |
 | `{{feedback}}`     | a rework's alone: the new comments, reviews and comments in threads                                                                 |
 | `{{conversation}}` | a rework's alone: the pull request's comments and its unresolved threads                                                            |
