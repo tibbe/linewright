@@ -1076,7 +1076,6 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
                     model: Some("opus".into()),
                     effort: Some(Effort::Xhigh),
                     session_timeout: Some(std::time::Duration::from_mins(90)),
-                    ..Partial::default()
                 },
                 ..StageTable::default()
             },

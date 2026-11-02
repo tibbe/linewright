@@ -45,7 +45,7 @@ fn hand_back_of(kind: HandBackKind, reason: &str, log_tail: Option<LogTail>) -> 
 fn log(of: Logged, text: &str) -> LogTail {
     match of {
         Logged::Session => LogTail::session(text),
-        Logged::Setup => LogTail::setup(text),
+        Logged::Maintenance => LogTail::maintenance(text),
     }
     .unwrap()
 }
@@ -144,10 +144,10 @@ fn a_hand_back_asks(#[case] item: Item, #[case] kind: HandBackKind, #[case] expe
     Some(log(Logged::Session, "Gave up.")),
     "Too hard.\n\n<details><summary>The end of the session's log</summary>\n\n```\nGave up.\n```\n\n</details>"
 )]
-#[case::an_issue_is_given_the_end_of_the_setup_commands_output(
+#[case::an_issue_is_given_the_end_of_the_maintenance_commands_output(
     Item::Issue(issue("reporter", None)),
-    Some(log(Logged::Setup, "npm ERR!")),
-    "Too hard.\n\n<details><summary>The end of the setup command's output</summary>\n\n```\nnpm ERR!\n```\n\n</details>"
+    Some(log(Logged::Maintenance, "npm ERR!")),
+    "Too hard.\n\n<details><summary>The end of the maintenance command's output</summary>\n\n```\nnpm ERR!\n```\n\n</details>"
 )]
 #[case::a_pull_request_is_told_to_assign_linewright_to_try_again(
     Item::Pull,
@@ -249,22 +249,22 @@ fn the_end_of_a_sessions_log(#[case] text: &str, #[case] expected: Option<(Logge
 
 #[rstest]
 #[case::an_empty_output_gives_none("\n  \n", None)]
-#[case::an_output_is_trimmed("\nnpm ERR!\n\n", Some((Logged::Setup, "npm ERR!")))]
+#[case::an_output_is_trimmed("\nnpm ERR!\n\n", Some((Logged::Maintenance, "npm ERR!")))]
 #[case::a_long_output_gives_its_last_forty_lines(
     &numbered_lines(42),
-    Some((Logged::Setup, "3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n\
+    Some((Logged::Maintenance, "3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n\
          26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42"))
 )]
-fn the_end_of_the_setup_commands_output(
+fn the_end_of_the_maintenance_commands_output(
     #[case] output: &str,
     #[case] expected: Option<(Logged, &str)>,
 ) {
-    assert_eq!(shown(LogTail::setup(output).as_ref()), expected);
+    assert_eq!(shown(LogTail::maintenance(output).as_ref()), expected);
 }
 
 #[rstest]
 #[case::a_sessions_log_stays_one(Logged::Session, "token [redacted]", Some((Logged::Session, "token [redacted]")))]
-#[case::a_setup_commands_output_stays_one(Logged::Setup, "token [redacted]", Some((Logged::Setup, "token [redacted]")))]
+#[case::a_maintenance_commands_output_stays_one(Logged::Maintenance, "token [redacted]", Some((Logged::Maintenance, "token [redacted]")))]
 #[case::its_new_text_is_trimmed(Logged::Session, "\n token [redacted]\n", Some((Logged::Session, "token [redacted]")))]
 #[case::a_log_rewritten_to_nothing_gives_none(Logged::Session, " \n", None)]
 fn a_rewritten_log(
@@ -552,14 +552,14 @@ fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
         Some(log(Logged::Session, "Still reading the spec.")),
     )
 )]
-#[case::the_pipelines_setting_in_setup(
+#[case::the_pipelines_setting_in_maintenance(
     TimeoutSetting::Pipeline,
-    Some(log(Logged::Setup, "npm install")),
+    Some(log(Logged::Maintenance, "npm install")),
     hand_back_of(
         HandBackKind::Stall,
         "The session ended unexpectedly: it timed out. The work may need cutting smaller, or \
          `session-timeout` may need to be longer.",
-        Some(log(Logged::Setup, "npm install")),
+        Some(log(Logged::Maintenance, "npm install")),
     )
 )]
 #[case::an_automations_setting_with_no_log(
@@ -613,12 +613,12 @@ fn a_session_that_ended_unexpectedly_stalls(#[case] session_log: &str, #[case] e
 )]
 #[case::with_a_note_and_a_log(
     "\n\nThe work so far is on the branch `7-gadgets`.",
-    Some(log(Logged::Setup, "npm ERR!")),
+    Some(log(Logged::Maintenance, "npm ERR!")),
     hand_back_of(
         HandBackKind::Stall,
         "The run failed twice on its infrastructure: cloning: connection reset\n\n\
          The work so far is on the branch `7-gadgets`.",
-        Some(log(Logged::Setup, "npm ERR!")),
+        Some(log(Logged::Maintenance, "npm ERR!")),
     )
 )]
 fn a_run_that_failed_twice_on_its_infrastructure_stalls(

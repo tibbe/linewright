@@ -1,6 +1,6 @@
 use super::*;
 
-use linewright::transcript::{SetupStatus, setup_ended, setup_started};
+use linewright::transcript::{MaintenanceStatus, maintenance_ended, maintenance_started};
 use serde_json::json;
 
 /// Where #1's implementing session keeps its record.
@@ -8,7 +8,8 @@ const SESSION: &str = "sessions/issue-1/20261013T100908Z-implement";
 
 /// How a session that ran with the harness's model and effort, and the
 /// operator's implementing prompt, is kept in its run's record, its own
-/// record in `dir`.
+/// record in `dir`: a record kept before `maintenance` was named, which
+/// names it `setup`.
 fn ran(dir: &str) -> serde_json::Value {
     json!({
         "dir": dir,
@@ -31,16 +32,16 @@ fn ran(dir: &str) -> serde_json::Value {
     })
 }
 
-/// The output of a session whose setup command `command` started at
+/// The output of a session whose maintenance command `command` started at
 /// `start` and ended `seconds` later as `status`.
-fn setting_up(start: &str, command: &str, status: SetupStatus, seconds: f64) -> String {
+fn setting_up(start: &str, command: &str, status: MaintenanceStatus, seconds: f64) -> String {
     let start = at(start);
     let end =
         start + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
     format!(
         "{}\n{}\n",
-        setup_started(start, command),
-        setup_ended(end, status, seconds)
+        maintenance_started(start, command),
+        maintenance_ended(end, status, seconds)
     )
 }
 
@@ -51,9 +52,9 @@ pub(super) async fn implemented_as_recorded() -> Pages {
     implemented_after("", None).await
 }
 
-/// [`implemented_as_recorded`]'s, its session's output after `setup`, and
-/// its setup command's output `setup_log`.
-async fn implemented_after(setup: &str, setup_log: Option<&str>) -> Pages {
+/// [`implemented_as_recorded`]'s, its session's output after `maintenance`, and
+/// its maintenance command's output `maintenance_log`.
+async fn implemented_after(maintenance: &str, maintenance_log: Option<&str>) -> Pages {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let record = json!({
         "item": 1,
@@ -64,7 +65,7 @@ async fn implemented_after(setup: &str, setup_log: Option<&str>) -> Pages {
         "sessions": [ran(SESSION)],
     });
     let output = [
-        setup,
+        maintenance,
         include_str!("../fixtures/transcript/turn-1.jsonl"),
         include_str!("../fixtures/transcript/turn-2.jsonl"),
     ]
@@ -82,7 +83,7 @@ async fn implemented_after(setup: &str, setup_log: Option<&str>) -> Pages {
                 .to_string(),
         ),
     ];
-    if let Some(log) = setup_log {
+    if let Some(log) = maintenance_log {
         files.push((format!("{SESSION}/setup.log"), log.to_string()));
     }
     let files: Vec<(&str, &str)> = files
@@ -149,9 +150,9 @@ async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_se
             "model: the harness's",
             "effort: the harness's",
             "session-timeout: the operator's",
-            "setup: Linewright's own",
             "session-env: Linewright's own",
             "session-pass-env: Linewright's own",
+            "maintenance: Linewright's own",
         ]
     );
     assert_eq!(
@@ -753,18 +754,18 @@ async fn the_run_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_un
     assert_passes_through_a_proxy(response.headers());
 }
 
-/// Each session's setup command, as its line, the output it opens to, and
+/// Each session's maintenance command, as its line, the output it opens to, and
 /// whether it starts open.
-fn setups_shown(html: &Html) -> Vec<(String, String, bool)> {
-    select(html, ".entry.setup")
+fn maintenances_shown(html: &Html) -> Vec<(String, String, bool)> {
+    select(html, ".entry.maintenance")
         .into_iter()
-        .map(|setup| {
-            let line = text(select_in(setup, ".line")[0]);
-            let output = select_in(setup, ".output")
+        .map(|maintenance| {
+            let line = text(select_in(maintenance, ".line")[0]);
+            let output = select_in(maintenance, ".output")
                 .into_iter()
                 .map(text)
                 .collect::<String>();
-            let open = select_in(setup, "details")
+            let open = select_in(maintenance, "details")
                 .first()
                 .is_some_and(|details| details.attr("open").is_some());
             (line, output, open)
@@ -772,15 +773,15 @@ fn setups_shown(html: &Html) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Times and Setup; The run
+/// `docs/specs/design_system.md`, Transcripts, Times and Maintenance; The run
 /// page, Folding and Verbose.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_to_its_line() {
+async fn the_run_page_shows_a_maintenance_command_as_its_sessions_first_entry_folded_to_its_line() {
     let pages = implemented_after(
         &setting_up(
             "2026-10-13T10:09:08Z",
             "echo 'added 3 packages'",
-            SetupStatus::Exited(0),
+            MaintenanceStatus::Exited(0),
             0.2,
         ),
         Some("added 3 packages\n"),
@@ -790,22 +791,27 @@ async fn the_run_page_shows_a_setup_command_as_its_sessions_first_entry_folded_t
     let html = pages.page("/runs/1/implement-1").await;
     let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
-    let line = "0:00 setup: echo 'added 3 packages' → exit 0, 0s".to_string();
+    let line = "0:00 maintenance: echo 'added 3 packages' → exit 0, 0s".to_string();
     assert_eq!(
-        setups_shown(&html),
+        maintenances_shown(&html),
         [(line.clone(), "added 3 packages".to_string(), false)]
     );
     assert_eq!(
-        setups_shown(&verbose),
+        maintenances_shown(&verbose),
         [(line, "added 3 packages".to_string(), true)]
     );
     let entries = select(&html, "#s1-entries > .entry");
     assert_eq!(entries[0].attr("id"), Some("s1-e1"));
-    assert!(entries[0].value().classes().any(|class| class == "setup"));
+    assert!(
+        entries[0]
+            .value()
+            .classes()
+            .any(|class| class == "maintenance")
+    );
 }
 
 #[test_log::test(tokio::test)]
-async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_session() {
+async fn the_page_of_a_run_whose_maintenance_command_failed_shows_it_open_under_each_session() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let sessions = [
         (
@@ -821,7 +827,7 @@ async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_s
         let output = setting_up(
             start,
             "echo 'npm ERR! missing lockfile'; exit 3",
-            SetupStatus::Exited(3),
+            MaintenanceStatus::Exited(3),
             0.1,
         );
         pages.write(&[
@@ -849,24 +855,24 @@ async fn the_page_of_a_run_whose_setup_command_failed_shows_it_open_under_each_s
         ]
     );
     let failed = (
-        "0:00 setup: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s".to_string(),
+        "0:00 maintenance: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s".to_string(),
         "npm ERR! missing lockfile".to_string(),
         true,
     );
-    assert_eq!(setups_shown(&html), [failed.clone(), failed]);
+    assert_eq!(maintenances_shown(&html), [failed.clone(), failed]);
     assert_no_status_by_colour_alone(&html);
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running; The run page,
 /// Following.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it_ends() {
+async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_once_it_ends() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let dir = "sessions/issue-1/20261014T120000Z-triage";
     let start = at("2026-10-14T12:00:00Z");
     pages.write(&[(
         &format!("{dir}/output.jsonl"),
-        &format!("{}\n", setup_started(start, "npm ci")),
+        &format!("{}\n", maintenance_started(start, "npm ci")),
     )]);
     pages.record(&json!({
         "item": 1,
@@ -882,9 +888,9 @@ async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it
     let events_path = events_path(&read).unwrap().to_string();
     let mut events = stream_with_ids(&pages, &events_path, None).await;
     pages.write(&[(&format!("{dir}/setup.log"), "installing\n")]);
-    let line = setup_ended(
+    let line = maintenance_ended(
         start + chrono::TimeDelta::seconds(12),
-        SetupStatus::Exited(0),
+        MaintenanceStatus::Exited(0),
         12.4,
     );
     pages.append(&format!("{dir}/output.jsonl"), &format!("{line}\n"));
@@ -894,9 +900,9 @@ async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it
     .await;
 
     assert_eq!(
-        setups_shown(&read),
+        maintenances_shown(&read),
         [(
-            "0:00 setup: npm ci → running".to_string(),
+            "0:00 maintenance: npm ci → running".to_string(),
             String::new(),
             false
         )]
@@ -906,9 +912,9 @@ async fn the_run_page_shows_a_setup_command_running_and_patches_its_line_once_it
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
     assert_eq!(
-        setups_shown(html),
+        maintenances_shown(html),
         [(
-            "0:00 setup: npm ci → exit 0, 12s".to_string(),
+            "0:00 maintenance: npm ci → exit 0, 12s".to_string(),
             "installing".to_string(),
             false
         )]

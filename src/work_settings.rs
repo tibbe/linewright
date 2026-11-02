@@ -74,30 +74,36 @@ impl fmt::Display for Effort {
 /// The settings a stage can set: the keys of its table
 /// (`docs/specs/operation.md`, Stage settings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Setting {
+pub enum StageSetting {
     Repository(RepositorySetting),
     SessionEnv,
     SessionPassEnv,
 }
 
-/// The settings of the repository's file, at its top level and in its
-/// stages' tables (`docs/specs/operation.md`, The repository's file), and
-/// of an automation's front matter (`docs/specs/automations.md`, Session
-/// settings).
+/// The settings a run's sessions run with: those a stage can set, and
+/// `maintenance`, which only the whole pipeline sets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Setting {
+    Stage(StageSetting),
+    Maintenance,
+}
+
+/// The session settings of the repository's file, at its top level and in
+/// its stages' tables (`docs/specs/operation.md`, The repository's file),
+/// and of an automation's front matter (`docs/specs/automations.md`,
+/// Session settings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RepositorySetting {
     Model,
     Effort,
     SessionTimeout,
-    Setup,
 }
 
 impl RepositorySetting {
-    pub const ALL: [RepositorySetting; 4] = [
+    pub const ALL: [RepositorySetting; 3] = [
         RepositorySetting::Model,
         RepositorySetting::Effort,
         RepositorySetting::SessionTimeout,
-        RepositorySetting::Setup,
     ];
 
     /// Its key in a config file and in front matter.
@@ -106,7 +112,6 @@ impl RepositorySetting {
             RepositorySetting::Model => "model",
             RepositorySetting::Effort => "effort",
             RepositorySetting::SessionTimeout => "session-timeout",
-            RepositorySetting::Setup => "setup",
         }
     }
 
@@ -128,39 +133,67 @@ impl RepositorySetting {
     }
 }
 
-impl Setting {
-    pub const MODEL: Setting = Setting::Repository(RepositorySetting::Model);
-    pub const EFFORT: Setting = Setting::Repository(RepositorySetting::Effort);
-    pub const SESSION_TIMEOUT: Setting = Setting::Repository(RepositorySetting::SessionTimeout);
-    pub const SETUP: Setting = Setting::Repository(RepositorySetting::Setup);
-
-    pub const ALL: [Setting; 6] = [
-        Setting::MODEL,
-        Setting::EFFORT,
-        Setting::SESSION_TIMEOUT,
-        Setting::SETUP,
-        Setting::SessionEnv,
-        Setting::SessionPassEnv,
+impl StageSetting {
+    pub const ALL: [StageSetting; 5] = [
+        StageSetting::Repository(RepositorySetting::Model),
+        StageSetting::Repository(RepositorySetting::Effort),
+        StageSetting::Repository(RepositorySetting::SessionTimeout),
+        StageSetting::SessionEnv,
+        StageSetting::SessionPassEnv,
     ];
 
     /// Its key in a config file.
     pub const fn name(self) -> &'static str {
         match self {
-            Setting::Repository(setting) => setting.name(),
-            Setting::SessionEnv => "session-env",
-            Setting::SessionPassEnv => "session-pass-env",
+            StageSetting::Repository(setting) => setting.name(),
+            StageSetting::SessionEnv => "session-env",
+            StageSetting::SessionPassEnv => "session-pass-env",
+        }
+    }
+
+    /// The setting whose key is `key`, if it is one of these.
+    pub fn named(key: &str) -> Option<StageSetting> {
+        StageSetting::ALL
+            .into_iter()
+            .find(|setting| setting.name() == key)
+    }
+}
+
+impl Setting {
+    pub const MODEL: Setting = Setting::Stage(StageSetting::Repository(RepositorySetting::Model));
+    pub const EFFORT: Setting = Setting::Stage(StageSetting::Repository(RepositorySetting::Effort));
+    pub const SESSION_TIMEOUT: Setting =
+        Setting::Stage(StageSetting::Repository(RepositorySetting::SessionTimeout));
+    pub const SESSION_ENV: Setting = Setting::Stage(StageSetting::SessionEnv);
+    pub const SESSION_PASS_ENV: Setting = Setting::Stage(StageSetting::SessionPassEnv);
+
+    /// Its key in a config file.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Setting::Stage(setting) => setting.name(),
+            Setting::Maintenance => MAINTENANCE,
         }
     }
 }
 
+/// The key of the `maintenance` setting.
+pub const MAINTENANCE: &str = "maintenance";
+
+/// `maintenance`'s other name: a run's record may name it so, and a
+/// config file may not.
+pub const SETUP: &str = "setup";
+
+/// A run's record may name `maintenance` as [`SETUP`].
 impl std::str::FromStr for Setting {
     type Err = String;
 
     fn from_str(name: &str) -> Result<Setting, String> {
-        Setting::ALL
-            .into_iter()
-            .find(|setting| setting.name() == name)
-            .ok_or_else(|| format!("{name:?} is not a stage's setting"))
+        match name {
+            MAINTENANCE | SETUP => Ok(Setting::Maintenance),
+            name => StageSetting::named(name)
+                .map(Setting::Stage)
+                .ok_or_else(|| format!("{name:?} is not a session's setting")),
+        }
     }
 }
 
@@ -178,43 +211,50 @@ impl<'de> Deserialize<'de> for Setting {
     }
 }
 
-/// The `setup` setting: the setup command each session's clone is prepared
-/// with (`docs/specs/runs.md`, Setup).
+/// The `maintenance` setting: the maintenance command each session's clone
+/// is made ready with (`docs/specs/runs.md`, Maintenance).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Setup {
+pub enum Maintenance {
     /// Runs nothing. Set in a layer, it wins over a command set below it.
     Empty,
-    Command(SetupCommand),
+    Command(MaintenanceCommand),
 }
 
-/// A setup command, never empty.
+/// A maintenance command, never empty.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SetupCommand(String);
+pub struct MaintenanceCommand(String);
 
-impl SetupCommand {
+impl MaintenanceCommand {
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// An empty string is [`Setup::Empty`].
-impl From<String> for Setup {
-    fn from(text: String) -> Setup {
+/// An empty string is [`Maintenance::Empty`].
+impl From<String> for Maintenance {
+    fn from(text: String) -> Maintenance {
         if text.is_empty() {
-            Setup::Empty
+            Maintenance::Empty
         } else {
-            Setup::Command(SetupCommand(text))
+            Maintenance::Command(MaintenanceCommand(text))
         }
     }
 }
 
-/// The settings one layer sets, `None` where it sets none.
+/// The session settings one layer sets, `None` where it sets none: those a
+/// stage's table and an automation's front matter can set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Partial {
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub session_timeout: Option<Duration>,
-    pub setup: Option<Setup>,
+}
+
+/// The whole-pipeline settings one layer sets, `None` where it sets none:
+/// those no stage's table or front matter can set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PipelineSettings {
+    pub maintenance: Option<Maintenance>,
 }
 
 /// A stage's table in the operator's file.
@@ -249,6 +289,11 @@ pub struct WorkSettings {
     /// The operator's config file, but for the settings `flags_and_env`
     /// sets.
     pub file: Partial,
+    /// The whole-pipeline settings the flags and environment variables set.
+    pub pipeline_flags_and_env: PipelineSettings,
+    /// The whole-pipeline settings the operator's config file sets, but for
+    /// those `pipeline_flags_and_env` sets.
+    pub pipeline_file: PipelineSettings,
     /// The operator's file's `[stage.NAME]` tables.
     pub stages: BTreeMap<WorkKind, StageTable>,
     /// The layers the whole pipeline's `session-env` and
@@ -290,12 +335,21 @@ impl EnvLayers {
 #[derive(Clone, Debug, Default)]
 pub struct RepoSettings {
     top: Partial,
+    pipeline: PipelineSettings,
     stages: BTreeMap<WorkKind, Partial>,
 }
 
 impl RepoSettings {
-    pub(crate) fn new(top: Partial, stages: BTreeMap<WorkKind, Partial>) -> RepoSettings {
-        RepoSettings { top, stages }
+    pub(crate) fn new(
+        top: Partial,
+        pipeline: PipelineSettings,
+        stages: BTreeMap<WorkKind, Partial>,
+    ) -> RepoSettings {
+        RepoSettings {
+            top,
+            pipeline,
+            stages,
+        }
     }
 }
 
@@ -373,9 +427,9 @@ pub struct SessionSettings {
     pub effort: Option<Sourced<Effort>>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
-    /// The setup command, which runs within its session's timeout,
+    /// The maintenance command, which runs within its session's timeout,
     /// `session_timeout`, having none of its own.
-    pub setup: Sourced<Setup>,
+    pub maintenance: Sourced<Maintenance>,
     pub environment: Arc<Given>,
     pub env_layers: EnvLayers,
 }
@@ -407,9 +461,12 @@ impl SessionSettings {
                 Setting::SESSION_TIMEOUT,
                 Source::Layer(self.session_timeout.layer),
             ),
-            (Setting::SETUP, Source::Layer(self.setup.layer)),
-            (Setting::SessionEnv, Source::Layer(self.env_layers.set)),
-            (Setting::SessionPassEnv, Source::Layer(self.env_layers.pass)),
+            (Setting::Maintenance, Source::Layer(self.maintenance.layer)),
+            (Setting::SESSION_ENV, Source::Layer(self.env_layers.set)),
+            (
+                Setting::SESSION_PASS_ENV,
+                Source::Layer(self.env_layers.pass),
+            ),
         ])
     }
 }
@@ -444,10 +501,12 @@ fn first<'a, T>(
 }
 
 impl WorkSettings {
-    /// A setting takes the first value set among: the automation's front
-    /// matter, the repository's stage table, the operator's stage table,
-    /// the flags and environment, the repository's file, the operator's
-    /// file, and the default.
+    /// A session setting takes the first value set among: the automation's
+    /// front matter, the repository's stage table, the operator's stage
+    /// table, the flags and environment, the repository's file, the
+    /// operator's file, and the default. `maintenance` takes the first
+    /// among the flags and environment, the repository's file, the
+    /// operator's file, and the default.
     pub fn for_run(
         &self,
         of: RunKind,
@@ -495,17 +554,21 @@ impl WorkSettings {
                     TimeoutSetting::Pipeline,
                 ),
             };
-        let setup = first(&ladder, |partial| partial.setup.clone()).map_or(
-            Sourced::new(Setup::Empty, Layer::Linewright),
-            |(setup, rung)| Sourced::new(setup, rung.layer),
-        );
+        let maintenance = [
+            (&self.pipeline_flags_and_env, Layer::Operator),
+            (&repo.pipeline, Layer::Repository),
+            (&self.pipeline_file, Layer::Operator),
+        ]
+        .into_iter()
+        .find_map(|(pipeline, layer)| Some(Sourced::new(pipeline.maintenance.clone()?, layer)))
+        .unwrap_or(Sourced::new(Maintenance::Empty, Layer::Linewright));
         let staged_environment = stage.and_then(|stage| environments.stages.get(&stage));
         SessionSettings {
             model,
             effort,
             session_timeout,
             timeout_setting,
-            setup,
+            maintenance,
             environment: staged_environment.unwrap_or(&environments.pipeline).clone(),
             env_layers: self.env_layers.with(table),
         }

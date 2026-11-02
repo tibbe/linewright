@@ -20,7 +20,7 @@ use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Paused, Seed, Write};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
-use linewright::work_settings::{Environments, Partial, Setup, WorkSettings};
+use linewright::work_settings::{Environments, Maintenance, Partial, WorkSettings};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -470,9 +470,10 @@ pub fn gated(world: &World, kind: WorkKind) -> Gate {
     gate
 }
 
-/// Sets `setup` as the setup command of every stage.
-pub fn setting_up_with(config: &mut FactoryConfig, setup: &str) {
-    config.work.flags_and_env.setup = Some(Setup::from(setup.to_string()));
+/// Sets `maintenance` as the maintenance command of every session.
+pub fn maintaining_with(config: &mut FactoryConfig, maintenance: &str) {
+    config.work.pipeline_flags_and_env.maintenance =
+        Some(Maintenance::from(maintenance.to_string()));
 }
 
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,

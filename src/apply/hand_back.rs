@@ -35,7 +35,7 @@ pub struct LogTail {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Logged {
     Session,
-    Setup,
+    Maintenance,
 }
 
 impl LogTail {
@@ -44,10 +44,10 @@ impl LogTail {
         LogTail::new(Logged::Session, text)
     }
 
-    /// The last lines of the setup command's `output`, unless it holds
+    /// The last lines of the maintenance command's `output`, unless it holds
     /// nothing.
-    pub fn setup(output: &str) -> Option<LogTail> {
-        LogTail::new(Logged::Setup, &tail(output))
+    pub fn maintenance(output: &str) -> Option<LogTail> {
+        LogTail::new(Logged::Maintenance, &tail(output))
     }
 
     fn new(of: Logged, text: &str) -> Option<LogTail> {
@@ -77,7 +77,7 @@ impl LogTail {
     pub fn heading(&self) -> &'static str {
         match self.of {
             Logged::Session => "The end of the session's log",
-            Logged::Setup => "The end of the setup command's output",
+            Logged::Maintenance => "The end of the maintenance command's output",
         }
     }
 }

@@ -22,96 +22,99 @@ pub fn followup_file(n: usize) -> String {
     format!("followup-{n}.md")
 }
 
-/// The file in a session's record that holds its setup command's output,
+/// The file in a session's record that holds its maintenance command's output,
 /// redacted, as it ran.
-pub const SETUP_OUTPUT: &str = "setup.log";
+pub const MAINTENANCE_OUTPUT: &str = "setup.log";
 
-/// The file in a session's record that held [`SetupRecord`], written when
-/// the setup command ended, before its start and end were events in
+/// The file in a session's record that held [`MaintenanceRecord`], written when
+/// the maintenance command ended, before its start and end were events in
 /// [`OUTPUT`].
-const SETUP_RECORD: &str = "setup.json";
+const MAINTENANCE_RECORD: &str = "setup.json";
 
-/// How a session's setup command ran (`docs/specs/runs.md`, Setup), as a
+/// How a session's maintenance command ran (`docs/specs/runs.md`, Maintenance), as a
 /// session recorded before its start and end were events kept it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SetupRecord {
+pub struct MaintenanceRecord {
     pub command: String,
-    pub status: SetupStatus,
+    pub status: MaintenanceStatus,
     pub duration_seconds: f64,
 }
 
-/// How a setup command ended.
-pub use crate::bash_command::Status as SetupStatus;
+/// How a maintenance command ended.
+pub use crate::bash_command::Status as MaintenanceStatus;
 
-impl SetupStatus {
-    /// Whether the command failed (`docs/specs/runs.md`, Setup, Failing):
+impl MaintenanceStatus {
+    /// Whether the command failed (`docs/specs/runs.md`, Maintenance, Failing):
     /// a cancelled one did not.
     pub fn failed(self) -> bool {
-        !matches!(self, SetupStatus::Exited(0) | SetupStatus::Cancelled)
+        !matches!(
+            self,
+            MaintenanceStatus::Exited(0) | MaintenanceStatus::Cancelled
+        )
     }
 
     fn account(self) -> String {
         match self {
-            SetupStatus::Exited(code) => format!("exit {code}"),
-            SetupStatus::Signalled(signal) => format!("signal {signal}"),
-            SetupStatus::TimedOut => "timed out".into(),
-            SetupStatus::Cancelled => "cancelled".into(),
+            MaintenanceStatus::Exited(code) => format!("exit {code}"),
+            MaintenanceStatus::Signalled(signal) => format!("signal {signal}"),
+            MaintenanceStatus::TimedOut => "timed out".into(),
+            MaintenanceStatus::Cancelled => "cancelled".into(),
         }
     }
 }
 
-/// A session's setup command, its first entry
-/// (`docs/specs/design_system.md`, Transcripts, Setup).
+/// A session's maintenance command, its first entry
+/// (`docs/specs/design_system.md`, Transcripts, Maintenance).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Setup {
+pub struct Maintenance {
     /// Redacted.
     pub command: String,
-    pub ran: SetupRan,
+    pub ran: MaintenanceRan,
 }
 
-/// How far a setup command has run, as its record says.
+/// How far a maintenance command has run, as its record says.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum SetupRan {
+pub enum MaintenanceRan {
     /// It started `at`, and has ended once `ended` is there.
     Started {
         at: Timestamp,
-        ended: Option<SetupEnded>,
+        ended: Option<MaintenanceEnded>,
     },
     /// It ended, recorded before its start was, so when is not known.
-    Recorded(SetupEnded),
+    Recorded(MaintenanceEnded),
 }
 
-impl Setup {
+impl Maintenance {
     /// When it started, if that is known.
     fn at(&self) -> Option<Timestamp> {
         match &self.ran {
-            SetupRan::Started { at, .. } => Some(*at),
-            SetupRan::Recorded(_) => None,
+            MaintenanceRan::Started { at, .. } => Some(*at),
+            MaintenanceRan::Recorded(_) => None,
         }
     }
 
     /// How it ended, once it has.
-    fn ended(&self) -> Option<&SetupEnded> {
+    fn ended(&self) -> Option<&MaintenanceEnded> {
         match &self.ran {
-            SetupRan::Started { ended, .. } => ended.as_ref(),
-            SetupRan::Recorded(ended) => Some(ended),
+            MaintenanceRan::Started { ended, .. } => ended.as_ref(),
+            MaintenanceRan::Recorded(ended) => Some(ended),
         }
     }
 }
 
-/// How a setup command ended, with its output.
+/// How a maintenance command ended, with its output.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SetupEnded {
-    pub status: SetupStatus,
+pub struct MaintenanceEnded {
+    pub status: MaintenanceStatus,
     pub duration_seconds: f64,
-    /// Redacted, as [`SETUP_OUTPUT`] holds it.
+    /// Redacted, as [`MAINTENANCE_OUTPUT`] holds it.
     pub output: String,
 }
 
-impl SetupEnded {
+impl MaintenanceEnded {
     /// Whether its output shows from the start: in `full`, or when it
-    /// failed (`docs/specs/design_system.md`, Transcripts, Setup).
+    /// failed (`docs/specs/design_system.md`, Transcripts, Maintenance).
     pub(crate) fn output_shown(&self, full: bool) -> bool {
         full || self.status.failed()
     }
@@ -126,45 +129,52 @@ impl SetupEnded {
     }
 }
 
-/// The lines Linewright writes to [`OUTPUT`] as a session's setup command
+/// The lines Linewright writes to [`OUTPUT`] as a session's maintenance command
 /// starts and ends, before the harness writes any.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
-enum SetupEvent {
+enum MaintenanceEvent {
     #[serde(rename = "linewright-setup")]
     Started { at: Timestamp, command: String },
     #[serde(rename = "linewright-setup-ended")]
     Ended {
         at: Timestamp,
-        status: SetupStatus,
+        status: MaintenanceStatus,
         duration_seconds: f64,
     },
 }
 
-/// The line that says the setup `command`, redacted, started `at`.
-pub fn setup_started(at: Timestamp, command: &str) -> String {
-    serde_json::to_string(&SetupEvent::Started {
+/// The line that says the maintenance `command`, redacted, started `at`.
+pub fn maintenance_started(at: Timestamp, command: &str) -> String {
+    serde_json::to_string(&MaintenanceEvent::Started {
         at,
         command: command.to_string(),
     })
-    .expect("a setup event serializes")
+    .expect("a maintenance event serializes")
 }
 
-/// The line that says the setup command ended `at`, as `status`, having run
-/// for `duration_seconds`: written once [`SETUP_OUTPUT`] holds all its
+/// The line that says the maintenance command ended `at`, as `status`, having run
+/// for `duration_seconds`: written once [`MAINTENANCE_OUTPUT`] holds all its
 /// output.
-pub fn setup_ended(at: Timestamp, status: SetupStatus, duration_seconds: f64) -> String {
-    serde_json::to_string(&SetupEvent::Ended {
+pub fn maintenance_ended(
+    at: Timestamp,
+    status: MaintenanceStatus,
+    duration_seconds: f64,
+) -> String {
+    serde_json::to_string(&MaintenanceEvent::Ended {
         at,
         status,
         duration_seconds,
     })
-    .expect("a setup event serializes")
+    .expect("a maintenance event serializes")
 }
 
-/// Whether `line` of [`OUTPUT`] says the setup command ended.
-fn says_setup_ended(line: &str) -> bool {
-    matches!(serde_json::from_str(line), Ok(SetupEvent::Ended { .. }))
+/// Whether `line` of [`OUTPUT`] says the maintenance command ended.
+fn says_maintenance_ended(line: &str) -> bool {
+    matches!(
+        serde_json::from_str(line),
+        Ok(MaintenanceEvent::Ended { .. })
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -207,11 +217,11 @@ pub struct SessionRecord {
     /// What the session ran with, from its run's record: `None` for a
     /// session recorded before Linewright kept it.
     pub ran: Option<Ran>,
-    /// Its setup command's output, once the command has ended.
-    pub setup_output: Option<String>,
-    /// Its setup command, of a session recorded before the command's start
+    /// Its maintenance command's output, once the command has ended.
+    pub maintenance_output: Option<String>,
+    /// Its maintenance command, of a session recorded before the command's start
     /// and end were events in [`OUTPUT`], which held it once it ended.
-    pub setup: Option<SetupRecord>,
+    pub maintenance: Option<MaintenanceRecord>,
 }
 
 impl SessionRecord {
@@ -233,13 +243,13 @@ impl SessionRecord {
         if self.brief.is_none() {
             self.brief = read(BRIEF)?;
         }
-        if self.setup.is_none()
-            && let Some(record) = read(SETUP_RECORD)?
+        if self.maintenance.is_none()
+            && let Some(record) = read(MAINTENANCE_RECORD)?
         {
-            self.setup = Some(
-                serde_json::from_str(&record)
-                    .with_context(|| format!("reading {}", dir.join(SETUP_RECORD).display()))?,
-            );
+            self.maintenance =
+                Some(serde_json::from_str(&record).with_context(|| {
+                    format!("reading {}", dir.join(MAINTENANCE_RECORD).display())
+                })?);
         }
         while let Some(followup) = read(&followup_file(self.followups.len() + 1))? {
             self.followups.push(followup);
@@ -258,12 +268,12 @@ impl SessionRecord {
         drop_character_being_written(&mut added);
         let partial_line_start = self.output.rfind('\n').map_or(0, |end| end + 1);
         self.output.push_str(&String::from_utf8_lossy(&added));
-        let setup_ended = self.setup.is_some()
+        let maintenance_ended = self.maintenance.is_some()
             || whole_lines(&self.output[partial_line_start..])
                 .lines()
-                .any(says_setup_ended);
-        if self.setup_output.is_none() && setup_ended {
-            self.setup_output = Some(read(SETUP_OUTPUT)?.unwrap_or_default());
+                .any(says_maintenance_ended);
+        if self.maintenance_output.is_none() && maintenance_ended {
+            self.maintenance_output = Some(read(MAINTENANCE_OUTPUT)?.unwrap_or_default());
         }
         Ok(())
     }
@@ -291,12 +301,12 @@ pub struct Transcript {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Session {
-    /// When its setup command started, if it ran one that says so, or else
+    /// When its maintenance command started, if it ran one that says so, or else
     /// when its first turn did.
     pub started_at: Option<Timestamp>,
     pub dir: Option<String>,
-    /// Its first entry, if it ran a setup command.
-    pub setup: Option<Setup>,
+    /// Its first entry, if it ran a maintenance command.
+    pub maintenance: Option<Maintenance>,
     pub turns: Vec<Turn>,
 }
 
@@ -444,7 +454,7 @@ pub struct CallResult {
 /// Lines that do not read as events, such as one being written, are skipped.
 pub fn parse(record: &SessionRecord) -> Session {
     let mut parser = Parser::default();
-    parser.recorded_setup(record);
+    parser.recorded_maintenance(record);
     for line in record.output.lines() {
         parser.line(line, record);
     }
@@ -484,7 +494,7 @@ enum Touch {
 
 /// An entry that a touch is of.
 enum Place {
-    Setup,
+    Maintenance,
     Turn(EntryAt),
 }
 
@@ -493,8 +503,8 @@ impl Parser {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             return;
         };
-        if let Ok(setup) = SetupEvent::deserialize(&event) {
-            self.setup(setup, record);
+        if let Ok(maintenance) = MaintenanceEvent::deserialize(&event) {
+            self.maintenance(maintenance, record);
             return;
         }
         if let Ok(marker) = serde_json::from_value::<TurnMarker>(event.clone()) {
@@ -515,55 +525,56 @@ impl Parser {
         self.event(event);
     }
 
-    /// Takes the setup command of a session recorded before its start and
+    /// Takes the maintenance command of a session recorded before its start and
     /// end were events, as having started with the session, unless it has
     /// been taken.
-    fn recorded_setup(&mut self, record: &SessionRecord) {
-        if self.session.setup.is_some() {
+    fn recorded_maintenance(&mut self, record: &SessionRecord) {
+        if self.session.maintenance.is_some() {
             return;
         }
-        let Some(ran) = &record.setup else {
+        let Some(ran) = &record.maintenance else {
             return;
         };
-        self.session.setup = Some(Setup {
+        self.session.maintenance = Some(Maintenance {
             command: ran.command.clone(),
-            ran: SetupRan::Recorded(SetupEnded {
+            ran: MaintenanceRan::Recorded(MaintenanceEnded {
                 status: ran.status,
                 duration_seconds: ran.duration_seconds,
-                output: record.setup_output.clone().unwrap_or_default(),
+                output: record.maintenance_output.clone().unwrap_or_default(),
             }),
         });
-        self.touched.push(Touch::Added(Place::Setup));
+        self.touched.push(Touch::Added(Place::Maintenance));
     }
 
-    fn setup(&mut self, event: SetupEvent, record: &SessionRecord) {
+    fn maintenance(&mut self, event: MaintenanceEvent, record: &SessionRecord) {
         match event {
-            SetupEvent::Started { at, command } => {
-                self.session.setup = Some(Setup {
+            MaintenanceEvent::Started { at, command } => {
+                self.session.maintenance = Some(Maintenance {
                     command,
-                    ran: SetupRan::Started { at, ended: None },
+                    ran: MaintenanceRan::Started { at, ended: None },
                 });
-                self.touched.push(Touch::Added(Place::Setup));
+                self.touched.push(Touch::Added(Place::Maintenance));
                 self.last_at = Some(at);
             }
-            SetupEvent::Ended {
+            MaintenanceEvent::Ended {
                 at,
                 status,
                 duration_seconds,
             } => {
-                let Some(Setup {
-                    ran: SetupRan::Started { ended, .. },
+                let Some(Maintenance {
+                    ran: MaintenanceRan::Started { ended, .. },
                     ..
-                }) = &mut self.session.setup
+                }) = &mut self.session.maintenance
                 else {
                     return;
                 };
-                *ended = Some(SetupEnded {
+                *ended = Some(MaintenanceEnded {
                     status,
                     duration_seconds,
-                    output: record.setup_output.clone().unwrap_or_default(),
+                    output: record.maintenance_output.clone().unwrap_or_default(),
                 });
-                self.touched.push(Touch::Ended(Place::Setup, Some(at)));
+                self.touched
+                    .push(Touch::Ended(Place::Maintenance, Some(at)));
                 self.last_at = Some(at);
             }
         }
@@ -888,32 +899,32 @@ pub(crate) enum EntryLine {
         other: Value,
     },
     Tool(ToolLine),
-    Setup(SetupLine),
+    Maintenance(MaintenanceLine),
 }
 
-/// A session's setup command's line: the command, and how it ended once it
+/// A session's maintenance command's line: the command, and how it ended once it
 /// has.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "SetupFields", into = "SetupFields")]
-pub(crate) struct SetupLine {
+#[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
+pub(crate) struct MaintenanceLine {
     pub(crate) command: String,
-    pub(crate) ended: Option<SetupEnded>,
+    pub(crate) ended: Option<MaintenanceEnded>,
 }
 
-/// A setup line as JSON: what it holds once the command has ended is null
+/// A maintenance line as JSON: what it holds once the command has ended is null
 /// until then (`docs/specs/monitoring.md`, logs, Running in JSON).
 #[derive(Serialize, Deserialize)]
-struct SetupFields {
+struct MaintenanceFields {
     command: String,
-    status: Option<SetupStatus>,
+    status: Option<MaintenanceStatus>,
     duration_seconds: Option<f64>,
     output: Option<String>,
 }
 
-impl From<SetupLine> for SetupFields {
-    fn from(line: SetupLine) -> SetupFields {
+impl From<MaintenanceLine> for MaintenanceFields {
+    fn from(line: MaintenanceLine) -> MaintenanceFields {
         let ended = line.ended;
-        SetupFields {
+        MaintenanceFields {
             command: line.command,
             status: ended.as_ref().map(|ended| ended.status),
             duration_seconds: ended.as_ref().map(|ended| ended.duration_seconds),
@@ -922,24 +933,24 @@ impl From<SetupLine> for SetupFields {
     }
 }
 
-impl TryFrom<SetupFields> for SetupLine {
+impl TryFrom<MaintenanceFields> for MaintenanceLine {
     type Error = &'static str;
 
-    fn try_from(fields: SetupFields) -> Result<SetupLine, &'static str> {
+    fn try_from(fields: MaintenanceFields) -> Result<MaintenanceLine, &'static str> {
         let ended = match (fields.status, fields.duration_seconds, fields.output) {
             (None, None, None) => None,
-            (Some(status), Some(duration_seconds), Some(output)) => Some(SetupEnded {
+            (Some(status), Some(duration_seconds), Some(output)) => Some(MaintenanceEnded {
                 status,
                 duration_seconds,
                 output,
             }),
             _ => {
                 return Err(
-                    "a setup line must have a status, a duration and an output, or none of them",
+                    "a maintenance line must have a status, a duration and an output, or none of them",
                 );
             }
         };
-        Ok(SetupLine {
+        Ok(MaintenanceLine {
             command: fields.command,
             ended,
         })
@@ -1201,14 +1212,14 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
     })];
     for (i, session) in transcript.sessions.iter().enumerate() {
         let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        let nothing_read = session.setup.is_none() && session.turns.is_empty();
+        let nothing_read = session.maintenance.is_none() && session.turns.is_empty();
         if current && nothing_read {
             continue;
         }
         let mut stamper = Stamper::new(i + 1, session.started_at);
         lines.push(stamper.header());
-        if let Some(setup) = &session.setup {
-            lines.push(stamper.setup(setup, setup.at()));
+        if let Some(maintenance) = &session.maintenance {
+            lines.push(stamper.maintenance(maintenance, maintenance.at()));
         }
         for turn in &session.turns {
             if let Some(what) = prompt_line(turn, verbosity) {
@@ -1301,16 +1312,16 @@ impl Stamper {
         Line::Entry(Box::new(Stamped { stamp, what }))
     }
 
-    /// The line of `setup` at `at`, or with no time for one recorded
+    /// The line of `maintenance` at `at`, or with no time for one recorded
     /// before its start was.
-    fn setup(&mut self, setup: &Setup, at: Option<Timestamp>) -> Line {
-        let what = EntryLine::Setup(SetupLine {
-            command: setup.command.clone(),
-            ended: setup.ended().cloned(),
+    fn maintenance(&mut self, maintenance: &Maintenance, at: Option<Timestamp>) -> Line {
+        let what = EntryLine::Maintenance(MaintenanceLine {
+            command: maintenance.command.clone(),
+            ended: maintenance.ended().cloned(),
         });
-        match setup.ran {
-            SetupRan::Started { .. } => self.line(at, Under::Session, what),
-            SetupRan::Recorded(_) => self.stamped(None, Under::Session, what),
+        match maintenance.ran {
+            MaintenanceRan::Started { .. } => self.line(at, Under::Session, what),
+            MaintenanceRan::Recorded(_) => self.stamped(None, Under::Session, what),
         }
     }
 }
@@ -1488,7 +1499,7 @@ impl Follower {
             let whole = ended || i + 1 < sessions.len();
             let unread = &record.output[followed.bytes_read.min(record.output.len())..];
             let complete = if whole { unread } else { whole_lines(unread) };
-            followed.parser.recorded_setup(record);
+            followed.parser.recorded_maintenance(record);
             for line in complete.lines() {
                 followed.parser.line(line, record);
                 followed.open(&mut shown);
@@ -1575,9 +1586,14 @@ impl Followed {
                 Touch::Ended(place, ended_at) => (place, Some(ended_at)),
             };
             let at = match place {
-                Place::Setup => {
-                    let setup = session.setup.as_ref().expect("a touched setup is there");
-                    lines.push(stamper.setup(setup, ended_at.unwrap_or(setup.at())));
+                Place::Maintenance => {
+                    let maintenance = session
+                        .maintenance
+                        .as_ref()
+                        .expect("a touched maintenance command is there");
+                    lines.push(
+                        stamper.maintenance(maintenance, ended_at.unwrap_or(maintenance.at())),
+                    );
                     continue;
                 }
                 Place::Turn(at) => at,
@@ -1605,12 +1621,16 @@ fn open<'a>(
 }
 
 fn started_at(session: &Session) -> Option<Timestamp> {
-    session.setup.as_ref().and_then(Setup::at).or_else(|| {
-        session.turns.first().and_then(|turn| {
-            turn.started_at
-                .or_else(|| turn.entries.iter().find_map(|entry| entry.at))
+    session
+        .maintenance
+        .as_ref()
+        .and_then(Maintenance::at)
+        .or_else(|| {
+            session.turns.first().and_then(|turn| {
+                turn.started_at
+                    .or_else(|| turn.entries.iter().find_map(|entry| entry.at))
+            })
         })
-    })
 }
 
 fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> (&'a Entry, Under) {
@@ -1816,7 +1836,7 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
                     .collect(),
             )
         }
-        EntryLine::Setup(SetupLine { command, ended }) => {
+        EntryLine::Maintenance(MaintenanceLine { command, ended }) => {
             let command = shown_command(command);
             let (account, output) = match ended {
                 None => ("running".to_string(), vec![]),
@@ -1835,7 +1855,7 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
                     },
                 ),
             };
-            (format!("setup: {command} → {account}"), output)
+            (format!("maintenance: {command} → {account}"), output)
         }
     };
     let _ = writeln!(shown, "{time:>5}  {indent}{first}");
@@ -1849,7 +1869,7 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
     shown
 }
 
-/// A setup command, as its line shows it.
+/// A maintenance command, as its line shows it.
 pub(crate) fn shown_command(command: &str) -> String {
     one_line(command, ARGUMENT_CHARS)
 }
