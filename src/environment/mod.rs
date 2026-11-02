@@ -638,15 +638,50 @@ impl Lease {
 
 /// Copies `from` to `to`, merging into a directory `to` already is and
 /// leaving each file already there as it is.
-async fn copy(from: &Path, to: &Path) -> Result<()> {
+fn copy<'a>(
+    from: &'a Path,
+    to: &'a Path,
+) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        let Some(there) = metadata_if_any(to).await? else {
+            return copy_absent(from, to).await;
+        };
+        if !there.is_dir() || !tokio::fs::symlink_metadata(from).await?.is_dir() {
+            return Ok(());
+        }
+        let mut entries = tokio::fs::read_dir(from).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            copy(&entry.path(), &to.join(entry.file_name())).await?;
+        }
+        Ok(())
+    })
+}
+
+async fn metadata_if_any(path: &Path) -> Result<Option<std::fs::Metadata>> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Copies `from` to `to`, which does not exist, as a copy-on-write copy
+/// where the filesystem allows one.
+async fn copy_absent(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    // `--update=none` skips every file that exists, and `-T` copies a
-    // directory's contents into one that exists:
-    // https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html
+    // GNU cp clones with `--reflink=auto`
+    // (https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html),
+    // and macOS's with `-c`, falling back to a plain copy where cloning is
+    // not supported (https://keith.github.io/xcode-man-pages/cp.1.html).
+    let clone = if cfg!(target_os = "macos") {
+        "-c"
+    } else {
+        "--reflink=auto"
+    };
     let output = child::command("cp")
-        .args(["-a", "--reflink=auto", "--update=none", "-T"])
+        .args(["-a", clone])
         .arg(from)
         .arg(to)
         .output()
