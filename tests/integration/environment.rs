@@ -35,13 +35,13 @@ fn commit<'a>(world: &'a World, files: &'a [(&str, &str)]) -> impl Future<Output
 }
 
 /// The repository's file with `command` as its setup command.
-fn setup_config(command: &str) -> String {
+pub(crate) fn setup_config(command: &str) -> String {
     format!("[setup]\ncommand = '''{command}'''\n")
 }
 
 /// Ignores `node_modules` and sets `command` as the setup command.
 #[track_caller]
-fn set_up_with<'a>(world: &'a World, command: &str) -> impl Future<Output = ()> + 'a {
+pub(crate) fn set_up_with<'a>(world: &'a World, command: &str) -> impl Future<Output = ()> + 'a {
     let config = setup_config(command);
     let caller = Location::caller();
     async move {
@@ -57,15 +57,15 @@ fn set_up_with<'a>(world: &'a World, command: &str) -> impl Future<Output = ()> 
 }
 
 /// A directory outside every clone, where setup commands leave marks.
-struct Marks(tempfile::TempDir);
+pub(crate) struct Marks(tempfile::TempDir);
 
 impl Marks {
     #[track_caller]
-    fn new() -> Marks {
+    pub(crate) fn new() -> Marks {
         Marks(tempfile::tempdir().unwrap())
     }
 
-    fn path(&self, name: &str) -> PathBuf {
+    pub(crate) fn path(&self, name: &str) -> PathBuf {
         self.0.path().join(name)
     }
 

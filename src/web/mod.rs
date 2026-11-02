@@ -40,6 +40,7 @@ use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Snapshot, Timestamp};
+use crate::environment::shown::{Attention, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
@@ -293,6 +294,9 @@ enum Hold {
     UnparsedAutomation(UnparsedAutomation),
     /// A file of the repository's Linewright cannot use.
     UnusableFile(FileError),
+    /// With a setup command, no environment yet, or a latest build that
+    /// failed.
+    Environment(Attention),
     /// An automation whose last run failed.
     AutomationFailed {
         name: String,
@@ -320,6 +324,11 @@ impl Hold {
             .unusable_files
             .iter()
             .map(|file| Hold::UnusableFile(file.clone()));
+        let environment = linewright
+            .environment
+            .as_ref()
+            .and_then(EnvironmentShown::attention)
+            .map(Hold::Environment);
         let failed = automations
             .into_iter()
             .flat_map(|automations| &automations.rows)
@@ -336,6 +345,7 @@ impl Hold {
             .flatten()
             .chain(unparsed)
             .chain(unusable)
+            .chain(environment)
             .chain(failed)
             .collect()
     }
@@ -350,6 +360,13 @@ impl Hold {
                 .text(", none accepted since"),
             Hold::UnparsedAutomation(file) => status::does_not_parse(file),
             Hold::UnusableFile(file) => status::unusable_file(file),
+            Hold::Environment(Attention::LatestFailed(at)) => {
+                Phrase::from("environment: the latest build failed ").time(*at)
+            }
+            Hold::Environment(Attention::FirstBuilding(since)) => {
+                Phrase::from("environment: none yet, building since ").time(*since)
+            }
+            Hold::Environment(Attention::NoneYet) => "environment: none yet".into(),
             Hold::AutomationFailed { name, run, outcome } => {
                 format!("automation {name}: last run {run} {}", outcome.word()).into()
             }
@@ -363,6 +380,9 @@ impl Hold {
             Hold::UsageLimit { .. } => Tone::Cancelled,
             Hold::Drain(_) => Tone::InProgress,
             Hold::WebhooksRefused { .. } => Tone::Pending,
+            Hold::Environment(Attention::FirstBuilding(_)) => Tone::InProgress,
+            Hold::Environment(Attention::NoneYet) => Tone::Pending,
+            Hold::Environment(Attention::LatestFailed(_)) => Tone::Failure,
             Hold::PollsFailed(_)
             | Hold::UnparsedAutomation(_)
             | Hold::UnusableFile(_)
@@ -377,7 +397,8 @@ impl Hold {
             | Hold::UsageLimit { .. }
             | Hold::Drain(_)
             | Hold::WebhooksRefused { .. }
-            | Hold::UnusableFile(_) => "/server".into(),
+            | Hold::UnusableFile(_)
+            | Hold::Environment(_) => "/server".into(),
             Hold::UnparsedAutomation(_) => "/automations".into(),
             Hold::AutomationFailed { run, .. } => run_path(run),
         }

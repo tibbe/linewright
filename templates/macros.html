@@ -29,6 +29,8 @@
 {% call status_text(tone, words) %}{% endcall %}
 {%- when crate::web::facts::Piece::Item { tone, pull_request, heading } -%}
 <span class="related-item{% if let Some(tone) = tone %} {{ tone.accent() }}{% endif %}">{% if let Some(tone) = tone %}{% call icon(tone) %}{% endcall %}{% endif %}{% if pull_request %}{% call pull_request_icon() %}{% endcall %}{% endif %}{{ heading|safe }}</span>
+{%- when crate::web::facts::Piece::Markup(markup) -%}
+{{ markup|safe }}
 {%- endmatch -%}
 {%- endfor -%}
 </div>

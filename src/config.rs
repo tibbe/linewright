@@ -132,6 +132,20 @@ pub enum Command {
         #[arg(long)]
         follow: bool,
     },
+    /// Show the environment and the output of its builds: the latest, and
+    /// the latest that failed when the latest succeeded. `environment
+    /// rebuild` builds it now.
+    #[command(args_conflicts_with_subcommands = true)]
+    Environment {
+        #[command(subcommand)]
+        command: Option<EnvironmentCommand>,
+        /// Show a build in progress so far, then follow it until it ends.
+        #[arg(long)]
+        follow: bool,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Automations: `automation run NAME` runs one now, then exits.
     Automation {
         #[command(subcommand)]
@@ -211,6 +225,21 @@ impl Args for Which {
     fn augment_args_for_update(command: clap::Command) -> clap::Command {
         WhichArgs::augment_args_for_update(command)
     }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EnvironmentCommand {
+    /// Ask the running `serve` to build the environment, and return once
+    /// the build ends, with a non-zero status when it fails. Without
+    /// `serve`, build it here.
+    Rebuild {
+        /// Return once `serve` has taken the request.
+        #[arg(long)]
+        no_wait: bool,
+        /// Print one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

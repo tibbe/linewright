@@ -14,7 +14,9 @@ use linewright::repo_files::{FileError, Unusable};
 use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
 use std::num::NonZeroU64;
 
-use linewright::status::{FailedPolls, Poll, Polling, Serving, Status, View, render, status};
+use linewright::status::{
+    FailedPolls, Poll, Polling, Serving, Status, StatusSources, View, render, status,
+};
 use linewright::webhook::Received;
 
 fn files(automations: &[(&str, &str)], unparsed: &[(&str, &str)]) -> AutomationFiles {
@@ -87,7 +89,16 @@ fn text_of(
     recorded: &[Recorded],
     now: &str,
 ) -> Vec<String> {
-    let answer = status(&serving(), webhooks, None, view, recorded, None, at(now));
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks,
+        polling: None,
+        view,
+        recorded,
+        environment: None,
+        drain_deadline: None,
+        now: at(now),
+    });
     render(&answer, false).lines().map(str::to_string).collect()
 }
 
@@ -238,15 +249,16 @@ fn a_repository_whose_files_linewright_can_use_shows_none() {
 #[test_log::test]
 fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_client_reads_an_answer_without_them()
  {
-    let answer = status(
-        &serving(),
-        None,
-        None,
-        Some(&with_unusable_files()),
-        &[],
-        None,
-        at("2026-10-01T12:00:30Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&with_unusable_files()),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:00:30Z"),
+    });
     let mut json = serde_json::to_value(&answer).unwrap();
 
     assert_eq!(
@@ -282,25 +294,27 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
     };
     let now = at("2026-10-01T12:00:30Z");
 
-    let shown = serde_json::to_value(status(
-        &serving(),
-        None,
-        None,
-        Some(&draining),
-        &[],
-        None,
+    let shown = serde_json::to_value(status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&draining),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
         now,
-    ))
+    }))
     .unwrap();
-    let none = serde_json::to_value(status(
-        &serving(),
-        None,
-        None,
-        Some(&view(vec![])),
-        &[],
-        None,
+    let none = serde_json::to_value(status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view(vec![])),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
         now,
-    ))
+    }))
     .unwrap();
 
     assert_eq!(
@@ -319,7 +333,16 @@ fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
     let now = at("2026-10-01T12:00:30Z");
     let deadline = Some(at("2026-10-01T14:00:20Z"));
 
-    let answer = status(&serving(), None, None, Some(&draining), &[], deadline, now);
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&draining),
+        recorded: &[],
+        environment: None,
+        drain_deadline: deadline,
+        now,
+    });
     let shown = serde_json::to_value(&answer).unwrap();
     let text = render(&answer, false);
 
@@ -356,15 +379,16 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
         ..view(vec![])
     };
 
-    let answer = status(
-        &serving(),
-        None,
-        None,
-        Some(&view),
-        &[],
-        None,
-        at("2026-10-01T12:00:30Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:00:30Z"),
+    });
 
     assert_eq!(answer.linewright.usage_limit_resets_at, None);
 }
@@ -851,15 +875,16 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
         ),
         ..view(vec![ready_issue()])
     };
-    let answer = status(
-        &serving(),
-        None,
-        None,
-        Some(&view),
-        &[],
-        None,
-        at("2026-10-01T12:10:00Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
 
     let coloured = render(&answer, true);
     let plain = render(&answer, false);
@@ -884,19 +909,20 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
         ],
         ..view(vec![ready_issue()])
     };
-    let answer = status(
-        &serving(),
-        Some(webhooks),
-        None,
-        Some(&view),
-        &[automation_run(
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: Some(webhooks),
+        polling: None,
+        view: Some(&view),
+        recorded: &[automation_run(
             "weekly/2",
             StartedBy::Schedule,
             "2026-09-28T06:00:00Z",
         )],
-        None,
-        at("2026-10-01T12:10:00Z"),
-    );
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
 
     let json = serde_json::to_string(&answer).unwrap();
 
@@ -922,15 +948,16 @@ fn the_json_names_each_fact() {
         automation_run("weekly/2", StartedBy::Schedule, "2026-09-28T06:00:00Z"),
         automation_run("weekly/3", StartedBy::Hand, "2026-09-30T09:15:00Z"),
     ];
-    let answer = status(
-        &serving(),
-        None,
-        None,
-        Some(&view),
-        &recorded,
-        None,
-        at("2026-10-01T12:10:00Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &recorded,
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
 
     assert_eq!(
         serde_json::to_value(&answer).unwrap(),
@@ -945,6 +972,7 @@ fn the_json_names_each_fact() {
                 "usage_limit_resets_at": null,
                 "unusable_files": [],
                 "drain": null,
+                "environment": null,
                 "runs_in_flight": 2,
                 "max_runs": 4,
                 "webhooks": null,
@@ -994,15 +1022,16 @@ fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it()
         refused: 1,
         last_refused: Some(at("2026-10-01T12:05:00Z")),
     };
-    let answer = status(
-        &serving(),
-        Some(webhooks),
-        None,
-        None,
-        &[],
-        None,
-        at("2026-10-01T12:10:00Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: Some(webhooks),
+        polling: None,
+        view: None,
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
 
     let mut json = serde_json::to_value(&answer).unwrap();
     assert_eq!(
@@ -1028,15 +1057,16 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
         last_scheduled_runs: last_scheduled_runs(&[("weekly", "2026-09-28T06:00:00Z")]),
         ..view(vec![])
     };
-    let answer = status(
-        &serving(),
-        None,
-        None,
-        Some(&view),
-        &[],
-        None,
-        at("2026-10-01T12:10:00Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
 
     assert_eq!(
         serde_json::to_value(&answer).unwrap()["automations"],
@@ -1114,15 +1144,16 @@ fn unmarked_view(issue: Issue) -> View {
 }
 
 fn managed_numbers(view: &View) -> Vec<Number> {
-    status(
-        &serving(),
-        None,
-        None,
-        Some(view),
-        &[],
-        None,
-        at("2026-10-01T12:00:30Z"),
-    )
+    status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(view),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:00:30Z"),
+    })
     .items
     .iter()
     .map(|item| item.number)
@@ -1215,15 +1246,16 @@ fn two_failed() -> Polling {
 
 #[test_log::test]
 fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
-    let answer = status(
-        &serving(),
-        None,
-        Some(&two_failed()),
-        Some(&view(vec![])),
-        &[],
-        None,
-        at("2026-10-01T12:01:30Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: Some(&two_failed()),
+        view: Some(&view(vec![])),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:01:30Z"),
+    });
 
     let text = render(&answer, false);
 
@@ -1244,15 +1276,16 @@ fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
         failed: failed(None, "2026-10-01T11:00:00Z", "bad credentials"),
     };
 
-    let answer = status(
-        &serving(),
-        None,
-        Some(&polling),
-        None,
-        &[],
-        None,
-        at("2026-10-01T11:00:05Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: Some(&polling),
+        view: None,
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T11:00:05Z"),
+    });
 
     assert_eq!(
         render(&answer, false).lines().collect::<Vec<_>>(),
@@ -1268,15 +1301,16 @@ fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
 
 #[test_log::test]
 fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
-    let answer = status(
-        &serving(),
-        None,
-        Some(&two_failed()),
-        Some(&view(vec![])),
-        &[],
-        None,
-        at("2026-10-01T12:01:30Z"),
-    );
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: Some(&two_failed()),
+        view: Some(&view(vec![])),
+        recorded: &[],
+        environment: None,
+        drain_deadline: None,
+        now: at("2026-10-01T12:01:30Z"),
+    });
     let mut json = serde_json::to_value(&answer).unwrap();
 
     assert_eq!(
@@ -1316,4 +1350,68 @@ fn the_open_managed_items_are_listed_but_those_in_done() {
     snapshot.merged = vec![common::merged_pull(30, "factory", &[1])];
 
     assert_eq!(managed_numbers(&view), [Number(2), Number(40)]);
+}
+
+#[test_log::test]
+fn with_a_setup_command_the_environment_shows_after_the_drain_in_text_and_json() {
+    use linewright::environment::shown::{BuiltShown, EnvironmentShown};
+    let shown_as = |built: bool, building: bool, failed: bool| EnvironmentShown {
+        built: built.then(|| BuiltShown {
+            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            at: at("2026-10-01T10:00:00Z"),
+        }),
+        building_since: building.then(|| at("2026-10-01T12:00:10Z")),
+        latest_failed: failed.then(|| at("2026-10-01T11:00:00Z")),
+    };
+    let now = at("2026-10-01T12:00:30Z");
+    let shown = |environment: Option<EnvironmentShown>| {
+        let draining = View {
+            memory: draining_since("2026-10-01T12:00:20Z"),
+            ..view(vec![])
+        };
+        status(StatusSources {
+            serving: &serving(),
+            webhooks: None,
+            polling: None,
+            view: Some(&draining),
+            recorded: &[],
+            environment,
+            drain_deadline: None,
+            now,
+        })
+    };
+    let lines = |environment| -> Vec<String> {
+        render(&shown(environment), false)
+            .lines()
+            .skip_while(|line| !line.starts_with("drain:"))
+            .skip(1)
+            .take_while(|line| !line.starts_with("runs in flight:"))
+            .map(str::to_string)
+            .collect()
+    };
+
+    assert_eq!(
+        lines(Some(shown_as(true, true, true))),
+        [
+            "environment: built from `0123456789ab` 2026-10-01 10:00:00 UTC",
+            "environment build: in progress since 2026-10-01 12:00:10 UTC",
+            "environment build: the latest failed 2026-10-01 11:00:00 UTC",
+        ]
+    );
+    assert_eq!(
+        lines(Some(shown_as(false, false, false))),
+        ["environment: none yet"]
+    );
+    assert_eq!(lines(None), Vec::<String>::new());
+    assert_eq!(
+        serde_json::to_value(shown(Some(shown_as(true, false, false)))).unwrap()["linewright"]["environment"],
+        serde_json::json!({
+            "built": {
+                "commit": "0123456789abcdef0123456789abcdef01234567",
+                "at": "2026-10-01T10:00:00Z",
+            },
+            "building_since": null,
+            "latest_failed": null,
+        })
+    );
 }

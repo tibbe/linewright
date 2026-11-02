@@ -12,21 +12,26 @@ use linewright::case;
 use linewright::child;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
-    AutomationCommand, Cli, Command, Config, Invocation, LogFormat, ResolveError, Settings, Since,
+    AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
+    ResolveError, Settings, Since,
 };
 use linewright::domain::Number;
 use linewright::drain::{self, Asked, Said, Stop, Taken, Timeout, Waiting, Was};
 use linewright::ending::{Ends, Event, Signal, Step, StopBy};
+use linewright::environment::shown::{self, Followed, FollowingBuild};
+use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
+use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir};
 use linewright::secrets::Secrets;
+use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
-use linewright::work_settings::Environments;
+use linewright::work_settings::{Environments, RepoSettings};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{contain, explain, status, web};
 use tokio::signal::unix::signal;
@@ -206,6 +211,261 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
                 return ExitCode::SUCCESS;
             }
         }
+    }
+}
+
+/// Shows the environment as `serve` answers, or else as it is kept, then
+/// with `follow` the build in progress, if any, until it ends.
+async fn show_environment(config: &Config, follow: bool, json: bool) -> ExitCode {
+    let work_dir = match config.repo_work_dir() {
+        Ok(work_dir) => work_dir,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let answer = match api::get_answer(&socket_dir(), &work_dir.repo, "/api/environment").await {
+        Ok(body) => read_as::<shown::EnvironmentAnswer>(&body, "an environment"),
+        Err(RequestError::NotServing { .. }) => kept_environment(config, &work_dir)
+            .await
+            .map_err(|e| failed(&e)),
+        Err(e) => Err(refused(&e)),
+    };
+    let answer = match answer {
+        Ok(answer) => answer,
+        Err(e) => return print_answer(Err(e)),
+    };
+    let answer = &answer;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(answer).expect("the answers serialize")
+        );
+    } else {
+        print!("{}", shown::render(answer, colour()));
+    }
+    let in_progress = answer
+        .environment
+        .iter()
+        .flat_map(|environment| &environment.builds)
+        .find(|build| build.in_progress());
+    match in_progress {
+        Some(build) if follow => {
+            let from = build.so_far.as_ref().map_or(0, |so_far| so_far.to);
+            follow_build(config, build.build, from, json).await
+        }
+        Some(_) | None => ExitCode::SUCCESS,
+    }
+}
+
+/// The environment as it is kept in `work_dir`.
+async fn kept_environment(
+    config: &Config,
+    work_dir: &RepoWorkDir,
+) -> Result<shown::EnvironmentAnswer> {
+    let dir = environment::dir(&work_dir.resolve());
+    let setup_command = match shown::setup_given(&dir) {
+        Some(_) => false,
+        None => setup_command_before_any_poll(config).await?,
+    };
+    shown::answer(&dir, setup_command)
+}
+
+/// Whether there is a setup command, as the operator's settings and the
+/// repository's file on its default branch now give it: before any poll has
+/// kept what it read.
+async fn setup_command_before_any_poll(config: &Config) -> Result<bool> {
+    if config.work.setup(&RepoSettings::default()).is_some() {
+        return Ok(true);
+    }
+    let github = connect(config, token()?).await?;
+    let branch = github
+        .settings()
+        .await
+        .context("reading the repository's settings")?
+        .default_branch;
+    let repo = RepoLayer::read(&github, &branch, &prompts(config)?)
+        .await
+        .context("reading Linewright's files in the repository")?;
+    Ok(config.work.setup(&repo.settings).is_some())
+}
+
+/// Prints build `build`'s output past the first `from` bytes as it comes,
+/// then its end: through `serve`, or else from what is kept.
+async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) -> ExitCode {
+    let work_dir = match config.repo_work_dir() {
+        Ok(work_dir) => work_dir,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let print = |followed: &Followed| {
+        match (followed, json) {
+            (Followed::Output { text, .. }, false) => print!("{}", shown::render_output(text)),
+            (Followed::Output { .. }, true) => {}
+            (Followed::Ended(ended), false) => {
+                print!("{}", shown::render_line(ended, "abandoned", colour()));
+            }
+            (Followed::Ended(ended), true) => println!(
+                "{}",
+                serde_json::to_string(ended).expect("the answers serialize")
+            ),
+        }
+        let _ = std::io::stdout().flush();
+    };
+    let resource = format!(
+        "/api/environment/follow?{}",
+        api::query_string(&api::BuildQuery { build })
+    );
+    let mut offset = from;
+    let mut hang_ups = api::HangUps::default();
+    loop {
+        let mut ended = false;
+        let mut unread = None;
+        let mut sent = false;
+        let last_id = (offset > 0).then(|| api::OutputAt { build, offset }.to_string());
+        let followed = api::get_events(
+            &socket_dir(),
+            &work_dir.repo,
+            &resource,
+            last_id.as_deref(),
+            |event| {
+                sent = true;
+                let read = match event.event.as_str() {
+                    api::OUTPUT_EVENT => {
+                        let at = event.id.as_deref().map(str::parse::<api::OutputAt>);
+                        match (serde_json::from_str::<String>(&event.data), at) {
+                            (Ok(text), Some(Ok(at))) => {
+                                offset = at.offset;
+                                Some(Followed::Output {
+                                    text,
+                                    to: at.offset,
+                                })
+                            }
+                            _ => None,
+                        }
+                    }
+                    api::END_EVENT => {
+                        ended = true;
+                        serde_json::from_str(&event.data).ok().map(Followed::Ended)
+                    }
+                    _ => return,
+                };
+                match read {
+                    Some(followed) => print(&followed),
+                    None => unread = Some(event),
+                }
+            },
+        )
+        .await;
+        if let Some(event) = unread {
+            let error = anyhow!("`serve`'s event does not read as a build's: {event:?}");
+            return print_answer(Err(failed(&error)));
+        }
+        if sent {
+            hang_ups.sent();
+        }
+        match followed {
+            Ok(()) if ended => return ExitCode::SUCCESS,
+            Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
+            Err(RequestError::HungUp(e)) => {
+                if !hang_ups.ask_again() {
+                    return print_answer(Err(failed(&e)));
+                }
+                tokio::time::sleep(api::ASK_AGAIN_AFTER).await;
+            }
+            Err(RequestError::NotServing { .. }) => {
+                let dir = environment::dir(&work_dir.resolve());
+                let mut following = FollowingBuild::start(&dir, build, offset);
+                loop {
+                    match following.next().await {
+                        Ok(Some(next)) => print(&next),
+                        Ok(None) => return ExitCode::SUCCESS,
+                        Err(e) => return print_answer(Err(failed(&e))),
+                    }
+                }
+            }
+            Err(e) => return print_answer(Err(refused(&e))),
+        }
+    }
+}
+
+/// Asks `serve` to build the environment and, unless `no_wait`, waits for
+/// the build to end; without `serve`, builds it here.
+async fn rebuild_environment(config: &Config, no_wait: bool, json: bool) -> ExitCode {
+    let say = |said: &RebuildSaid| {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(said).expect("the answers serialize")
+            );
+        } else {
+            print!("{}", said.render());
+        }
+        let _ = std::io::stdout().flush();
+    };
+    let repo = match config.required_repo() {
+        Ok(repo) => repo,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let dir = socket_dir();
+    let taken = match api::post_answer(&dir, &repo, "/api/environment/rebuild").await {
+        Ok(body) => match read_as::<RebuildTaken>(&body, "a rebuild taken") {
+            Ok(taken) => taken,
+            Err(e) => return print_answer(Err(e)),
+        },
+        Err(RequestError::NotServing { .. }) => return rebuild_here(config, say).await,
+        Err(e) => return print_answer(Err(refused(&e))),
+    };
+    let build = match &taken {
+        RebuildTaken::Started { build } | RebuildTaken::Queued { build } => *build,
+        RebuildTaken::NoSetupCommand => return no_setup_command(),
+        RebuildTaken::Refused { reason } => {
+            return print_answer(Err((1, format!("no build starts: {reason}"))));
+        }
+    };
+    say(&RebuildSaid::Taken(taken));
+    if no_wait {
+        return ExitCode::SUCCESS;
+    }
+    let resource = format!("/api/environment/rebuild/{build}");
+    match api::get_answer(&dir, &repo, &resource).await {
+        Ok(body) => match read_as::<BuildEnded>(&body, "a build ended") {
+            Ok(ended) => {
+                let code = ended_code(&ended);
+                say(&RebuildSaid::Ended(ended));
+                code
+            }
+            Err(e) => print_answer(Err(e)),
+        },
+        Err(e) => print_answer(Err(refused(&e))),
+    }
+}
+
+/// Builds the environment without `serve`, and says how the build ended.
+async fn rebuild_here(config: &Config, say: impl Fn(&RebuildSaid)) -> ExitCode {
+    let ended = async {
+        let mut factory = start(config, OnUsageLimit::End, Ends::new()).await?;
+        factory.rebuild_environment().await
+    }
+    .await;
+    match ended {
+        Ok(Some(ended)) => {
+            let code = ended_code(&ended);
+            say(&RebuildSaid::Ended(ended));
+            code
+        }
+        Ok(None) => no_setup_command(),
+        Err(e) => print_answer(Err(failed(&e))),
+    }
+}
+
+fn no_setup_command() -> ExitCode {
+    print_answer(Err((
+        1,
+        "there is no setup command: set `setup.command` to build the environment".into(),
+    )))
+}
+
+fn ended_code(ended: &BuildEnded) -> ExitCode {
+    match ended {
+        BuildEnded::Succeeded { .. } => ExitCode::SUCCESS,
+        BuildEnded::Failed { .. } | BuildEnded::NotStarted { .. } => ExitCode::FAILURE,
     }
 }
 
@@ -482,6 +742,19 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         } => {
             return Ok(drain(&config, no_wait, timeout, json).await);
         }
+        Command::Environment {
+            command: None,
+            follow,
+            json,
+        } => {
+            return Ok(show_environment(&config, follow, json).await);
+        }
+        Command::Environment {
+            command: Some(EnvironmentCommand::Rebuild { no_wait, json }),
+            ..
+        } => {
+            return Ok(rebuild_environment(&config, no_wait, json).await);
+        }
         Command::Explain { number, json } => {
             let resource = format!("/api/items/{number}");
             let what = "an explanation";
@@ -533,7 +806,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 }
                 None => None,
             };
-            let (publish, served, polling) = Publish::new();
+            let (publish, served, polling, environment) = Publish::new();
             let sources = Sources {
                 serving: status::Serving {
                     since,
@@ -545,6 +818,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 clock,
                 work_dir,
                 ends: ends.clone(),
+                environment,
             };
             let ui = match &config.ui {
                 Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),

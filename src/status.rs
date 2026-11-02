@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{Item, Number, Requirement, Snapshot, Timestamp, label};
+use crate::environment::shown::{self, EnvironmentShown};
 use crate::lifecycle::State;
 use crate::managed::{self, Detail, Ended, Managed, Tickets};
 use crate::phrase::Phrase;
@@ -133,6 +134,10 @@ pub struct Linewright {
     pub unusable_files: Vec<FileError>,
     /// Set only while a drain is under way.
     pub drain: Option<DrainShown>,
+    /// Set only with a setup command. Absent from the answers of a `serve`
+    /// that does not build one.
+    #[serde(default)]
+    pub environment: Option<EnvironmentShown>,
     pub runs_in_flight: usize,
     pub max_runs: usize,
     /// Set only with webhooks on.
@@ -291,18 +296,35 @@ pub struct DrainShown {
     pub deadline: Option<Timestamp>,
 }
 
-/// `polling` is `None` until the first poll ends; `view` is `None` before
-/// the first poll that succeeded; `recorded` is every run's record;
-/// `drain_deadline` is the deadline of the drain under way, if any.
-pub fn status(
-    serving: &Serving,
-    webhooks: Option<Received>,
-    polling: Option<&Polling>,
-    view: Option<&View>,
-    recorded: &[Recorded],
-    drain_deadline: Option<Timestamp>,
-    now: Timestamp,
-) -> Status {
+/// What `status` answers from.
+pub struct StatusSources<'a> {
+    pub serving: &'a Serving,
+    /// Set with webhooks on.
+    pub webhooks: Option<Received>,
+    /// `None` until the first poll ends.
+    pub polling: Option<&'a Polling>,
+    /// `None` before the first poll that succeeded.
+    pub view: Option<&'a View>,
+    /// Every run's record.
+    pub recorded: &'a [Recorded],
+    /// `None` without a setup command.
+    pub environment: Option<EnvironmentShown>,
+    /// The deadline of the drain under way, if any.
+    pub drain_deadline: Option<Timestamp>,
+    pub now: Timestamp,
+}
+
+pub fn status(sources: StatusSources<'_>) -> Status {
+    let StatusSources {
+        serving,
+        webhooks,
+        polling,
+        view,
+        recorded,
+        environment,
+        drain_deadline,
+        now,
+    } = sources;
     let linewright = Linewright {
         serving_since: serving.since,
         polls: match (view, polling) {
@@ -328,6 +350,7 @@ pub fn status(
                 since,
                 deadline: drain_deadline,
             }),
+        environment,
         runs_in_flight: view.map_or(0, View::runs_in_flight),
         max_runs: serving.max_runs,
         webhooks,
@@ -477,7 +500,7 @@ pub(crate) enum Fact {
 }
 
 impl Fact {
-    fn render(&self, paint: Paint) -> String {
+    pub(crate) fn render(&self, paint: Paint) -> String {
         match self {
             Fact::Plain(phrase) => phrase.to_string(),
             Fact::Warning(phrase) => paint.yellow(phrase),
@@ -499,6 +522,7 @@ pub(crate) enum LinewrightFact<'a> {
     },
     UnusableFile(&'a FileError),
     Drain(DrainShown),
+    Environment(&'a EnvironmentShown),
     RunsInFlight {
         runs: usize,
         max_runs: usize,
@@ -525,6 +549,7 @@ impl Linewright {
         )
         .chain([
             self.drain.map(LinewrightFact::Drain),
+            self.environment.as_ref().map(LinewrightFact::Environment),
             Some(LinewrightFact::RunsInFlight {
                 runs: self.runs_in_flight,
                 max_runs: self.max_runs,
@@ -555,6 +580,7 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
             LinewrightFact::UsageLimit { resets_at } => vec![Fact::Warning(usage_limit(resets_at))],
             LinewrightFact::UnusableFile(file) => vec![Fact::Problem(unusable_file(file))],
             LinewrightFact::Drain(drain) => vec![Fact::Warning(drain_under_way(drain))],
+            LinewrightFact::Environment(environment) => shown::facts(environment),
             LinewrightFact::RunsInFlight { runs, max_runs } => vec![Fact::Plain(
                 format!("runs in flight: {runs} of {max_runs}").into(),
             )],

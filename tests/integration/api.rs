@@ -32,6 +32,7 @@ fn sources(work_dir: RepoWorkDir) -> Sources {
         clock,
         work_dir,
         ends: Ends::new(),
+        environment: api::EnvironmentLink::default(),
     }
 }
 

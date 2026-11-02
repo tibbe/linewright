@@ -107,6 +107,7 @@ impl Answering {
                 repo: REPO.parse().unwrap(),
             },
             ends: ends.clone(),
+            environment: serving.environment.clone(),
         };
         let ui = web::Ui {
             address: "127.0.0.1:0".parse().unwrap(),
@@ -1512,6 +1513,220 @@ async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linew
                 not one of Linewright's prompts"),
         "{}",
         output.stdout
+    );
+    answering.stop().await;
+}
+
+/// A world whose work dir is `REPO`'s, with `command` as its setup command.
+#[track_caller]
+fn setting_up_with(command: &str) -> impl Future<Output = World> + '_ {
+    let caller = std::panic::Location::caller();
+    async move {
+        let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+        let config = crate::environment::setup_config(command);
+        if let Err(e) = world
+            .store
+            .commit(
+                "maintainer",
+                "main",
+                &[(".linewright/config.toml", config.as_str())],
+                "Set up",
+            )
+            .await
+        {
+            panic!("setting up at {caller} failed: {e:#}");
+        }
+        world
+    }
+}
+
+impl Answering {
+    /// Waits for `GET /api/environment` to answer what `done` accepts.
+    #[track_caller]
+    fn environment_until<'a>(
+        &'a self,
+        done: impl Fn(&serde_json::Value) -> bool + 'a,
+    ) -> impl Future<Output = ()> + 'a {
+        let caller = std::panic::Location::caller();
+        async move {
+            let waited = tokio::time::timeout(ANSWERING, async {
+                loop {
+                    let (_, body) =
+                        get(self.runtime_dir.path(), "localhost", "/api/environment").await;
+                    if done(&serde_json::from_str(&body).unwrap()) {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            })
+            .await;
+            assert!(
+                waited.is_ok(),
+                "the environment had not answered as waited for at {caller}"
+            );
+        }
+    }
+}
+
+/// Whether an environment's answer says it is built and no build is in
+/// progress.
+fn built_and_idle(answer: &serde_json::Value) -> bool {
+    let environment = &answer["environment"];
+    !environment["built"].is_null() && environment["building_since"].is_null()
+}
+
+#[test_log::test(tokio::test)]
+async fn environment_follow_prints_a_build_in_progress_as_it_comes_and_ends_when_it_ends() {
+    use tokio::io::AsyncBufReadExt as _;
+    let marks = crate::environment::Marks::new();
+    let gate = marks.path("go");
+    let world = setting_up_with(&format!(
+        "echo started; while [ ! -e '{}' ]; do sleep 0.05; done; echo done",
+        gate.display()
+    ))
+    .await;
+    let answering = Answering::start(world, false).await;
+    answering
+        .environment_until(|answer| !answer["environment"]["building_since"].is_null())
+        .await;
+
+    let cwd = tempfile::tempdir().unwrap();
+    let mut following = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+        .args(["--repo", REPO, "environment", "--follow"])
+        .current_dir(cwd.path())
+        .env("XDG_RUNTIME_DIR", answering.runtime_dir.path())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(following.stdout.take().unwrap()).lines();
+    let mut printed = vec![];
+    within(ANSWERING, "the build in progress is printed", async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            let running = line.ends_with("→ running");
+            printed.push(line);
+            if running {
+                return;
+            }
+        }
+        panic!("{printed:?}");
+    })
+    .await;
+    let before_its_end = printed.len();
+    std::fs::write(&gate, "").unwrap();
+    within(ANSWERING, "the build's end is printed", async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            printed.push(line);
+        }
+    })
+    .await;
+    let status = within(ANSWERING, "lw exits", following.wait())
+        .await
+        .unwrap();
+
+    assert_eq!(status.code(), Some(0));
+    let command = "setup: echo started; while [ ! -e";
+    assert!(
+        printed[before_its_end - 2].starts_with("build 1: started ")
+            && printed[before_its_end - 1].starts_with(command),
+        "{printed:?}"
+    );
+    assert_eq!(
+        printed[before_its_end..before_its_end + 2],
+        ["  started", "  done"]
+    );
+    assert!(
+        printed[before_its_end + 2].starts_with(command)
+            && printed[before_its_end + 2].contains("→ exit 0, "),
+        "{printed:?}"
+    );
+    assert_eq!(printed.len(), before_its_end + 3, "{printed:?}");
+    answering.stop().await;
+}
+
+#[test_log::test(tokio::test)]
+async fn environment_rebuild_returns_once_the_build_ends_with_a_status_saying_how() {
+    let marks = crate::environment::Marks::new();
+    let (hold, fail) = (marks.path("hold"), marks.path("fail"));
+    let world = setting_up_with(&format!(
+        "echo built; while [ -e '{}' ]; do sleep 0.05; done; test ! -e '{}'",
+        hold.display(),
+        fail.display()
+    ))
+    .await;
+    let answering = Answering::start(world, false).await;
+    answering.environment_until(built_and_idle).await;
+
+    let succeeded = answering.lw(&["environment", "rebuild"]).await;
+    std::fs::write(&fail, "").unwrap();
+    let failed = answering.lw(&["environment", "rebuild"]).await;
+    std::fs::write(&hold, "").unwrap();
+    let started = answering.lw(&["environment", "rebuild", "--no-wait"]).await;
+    let queued = answering.lw(&["environment", "rebuild", "--no-wait"]).await;
+    answering
+        .environment_until(|answer| {
+            answer["environment"]["builds"]
+                .as_array()
+                .and_then(|builds| builds.last())
+                .is_some_and(|build| build["so_far"]["output"] == "built\n")
+        })
+        .await;
+    let in_progress = answering.lw(&["environment"]).await;
+    std::fs::remove_file(&hold).unwrap();
+
+    assert_eq!(succeeded.code, Some(0), "{}", succeeded.stderr);
+    let lines: Vec<&str> = succeeded.stdout.lines().collect();
+    assert_eq!(lines[0], "rebuild: the build starts now");
+    assert!(
+        lines[1].starts_with("rebuild: the build succeeded: the environment is built from `"),
+        "{lines:?}"
+    );
+    assert_eq!(failed.code, Some(1), "{}", failed.stderr);
+    assert!(
+        failed.stdout.lines().nth(1).is_some_and(|line| line
+            .starts_with("rebuild: the build failed: the setup command exited with status 1;")),
+        "{}",
+        failed.stdout
+    );
+    assert_eq!(
+        [
+            (started.code, started.stdout.as_str()),
+            (queued.code, queued.stdout.as_str())
+        ],
+        [
+            (Some(0), "rebuild: the build starts now\n"),
+            (
+                Some(0),
+                "rebuild: the build starts once the one in progress ends\n"
+            )
+        ]
+    );
+    assert!(
+        in_progress.stdout.contains("→ running\n  built\n"),
+        "{}",
+        in_progress.stdout
+    );
+    answering.stop().await;
+}
+
+#[test_log::test(tokio::test)]
+async fn with_no_setup_command_environment_and_its_rebuild_say_there_is_none() {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    let answering = Answering::start(world, false).await;
+
+    let shown = answering.lw(&["environment"]).await;
+    let rebuilt = answering.lw(&["environment", "rebuild"]).await;
+
+    assert_eq!(
+        (shown.code, shown.stdout.as_str()),
+        (Some(0), "environment: there is no setup command\n")
+    );
+    assert_eq!(
+        (rebuilt.code, rebuilt.stderr.as_str()),
+        (
+            Some(1),
+            "lw: there is no setup command: set `setup.command` to build the environment\n"
+        )
     );
     answering.stop().await;
 }

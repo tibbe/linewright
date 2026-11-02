@@ -5,7 +5,8 @@ use crate::domain::{Number, Timestamp};
 use crate::phrase::{Phrase, Segment};
 
 /// Markup with its text escaped, which a template may put in a page as it
-/// is. Only this module makes one, or [`rendered`] from a template.
+/// is. Only this module makes one, [`rendered`] from a template or
+/// [`built`] from a page's own builder.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Html(String);
 
@@ -24,6 +25,12 @@ impl fmt::Display for Html {
 }
 
 impl askama::filters::HtmlSafe for Html {}
+
+/// `markup` that the pages' own builders made, escaping its text as they
+/// went.
+pub(crate) fn built(markup: String) -> Html {
+    Html(markup)
+}
 
 /// `template` rendered, its text escaped as a template escapes it.
 pub(crate) fn rendered(template: &impl askama::Template) -> Html {

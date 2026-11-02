@@ -17,7 +17,7 @@ use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
 use sha2::Digest;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -26,13 +26,15 @@ use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
 use crate::drain::{Asked, Stop, Taken, Was};
 use crate::ending::{self, Ends};
+use crate::environment::shown::{self as environment_shown, Followed, FollowingBuild};
+use crate::environment::{self, BuildId, BuildTally, RebuildTaken, Tallied};
 use crate::explain;
 use crate::host::HostName;
 use crate::item_facts::{self, ItemFacts};
 use crate::listening::Listening;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
-use crate::status::{self, Polling, Serving, Status, View};
+use crate::status::{self, Polling, Serving, Status, StatusSources, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::webhook::Tally;
@@ -200,18 +202,83 @@ impl Served {
 pub struct Publish {
     pub served: watch::Sender<Option<Served>>,
     pub polling: watch::Sender<Option<Polling>>,
+    pub environment: EnvironmentPublish,
 }
 
 impl Publish {
-    /// The senders, and the receivers of `served` and `polling`.
+    /// The senders, and the receivers of `served` and `polling`, and the
+    /// local API's link to the environment.
     pub fn new() -> (
         Publish,
         watch::Receiver<Option<Served>>,
         watch::Receiver<Option<Polling>>,
+        EnvironmentLink,
     ) {
         let (served, served_from) = watch::channel(None);
         let (polling, polling_from) = watch::channel(None);
-        (Publish { served, polling }, served_from, polling_from)
+        let (environment, link) = EnvironmentPublish::new();
+        (
+            Publish {
+                served,
+                polling,
+                environment,
+            },
+            served_from,
+            polling_from,
+            link,
+        )
+    }
+}
+
+/// A rebuild asked of `serve`, answered once taken.
+pub type RebuildAsked = oneshot::Sender<RebuildTaken>;
+
+/// `serve`'s end of [`EnvironmentLink`].
+pub struct EnvironmentPublish {
+    tally: watch::Sender<BuildTally>,
+    pub asked: tokio::sync::Mutex<mpsc::UnboundedReceiver<RebuildAsked>>,
+}
+
+impl EnvironmentPublish {
+    fn new() -> (EnvironmentPublish, EnvironmentLink) {
+        let (tally, tally_from) = watch::channel(BuildTally::default());
+        let (ask, asked) = mpsc::unbounded_channel();
+        (
+            EnvironmentPublish {
+                tally,
+                asked: tokio::sync::Mutex::new(asked),
+            },
+            EnvironmentLink {
+                ask,
+                tally: tally_from,
+            },
+        )
+    }
+
+    /// Publishes `tally`, if it changed.
+    pub fn tally(&self, tally: &BuildTally) {
+        self.tally.send_if_modified(|published| {
+            let changed = published != tally;
+            if changed {
+                published.clone_from(tally);
+            }
+            changed
+        });
+    }
+}
+
+/// How the local API asks `serve` for a rebuild, and learns how the builds
+/// it started ended.
+#[derive(Clone)]
+pub struct EnvironmentLink {
+    ask: mpsc::UnboundedSender<RebuildAsked>,
+    tally: watch::Receiver<BuildTally>,
+}
+
+/// Linked to no `serve`: a rebuild asked is refused.
+impl Default for EnvironmentLink {
+    fn default() -> EnvironmentLink {
+        EnvironmentPublish::new().1
     }
 }
 
@@ -228,6 +295,7 @@ pub struct Sources {
     pub work_dir: RepoWorkDir,
     /// What a drain asked for goes through.
     pub ends: Ends,
+    pub environment: EnvironmentLink,
 }
 
 /// The local API, under `/api/`, answering only requests whose `Host` is
@@ -239,6 +307,10 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/items/{number}", get(answer_item))
         .route("/logs", get(answer_logs))
         .route("/logs/follow", get(follow_logs))
+        .route("/environment", get(answer_environment))
+        .route("/environment/follow", get(follow_environment))
+        .route("/environment/rebuild", post(take_rebuild))
+        .route("/environment/rebuild/{build}", get(answer_rebuild))
         .route("/drain", post(take_drain))
         .route("/stop", get(answer_stop));
     Router::new()
@@ -316,15 +388,171 @@ pub(crate) fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
 /// What `status` answers of `view` and `recorded`.
 pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Recorded]) -> Status {
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
-    status::status(
-        &sources.serving,
+    status::status(StatusSources {
+        serving: &sources.serving,
         webhooks,
-        sources.polling.borrow().as_ref(),
+        polling: sources.polling.borrow().as_ref(),
         view,
         recorded,
-        sources.ends.deadline(),
-        sources.clock.now(),
-    )
+        environment: environment_or_none(sources)
+            .and_then(|answer| answer.environment)
+            .map(|environment| environment.shown),
+        drain_deadline: sources.ends.deadline(),
+        now: sources.clock.now(),
+    })
+}
+
+/// The environment's directory.
+pub(crate) fn environment_dir(sources: &Sources) -> PathBuf {
+    environment::dir(&sources.work_dir.resolve())
+}
+
+/// What is kept of the environment, or nothing when it does not read,
+/// which is logged.
+pub(crate) fn environment_or_none(
+    sources: &Sources,
+) -> Option<environment_shown::EnvironmentAnswer> {
+    environment_shown::answer(&environment_dir(sources), false)
+        .inspect_err(|e| error!(error = format!("{e:#}"), "reading the environment failed"))
+        .ok()
+}
+
+async fn answer_environment(State(sources): State<Sources>) -> Response {
+    answer(environment_shown::answer(&environment_dir(&sources), false).map_err(Unanswered::Failed))
+}
+
+/// Which build `/environment/follow` follows.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct BuildQuery {
+    pub build: BuildId,
+}
+
+/// Where a reader of a build's output is: `build` and how far into its
+/// output, as an event ID.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutputAt {
+    pub build: BuildId,
+    pub offset: u64,
+}
+
+impl std::str::FromStr for OutputAt {
+    type Err = String;
+
+    fn from_str(id: &str) -> Result<OutputAt, String> {
+        let not_one = || format!("{id:?} is not an event ID of a build");
+        let (build, offset) = id.split_once(':').ok_or_else(not_one)?;
+        Ok(OutputAt {
+            build: build.parse().map_err(|_| not_one())?,
+            offset: offset.parse().map_err(|_| not_one())?,
+        })
+    }
+}
+
+impl std::fmt::Display for OutputAt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.build, self.offset)
+    }
+}
+
+pub const OUTPUT_EVENT: &str = "output";
+
+/// A build's output as it comes, as [`OUTPUT_EVENT`]s whose data is the
+/// text as a JSON string, then its end as an [`END_EVENT`] whose data is
+/// the build.
+async fn follow_environment(
+    State(sources): State<Sources>,
+    Extension(stopping): Extension<CancellationToken>,
+    Query(query): Query<BuildQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let resumed = match headers.get(LAST_EVENT_ID) {
+        None => None,
+        Some(id) => match id.to_str().ok().and_then(|id| id.parse::<OutputAt>().ok()) {
+            Some(at) if at.build == query.build => Some(at.offset),
+            _ => {
+                return error_response(
+                    StatusCode::BAD_REQUEST,
+                    "`Last-Event-ID` is not an event ID of the build",
+                );
+            }
+        },
+    };
+    let build = query.build;
+    let following = FollowingBuild::start(&environment_dir(&sources), build, resumed.unwrap_or(0));
+    let events = futures_util::stream::unfold(Some(following), move |following| {
+        let stopping = stopping.clone();
+        async move {
+            let mut following = following?;
+            let next = tokio::select! {
+                next = following.next() => next,
+                () = stopping.cancelled() => return None,
+            };
+            let event = match next {
+                Ok(Some(Followed::Output { text, to })) => Event::default()
+                    .event(OUTPUT_EVENT)
+                    .id(OutputAt { build, offset: to }.to_string())
+                    .data(serde_json::to_string(&text).expect("a string serializes")),
+                Ok(Some(Followed::Ended(shown))) => Event::default()
+                    .event(END_EVENT)
+                    .data(serde_json::to_string(&shown).expect("the answers serialize")),
+                Ok(None) => return None,
+                Err(e) => {
+                    let e = format!("{e:#}");
+                    error!(error = e, "following a build failed");
+                    let error = ErrorAnswer {
+                        error: e,
+                        missing: None,
+                    };
+                    let error = serde_json::to_string(&error).expect("the answers serialize");
+                    return Some((Event::default().event(ERROR_EVENT).data(error), None));
+                }
+            };
+            Some((event, Some(following)))
+        }
+    })
+    .map(Ok::<_, std::convert::Infallible>);
+    crate::event_stream::respond(events)
+}
+
+/// Answers once `serve` has taken the rebuild asked for.
+async fn take_rebuild(State(sources): State<Sources>) -> Response {
+    let (reply, taken) = oneshot::channel();
+    if sources.environment.ask.send(reply).is_err() {
+        return error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` takes no rebuild: it is exiting",
+        );
+    }
+    match taken.await {
+        Ok(taken) => json_response(StatusCode::OK, &taken),
+        Err(_) => error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` exited before it took the rebuild",
+        ),
+    }
+}
+
+/// Answers once the `build`th build since `serve` started has ended, with
+/// how it ended.
+async fn answer_rebuild(
+    State(sources): State<Sources>,
+    Extension(stopping): Extension<CancellationToken>,
+    Resource(build): Resource<Tallied>,
+) -> Response {
+    let mut tally = sources.environment.tally.clone();
+    let ended = tokio::select! {
+        ended = tally.wait_for(|now| now.ended.contains_key(&build)) => {
+            ended.ok().and_then(|now| now.ended.get(&build).cloned())
+        }
+        () = stopping.cancelled() => None,
+    };
+    match ended {
+        Some(ended) => json_response(StatusCode::OK, &ended),
+        None => error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "`serve` stopped before the build ended",
+        ),
+    }
 }
 
 async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) -> Response {

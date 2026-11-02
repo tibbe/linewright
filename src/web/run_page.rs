@@ -318,19 +318,21 @@ fn ran_html(ran: Option<&Ran>) -> String {
     )
 }
 
-/// A maintenance command's line, opening to its output once it has ended, open
-/// from the start when it failed, and with `verbose`.
-fn maintenance_html(
+/// A command's line, such as a maintenance command's, labeled `label`,
+/// opening to its output once it has ended, open from the start when it
+/// failed, and with `verbose`.
+pub(super) fn command_html(
     stamp: &str,
+    label: &str,
     command: &str,
     ended: Option<&MaintenanceEnded>,
     verbose: bool,
 ) -> String {
-    let command = html::escape(&transcript::shown_command(command));
     let Some(ended) = ended else {
         let running = status_html(Tone::InProgress, "running");
-        return format!(r#"<div class="line">{stamp} maintenance: {command} → {running}</div>"#);
+        return command_line_html(stamp, label, command, &running);
     };
+    let command = html::escape(&transcript::shown_command(command));
     let account = if ended.status.failed() {
         status_html(Tone::Failure, &ended.account())
     } else {
@@ -341,16 +343,26 @@ fn maintenance_html(
     } else {
         ""
     };
-    let output = if ended.output.trim().is_empty() {
-        String::new()
-    } else {
-        format!(
-            r#"<pre class="output my-1 ml-[4.5em] max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre>"#,
-            html::escape(ended.output.trim_end())
-        )
-    };
+    let output = output_html(&ended.output);
     format!(
-        r#"<details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} maintenance: {command} → {account}</span></summary>{output}</details>"#
+        r#"<details{open}><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} {label}: {command} → {account}</span></summary>{output}</details>"#
+    )
+}
+
+/// A command's line that does not open, `account` after its arrow.
+pub(super) fn command_line_html(stamp: &str, label: &str, command: &str, account: &str) -> String {
+    let command = html::escape(&transcript::shown_command(command));
+    format!(r#"<div class="line">{stamp} {label}: {command} → {account}</div>"#)
+}
+
+/// A command's output under its line; nothing for an empty one.
+pub(super) fn output_html(output: &str) -> String {
+    if output.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<pre class="output my-1 ml-[4.5em] max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre>"#,
+        html::escape(output.trim_end())
     )
 }
 
@@ -418,7 +430,7 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
         EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
         EntryLine::Maintenance(MaintenanceLine { command, ended }) => (
             "maintenance",
-            maintenance_html(&stamp, command, ended.as_ref(), verbose),
+            command_html(&stamp, "maintenance", command, ended.as_ref(), verbose),
         ),
         EntryLine::Message { text } => ("message", line_html(&stamp, "", text)),
         EntryLine::Thinking { text } => ("thinking", line_html(&stamp, "thinking: ", text)),
@@ -542,7 +554,7 @@ struct Status<'a> {
     word: &'a str,
 }
 
-fn status_html(tone: Tone, word: &str) -> String {
+pub(super) fn status_html(tone: Tone, word: &str) -> String {
     render(&Status { tone, word })
 }
 
