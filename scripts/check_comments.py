@@ -11,6 +11,7 @@ VENDORED_OR_MODEL = re.compile(
 LINK = re.compile(r"https?://")
 LICENSE = re.compile(r"@license|SPDX-License-Identifier")
 SHELLCHECK = re.compile(r"shellcheck disable=")
+SHELLCHECK_DIRECTIVE = re.compile(r"^\s*shellcheck (shell|source|source-path)=\S+\s*$")
 SHELLCHECK_REASON = re.compile(r"shellcheck disable=\S+\s+#\s*\S")
 NOT_ALLOWED = "not a contract, a linked outside constraint, a directive or a license notice"
 
@@ -359,7 +360,7 @@ BY_EXTENSION = {
 
 def language(path, src):
     name = os.path.basename(path)
-    if re.match(r"#!.*\b(ba|z)?sh\b", src):
+    if re.match(r"#!.*\b(ba|z)?sh\b", src) or re.match(r"# shellcheck shell=", src):
         return SHELL
     if re.match(r"#!.*\bpython", src):
         return PYTHON
@@ -373,7 +374,9 @@ def language(path, src):
 def directive(lang, comment):
     if comment.line == 1 and lang.first_line and lang.first_line.match(comment.text):
         return True
-    return lang is SHELL and SHELLCHECK_REASON.search(comment.text) is not None
+    return lang is SHELL and (
+        SHELLCHECK_REASON.search(comment.text) is not None or SHELLCHECK_DIRECTIVE.match(comment.text) is not None
+    )
 
 
 def violations(path, lang, src, comments):

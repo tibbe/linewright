@@ -19,7 +19,11 @@ fn reports(files: &[(&str, &str)]) -> Vec<String> {
     }
     git(dir, &["add", "--all"]);
     std::fs::create_dir_all(dir.join("scripts")).unwrap();
-    for script in ["scripts/check", "scripts/check_comments.py"] {
+    for script in [
+        "scripts/check",
+        "scripts/lib.sh",
+        "scripts/check_comments.py",
+    ] {
         std::fs::copy(
             Path::new(env!("CARGO_MANIFEST_DIR")).join(script),
             dir.join(script),
@@ -123,6 +127,21 @@ fn a_shellcheck_directive_needs_a_reason() {
     assert_eq!(
         reports(&[("run", script)]),
         ["run:2: a `# shellcheck disable=` needs a `# reason` after it"]
+    );
+}
+
+#[test_log::test]
+fn shellchecks_shell_and_source_directives_pass() {
+    let script = "#!/usr/bin/env bash\n\
+                  # shellcheck source=lib.sh\n\
+                  . lib.sh\n";
+    let lib = "# shellcheck shell=bash\n\
+               # shellcheck disable=SC2034 # read by run\n\
+               greeting=hi\n";
+
+    assert_eq!(
+        reports(&[("run", script), ("lib.sh", lib)]),
+        Vec::<String>::new()
     );
 }
 
