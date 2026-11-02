@@ -53,8 +53,8 @@ before the agent's first prompt.
   the clone, with nothing on its standard input, in the session's environment
   ([Environment](sessions.md#environment)). With an empty
   one, the session starts with the agent's first prompt.
-- **When.** On the branch as the clone checked it out, before the run brings
-  the branch up to date with the default branch
+- **When.** On the branch as the clone checked it out, before any update of
+  the branch with the default branch
   ([Keeping up to date](pull_requests.md#keeping-up-to-date)).
 - **Failing.** A setup command that exits with a non-zero status ends its
   session, as an infrastructure failure

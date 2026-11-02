@@ -44,8 +44,13 @@ module pull_request {
     timedOut: bool,
     // P ## Rework: feedback has come
     feedback: bool,
-    // GitHub reports it behind the default branch, or in conflict with it
+    // it conflicts with the default branch
+    conflict: bool,
+    // it is behind the default branch, and the repository requires it up to
+    // date to merge
     behind: bool,
+    // a person has approved it
+    approved: bool,
     // it cannot be merged by a method the repository allows
     unmergeable: bool,
     // a run has ended on it since its last push
@@ -67,12 +72,11 @@ module pull_request {
   pure def rows(x: Pr, am: bool): List[(bool, str)] = [
     // "feedback has come" | "starts a rework run"
     (x.feedback, "rework"),
-    // "GitHub reports it behind the default branch, or in conflict with it" |
-    // "starts an update run"
-    (x.behind, "update"),
-    // "it cannot be merged by a method the repository allows, and no run has
-    // ended on it since its last push" | "starts an update run": every run
-    // first brings the branch up to date (P ## Keeping up to date)
+    // "it conflicts with the default branch" | "starts an update run"
+    (x.conflict, "update"),
+    // "it cannot be merged by a method the repository allows, for a reason
+    // other than being behind, and no run has ended on it since its last
+    // push" | "starts an update run"
     (x.unmergeable and not(x.ranSincePush), "update"),
     // "none of its checks has appeared, and its last push was less than
     // ci-grace ago" | "waits for its checks"
@@ -87,6 +91,10 @@ module pull_request {
     (x.checks == "failed" and x.fixes < CI_ATTEMPTS, "fix"),
     // "a check failed" | "hands it back, naming the failing checks"
     (x.checks == "failed", "hand back"),
+    // "it is behind the default branch, the repository requires it up to date
+    // to merge, and that alone keeps it from being ready to merge" | "starts an
+    // update run"
+    (x.behind and readyToMerge(x, am), "update"),
     // draft | "otherwise" | "marks it ready for review"; the rows after it are
     // ready for review's
     (x.draft, "ready"),
@@ -105,7 +113,15 @@ module pull_request {
     // "otherwise" | "merges it"
     (true, "merge"),
   ]
-  pure val ROWS = 14
+  pure val ROWS = 15
+
+  /// P ## Working a pull request "Ready to merge": "no person holds its
+  /// merge", "it has everything the repository requires before a merge" and,
+  /// with auto-merge off, "a person has approved it"; being behind is its own
+  /// fact.
+  /// That no check of it is running or has failed is the row's place.
+  pure def readyToMerge(x: Pr, am: bool): bool =
+    not(x.held) and x.github != "blocks" and (am or x.approved)
 
   /// The first row that holds, from 0.
   pure def firstRow(x: Pr, am: bool): int = {
@@ -163,7 +179,8 @@ module pull_request {
     nondet u = Set(true, false).oneOf()
     all {
       pr' = { status: "open", lw: true, draft: true, checks: "none", graceOver: false,
-              timedOut: false, feedback: false, behind: false, unmergeable: u,
+              timedOut: false, feedback: false, conflict: false, behind: false,
+              approved: false, unmergeable: u,
               ranSincePush: false, held: false, github: "unknown", commented: false,
               fixes: 0, mergeFails: 0, stalled: false },
       am' = a,
@@ -209,13 +226,16 @@ module pull_request {
   /// The run in flight ends: R ## Working an item, "a run on it cannot
   /// finish" hands it back; otherwise it pushes, or finds nothing to push.
   /// "Feedback posted while a run works goes to its session before the run
-  /// pushes", and
-  /// every run first brings the branch up to date.
+  /// pushes". P ## Keeping up to date "Which runs": an update or a fix-ci run
+  /// brings the branch up to date; a rework run does where an update row held
+  /// as it started, read as it may or may not have.
   action runEnds: bool = {
     nondet end = Set("push", "nothing", "cannot finish").oneOf()
     // an update may leave it as unmergeable by a method as it was
     nondet repaired = Set(true, false).oneOf()
-    val done = { ...pr, behind: false }
+    nondet reworkUpdated = Set(true, false).oneOf()
+    val updated = inFlight != "rework" or reworkUpdated
+    val done = if (updated) { ...pr, behind: false, conflict: false } else pr
     // a rework run that ends done answers the feedback it was given; read the
     // old way, any push did
     val answered = if (FEEDBACK_UNTIL_REWORK_DONE) inFlight == "rework" else end == "push"
@@ -225,15 +245,16 @@ module pull_request {
       if (inFlight == "rework") newRound(after)
       else if (inFlight == "fix") { ...after, fixes: after.fixes + 1 }
       else after
-    // every run brings the branch up to date, which may make it mergeable
+    // bringing the branch up to date may make it mergeable
     val brought = { ...counted, ranSincePush: true,
-                    unmergeable: counted.unmergeable and not(repaired) }
+                    unmergeable: counted.unmergeable and not(updated and repaired) }
     all {
       inFlight != "",
       series.length() == 0,
       // An update or a fix finds nothing to push only where there is nothing
       // to bring up to date; a rework may answer without a push.
-      end == "nothing" implies (inFlight == "rework" or (inFlight == "update" and not(pr.behind))),
+      end == "nothing" implies (inFlight == "rework"
+                                or (inFlight == "update" and not(pr.behind or pr.conflict))),
       pr' = if (end == "cannot finish") pr else brought,
       series' = if (end == "cannot finish") HAND_BACK else [],
       inFlight' = "",
@@ -343,11 +364,13 @@ module pull_request {
     // holds the merge
     personMoves({ ...pr, feedback: true, held: true }),
     // a review that only approves
-    personMoves({ ...pr, held: false }),
+    personMoves({ ...pr, held: false, approved: true }),
     // a push of their own
     personMoves(pushed(pr)),
-    // the default branch moves
+    // the default branch moves: the branch falls behind, where the repository
+    // requires it up to date, or comes to conflict with it
     personMoves({ ...pr, behind: true, github: "unknown" }),
+    personMoves({ ...pr, conflict: true, github: "unknown" }),
     // they change what GitHub requires, or meet it
     personMoves({ ...pr, github: "blocks" }),
     personMoves({ ...pr, github: "allows" }),
@@ -402,6 +425,7 @@ module pull_request {
   val row11Unreached = rowUnreached(11)
   val row12Unreached = rowUnreached(12)
   val row13Unreached = rowUnreached(13)
+  val row14Unreached = rowUnreached(14)
 
   /// Fix and merge attempts are bounded: ci-attempts fix-ci runs and two
   /// failed merges a round.
