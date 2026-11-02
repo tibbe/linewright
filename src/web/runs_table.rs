@@ -1,6 +1,4 @@
-//! A list of runs as a table (`docs/specs/design_system.md`, Lists of runs),
-//! as the runs page and the item page both show one, drawn by
-//! `macros.html`'s `runs`.
+//! A list of runs as a table (`docs/specs/design_system.md`, Lists of runs).
 
 use askama::Template;
 
@@ -44,8 +42,7 @@ pub(super) struct RunRow {
     pub(super) duration: Option<Html>,
 }
 
-/// What a run is of, as the Item column names it, drawn by `macros.html`'s
-/// `item_cell`.
+/// What a run is of, as the Item column names it.
 pub(super) enum ItemCell {
     /// The item's number, and its title where known, linking to its page.
     Item(Html),
@@ -62,7 +59,7 @@ impl ItemCell {
         }
     }
 
-    /// The cell's content as markup, for a page that builds its own.
+    /// The cell's content as markup.
     pub(super) fn html(&self) -> Html {
         html::rendered(&ItemCellHtml { item: self })
     }
@@ -171,8 +168,7 @@ impl RunsTable {
             .collect()
     }
 
-    /// How many columns the table shows, which the cut list's last row
-    /// spans.
+    /// How many columns the table shows.
     pub(super) fn columns(&self) -> usize {
         self.heads().len()
     }

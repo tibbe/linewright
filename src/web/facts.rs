@@ -1,5 +1,5 @@
-//! A page's facts about one thing (`docs/specs/design_system.md`, Facts),
-//! which `ui::facts` draws (`docs/specs/web/design_system.md`, Facts).
+//! A page's facts about one thing (`docs/specs/design_system.md` and
+//! `docs/specs/web/design_system.md`, Facts).
 
 use crate::phrase::Tone;
 

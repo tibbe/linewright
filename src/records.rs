@@ -22,8 +22,8 @@ pub(crate) fn load<T: DeserializeOwned>(path: &Path, what: &str) -> Option<T> {
     })
 }
 
-/// Records `value` at `path`, whole: to a file beside the record, then
-/// renamed over it, so a crash leaves the old record or the new one.
+/// Records `value` at `path`, whole: a crash leaves the old record or the
+/// new one.
 pub(crate) fn save(path: &Path, value: &impl Serialize, what: &str) -> Result<()> {
     let dir = path.parent().context("the record has a directory")?;
     std::fs::create_dir_all(dir).context("creating the work directory")?;

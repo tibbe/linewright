@@ -1,6 +1,5 @@
 //! The server page (`docs/specs/design_system.md`, The server page): the
-//! facts about Linewright itself, in the page's own words. `status` prints
-//! the same [`Linewright`] in its own lines.
+//! facts about Linewright itself, in the page's own words.
 
 use std::num::NonZeroU64;
 

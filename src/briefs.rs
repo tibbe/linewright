@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -20,8 +19,7 @@ pub struct Briefs {
 }
 
 /// One layer of the prompts: each of Linewright's prompts it has, by its
-/// path under the prompts' root, such as `follow-ups/result-error.md`. Built
-/// only by [`PromptLayer::parse`], which looks at every file the layer holds.
+/// path under the prompts' root, such as `follow-ups/result-error.md`.
 #[derive(Clone, Debug)]
 pub struct PromptLayer {
     pub layer: Layer,
@@ -131,7 +129,6 @@ impl PromptLayer {
                     }
                     Err(error) => (error, readers),
                 },
-                // No stage is known to read it, so it could be meant for any.
                 None => (NOT_A_PROMPT, Readers::Every),
             };
             unusable.push(Unusable {
@@ -162,7 +159,6 @@ impl Briefs {
     /// Takes each prompt from the first of `layers` that has it and whose
     /// file can be used, or else from the prompts Linewright ships.
     pub fn resolve(layers: &[&PromptLayer]) -> Resolved {
-        // Each path's layers that have it, the one in use first.
         let mut candidates: BTreeMap<&str, Vec<&PromptLayer>> = Prompts::paths()
             .into_iter()
             .map(|path| {
@@ -175,8 +171,6 @@ impl Briefs {
             })
             .collect();
         let mut unusable = Vec::new();
-        // A file that cannot be used drops out, and the prompts are read
-        // again with the next layer's in its place.
         let prompts = loop {
             let (prompts, failed) = Prompts::read(&mut |path| {
                 let layer = candidates.get(path)?.first()?;
@@ -294,7 +288,6 @@ fn files_under(dir: &Path) -> Result<Vec<String>> {
             let entry =
                 entry.with_context(|| format!("reading the prompts directory {}", at.display()))?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            // Not descending into a hidden directory, such as `.git/`.
             if is_hidden(&name) {
                 continue;
             }

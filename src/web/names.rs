@@ -4,8 +4,7 @@
 use super::html::{self, Html};
 use crate::domain::{Number, Snapshot};
 
-/// The repo and the titles a page knows, which every phrase it draws names
-/// its items with.
+/// The repo and the titles a page knows, to name its items with.
 #[derive(Clone, Copy)]
 pub(crate) struct Names<'a> {
     repo: &'a str,

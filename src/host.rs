@@ -1,5 +1,5 @@
-//! Reading a request's `Host`: the one place that says what a host name
-//! is, ignoring case, port and a trailing dot, for every check made on it.
+//! Reading a request's `Host` as a host name, ignoring case, port and a
+//! trailing dot.
 
 use std::net::IpAddr;
 

@@ -1,7 +1,6 @@
 pub const COMMAND: &str = "lw";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-/// The commit Linewright is built from, abbreviated, or `unknown` (see
-/// `build.rs`).
+/// The commit Linewright is built from, abbreviated, or `unknown`.
 pub const COMMIT: &str = env!("LINEWRIGHT_COMMIT");
 pub const VERSION_AND_COMMIT: &str = concat!(
     env!("CARGO_PKG_VERSION"),

@@ -1,4 +1,3 @@
-// comments: pending
 //! Linewright's secrets: the values of the variables it reads a credential
 //! from and of those the `secrets` setting names, and the credentials the
 //! table of sessions' variables passes (`docs/specs/operation.md`,
@@ -117,8 +116,6 @@ impl Secrets {
             .filter(|(_, value)| !value.is_empty())
             .map(|(name, value)| Secret { name, value })
             .collect();
-        // `ANTHROPIC_API_KEY` is both Linewright's credential and the
-        // harness's.
         all.sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
         all.dedup();
         let (list, short): (Vec<Secret>, Vec<Secret>) = all

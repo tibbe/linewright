@@ -17,7 +17,8 @@ fn main() {
     println!("cargo::rustc-env={COMMIT_VARIABLE}={commit}");
 }
 
-/// `given` is for the Docker build, which has no `.git`.
+/// The first `COMMIT_DIGITS` of `head`, or else of `given`, or else
+/// `unknown`.
 fn commit(head: Option<String>, given: Option<String>) -> String {
     head.or(given)
         .map(|commit| {
@@ -34,8 +35,7 @@ fn commit(head: Option<String>, given: Option<String>) -> String {
 /// The paths that change when `HEAD` moves: `HEAD` itself and the branch it
 /// is on, loose or packed. A branch with no loose ref yet gets one in its
 /// directory when it moves, so that directory stands in for it. Only paths
-/// that exist, as Cargo reruns the script on every build for one that
-/// doesn't.
+/// that exist.
 fn head_paths() -> Vec<PathBuf> {
     let mut paths = git_path("HEAD").into_iter().collect::<Vec<_>>();
     if let Some(branch) = git(&["symbolic-ref", "-q", "HEAD"]) {

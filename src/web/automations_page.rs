@@ -1,4 +1,3 @@
-// comments: pending
 //! The automations page (`docs/specs/design_system.md`, The automations page):
 //! each automation file that does not parse, then a row per automation.
 
@@ -65,8 +64,6 @@ impl Automations {
                     .last_run
                     .as_ref()
                     .and_then(|last| recorded.iter().find(|run| run.id == last.id));
-                // With no run recorded, the last scheduled run is the time a
-                // poll first saw the automation.
                 let last_run = match last_run {
                     Some(run) => LastRun::Run(run.clone().at(now)),
                     None => LastRun::NoneYet {

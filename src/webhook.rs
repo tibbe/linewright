@@ -1,4 +1,3 @@
-// comments: pending
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -174,7 +173,6 @@ pub fn receive(secret: &Secret, headers: Headers, body: &[u8]) -> Result<Deliver
     let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(secret.0.as_bytes())
         .expect("HMAC takes a key of any length");
     mac.update(body);
-    // In constant time, so the signature cannot be found by timing.
     mac.verify_slice(&signature)
         .map_err(|_| Refusal::WrongSignature)?;
     let name = headers.event.ok_or(Unreadable::NoEvent)?;
@@ -294,8 +292,8 @@ fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
     Ok(Delivery::Accepted(subject))
 }
 
-/// The listener adds to it and the factory takes it, so deliveries never race
-/// a poll, and those that arrive while it reads coalesce.
+/// The subjects of the deliveries accepted since they were last taken, each
+/// once however many deliveries named it.
 #[derive(Clone, Default)]
 pub struct Pending(Arc<PendingSubjects>);
 

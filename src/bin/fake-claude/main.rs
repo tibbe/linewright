@@ -1,7 +1,5 @@
-//! The stand-in for Claude Code's `claude` that the integration tests run.
-//! A test symlinks a path of its own to it and writes the [`Scenario`] it is
-//! to carry out beside that path, as `<path>.json`: the harness runs it with
-//! an environment and arguments of its own, but by the path the test chose.
+//! A stand-in for Claude Code's `claude`: it carries out the [`Scenario`] in
+//! `<path>.json`, where `<path>` is the path it was invoked by.
 
 mod scenario;
 
@@ -61,8 +59,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 /// The scenario beside the path the fake was invoked by: `invoked` itself
-/// when it holds a `/`, and otherwise the first file of that name on `PATH`,
-/// as the caller found it.
+/// when it holds a `/`, and otherwise the first file of that name on `PATH`.
 fn scenario(invoked: &OsStr) -> anyhow::Result<Scenario> {
     let path = if invoked.as_bytes().contains(&b'/') {
         PathBuf::from(invoked)
@@ -132,8 +129,7 @@ fn carry_out(step: Step, args: &[OsString]) -> anyhow::Result<Option<i32>> {
     Ok(None)
 }
 
-/// Writes `line` to standard output, flushed, so that whoever reads it sees
-/// it while the fake runs on.
+/// Writes `line` to standard output and flushes it.
 fn say(line: &str) -> std::io::Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{line}")?;
@@ -203,9 +199,8 @@ fn leave_in_own_session(pid: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Moves into a session of its own, writes its PID to `pid` and sleeps. The
-/// PID is written whole, under another name first, so the fake that waits
-/// for it never reads part of it.
+/// Moves into a session of its own, writes its PID to `pid`, which appears
+/// whole, and sleeps.
 fn in_own_session(pid: &Path) -> anyhow::Result<()> {
     rustix::process::setsid()?;
     let mut writing = pid.as_os_str().to_owned();

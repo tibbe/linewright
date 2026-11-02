@@ -44,7 +44,6 @@ const TABLE: &[&str] = &[
 ];
 
 /// The table's proxy variables that hold a URL, which may hold a password.
-/// `NO_PROXY` holds hosts and is in `TABLE`.
 const PROXY_VARIABLES: [&str; 6] = [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -350,9 +349,10 @@ impl SessionEnv {
         }
     }
 
-    /// The values set replace variables of the same name passed.
-    /// `set_by_linewright` names the variables Linewright sets for sessions
-    /// itself, which are not withheld whatever their values here.
+    /// `environment` split by what sessions are given, the values set
+    /// replacing variables of the same name passed. `set_by_linewright`
+    /// names the variables Linewright sets for sessions itself, which are
+    /// not withheld whatever their values here.
     pub fn split(
         &self,
         environment: impl IntoIterator<Item = (OsString, OsString)>,

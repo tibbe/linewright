@@ -1,4 +1,3 @@
-// comments: pending
 //! The board (`docs/specs/design_system.md`, The board): the managed items
 //! as cards, in a lane per piece of work and a column per stage.
 
@@ -54,8 +53,6 @@ struct CardShown {
 
 impl BoardShown {
     fn of(board: &Board, repo: &str) -> BoardShown {
-        // A card's line names items by number alone, so the board needs no
-        // titles but its cards' own.
         let names = Names::of(repo, None);
         let (finished, unfinished): (Vec<&Lane>, Vec<&Lane>) = board
             .lanes

@@ -1,6 +1,5 @@
 //! A card's words (`docs/specs/design_system.md`, Cards), and a lane's head
-//! (The board), shared by every page that shows a card's line or status or
-//! a lane's head.
+//! (The board).
 
 use super::html::{self, Html};
 use super::names::Names;
@@ -11,7 +10,7 @@ use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
 /// A card's line, the one place a page names items by their number alone
-/// (`docs/specs/design_system.md`, Navigation). Made only by [`card_line`].
+/// (`docs/specs/design_system.md`, Navigation).
 pub(super) struct Line(Phrase);
 
 impl Line {
@@ -39,9 +38,7 @@ fn card_phrase(card: &Card) -> Option<Phrase> {
 /// A lane's head (`docs/specs/design_system.md`, The board, Lanes and
 /// Finished lanes): the tracking issue's number and title and its tickets
 /// closed of total, or the item's number and title; then when it finished,
-/// if it did. What follows the name is one element of its own, which a
-/// holder that cuts the name keeps whole (`styles/linewright.css`,
-/// `.name-cut-1`).
+/// if it did. What follows the name is one `span` of class `tail`.
 pub(super) fn lane_head(heading: &LaneHeading, repo: &str) -> Html {
     let (name, closed) = match &heading.head {
         LaneHead::Tracking {

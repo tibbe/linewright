@@ -1,6 +1,5 @@
-// comments: pending
-//! `lw contain -- PROGRAM ARGS…`: the wrapper [`crate::child::Contained`]
-//! runs a program in, so that nothing the program starts outlives it. Once
+//! `lw contain -- PROGRAM ARGS…`: a wrapper that runs a program so that
+//! nothing the program starts outlives it. Once
 //! the program exits, or `serve` closes the control socket, it ends every
 //! process under it, those that left the program's process group and
 //! session included.
@@ -27,9 +26,7 @@ pub const CONTROL_VARIABLE: &str = "LINEWRIGHT_CONTAIN_CONTROL";
 const GRACE: Duration = Duration::from_secs(2);
 
 /// The variable macOS's CoreFoundation adds to the environment of the
-/// process it loads into, here the wrapper's, when it is missing. The
-/// wrapper does not pass it on, so that the program's environment is the one
-/// `serve` gave; a program that loads CoreFoundation sets it again itself.
+/// process it loads into when it is missing.
 const CF_TEXT_ENCODING: &str = "__CF_USER_TEXT_ENCODING";
 
 /// What the wrapper exits with when it cannot run the program, as `env`
@@ -38,8 +35,7 @@ const CANNOT_CONTAIN: u8 = 125;
 
 /// What `serve` tells the wrapper on the control socket once it has checked
 /// that the wrapper is its peer, and before the wrapper starts the program.
-/// The wrapper waits for it, so that it is still connected while it is
-/// checked. `serve` sends nothing after it: the socket's end, however
+/// The wrapper waits for it. `serve` sends nothing after it: the socket's end, however
 /// `serve` closes it or ends, is the word to end.
 pub const GO_AHEAD: &str = "go\n";
 
@@ -74,8 +70,8 @@ impl Report {
 }
 
 /// Runs `program` with `args`, which inherit the wrapper's standard streams,
-/// working directory and environment, and reports on the control socket
-/// whether it started. Returns, once every process under the wrapper has
+/// working directory and the environment it was given, and reports on the
+/// control socket whether it started. Returns, once every process under the wrapper has
 /// ended, as the program did: with its exit code, or by the signal that
 /// ended it.
 pub fn main(program: &OsStr, args: &[OsString]) -> ExitCode {
@@ -166,8 +162,7 @@ fn wait_for(program: Pid) -> rustix::io::Result<WaitStatus> {
     }
 }
 
-/// The program's status. No other process is re-parented to the wrapper,
-/// and the `ps` it runs is reaped by its own wait.
+/// The program's status.
 #[cfg(not(target_os = "linux"))]
 fn wait_for(program: Pid) -> rustix::io::Result<WaitStatus> {
     loop {
@@ -182,9 +177,8 @@ enum Reaping {
     /// Reaps the processes re-parented to the wrapper, and returns only
     /// once it has no child left.
     Yes,
-    /// Leaves them to the wrapper's main thread, which waits for the
-    /// program, and returns once every process under it has ended or been
-    /// sent SIGKILL.
+    /// Leaves them unreaped, and returns once every process under the
+    /// wrapper has ended or been sent SIGKILL.
     No,
 }
 
@@ -228,8 +222,8 @@ fn reap() -> bool {
     }
 }
 
-/// Only the program is the wrapper's child, and [`wait_for`] has reaped it.
-/// A `wait` here could take the status of the `ps` another thread runs.
+/// Whether the wrapper has a child left, which off Linux it never has once
+/// [`wait_for`] has returned.
 #[cfg(not(target_os = "linux"))]
 fn reap() -> bool {
     false
@@ -244,8 +238,9 @@ fn exit_as(status: WaitStatus) -> ExitCode {
     if let Some(raised) = Signal::from_named_raw(signal) {
         let _ = rustix::process::kill_process(rustix::process::getpid(), raised);
     }
-    // A signal the wrapper ignores, such as SIGPIPE, which Rust ignores: a
-    // shell's way of saying it.
+    // Rust ignores SIGPIPE (https://github.com/rust-lang/rust/issues/62569),
+    // so raising it leaves the wrapper running; it then exits as a shell
+    // reports a signal (https://www.gnu.org/software/bash/manual/html_node/Exit-Status.html).
     ExitCode::from(128_u8.saturating_add(u8::try_from(signal).unwrap_or(0)))
 }
 
@@ -295,7 +290,8 @@ fn running() -> Vec<Process> {
 /// <https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html>.
 #[cfg(target_os = "linux")]
 fn from_stat(pid: Pid, stat: &str) -> Option<Process> {
-    // The name, in parentheses, can hold anything, a `)` included.
+    // The name, in parentheses, can hold a `)`:
+    // https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
     let mut fields = stat[stat.rfind(')')? + 1..].split_whitespace();
     let state = fields.next()?;
     let parent = Pid::from_raw(fields.next()?.parse().ok()?);

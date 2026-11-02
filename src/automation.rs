@@ -223,9 +223,8 @@ fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
     (names, files)
 }
 
-/// Its keys but the session settings, which are gathered in `session` and
-/// checked against [`RepositorySetting`] so that the front matter takes
-/// what the repository's file takes.
+/// An automation file's front matter, with every key but `on` and
+/// `max-issues` in `session`.
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct FrontMatter {

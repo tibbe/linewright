@@ -1,4 +1,3 @@
-// comments: pending
 use std::fs::{DirBuilder, File, Permissions, TryLockError};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -45,8 +44,9 @@ pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> Pa
     }
 }
 
-/// Hashed to keep the path short whatever the name's length; lowercased as
-/// GitHub names repositories case-insensitively.
+/// The socket for `repo` in `dir`: the same for any case of `repo`, as
+/// GitHub's repository names are case-insensitive, and short whatever
+/// `repo`'s length.
 pub fn socket_path(dir: &Path, repo: &str) -> PathBuf {
     let digest = sha2::Sha256::digest(repo.to_lowercase().as_bytes());
     dir.join(format!("{}.sock", &hex::encode(digest)[..16]))
@@ -63,18 +63,17 @@ pub enum ClaimError {
 pub struct Claimed {
     listener: UnixListener,
     path: PathBuf,
-    /// Locked while held. The kernel releases the lock when the process
-    /// ends however it ends, so a socket a dead `serve` left behind never
-    /// blocks the next.
+    /// Locked while held.
     lock: File,
 }
 
-/// How long [`claim`] waits out [`is_claimed`] looking at the lock, which
-/// takes it for a moment only.
+/// How long a lock held only by [`is_claimed`] looking at it is waited out.
 const WAITS_OUT_LOOKING_FOR: std::time::Duration = std::time::Duration::from_secs(1);
-/// How soon [`claim`] tries the lock again when only looking holds it.
+/// How soon the lock is tried again while only looking holds it.
 const TRIES_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_millis(1);
 
+/// Claims `repo` on this host for this process, until it ends however it
+/// ends: a claim left by a `serve` that has ended never blocks the next.
 pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
     private_dir(dir)?;
     let path = socket_path(dir, repo);
@@ -110,7 +109,6 @@ pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
             }
         }
     }
-    // Left behind by a `serve` that died.
     remove_if_present(&path)?;
     let listener =
         UnixListener::bind(&path).with_context(|| format!("listening on {}", path.display()))?;
@@ -123,10 +121,8 @@ pub fn claim(dir: &Path, repo: &str) -> Result<Claimed, ClaimError> {
     })
 }
 
-/// Whether a `serve` holds the claim on `repo` on this host. It looks by
-/// taking a shared lock on the claim's lock for a moment, which only a
-/// `serve`'s exclusive lock blocks; [`claim`] tells that shared lock apart
-/// from a `serve`'s and waits it out.
+/// Whether a `serve` holds the claim on `repo` on this host. Looking keeps
+/// no `serve` from claiming it.
 pub fn is_claimed(dir: &Path, repo: &str) -> Result<bool> {
     let lock_path = lock_path(dir, repo);
     let lock = match File::open(&lock_path) {
@@ -200,8 +196,7 @@ impl Served {
     }
 }
 
-/// What `serve` publishes for the local API to answer from, as
-/// [`Sources`] receives it.
+/// What `serve` publishes for the local API to answer from.
 pub struct Publish {
     pub served: watch::Sender<Option<Served>>,
     pub polling: watch::Sender<Option<Polling>>,
@@ -225,8 +220,7 @@ pub struct Sources {
     pub serving: Serving,
     /// `None` until the first poll that succeeds.
     pub served: watch::Receiver<Option<Served>>,
-    /// `None` until the first poll ends; kept apart from `served` so that
-    /// polls that failed show before any has succeeded.
+    /// `None` until the first poll ends, whether or not it succeeded.
     pub polling: watch::Receiver<Option<Polling>>,
     /// Set with webhooks on.
     pub deliveries: Option<Tally>,
@@ -237,8 +231,7 @@ pub struct Sources {
 }
 
 /// The local API, under `/api/`, answering only requests whose `Host` is
-/// local. `stopping` ends the event streams, so that stopping waits only
-/// for the answers being given.
+/// local. `stopping` ends the event streams.
 pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
     let api = Router::new()
         .route("/status", get(answer_status))
@@ -364,8 +357,7 @@ async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) 
     json_response(StatusCode::OK, &taken)
 }
 
-/// Answers once a stop begins, or `serve` stops answering, so that `drain`
-/// learns of a stop however soon `serve` exits after it.
+/// Answers once a stop begins, or once `serve` stops answering.
 async fn answer_stop(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -687,8 +679,7 @@ pub(crate) async fn item_answer(
 
 /// The item page's facts about #`number` (`docs/specs/design_system.md`,
 /// The item page), from what [`item_answer`] answers, with the board of the
-/// view it answered from, and that view's snapshot, whose titles the page
-/// names items with.
+/// view it answered from, and that view's snapshot.
 pub(crate) async fn item_facts(
     sources: &Sources,
     number: Number,
@@ -799,7 +790,7 @@ pub fn query_string(query: &impl serde::Serialize) -> String {
 
 pub const ASK_AGAIN_AFTER: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// A `serve` that is stopping hangs up only until its socket is gone.
+/// The most tries of a request while `serve` hangs up on it.
 const HANG_UP_TRIES: u32 = 50;
 
 #[derive(Default)]
@@ -832,6 +823,8 @@ pub async fn get_answer_once(
     ask(dir, repo, hyper::Method::GET, resource).await
 }
 
+/// The answer to a GET of `resource`, asked again on a hang-up, up to
+/// `HANG_UP_TRIES` tries in all.
 pub async fn get_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes, RequestError> {
     let mut hang_ups = HangUps::default();
     loop {
@@ -1028,8 +1021,8 @@ fn request_error(e: hyper::Error, doing: &'static str) -> RequestError {
     RequestError::failed(anyhow::Error::new(e).context(doing), hung_up)
 }
 
-/// Writing to a socket the peer has shut fails with `ENOTCONN` on macOS,
-/// where Linux gives `EPIPE`.
+/// Whether `e` says the peer hung up, as writing to a socket the peer has
+/// shut does with `EPIPE` on Linux and `ENOTCONN` on macOS.
 fn hung_up(e: &std::io::Error) -> bool {
     matches!(
         e.kind(),

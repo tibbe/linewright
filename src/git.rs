@@ -1,4 +1,3 @@
-// comments: pending
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -12,14 +11,11 @@ use crate::domain::{UpdateMethod, UpdateRule};
 pub type GitEnv = [(String, String)];
 
 /// The git binary that the `git` on the path runs, found on first use
-/// (`docs/specs/operation.md`, Running, "git"). A `git` on the path may be a
-/// stub or shim that finds another git and runs it, as macOS's
-/// `/usr/bin/git` does with xcrun on every run, which costs more than many
-/// a git command itself. git's install puts a `git` among its helpers, in
-/// the directory `git --exec-path` names
-/// (<https://github.com/git/git/blob/master/Makefile>, `install`), and that
-/// `git` finds the rest of its install from there. Where it is missing, the
-/// `git` on the path is run.
+/// (`docs/specs/operation.md`, Running, "git"), so that a shim on the path,
+/// such as macOS's `/usr/bin/git`, is not run each time: the `git` that
+/// git's install puts in the directory `git --exec-path` names
+/// (<https://github.com/git/git/blob/master/Makefile>, `install`), or the
+/// `git` on the path where that is missing.
 fn program() -> &'static Path {
     static PROGRAM: OnceLock<PathBuf> = OnceLock::new();
     PROGRAM.get_or_init(|| {
@@ -48,10 +44,7 @@ pub async fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 
 /// The contents of `object`, such as `main:README.md`, and its type, or none
-/// when there is no such object, read in one process: `cat-file --batch`
-/// says `missing` rather than failing
-/// (<https://git-scm.com/docs/git-cat-file#_batch_output>). `-Z` ends the
-/// name and the header with NUL, so a path may hold a newline.
+/// when there is no such object. A path in `object` may hold a newline.
 pub async fn object(dir: &Path, object: &str) -> Result<Option<(String, Vec<u8>)>> {
     let input = format!("{object}\0");
     let output = git_output(dir, &["cat-file", "--batch", "-Z"], &[], input.as_bytes()).await?;
@@ -60,7 +53,8 @@ pub async fn object(dir: &Path, object: &str) -> Result<Option<(String, Vec<u8>)
         .position(|&b| b == 0)
         .context("git cat-file --batch wrote no header")?;
     let header = String::from_utf8_lossy(&output[..header_end]);
-    // `<object> <type> <size>`, or `<object> missing`.
+    // `<oid> <type> <size>`, or `<object> missing`:
+    // https://git-scm.com/docs/git-cat-file#_batch_output
     let mut fields = header.rsplitn(3, ' ');
     let (Some(size), Some(kind)) = (fields.next(), fields.next()) else {
         bail!("git cat-file --batch wrote {header}");
@@ -280,17 +274,15 @@ pub struct WorkState {
 
 /// Where the work in `dir` stands. Reading it changes nothing in `dir`.
 pub async fn work_state(dir: &Path) -> Result<WorkState> {
-    // The tree is written from a copy of the index, so the clone's own,
-    // which may hold a conflict, is left as it is.
-    let [scratch, index] = git_paths(dir, ["linewright-state-index", "index"]).await?;
-    tokio::fs::copy(&index, &scratch).await?;
-    let env = [("GIT_INDEX_FILE".to_string(), scratch.clone())];
+    let [index_copy, index] = git_paths(dir, ["linewright-state-index", "index"]).await?;
+    tokio::fs::copy(&index, &index_copy).await?;
+    let env = [("GIT_INDEX_FILE".to_string(), index_copy.clone())];
     let tree = async {
         git_with(dir, &["add", "--all"], &env).await?;
         git_with(dir, &["write-tree"], &env).await
     }
     .await;
-    let _ = tokio::fs::remove_file(&scratch).await;
+    let _ = tokio::fs::remove_file(&index_copy).await;
     Ok(WorkState {
         head: head(dir).await?,
         tree: tree?.trim().to_string(),
@@ -331,9 +323,7 @@ impl InProgress {
 
     /// The commit the branch was at before the operation, and the tree that
     /// holds the branch with the operation's `work` tree applied to it, so
-    /// the work is kept without finishing the operation. A rebase's `work`
-    /// is on the commits it has replayed, so the commits it has not yet
-    /// replayed are merged into it.
+    /// the work is kept without finishing the operation.
     async fn kept(self, dir: &Path, work: &str) -> Result<(String, String)> {
         let InProgress::Rebase(backend) = self else {
             return Ok((head(dir).await?, work.to_string()));
@@ -346,15 +336,14 @@ impl InProgress {
                 .with_context(|| format!("reading the rebase's {file}"))
         };
         let original = read("orig-head").await?.trim().to_string();
-        // The commit replayed last: the rebase stopped on it, or after it.
-        let replayed = match backend {
+        let replayed_last = match backend {
             Backend::Merge => last_replayed(&read("done").await?)
                 .context("the rebase in progress has replayed no commit")?
                 .to_string(),
             Backend::Apply => read("original-commit").await?.trim().to_string(),
         };
         let ours = git(dir, &["commit-tree", work, "-p", "HEAD", "-m", "Work"]).await?;
-        let tree = match merge_tree(dir, Some(&replayed), ours.trim(), &original).await? {
+        let tree = match merge_tree(dir, Some(&replayed_last), ours.trim(), &original).await? {
             Merged::Clean(tree) | Merged::Conflicted(tree) => tree,
         };
         Ok((original, tree))
@@ -412,7 +401,7 @@ pub(crate) async fn merge_tree(
         .await
         .with_context(|| format!("running git {}", args.join(" ")))?;
     // Exit status 1 is a merge with conflicts, whose tree comes first all the
-    // same.
+    // same: https://git-scm.com/docs/git-merge-tree
     let merged: fn(String) -> Merged = match output.status.code() {
         Some(0) => Merged::Clean,
         Some(1) => Merged::Conflicted,
@@ -443,8 +432,7 @@ async fn in_progress(dir: &Path) -> Result<Option<InProgress>> {
 }
 
 /// Where git keeps each of `names` in the git directory of `dir`, as
-/// absolute paths, in one process: `rev-parse` prints a line per
-/// `--git-path`.
+/// absolute paths.
 async fn git_paths<const N: usize>(dir: &Path, names: [&str; N]) -> Result<[String; N]> {
     let mut args = vec!["rev-parse", "--path-format=absolute"];
     for name in names {
@@ -480,8 +468,7 @@ const UNFINISHED_TRAILER: &str = "Linewright-Unfinished";
 /// ignored ones not, as one unfinished commit. A rebase or merge in progress
 /// is ended, and what it did so far is kept in the unfinished commit on the
 /// branch as it was before it. The commit amends the branch's last commit
-/// when that is an unfinished commit already, so the work a run leaves stays
-/// in one.
+/// when that is an unfinished commit already.
 pub async fn commit_unfinished(dir: &Path) -> Result<()> {
     git(dir, &["add", "--all"]).await?;
     let work = git(dir, &["write-tree"]).await?.trim().to_string();
@@ -594,8 +581,7 @@ pub struct Addition {
     /// The commit's abbreviated name.
     pub commit: String,
     pub file: String,
-    /// The lines, joined by newlines, so that a value that spans them is
-    /// found whole.
+    /// The lines, joined by newlines.
     pub text: String,
 }
 
@@ -631,35 +617,32 @@ fn parse_additions(log: &str) -> Vec<Addition> {
     let mut additions = vec![];
     let mut commit = "";
     let mut file = String::new();
-    // The width of the hunk lines' prefix, one column per parent, once in a
-    // hunk.
-    let mut columns: Option<usize> = None;
-    // The added lines since the last line that was not one.
-    let mut run: Vec<&str> = vec![];
+    let mut hunk_prefix_width: Option<usize> = None;
+    let mut added_run: Vec<&str> = vec![];
     for line in log.lines() {
-        if let Some(width) = columns
+        if let Some(width) = hunk_prefix_width
             && let Some((prefix, rest)) = line.split_at_checked(width)
             && prefix.contains('+')
         {
-            run.push(rest);
+            added_run.push(rest);
             continue;
         }
-        end_run(&mut additions, &mut run, commit, &file);
+        end_run(&mut additions, &mut added_run, commit, &file);
         if let Some(name) = line.strip_prefix('\0') {
             commit = name;
-            columns = None;
+            hunk_prefix_width = None;
         } else if line.starts_with("diff ") {
-            columns = None;
-        } else if columns.is_none()
+            hunk_prefix_width = None;
+        } else if hunk_prefix_width.is_none()
             && let Some(path) = line.strip_prefix("+++ ")
         {
             let path = path.trim_matches('"');
             file = path.strip_prefix("b/").unwrap_or(path).to_string();
         } else if line.starts_with("@@") {
-            columns = Some(line.chars().take_while(|c| *c == '@').count() - 1);
+            hunk_prefix_width = Some(line.chars().take_while(|c| *c == '@').count() - 1);
         }
     }
-    end_run(&mut additions, &mut run, commit, &file);
+    end_run(&mut additions, &mut added_run, commit, &file);
     additions
 }
 
