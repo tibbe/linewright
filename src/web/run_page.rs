@@ -1,4 +1,3 @@
-// comments: pending
 //! The run page (`docs/specs/design_system.md`, The run page): a run's
 //! transcripts (Transcripts), in full with Verbose, each tool call folded to
 //! its line, and followed while the run is in flight.
@@ -60,9 +59,7 @@ impl Patch {
     }
 }
 
-/// A run's transcript as the page shows it, built up from its lines as
-/// following it makes them, so that the page read whole and the page
-/// followed in pieces are one and the same.
+/// A run's transcript as the page shows it, built up from its lines.
 struct RunView {
     run: RunId,
     /// What the run is of, as the Item column of a list of runs names it
@@ -81,8 +78,8 @@ struct SessionView {
     started_at: Option<Timestamp>,
     /// `None` for a session recorded before Linewright kept it.
     ran: Option<Ran>,
-    /// In the order they first appeared, so that each keeps its anchor
-    /// however the transcript is read: the `k`th is `s{number}-e{k}`.
+    /// In the order they first appeared: the `k`th's anchor is
+    /// `s{number}-e{k}`.
     entries: Vec<EntryView>,
     /// The session's own entries, as against its sub-agents'.
     own: Vec<usize>,
@@ -99,8 +96,7 @@ struct EntryView {
     children: Vec<usize>,
 }
 
-/// When an entry happened, kept from its first line: a call's later line
-/// gives its account, not its time, as a transcript shows it.
+/// When an entry happened, as its first line gives it.
 #[derive(Clone, Copy)]
 struct StampView {
     at: Option<Timestamp>,
@@ -177,8 +173,6 @@ impl RunView {
                 session.calls.insert(call.tool_use_id.clone(), i);
             }
             EntryLine::Setup { .. } => {
-                // Its line once it has ended takes the place of its line as
-                // it ran, which had nothing to open to.
                 if let Some(known) = session.setup {
                     session.entries[known].what = stamped.what.clone();
                     return vec![Patch::Replace {
@@ -630,8 +624,7 @@ fn run_id(id: &str) -> Result<RunId, RunError> {
     })
 }
 
-/// Following the run `id` from its first line, at full verbosity, which
-/// gives every call's input and result to fold.
+/// Following the run `id` from its first line, at full verbosity.
 fn following(sources: &Sources, id: RunId) -> Result<Following, LogsError> {
     let which = Which::Run { id, item: None };
     Following::start(&sources.work_dir, &which, Verbosity::Full, None)

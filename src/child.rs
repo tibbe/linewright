@@ -1,4 +1,3 @@
-// comments: pending
 //! The child processes `serve` spawns.
 
 use std::ffi::OsStr;
@@ -15,8 +14,7 @@ use crate::contain::{CONTROL_VARIABLE, GO_AHEAD, Report};
 
 /// A command for `program` run as a child of `serve`. It runs in a process
 /// group of its own, out of the reach of the SIGINT a terminal sends
-/// `serve`'s process group on Ctrl-C, which drains rather than cancelling
-/// the runs in flight. It is killed if dropped before it ends.
+/// `serve`'s process group on Ctrl-C. It is killed if dropped before it ends.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut command = Command::new(program);
     command.process_group(0).kill_on_drop(true);
@@ -25,9 +23,9 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
 
 /// A command for `program` run inside a wrapper, `container contain`, that
 /// ends everything `program` starts once `program` ends or is ended (see
-/// [`crate::contain`]). Callers add `program`'s arguments, environment,
-/// working directory and standard streams to it as they would to
-/// `program`'s own command, and start it with [`ContainedCommand::spawn`].
+/// [`crate::contain`]). It takes `program`'s arguments, environment, an
+/// `env_clear` included, working directory and standard streams as
+/// `program`'s own command would, and starts with [`ContainedCommand::spawn`].
 ///
 /// The wrapper runs in a process group of its own, as [`command`]'s
 /// programs do, but is not killed on drop: [`Contained`] ends it.
@@ -40,8 +38,7 @@ pub fn contained(container: &Path, program: impl AsRef<OsStr>) -> ContainedComma
     ContainedCommand(command)
 }
 
-/// A command made by [`contained`], so that only a wrapper is ever waited
-/// on to report on its control socket.
+/// A command made by [`contained`].
 pub struct ContainedCommand(Command);
 
 impl Deref for ContainedCommand {
@@ -76,19 +73,18 @@ impl ContainedCommand {
     /// `Command::spawn` gives it.
     pub async fn spawn(self) -> io::Result<Contained> {
         let ContainedCommand(mut command) = self;
-        // A directory of its own, which only Linewright's user can enter.
-        let dir = tempfile::Builder::new().prefix("lw-contain-").tempdir()?;
-        let path = dir.path().join("control");
+        let private_dir = tempfile::Builder::new().prefix("lw-contain-").tempdir()?;
+        let path = private_dir.path().join("control");
         let listener = UnixListener::bind(&path).map_err(|e| {
             io::Error::new(
                 e.kind(),
                 format!("listening for the wrapper on {}: {e}", path.display()),
             )
         })?;
-        // Set after any `env_clear` the caller made.
         command.env(CONTROL_VARIABLE, &path);
         let mut wrapper = command.spawn()?;
-        // Taken first, as `wait` closes stdin.
+        // Taken before `wait`, which closes stdin:
+        // https://docs.rs/tokio/latest/tokio/process/struct.Child.html#method.wait
         let (stdin, stdout, stderr) = (
             wrapper.stdin.take(),
             wrapper.stdout.take(),
@@ -99,13 +95,10 @@ impl ContainedCommand {
             tokio::select! {
                 accepted = listener.accept() => {
                     let (control, _) = accepted?;
-                    // Another process of the same user may connect too, and
-                    // be gone before it is checked. The wrapper is not: see
-                    // [`GO_AHEAD`].
-                    if control
+                    let from_the_wrapper = control
                         .peer_cred()
-                        .is_ok_and(|cred| cred.pid() == wrapper_pid)
-                    {
+                        .is_ok_and(|cred| cred.pid() == wrapper_pid);
+                    if from_the_wrapper {
                         break control;
                     }
                 }
@@ -118,8 +111,7 @@ impl ContainedCommand {
             }
         };
         drop(listener);
-        drop(dir);
-        // A wrapper gone before it has the go-ahead has started nothing.
+        drop(private_dir);
         let report = match control.write_all(GO_AHEAD.as_bytes()).await {
             Ok(()) => {
                 let mut report = String::new();

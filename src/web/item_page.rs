@@ -37,7 +37,6 @@ struct ItemShown {
 }
 
 impl ItemShown {
-    /// Its runs are left to [`item_runs`], to show as a table.
     fn of(facts: &ItemFacts, names: &Names) -> ItemShown {
         let repo = names.repo();
         ItemShown {
@@ -290,8 +289,8 @@ fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
 
 /// The item page's regions: the frame's, the item as `serve`'s view
 /// explains it, without reading GitHub, when it holds the item, with the
-/// view's board, and its runs from their records, so that they keep up
-/// whether or not the view holds it.
+/// view's board, and its runs from their records whether or not the view
+/// holds it.
 pub(super) async fn item_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,

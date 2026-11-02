@@ -70,7 +70,7 @@ pub struct RepoLayer {
 impl RepoLayer {
     /// The repository's layer as it is now on `branch`, over the operator's:
     /// every file under `.linewright/`, hidden ones aside, but the
-    /// automation files, which [`automation::read`] reads.
+    /// automation files.
     pub async fn read(
         store: &dyn Store,
         branch: &str,

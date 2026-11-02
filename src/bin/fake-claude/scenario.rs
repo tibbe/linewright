@@ -1,7 +1,4 @@
-//! What a test has the fake `claude` do, which the test writes as
-//! `<the fake's path>.json`. The fake includes this file as a module, and so
-//! do the tests (`tests/integration/common/harness.rs`), so the two agree on
-//! it.
+//! What the fake `claude` does, read from `<the fake's path>.json`.
 
 use std::path::PathBuf;
 

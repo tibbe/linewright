@@ -94,7 +94,7 @@ impl Listener {
 
 /// The web UI: its pages, their event streams and their assets, answering
 /// only the requests whose `Host` `hosts` answers. `stopping` ends the event
-/// streams, so that stopping waits only for the answers being given.
+/// streams.
 pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> Router {
     Router::new()
         .route("/", get(board_page::board_page))
@@ -121,8 +121,7 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
 }
 
 /// Refuses a request whose `Host` is not local, an IP address or one of
-/// `ui-hosts`, such as one a web page sends under a name it controls that
-/// it has pointed at the UI's address.
+/// `ui-hosts`.
 async fn misdirected(State(hosts): State<UiHosts>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let reason = match HostName::of(headers) {
@@ -145,10 +144,8 @@ async fn misdirected(State(hosts): State<UiHosts>, request: Request, next: Next)
 }
 
 /// Has the browser run only the scripts Linewright serves, and show only
-/// its own images, the repository owner's GitHub avatar, which
-/// `github.com` redirects to `avatars.githubusercontent.com`, and `data:`
-/// images, which daisyUI's CSS draws some of its parts from (the tooltip's
-/// tail, the noise texture).
+/// its own images, `data:` images and those from `github.com` and
+/// `avatars.githubusercontent.com`, such as the repository owner's avatar.
 async fn confined(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(
@@ -264,8 +261,7 @@ impl Page {
     }
 }
 
-/// The icon of a link in the navigation, drawn by `macros.html`'s
-/// `nav_icon`.
+/// The icon of a link in the navigation.
 #[derive(Clone, Copy)]
 enum NavIcon {
     Board,
@@ -467,8 +463,7 @@ struct ErrorPage {
     error: String,
 }
 
-/// How often a stream looks for what changed, as what its regions read on
-/// disk, such as run records, changes with nothing sent on `serve`'s view.
+/// How often a stream looks for what changed.
 const SAMPLED_EVERY: Duration = Duration::from_secs(1);
 
 fn samples() -> tokio::time::Interval {

@@ -242,13 +242,12 @@ impl StageTable {
     }
 }
 
-/// The operator's settings for sessions, each of its layers kept apart so
-/// that a run can rank the repository's between them.
+/// The operator's settings for sessions, each of its layers kept apart.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WorkSettings {
     pub flags_and_env: Partial,
     /// The operator's config file, but for the settings `flags_and_env`
-    /// sets, which it could never win over.
+    /// sets.
     pub file: Partial,
     /// The operator's file's `[stage.NAME]` tables.
     pub stages: BTreeMap<WorkKind, StageTable>,
@@ -307,7 +306,7 @@ pub enum RunKind<'a> {
     Automation(&'a Automation),
 }
 
-/// The environment each session is given, worked out once at startup.
+/// The environment each session is given.
 #[derive(Clone, Debug, Default)]
 pub struct Environments {
     pipeline: Arc<Given>,
@@ -339,9 +338,8 @@ pub struct StageSet {
     pub taken: Vec<String>,
 }
 
-/// The setting a session's timeout came from. A timeout bounds what a run
-/// costs, so a timed-out run is not retried: its hand-back names the setting
-/// that would give the next run longer.
+/// The setting a session's timeout came from, the one that would give the
+/// next run longer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimeoutSetting {
     /// `session-timeout` in the automation's front matter.

@@ -1,4 +1,3 @@
-// comments: pending
 //! The attachments a session's result refers to in the Markdown Linewright
 //! posts (`docs/specs/runs.md`, "Attachments"): finding the references,
 //! judging their paths, refusing secrets and rewriting each path to its
@@ -17,8 +16,7 @@ use crate::secrets::Secrets;
 /// A session's attachments directory.
 #[derive(Clone, Debug)]
 pub struct Dir {
-    /// Absolute, with no symlinks, so that a reference is judged by its
-    /// path alone.
+    /// Absolute, with no symlinks.
     path: PathBuf,
 }
 
@@ -146,15 +144,18 @@ pub fn resolve(dir: &Dir, markdown: &[&str], secrets: &Secrets) -> Result<Resolv
                 attached.push((found, file));
             }
         }
-        // A video replaced whole takes what it holds with it.
-        let wholes: Vec<Range<usize>> = attached
+        let replaced_whole: Vec<Range<usize>> = attached
             .iter()
             .filter_map(|(found, _)| match &found.change {
                 Change::Whole(range) => Some(range.clone()),
                 Change::Parts(_) => None,
             })
             .collect();
-        attached.retain(|(found, _)| !wholes.iter().any(|whole| found.change.lies_within(whole)));
+        attached.retain(|(found, _)| {
+            !replaced_whole
+                .iter()
+                .any(|whole| found.change.lies_within(whole))
+        });
         let mut text_splices = Vec::new();
         for (found, file) in attached {
             if !files.contains(&file) {
@@ -481,10 +482,10 @@ fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Fo
                 with: With::Url,
             });
         }
-        // The definition holds the destination.
         LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {}
-        // A reference to no definition is plain text, and an autolink is
-        // never a path.
+        // A reference to no definition is plain text
+        // (https://spec.commonmark.org/0.31.2/#reference-link), and an
+        // autolink is never a path (https://spec.commonmark.org/0.31.2/#autolinks).
         LinkType::ReferenceUnknown
         | LinkType::CollapsedUnknown
         | LinkType::ShortcutUnknown
@@ -493,7 +494,7 @@ fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Fo
         | LinkType::WikiLink { .. } => return None,
     }
     let written = dest_url.to_string();
-    // A link to a video stays a link: only an embedded one plays.
+    // Only an embedded video plays: https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files
     if !image {
         return Some(Found {
             written,
@@ -509,10 +510,9 @@ fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Fo
                 range: link_start..link_start + 1,
                 with: With::Delete,
             });
-            // A link with no text would not show; a shortcut's or collapsed
-            // reference's text is its label, which must stay.
-            if text_end == text_start && matches!(link_type, LinkType::Inline | LinkType::Reference)
-            {
+            let shows_no_text = text_end == text_start
+                && matches!(link_type, LinkType::Inline | LinkType::Reference);
+            if shows_no_text {
                 splices.push(Splice {
                     range: text_start..text_start,
                     with: With::Url,
@@ -660,8 +660,7 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
             range: src,
             with: With::Url,
         }];
-        // An `alt=""` would make a link that does not show.
-        let label = tag
+        let non_empty_alt = tag
             .alt
             .map(|alt| text[alt].to_string())
             .filter(|alt| !alt.is_empty());
@@ -670,7 +669,7 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
             || {
                 vec![Splice {
                     range: tag_range,
-                    with: With::Anchor(label),
+                    with: With::Anchor(non_empty_alt),
                 }]
             }
         };
@@ -709,8 +708,8 @@ fn img_tag(text: &str, start: usize, limit: usize) -> Option<ImgTag> {
         {
             i += 1;
         }
-        if i == name_start {
-            // A `/` not closing the tag.
+        let at_a_slash_not_closing_the_tag = i == name_start;
+        if at_a_slash_not_closing_the_tag {
             i += 1;
             continue;
         }

@@ -1,4 +1,3 @@
-// comments: pending
 //! How `serve` ends, on the signals it is sent and the drains `lw drain`
 //! asks for (`docs/specs/operation.md`, "Stopping").
 
@@ -103,11 +102,11 @@ pub enum Step {
 }
 
 impl Ending {
+    /// Where `event` takes `serve`, and the step it has it take, as
+    /// `docs/specs/operation.md`, "Stopping", has them.
     pub fn on(self, event: Event) -> (Ending, Step) {
         use Signal::{Interrupt, Quit, Terminate};
         match (self, event) {
-            // Only serving tells signals apart: once ending has begun, any
-            // signal takes the next way.
             (Ending::Serving, Event::Signal(Terminate | Interrupt)) => {
                 (Ending::Draining { deadline: None }, Step::Drain)
             }
@@ -118,7 +117,6 @@ impl Ending {
             | (Ending::Draining { .. }, Event::Signal(_)) => {
                 (Ending::Stopping { by: StopBy::Signal }, Step::Stop)
             }
-            // The latest `drain` sets the deadline.
             (Ending::Draining { .. }, Event::Drain { deadline }) => {
                 (Ending::Draining { deadline }, Step::SetDeadline)
             }
@@ -137,7 +135,6 @@ impl Ending {
                 Event::Deadline(_),
             ) => (self, Step::PassedUnheeded),
             (Ending::Stopping { .. }, Event::Drain { .. }) => (self, Step::Nothing),
-            // A process that has exited reads no more signals.
             (Ending::Stopping { .. }, Event::Signal(_)) | (Ending::Exited, _) => {
                 (Ending::Exited, Step::Exit)
             }
@@ -153,8 +150,8 @@ impl Ending {
     }
 }
 
-/// Where `serve` is in ending, shared by what asks it to end: it takes each
-/// event as [`Ending::on`] has it, logging what it does.
+/// Where `serve` is in ending: it takes each event as [`Ending::on`] has it,
+/// logging what it does.
 #[derive(Clone, Debug)]
 pub struct Ends {
     state: watch::Sender<Ending>,
@@ -192,8 +189,9 @@ impl Ends {
         self.state.borrow().deadline()
     }
 
-    /// Returns where `serve` was in ending, and the step `event` takes, which
-    /// is left to the caller only if it is [`Step::Exit`].
+    /// Takes `event`, beginning the drain or the stop it calls for, and
+    /// returns where `serve` was in ending and the step `event` takes. It
+    /// does not exit on [`Step::Exit`].
     pub fn on(&self, event: Event) -> (Ending, Step) {
         let mut was = Ending::default();
         let mut now = Ending::default();
@@ -275,7 +273,6 @@ impl Ends {
                     _ = changed => {}
                 },
                 None => {
-                    // The sender lives as long as `self`.
                     let _ = changed.await;
                 }
             }

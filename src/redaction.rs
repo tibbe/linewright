@@ -1,4 +1,3 @@
-// comments: pending
 //! Keeping Linewright's secrets out of what it keeps, logs or posts
 //! (`docs/specs/operation.md`, Secrets).
 
@@ -12,28 +11,25 @@ pub const REDACTED: &str = "[redacted]";
 /// nothing.
 #[derive(Clone, Default)]
 pub struct Redaction {
-    /// `None` when no secret is set, as a matcher needs a pattern.
     matcher: Option<AhoCorasick>,
 }
 
 impl Redaction {
+    /// Redacts each secret's value as it is and as it is written inside a
+    /// JSON string once or twice. A secret that holds another is redacted
+    /// whole.
     pub fn of(secrets: &[Secret]) -> Redaction {
         let mut patterns = Vec::new();
         for secret in secrets {
             let value = secret.value().to_string();
-            // The harness's events and transcript write text in JSON strings,
-            // and a session's result is often JSON itself, so a secret
-            // can be escaped twice.
-            let once = json_escaped(&value);
-            let twice = json_escaped(&once);
-            patterns.extend([value, once, twice]);
+            let in_json = json_escaped(&value);
+            let in_json_in_json = json_escaped(&in_json);
+            patterns.extend([value, in_json, in_json_in_json]);
         }
         patterns.dedup();
         if patterns.is_empty() {
             return Redaction::default();
         }
-        // Leftmost-longest, so a secret that holds another is redacted
-        // whole.
         let matcher = AhoCorasick::builder()
             .match_kind(MatchKind::LeftmostLongest)
             .build(patterns)

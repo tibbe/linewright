@@ -32,9 +32,7 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
 
 /// `phrase` as HTML (`docs/specs/design_system.md`): an item is named as
 /// `names` names it, a time and a duration are `<time>` elements holding
-/// the text the commands print, which the page's script shows in the
-/// reader's time zone or locale and keeps up, and a label or a command is
-/// code.
+/// the text the commands print, and a label or a command is code.
 pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
     let mut html = String::new();
     for segment in phrase.segments() {
@@ -69,8 +67,8 @@ pub(crate) fn item(number: Number, repo: &str) -> Html {
 }
 
 /// #`number` and its title, linking to its page, and a link to it on
-/// GitHub. The number and the title are each marked, for the stylesheet's
-/// `.name-cut-1` and `.name-cut-2` (`docs/specs/design_system.md`, Layout).
+/// GitHub. The number and the title are each a `span` of its own, of class
+/// `number` and `title` (`docs/specs/design_system.md`, Layout).
 pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
     Html(format!(
         "{}{}",
@@ -109,9 +107,7 @@ fn github(number: Number, repo: &str) -> String {
     )
 }
 
-/// `at` as a `<time>`, focusable so that the absolute time the page's
-/// script gives a past time in its tooltip shows on keyboard focus too
-/// (`docs/specs/design_system.md`, Layout).
+/// `at` as a focusable `<time>` (`docs/specs/design_system.md`, Layout).
 pub(crate) fn time(at: Timestamp) -> Html {
     Html(format!(
         r#"<time datetime="{}" tabindex="0">{}</time>"#,
@@ -145,7 +141,7 @@ pub(crate) fn escape(text: &str) -> Html {
 }
 
 /// `html` with the text of its running durations left out: what changes of
-/// it only as time passes, which the page's script keeps up itself.
+/// it only as time passes.
 pub(crate) fn settled(html: &str) -> String {
     const RUNNING: &str = "<time data-since=\"";
     let mut settled = String::with_capacity(html.len());

@@ -1,4 +1,3 @@
-// comments: pending
 use std::io::{IsTerminal, Write as _};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -35,14 +34,13 @@ use tracing::{error, info, warn};
 
 const HARNESS_PROGRAM: &str = "claude";
 
-/// Clap exits with 2 too for a command line it cannot parse.
+/// The exit code for a command line that is wrong, the one Clap gives a
+/// command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.invocation {
-        // Without a runtime: the wrapper runs nothing but its program, and
-        // reaps whatever is re-parented to it.
         Invocation::Contain { program } => {
             let (name, args) = program.split_first().expect("clap requires the program");
             contain::main(name, args)
@@ -161,7 +159,6 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
     if no_wait {
         return ExitCode::SUCCESS;
     }
-    // Answered as the stop begins, however soon `serve` exits after it.
     let mut stop = (taken.was != Was::Stopping).then(|| {
         let (dir, repo) = (dir.clone(), repo.to_string());
         tokio::spawn(async move {
@@ -184,27 +181,24 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
         } else {
             tokio::time::sleep(DRAIN_ASKS_EVERY).await;
         }
-        let status = match api::get_answer(&dir, &repo, "/api/status").await {
+        let answered = match api::get_answer(&dir, &repo, "/api/status").await {
             Ok(body) => match read_as::<status::Status>(&body, "a status") {
                 Ok(status) => Some(status),
                 Err(e) => return print_answer(Err(e)),
             },
-            // `serve` stops answering before it releases its claim, which a
-            // new `serve` needs.
             Err(RequestError::NotServing { .. }) => match api::is_claimed(&dir, &repo) {
                 Ok(true) => continue,
                 Ok(false) => None,
                 Err(e) => return print_answer(Err(failed(&e))),
             },
-            // Asked again: a `serve` that hangs up is about to exit.
             Err(RequestError::HungUp(_)) => continue,
             Err(e) => return print_answer(Err(refused(&e))),
         };
-        // One started since, as a supervisor restarts it, is another.
-        match status.filter(|status| status.linewright.serving_since == taken.serving_since) {
+        let of_same_serve =
+            answered.filter(|status| status.linewright.serving_since == taken.serving_since);
+        match of_same_serve {
             Some(status) => say(&waiting.seen(&status.run_ids())),
             None => {
-                // Answered before `serve` stopped answering.
                 if let Some(answering) = stop.take() {
                     say(&stop_begun(answering.await));
                 }
@@ -345,7 +339,6 @@ async fn follow_logs(
         }
         match followed {
             Ok(()) if ended => return ExitCode::SUCCESS,
-            // Broken off: asked again, after the last line read.
             Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
             Err(RequestError::HungUp(e)) => {
                 if !hang_ups.ask_again() {
@@ -478,7 +471,6 @@ fn socket_dir() -> PathBuf {
 
 async fn run(command: Command, config: Config) -> Result<ExitCode> {
     let done = match command {
-        // Its errors go to standard error as they are, not to the log.
         Command::Status { json } => {
             let resource = "/api/status";
             return Ok(ask(&config, resource, "a status", json, status::render).await);
@@ -523,18 +515,15 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             return Ok(show_logs(&config, &which, printing, follow).await);
         }
         Command::Serve => {
-            // First, so a log names the build it came from.
             info!(version = %VERSION, commit = %COMMIT, "starting");
-            // Listening before startup, which talks to GitHub: in a container
-            // `lw` can be PID 1, which the kernel sends no signal it
-            // has no handler for.
+            // PID 1, as `lw` can be in a container, is sent only the signals
+            // it has a handler for:
+            // https://man7.org/linux/man-pages/man2/kill.2.html#NOTES
             let signals = Signals::new().context("listening for stop signals")?;
             let ends = Ends::new();
             end_on(signals, ends.clone());
             let clock: Arc<dyn Clock> = Arc::new(SystemClock);
             let since = clock.now();
-            // Before anything else, so that a second `serve` for the
-            // repository stops at once.
             let work_dir = config.repo_work_dir()?;
             let claimed = api::claim(&socket_dir(), &work_dir.repo)?;
             let pending = Pending::default();
@@ -566,13 +555,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             if let Some(listener) = listener {
                 listener.stop().await;
             }
-            // Before the claim is released, which `drain` waits for, so
-            // that a `serve` started once it returns can listen on the
-            // same `ui-address`.
-            if let Some(ui) = ui {
-                ui.stop().await;
-            }
-            api.stop().await;
+            stop_ui_then_release_claim(ui, api).await;
             stopped
         }
         Command::Once => {
@@ -637,8 +620,17 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     done.map(|()| ExitCode::SUCCESS)
 }
 
+/// Stops the web UI, and only once it has stopped releases the repository's
+/// claim, so that a `serve` that starts once the claim is released can
+/// listen on the same `ui-address`.
+async fn stop_ui_then_release_claim(ui: Option<web::Listener>, api: Api) {
+    if let Some(ui) = ui {
+        ui.stop().await;
+    }
+    api.stop().await;
+}
+
 async fn serve(config: &Config, ends: &Ends, pending: &Pending, publish: &Publish) -> Result<()> {
-    // No run can be in flight yet, so every drain or stop ends `serve` alike.
     let mut factory = tokio::select! {
         factory = start(config, OnUsageLimit::Wait, ends.clone()) => factory?,
         () = ends.drain_or_stop_begun() => {
@@ -688,8 +680,8 @@ fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
 }
 
-/// The token sessions are given and Linewright's secrets, redacted from
-/// what they say, for the harness and the factory alike.
+/// The token sessions are given, and Linewright's secrets, which are
+/// redacted from what sessions say.
 struct SessionCredentials {
     token: SessionToken,
     secrets: Secrets,
@@ -722,10 +714,9 @@ fn harness(bash: PathBuf, sessions: &SessionCredentials) -> Result<ClaudeCode> {
 }
 
 /// What sessions are given of Linewright's environment. Logs the names of
-/// the variables they are not given, so that an operator whose build fails
-/// only in a session sees what to add to `session-pass-env`, and of those,
-/// what each stage's table gives its sessions; and the names, never the
-/// values, `session-env` sets.
+/// the variables they are not given and, of those, the ones each stage's
+/// table gives its sessions; and the names, never the values, that
+/// `session-env` sets.
 fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
     let split = config.work.environments(
         &config.session_env,
@@ -763,8 +754,7 @@ fn environments(config: &Config, sessions: &SessionCredentials) -> Environments 
     split.environments
 }
 
-/// Read before anything else at startup, so a mistake in them is found at
-/// once. Logs which files they provide.
+/// The operator's prompts. Logs which files they provide.
 fn prompts(config: &Config) -> Result<OperatorPrompts> {
     let prompts = OperatorPrompts::read(config.prompts.as_deref())?;
     if config.prompts.is_some() {
@@ -892,8 +882,8 @@ async fn require_tool(program: &str) -> Result<()> {
     Ok(())
 }
 
-/// Claude Code takes the shell it is told to use as a path, not a name to
-/// look up.
+/// The absolute path of the first `bash` on the `PATH`, or an error when
+/// there is none.
 fn require_bash() -> Result<PathBuf> {
     let found = std::env::var_os("PATH")
         .iter()

@@ -1,4 +1,3 @@
-// comments: pending
 //! Running a session's setup command in its clone, as the session starts
 //! (`docs/specs/runs.md`, Setup): in a process group of its own, its output
 //! on one pipe, redacted line by line into the session's record, and its
@@ -88,7 +87,6 @@ pub async fn run(
     let writer: OwnedFd = sender
         .into_blocking_fd()
         .context("making the setup command's pipe")?;
-    // Ends the group from here on, even if this is dropped part way.
     let leftovers = Leftovers {
         group: Some(Group::start(bash)?),
         drained: CancellationToken::new(),
@@ -110,8 +108,8 @@ pub async fn run(
         .stderr(Stdio::from(writer))
         .process_group(group.as_raw_nonzero().get());
     let spawned = command.spawn();
-    // The command holds the pipe's write end until it is dropped, and the
-    // pipe ends only once every writer has closed it.
+    // A pipe's reader sees end-of-file only once every write end is closed:
+    // https://man7.org/linux/man-pages/man7/pipe.7.html
     drop(command);
     let mut child = spawned.with_context(|| format!("starting {}", bash.display()))?;
     let mut output = Output {
@@ -144,12 +142,11 @@ pub async fn run(
             },
         }
     };
-    // What the command wrote before it ended is in the pipe.
     output.take_buffered(&receiver, &mut buffer)?;
     output.finish()?;
     let text = output.text;
-    // A process left running can still write to the pipe: it is read and
-    // dropped until the group ends, so that the process gets no `EPIPE`.
+    // A write to a pipe with no reader fails with `EPIPE`:
+    // https://man7.org/linux/man-pages/man7/pipe.7.html
     let drained = leftovers.drained.clone();
     tokio::spawn(async move {
         tokio::select! {
@@ -208,9 +205,7 @@ impl Output<'_> {
         Ok(())
     }
 
-    /// Takes what `receiver` holds now, but nothing written after. It reads
-    /// the descriptor, which does not block, as the runtime may not have
-    /// seen the output arrive yet.
+    /// Takes what `receiver` holds now, but nothing written after.
     fn take_buffered(&mut self, receiver: &pipe::Receiver, buffer: &mut [u8]) -> Result<()> {
         let reading = "reading the setup command's output";
         let held = rustix::io::ioctl_fionread(receiver).context(reading)?;
@@ -280,22 +275,20 @@ impl Drop for Leftovers {
     }
 }
 
-/// The command's process group. Its leader is a process of Linewright's
-/// that waits for as long as the group is held, so that no other group
-/// takes its id meanwhile, as one could once the command and every process
-/// it left had exited.
+/// The command's process group, whose id no other group takes for as long
+/// as it is held.
 #[derive(Debug)]
 struct Group {
     leader: std::process::Child,
     id: Pid,
 }
 
+const WAIT_UNTIL_STDIN_CLOSES: &str = "read -r _";
+
 impl Group {
     fn start(bash: &Path) -> Result<Group> {
-        // It waits for a line that never comes on a pipe Linewright holds
-        // open.
         let leader = std::process::Command::new(bash)
-            .args(["-c", "read -r _"])
+            .args(["-c", WAIT_UNTIL_STDIN_CLOSES])
             .env_clear()
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

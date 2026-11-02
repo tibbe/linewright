@@ -591,7 +591,8 @@ const BRANCH_WORK: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::Update),
 ]);
 
-/// Reads each template from its lookup, noting the runs it is sent to.
+/// The templates read from a lookup: each read one's path with the runs it is
+/// sent to, and the paths whose text could not be used, with why.
 struct Reader<'l, 'a> {
     lookup: &'l mut dyn FnMut(&'static str) -> Option<&'a str>,
     unusable: Vec<(&'static str, anyhow::Error)>,

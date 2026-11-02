@@ -1,4 +1,3 @@
-// comments: pending
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -224,8 +223,8 @@ pub enum AutomationCommand {
     },
 }
 
-/// The settings as flags. Each is a string here, or a string per entry for a
-/// table, and parsed once, after the layers are merged.
+/// The settings as flags, unparsed: a string, or a string per entry for a
+/// table.
 #[derive(Args, Debug, Default)]
 pub struct Settings {
     /// The TOML config file [default: linewright.toml in the working directory]
@@ -589,9 +588,9 @@ impl Layers {
     }
 }
 
-/// A list setting's `entries`, each parsed by `parse` on its own, so that
-/// an error is blamed by `blame_on` on the layer that gave it, then joined
-/// by `and`.
+/// A list setting's `entries`, each parsed by `parse` and joined by `and`.
+/// An entry that does not parse is blamed by `blame_on` on the layer that
+/// gave it.
 fn joined<T: Default>(
     entries: Vec<Entry>,
     blame_on: &dyn Fn(Option<OperatorLayer>, anyhow::Error) -> ResolveError,
@@ -622,7 +621,6 @@ struct Features {
 }
 
 const FEATURES: Features = Features {
-    // Turned on by the environment's secret, which no setting holds.
     webhooks: Feature {
         setting: "webhook-address",
         switches: &[],
@@ -706,9 +704,7 @@ impl Config {
                 key.to_uppercase().replace('-', "_")
             ))
         };
-        // What each layer sets of every setting held as text, read once:
-        // its flag, its variable and the file.
-        let texts: BTreeMap<&str, Layers> = SETTINGS
+        let text_layers: BTreeMap<&str, Layers> = SETTINGS
             .iter()
             .filter_map(|&(key, form)| {
                 let Form::Text(form) = form else {
@@ -728,14 +724,11 @@ impl Config {
                 Some((key, Layers::Text { form, set }))
             })
             .collect();
-        // `key` is one of `SETTINGS` held as text.
         let layers = |key: &str| -> &Layers {
-            texts
+            text_layers
                 .get(key)
                 .unwrap_or_else(|| panic!("`{key}` is not a setting held as text"))
         };
-        // What each layer sets of the table `key`: its flag, a mistake in
-        // which is the command line's, and the file.
         let flag_tables = settings.tables();
         let table_layers = |key: &str| -> Result<Layers, ResolveError> {
             let flag = flag_tables
@@ -762,8 +755,6 @@ impl Config {
             Combined::List(entries) => entries,
             Combined::Value(_) | Combined::Table(_) => panic!("`{key}` is not a list"),
         };
-        // A wrong value is blamed on the flag that gave it, and one the file
-        // gave names the file.
         let blame_on = |layer: Option<OperatorLayer>, error: anyhow::Error| match layer {
             Some(OperatorLayer::Flag) => ResolveError::CommandLine(error),
             Some(OperatorLayer::File) => {
@@ -771,8 +762,6 @@ impl Config {
             }
             Some(OperatorLayer::Environment) | None => ResolveError::Elsewhere(error),
         };
-        // A wrong combination is blamed on the command line when a flag gave
-        // any of `keys`.
         let blame = |keys: &[&str], error: anyhow::Error| {
             if keys
                 .iter()
@@ -838,7 +827,6 @@ impl Config {
                 )
             })
         };
-        // The repository's own setting by default.
         let merge_method = refuse_while_off(
             &FEATURES.auto_merge,
             auto_merge,
@@ -875,8 +863,6 @@ impl Config {
                 .parse()
                 .map_err(|e| not_one("webhook-address", address, e))
         };
-        // `WEBHOOK_ADDRESS` by default with the secret set, and none
-        // without it, so any address given is not at its default.
         let webhook_address = refuse_while_off(
             &FEATURES.webhooks,
             secret.is_some(),
@@ -902,8 +888,6 @@ impl Config {
             |host| UiHosts::new([host.as_str()]).map_err(|e| format!("the setting `ui-hosts` {e}")),
             UiHosts::and,
         )?;
-        // No names at any layer is its default: `""` as a flag or variable
-        // and `[]` in the file.
         let ui_hosts = refuse_while_off(
             &FEATURES.ui,
             !ui_address.is_empty(),
@@ -954,9 +938,6 @@ impl Config {
                 Layer::Linewright
             }
         };
-        // The repository's file ranks between the flags and environment and
-        // the operator's file, so a run is given the value with the layer
-        // it came from.
         let flag_or_env =
             |key: &str| value_of(key).filter(|entry| entry.layer != OperatorLayer::File);
         let in_file = |key: &str| value_of(key).filter(|entry| entry.layer == OperatorLayer::File);
@@ -1118,8 +1099,8 @@ fn set(table: &mut StageTable, setting: Setting, value: toml::Value) -> Result<(
     Ok(())
 }
 
-/// Sets `setting` in `settings` to `value`: so the repository's file and an
-/// automation's front matter read a setting alike.
+/// Sets `setting` in `settings` to `value`, as the repository's file sets
+/// it.
 pub(crate) fn set_session(
     settings: &mut Partial,
     setting: RepositorySetting,
@@ -1232,7 +1213,6 @@ fn setting_value(key: &str, form: Text, value: toml::Value) -> Result<String> {
         (_, toml::Value::String(s)) => s,
         (_, toml::Value::Integer(i)) => i.to_string(),
         (_, toml::Value::Boolean(b)) => b.to_string(),
-        // As the text its flag takes, separated by commas.
         (Text::List { holds }, toml::Value::Array(entries)) => entries
             .into_iter()
             .map(|entry| match entry.as_str() {
@@ -1254,8 +1234,7 @@ fn setting_value(key: &str, form: Text, value: toml::Value) -> Result<String> {
 }
 
 /// `value`, of the table setting `key`, `session-env`, as the values it
-/// sets. An array, the form of `session-pass-env`, which `session-env` once
-/// held, says so.
+/// sets. The error for an array points to `session-pass-env`.
 fn set_env(key: &str, value: toml::Value) -> Result<SetEnv> {
     let toml::Value::Table(table) = value else {
         let pass = match value {

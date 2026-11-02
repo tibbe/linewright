@@ -1,4 +1,3 @@
-// comments: pending
 use std::time::Duration;
 
 use anyhow::Context;
@@ -118,8 +117,8 @@ pub enum LogsError {
     Other(#[from] anyhow::Error),
 }
 
-/// A named run whose record does not read is not missing but failed to
-/// read, unlike the runs [`Runs::read`] skips.
+/// The run `which` names. A run named by its ID whose record does not read
+/// is an error, not a run that is missing.
 fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
     if let Which::Run { id, .. } = which {
         runs.try_read_run(id)
@@ -142,8 +141,6 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    // Of a run in flight, its last session's whole lines, so that following
-    // it carries on from the line after them.
     let in_flight = (run.state == State::InFlight).then(|| {
         if let Some(last) = records.last_mut() {
             last.output
@@ -265,8 +262,6 @@ impl Following {
     /// The next lines to show of what the run's records hold now, without
     /// waiting for more.
     pub fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
-        // Its state before its sessions' output, so that the output of a
-        // run that has ended is read whole.
         let recorded = self
             .runs
             .read_run(&self.run)
