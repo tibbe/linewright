@@ -2139,14 +2139,7 @@ async fn a_stopped_rework_leaves_commits_a_person_pushed_while_it_worked_and_say
 #[test_log::test(tokio::test)]
 async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date_once_that_alone_keeps_it_from_merging()
  {
-    let mut world = World::with_repository(
-        Repository {
-            requires_up_to_date: true,
-            ..Repository::default()
-        },
-        |_| {},
-    )
-    .await;
+    let mut world = World::with_repository(Repository::requiring_up_to_date(), |_| {}).await;
     let (_, pr) = world.ticket_in_review().await;
     let before = world.store.snapshot_pull(pr).await.head_sha;
     world.approve_behind(pr).await;
@@ -2173,8 +2166,8 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date_once_tha
     );
 }
 
-/// A world whose ticket's pull request conflicts with the default branch,
-/// which moved on past it.
+/// A world whose ticket's pull request, ready for review, conflicts with the
+/// default branch, which moved on past it.
 async fn moved_past_in_conflict() -> (World, linewright::domain::Number) {
     moved_past_with(Repository::default(), |_| {}, true).await
 }
@@ -2186,6 +2179,7 @@ pub(crate) async fn moved_past_with(
 ) -> (World, linewright::domain::Number) {
     let mut world = World::with_repository(repository, adjust).await;
     let (ticket, pr) = world.ticket_in_review().await;
+    world.store.mark_ready(pr).await.unwrap();
     let file = if conflicting {
         format!("src/issue-{}.txt", ticket.0)
     } else {
@@ -2307,16 +2301,7 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
 async fn a_rework_run_on_a_branch_merely_behind_leaves_it_behind() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
+    world.move_default_branch_on().await;
     let before = world.store.snapshot_pull(pr).await.head_sha;
     world.rework_asked(pr);
 

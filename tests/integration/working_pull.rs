@@ -1,5 +1,7 @@
 use linewright::domain::{MergeMethod, Requirement};
-use linewright::working_pull::{Branch, Checks, Facts, Row, Verdict, row, updates};
+use linewright::working_pull::{
+    Branch, Checks, Facts, Row, Verdict, rework_starts_with_update, row,
+};
 
 /// A green draft with nothing else to do: only marking it ready holds.
 fn green_draft() -> Facts {
@@ -306,25 +308,25 @@ fn a_rework_run_updates_where_an_update_row_holds_with_its_feedback_set_aside() 
         ..facts
     };
 
-    assert!(updates(&feedback(behind())));
-    assert!(updates(&feedback(Facts {
+    assert!(rework_starts_with_update(&feedback(behind())));
+    assert!(rework_starts_with_update(&feedback(Facts {
         branch: Branch::Conflicting,
         checks: failing(),
         ..green_draft()
     })));
-    assert!(updates(&feedback(Facts {
+    assert!(rework_starts_with_update(&feedback(Facts {
         branch: Branch::Unmergeable {
             ended_since_push: false
         },
         ..mergeable()
     })));
-    assert!(!updates(&feedback(Facts {
+    assert!(!rework_starts_with_update(&feedback(Facts {
         held: true,
         ..behind()
     })));
-    assert!(!updates(&feedback(Facts {
+    assert!(!rework_starts_with_update(&feedback(Facts {
         checks: failing(),
         ..behind()
     })));
-    assert!(!updates(&feedback(mergeable())));
+    assert!(!rework_starts_with_update(&feedback(mergeable())));
 }

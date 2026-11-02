@@ -1122,12 +1122,13 @@ impl LocalStore {
         };
         let mergeability = match record.state {
             PullState::Open { .. } if record.merge_state_pending => Mergeability::Unknown,
-            PullState::Open { .. } => {
+            PullState::Open { draft } => {
                 let found = self
                     .mergeability(&default_branch, &record.head_ref, up_to_date)
                     .await?;
                 match (found, &record.blocked) {
                     (Mergeability::Conflicting, _) => Mergeability::Conflicting,
+                    _ if draft => Mergeability::Unknown,
                     (_, Some(requires)) => Mergeability::Blocked {
                         requires: requires.clone(),
                     },

@@ -94,7 +94,7 @@ pub enum Work {
         issue: Number,
         pr: Number,
         /// It starts by bringing the branch up to date
-        /// ([`working_pull::updates`]).
+        /// ([`working_pull::rework_starts_with_update`]).
         update: bool,
     },
     FixCi {
@@ -1535,7 +1535,7 @@ fn pull_work(
         WorkingRow::Rework => PullWork::Start(Work::Rework {
             issue: ticket,
             pr: pr_number,
-            update: working_pull::updates(&facts),
+            update: working_pull::rework_starts_with_update(&facts),
         }),
         WorkingRow::Update => PullWork::Start(Work::Update {
             issue: ticket,
