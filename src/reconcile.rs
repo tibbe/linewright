@@ -93,6 +93,9 @@ pub enum Work {
     Rework {
         issue: Number,
         pr: Number,
+        /// It starts by bringing the branch up to date
+        /// ([`working_pull::updates`]).
+        update: bool,
     },
     FixCi {
         issue: Number,
@@ -1527,10 +1530,12 @@ fn pull_work(
     let merge_state = Wait::MergeState {
         pull_request: pr_number,
     };
-    match working_pull::row(&working_pull::facts(pr, memory, policy, now)) {
+    let facts = working_pull::facts(pr, memory, policy, now);
+    match working_pull::row(&facts) {
         WorkingRow::Rework => PullWork::Start(Work::Rework {
             issue: ticket,
             pr: pr_number,
+            update: working_pull::updates(&facts),
         }),
         WorkingRow::Update => PullWork::Start(Work::Update {
             issue: ticket,

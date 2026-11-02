@@ -477,7 +477,11 @@ async fn attempt(
             let ticket = ticket_of(shell, snapshot, issue).await?;
             return implement(shell, ctx, &ticket, branch).await;
         }
-        Work::Rework { issue: n, pr } => (n, pr, Task::Rework),
+        Work::Rework {
+            issue: n,
+            pr,
+            update,
+        } => (n, pr, Task::Rework { update: *update }),
         Work::FixCi {
             issue: n,
             pr,
@@ -1730,7 +1734,10 @@ async fn file_spec_gaps(
 }
 
 enum Task<'a> {
-    Rework,
+    Rework {
+        /// It starts by bringing the branch up to date.
+        update: bool,
+    },
     FixCi(&'a [String]),
     Update,
 }
@@ -1789,8 +1796,10 @@ async fn update_branch(
     })
 }
 
-/// Works `pr`, of `ticket`, at `task`. The setup command runs on the branch
-/// as it was cloned, before it is updated (docs/specs/runs.md, "Setup").
+/// Works `pr`, of `ticket`, at `task`, bringing the branch up to date first
+/// for an update or a fix-ci and for a rework that asks for it. The setup
+/// command runs on the branch as it was cloned, before any update
+/// (docs/specs/runs.md, "Setup").
 /// Feedback that arrives while the session works goes to it before anything
 /// is pushed, for as long as it keeps coming within the session's time.
 async fn pull_work(
@@ -1802,7 +1811,7 @@ async fn pull_work(
 ) -> Result<(), Failure> {
     let subject = Subject::Issue(ticket.number());
     let kind = match task {
-        Task::Rework => WorkKind::Rework,
+        Task::Rework { .. } => WorkKind::Rework,
         Task::FixCi(_) => WorkKind::FixCi,
         Task::Update => WorkKind::Update,
     };
@@ -1820,7 +1829,12 @@ async fn pull_work(
         git::abort_update(&ws.dir, conflict).await.map_err(infra)?;
     }
     let opened = open_session(shell, ctx, purpose, &mut ws).await?;
-    let conflict = update_branch(shell, pr, &ws.dir).await?;
+    let conflict = match task {
+        Task::Rework { update: false } => None,
+        Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
+            update_branch(shell, pr, &ws.dir).await?
+        }
+    };
     let store = &shell.store;
     let lease = PushMode::Lease {
         expected: start.clone(),
@@ -1830,12 +1844,12 @@ async fn pull_work(
             .check_failures(pr.number, names)
             .await
             .map_err(infra)?,
-        Task::Rework | Task::Update => vec![],
+        Task::Rework { .. } | Task::Update => vec![],
     };
     let given = feedback(pr, linewright, ctx.reworked);
     let briefed_authors = feedback_people(&given, linewright);
     let job = match task {
-        Task::Rework => PullJob::Rework(given),
+        Task::Rework { .. } => PullJob::Rework(given),
         Task::FixCi(_) => PullJob::FixCi(&failures),
         Task::Update => PullJob::Update,
     };

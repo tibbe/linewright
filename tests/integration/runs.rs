@@ -132,18 +132,17 @@ async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_
 
 #[test_log::test(tokio::test)]
 async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.implement_a_ticket().await;
-    world
-        .store
-        .merge_change(
-            "maintainer",
-            "Other work",
-            "",
-            &[("src/other.txt", "other\n")],
-        )
-        .await
-        .unwrap();
+    let work_dir = tempfile::tempdir().unwrap();
+    let mut world = World::with_repository(
+        Repository {
+            requires_up_to_date: true,
+            ..Repository::default()
+        },
+        |config| config.work_dir = work_dir.path().join(REPO),
+    )
+    .await;
+    let (_, pr) = world.implement_a_ticket().await;
+    world.approve_behind(pr).await;
     world.poll().await;
 
     let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();

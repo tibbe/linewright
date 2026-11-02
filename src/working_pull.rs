@@ -1,19 +1,27 @@
 //! The Working a pull request table (`docs/specs/pull_requests.md`): the
 //! facts its rows read about a pull request Linewright opened ([`facts`]),
 //! and the first row that holds ([`row`]).
+//! [`updates`] says whether a rework run starts with an update.
 
 use crate::domain::{
     Assignment, CheckState, Comment, Login, MergeMethod, Mergeability, Pull, PullState,
-    Rebaseability, Requirement, Review, ReviewState, Thread, Timestamp,
+    Rebaseability, Requirement, Review, ReviewDecision, ReviewState, Thread, Timestamp,
 };
 use crate::reconcile::{EndedRun, Memory, Policy, WorkKind};
 
 /// What the rows read about one pull request, worked out once at a poll.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a fact of its own that rows of the table read, in any combination"
+)]
 pub struct Facts {
     /// Feedback has come: see [`feedback`].
     pub feedback: bool,
     pub branch: Branch,
+    /// GitHub reports it [`Mergeability::Behind`]. Never for a draft, whose
+    /// merge state GitHub doesn't report.
+    pub behind: bool,
     pub checks: Checks,
     /// Fix-ci runs that have ended on it this round, however they ended.
     pub fix_ci_runs: usize,
@@ -23,6 +31,11 @@ pub struct Facts {
     pub auto_merge: Option<MergeMethod>,
     /// A person holds its merge.
     pub held: bool,
+    /// GitHub requires a review it has not had ([`Pull::review_required`]),
+    /// or a reviewer requested changes.
+    pub review_required: bool,
+    /// A person besides Linewright has submitted an approving review.
+    pub approved: bool,
     /// GitHub's reasons for the merges of it that failed this round, oldest
     /// first.
     pub failed_merges: Vec<String>,
@@ -32,8 +45,8 @@ pub struct Facts {
 /// Whether its branch can be merged as it is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Branch {
-    /// GitHub reports it behind the default branch, or in conflict with it.
-    Behind,
+    /// GitHub reports it in conflict with the default branch.
+    Conflicting,
     /// It cannot be merged by a method the repository allows: GitHub reports
     /// it not rebaseable, and the repository allows rebase.
     Unmergeable {
@@ -114,14 +127,16 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
         Checks::Green
     };
     let branch = match pr.mergeability {
-        Mergeability::Behind | Mergeability::Conflicting => Branch::Behind,
+        Mergeability::Conflicting => Branch::Conflicting,
         _ if unmergeable(pr, policy) => Branch::Unmergeable {
             ended_since_push: ended.iter().any(|r| r.at > pushed),
         },
-        Mergeability::Clean | Mergeability::Blocked { .. } | Mergeability::Unknown => {
-            Branch::Mergeable
-        }
+        Mergeability::Clean
+        | Mergeability::Behind
+        | Mergeability::Blocked { .. }
+        | Mergeability::Unknown => Branch::Mergeable,
     };
+    let draft = pr.state == (PullState::Open { draft: true });
     let auto_merge = policy.auto_merge;
     let verdict = match (&pr.mergeability, auto_merge) {
         (Mergeability::Clean, Some(MergeMethod::Rebase))
@@ -144,15 +159,22 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
     Facts {
         feedback: !feedback(pr, linewright, memory.rework_answered_until(pr.number)).is_empty(),
         branch,
+        behind: !draft && pr.mergeability == Mergeability::Behind,
         checks,
         fix_ci_runs: ended
             .iter()
             .filter(|r| r.kind == WorkKind::FixCi && r.at > round_start)
             .count(),
         ci_attempts: policy.ci_attempts as usize,
-        draft: pr.state == (PullState::Open { draft: true }),
+        draft,
         auto_merge,
         held: is_held(pr, linewright),
+        review_required: pr.review_required()
+            || pr.review_decision == Some(ReviewDecision::ChangesRequested),
+        approved: pr
+            .reviews
+            .iter()
+            .any(|r| r.state == ReviewState::Approved && r.author.is_person_besides(linewright)),
         failed_merges: memory
             .pulls
             .failed_merges(pr.number)
@@ -206,7 +228,7 @@ pub fn row(facts: &Facts) -> Row {
         return Row::Rework;
     }
     match facts.branch {
-        Branch::Behind
+        Branch::Conflicting
         | Branch::Unmergeable {
             ended_since_push: false,
         } => return Row::Update,
@@ -242,6 +264,9 @@ pub fn row(facts: &Facts) -> Row {
         }
         | Checks::Green => {}
     }
+    if facts.behind && ready_to_merge(facts) {
+        return Row::Update;
+    }
     if facts.draft {
         return Row::MarkReady;
     }
@@ -269,6 +294,24 @@ pub fn row(facts: &Facts) -> Row {
         Verdict::NotReported => Row::WaitForMergeState,
         Verdict::Allows => Row::Merge { method },
     }
+}
+
+/// Whether a rework run on a pull request with `facts` starts by bringing
+/// its branch up to date: a row that starts an update run holds once its
+/// feedback is set aside.
+pub fn updates(facts: &Facts) -> bool {
+    row(&Facts {
+        feedback: false,
+        ..facts.clone()
+    }) == Row::Update
+}
+
+/// Ready to merge, but for being behind: no person holds its merge, GitHub
+/// requires no review it has not had and, with `auto-merge` off, a person
+/// has approved it. GitHub reports it behind only while nothing else it
+/// requires is missing.
+fn ready_to_merge(facts: &Facts) -> bool {
+    !facts.held && !facts.review_required && (facts.auto_merge.is_some() || facts.approved)
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

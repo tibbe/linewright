@@ -49,7 +49,14 @@ async fn a_review_on_linewrights_pull_request_refreshed_after_its_run_is_address
         .unwrap();
     let actions = world.factory.refresh([Item::Pull(pr)]).await.unwrap();
 
-    assert_eq!(actions, [Action::Start(Work::Rework { issue, pr })]);
+    assert_eq!(
+        actions,
+        [Action::Start(Work::Rework {
+            issue,
+            pr,
+            update: false
+        })]
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -92,7 +99,11 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
                 pr: spec,
                 let_go: false
             },
-            Action::Start(Work::Rework { issue: ticket, pr }),
+            Action::Start(Work::Rework {
+                issue: ticket,
+                pr,
+                update: false
+            }),
             Action::Claim {
                 item: Item::Issue(issue)
             },

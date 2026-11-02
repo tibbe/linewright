@@ -115,6 +115,7 @@ impl Sandbox {
                 linewright: Login::new(LOCAL_LINEWRIGHT),
                 issue_types: None,
                 linear_history: false,
+                requires_up_to_date: false,
                 allowed_merge_methods: MergeMethods::all(),
             },
             Arc::new(SystemClock),
