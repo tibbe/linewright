@@ -254,8 +254,7 @@ fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_
 }
 
 /// `docs/specs/design_system.md`, The board: a card is in the column of its
-/// item's state, whatever run is in flight on it; here a person labeled #2
-/// `needs-info` while its triage run is in flight.
+/// item's state, whatever run is in flight on it.
 #[test_log::test]
 fn a_card_is_in_the_column_of_its_state_whatever_run_is_in_flight() {
     let view = with_runs(
@@ -1319,7 +1318,7 @@ fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_i
     );
     let handed_back_by_its_last_run =
         recorded("2/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack);
-    let (handed_back, then_triaged_again_asking_for_a_decision) = (
+    let (three_handed_back, then_triaged_again_asking_for_a_decision) = (
         recorded("3/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
         recorded("3/triage-1", "2026-10-01T11:00:00Z", Ending::Done),
     );
@@ -1331,7 +1330,7 @@ fn a_card_needing_a_person_says_who_was_asked_it_was_handed_back_or_a_decision_i
         recorded("8/implement-1", "2026-10-01T10:00:00Z", Ending::HandedBack);
     let recorded = [
         handed_back_by_its_last_run,
-        handed_back,
+        three_handed_back,
         then_triaged_again_asking_for_a_decision,
         a_triage_asking_for_a_decision,
         triaged_again_after_its_pull_request_closed_unmerged,
@@ -1780,13 +1779,17 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
     );
 }
 
-/// Each of `numbers` with its card's card status.
-fn statuses<const N: usize>(board: &Board, numbers: [u64; N]) -> [(u64, Option<CardStatus>); N] {
-    numbers.map(|n| (n, card(board, n).status()))
+/// Asserts that each card of `cards`, a case, #number and card status each,
+/// has that card status on `board`, naming the case where it does not.
+#[track_caller]
+fn assert_card_statuses(board: &Board, cards: &[(&str, u64, Option<CardStatus>)]) {
+    for &(case, number, status) in cards {
+        assert_eq!(card(board, number).status(), status, "#{number}: {case}");
+    }
 }
 
 /// `docs/specs/design_system.md`, Cards: the Card status column of the table
-/// of lines, on the boards the tests of each line above set up.
+/// of lines.
 #[test_log::test]
 fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
     use CardStatus::{Failed, InFlight, PausedOrQueued, WaitingForAPerson};
@@ -1839,37 +1842,38 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
         ..working
     };
 
-    let needing_a_person = board(&needing, &handed_back, at(NOW));
-    for (line, number, status) in [
-        ("stalled", 1, Some(Failed)),
-        ("asked", 2, Some(WaitingForAPerson)),
-        ("handed back", 3, Some(WaitingForAPerson)),
-        ("decision needed", 4, Some(WaitingForAPerson)),
-        ("triage, nothing but the time", 5, None),
-    ] {
-        assert_eq!(
-            card(&needing_a_person, number).status(),
-            status,
-            "#{number}: {line}"
-        );
-    }
-    assert_eq!(
-        statuses(&board(&ready(), &[], at(NOW)), [1, 2, 3, 4]),
-        [(1, None), (2, None), (3, None), (4, None)]
+    assert_card_statuses(
+        &board(&needing, &handed_back, at(NOW)),
+        &[
+            ("stalled", 1, Some(Failed)),
+            ("asked", 2, Some(WaitingForAPerson)),
+            ("handed back", 3, Some(WaitingForAPerson)),
+            ("decision needed", 4, Some(WaitingForAPerson)),
+            ("triage, nothing but the time", 5, None),
+        ],
+    );
+    assert_card_statuses(
+        &board(&ready(), &[], at(NOW)),
+        &[
+            ("blocked", 1, None),
+            ("assigned to alice", 2, None),
+            ("nothing but the time", 3, None),
+            ("unassigned", 4, None),
+        ],
     );
     for paused_or_queued in [limited, draining, full] {
-        assert_eq!(
-            statuses(&board(&paused_or_queued, &[], at(NOW)), [3]),
-            [(3, Some(PausedOrQueued))]
+        assert_card_statuses(
+            &board(&paused_or_queued, &[], at(NOW)),
+            &[("paused or queued", 3, Some(PausedOrQueued))],
         );
     }
-    assert_eq!(
-        statuses(&board(&running, &[], at(NOW)), [1]),
-        [(1, Some(InFlight))]
+    assert_card_statuses(
+        &board(&running, &[], at(NOW)),
+        &[("a run in flight", 1, Some(InFlight))],
     );
-    assert_eq!(
-        statuses(&board(&held, &[], at(NOW)), [1]),
-        [(1, Some(PausedOrQueued))]
+    assert_card_statuses(
+        &board(&held, &[], at(NOW)),
+        &[("working, held by a limit", 1, Some(PausedOrQueued))],
     );
 }
 
@@ -1918,23 +1922,24 @@ fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
 
     let board = board(&view, &[], at(NOW));
 
-    for (stop, number, status) in [
-        ("a run in flight", 1, Some(InFlight)),
-        ("checks failed", 2, Some(Failed)),
-        ("checks running", 3, Some(InFlight)),
-        ("conflicts", 4, Some(Failed)),
-        ("behind main", 5, None),
-        ("draft", 6, None),
-        ("nothing", 7, None),
-        ("changes requested", 8, Some(WaitingForAPerson)),
-        ("review required", 9, Some(WaitingForAPerson)),
-        ("approved", 10, None),
-        ("stalled", 40, Some(Failed)),
-        ("checks failed, on its own card", 30, Some(Failed)),
-        ("approved, on its own card", 31, None),
-    ] {
-        assert_eq!(card(&board, number).status(), status, "#{number}: {stop}");
-    }
+    assert_card_statuses(
+        &board,
+        &[
+            ("a run in flight", 1, Some(InFlight)),
+            ("checks failed", 2, Some(Failed)),
+            ("checks running", 3, Some(InFlight)),
+            ("conflicts", 4, Some(Failed)),
+            ("behind main", 5, None),
+            ("draft", 6, None),
+            ("nothing stops it", 7, None),
+            ("changes requested", 8, Some(WaitingForAPerson)),
+            ("review required", 9, Some(WaitingForAPerson)),
+            ("approved", 10, None),
+            ("stalled", 40, Some(Failed)),
+            ("checks failed, on its own card", 30, Some(Failed)),
+            ("approved, on its own card", 31, None),
+        ],
+    );
 }
 
 #[test_log::test]
@@ -1963,16 +1968,16 @@ fn a_card_in_done_has_no_card_status() {
 
     let board = board(&view, &[], at(NOW));
 
-    assert_eq!(
-        statuses(&board, [1, 2, 3, 5, 30, 40]),
-        [
-            (1, None),
-            (2, None),
-            (3, None),
-            (5, None),
-            (30, None),
-            (40, None)
-        ]
+    assert_card_statuses(
+        &board,
+        &[
+            ("closed in a pull request", 1, None),
+            ("closed", 2, None),
+            ("completed", 3, None),
+            ("a spec change", 5, None),
+            ("a closed pull request", 30, None),
+            ("a merged pull request", 40, None),
+        ],
     );
 }
 
@@ -2574,7 +2579,7 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
     ];
     let issues = (1..=5).map(|n| assigned(ticket(n, "Reviewed"))).collect();
     let view = with_runs(view(issues, pulls), &["12/rework-1"]);
-    let (handed_back, then_worked_again) = (
+    let (fourteen_handed_back, then_worked_again) = (
         recorded("14/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
         recorded("14/rework-1", "2026-10-01T11:00:00Z", Ending::Done),
     );
@@ -2583,7 +2588,7 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
     let recorded = [
         recorded("11/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
         recorded("13/fix-ci-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
-        handed_back,
+        fourteen_handed_back,
         then_worked_again,
         the_issues_own_run_not_its_pull_requests,
         recorded("16/rework-1", "2026-10-01T10:00:00Z", Ending::HandedBack),
@@ -2609,13 +2614,17 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
             Some(CardLine::MergeStop(Stop::HandedBack)),
         ]
     );
-    assert_eq!(
-        statuses(&board, [1, 2, 16]),
-        [
-            (1, Some(CardStatus::WaitingForAPerson)),
-            (2, None),
-            (16, Some(CardStatus::WaitingForAPerson)),
-        ]
+    assert_card_statuses(
+        &board,
+        &[
+            ("handed back", 1, Some(CardStatus::WaitingForAPerson)),
+            ("unassigned", 2, None),
+            (
+                "handed back, on its own card",
+                16,
+                Some(CardStatus::WaitingForAPerson),
+            ),
+        ],
     );
 }
 

@@ -168,9 +168,8 @@ impl Routed for Web {
     }
 }
 
-/// The web UI's router driven in-process over a `Served` written through
-/// the back door: a view built by hand over a local store, with no factory
-/// and no poll.
+/// The web UI's router driven in-process over a view built by hand over a
+/// local store, with no factory and no poll.
 struct Pages {
     router: Router,
     sources: Sources,

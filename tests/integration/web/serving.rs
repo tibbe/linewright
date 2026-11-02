@@ -141,6 +141,8 @@ async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached
     assert_passes_through_a_proxy(response.headers());
 }
 
+/// `docs/specs/operation.md`, Running, Behind a proxy: a quiet stream sends a
+/// keep-alive once it has been quiet for 15 seconds.
 #[test_log::test(tokio::test)]
 async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
     let pages = pages().await;
