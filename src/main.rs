@@ -838,7 +838,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             if let Err(e) = &prepared {
                 error!(
                     error = format!("{e:#}"),
-                    "no session starts: there is no environment"
+                    "no run starts: there is no environment"
                 );
             }
             factory.cycle().await?;
