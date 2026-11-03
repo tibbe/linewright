@@ -3691,6 +3691,10 @@ impl Store for GitHub {
         git::clone(&url, dir, branch, config, &self.git_env()).await
     }
 
+    async fn fetch(&self, dir: &Path) -> Result<()> {
+        git::fetch(dir, &self.git_env()).await
+    }
+
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
         let refspec = format!("HEAD:refs/heads/{branch}");
         let lease = match &mode {

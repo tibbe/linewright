@@ -658,21 +658,43 @@ struct Workspace {
 }
 
 impl Workspace {
-    /// A session's clone of `branch`, with the environment copied into it
-    /// (docs/specs/sessions.md, "Environment").
+    /// A session's clone: a copy of the environment with `branch` checked
+    /// out in it, or a plain clone of `branch` without an environment
+    /// (docs/specs/sessions.md, Environment, "A session's clone").
     async fn make(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
-        let ws = Workspace::clone(shell, purpose, branch).await?;
-        if let Some(lease) = shell.environment.lease() {
-            lease
-                .copy_into(&ws.dir)
+        let Some(lease) = shell.environment.lease() else {
+            return Workspace::clone(shell, purpose, branch).await;
+        };
+        Workspace::create(shell, purpose, async |dir| {
+            lease.copy_to(dir).await?;
+            drop(lease);
+            shell
+                .store
+                .fetch(dir)
                 .await
-                .context("copying the environment into the clone")?;
-        }
-        Ok(ws)
+                .context("fetching into the copy of the environment")?;
+            git::check_out_fresh(dir, branch).await
+        })
+        .await
     }
 
     /// A run's own clone of `branch`, for work that needs no session.
     async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
+        Workspace::create(shell, purpose, async |dir| {
+            shell.store.clone_repo(dir, branch, &[]).await
+        })
+        .await
+    }
+
+    /// A new workspace for `purpose`, under the work directory's `clones`,
+    /// whose repository `fill` makes at the path it is given, which does not
+    /// exist yet. The repository is then given [`clone_config`], and the
+    /// workspace a scratch directory and Linewright's plugin.
+    async fn create(
+        shell: &Shell,
+        purpose: &Purpose,
+        fill: impl AsyncFnOnce(&Path) -> Result<()>,
+    ) -> Result<Workspace> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
@@ -682,12 +704,8 @@ impl Workspace {
             .tempdir_in(&clones)
             .context("creating a clone directory")?;
         let dir = temp.path().join("repo");
-        let config = [
-            ("user.name", shell.identity.name.as_str()),
-            ("user.email", shell.identity.email.as_str()),
-            ("maintenance.auto", "false"),
-        ];
-        shell.store.clone_repo(&dir, branch, &config).await?;
+        fill(&dir).await?;
+        git::configure(&dir, &clone_config(shell)).await?;
         let scratch = temp.path().join("tmp");
         tokio::fs::create_dir(&scratch)
             .await
@@ -702,6 +720,16 @@ impl Workspace {
             plugin,
         })
     }
+}
+
+/// The git settings of every clone a run makes: Linewright's identity, and
+/// no maintenance git starts by itself.
+fn clone_config(shell: &Shell) -> [(&str, &str); 3] {
+    [
+        ("user.name", shell.identity.name.as_str()),
+        ("user.email", shell.identity.email.as_str()),
+        ("maintenance.auto", "false"),
+    ]
 }
 
 impl Drop for Workspace {

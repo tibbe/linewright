@@ -115,6 +115,8 @@ pub enum Write {
     Clone {
         branch: String,
     },
+    /// A fetch into a clone.
+    Fetch,
 }
 
 /// How [`LocalStore::refuse_attachments`] has GitHub refuse an upload.
@@ -2101,6 +2103,11 @@ impl Store for LocalStore {
             branch: branch.into(),
         })
         .await
+    }
+
+    async fn fetch(&self, dir: &Path) -> Result<()> {
+        git::fetch(dir, &[]).await?;
+        self.paused(Write::Fetch).await
     }
 
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {

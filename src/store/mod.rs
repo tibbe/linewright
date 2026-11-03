@@ -462,6 +462,10 @@ pub trait Store: Send + Sync {
     /// Clones the repository into `dir` at `branch`, with each `config`
     /// setting, such as `user.name`, written to the clone's config.
     async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()>;
+    /// Brings the remote-tracking refs of the clone in `dir` up to date
+    /// with the repository's branches, dropping those of branches it no
+    /// longer has.
+    async fn fetch(&self, dir: &Path) -> Result<()>;
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
     /// Uploads `file` as an attachment of the repository's Markdown, named
     /// `name`, and returns the URL to put in place of its path

@@ -75,6 +75,36 @@ async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a
 }
 
 #[test_log::test(tokio::test)]
+async fn a_fetch_into_the_copy_of_the_environment_that_fails_twice_hands_the_item_back() {
+    let mut world = World::new().await;
+    crate::environment::set_up_with(&world, "mkdir -p node_modules").await;
+    world.poll().await;
+    implement(&world);
+    let ticket = open_ticket(&world, "Do the thing");
+    let mut first = world.store.pause_after(Write::Fetch);
+
+    world.factory.cycle().await.unwrap();
+    reached(&mut first).await;
+    let mut second = world.store.pause_after(Write::Fetch);
+    first.fail();
+    reached(&mut second).await;
+    second.fail();
+    world.factory.settle().await;
+
+    assert_eq!(
+        world.harness.prompts(WorkKind::Implement),
+        Vec::<String>::new()
+    );
+    assert_eq!(sessions_per_run(&world), [2]);
+    let issue = world.issue(ticket);
+    let comment = last_comment(&issue);
+    assert!(
+        comment.contains("The run failed twice on its infrastructure"),
+        "{comment}"
+    );
+}
+
+#[test_log::test(tokio::test)]
 async fn a_clone_still_being_made_at_its_sessions_deadline_is_the_session_timing_out() {
     let mut world = World::with(|config| {
         config.work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
