@@ -221,4 +221,18 @@ module pipeline {
   run issue881LeftAloneTest = setup(READY_FOR_AGENT, true, false, true, false, false)
     .then(personMergesPr(Q))
     .expect(prState(world, Q) == "merged" and not(managed(world, Q)))
+
+  /// #1029: a stalled issue a person relabels and reassigns sheds
+  /// linewright:stalled before any run starts on it again.
+  run issue1029Test = setup(READY_FOR_AGENT, true, false, false, false, false)
+    .then(does("claim", I, "")).then(does("start run", I, "design"))
+    .then(does("end run", I, "uncut")).then(finishes)
+    .then(does("start run", I, "implement")).then(does("end run", I, "stall"))
+    .then(8.reps(_ => finishes))
+    .expect(stateOfI == READY_FOR_HUMAN and items.get(I).stalled and not(items.get(I).lw))
+    .then(personAddsStatusLabel(I, READY_FOR_AGENT)).then(personAssignsLinewright(I))
+    .expect(stateOfI == "being designed" and items.get(I).stalled
+            and optionsOn(world, I) == Set(opt("clear stalled", I, "")))
+    .then(does("clear stalled", I, "")).then(finishes)
+    .expect(not(items.get(I).stalled) and mayNowStart(I, "design"))
 }

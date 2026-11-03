@@ -163,6 +163,7 @@ item. Its writes are made in their order ([Writes](#writes)).
 | tracking | it has sub-issues and every one is closed | closes it | done |
 | `needs-info` | a reply has come ([Answers](triage.md#answers)) | labels it `needs-triage` | `needs-triage` |
 | `needs-triage`, `ready-for-agent` | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries `linewright:designed` |
+| any but done, merged and closed | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |
 | being triaged | no run is in flight on it | starts a triage run ([Triage](triage.md)) | being triaged |
 | being triaged | the triage run ends with `ready-for-agent` | labels it `ready-for-agent` | being designed, or being implemented where it carries `linewright:designed` |
 | being triaged | the triage run ends with `needs-info` | labels it `needs-info`, then assigns the people asked whom GitHub lets it assign | `needs-info` |
@@ -180,8 +181,9 @@ item. Its writes are made in their order ([Writes](#writes)).
 | open | a pull request Linewright opened and is assigned to, whose first row of [Working a pull request](pull_requests.md#working-a-pull-request) that holds does more than wait | does what that row gives | open, or merged |
 | open | a run on it cannot finish ([Ending](runs.md#ending)) | hands it back | open |
 | any but done | the issue carries more than one status label | removes all but the newest | unchanged |
-| any but done, merged and closed | it carries `linewright:stalled` and Linewright is assigned to it | removes `linewright:stalled` | unchanged |
 
+- **Stalls.** Linewright removes `linewright:stalled` before it starts work
+  on the item again.
 - **Claiming.** On its own, Linewright claims an issue that is unassigned,
   marked for it and that it can start: no open issue blocks it. It claims a
   pull request it opened. An item Linewright was unassigned from, by itself or
