@@ -158,6 +158,7 @@ fn stop_worded(stop: &Stop) -> Phrase {
         Stop::HandedBack => "handed back".into(),
         Stop::Unassigned => "unassigned".into(),
         Stop::Running(running) => running_worded(*running),
+        Stop::Held(held) => held_worded(held),
         Stop::ChecksFailed => "checks failed".into(),
         Stop::ChecksRunning => "checks running".into(),
         Stop::Conflicts => "conflicts".into(),

@@ -158,6 +158,17 @@ pub fn in_flight(id: &str, started: &str) -> InFlight {
     }
 }
 
+/// `view` with the runs in flight at `max-runs`, none of them on its items.
+pub fn at_max_runs(view: View) -> View {
+    View {
+        live: (901..)
+            .take(view.policy.max_runs)
+            .map(implementing)
+            .collect(),
+        ..view
+    }
+}
+
 pub fn limited_until(resets_at: &str) -> Memory {
     Memory {
         usage_limit: Some(UsageLimit {
