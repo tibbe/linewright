@@ -9,6 +9,7 @@ use crate::sandbox::{NewCommit, Sandbox, commit, recent};
 
 contracts![
     a_clone_is_of_the_branch_asked_with_the_settings_given,
+    a_fetch_brings_the_clones_branches_up_to_date_with_the_repositorys,
     a_replacing_push_moves_the_branch_to_a_commit_not_after_its_head,
     a_push_with_a_lease_moves_the_branch_from_the_commit_expected,
     a_push_with_a_stale_lease_is_refused_and_leaves_the_branch,
@@ -40,6 +41,59 @@ async fn a_clone_is_of_the_branch_asked_with_the_settings_given(sandbox: Sandbox
     equal("the file", contents.as_str(), "cloned\n")?;
     let name = git::git(&clone, &["config", "--local", "user.name"]).await?;
     equal("the name set", name.trim(), "Cloner")
+}
+
+/// The commit `dir`'s remote-tracking ref for `branch` names, `None`
+/// without one.
+async fn tracked(dir: &std::path::Path, branch: &str) -> Result<Option<String>> {
+    let remote = format!("refs/remotes/origin/{branch}");
+    Ok(
+        git::git(dir, &["rev-parse", "--verify", "--quiet", &remote])
+            .await
+            .ok()
+            .map(|head| head.trim().to_string()),
+    )
+}
+
+async fn a_fetch_brings_the_clones_branches_up_to_date_with_the_repositorys(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let deleted = sandbox
+        .push_branch(
+            "fetch-deleted",
+            &[NewCommit {
+                message: "Add a file",
+                files: &[("deleted.txt", b"deleted\n")],
+            }],
+        )
+        .await?;
+    let clone = sandbox.clone_default_branch().await?;
+    let pushed = sandbox
+        .push_branch(
+            "fetch-pushed",
+            &[NewCommit {
+                message: "Add a file",
+                files: &[("pushed.txt", b"pushed\n")],
+            }],
+        )
+        .await?;
+    sandbox.store().delete_branch(&deleted.name).await?;
+
+    sandbox
+        .eventually(async || {
+            sandbox.store().fetch(&clone).await?;
+            equal(
+                "the branch pushed since the clone",
+                &tracked(&clone, &pushed.name).await?,
+                &Some(pushed.head.clone()),
+            )?;
+            equal(
+                "the branch deleted since the clone",
+                &tracked(&clone, &deleted.name).await?,
+                &None,
+            )
+        })
+        .await
 }
 
 /// Checks that the file `replaced.txt` at the head of `branch` holds

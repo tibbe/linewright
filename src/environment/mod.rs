@@ -7,8 +7,7 @@ pub mod lifecycle;
 pub mod shown;
 
 use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
-use std::os::unix::ffi::OsStrExt as _;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -836,65 +835,15 @@ pub struct Lease {
 }
 
 impl Lease {
-    /// Copies every path git ignores in the environment into `clone`, as a
-    /// copy-on-write copy where the filesystem allows, never overwriting a
-    /// file `clone` has (`docs/specs/sessions.md`, Environment). No process
-    /// removes the build while the copy is in progress.
-    pub async fn copy_into(&self, clone: &Path) -> Result<()> {
+    /// Copies the build's repository, `.git` included, to `dest`, which
+    /// does not exist, sharing disk space where the filesystem allows
+    /// (`docs/specs/sessions.md`, Environment, "A session's clone"). No
+    /// process removes the build while the copy is in progress.
+    pub async fn copy_to(&self, dest: &Path) -> Result<()> {
         let _copying = kept::lease(&self.build.path).await?;
-        let repo = self.build.path.join(kept::REPO);
-        let listed = git::git_bytes(
-            &repo,
-            &[
-                "ls-files",
-                "-z",
-                "--others",
-                "--ignored",
-                "--exclude-standard",
-                "--directory",
-            ],
-        )
-        .await
-        .context("listing the environment's ignored paths")?;
-        for path in listed
-            .split(|&byte| byte == 0)
-            .filter(|path| !path.is_empty())
-        {
-            let path: PathBuf = Path::new(OsStr::from_bytes(path)).components().collect();
-            copy(&repo.join(&path), &clone.join(&path))
-                .await
-                .with_context(|| format!("copying {} from the environment", path.display()))?;
-        }
-        Ok(())
-    }
-}
-
-/// Copies `from` to `to`, merging into a directory `to` already is and
-/// leaving each file already there as it is.
-fn copy<'a>(
-    from: &'a Path,
-    to: &'a Path,
-) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-    Box::pin(async move {
-        let Some(there) = metadata_if_any(to).await? else {
-            return copy_absent(from, to).await;
-        };
-        if !there.is_dir() || !tokio::fs::symlink_metadata(from).await?.is_dir() {
-            return Ok(());
-        }
-        let mut entries = tokio::fs::read_dir(from).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            copy(&entry.path(), &to.join(entry.file_name())).await?;
-        }
-        Ok(())
-    })
-}
-
-async fn metadata_if_any(path: &Path) -> Result<Option<std::fs::Metadata>> {
-    match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) => Ok(Some(metadata)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
+        copy_absent(&self.build.path.join(kept::REPO), dest)
+            .await
+            .context("copying the environment")
     }
 }
 

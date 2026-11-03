@@ -134,6 +134,56 @@ pub async fn clone(
     Ok(())
 }
 
+/// Brings the remote-tracking refs of the clone in `dir` up to date with
+/// origin's branches, dropping those of branches origin no longer has,
+/// without running the repository's hooks.
+pub async fn fetch(dir: &Path, env: &GitEnv) -> Result<()> {
+    let args = [
+        NO_HOOKS[0],
+        NO_HOOKS[1],
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--prune",
+        "origin",
+    ];
+    git_with(dir, &args, env).await?;
+    Ok(())
+}
+
+/// Writes each `config` setting, such as `user.name`, to the config of the
+/// clone in `dir`.
+pub async fn configure(dir: &Path, config: &[(&str, &str)]) -> Result<()> {
+    for (key, value) in config {
+        git(dir, &["config", key, value]).await?;
+    }
+    Ok(())
+}
+
+/// The arguments that keep a git command from running the repository's
+/// hooks, which a clone copied from the environment may set.
+const NO_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+
+/// Checks out `branch` as the clone in `dir` last fetched it from origin,
+/// replacing the local `branch`. Tracked files are the branch's, whatever
+/// the working tree held, and untracked files are kept but where they are
+/// in the branch's way. The repository's hooks are not run.
+pub async fn check_out_fresh(dir: &Path, branch: &str) -> Result<()> {
+    let remote = format!("refs/remotes/origin/{branch}");
+    let args = [
+        NO_HOOKS[0],
+        NO_HOOKS[1],
+        "checkout",
+        "--quiet",
+        "--force",
+        "-B",
+        branch,
+        &remote,
+    ];
+    git(dir, &args).await?;
+    Ok(())
+}
+
 pub async fn head(dir: &Path) -> Result<String> {
     Ok(git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string())
 }
@@ -155,8 +205,9 @@ pub enum BranchStart {
     New,
 }
 
-/// Checks out `branch` as the remote had it when cloned, or as a new branch
-/// at `HEAD` when the remote had no such branch. `base` is what the
+/// Checks out `branch` as the remote had it when last fetched, replacing
+/// untracked files in its way, or as a new branch at `HEAD` when the remote
+/// had no such branch. `base` is what the
 /// branch's unfinished commits are counted past.
 pub async fn check_out_branch(dir: &Path, branch: &str, base: &str) -> Result<BranchStart> {
     let remote = format!("refs/remotes/origin/{branch}");
@@ -164,7 +215,7 @@ pub async fn check_out_branch(dir: &Path, branch: &str, base: &str) -> Result<Br
         .await
         .is_ok()
     {
-        git(dir, &["checkout", "--quiet", "-B", branch, &remote]).await?;
+        check_out_fresh(dir, branch).await?;
         let unfinished = unfinished_commits(dir, base, "HEAD").await?;
         Ok(BranchStart::Existing { unfinished })
     } else {

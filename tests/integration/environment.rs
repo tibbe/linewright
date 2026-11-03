@@ -492,3 +492,182 @@ async fn a_config_file_linewright_cannot_use_starts_no_build() {
 
     assert_eq!(marks.builds(), 1, "an unusable file starts no build");
 }
+
+/// What a session's clone holds, read by [`clone_reading`].
+#[derive(Debug, PartialEq)]
+struct CloneRead {
+    installed: Option<String>,
+    untracked: Option<String>,
+    clash: Option<String>,
+    gone: bool,
+    hooks_path: String,
+    branch: String,
+}
+
+/// What git writes, trimmed, run in `dir` with `args`: empty when it
+/// fails, as `git config` does for a setting the repository lacks.
+#[track_caller]
+fn git_in(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// What each implement session found in its clone. Each writes over the
+/// files it read, then answers that it failed.
+fn clone_reading(world: &World) -> Arc<Mutex<Vec<CloneRead>>> {
+    let seen = Arc::new(Mutex::new(vec![]));
+    world.harness.on(WorkKind::Implement, {
+        let seen = seen.clone();
+        move |call| {
+            let dir = &call.spec.dir;
+            let read = |path: &str| std::fs::read_to_string(dir.join(path)).ok();
+            let git = |args: &[&str]| git_in(dir, args);
+            seen.lock().unwrap().push(CloneRead {
+                installed: read("node_modules/x"),
+                untracked: read("notes.txt"),
+                clash: read("clash.txt"),
+                gone: dir.join("gone.txt").exists(),
+                hooks_path: git(&["config", "core.hooksPath"]),
+                branch: git(&["rev-parse", "--abbrev-ref", "HEAD"]),
+            });
+            for path in ["node_modules/x", "notes.txt", "clash.txt"] {
+                std::fs::write(dir.join(path), "session\n").unwrap();
+            }
+            failed_session("looked")
+        }
+    });
+    seen
+}
+
+/// Commits `gone.txt` and sets up an environment whose setup command
+/// installs `node_modules/x`, leaves `notes.txt` and `clash.txt` untracked
+/// and sets `core.hooksPath` in its `.git`.
+async fn set_up_leaving_untracked_files(world: &World) {
+    commit(world, &[("gone.txt", "on main\n")]).await;
+    set_up_with(
+        world,
+        "mkdir -p node_modules && echo environment > node_modules/x; \
+         echo environment > notes.txt; echo environment > clash.txt; \
+         git config core.hooksPath .husky",
+    )
+    .await;
+}
+
+/// The repository of the environment's one build.
+#[track_caller]
+fn built_repo(world: &World) -> PathBuf {
+    let builds = world.dir.path().join("work/environment/builds");
+    let mut repos: Vec<PathBuf> = std::fs::read_dir(&builds)
+        .unwrap()
+        .map(|entry| entry.unwrap().path().join("repo"))
+        .filter(|repo| repo.is_dir())
+        .collect();
+    assert_eq!(repos.len(), 1, "{repos:?}");
+    repos.pop().unwrap()
+}
+
+#[test_log::test(tokio::test)]
+async fn a_sessions_clone_is_a_copy_of_the_environment_with_a_branch_pushed_since_the_build_checked_out()
+ {
+    let mut world = World::new().await;
+    set_up_leaving_untracked_files(&world).await;
+    world.poll().await;
+    let seen = clone_reading(&world);
+    let ticket = open_ticket(&world, "Do the thing");
+    let branch = format!("{}-do-the-thing", ticket.0);
+    world
+        .store
+        .commit(
+            "maintainer",
+            &branch,
+            &[("clash.txt", "branch\n")],
+            "Track clash.txt",
+        )
+        .await
+        .unwrap();
+    world
+        .store
+        .remove("maintainer", &branch, &["gone.txt"], "Remove gone.txt")
+        .await
+        .unwrap();
+
+    world.poll().await;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [CloneRead {
+            installed: Some("environment\n".into()),
+            untracked: Some("environment\n".into()),
+            clash: Some("branch\n".into()),
+            gone: false,
+            hooks_path: ".husky".into(),
+            branch,
+        }]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_leaves_the_environment_as_it_was_built() {
+    let mut world = World::new().await;
+    set_up_leaving_untracked_files(&world).await;
+    world.poll().await;
+    let repo = built_repo(&world);
+    let read = |path: &str| std::fs::read_to_string(repo.join(path)).ok();
+    let seen = clone_reading(&world);
+    let ticket = open_ticket(&world, "Do the thing");
+    world
+        .store
+        .commit(
+            "maintainer",
+            &format!("{}-do-the-thing", ticket.0),
+            &[("clash.txt", "branch\n")],
+            "Track clash.txt",
+        )
+        .await
+        .unwrap();
+
+    world.poll().await;
+
+    assert_eq!(seen.lock().unwrap().len(), 1, "a session started");
+    assert_eq!(
+        [
+            read("node_modules/x"),
+            read("notes.txt"),
+            read("clash.txt"),
+            read("gone.txt"),
+        ],
+        [
+            Some("environment\n".to_string()),
+            Some("environment\n".to_string()),
+            Some("environment\n".to_string()),
+            Some("on main\n".to_string()),
+        ]
+    );
+    assert_eq!(
+        git_in(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "main"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_copy_of_the_environment_that_fails_is_an_infrastructure_failure() {
+    let mut world = World::new().await;
+    set_up_with(&world, "echo secret > unreadable && chmod 000 unreadable").await;
+    world.poll().await;
+    let seen = implement_reading(&world);
+    let ticket = open_ticket(&world, "Do the thing");
+
+    world.poll().await;
+
+    assert!(installed(&seen).is_empty(), "no agent started");
+    let issue = world.issue(ticket);
+    let comment = last_comment(&issue);
+    assert!(
+        comment.contains("The run failed twice on its infrastructure"),
+        "{comment}"
+    );
+}
