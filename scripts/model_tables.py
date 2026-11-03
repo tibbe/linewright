@@ -20,8 +20,9 @@ The kinds, and what the model gives each, with `A` the header's arguments:
   Its when is `when_<when>(A)`, or `else` for "otherwise".
 - `index`: the same table, as the number, from 1, of the first row that holds.
 - `rows`: a first-match table of (state | when | Linewright | state after), as
-  a chain of ifs over `inState(A, Set(...))` for its state, or its negation
-  for "any but ...", and `when_<when>(A)`, giving `does_<Linewright>(A)`.
+  a chain of ifs over whether `rowState(A)`, computed once, is one of its
+  states, or none of them for "any but ...", and `when_<when>(A)`, giving
+  `does_<Linewright>(A)`.
   With `keep=K`, a row holds only where `K(A, does_<Linewright>(A))` also
   does. With `else=E`, `E(A)` is what it gives where no row holds; a table
   whose rows can all fail to hold needs one.
@@ -67,13 +68,13 @@ def state_set(cell):
     return ["" if s == "no state" else s for s in re.split(r",\s*|\s+and\s+|\s+or\s+", unquoted(cell)) if s]
 
 
-def state_condition(cell, args):
+def state_condition(cell):
     text = unquoted(cell)
     if text == "any":
         return None
     if text.startswith("any but "):
-        return f"not(inState({args}, Set({', '.join(literal(s) for s in state_set(text[len('any but '):]))})))"
-    return f"inState({args}, Set({', '.join(literal(s) for s in state_set(text))}))"
+        return f"not(Set({', '.join(literal(s) for s in state_set(text[len('any but '):]))}).contains(state))"
+    return f"Set({', '.join(literal(s) for s in state_set(text))}).contains(state)"
 
 
 def otherwise(cell):
@@ -116,7 +117,7 @@ def generate(d, table, states, calls):
             if unconditional:
                 raise Finding(f"{d.path}:{d.line}: no row after {table.path}:{rows[k - 1][1].line} can hold")
             state, when, does = row.cells[0], row.cells[1], row.cells[2]
-            parts = [state_condition(state, args)]
+            parts = [state_condition(state)]
             if not otherwise(when):
                 parts.append(when_call(when, args, calls, row))
             if d.kind == "row":
@@ -141,6 +142,8 @@ def generate(d, table, states, calls):
                 out.append(f"else {fallback}({args})")
             else:
                 raise Finding(f"{d.path}:{d.line}: a row can fail to hold, so the directive needs else=NAME")
+        if any(state_condition(r.cells[0]) for _, r in rows):
+            out = ["{", f"  val state = rowState({args})"] + ["  " + o for o in out] + ["}"]
     elif d.kind == "lines":
         column = d.options.get("column")
         groups, current = [], None
