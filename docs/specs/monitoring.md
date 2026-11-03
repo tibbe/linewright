@@ -141,6 +141,8 @@ that started a session.
 - **Running in JSON.** Read without following, `logs --json` gives an entry
   still running as one object with what it holds so far and null for the
   rest.
+- **The clone.** In `logs --json`, the clone's object holds how long it took
+  and, when it failed, the error.
 - **Maintenance.** In `logs --json`, the maintenance command's object holds
   the command, its exit status, how long it ran and its output, even where
   the transcript as text wouldn't show the output.

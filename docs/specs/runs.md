@@ -43,18 +43,28 @@ has no item.
   fresh and in its own clone, or in none where its work needs no agent, such as
   an update without a conflict.
 
+A session starts as its clone starts being made, and goes on along these
+steps:
+
+1. Linewright makes the session's clone
+   ([Environment](sessions.md#environment)).
+2. The maintenance command runs in it ([Maintenance](#maintenance)).
+3. The agent is sent its first prompt.
+
+- **1a. The clone cannot be made.** The session ends, as an infrastructure
+  failure ([Ending](#ending)).
+
 ## Maintenance
 
-A session starts with its maintenance command, which brings the session's
-clone up to date with its branch and ready for the agent, before the agent's
-first prompt.
+A session's maintenance command brings its clone up to date with its branch
+and ready for the agent.
 
 - **The command.** The `maintenance` setting
   ([Configuration](operation.md#configuration)), run by `bash` in the root of
   the clone, with nothing on its standard input, with the session's
   environment variables
   ([Environment variables](sessions.md#environment-variables)). With an empty
-  one, the session starts with the agent's first prompt.
+  one, nothing runs.
 - **When.** On the branch as the clone checked it out, before any update of
   the branch with the default branch
   ([Keeping up to date](pull_requests.md#keeping-up-to-date)).
