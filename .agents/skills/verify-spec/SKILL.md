@@ -15,10 +15,16 @@ description:
    clauses that changed; and the sentences of the sections it encodes in full
    that it quotes nowhere. For a clause added to any other section, grep the
    model for its section.
-2. Change the model in the same commit as the spec, until all three pass. A
-   `when_` predicate reads its cell and nothing else; a clause of the spec it
+2. Change the model in the same commit as the spec. The three checks compare
+   text: they pass once every name and quote matches, whatever the code under
+   them does. For each clause that changed, read every definition that encodes
+   it, the bodies of its `when_`, `does_` and `result_` definitions and any
+   other code the clause governs, and make each do what the clause now says.
+   A `when_` predicate reads its cell and nothing else; a clause of the spec it
    would need is encoded where the spec states it. A reading the spec leaves
-   open is a new numbered assumption beside the model's others.
+   open is a new numbered assumption beside the model's others. Done when each
+   changed clause's encoding reads as the clause does and all three checks
+   pass.
 3. Run `scripts/check model MODEL NAME...` for the scenarios, invariants, flap
    and temporal properties the change bears on.
 4. A violation is a finding: fix the model where it misreads the spec;
