@@ -284,11 +284,11 @@ impl Environment {
             .await
             .context("opening the environment's builds")?
             .map(|built| {
-                let build = Arc::new(BuildDir::new(
+                let build = Arc::new(BuildDir::new(Build::new(
+                    &builds,
                     built.id,
-                    builds.build_dir(built.id),
-                    builder.winding_up.clone(),
-                ));
+                    &builder.winding_up,
+                )));
                 (built, build)
             });
         Ok(Environment {
@@ -603,7 +603,7 @@ impl Environment {
         );
         let (builder, builds) = (self.builder.clone(), self.builds.clone());
         self.building = Some(tokio::spawn(async move {
-            let abandoned = Abandoned::new(builder.winding_up.clone());
+            let abandoned = Abandoned::default();
             build(&builder, &builds, &settings, fingerprint, &abandoned).await
         }));
     }
@@ -611,11 +611,11 @@ impl Environment {
     /// Makes `built`, which the state file names, the environment. The build
     /// it replaces is removed once no copy from it is in progress.
     fn replace(&mut self, built: Built) {
-        let build = Arc::new(BuildDir::new(
+        let build = Arc::new(BuildDir::new(Build::new(
+            &self.builds,
             built.id,
-            self.builds.build_dir(built.id),
-            self.builder.winding_up.clone(),
-        ));
+            &self.builder.winding_up,
+        )));
         if let Some((_, replaced)) = self.built.replace((built, build)) {
             replaced.retire();
         }
@@ -625,44 +625,58 @@ impl Environment {
 
 /// Abandoning a build mid-way aborts its task, which drops this: what is
 /// left of the build is removed, as at the next start.
+#[derive(Default)]
 struct Abandoned {
-    dir: Mutex<Option<(BuildId, PathBuf)>>,
-    winding_up: WindingUp,
+    build: Mutex<Option<Build>>,
 }
 
 impl Abandoned {
-    fn new(winding_up: WindingUp) -> Abandoned {
-        Abandoned {
-            dir: Mutex::new(None),
-            winding_up,
-        }
-    }
-
-    fn building_in(&self, id: BuildId, dir: &Path) {
-        *self.dir.lock().expect("never poisoned") = Some((id, dir.to_path_buf()));
+    fn building(&self, build: Build) {
+        *self.build.lock().expect("never poisoned") = Some(build);
     }
 
     fn done(&self) {
-        *self.dir.lock().expect("never poisoned") = None;
+        *self.build.lock().expect("never poisoned") = None;
     }
 }
 
 impl Drop for Abandoned {
     fn drop(&mut self) {
-        if let Some((id, dir)) = self.dir.get_mut().ok().and_then(Option::take) {
-            remove_aside(&self.winding_up, id, dir);
+        if let Some(build) = self.build.get_mut().ok().and_then(Option::take) {
+            build.remove_aside();
         }
     }
 }
 
-/// Removes the build `id` in `dir` through `winding_up`, unless a copy from
-/// it is in progress.
-fn remove_aside(winding_up: &WindingUp, id: BuildId, dir: PathBuf) {
-    winding_up.spawn_blocking(Remaining::Build { id }, move || {
-        if let Err(e) = kept::remove_unleased(&dir) {
-            warn!(error = format!("{e:#}"), "removing a build failed");
+/// A build in its directory.
+#[derive(Debug)]
+struct Build {
+    id: BuildId,
+    path: PathBuf,
+    /// What removes it.
+    winding_up: WindingUp,
+}
+
+impl Build {
+    fn new(builds: &Builds, id: BuildId, winding_up: &WindingUp) -> Build {
+        Build {
+            id,
+            path: builds.build_dir(id),
+            winding_up: winding_up.clone(),
         }
-    });
+    }
+
+    /// Removes the build through its [`WindingUp`], unless a copy from it is
+    /// in progress.
+    fn remove_aside(&self) {
+        let dir = self.path.clone();
+        self.winding_up
+            .spawn_blocking(Remaining::Build { id: self.id }, move || {
+                if let Err(e) = kept::remove_unleased(&dir) {
+                    warn!(error = format!("{e:#}"), "removing a build failed");
+                }
+            });
+    }
 }
 
 /// Builds the environment with `settings` under `builds`' lock, and names
@@ -677,7 +691,7 @@ async fn build(
     let _lock = builds.lock().await.map_err(|e| format!("{e:#}"))?;
     let id = builds.next_id().map_err(|e| format!("{e:#}"))?;
     let dir = builds.build_dir(id);
-    abandoned.building_in(id, &dir);
+    abandoned.building(Build::new(builds, id, &builder.winding_up));
     let at = builder.clock.now();
     let mut record = BuildRecord::started(builder.redaction.apply(settings.command.as_str()), at);
     let why = match run(builder, &dir, settings, &mut record).await {
@@ -804,20 +818,20 @@ async fn run(
 /// in progress.
 #[derive(Debug)]
 struct BuildDir {
-    id: BuildId,
-    path: PathBuf,
+    build: Build,
     retired: AtomicBool,
-    winding_up: WindingUp,
 }
 
 impl BuildDir {
-    fn new(id: BuildId, path: PathBuf, winding_up: WindingUp) -> BuildDir {
+    fn new(build: Build) -> BuildDir {
         BuildDir {
-            id,
-            path,
+            build,
             retired: AtomicBool::new(false),
-            winding_up,
         }
+    }
+
+    fn path(&self) -> &Path {
+        &self.build.path
     }
 
     fn retire(&self) {
@@ -828,7 +842,7 @@ impl BuildDir {
 impl Drop for BuildDir {
     fn drop(&mut self) {
         if self.retired.load(Ordering::Relaxed) {
-            remove_aside(&self.winding_up, self.id, std::mem::take(&mut self.path));
+            self.build.remove_aside();
         }
     }
 }
@@ -858,8 +872,8 @@ impl Lease {
     /// (`docs/specs/sessions.md`, Environment, "A session's clone"). No
     /// process removes the build while the copy is in progress.
     pub async fn copy_to(&self, dest: &Path) -> Result<()> {
-        let _copying = kept::lease(&self.build.path).await?;
-        copy_absent(&self.build.path.join(kept::REPO), dest)
+        let _copying = kept::lease(self.build.path()).await?;
+        copy_absent(&self.build.path().join(kept::REPO), dest)
             .await
             .context("copying the environment")
     }

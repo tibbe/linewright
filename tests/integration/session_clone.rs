@@ -25,12 +25,23 @@ fn sessions_per_run(world: &World) -> Vec<usize> {
 
 /// The clones left in `world`'s work directory once every removal pending
 /// has ended.
-async fn clones_left(world: &World) -> Vec<std::ffi::OsString> {
-    world.factory.winding_up().wait().await;
-    match std::fs::read_dir(world.dir.path().join("work").join("clones")) {
-        Ok(entries) => entries.map(|entry| entry.unwrap().file_name()).collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-        Err(e) => panic!("reading the clones: {e}"),
+#[track_caller]
+fn clones_left(world: &World) -> impl Future<Output = Vec<std::ffi::OsString>> + '_ {
+    let caller = Location::caller();
+    async move {
+        world.factory.winding_up().wait().await;
+        let clones = world.dir.path().join("work").join("clones");
+        match std::fs::read_dir(clones) {
+            Ok(entries) => entries
+                .map(|entry| {
+                    entry
+                        .unwrap_or_else(|e| panic!("reading the clones at {caller}: {e}"))
+                        .file_name()
+                })
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+            Err(e) => panic!("reading the clones at {caller}: {e}"),
+        }
     }
 }
 

@@ -36,7 +36,7 @@ impl Clones {
             .context("creating a clone directory")?;
         Ok(CloneDir {
             temp: Some(temp),
-            first: None,
+            before_removal: None,
             winding_up: self.winding_up.clone(),
         })
     }
@@ -47,7 +47,9 @@ impl Clones {
 pub struct CloneDir {
     /// `None` once dropped.
     temp: Option<TempDir>,
-    first: Option<Box<dyn FnOnce() + Send>>,
+    /// What runs, off the runtime's threads, before the directory is
+    /// removed.
+    before_removal: Option<Box<dyn FnOnce() + Send>>,
     winding_up: WindingUp,
 }
 
@@ -65,15 +67,15 @@ impl CloneDir {
             .into_owned()
     }
 
-    /// Has `first` run, off the runtime's threads, before the directory is
-    /// removed, after any given earlier.
-    pub fn then_remove(&mut self, first: impl FnOnce() + Send + 'static) {
-        let earlier = self.first.take();
-        self.first = Some(Box::new(move || {
+    /// Has `before_removal` run, off the runtime's threads, before the
+    /// directory is removed, after any given earlier.
+    pub fn then_remove(&mut self, before_removal: impl FnOnce() + Send + 'static) {
+        let earlier = self.before_removal.take();
+        self.before_removal = Some(Box::new(move || {
             if let Some(earlier) = earlier {
                 earlier();
             }
-            first();
+            before_removal();
         }));
     }
 }
@@ -82,11 +84,11 @@ impl Drop for CloneDir {
     fn drop(&mut self) {
         let name = self.name();
         let temp = self.temp.take();
-        let first = self.first.take();
+        let before_removal = self.before_removal.take();
         self.winding_up
             .spawn_blocking(Remaining::Clone { name }, move || {
-                if let Some(first) = first {
-                    first();
+                if let Some(before_removal) = before_removal {
+                    before_removal();
                 }
                 drop(temp);
             });
