@@ -4,7 +4,7 @@ use common::{
     NOW, assigning_linewright, at, labeled_by_linewright, ticket, unassigning_linewright, view,
 };
 use linewright::board::{
-    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, LaneHead, Running, Stop, board,
+    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Held, LaneHead, Running, Stop, board,
 };
 use linewright::domain::*;
 use linewright::holds::Hold;
@@ -1513,9 +1513,9 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
         [
             blocked.clone(),
             assigned.clone(),
-            Some(CardLine::Paused(Hold::UsageLimit {
+            Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
                 resets_at: at(RESETS_AT)
-            }))
+            })))
         ]
     );
     assert_eq!(
@@ -1523,12 +1523,12 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
         [
             blocked.clone(),
             assigned.clone(),
-            Some(CardLine::Paused(Hold::Drain))
+            Some(CardLine::Held(Held::Paused(Hold::Drain)))
         ]
     );
     assert_eq!(
         ready_lines(&full),
-        [blocked, assigned, Some(CardLine::Queued)]
+        [blocked, assigned, Some(CardLine::Held(Held::Queued))]
     );
 }
 
@@ -1566,27 +1566,27 @@ fn a_held_card_names_the_first_hold() {
 
     assert_eq!(
         line_under(common::draining_since("2026-10-01T11:00:00Z"), vec![]),
-        Some(CardLine::Paused(Hold::Drain))
+        Some(CardLine::Held(Held::Paused(Hold::Drain)))
     );
     assert_eq!(
         line_under(common::limited_until(RESETS_AT), vec![]),
-        Some(CardLine::Paused(Hold::UsageLimit { resets_at }))
+        Some(CardLine::Held(Held::Paused(Hold::UsageLimit { resets_at })))
     );
     assert_eq!(
         line_under(awaiting_the_environment.clone(), vec![]),
-        Some(CardLine::Paused(Hold::Environment))
+        Some(CardLine::Held(Held::Paused(Hold::Environment)))
     );
     assert_eq!(
         line_under(Memory::default(), broken.clone()),
-        Some(CardLine::Paused(Hold::File(file)))
+        Some(CardLine::Held(Held::Paused(Hold::File(file))))
     );
     assert_eq!(
         line_under(awaiting_the_environment, broken),
-        Some(CardLine::Paused(Hold::Environment))
+        Some(CardLine::Held(Held::Paused(Hold::Environment)))
     );
     assert_eq!(
         line_under(drained_and_limited, vec![]),
-        Some(CardLine::Paused(Hold::Drain))
+        Some(CardLine::Held(Held::Paused(Hold::Drain)))
     );
 }
 
@@ -1625,9 +1625,9 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     assert_eq!(
         [1, 2].map(|n| line(&limited, n)),
         [
-            Some(CardLine::Paused(Hold::UsageLimit {
+            Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
                 resets_at: at(RESETS_AT)
-            })),
+            }))),
             run(WorkKind::Triage)
         ]
     );
@@ -2584,9 +2584,9 @@ fn a_triage_card_says_what_a_ready_card_would() {
             (Some(CardLine::BlockedBy(Number(9))), None),
             (Some(CardLine::AssignedTo(Login::new("alice"))), None),
             (
-                Some(CardLine::Paused(Hold::UsageLimit {
+                Some(CardLine::Held(Held::Paused(Hold::UsageLimit {
                     resets_at: at(RESETS_AT)
-                })),
+                }))),
                 Some(CardStatus::PausedOrQueued)
             ),
         ]

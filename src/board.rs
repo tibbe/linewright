@@ -242,8 +242,7 @@ pub enum CardLine {
     /// It is not marked for Linewright (`GLOSSARY.md`, **Marked for
     /// Linewright**).
     NotMarked,
-    Paused(Hold),
-    Queued,
+    Held(Held),
     Running(Running),
     /// Of an item other than its pull request.
     Review {
@@ -271,7 +270,7 @@ impl CardLine {
             CardLine::Asked(_) | CardLine::HandedBack | CardLine::DecisionNeeded => {
                 Some(CardStatus::WaitingForAPerson)
             }
-            CardLine::Paused(_) | CardLine::Queued => Some(CardStatus::PausedOrQueued),
+            CardLine::Held(held) => Some(held.status()),
             CardLine::Running(_) => Some(CardStatus::InFlight),
             CardLine::Review { stops, .. } => stops.as_ref().and_then(Stop::status),
             CardLine::MergeStop(stop) => stop.status(),
@@ -281,6 +280,21 @@ impl CardLine {
             | CardLine::NotMarked
             | CardLine::Ended { .. } => None,
         }
+    }
+}
+
+/// What holds back the run Linewright would start on an item: a hold, or
+/// the runs in flight at `max-runs`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Held {
+    Paused(Hold),
+    Queued,
+}
+
+impl Held {
+    /// Its card status (`docs/specs/design_system.md`, Cards, Card status).
+    pub fn status(&self) -> CardStatus {
+        CardStatus::PausedOrQueued
     }
 }
 
@@ -616,7 +630,7 @@ fn ready_line(issue: Option<&Issue>, policy: &Policy, waits: &[Wait]) -> Option<
         assignee.map(CardLine::AssignedTo),
         unassigned.then_some(CardLine::Unassigned),
         (marking == Some(Marking::Unmarked)).then_some(CardLine::NotMarked),
-        held(waits),
+        held(waits).map(CardLine::Held),
     ])
 }
 
@@ -627,7 +641,7 @@ fn working_line(issue: Option<&Issue>, run: Option<Running>, waits: &[Wait]) -> 
     first([
         run.map(CardLine::Running),
         lowest_blocker(issue),
-        held(waits),
+        held(waits).map(CardLine::Held),
     ])
 }
 
@@ -640,14 +654,14 @@ fn lowest_blocker(issue: Option<&Issue>) -> Option<CardLine> {
 /// The first hold among `waits` by rank (`docs/specs/runs.md`, Holds,
 /// Rank), the first noted among files, or, where none is a hold, the runs in
 /// flight at `max-runs`, holding back the run that would start.
-fn held(waits: &[Wait]) -> Option<CardLine> {
+fn held(waits: &[Wait]) -> Option<Held> {
     let first_hold = waits.iter().filter_map(Hold::of).min_by(Hold::cmp_rank);
     first([
-        first_hold.map(CardLine::Paused),
+        first_hold.map(Held::Paused),
         waits
             .iter()
             .any(|wait| matches!(wait, Wait::FreeRun { .. }))
-            .then_some(CardLine::Queued),
+            .then_some(Held::Queued),
     ])
 }
 

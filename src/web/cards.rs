@@ -3,7 +3,9 @@
 
 use super::html::{self, Html};
 use super::names::Names;
-use crate::board::{Card, CardLine, CardStatus, Elapsed, LaneHead, LaneHeading, Running, Stop};
+use crate::board::{
+    Card, CardLine, CardStatus, Elapsed, Held, LaneHead, LaneHeading, Running, Stop,
+};
 use crate::holds::Hold;
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
@@ -102,8 +104,7 @@ fn worded(line: &CardLine) -> Phrase {
         CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
         CardLine::Unassigned => "unassigned".into(),
         CardLine::NotMarked => "not marked for Linewright".into(),
-        CardLine::Paused(hold) => Phrase::from("paused until ").then(ends(hold)),
-        CardLine::Queued => "queued".into(),
+        CardLine::Held(held) => held_worded(held),
         CardLine::Running(running) => running_worded(*running),
         CardLine::Review {
             pull_request,
@@ -122,6 +123,14 @@ fn worded(line: &CardLine) -> Phrase {
         }
         CardLine::MergeStop(stop) => stop_worded(stop),
         CardLine::Ended { ended, at } => ended.worded().text(" · ").time(*at),
+    }
+}
+
+/// `held` in the UI's own words.
+fn held_worded(held: &Held) -> Phrase {
+    match held {
+        Held::Paused(hold) => Phrase::from("paused until ").then(ends(hold)),
+        Held::Queued => "queued".into(),
     }
 }
 
