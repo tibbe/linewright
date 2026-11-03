@@ -104,7 +104,7 @@ through and those Linewright sets.
 
 With a setup command, every session's clone starts from the environment: the
 repository made ready for agents' work once, by the setup command, rather than
-in each session.
+in each session, much as a container starts from its image.
 
 - **The setup command.** The `setup` table's `command`
   ([Configuration](operation.md#configuration)), run by `bash` in the root of
@@ -119,11 +119,9 @@ in each session.
   build succeeds when the command exits with status 0 within the `setup`
   table's `timeout`, and fails otherwise. A build is not a run. Processes it
   leaves running end when it ends; only its files are kept.
-- **What a session's clone gets.** Every file git ignores in the
-  environment, copied into the clone, as a copy-on-write copy where the
-  filesystem allows one; every tracked file comes from the session's branch.
-  A copy that fails is an infrastructure failure of the session
-  ([Ending](runs.md#ending)).
+- **A session's clone.** A copy of the environment with the session's branch
+  checked out in it, sharing the environment's disk space where the filesystem
+  allows.
 
 ### Building
 
@@ -193,6 +191,8 @@ including those that left its process group or session.
 - One container per run, instead of agents as processes beside Linewright.
 - Carrying into a session's clone what the setup command wrote outside its
   own clone.
+- Giving a session's clone the environment's own path, which files that
+  record their absolute path, such as a virtual environment's scripts, need.
 - Variables only the setup command is given, such as a registry token that
   sessions are not.
 - Keeping sessions from, or redacting, credentials stored where Linewright's

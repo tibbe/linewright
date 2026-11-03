@@ -100,12 +100,15 @@ An item's state ([State](repository.md#state)) is shown in these words.
   as the lines read, the exit status or, for a sub-agent, the count of its
   tool calls and how long it ran. A sub-agent's work shows under the call that
   started it.
-- **Maintenance.** A session's first entry is its maintenance command
+- **The clone.** The making of a session's clone
+  ([Stages](runs.md#stages)) is an entry: a line with how long it took, then,
+  when it failed, the error.
+- **Maintenance.** The maintenance command is an entry
   ([Maintenance](runs.md#maintenance)): a line with the command, its exit status
   and how long it ran, then its output, which shows only in full or when the
   command failed. An empty one shows nothing.
-- **Running.** A tool call and the maintenance command are entries that run:
-  each shows `running` in place of its account until it ends.
+- **Running.** A tool call, the clone and the maintenance command are entries
+  that run: each shows `running` in place of its account until it ends.
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -337,9 +340,9 @@ came from.
   and "(it started no session)" for a run that ended without one, and under
   them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
 - **Folding.** An entry that runs opens on click to the rest of it, a tool
-  call's full input and result or the maintenance command's output, and one that
-  failed starts open. A sub-agent's work starts folded to the line of the
-  call that started it, with the count of its entries.
+  call's full input and result, the clone's error or the maintenance command's
+  output, and one that failed starts open. A sub-agent's work starts folded to
+  the line of the call that started it, with the count of its entries.
 - **Verbose.** A switch, set once for the page, shows the transcripts in full,
   with everything open.
 - **Following.** A run in flight is followed. The page stays at the bottom

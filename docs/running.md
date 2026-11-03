@@ -99,9 +99,9 @@ clone is a plain clone of its branch.
   A build that runs past `timeout` (60m unless set) fails. Processes it leaves
   running end when it ends: only its files are kept, so start services, such
   as a database, in the maintenance command.
-- **What a session's clone gets.** A copy of every file git ignores in the
-  environment, such as `node_modules` or `.venv`, made copy-on-write where the
-  filesystem supports it; tracked files come from the session's branch. What
+- **What a session's clone gets.** A copy of the environment, such as its
+  `node_modules` or `.venv`, with the session's branch checked out in it,
+  sharing the environment's disk space where the filesystem supports it. What
   the setup command writes outside its clone, such as in `~/.cache`, isn't
   copied, but sessions on the same host see it anyway. A copied file that
   holds the environment's absolute path, such as a script in a Python virtual
@@ -127,10 +127,12 @@ the clone, with nothing on its standard input, in the session's environment
 variables (see [Variables your build needs](#variables-your-build-needs)).
 Keep it quick when nothing has changed: every session runs it.
 
-- **Its timeout** is the session's, `session-timeout`.
-- **A command that fails**, exiting with a non-zero status, keeps its session
-  from starting. Linewright retries the run once, then hands the item back with
-  the end of the command's output. A command that times out hands back at once.
+- **Its timeout** is the session's, `session-timeout`, which counts from when
+  the session's clone starts being made.
+- **A command that fails**, exiting with a non-zero status, ends its session
+  before the agent starts. Linewright retries the run once, then hands the item
+  back with the end of the command's output. A command that times out hands back
+  at once.
 - **What it leaves running**, such as a dev server, ends when the run is done
   with the clone: Linewright sends its process group SIGTERM, then SIGKILL. A
   process that leaves the group, or a container it starts, outlives the run.
