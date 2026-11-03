@@ -1,6 +1,8 @@
 use super::*;
 
-use linewright::transcript::{MaintenanceStatus, maintenance_ended, maintenance_started};
+use linewright::transcript::{
+    MaintenanceStatus, clone_ended, clone_started, maintenance_ended, maintenance_started,
+};
 use serde_json::json;
 
 /// Where #1's implementing session keeps its record.
@@ -425,6 +427,7 @@ fn entry_lines_in(element: ElementRef) -> Vec<(String, String)> {
 #[test_log::test(tokio::test)]
 async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resumes_by_event_id() {
     let world = with_issue_for_triage().await;
+    before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
     let web = Web::start(world).await;
     let turn = crate::local_api::turn_1();
@@ -505,7 +508,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
             (format!("#{entry}-io"), "outerHTML".to_string()),
         ]
     };
-    assert!(accounts.contains(&replaced_line("s1-e6")), "{accounts:?}");
+    assert!(accounts.contains(&replaced_line("s1-e7")), "{accounts:?}");
 
     let followed: Vec<(String, String)> = [made, returned, rest.clone()].concat();
     let mut shown = entry_lines(&read);
@@ -918,5 +921,157 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
             "installing".to_string(),
             false
         )]
+    );
+}
+
+/// The output of a session whose clone started being made at `start` and
+/// ended `seconds` later with `error`.
+fn cloning(start: &str, seconds: f64, error: Option<&str>) -> String {
+    let start = at(start);
+    let end =
+        start + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
+    format!(
+        "{}\n{}\n",
+        clone_started(start),
+        clone_ended(end, seconds, error)
+    )
+}
+
+/// Each session's clone, as its line, the error it opens to, and whether it
+/// starts open.
+fn clones_shown(html: &Html) -> Vec<(String, String, bool)> {
+    select(html, ".entry.clone")
+        .into_iter()
+        .map(|clone| {
+            let line = text(select_in(clone, ".line")[0]);
+            let error = select_in(clone, ".output")
+                .into_iter()
+                .map(text)
+                .collect::<String>();
+            let open = select_in(clone, "details")
+                .first()
+                .is_some_and(|details| details.attr("open").is_some());
+            (line, error, open)
+        })
+        .collect()
+}
+
+/// `docs/specs/design_system.md`, Transcripts, The clone; The run page,
+/// Folding.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_the_clone_as_its_sessions_first_entry_before_the_maintenance_command() {
+    let pages = implemented_after(
+        &[
+            cloning("2026-10-13T10:09:02Z", 6.2, None),
+            setting_up(
+                "2026-10-13T10:09:08Z",
+                "echo 'added 3 packages'",
+                MaintenanceStatus::Exited(0),
+                0.2,
+            ),
+        ]
+        .concat(),
+        Some("added 3 packages\n"),
+    )
+    .await;
+
+    let html = pages.page("/runs/1/implement-1").await;
+
+    assert_eq!(
+        clones_shown(&html),
+        [("0:00 clone → 6s".to_string(), String::new(), false)]
+    );
+    let entries = select(&html, "#s1-entries > .entry");
+    assert_eq!(entries[0].attr("id"), Some("s1-e1"));
+    assert!(entries[0].value().classes().any(|class| class == "clone"));
+    assert!(
+        entries[1]
+            .value()
+            .classes()
+            .any(|class| class == "maintenance")
+    );
+    assert_eq!(
+        heading(&html)[1],
+        "session 1: started 2026-10-13 10:09:02 UTC"
+    );
+}
+
+/// `docs/specs/design_system.md`, The run page, Folding.
+#[test_log::test(tokio::test)]
+async fn the_page_of_a_run_whose_clone_could_not_be_made_shows_its_error_open() {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let dir = "sessions/issue-1/20261014T120000Z-triage";
+    pages.write(&[(
+        &format!("{dir}/output.jsonl"),
+        &cloning(
+            "2026-10-14T12:00:00Z",
+            3.0,
+            Some("fetching origin: fatal: could not read from remote"),
+        ),
+    )]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
+        "sessions": [ran(dir)],
+    }));
+
+    let html = pages.page("/runs/1/triage-1").await;
+
+    assert_eq!(
+        clones_shown(&html),
+        [(
+            "0:00 clone → 3s".to_string(),
+            "fetching origin: fatal: could not read from remote".to_string(),
+            true
+        )]
+    );
+    assert_no_status_by_colour_alone(&html);
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// Following.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_made() {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let dir = "sessions/issue-1/20261014T120000Z-triage";
+    let start = at("2026-10-14T12:00:00Z");
+    pages.write(&[(
+        &format!("{dir}/output.jsonl"),
+        &format!("{}\n", clone_started(start)),
+    )]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": null,
+        "sessions": [ran(dir)],
+    }));
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    let line = clone_ended(start + chrono::TimeDelta::seconds(12), 12.4, None);
+    pages.append(&format!("{dir}/output.jsonl"), &format!("{line}\n"));
+    let ended = transcript_events(&mut events, |sent| {
+        sent.iter().any(|(_, data)| data.contains("12s"))
+    })
+    .await;
+
+    assert_eq!(
+        clones_shown(&read),
+        [("0:00 clone → running".to_string(), String::new(), false)]
+    );
+    let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
+        panic!("{ended:?}")
+    };
+    assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
+    assert_eq!(
+        clones_shown(html),
+        [("0:00 clone → 12s".to_string(), String::new(), false)]
     );
 }

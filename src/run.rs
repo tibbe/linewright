@@ -33,6 +33,7 @@ use crate::harness::{
 };
 use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop, rebases_to_repair};
+use crate::redaction::Redaction;
 use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
@@ -658,14 +659,14 @@ struct Workspace {
 }
 
 impl Workspace {
-    /// A session's clone: a copy of the environment with `branch` checked
-    /// out in it, or a plain clone of `branch` without an environment
+    /// A session's clone in `temp`: a copy of the environment with `branch`
+    /// checked out in it, or a plain clone of `branch` without an environment
     /// (docs/specs/sessions.md, Environment, "A session's clone").
-    async fn make(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
+    async fn make(shell: &Shell, temp: TempDir, branch: &str) -> Result<Workspace> {
         let Some(lease) = shell.environment.lease() else {
-            return Workspace::clone(shell, purpose, branch).await;
+            return Workspace::clone_in(shell, temp, branch).await;
         };
-        Workspace::create(shell, purpose, async |dir| {
+        Workspace::create(shell, temp, async |dir| {
             lease.copy_to(dir).await?;
             drop(lease);
             shell
@@ -680,30 +681,45 @@ impl Workspace {
 
     /// A run's own clone of `branch`, for work that needs no session.
     async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
-        Workspace::create(shell, purpose, async |dir| {
+        Workspace::clone_in(shell, Workspace::temp(shell, purpose).await?, branch).await
+    }
+
+    /// A plain clone of `branch` in `temp`.
+    async fn clone_in(shell: &Shell, temp: TempDir, branch: &str) -> Result<Workspace> {
+        Workspace::create(shell, temp, async |dir| {
             shell.store.clone_repo(dir, branch, &[]).await
         })
         .await
     }
 
-    /// A new workspace for `purpose`, under the work directory's `clones`,
-    /// whose repository `fill` makes at the path it is given, which does not
-    /// exist yet. The repository is then given [`clone_config`], and the
-    /// workspace a scratch directory and Linewright's plugin.
-    async fn create(
-        shell: &Shell,
-        purpose: &Purpose,
-        fill: impl AsyncFnOnce(&Path) -> Result<()>,
-    ) -> Result<Workspace> {
+    /// The directory a clone for `purpose` is made in, under the work
+    /// directory's `clones`, its repository in [`Workspace::repo_in`].
+    async fn temp(shell: &Shell, purpose: &Purpose) -> Result<TempDir> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
             .context("creating the clones directory")?;
-        let temp = tempfile::Builder::new()
+        tempfile::Builder::new()
             .prefix(&format!("{}-", purpose_name(purpose)))
             .tempdir_in(&clones)
-            .context("creating a clone directory")?;
-        let dir = temp.path().join("repo");
+            .context("creating a clone directory")
+    }
+
+    /// Where the repository of a clone made in `temp` is.
+    fn repo_in(temp: &Path) -> PathBuf {
+        temp.join("repo")
+    }
+
+    /// A new workspace in `temp`, whose repository `fill` makes at the path
+    /// it is given, which does not exist yet. The repository is then given
+    /// [`clone_config`], and the workspace a scratch directory and
+    /// Linewright's plugin.
+    async fn create(
+        shell: &Shell,
+        temp: TempDir,
+        fill: impl AsyncFnOnce(&Path) -> Result<()>,
+    ) -> Result<Workspace> {
+        let dir = Workspace::repo_in(temp.path());
         fill(&dir).await?;
         git::configure(&dir, &clone_config(shell)).await?;
         let scratch = temp.path().join("tmp");
@@ -1023,6 +1039,59 @@ fn followup_name(record: &Path) -> String {
     transcript::followup_file(n)
 }
 
+/// Why a session's clone was not made.
+enum Unmade {
+    Cancelled,
+    /// The session's deadline came first.
+    TimedOut,
+    Failed(anyhow::Error),
+}
+
+impl Unmade {
+    /// The error the clone's entry shows: a failure's chain, redacted and
+    /// with the clone's repository `repo`, once known, shown as `.`.
+    fn shown(&self, redaction: &Redaction, repo: Option<&Path>) -> String {
+        match self {
+            Unmade::Cancelled => "cancelled".into(),
+            Unmade::TimedOut => "timed out".into(),
+            Unmade::Failed(error) => {
+                let shown = redaction.apply(&format!("{error:#}"));
+                match repo {
+                    Some(repo) => scrub(&shown, repo),
+                    None => shown,
+                }
+            }
+        }
+    }
+
+    /// How the session ends (docs/specs/runs.md, "Stages", 1a).
+    fn failure(self, settings: &SessionSettings) -> Failure {
+        match self {
+            Unmade::Cancelled => Failure::Cancelled,
+            Unmade::TimedOut => {
+                Failure::HandBack(hand_back::timed_out(&settings.timeout_setting, None))
+            }
+            Unmade::Failed(error) => infra(error.context("making the session's clone")),
+        }
+    }
+}
+
+/// When something that started `at` and took `duration` ended.
+fn ended_after(at: Timestamp, duration: std::time::Duration) -> Timestamp {
+    at + chrono::TimeDelta::from_std(duration).unwrap_or(chrono::TimeDelta::MAX)
+}
+
+/// Appends the `line` Linewright writes to the transcript of the session
+/// whose record is `record`.
+fn append_event(record: &Path, line: &str) -> Result<()> {
+    let mut transcript = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(record.join(transcript::OUTPUT))
+        .context("opening the session's transcript")?;
+    writeln!(transcript, "{line}").context("writing to the session's transcript")
+}
+
 fn scrub(text: &str, dir: &Path) -> String {
     text.replace(&dir.to_string_lossy().into_owned(), ".")
 }
@@ -1046,8 +1115,9 @@ struct Opened<'a> {
 /// directory, registered with the run, then makes its clone of `branch`
 /// and runs `check_out` on it, then runs its maintenance command
 /// (docs/specs/runs.md, "Stages"). Making the clone, `check_out` included,
-/// and the maintenance command count against the session's timeout, and the
-/// command's output is under the session whether or not the agent starts.
+/// and the maintenance command count against the session's timeout. Each is
+/// an entry in the session's transcript, its start and end written there
+/// whether or not the agent starts.
 async fn open_session<'a, T>(
     shell: &Shell,
     ctx: &'a Ctx,
@@ -1062,21 +1132,53 @@ async fn open_session<'a, T>(
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
     let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
+    let started_at = shell.clock.now();
+    let started = tokio::time::Instant::now();
+    append_event(&record, &transcript::clone_started(started_at))
+        .context("writing the clone's start")
+        .map_err(infra)?;
+    let mut repo = None;
     let making = async {
-        let ws = Workspace::make(shell, &purpose, branch).await?;
+        let temp = Workspace::temp(shell, &purpose).await?;
+        repo = Some(Workspace::repo_in(temp.path()));
+        let ws = Workspace::make(shell, temp, branch).await?;
         let checked_out = check_out(&ws.dir).await?;
         Ok::<_, anyhow::Error>((ws, checked_out))
     };
-    let (mut ws, checked_out) = tokio::select! {
+    let made = tokio::select! {
         biased;
-        () = ctx.cancel.cancelled() => return Err(Failure::Cancelled),
-        () = tokio::time::sleep_until(deadline) => {
-            return Err(Failure::HandBack(hand_back::timed_out(
-                &settings.timeout_setting,
-                None,
-            )));
+        () = ctx.cancel.cancelled() => Err(Unmade::Cancelled),
+        () = tokio::time::sleep_until(deadline) => Err(Unmade::TimedOut),
+        made = making => made.map_err(Unmade::Failed),
+    };
+    let duration = started.elapsed();
+    let error = made
+        .as_ref()
+        .err()
+        .map(|unmade| unmade.shown(shell.secrets.redaction(), repo.as_deref()));
+    let ended = append_event(
+        &record,
+        &transcript::clone_ended(
+            ended_after(started_at, duration),
+            duration.as_secs_f64(),
+            error.as_deref(),
+        ),
+    )
+    .context("writing the clone's end");
+    let (mut ws, checked_out) = match made {
+        Ok(made) => {
+            ended.map_err(infra)?;
+            made
         }
-        made = making => made.context("making the session's clone").map_err(infra)?,
+        Err(unmade) => {
+            if let Err(unrecorded) = ended {
+                warn!(
+                    error = format!("{unrecorded:#}"),
+                    "the clone's end is not recorded"
+                );
+            }
+            return Err(unmade.failure(settings));
+        }
     };
     if let Maintenance::Command(command) = &settings.maintenance.value {
         run_maintenance(shell, ctx, command, &record, deadline, &mut ws).await?;
@@ -1122,16 +1224,9 @@ async fn run_maintenance(
     let settings = &ctx.with.settings;
     let redaction = shell.secrets.redaction();
     let started_at = shell.clock.now();
-    let mut transcript = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(record.join(transcript::OUTPUT))
-        .context("creating the session's transcript")
-        .map_err(infra)?;
-    writeln!(
-        transcript,
-        "{}",
-        transcript::maintenance_started(started_at, &redaction.apply(command.as_str()))
+    append_event(
+        record,
+        &transcript::maintenance_started(started_at, &redaction.apply(command.as_str())),
     )
     .context("writing the maintenance command's start")
     .map_err(infra)?;
@@ -1152,12 +1247,13 @@ async fn run_maintenance(
             .context("running the maintenance command")
             .map_err(infra)?;
     ws.leftovers = Some(leftovers);
-    let ended_at =
-        started_at + chrono::TimeDelta::from_std(ran.duration).unwrap_or(chrono::TimeDelta::MAX);
-    writeln!(
-        transcript,
-        "{}",
-        transcript::maintenance_ended(ended_at, ran.status, ran.duration.as_secs_f64())
+    append_event(
+        record,
+        &transcript::maintenance_ended(
+            ended_after(started_at, ran.duration),
+            ran.status,
+            ran.duration.as_secs_f64(),
+        ),
     )
     .context("writing the maintenance command's end")
     .map_err(infra)?;

@@ -121,10 +121,8 @@ impl MaintenanceEnded {
 
     /// How it ended and how long it ran, as its line shows them.
     pub(crate) fn account(&self) -> String {
-        let seconds = std::time::Duration::try_from_secs_f64(self.duration_seconds)
-            .map_or(0, |duration| duration.as_secs());
         Phrase::from(format!("{}, ", self.status.account()))
-            .duration(seconds, None)
+            .duration(whole_seconds(self.duration_seconds), None)
             .to_string()
     }
 }
@@ -175,6 +173,70 @@ fn says_maintenance_ended(line: &str) -> bool {
         serde_json::from_str(line),
         Ok(MaintenanceEvent::Ended { .. })
     )
+}
+
+/// The making of a session's clone, its first entry
+/// (`docs/specs/design_system.md`, Transcripts, The clone).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SessionClone {
+    /// When it started being made.
+    pub at: Timestamp,
+    pub ended: Option<CloneEnded>,
+}
+
+/// How the making of a session's clone ended.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CloneEnded {
+    pub duration_seconds: f64,
+    /// Why it could not be made, redacted, or `None` when it was made.
+    pub error: Option<String>,
+}
+
+impl CloneEnded {
+    /// How long it took, as its line shows it.
+    pub(crate) fn account(&self) -> String {
+        Phrase::default()
+            .duration(whole_seconds(self.duration_seconds), None)
+            .to_string()
+    }
+}
+
+/// `seconds` as the whole seconds a line shows: none for a time that is not
+/// one.
+fn whole_seconds(seconds: f64) -> u64 {
+    std::time::Duration::try_from_secs_f64(seconds).map_or(0, |duration| duration.as_secs())
+}
+
+/// The lines Linewright writes to [`OUTPUT`] as a session's clone starts
+/// being made and ends, before any other.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum CloneEvent {
+    #[serde(rename = "linewright-clone")]
+    Started { at: Timestamp },
+    #[serde(rename = "linewright-clone-ended")]
+    Ended {
+        at: Timestamp,
+        duration_seconds: f64,
+        error: Option<String>,
+    },
+}
+
+/// The line that says the session's clone started being made `at`.
+pub fn clone_started(at: Timestamp) -> String {
+    serde_json::to_string(&CloneEvent::Started { at }).expect("a clone event serializes")
+}
+
+/// The line that says the session's clone ended `at`, having taken
+/// `duration_seconds`, made unless there is an `error`, which the caller has
+/// redacted and scrubbed of the clone's path.
+pub fn clone_ended(at: Timestamp, duration_seconds: f64, error: Option<&str>) -> String {
+    serde_json::to_string(&CloneEvent::Ended {
+        at,
+        duration_seconds,
+        error: error.map(str::to_string),
+    })
+    .expect("a clone event serializes")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -301,11 +363,15 @@ pub struct Transcript {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Session {
-    /// When its maintenance command started, if it ran one that says so, or else
-    /// when its first turn did.
+    /// When its clone started being made, if it says so, or else when its
+    /// maintenance command started, if it ran one that says so, or else when
+    /// its first turn did.
     pub started_at: Option<Timestamp>,
     pub dir: Option<String>,
-    /// Its first entry, if it ran a maintenance command.
+    /// Its first entry, unless it was recorded before the clone was one.
+    #[serde(default)]
+    pub clone: Option<SessionClone>,
+    /// Its entry before its turns, if it ran a maintenance command.
     pub maintenance: Option<Maintenance>,
     pub turns: Vec<Turn>,
 }
@@ -494,6 +560,7 @@ enum Touch {
 
 /// An entry that a touch is of.
 enum Place {
+    Clone,
     Maintenance,
     Turn(EntryAt),
 }
@@ -503,6 +570,10 @@ impl Parser {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             return;
         };
+        if let Ok(clone) = CloneEvent::deserialize(&event) {
+            self.session_clone(clone);
+            return;
+        }
         if let Ok(maintenance) = MaintenanceEvent::deserialize(&event) {
             self.maintenance(maintenance, record);
             return;
@@ -544,6 +615,31 @@ impl Parser {
             }),
         });
         self.touched.push(Touch::Added(Place::Maintenance));
+    }
+
+    fn session_clone(&mut self, event: CloneEvent) {
+        match event {
+            CloneEvent::Started { at } => {
+                self.session.clone = Some(SessionClone { at, ended: None });
+                self.touched.push(Touch::Added(Place::Clone));
+                self.last_at = Some(at);
+            }
+            CloneEvent::Ended {
+                at,
+                duration_seconds,
+                error,
+            } => {
+                let Some(clone) = &mut self.session.clone else {
+                    return;
+                };
+                clone.ended = Some(CloneEnded {
+                    duration_seconds,
+                    error,
+                });
+                self.touched.push(Touch::Ended(Place::Clone, Some(at)));
+                self.last_at = Some(at);
+            }
+        }
     }
 
     fn maintenance(&mut self, event: MaintenanceEvent, record: &SessionRecord) {
@@ -899,7 +995,54 @@ pub(crate) enum EntryLine {
         other: Value,
     },
     Tool(ToolLine),
+    Clone(CloneLine),
     Maintenance(MaintenanceLine),
+}
+
+/// The line of the making of a session's clone: how it ended, once it has.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "CloneFields", into = "CloneFields")]
+pub(crate) struct CloneLine {
+    pub(crate) ended: Option<CloneEnded>,
+}
+
+/// A clone line as JSON: both null while the clone is being made, and the
+/// error null when it was made (`docs/specs/monitoring.md`, logs, The clone).
+#[derive(Serialize, Deserialize)]
+struct CloneFields {
+    duration_seconds: Option<f64>,
+    error: Option<String>,
+}
+
+impl From<CloneLine> for CloneFields {
+    fn from(line: CloneLine) -> CloneFields {
+        match line.ended {
+            None => CloneFields {
+                duration_seconds: None,
+                error: None,
+            },
+            Some(ended) => CloneFields {
+                duration_seconds: Some(ended.duration_seconds),
+                error: ended.error,
+            },
+        }
+    }
+}
+
+impl TryFrom<CloneFields> for CloneLine {
+    type Error = &'static str;
+
+    fn try_from(fields: CloneFields) -> Result<CloneLine, &'static str> {
+        let ended = match (fields.duration_seconds, fields.error) {
+            (None, None) => None,
+            (Some(duration_seconds), error) => Some(CloneEnded {
+                duration_seconds,
+                error,
+            }),
+            (None, Some(_)) => return Err("a clone line with an error must have a duration"),
+        };
+        Ok(CloneLine { ended })
+    }
 }
 
 /// A session's maintenance command's line: the command, and how it ended once it
@@ -1212,12 +1355,16 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
     })];
     for (i, session) in transcript.sessions.iter().enumerate() {
         let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        let nothing_read = session.maintenance.is_none() && session.turns.is_empty();
+        let nothing_read =
+            session.clone.is_none() && session.maintenance.is_none() && session.turns.is_empty();
         if current && nothing_read {
             continue;
         }
         let mut stamper = Stamper::new(i + 1, session.started_at);
         lines.push(stamper.header());
+        if let Some(clone) = &session.clone {
+            lines.push(stamper.clone_line(clone, clone.at));
+        }
         if let Some(maintenance) = &session.maintenance {
             lines.push(stamper.maintenance(maintenance, maintenance.at()));
         }
@@ -1310,6 +1457,14 @@ impl Stamper {
             under,
         };
         Line::Entry(Box::new(Stamped { stamp, what }))
+    }
+
+    /// The line of the making of `clone` at `at`.
+    fn clone_line(&mut self, clone: &SessionClone, at: Timestamp) -> Line {
+        let what = EntryLine::Clone(CloneLine {
+            ended: clone.ended.clone(),
+        });
+        self.line(Some(at), Under::Session, what)
     }
 
     /// The line of `maintenance` at `at`, or with no time for one recorded
@@ -1586,6 +1741,11 @@ impl Followed {
                 Touch::Ended(place, ended_at) => (place, Some(ended_at)),
             };
             let at = match place {
+                Place::Clone => {
+                    let clone = session.clone.as_ref().expect("a touched clone is there");
+                    lines.push(stamper.clone_line(clone, ended_at.flatten().unwrap_or(clone.at)));
+                    continue;
+                }
                 Place::Maintenance => {
                     let maintenance = session
                         .maintenance
@@ -1621,10 +1781,9 @@ fn open<'a>(
 }
 
 fn started_at(session: &Session) -> Option<Timestamp> {
-    session
-        .maintenance
-        .as_ref()
-        .and_then(Maintenance::at)
+    let clone = session.clone.as_ref().map(|clone| clone.at);
+    clone
+        .or_else(|| session.maintenance.as_ref().and_then(Maintenance::at))
         .or_else(|| {
             session.turns.first().and_then(|turn| {
                 turn.started_at
@@ -1836,6 +1995,16 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
                     .collect(),
             )
         }
+        EntryLine::Clone(CloneLine { ended }) => match ended {
+            None => ("clone → running".to_string(), vec![]),
+            Some(ended) => (
+                format!("clone → {}", ended.account()),
+                ended.error.as_deref().map_or(vec![], |error| {
+                    let red: Vec<String> = error.lines().map(|part| paint.red(part)).collect();
+                    indented("", &red.join("\n"))
+                }),
+            ),
+        },
         EntryLine::Maintenance(MaintenanceLine { command, ended }) => {
             let command = shown_command(command);
             let (account, output) = match ended {

@@ -157,6 +157,7 @@ fn an_item_with_no_runs_has_none_to_show() {
 /// ends in an answer that is not a result, and its second, after the
 /// follow-up, in one that is.
 pub(crate) fn implement_as_recorded(world: &World) {
+    before_the_recorded_transcript(world);
     world.harness.on(WorkKind::Implement, |call| {
         let turn = match call.followup {
             None => include_str!("fixtures/transcript/turn-1.jsonl"),
@@ -195,9 +196,10 @@ async fn logs_shows_the_items_latest_run_compact() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 15, "{}", output.stdout);
+    assert_eq!(lines.len(), 16, "{}", output.stdout);
     assert_eq!(lines[0], "run: 1/implement-1");
-    assert_eq!(lines[1], "session 1: started 2026-10-13 10:09:08 UTC");
+    assert_eq!(lines[1], "session 1: started 2026-10-13 10:09:06 UTC");
+    assert_eq!(lines[2], " 0:00  clone → 0s");
 }
 
 #[test_log::test(tokio::test)]
@@ -270,8 +272,8 @@ async fn logs_shows_the_maintenance_command_a_session_ran() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
-        output.stdout.lines().nth(2),
-        Some(" 0:00  maintenance: echo 'added 3 packages' → exit 0, 0s"),
+        output.stdout.lines().nth(3),
+        Some(" 0:01  maintenance: echo 'added 3 packages' → exit 0, 0s"),
         "{}",
         output.stdout
     );
