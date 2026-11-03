@@ -18,7 +18,9 @@ The model's files are their own documentation:
   model-tables` fails where it is out of date. The model gives one
   `when_<cell>` predicate per When cell, one `does_<cell>` per Linewright
   cell and a `result_<cell>` per result that is not a literal, each named by
-  the cell's text. `scripts/model_tables.py` describes the directives.
+  the cell's text. The generator writes the tables' structure; the meaning
+  of each cell is the hand-written definition's, and no check reads it.
+  `scripts/model_tables.py` describes the directives.
 - `pipeline.qnt`, `cut.qnt`, `spec_change.qnt`: the three models, each header
   giving its items, bounds and starts; and their scenarios, named after the
   regressions (S8) and issues (S9) they replay.
