@@ -281,6 +281,7 @@ impl Factory {
         )
         .await?;
         let clones = Clones::new(&config.work_dir, config.winding_up.clone());
+        clones.sweep();
         let shell = Shell {
             policy: Policy {
                 linewright: identity.login.clone(),

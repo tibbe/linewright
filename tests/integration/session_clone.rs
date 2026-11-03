@@ -299,3 +299,20 @@ async fn a_clone_still_being_made_at_its_sessions_deadline_or_when_its_run_is_ca
     assert!(timed_out.ends_with("\n         timed out\n"), "{timed_out}");
     assert!(cancelled.ends_with("\n         cancelled\n"), "{cancelled}");
 }
+
+#[test_log::test(tokio::test)]
+async fn a_factory_starting_removes_a_clone_left_behind() {
+    let mut world = World::new().await;
+    let left = world
+        .dir
+        .path()
+        .join("work")
+        .join("clones")
+        .join("issue-12-AbC123");
+    std::fs::create_dir_all(left.join("repo")).unwrap();
+    std::fs::File::create(left.with_extension("lock")).unwrap();
+
+    world.restart(|_| {}).await;
+
+    assert_eq!(clones_left(&world).await, Vec::<std::ffi::OsString>::new());
+}
