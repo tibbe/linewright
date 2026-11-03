@@ -431,12 +431,12 @@ module linewright {
       (x.open and WORKING_STATES.contains(st) and not(blocked(w, i))
          and outcomesOf(w, i, stageOf(st)).size() > 0,
         opt("start run", i, stageOf(st))),
-      // any | "the issue carries more than one status label" | "removes all
-      // but the newest"
-      (x.open and x.older != "", opt("remove older label", i, x.older)),
-      // any | "it carries linewright:stalled and Linewright is assigned to
-      // it" | "removes linewright:stalled" (A16).
-      (x.open and x.stalled and x.lw, opt("clear stalled", i, "")),
+      // any but done | "the issue carries more than one status label" |
+      // "removes all but the newest"
+      (x.open and st != "done" and x.older != "", opt("remove older label", i, x.older)),
+      // any but done, merged and closed | "it carries linewright:stalled and
+      // Linewright is assigned to it" | "removes linewright:stalled" (A16).
+      (x.open and st != "done" and x.stalled and x.lw, opt("clear stalled", i, "")),
     ]
   }
 
