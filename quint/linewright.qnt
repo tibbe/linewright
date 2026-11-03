@@ -1477,6 +1477,8 @@ module linewright {
     else if (when_linewright_opened_it_and_is_not_assigned_to_it_otherwise(w, p)) "unassigned"
     // its stage and how long it has run, as in Working | a run is in flight on it | in flight
     else if (when_a_run_is_in_flight_on_it(w, p)) result_its_stage_and_how_long_it_has_run_as_in_working(w, p)
+    // "paused until" what ends the hold, or "queued", as in Ready | Linewright would start a run on it, as in Ready | paused or queued
+    else if (when_linewright_would_start_a_run_on_it_as_in_ready(w, p)) "paused until"
     // "checks failed" | a check failed | failed
     else if (when_a_check_failed(w, p)) "checks failed"
     // "checks running" | a check has not finished | in flight
@@ -1528,6 +1530,8 @@ module linewright {
     it(w, p).byLw and not(it(w, p).lw)
   pure def when_a_run_is_in_flight_on_it(w: World, p: int): bool = runInFlight(w, p)
   pure def result_its_stage_and_how_long_it_has_run_as_in_working(w: World, p: int): str = "its stage"
+  /// Holds and max-runs are not modelled, as in Ready.
+  pure def when_linewright_would_start_a_run_on_it_as_in_ready(w: World, p: int): bool = false
   pure def when_a_check_failed(w: World, p: int): bool = false
   pure def when_a_check_has_not_finished(w: World, p: int): bool = false
   pure def when_it_cannot_merge_cleanly(w: World, p: int): bool = false
