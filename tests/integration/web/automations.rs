@@ -277,19 +277,37 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
         .await
         .unwrap();
 
-    let shown = tokio::time::timeout(Duration::from_secs(5), async {
+    let mut last_seen = None;
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = events.recv().await.unwrap();
             if let Some((_, region)) = regions(&event)
                 .into_iter()
                 .find(|(id, _)| id == "automations")
             {
-                return rows_shown(&region);
+                let shown = rows_shown(&region);
+                if !shown[0][2].ends_with("— in flight") {
+                    return shown;
+                }
+                last_seen = Some(shown);
             }
         }
     })
     .await
-    .unwrap();
-    assert!(shown[0][2].ends_with("— done"), "{shown:?}");
+    .unwrap_or_else(|_| panic!("the run never ended; last shown: {last_seen:?}"));
+    let [row] = &ended[..] else {
+        panic!("{ended:?}");
+    };
+    let [name, schedule, last_run, next_run] = &row[..] else {
+        panic!("{row:?}");
+    };
+    assert_eq!(
+        [name, schedule, next_run],
+        ["weekly", "At 06:00, on Monday.", "2026-10-05 06:00:00 UTC"]
+    );
+    assert!(
+        last_run.starts_with("weekly/1 by hand, started ") && last_run.ends_with(" UTC — done"),
+        "{last_run}"
+    );
     web.stop().await;
 }
