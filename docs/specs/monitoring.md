@@ -88,7 +88,8 @@ order:
     and when `serve` last read it;
   - each thing Linewright waits for before it acts on #N next, naming what
     ends the wait, such as "the usage limit, until 14:30 UTC", "the drain,
-    until `serve` restarts" or "the environment, until a build succeeds";
+    until `serve` restarts" or "the environment, until it is built"
+    ([Holds](runs.md#holds));
   - its run in flight;
   - its latest three past runs, as `runs N` lists them.
 - **An item Linewright leaves.** For an item that is not managed,
