@@ -344,6 +344,7 @@ pub enum Stop {
     /// Linewright opened it and is not assigned to it otherwise.
     Unassigned,
     Running(Running),
+    Held(Held),
     ChecksFailed,
     ChecksRunning,
     Conflicts,
@@ -367,6 +368,7 @@ impl Stop {
         match self {
             Stop::Stalled | Stop::ChecksFailed | Stop::Conflicts => Some(CardStatus::Failed),
             Stop::Running(_) | Stop::ChecksRunning => Some(CardStatus::InFlight),
+            Stop::Held(held) => Some(held.status()),
             Stop::HandedBack | Stop::ChangesRequested | Stop::ReviewRequired => {
                 Some(CardStatus::WaitingForAPerson)
             }
@@ -437,7 +439,7 @@ fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column
             seen,
         ),
         Column::Working => working_line(issue, run, &waits),
-        Column::InReview => review_line(managed, issue, run, seen),
+        Column::InReview => review_line(managed, &folded, issue, run, seen),
         Column::Done => done_line(managed.detail.as_ref()),
     };
     let card = Card {
@@ -667,16 +669,19 @@ fn held(waits: &[Wait]) -> Option<Held> {
 
 /// The line in In review: of an item other than its pull request, its pull
 /// request and what stops it merging; of a pull request, what stops it
-/// merging.
+/// merging. `folded` is the pull requests the card shows, among which the
+/// shown pull request's own waits are found.
 fn review_line(
     managed: &Managed,
+    folded: &[&Managed],
     issue: Option<&Issue>,
     run: Option<Running>,
     seen: &Seen,
 ) -> Option<CardLine> {
     let (pull_request, author) = match managed.detail.as_ref()? {
         Detail::PullRequest { .. } => {
-            return merge_stop(managed.number, None, run, seen).map(CardLine::MergeStop);
+            return merge_stop(managed.number, None, run, &managed.waiting_for, seen)
+                .map(CardLine::MergeStop);
         }
         Detail::InReview(review) => (review.pull_request, None),
         Detail::InReviewElsewhere {
@@ -688,20 +693,25 @@ fn review_line(
         ),
         Detail::Ended { .. } => return None,
     };
+    let waits = folded
+        .iter()
+        .find(|pull| pull.number == pull_request)
+        .map_or(&[][..], |pull| &pull.waiting_for);
     Some(CardLine::Review {
         pull_request,
         author,
-        stops: merge_stop(pull_request, issue, run, seen),
+        stops: merge_stop(pull_request, issue, run, waits, seen),
     })
 }
 
-/// What stops `pull_request` merging, the first that holds. Someone else's
-/// pull request the snapshot does not hold is known only by `issue`'s
-/// reference to it.
+/// What stops `pull_request` merging, the first that holds, with `waits` its
+/// own waits. Someone else's pull request the snapshot does not hold is known
+/// only by `issue`'s reference to it.
 fn merge_stop(
     pull_request: Number,
     issue: Option<&Issue>,
     run: Option<Running>,
+    waits: &[Wait],
     seen: &Seen,
 ) -> Option<Stop> {
     let view = seen.view;
@@ -732,6 +742,7 @@ fn merge_stop(
             }
         }),
         run.map(Stop::Running),
+        held(waits).map(Stop::Held),
         checks(CheckState::Failed).then_some(Stop::ChecksFailed),
         checks(CheckState::Pending).then_some(Stop::ChecksRunning),
         matches!(mergeability, Some(Mergeability::Conflicting)).then_some(Stop::Conflicts),

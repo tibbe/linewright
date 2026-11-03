@@ -961,6 +961,30 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
     );
 }
 
+/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// a pull request whose update run waits for a free run says "queued", not
+/// "conflicts", in Muted text.
+#[test_log::test(tokio::test)]
+async fn a_pull_request_whose_run_is_queued_says_queued_in_muted_text() {
+    let conflicting = Pull {
+        mergeability: Mergeability::Conflicting,
+        ..linewrights_pull(11, &[1], &[CheckState::Passed])
+    };
+    let pages = Pages::of(at_max_runs(view(
+        vec![assigned(ticket(1, "Do the thing"), &[LINEWRIGHT])],
+        vec![conflicting],
+    )))
+    .await;
+
+    let html = pages.page("/").await;
+
+    assert_eq!(
+        sorted_cards(&html),
+        ["In review: #1: Do the thing | #11 · queued"]
+    );
+    assert_eq!(toned(&html, PAUSED_OR_QUEUED), ["#1: Do the thing"]);
+}
+
 #[test_log::test(tokio::test)]
 async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_column() {
     let opened_at = |issue: Issue, when| {

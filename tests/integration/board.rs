@@ -359,7 +359,7 @@ fn an_in_review_card_says_its_pull_request_and_the_first_that_holds_of_what_stop
         approved_but_not_by_a_code_owner,
         reviewed(44, 34, &[Failed], blocked(code_owner()), false),
     ];
-    let view = with_runs(view(issues, pulls), &["11/rework-1"]);
+    let view = with_runs(unlimited(view(issues, pulls)), &["11/rework-1"]);
 
     let board = board(&view, &[], at(NOW));
 
@@ -1441,6 +1441,189 @@ fn a_stalled_pull_request_in_review_says_so_ahead_of_a_run_in_flight_and_failed_
     );
 }
 
+/// The line of an issue in review on Linewright's pull request
+/// #`pull_request`, which `stops` stops merging.
+fn reviewing(pull_request: u64, stops: Stop) -> CardLine {
+    CardLine::Review {
+        pull_request: Number(pull_request),
+        author: None,
+        stops: Some(stops),
+    }
+}
+
+/// `view` with room under `max-runs` for every run it would start.
+fn unlimited(mut view: View) -> View {
+    view.policy.max_runs = 100;
+    view
+}
+
+/// Linewright's pull request #`number` closing `closes`, on which alice
+/// requested changes.
+fn changes_requested(number: u64, closes: &[u64]) -> Pull {
+    Pull {
+        mergeability: Mergeability::Clean,
+        review_decision: Some(ReviewDecision::ChangesRequested),
+        reviews: vec![Review {
+            author: Login::new("alice"),
+            state: ReviewState::ChangesRequested,
+            body: "Please rename it.".into(),
+            submitted_at: at("2026-10-01T11:59:00Z"),
+        }],
+        ..pull(number, closes, &[CheckState::Passed])
+    }
+}
+
+/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// a pull request whose run is held back says so, as in Ready, ahead of what
+/// the run would act on.
+#[test_log::test]
+fn a_pull_request_whose_run_is_held_back_says_paused_or_queued_ahead_of_what_the_run_would_fix() {
+    use CheckState::{Failed, Passed};
+    let issues = || (1..=3).map(|n| assigned(ticket(n, "Reviewed"))).collect();
+    let pulls = || {
+        vec![
+            changes_requested(11, &[1]),
+            pull(12, &[2], &[Failed]),
+            reviewed(13, 3, &[Passed], Mergeability::Conflicting, false),
+            changes_requested(30, &[98]),
+        ]
+    };
+    let queued = board(&common::at_max_runs(view(issues(), pulls())), &[], at(NOW));
+    let limited = board(
+        &View {
+            memory: common::limited_until(RESETS_AT),
+            ..view(issues(), pulls())
+        },
+        &[],
+        at(NOW),
+    );
+
+    let paused = Stop::Held(Held::Paused(Hold::UsageLimit {
+        resets_at: at(RESETS_AT),
+    }));
+    assert_eq!(
+        [1, 2, 3, 30].map(|n| line(&queued, n)),
+        [
+            Some(reviewing(11, Stop::Held(Held::Queued))),
+            Some(reviewing(12, Stop::Held(Held::Queued))),
+            Some(reviewing(13, Stop::Held(Held::Queued))),
+            Some(CardLine::MergeStop(Stop::Held(Held::Queued))),
+        ]
+    );
+    assert_eq!(
+        [1, 2, 3, 30].map(|n| line(&limited, n)),
+        [
+            Some(reviewing(11, paused.clone())),
+            Some(reviewing(12, paused.clone())),
+            Some(reviewing(13, paused.clone())),
+            Some(CardLine::MergeStop(paused)),
+        ]
+    );
+    assert_card_statuses(
+        &queued,
+        &[
+            (
+                "changes requested, rework queued",
+                1,
+                Some(CardStatus::PausedOrQueued),
+            ),
+            (
+                "checks failed, fix-ci queued",
+                2,
+                Some(CardStatus::PausedOrQueued),
+            ),
+            (
+                "conflicts, update queued",
+                3,
+                Some(CardStatus::PausedOrQueued),
+            ),
+            ("on its own card", 30, Some(CardStatus::PausedOrQueued)),
+        ],
+    );
+}
+
+/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// stalled, handed back, unassigned and a run in flight come before a run
+/// held back.
+#[test_log::test]
+fn a_stalled_handed_back_unassigned_or_running_pull_request_says_so_ahead_of_its_run_held_back() {
+    let stalled = Pull {
+        labels: vec![label::STALLED.into()],
+        ..changes_requested(11, &[1])
+    };
+    let unassigned = |number, closes| Pull {
+        assignees: vec![],
+        ..changes_requested(number, closes)
+    };
+    let view = with_runs(
+        common::at_max_runs(view(
+            (1..=4).map(|n| assigned(ticket(n, "Reviewed"))).collect(),
+            vec![
+                stalled,
+                unassigned(12, &[2]),
+                unassigned(13, &[3]),
+                changes_requested(14, &[4]),
+            ],
+        )),
+        &["14/rework-1"],
+    );
+    let recorded = [recorded(
+        "13/rework-1",
+        "2026-10-01T11:59:30Z",
+        Ending::HandedBack,
+    )];
+
+    let board = board(&view, &recorded, at(NOW));
+
+    assert_eq!(
+        (1..=4).map(|n| line(&board, n)).collect::<Vec<_>>(),
+        [
+            Some(reviewing(11, Stop::Stalled)),
+            Some(reviewing(12, Stop::Unassigned)),
+            Some(reviewing(13, Stop::HandedBack)),
+            Some(reviewing(
+                14,
+                Stop::Running(Running {
+                    stage: WorkKind::Rework,
+                    elapsed: Elapsed {
+                        since: at("2026-10-01T11:50:00Z"),
+                        seconds: 630,
+                    },
+                })
+            )),
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// with no run held back, the line says what stops it merging, and a run
+/// held back on another pull request closing the same issue does not show.
+#[test_log::test]
+fn a_pull_request_with_no_run_held_back_says_what_stops_it_merging() {
+    let view = common::at_max_runs(view(
+        vec![
+            assigned(ticket(1, "Reviewed")),
+            assigned(ticket(2, "Reviewed")),
+        ],
+        vec![
+            Pull {
+                review_decision: Some(ReviewDecision::ChangesRequested),
+                ..reviewed(11, 1, &[CheckState::Passed], Mergeability::Clean, false)
+            },
+            changes_requested(12, &[2]),
+            Pull {
+                review_decision: Some(ReviewDecision::ChangesRequested),
+                ..reviewed(13, 2, &[CheckState::Passed], Mergeability::Clean, false)
+            },
+        ],
+    ));
+
+    let board = board(&view, &[], at(NOW));
+
+    assert_eq!(line(&board, 1), Some(reviewing(11, Stop::ChangesRequested)));
+    assert_eq!(line(&board, 2), Some(reviewing(13, Stop::ChangesRequested)));
+}
+
 fn blocked_by(issue: Issue, blockers: &[u64]) -> Issue {
     Issue {
         blocked_by: blockers
@@ -1986,7 +2169,7 @@ fn a_card_in_review_has_the_card_status_of_what_stops_it_merging() {
         own_card_with_checks_failed,
         own_card_approved,
     ];
-    let view = with_runs(view(issues, pulls), &["11/rework-1"]);
+    let view = with_runs(unlimited(view(issues, pulls)), &["11/rework-1"]);
 
     let board = board(&view, &[], at(NOW));
 
