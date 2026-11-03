@@ -24,7 +24,7 @@ use tracing::{error, info};
 use crate::board::{self, Board};
 use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
-use crate::drain::{Asked, Stop, Taken, Was};
+use crate::drain::{Asked, Exiting, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::environment::shown::{self as environment_shown, Followed, FollowingBuild};
 use crate::environment::{self, BuildId, BuildTally, RebuildTaken, Tallied};
@@ -39,7 +39,7 @@ use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::web;
 use crate::webhook::{self, Tally};
-use crate::winding_up::WindingUp;
+use crate::winding_up::{Remaining, WindingUp};
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
@@ -298,6 +298,8 @@ pub struct Sources {
     /// What a drain asked for goes through.
     pub ends: Ends,
     pub environment: EnvironmentLink,
+    /// What `serve` waits for before it exits.
+    pub exiting: watch::Receiver<Vec<Remaining>>,
 }
 
 /// The local API, under `/api/`, answering only requests whose `Host` is
@@ -314,7 +316,8 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
         .route("/drain", post(take_drain))
-        .route("/stop", get(answer_stop));
+        .route("/stop", get(answer_stop))
+        .route("/exiting", get(answer_exiting));
     Router::new()
         .nest("/api", api)
         .fallback(no_such_resource)
@@ -610,6 +613,14 @@ async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) 
         runs,
     };
     json_response(StatusCode::OK, &taken)
+}
+
+async fn answer_exiting(State(sources): State<Sources>) -> Response {
+    let exiting = Exiting {
+        serving_since: sources.serving.since,
+        waits: sources.exiting.borrow().clone(),
+    };
+    json_response(StatusCode::OK, &exiting)
 }
 
 /// Answers once a stop begins, or once `serve` stops answering.

@@ -17,8 +17,8 @@ use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
     ResolveError, Settings, Since,
 };
-use linewright::domain::Number;
-use linewright::drain::{self, Asked, Said, Stop, Taken, Timeout, Waiting, Was};
+use linewright::domain::{Number, Timestamp};
+use linewright::drain::{self, Asked, Exiting, Said, Stop, Taken, Timeout, Waiting, Was};
 use linewright::ending::{Ends, Event, Signal, Step, StopBy};
 use linewright::environment::shown::{self, Followed, FollowingBuild};
 use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
@@ -33,7 +33,7 @@ use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES}
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
-use linewright::winding_up::WindingUp;
+use linewright::winding_up::{Remaining, WindingUp};
 use linewright::work_settings::{Environments, RepoSettings};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{contain, explain, status, web};
@@ -42,50 +42,55 @@ use tracing::{error, info, warn};
 
 const HARNESS_PROGRAM: &str = "claude";
 
+const SUCCESS: u8 = 0;
+
+/// The exit code for any error but the ones with codes of their own.
+const FAILURE: u8 = 1;
+
 /// The exit code for a command line that is wrong, the one Clap gives a
 /// command line it cannot parse.
 const WRONG_COMMAND_LINE: u8 = 2;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match cli.invocation {
+    let command = match cli.invocation {
         Invocation::Contain { program } => {
             let (name, args) = program.split_first().expect("clap requires the program");
-            contain::main(name, args)
+            return contain::main(name, args);
         }
-        Invocation::Command(command) => tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("the runtime builds")
-            .block_on(serve_or_ask(command, &cli.settings)),
-    }
+        Invocation::Command(command) => command,
+    };
+    let config = match resolve(&cli.settings) {
+        Ok(config) => config,
+        Err(status) => return ExitCode::from(status),
+    };
+    init_logging(config.log_format);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime builds");
+    let status = runtime.block_on(run(command, config));
+    drop(runtime);
+    info!(status, "exiting");
+    ExitCode::from(status)
 }
 
-async fn serve_or_ask(command: Command, settings: &Settings) -> ExitCode {
+/// The config `settings` give, or else, having said why not, the exit status.
+fn resolve(settings: &Settings) -> Result<Config, u8> {
     let cwd = std::env::current_dir().unwrap_or_default();
-    let config = match Config::resolve(
+    Config::resolve(
         settings,
         &cwd,
         &|key| std::env::var(key).ok(),
         std::io::stderr().is_terminal(),
-    ) {
-        Ok(config) => config,
-        Err(e) => {
-            complain(&e);
-            return match e {
-                ResolveError::CommandLine(_) => ExitCode::from(WRONG_COMMAND_LINE),
-                ResolveError::Elsewhere(_) => ExitCode::FAILURE,
-            };
+    )
+    .map_err(|e| {
+        complain(&e);
+        match e {
+            ResolveError::CommandLine(_) => WRONG_COMMAND_LINE,
+            ResolveError::Elsewhere(_) => FAILURE,
         }
-    };
-    init_logging(config.log_format);
-    match run(command, config).await {
-        Ok(code) => code,
-        Err(e) => {
-            error!(error = format!("{e:#}"), "exiting");
-            ExitCode::FAILURE
-        }
-    }
+    })
 }
 
 fn complain(message: impl std::fmt::Display) {
@@ -110,7 +115,7 @@ async fn ask<T: serde::de::DeserializeOwned>(
     what: &str,
     json: bool,
     render: fn(&T, bool) -> String,
-) -> ExitCode {
+) -> u8 {
     let repo = match config.required_repo() {
         Ok(repo) => repo,
         Err(e) => return print_answer(Err(failed(&e))),
@@ -131,13 +136,13 @@ async fn ask<T: serde::de::DeserializeOwned>(
     if json && !text.ends_with('\n') {
         println!();
     }
-    ExitCode::SUCCESS
+    SUCCESS
 }
 
 /// How often `drain` asks what is in flight while it waits.
 const DRAIN_ASKS_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
-async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: bool) -> ExitCode {
+async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: bool) -> u8 {
     let say = |lines: &[Said]| {
         for said in lines {
             if json {
@@ -165,7 +170,7 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
     say(&[Said::Taken { was: taken.was }]);
     say(&waiting.seen(&taken.runs));
     if no_wait {
-        return ExitCode::SUCCESS;
+        return SUCCESS;
     }
     let mut stop = (taken.was != Was::Stopping).then(|| {
         let (dir, repo) = (dir.clone(), repo.to_string());
@@ -205,21 +210,34 @@ async fn drain(config: &Config, no_wait: bool, timeout: Option<Timeout>, json: b
         let of_same_serve =
             answered.filter(|status| status.linewright.serving_since == taken.serving_since);
         match of_same_serve {
-            Some(status) => say(&waiting.seen(&status.run_ids())),
+            Some(status) => {
+                say(&waiting.seen(&status.run_ids()));
+                if let Some(waits) = exiting(&dir, &repo, taken.serving_since).await {
+                    say(&waiting.seen_exiting(&waits));
+                }
+            }
             None => {
                 if let Some(answering) = stop.take() {
                     say(&stop_begun(answering.await));
                 }
                 say(&waiting.exited());
-                return ExitCode::SUCCESS;
+                return SUCCESS;
             }
         }
     }
 }
 
+/// What the `serve` that began serving at `serving_since` waits for before it
+/// exits; `None` if it does not answer that.
+async fn exiting(dir: &Path, repo: &str, serving_since: Timestamp) -> Option<Vec<Remaining>> {
+    let body = api::get_answer(dir, repo, "/api/exiting").await.ok()?;
+    let exiting = read_as::<Exiting>(&body, "what serve waits for before it exits").ok()?;
+    (exiting.serving_since == serving_since).then_some(exiting.waits)
+}
+
 /// Shows the environment as `serve` answers, or else as it is kept, then
 /// with `follow` the build in progress, if any, until it ends.
-async fn show_environment(config: &Config, follow: bool, json: bool) -> ExitCode {
+async fn show_environment(config: &Config, follow: bool, json: bool) -> u8 {
     let work_dir = match config.repo_work_dir() {
         Ok(work_dir) => work_dir,
         Err(e) => return print_answer(Err(failed(&e))),
@@ -254,7 +272,7 @@ async fn show_environment(config: &Config, follow: bool, json: bool) -> ExitCode
             let from = build.so_far.as_ref().map_or(0, |so_far| so_far.to);
             follow_build(config, build.build, from, json).await
         }
-        Some(_) | None => ExitCode::SUCCESS,
+        Some(_) | None => SUCCESS,
     }
 }
 
@@ -292,7 +310,7 @@ async fn setup_command_before_any_poll(config: &Config) -> Result<bool> {
 
 /// Prints build `build`'s output past the first `from` bytes as it comes,
 /// then its end: through `serve`, or else from what is kept.
-async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) -> ExitCode {
+async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) -> u8 {
     let work_dir = match config.repo_work_dir() {
         Ok(work_dir) => work_dir,
         Err(e) => return print_answer(Err(failed(&e))),
@@ -364,7 +382,7 @@ async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) ->
             hang_ups.sent();
         }
         match followed {
-            Ok(()) if ended => return ExitCode::SUCCESS,
+            Ok(()) if ended => return SUCCESS,
             Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
             Err(RequestError::HungUp(e)) => {
                 if !hang_ups.ask_again() {
@@ -378,7 +396,7 @@ async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) ->
                 loop {
                     match following.next().await {
                         Ok(Some(next)) => print(&next),
-                        Ok(None) => return ExitCode::SUCCESS,
+                        Ok(None) => return SUCCESS,
                         Err(e) => return print_answer(Err(failed(&e))),
                     }
                 }
@@ -395,7 +413,7 @@ async fn rebuild_environment(
     no_wait: bool,
     json: bool,
     winding_up: &WindingUp,
-) -> ExitCode {
+) -> u8 {
     let say = |said: &RebuildSaid| {
         if json {
             println!(
@@ -429,7 +447,7 @@ async fn rebuild_environment(
     };
     say(&RebuildSaid::Taken(taken));
     if no_wait {
-        return ExitCode::SUCCESS;
+        return SUCCESS;
     }
     let resource = format!("/api/environment/rebuild/{build}");
     match api::get_answer(&dir, &repo, &resource).await {
@@ -446,11 +464,7 @@ async fn rebuild_environment(
 }
 
 /// Builds the environment without `serve`, and says how the build ended.
-async fn rebuild_here(
-    config: &Config,
-    say: impl Fn(&RebuildSaid),
-    winding_up: &WindingUp,
-) -> ExitCode {
+async fn rebuild_here(config: &Config, say: impl Fn(&RebuildSaid), winding_up: &WindingUp) -> u8 {
     let ended = async {
         let mut factory = start(config, OnUsageLimit::End, Ends::new(), winding_up).await?;
         factory.rebuild_environment().await
@@ -467,17 +481,17 @@ async fn rebuild_here(
     }
 }
 
-fn no_setup_command() -> ExitCode {
+fn no_setup_command() -> u8 {
     print_answer(Err((
         1,
         "there is no setup command: set `setup.command` to build the environment".into(),
     )))
 }
 
-fn ended_code(ended: &BuildEnded) -> ExitCode {
+fn ended_code(ended: &BuildEnded) -> u8 {
     match ended {
-        BuildEnded::Succeeded { .. } => ExitCode::SUCCESS,
-        BuildEnded::Failed { .. } | BuildEnded::NotStarted { .. } => ExitCode::FAILURE,
+        BuildEnded::Succeeded { .. } => SUCCESS,
+        BuildEnded::Failed { .. } | BuildEnded::NotStarted { .. } => FAILURE,
     }
 }
 
@@ -486,7 +500,7 @@ fn read_as<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T,
         .map_err(|e| (1, format!("`serve`'s answer does not read as {what}: {e}")))
 }
 
-async fn list_runs(config: &Config, query: &Query, json: bool) -> ExitCode {
+async fn list_runs(config: &Config, query: &Query, json: bool) -> u8 {
     let resource = format!("/api/runs?{}", api::query_string(query));
     let answer = ask_or_read(config, &resource, "runs", |work_dir| {
         runs::answer(work_dir, query, SystemClock.now())
@@ -527,7 +541,7 @@ impl Printing {
     }
 }
 
-async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> ExitCode {
+async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> u8 {
     let resource = format!("/api/logs?{}", api::query_string(which));
     let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
         logs::answer(work_dir, which)
@@ -565,7 +579,7 @@ async fn follow_logs(
     query: FollowQuery,
     mut after: Option<Resume>,
     printing: Printing,
-) -> ExitCode {
+) -> u8 {
     let work_dir = match config.repo_work_dir() {
         Ok(work_dir) => work_dir,
         Err(e) => return print_answer(Err(failed(&e))),
@@ -610,7 +624,7 @@ async fn follow_logs(
             hang_ups.sent();
         }
         match followed {
-            Ok(()) if ended => return ExitCode::SUCCESS,
+            Ok(()) if ended => return SUCCESS,
             Ok(()) => tokio::time::sleep(api::ASK_AGAIN_AFTER).await,
             Err(RequestError::HungUp(e)) => {
                 if !hang_ups.ask_again() {
@@ -632,7 +646,7 @@ async fn follow_records(
     query: &FollowQuery,
     after: Option<After>,
     printing: Printing,
-) -> ExitCode {
+) -> u8 {
     let mut following = match Following::start(work_dir, &query.which, query.verbosity, after) {
         Ok(following) => following,
         Err(e) => return print_answer(Err(unanswered(e.into()))),
@@ -644,21 +658,21 @@ async fn follow_records(
                     printing.line(&followed.line);
                 }
             }
-            Ok(None) => return ExitCode::SUCCESS,
+            Ok(None) => return SUCCESS,
             Err(e) => return print_answer(Err(failed(&e))),
         }
     }
 }
 
-fn print_answer(answer: Result<String, (u8, String)>) -> ExitCode {
+fn print_answer(answer: Result<String, (u8, String)>) -> u8 {
     match answer {
         Ok(text) => {
             print!("{text}");
-            ExitCode::SUCCESS
+            SUCCESS
         }
         Err((code, message)) => {
             complain(message);
-            ExitCode::from(code)
+            code
         }
     }
 }
@@ -684,7 +698,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
 }
 
 fn failed(e: &anyhow::Error) -> (u8, String) {
-    (1, format!("{e:#}"))
+    (FAILURE, format!("{e:#}"))
 }
 
 fn unanswered(e: Unanswered) -> (u8, String) {
@@ -742,15 +756,18 @@ fn socket_dir() -> PathBuf {
 }
 
 /// Runs `command`, then waits for what its work left before Linewright
-/// exits.
-async fn run(command: Command, config: Config) -> Result<ExitCode> {
+/// exits; returns the exit status.
+async fn run(command: Command, config: Config) -> u8 {
     let winding_up = WindingUp::default();
     let done = work(command, config, &winding_up).await;
     winding_up.wait().await;
-    done
+    done.unwrap_or_else(|e| {
+        error!(error = format!("{e:#}"), "failed");
+        FAILURE
+    })
 }
 
-async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Result<ExitCode> {
+async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Result<u8> {
     let done = match command {
         Command::Status { json } => {
             let resource = "/api/status";
@@ -840,6 +857,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
                 work_dir,
                 ends: ends.clone(),
                 environment,
+                exiting: winding_up.exiting(),
             };
             let ui = match &config.ui {
                 Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),
@@ -921,7 +939,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
             Ok(())
         }
     };
-    done.map(|()| ExitCode::SUCCESS)
+    done.map(|()| SUCCESS)
 }
 
 async fn serve(

@@ -10,6 +10,7 @@ use linewright::factory::{Factory, ServeEnd};
 use linewright::harness::SessionError;
 use linewright::runs::{Ending, Runs, State};
 use linewright::webhook::Pending;
+use linewright::winding_up::Remaining;
 
 struct Served {
     world: World,
@@ -279,6 +280,73 @@ fn a_drain_names_each_run_in_flight_once_and_again_as_it_ends() {
     );
 }
 
+fn clone(name: &str) -> Remaining {
+    Remaining::Clone { name: name.into() }
+}
+
+fn build(id: u64) -> Remaining {
+    Remaining::Build {
+        id: id.to_string().parse().unwrap(),
+    }
+}
+
+#[test_log::test]
+fn a_drain_names_each_thing_serve_waits_for_before_it_exits_once_and_again_as_it_ends() {
+    let mut waiting = Waiting::default();
+
+    let first = waiting.seen_exiting(&[clone("issue-1-AbC123"), build(7)]);
+    let one_ended = waiting.seen_exiting(&[build(7)]);
+    let none_new = waiting.seen_exiting(&[build(7)]);
+    let exited = waiting.exited();
+
+    assert_eq!(
+        first,
+        [
+            Said::WaitingForExit {
+                what: clone("issue-1-AbC123")
+            },
+            Said::WaitingForExit { what: build(7) }
+        ]
+    );
+    assert_eq!(
+        one_ended,
+        [Said::EndedForExit {
+            what: clone("issue-1-AbC123")
+        }]
+    );
+    assert_eq!(none_new, []);
+    assert_eq!(
+        exited,
+        [Said::EndedForExit { what: build(7) }, Said::Exited]
+    );
+}
+
+/// As `drain` prints the runs it waits for (`docs/specs/operation.md`,
+/// Stopping, "`drain`").
+#[test_log::test]
+fn a_drain_says_what_serve_waits_for_before_it_exits_and_that_it_ended() {
+    let said = [
+        Said::WaitingForExit {
+            what: clone("issue-12-AbC123"),
+        },
+        Said::EndedForExit { what: build(7) },
+        Said::WaitingForExit {
+            what: Remaining::LeftClones,
+        },
+    ];
+
+    let lines: Vec<String> = said.iter().map(|said| drain::render(said, false)).collect();
+
+    assert_eq!(
+        lines,
+        [
+            "waiting for: the removal of clone issue-12-AbC123\n",
+            "ended: the removal of build 7\n",
+            "waiting for: the removal of the clones left behind\n",
+        ]
+    );
+}
+
 /// `drain`'s output is the monitoring commands' (`docs/specs/operation.md`,
 /// Stopping): with `--json`, the same as JSON.
 #[test_log::test]
@@ -292,6 +360,13 @@ fn each_thing_a_drain_says_is_one_json_object_on_a_line() {
             run: run("1/triage-1"),
         },
         Said::BecameAStop,
+        Said::WaitingForExit {
+            what: clone("issue-12-AbC123"),
+        },
+        Said::EndedForExit { what: build(7) },
+        Said::EndedForExit {
+            what: Remaining::LeftClones,
+        },
         Said::Exited,
     ];
 
@@ -304,6 +379,9 @@ fn each_thing_a_drain_says_is_one_json_object_on_a_line() {
             "{\"event\":\"waiting-for\",\"run\":\"1/triage-1\"}\n",
             "{\"event\":\"ended\",\"run\":\"1/triage-1\"}\n",
             "{\"event\":\"became-a-stop\"}\n",
+            "{\"event\":\"waiting-for-exit\",\"what\":{\"what\":\"clone\",\"name\":\"issue-12-AbC123\"}}\n",
+            "{\"event\":\"ended-for-exit\",\"what\":{\"what\":\"build\",\"id\":7}}\n",
+            "{\"event\":\"ended-for-exit\",\"what\":{\"what\":\"left-clones\"}}\n",
             "{\"event\":\"exited\"}\n",
         ]
     );

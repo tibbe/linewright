@@ -33,6 +33,7 @@ fn sources(work_dir: RepoWorkDir) -> Sources {
         work_dir,
         ends: Ends::new(),
         environment: api::EnvironmentLink::default(),
+        exiting: linewright::winding_up::WindingUp::default().exiting(),
     }
 }
 
