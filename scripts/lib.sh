@@ -158,12 +158,12 @@ java21() {
 # Quint, from the model's lockfile, with Apalache and the Rust evaluator where
 # Quint looks for them (QUINT_HOME), so that it fetches nothing itself.
 quint() {
-  local lock=docs/model/package-lock.json cache="${XDG_CACHE_HOME:-$HOME/.cache}/linewright"
+  local lock=quint/package-lock.json cache="${XDG_CACHE_HOME:-$HOME/.cache}/linewright"
   local dir home="$cache/quint-home" target sha bin tmp status
   dir="$cache/quint-$({ sha256sum "$lock" 2>/dev/null || shasum -a 256 "$lock"; } | cut -c1-16)"
   if [ ! -x "$dir/node_modules/.bin/quint" ]; then
     tmp="$(mktemp -d)"
-    cp docs/model/package.json "$lock" "$tmp/"
+    cp quint/package.json "$lock" "$tmp/"
     if (cd "$tmp" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error) &&
       mkdir -p "$cache" && { [ -e "$dir" ] || mv "$tmp" "$dir"; }; then
       rm -rf "$tmp"

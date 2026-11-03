@@ -1,7 +1,7 @@
 ---
 name: verify-spec
 description:
-  Check the spec against its formal model in `docs/model/`. Use after changing
+  Check the spec against its formal model in `quint/`. Use after changing
   a spec section the model covers, when changing the model, or when a model
   check fails.
 ---

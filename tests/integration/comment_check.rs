@@ -200,7 +200,7 @@ fn what_only_looks_like_a_comment_inside_a_string_passes() {
 fn the_model_vendored_files_and_files_without_comments_are_not_checked() {
     assert_eq!(
         reports(&[
-            ("docs/model/x.qnt", "// Narrates.\n"),
+            ("quint/x.qnt", "// Narrates.\n"),
             ("assets/htmx.min.js", "// Narrates.\n"),
             ("styles/daisyui.mjs", "// Narrates.\n"),
             ("README.md", "<!-- Narrates. -->\n"),
