@@ -33,7 +33,7 @@ pub const CONFIG: &str = linewright_path!("/config.toml");
 pub const PROMPTS: &str = linewright_path!("/prompts");
 
 /// A file of the repository's Linewright cannot use, and why.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct FileError {
     /// Its path in the repository.
     pub path: String,
