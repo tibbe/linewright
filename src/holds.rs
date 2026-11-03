@@ -18,6 +18,15 @@ pub enum Hold {
 }
 
 impl Hold {
+    /// `self` against `other` by rank alone, under which every file ranks
+    /// the same.
+    pub fn cmp_rank(&self, other: &Hold) -> Ordering {
+        match (self, other) {
+            (Hold::File(_), Hold::File(_)) => Ordering::Equal,
+            _ => self.cmp(other),
+        }
+    }
+
     /// The hold `wait` is for, if it is for one.
     pub fn of(wait: &Wait) -> Option<Hold> {
         match wait {
@@ -99,10 +108,7 @@ impl<'a> InForce<'a> {
                 .map(|file| Hold::File(file.clone())),
         )
         .collect();
-        holds.sort_by(|a, b| match (a, b) {
-            (Hold::File(_), Hold::File(_)) => Ordering::Equal,
-            _ => a.cmp(b),
-        });
+        holds.sort_by(Hold::cmp_rank);
         holds
     }
 

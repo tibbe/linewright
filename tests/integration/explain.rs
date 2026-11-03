@@ -148,7 +148,7 @@ fn work_held_back_waits_for_a_free_run_or_the_usage_limit() {
 }
 
 #[test_log::test]
-fn without_an_environment_work_held_back_waits_for_a_build_to_succeed() {
+fn without_an_environment_work_held_back_waits_until_it_is_built() {
     let awaiting = View {
         memory: linewright::reconcile::Memory {
             awaits_environment: true,
@@ -159,7 +159,7 @@ fn without_an_environment_work_held_back_waits_for_a_build_to_succeed() {
 
     assert_eq!(
         text(&awaiting, 42)[3],
-        "waiting for: the environment, until a build succeeds"
+        "waiting for: the environment, until it is built"
     );
 }
 

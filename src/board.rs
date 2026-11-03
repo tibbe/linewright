@@ -8,6 +8,7 @@ use crate::domain::{
     CheckState, ClosedKind, Issue, Login, Marking, Mergeability, Number, Pull, PullState,
     ReviewDecision, StatusLabel, SubIssue, Timestamp, last_labeling, last_unassigned, tickets_cut,
 };
+use crate::holds::Hold;
 use crate::lifecycle::{self, done_at, done_by_merge};
 pub use crate::managed::Ended;
 use crate::managed::{self, Detail, Managed, Tickets};
@@ -292,13 +293,6 @@ pub enum CardStatus {
     WaitingForAPerson,
     InFlight,
     PausedOrQueued,
-}
-
-/// What holds back a run that would start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Hold {
-    UsageLimit,
-    Drain,
 }
 
 /// A run in flight: its stage and how long it has run.
@@ -643,15 +637,17 @@ fn lowest_blocker(issue: Option<&Issue>) -> Option<CardLine> {
     Some(CardLine::BlockedBy(blocker))
 }
 
-/// A hold, or the runs in flight at `max-runs`, holding back the run that
-/// would start.
+/// The first hold among `waits` by rank (`docs/specs/runs.md`, Holds,
+/// Rank), the first noted among files, or, where none is a hold, the runs in
+/// flight at `max-runs`, holding back the run that would start.
 fn held(waits: &[Wait]) -> Option<CardLine> {
-    let waits_for = |holds: fn(&Wait) -> bool| waits.iter().any(holds);
+    let first_hold = waits.iter().filter_map(Hold::of).min_by(Hold::cmp_rank);
     first([
-        waits_for(|wait| matches!(wait, Wait::UsageLimit { .. }))
-            .then_some(CardLine::Paused(Hold::UsageLimit)),
-        waits_for(|wait| matches!(wait, Wait::Drain)).then_some(CardLine::Paused(Hold::Drain)),
-        waits_for(|wait| matches!(wait, Wait::FreeRun { .. })).then_some(CardLine::Queued),
+        first_hold.map(CardLine::Paused),
+        waits
+            .iter()
+            .any(|wait| matches!(wait, Wait::FreeRun { .. }))
+            .then_some(CardLine::Queued),
     ])
 }
 

@@ -5,6 +5,9 @@ use linewright::domain::{
     Login, Mergeability, MergedPull, Number, Parent, Pull, PullState, Requirement, ReviewDecision,
     label,
 };
+use linewright::prompts::Readers;
+use linewright::reconcile::Memory;
+use linewright::repo_files::{FileError, Unusable};
 use linewright::status::View;
 
 /// Issue #`number`, which Linewright labeled `labels` as it was opened at
@@ -570,7 +573,7 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
 
     assert_eq!(
         sorted_cards(&html),
-        ["Working: #1: Do the thing | paused for the usage limit"]
+        ["Working: #1: Do the thing | paused until the usage limit resets"]
     );
     let card = select(&html, "#board .card")[0];
     assert!(
@@ -585,6 +588,50 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
         card.html()
     );
     assert_no_status_by_colour_alone(&html);
+}
+
+/// `docs/specs/design_system.md`, Cards: a held card says "paused until"
+/// what ends its hold (`docs/specs/runs.md`, Holds).
+#[test_log::test(tokio::test)]
+async fn a_held_card_says_what_ends_its_hold() {
+    let held = |memory: Memory, unusable: Vec<Unusable>| View {
+        memory,
+        unusable,
+        ..view(vec![ticket(1, "Do the thing")], vec![])
+    };
+    let broken = vec![Unusable {
+        file: FileError {
+            path: ".linewright/config.toml".into(),
+            error: "invalid".into(),
+        },
+        holds: Readers::Every,
+    }];
+    let awaiting_the_environment = Memory {
+        awaits_environment: true,
+        ..Memory::default()
+    };
+    let views = [
+        held(draining_since("2026-10-01T11:00:00Z"), vec![]),
+        held(limited_until("2026-10-01T13:00:00Z"), vec![]),
+        held(awaiting_the_environment, vec![]),
+        held(Memory::default(), broken),
+    ];
+
+    let mut shown = vec![];
+    for view in views {
+        let html = Pages::of(view).await.page("/").await;
+        shown.push(sorted_cards(&html).concat());
+    }
+
+    assert_eq!(
+        shown,
+        [
+            "Ready: #1: Do the thing | paused until `serve` restarts · 2026-09-30 09:00:00 UTC",
+            "Ready: #1: Do the thing | paused until the usage limit resets · 2026-09-30 09:00:00 UTC",
+            "Ready: #1: Do the thing | paused until the environment is built · 2026-09-30 09:00:00 UTC",
+            "Ready: #1: Do the thing | paused until the default branch fixes `.linewright/config.toml` · 2026-09-30 09:00:00 UTC",
+        ]
+    );
 }
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in

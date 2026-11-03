@@ -3,9 +3,8 @@
 
 use super::html::{self, Html};
 use super::names::Names;
-use crate::board::{
-    Card, CardLine, CardStatus, Elapsed, Hold, LaneHead, LaneHeading, Running, Stop,
-};
+use crate::board::{Card, CardLine, CardStatus, Elapsed, LaneHead, LaneHeading, Running, Stop};
+use crate::holds::Hold;
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::WorkKind;
 
@@ -78,6 +77,16 @@ pub(super) fn tone(status: CardStatus) -> Tone {
     }
 }
 
+/// What ends `hold` (`docs/specs/runs.md`, Holds, Ends when).
+fn ends(hold: &Hold) -> Phrase {
+    match hold {
+        Hold::Drain => Phrase::default().code("serve").text(" restarts"),
+        Hold::UsageLimit { .. } => "the usage limit resets".into(),
+        Hold::Environment => "the environment is built".into(),
+        Hold::File(file) => Phrase::from("the default branch fixes ").code(file.path.clone()),
+    }
+}
+
 /// `line` in the UI's own words.
 fn worded(line: &CardLine) -> Phrase {
     match line {
@@ -93,8 +102,7 @@ fn worded(line: &CardLine) -> Phrase {
         CardLine::AssignedTo(assignee) => format!("assigned to {assignee}").into(),
         CardLine::Unassigned => "unassigned".into(),
         CardLine::NotMarked => "not marked for Linewright".into(),
-        CardLine::Paused(Hold::UsageLimit) => "paused for the usage limit".into(),
-        CardLine::Paused(Hold::Drain) => "paused for the drain".into(),
+        CardLine::Paused(hold) => Phrase::from("paused until ").then(ends(hold)),
         CardLine::Queued => "queued".into(),
         CardLine::Running(running) => running_worded(*running),
         CardLine::Review {

@@ -159,7 +159,7 @@ async fn a_run_waits_for_the_first_build_then_its_clone_starts_from_the_environm
     serving.stop().await;
 
     assert!(
-        explained.contains("waiting for: the environment, until a build succeeds"),
+        explained.contains("waiting for: the environment, until it is built"),
         "{explained}"
     );
     assert_eq!(installed.as_deref(), Some(""));
