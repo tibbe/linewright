@@ -11,7 +11,7 @@ use crate::domain::{
     UpdateRule, Windows, label,
 };
 use crate::harness::UsageLimit;
-use crate::holds::{Hold, InForce};
+use crate::holds::InForce;
 use crate::lifecycle::{
     Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
     Row, State, TakeUp, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
@@ -1172,7 +1172,7 @@ impl Plan<'_> {
         if holds.is_empty() {
             self.starts.push(start);
         } else {
-            let waits = noted(holds).into_iter().map(Wait::from).collect();
+            let waits = holds.into_iter().map(Wait::from).collect();
             self.wait_all(start.work.subject().number(), waits);
         }
     }
@@ -1202,15 +1202,6 @@ impl Plan<'_> {
             waits: self.waits,
         };
         (decisions, room_left)
-    }
-}
-
-/// The holds among `holds`, in rank order, that a held start notes as its
-/// item's waits: the files where any hold it, and otherwise the first.
-fn noted(mut holds: Vec<Hold>) -> Vec<Hold> {
-    match holds.iter().position(|hold| matches!(hold, Hold::File(_))) {
-        Some(first_file) => holds.split_off(first_file),
-        None => holds.into_iter().take(1).collect(),
     }
 }
 

@@ -4,10 +4,13 @@ use common::{
     NOW, assigning_linewright, at, labeled_by_linewright, ticket, unassigning_linewright, view,
 };
 use linewright::board::{
-    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Hold, LaneHead, Running, Stop, board,
+    Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, LaneHead, Running, Stop, board,
 };
 use linewright::domain::*;
-use linewright::reconcile::WorkKind;
+use linewright::holds::Hold;
+use linewright::prompts::Readers;
+use linewright::reconcile::{Drain, Memory, WorkKind};
+use linewright::repo_files::{FileError, Unusable};
 use linewright::runs::{Ending, Recorded, Started, State};
 use linewright::status::View;
 
@@ -32,6 +35,9 @@ fn placed(board: &Board) -> Vec<(u64, Column, u64)> {
 fn heads(board: &Board) -> Vec<LaneHead> {
     board.lanes.iter().map(|lane| lane.head.clone()).collect()
 }
+
+/// When the usage limit of a limited view resets.
+const RESETS_AT: &str = "2026-10-01T13:00:00Z";
 
 /// Ticket #`number`, which Linewright labeled `labels`.
 fn labeled(number: u64, labels: &[&str]) -> Issue {
@@ -1486,7 +1492,7 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
     let blocked = Some(CardLine::BlockedBy(Number(8)));
     let assigned = Some(CardLine::AssignedTo(Login::new("alice")));
     let limited = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..ready_view()
     };
     let draining = View {
@@ -1507,7 +1513,9 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
         [
             blocked.clone(),
             assigned.clone(),
-            Some(CardLine::Paused(Hold::UsageLimit))
+            Some(CardLine::Paused(Hold::UsageLimit {
+                resets_at: at(RESETS_AT)
+            }))
         ]
     );
     assert_eq!(
@@ -1524,6 +1532,64 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
     );
 }
 
+/// `docs/specs/design_system.md`, Cards, and `docs/specs/runs.md`, Holds,
+/// Rank: a held card names the first hold in force.
+#[test_log::test]
+fn a_held_card_names_the_first_hold() {
+    let resets_at = at(RESETS_AT);
+    let file = FileError {
+        path: ".linewright/config.toml".into(),
+        error: "invalid".into(),
+    };
+    let broken = vec![Unusable {
+        file: file.clone(),
+        holds: Readers::Every,
+    }];
+    let line_under = |memory: Memory, unusable: Vec<Unusable>| {
+        let held = View {
+            memory,
+            unusable,
+            ..ready_view()
+        };
+        ready_lines(&held)[2].clone()
+    };
+    let awaiting_the_environment = Memory {
+        awaits_environment: true,
+        ..Memory::default()
+    };
+    let drained_and_limited = Memory {
+        drain: Some(Drain {
+            since: at("2026-10-01T11:00:00Z"),
+        }),
+        ..common::limited_until(RESETS_AT)
+    };
+
+    assert_eq!(
+        line_under(common::draining_since("2026-10-01T11:00:00Z"), vec![]),
+        Some(CardLine::Paused(Hold::Drain))
+    );
+    assert_eq!(
+        line_under(common::limited_until(RESETS_AT), vec![]),
+        Some(CardLine::Paused(Hold::UsageLimit { resets_at }))
+    );
+    assert_eq!(
+        line_under(awaiting_the_environment.clone(), vec![]),
+        Some(CardLine::Paused(Hold::Environment))
+    );
+    assert_eq!(
+        line_under(Memory::default(), broken.clone()),
+        Some(CardLine::Paused(Hold::File(file)))
+    );
+    assert_eq!(
+        line_under(awaiting_the_environment, broken),
+        Some(CardLine::Paused(Hold::Environment))
+    );
+    assert_eq!(
+        line_under(drained_and_limited, vec![]),
+        Some(CardLine::Paused(Hold::Drain))
+    );
+}
+
 #[test_log::test]
 fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     let working = view(
@@ -1536,7 +1602,7 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     );
     let running = with_runs(working.clone(), &["1/implement-1", "2/triage-1"]);
     let limited = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..with_runs(working, &["2/triage-1"])
     };
 
@@ -1559,7 +1625,9 @@ fn a_working_card_says_its_run_in_flight_or_else_what_holds_it_back() {
     assert_eq!(
         [1, 2].map(|n| line(&limited, n)),
         [
-            Some(CardLine::Paused(Hold::UsageLimit)),
+            Some(CardLine::Paused(Hold::UsageLimit {
+                resets_at: at(RESETS_AT)
+            })),
             run(WorkKind::Triage)
         ]
     );
@@ -1746,7 +1814,7 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
         )
     };
     let view = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..view(
             vec![
                 unassigned(blocked_by(ticket(1, "Blocked"), &[9])),
@@ -1824,7 +1892,7 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
         view
     };
     let limited = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..ready()
     };
     let draining = View {
@@ -1838,7 +1906,7 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
     let working = view(vec![assigned(ticket(1, "Implemented"))], vec![]);
     let running = with_runs(working.clone(), &["1/implement-1"]);
     let held = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..working
     };
 
@@ -2492,7 +2560,7 @@ fn a_triage_card_says_what_a_ready_card_would() {
         ..issue
     };
     let limited = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..view(
             vec![
                 triage(blocked_by(ticket(1, "Blocked"), &[9])),
@@ -2516,7 +2584,9 @@ fn a_triage_card_says_what_a_ready_card_would() {
             (Some(CardLine::BlockedBy(Number(9))), None),
             (Some(CardLine::AssignedTo(Login::new("alice"))), None),
             (
-                Some(CardLine::Paused(Hold::UsageLimit)),
+                Some(CardLine::Paused(Hold::UsageLimit {
+                    resets_at: at(RESETS_AT)
+                })),
                 Some(CardStatus::PausedOrQueued)
             ),
         ]
@@ -2530,7 +2600,7 @@ fn a_triage_card_says_what_a_ready_card_would() {
 #[test_log::test]
 fn a_working_card_blocked_by_an_open_issue_says_so_unless_a_run_is_in_flight() {
     let working = View {
-        memory: common::limited_until("2026-10-01T13:00:00Z"),
+        memory: common::limited_until(RESETS_AT),
         ..view(
             vec![
                 assigned(blocked_by(ticket(1, "Blocked"), &[9, 8])),

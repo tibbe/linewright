@@ -3868,14 +3868,14 @@ fn while_draining_a_green_pull_request_is_merged_still() {
 }
 
 #[test_log::test]
-fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain() {
+fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain_then_the_usage_limit() {
     let world = snapshot(vec![claimed(ticket(1))]);
     let mut memory = draining();
     memory.hold_until(t(150));
 
     assert_eq!(
         waits(&world, &[], &memory, 70, &policy()).remove(&Number(1)),
-        Some(vec![Wait::Drain])
+        Some(vec![Wait::Drain, Wait::UsageLimit { resets_at: t(150) }])
     );
 }
 
@@ -5075,7 +5075,7 @@ fn while_awaiting_the_environment_no_run_starts_and_no_automation_runs_but_other
 }
 
 #[test_log::test]
-fn while_awaiting_the_environment_work_waits_for_a_build_to_succeed() {
+fn while_awaiting_the_environment_work_waits_for_it() {
     let world = snapshot(vec![claimed(ticket(1))]);
 
     assert_eq!(
@@ -5097,13 +5097,61 @@ fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the
         waits(&world, live, memory, 10, &policy()).remove(&Number(1))
     };
 
-    assert_eq!(wait_of(&[], &drained), Some(vec![Wait::Drain]));
+    assert_eq!(
+        wait_of(&[], &drained),
+        Some(vec![
+            Wait::Drain,
+            Wait::UsageLimit { resets_at: t(150) },
+            Wait::Environment
+        ])
+    );
     assert_eq!(
         wait_of(&[], &limited),
-        Some(vec![Wait::UsageLimit { resets_at: t(150) }])
+        Some(vec![
+            Wait::UsageLimit { resets_at: t(150) },
+            Wait::Environment
+        ])
     );
     assert_eq!(
         wait_of(&busy, &awaiting_the_environment()),
         Some(vec![Wait::Environment])
+    );
+}
+
+/// `docs/specs/runs.md`, Holds, Rank: a start held by a file and by holds
+/// over every run notes each, the file last.
+#[test_log::test]
+fn a_start_held_by_a_file_notes_the_holds_over_every_run_before_it() {
+    let world = snapshot(vec![claimed(ticket(1))]);
+    let file = FileError {
+        path: ".linewright/config.toml".into(),
+        error: "invalid".into(),
+    };
+    let broken = [Unusable {
+        file: file.clone(),
+        holds: Readers::Every,
+    }];
+
+    let wait_of = |memory: &Memory| {
+        decisions(
+            &world,
+            &[],
+            memory,
+            &Automations::default(),
+            t(10),
+            &policy(),
+            &broken,
+        )
+        .waits
+        .remove(&Number(1))
+    };
+
+    assert_eq!(
+        wait_of(&draining()),
+        Some(vec![Wait::Drain, Wait::RepositoryFile(file.clone())])
+    );
+    assert_eq!(
+        wait_of(&awaiting_the_environment()),
+        Some(vec![Wait::Environment, Wait::RepositoryFile(file)])
     );
 }
