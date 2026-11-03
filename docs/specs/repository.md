@@ -188,7 +188,8 @@ item. Its writes are made in their order ([Writes](#writes)).
   by anyone, is not claimed again on its own until its status label or the
   required label is applied again. A hold holds claims as under
   [Holds](runs.md#holds).
-- **Blocked.** A run starts on an issue only once no open issue blocks it.
+- **Blocked.** No row that starts a run holds for an issue while an open
+  issue blocks it.
 - **A run in flight.** While a run is in flight on an item, only the rows for
   how that run ends hold for it.
 

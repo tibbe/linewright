@@ -587,9 +587,9 @@ module linewright {
     subIssues(w, i).size() > 0 and subIssues(w, i).forall(t => not(it(w, t).open))
   pure def when_a_reply_has_come(w: World, i: int): bool = it(w, i).reply
   pure def when_linewright_may_claim_it(w: World, i: int): bool = claimsOnItsOwn(w, i)
-  /// "Blocked": "A run starts on an issue only once no open issue blocks it",
-  /// read as part of the row's condition; and only where the bounds give the
-  /// run an outcome to end with.
+  /// "Blocked": "No row that starts a run holds for an issue while an open
+  /// issue blocks it"; and only where the bounds give the run an outcome to
+  /// end with.
   pure def when_no_run_is_in_flight_on_it(w: World, i: int): bool =
     not(runInFlight(w, i)) and not(blocked(w, i)) and outcomesOf(w, i, stageOf(stateOf(w, i))).size() > 0
   pure def when_the_triage_run_ends_with_ready_for_agent(w: World, i: int): bool =
