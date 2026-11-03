@@ -112,8 +112,9 @@ in each session.
   input, with the whole pipeline's environment variables
   ([Environment variables](#environment-variables)) and a temporary directory
   of its own as `TMPDIR`.
-- **No setup command.** Without one there is no environment: a session's
-  clone is a plain clone of its branch, and no run waits for one.
+- **No setup command.** Without one, a session's clone is a plain clone of
+  its branch. An environment built earlier is kept, unused, until a setup
+  command is set again.
 - **A build.** Running the setup command is a build of the environment. A
   build succeeds when the command exits with status 0 within the `setup`
   table's `timeout`, and fails otherwise. A build is not a run. Processes it
@@ -138,8 +139,8 @@ old, or on request, and a build replaces it only by succeeding.
 
 | State      | Event                        | Next       | Effect                                                                                       |
 | ---------- | ---------------------------- | ---------- | -------------------------------------------------------------------------------------------- |
-| none       | `serve` starts, or a trigger | building   | the setup command starts; no run that would start a session starts, and its item waits        |
-| building   | the build succeeds           | ready      | runs that would start a session start again                                                  |
+| none       | `serve` starts, or a trigger | building   | the setup command starts; runs wait as under [Holds](runs.md#holds)                          |
+| building   | the build succeeds           | ready      | the build becomes the environment                                                            |
 | building   | the build fails              | none       | nothing more                                                                                 |
 | ready      | a trigger                    | rebuilding | the setup command starts; sessions go on starting from the environment                       |
 | rebuilding | the build succeeds           | ready      | the build replaces the environment                                                           |
@@ -159,13 +160,22 @@ old, or on request, and a build replaces it only by succeeding.
   came while `serve` was down builds once it starts.
 - **Without `serve`.** `once` and `automation run` use the environment when
   no trigger applies to it, and otherwise build it first and wait for the
-  build.
+  build. A build that fails while there is an environment is no error of
+  theirs. When it fails and there is none, `automation run` runs nothing, and
+  `once` does its cycle under the hold as `serve` would
+  ([Holds](runs.md#holds)); each then exits with status 1, naming the failed
+  build and `lw environment` for its output.
 - **`lw environment rebuild`.** It asks the `serve` of the configured `repo`
-  on the same host to build, and returns once the build ends, with a non-zero
-  status when it fails; `--no-wait` returns once `serve` has taken the
-  request. Without `serve`, it builds the environment itself. With no setup
-  command, it says so. Its output and exit statuses are the monitoring
-  commands' ([Monitoring](monitoring.md)).
+  on the same host to build, and returns once the build ends; `--no-wait`
+  returns once `serve` has taken the request. Without `serve`, it builds the
+  environment itself. A request while no build may start, as under a drain
+  or a `config.toml` Linewright cannot use
+  ([Linewright's files](repository.md#linewrights-files)), is refused, saying
+  why, and is not kept for later. Its output and exit statuses are the
+  monitoring commands' ([Monitoring](monitoring.md)): it succeeds when what
+  it asked for was done, a build that succeeded or, with `--no-wait`, a
+  request `serve` took, and fails otherwise, such as when the build failed or
+  there is no setup command.
 
 ## Isolation
 

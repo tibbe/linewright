@@ -186,7 +186,8 @@ item. Its writes are made in their order ([Writes](#writes)).
   marked for it and that it can start: no open issue blocks it. It claims a
   pull request it opened. An item Linewright was unassigned from, by itself or
   by anyone, is not claimed again on its own until its status label or the
-  required label is applied again.
+  required label is applied again. A hold holds claims as under
+  [Holds](runs.md#holds).
 - **Blocked.** A run starts on an issue only once no open issue blocks it.
 - **A run in flight.** While a run is in flight on an item, only the rows for
   how that run ends hold for it.

@@ -189,6 +189,10 @@ as five hours or a week, beyond which the harness refuses sessions until
 a stated reset time.
 _Avoid_: rate limit, session limit, quota
 
+**Hold**:
+A condition under which Linewright starts no run for a while.
+_Avoid_: quiet mode, freeze, gate
+
 ### Operation
 
 **Layer**:

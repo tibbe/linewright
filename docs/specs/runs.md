@@ -191,11 +191,31 @@ A run ends in one of these outcomes, each with its name in JSON.
   settings and prompt files came from: the repository, the operator or
   Linewright's own, or, for a model or effort none set, the harness.
 
+## Holds
+
+While a hold is in force Linewright starts none of the runs it holds and
+claims nothing it would start one on; the items wait, and start once the hold
+ends.
+
+| Hold            | In force                                                                      | Holds                       | Ends when                |
+| --------------- | ----------------------------------------------------------------------------- | --------------------------- | ------------------------ |
+| a drain         | `serve` is draining or stopping ([Stopping](operation.md#stopping))           | every run                   | `serve` restarts         |
+| the usage limit | the harness has refused a session for it, saying when it resets ([Usage limit](#usage-limit)) | every run | the usage limit resets   |
+| the environment | there is a setup command and no environment ([Building](sessions.md#building)) | every run                  | the environment is built |
+| a file          | a file of the repository's cannot be used ([Linewright's files](repository.md#linewrights-files)) | the runs that could read it | the default branch fixes the file |
+
+- **Every run.** A hold holds a run whether or not it would start a session,
+  such as an `update` ([Stages](#stages)).
+- **Claims.** A drain holds every claim
+  ([Assignment](repository.md#assignment)).
+- **Rank.** The holds are ranked as the table lists them. Where more than one
+  is in force, a line with room for one hold names the first, and a list
+  names each in that order.
+
 ## Usage limit
 
-When the harness refuses a session for the usage limit and says when
-the limit resets, Linewright starts no session until then, and claims no
-tickets.
+When the harness refuses a session for the usage limit and says when the
+limit resets, the usage limit holds runs until then ([Holds](#holds)).
 
 - **The refused session.** A session refused for the usage limit has not
   failed. It waits in its clone and, once the limit resets, resumes as the
