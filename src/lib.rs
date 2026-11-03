@@ -30,6 +30,7 @@ pub mod explain;
 pub mod factory;
 pub mod git;
 pub mod harness;
+pub mod holds;
 pub mod host;
 pub mod item_facts;
 pub mod layer;

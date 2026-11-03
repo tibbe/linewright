@@ -11,6 +11,7 @@ use crate::domain::{
     UpdateRule, Windows, label,
 };
 use crate::harness::UsageLimit;
+use crate::holds::{Hold, InForce};
 use crate::lifecycle::{
     Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
     Row, State, TakeUp, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
@@ -18,7 +19,7 @@ use crate::lifecycle::{
 };
 use crate::phrase::Phrase;
 use crate::pull_records::PullRecords;
-use crate::repo_files::{FileError, Unusable, holding};
+use crate::repo_files::{FileError, Unusable};
 use crate::runs::Ending;
 use crate::spec_glob::SpecGlob;
 use crate::work_settings::RunKind;
@@ -721,23 +722,16 @@ pub fn decisions(
     unusable: &[Unusable],
 ) -> Decisions {
     let in_flight = live.len() + automations.in_flight.len();
-    let usage_limit = memory.usage_limit.filter(|_| memory.holds_starts(now));
-    let (room, held) = match (memory.drain, usage_limit) {
-        (Some(_), _) => (0, Held::Drain),
-        (None, Some(UsageLimit { resets_at })) => (0, Held::UsageLimit { resets_at }),
-        (None, None) if memory.awaits_environment => (0, Held::Environment),
-        (None, None) => (
-            policy.max_runs.saturating_sub(in_flight),
-            Held::Ceiling {
-                in_flight,
-                max_runs: policy.max_runs,
-            },
-        ),
+    let room = policy.max_runs.saturating_sub(in_flight);
+    let ceiling = Ceiling {
+        in_flight,
+        max_runs: policy.max_runs,
     };
+    let in_force = InForce::of(memory, now, unusable);
     let held_by_runs = held_by_runs(snapshot, live, &policy.linewright);
     let mut plan = Plan {
-        held,
-        unusable,
+        ceiling,
+        in_force: &in_force,
         snapshot,
         held_by_runs: &held_by_runs,
         actions: vec![],
@@ -857,7 +851,7 @@ pub fn decisions(
     let (mut decisions, room) = plan.into_decisions(room);
     decisions
         .actions
-        .extend(schedule(automations, now, room, unusable));
+        .extend(schedule(automations, now, room, &in_force));
     decisions
 }
 
@@ -966,13 +960,13 @@ pub fn next_run(automation: &Automation, last_scheduled_run: Timestamp, now: Tim
 }
 
 /// The runs of the automations due, at most `room`, followed by the record
-/// of the last scheduled runs if it changed. An automation held by a file in
-/// `unusable` stays due, to run once the file is fixed.
+/// of the last scheduled runs if it changed. An automation a hold in
+/// `in_force` holds stays due, to run once the hold ends.
 fn schedule(
     automations: &Automations,
     now: Timestamp,
     room: usize,
-    unusable: &[Unusable],
+    in_force: &InForce,
 ) -> Vec<Action> {
     let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
@@ -982,7 +976,9 @@ fn schedule(
             continue;
         };
         let running = automations.in_flight.contains(&automation.name);
-        let held = !holding(unusable, &RunKind::Automation(automation)).is_empty();
+        let held = !in_force
+            .holding(&RunKind::Automation(automation))
+            .is_empty();
         if next_run(automation, last_scheduled_run, now) == NextRun::Due && !running && !held {
             due.push(automation);
         }
@@ -1083,9 +1079,9 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
 
 struct Plan<'a> {
     /// What holds back the starts beyond the room for them.
-    held: Held,
-    /// The repository's files that hold the runs that would read them.
-    unusable: &'a [Unusable],
+    ceiling: Ceiling,
+    /// The holds in force at this poll.
+    in_force: &'a InForce<'a>,
     snapshot: &'a Snapshot,
     /// What [`held_by_runs`] returns: no action but a cancel touches these.
     held_by_runs: &'a BTreeMap<Item, WorkKind>,
@@ -1094,12 +1090,11 @@ struct Plan<'a> {
     waits: BTreeMap<Number, Vec<Wait>>,
 }
 
+/// The ceiling on the runs in flight, `max-runs`.
 #[derive(Clone, Copy)]
-enum Held {
-    UsageLimit { resets_at: Timestamp },
-    Drain,
-    Environment,
-    Ceiling { in_flight: usize, max_runs: usize },
+struct Ceiling {
+    in_flight: usize,
+    max_runs: usize,
 }
 
 struct Start {
@@ -1138,10 +1133,11 @@ impl Plan<'_> {
         }
     }
 
-    /// A claim on its own, outside any start, which a drain holds back too.
+    /// A claim on its own, outside any start, which a hold over claims
+    /// holds back too.
     fn claim(&mut self, item: Item) {
-        if matches!(self.held, Held::Drain) {
-            self.wait(item.number(), Wait::Drain);
+        if let Some(hold) = self.in_force.holds_claims() {
+            self.wait(item.number(), hold.into());
         } else {
             self.act(Action::Claim { item });
         }
@@ -1164,21 +1160,19 @@ impl Plan<'_> {
         });
     }
 
-    /// A start that a live run or a file in `unusable` holds is neither
-    /// claimed nor started, and its item waits for the run or the file.
+    /// A start that a live run or a hold holds is neither claimed nor
+    /// started, and its item waits for the run or the holds it notes.
     fn push_start(&mut self, start: Start) {
         let claim = start.claim.map(|item| Action::Claim { item });
         let run = Action::Start(start.work.clone());
         if self.held_back(&claim.iter().chain([&run]).collect::<Vec<_>>()) {
             return;
         }
-        let waits: Vec<Wait> = holding(self.unusable, &RunKind::Stage(start.work.kind()))
-            .into_iter()
-            .map(|file| Wait::RepositoryFile(file.clone()))
-            .collect();
-        if waits.is_empty() {
+        let holds = self.in_force.holding(&RunKind::Stage(start.work.kind()));
+        if holds.is_empty() {
             self.starts.push(start);
         } else {
+            let waits = noted(holds).into_iter().map(Wait::from).collect();
             self.wait_all(start.work.subject().number(), waits);
         }
     }
@@ -1189,17 +1183,9 @@ impl Plan<'_> {
         starts.sort_by_key(|s| (rank(s.work.kind()), s.work.subject()));
         let room_left = room.saturating_sub(starts.len());
         let started = starts.len().min(room);
-        let wait = match self.held {
-            Held::UsageLimit { resets_at } => Wait::UsageLimit { resets_at },
-            Held::Drain => Wait::Drain,
-            Held::Environment => Wait::Environment,
-            Held::Ceiling {
-                in_flight,
-                max_runs,
-            } => Wait::FreeRun {
-                in_flight: in_flight + started,
-                max_runs,
-            },
+        let wait = Wait::FreeRun {
+            in_flight: self.ceiling.in_flight + started,
+            max_runs: self.ceiling.max_runs,
         };
         for start in starts.iter().skip(room) {
             self.wait(start.work.subject().number(), wait.clone());
@@ -1216,6 +1202,15 @@ impl Plan<'_> {
             waits: self.waits,
         };
         (decisions, room_left)
+    }
+}
+
+/// The holds among `holds`, in rank order, that a held start notes as its
+/// item's waits: the files where any hold it, and otherwise the first.
+fn noted(mut holds: Vec<Hold>) -> Vec<Hold> {
+    match holds.iter().position(|hold| matches!(hold, Hold::File(_))) {
+        Some(first_file) => holds.split_off(first_file),
+        None => holds.into_iter().take(1).collect(),
     }
 }
 
