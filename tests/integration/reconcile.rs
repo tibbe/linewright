@@ -1787,14 +1787,21 @@ fn clear_stall(item: Item) -> Action {
 }
 
 #[test_log::test]
-fn a_stalled_ticket_relabeled_ready_for_agent_is_claimed_and_implemented_with_its_stall_kept() {
+fn a_stalled_ticket_relabeled_ready_for_agent_is_claimed_alone() {
     let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
 
-    assert_eq!(decide(&world), vec![claim(2), implement(2)]);
+    assert_eq!(decide(&world), vec![claim(2)]);
 }
 
 #[test_log::test]
-fn a_stalled_issue_linewright_is_assigned_to_has_its_stall_cleared_once_no_other_row_holds() {
+fn a_stalled_ticket_once_claimed_has_its_stall_cleared_before_it_is_implemented() {
+    let world = snapshot(vec![claimed(labeled(ticket(2), label::STALLED))]);
+
+    assert_eq!(decide(&world), vec![clear_stall(Item::Issue(Number(2)))]);
+}
+
+#[test_log::test]
+fn a_stalled_issue_in_review_linewright_is_assigned_to_has_its_stall_cleared() {
     let mut world = in_review(pull(20, 2));
     world.issues[0].labels.push(label::STALLED.into());
 
@@ -1875,6 +1882,19 @@ fn a_stalled_pull_request_linewright_is_assigned_to_again_has_its_stall_cleared(
         at(&in_review(pr), 8),
         vec![clear_stall(Item::Pull(Number(20)))]
     );
+}
+
+#[test_log::test]
+fn a_stalled_pull_request_asking_for_a_rework_has_its_stall_cleared_then_is_reworked() {
+    let mut pr = ready(pull(20, 2));
+    pr.comments = vec![comment("maintainer", 4, "Please rename `foo`.")];
+    let stalled = labeled_pull(pr.clone(), label::STALLED);
+
+    assert_eq!(
+        at(&in_review(stalled), 10),
+        vec![clear_stall(Item::Pull(Number(20)))]
+    );
+    assert_eq!(at(&in_review(pr), 10), vec![rework(2, 20)]);
 }
 
 #[test_log::test]

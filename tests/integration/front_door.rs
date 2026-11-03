@@ -137,12 +137,21 @@ async fn stalled_ticket_relabeled(world: &World) -> linewright::domain::Number {
     ticket
 }
 
+/// Polls `world` until the ticket [`stalled_ticket_relabeled`] leaves is
+/// designed: its claim, the clear of its stall and its design take a poll
+/// each.
+async fn poll_until_stalled_ticket_designed(world: &mut World) {
+    for _ in 0..3 {
+        world.poll().await;
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn a_stalled_ticket_designed_on_the_issue_is_what_design_leaves() {
     let mut front = World::new().await;
     stalled_ticket_relabeled(&front).await;
     design_issues(&front);
-    front.poll().await;
+    poll_until_stalled_ticket_designed(&mut front).await;
     let back = World::new().await;
     let ticket = stalled_ticket_relabeled(&back).await;
 
