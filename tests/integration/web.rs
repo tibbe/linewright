@@ -65,6 +65,7 @@ fn sources(
         },
         ends: linewright::ending::Ends::new(),
         environment: linewright::api::EnvironmentLink::default(),
+        exiting: linewright::winding_up::WindingUp::default().exiting(),
     }
 }
 

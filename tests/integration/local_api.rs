@@ -111,6 +111,7 @@ impl Answering {
             },
             ends: ends.clone(),
             environment: serving.environment.clone(),
+            exiting: winding_up.exiting(),
         };
         let ui = web::Ui {
             address: "127.0.0.1:0".parse().unwrap(),
@@ -1300,10 +1301,61 @@ async fn drain_no_wait_returns_once_serve_has_taken_it_and_serve_goes_on_drainin
     );
 }
 
+/// Each line logged, with whether the repository was claimed as it was.
+#[derive(Clone)]
+struct ClaimedAsLogged {
+    socket_dir: std::path::PathBuf,
+    lines: std::sync::Arc<std::sync::Mutex<Vec<(String, bool)>>>,
+}
+
+impl ClaimedAsLogged {
+    /// Captures what this thread logs until the guard is dropped, as
+    /// `Log::capture` does.
+    fn capture(runtime_dir: &Path) -> (ClaimedAsLogged, tracing::subscriber::DefaultGuard) {
+        let logged = ClaimedAsLogged {
+            socket_dir: socket_dir_in(runtime_dir),
+            lines: std::sync::Arc::default(),
+        };
+        let writer = logged.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        (logged, tracing::subscriber::set_default(subscriber))
+    }
+
+    /// Whether the repository was claimed as each line holding `text` was
+    /// logged.
+    fn claimed_as(&self, text: &str) -> Vec<bool> {
+        self.lines
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(line, _)| line.contains(text))
+            .map(|(_, claimed)| *claimed)
+            .collect()
+    }
+}
+
+impl std::io::Write for ClaimedAsLogged {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let claimed = api::is_claimed(&self.socket_dir, REPO).unwrap();
+        let line = String::from_utf8_lossy(bytes).into_owned();
+        self.lines.lock().unwrap().push((line, claimed));
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[test_log::test(tokio::test)]
-async fn serve_lets_go_of_the_repository_only_once_a_removal_pending_at_exit_has_ended() {
+async fn serve_waits_for_a_removal_pending_at_exit_logging_it_and_lets_go_of_the_repository_once_it_ended()
+ {
     let (agent, answering) = triage_held().await;
     let runtime_dir = answering.runtime_dir.path().to_path_buf();
+    let (logged, _guard) = ClaimedAsLogged::capture(&runtime_dir);
     let winding_up = answering.winding_up.clone();
     let (release, held) = std::sync::mpsc::channel::<()>();
     winding_up.spawn_blocking(
@@ -1314,19 +1366,14 @@ async fn serve_lets_go_of_the_repository_only_once_a_removal_pending_at_exit_has
             let _released = held.recv();
         },
     );
-    let mut exiting = winding_up.exiting();
     let exited = answering.exits_once_served();
     let drain = Watching::start(&runtime_dir, &["drain"]);
     drain.shows("waiting for: 1/triage-1\n").await;
 
     drop(agent);
-    within(
-        STOPPING,
-        "the wait before exiting begins",
-        exiting.wait_for(|waits| !waits.is_empty()),
-    )
-    .await
-    .unwrap();
+    drain
+        .shows("waiting for: the removal of clone issue-1-held\n")
+        .await;
     let claimed_while_pending = api::is_claimed(&socket_dir_in(&runtime_dir), REPO).unwrap();
     let shown_while_pending = drain.shown();
     release.send(()).unwrap();
@@ -1338,10 +1385,29 @@ async fn serve_lets_go_of_the_repository_only_once_a_removal_pending_at_exit_has
         "{shown_while_pending}"
     );
     assert_eq!(code, Some(0), "{stderr}");
-    assert!(shown.ends_with("serve: exited\n"), "{shown}");
+    let shown_held: Vec<&str> = shown
+        .lines()
+        .filter(|line| line.ends_with("the removal of clone issue-1-held"))
+        .collect();
+    assert_eq!(
+        shown_held,
+        [
+            "waiting for: the removal of clone issue-1-held",
+            "ended: the removal of clone issue-1-held"
+        ],
+        "{shown}"
+    );
+    assert!(shown.ends_with("\nserve: exited\n"), "{shown}");
     assert_eq!(
         within(STOPPING, "serve exits", exited).await.unwrap(),
         ServeEnd::Drained
+    );
+    assert_eq!(
+        (
+            logged.claimed_as("waiting_for=the removal of clone issue-1-held"),
+            logged.claimed_as("waited_for=the removal of clone issue-1-held"),
+        ),
+        (vec![true], vec![true])
     );
 }
 
@@ -1783,11 +1849,13 @@ async fn with_no_setup_command_environment_and_its_rebuild_say_there_is_none() {
         (Some(0), "environment: there is no setup command\n")
     );
     assert_eq!(
-        (rebuilt.code, rebuilt.stderr.as_str()),
+        (rebuilt.code, rebuilt.stderr.lines().next()),
         (
             Some(1),
-            "lw: there is no setup command: set `setup.command` to build the environment\n"
-        )
+            Some("lw: there is no setup command: set `setup.command` to build the environment")
+        ),
+        "{}",
+        rebuilt.stderr
     );
     answering.stop().await;
 }

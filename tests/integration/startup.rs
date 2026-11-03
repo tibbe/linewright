@@ -952,7 +952,8 @@ fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_e
 }
 
 #[test_log::test]
-fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signal_stops() {
+fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signal_stops_and_logs_exiting_last()
+ {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");
     link_from_path(bin.path(), "bash");
@@ -1013,6 +1014,15 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
     assert_eq!(
         drained["fields"]["message"],
         "draining: exiting once no run is in flight; the next signal stops instead"
+    );
+    let last: serde_json::Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        (&last["level"], &last["fields"]),
+        (
+            &serde_json::json!("INFO"),
+            &serde_json::json!({ "message": "exiting", "status": 0 })
+        ),
+        "{log}"
     );
 }
 

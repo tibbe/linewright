@@ -8,6 +8,7 @@ use crate::domain::Timestamp;
 use crate::ending::{Ending, StopBy};
 use crate::runs::RunId;
 use crate::status::Paint;
+use crate::winding_up::Remaining;
 
 /// A drain request to the local API.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +68,15 @@ pub struct Taken {
     pub runs: Vec<RunId>,
 }
 
+/// The local API's answer to what `serve` waits for before it exits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Exiting {
+    /// Tells this `serve` from one started after it exits.
+    pub serving_since: Timestamp,
+    /// Empty until the wait begins.
+    pub waits: Vec<Remaining>,
+}
+
 /// Where `serve` was in ending when it took a drain request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -103,43 +113,69 @@ pub enum Said {
     },
     /// The drain's deadline passed with runs in flight.
     BecameAStop,
+    /// `serve` waits for `what` before it exits.
+    WaitingForExit {
+        what: Remaining,
+    },
+    EndedForExit {
+        what: Remaining,
+    },
     /// `serve` has exited: it no longer answers and has released its claim
     /// on the repository, or another has started since.
     Exited,
 }
 
-/// The runs a drain waits for.
+/// The runs a drain waits for, then what `serve` waits for before it exits.
 #[derive(Debug, Default)]
-pub struct Waiting(Vec<RunId>);
+pub struct Waiting {
+    runs: Vec<RunId>,
+    exiting: Vec<Remaining>,
+}
 
 impl Waiting {
     /// What changed since the runs in flight were last seen: the runs in
     /// `in_flight` it did not wait for yet, and the runs it waited for that
     /// are no longer in flight, which have ended.
     pub fn seen(&mut self, in_flight: &[RunId]) -> Vec<Said> {
-        let (still, ended): (Vec<RunId>, Vec<RunId>) = std::mem::take(&mut self.0)
-            .into_iter()
-            .partition(|run| in_flight.contains(run));
-        let new: Vec<RunId> = in_flight
-            .iter()
-            .filter(|run| !still.contains(run))
-            .cloned()
-            .collect();
-        self.0 = still;
-        self.0.extend(new.iter().cloned());
+        let (ended, new) = changed(&mut self.runs, in_flight);
         let ended = ended.into_iter().map(|run| Said::Ended { run });
         let new = new.into_iter().map(|run| Said::WaitingFor { run });
         ended.chain(new).collect()
     }
 
-    /// Once `serve` has exited, no run it waited for is in flight.
-    pub fn exited(self) -> Vec<Said> {
-        self.0
-            .into_iter()
-            .map(|run| Said::Ended { run })
-            .chain([Said::Exited])
-            .collect()
+    /// What changed since what `serve` waits for before it exits was last
+    /// seen, as [`Waiting::seen`] has it for runs.
+    pub fn seen_exiting(&mut self, waits: &[Remaining]) -> Vec<Said> {
+        let (ended, new) = changed(&mut self.exiting, waits);
+        let ended = ended.into_iter().map(|what| Said::EndedForExit { what });
+        let new = new.into_iter().map(|what| Said::WaitingForExit { what });
+        ended.chain(new).collect()
     }
+
+    /// Once `serve` has exited, nothing it waited for is left.
+    pub fn exited(self) -> Vec<Said> {
+        let runs = self.runs.into_iter().map(|run| Said::Ended { run });
+        let exiting = self
+            .exiting
+            .into_iter()
+            .map(|what| Said::EndedForExit { what });
+        runs.chain(exiting).chain([Said::Exited]).collect()
+    }
+}
+
+/// Updates `listed` to `now`, returning what left it and what joined it.
+fn changed<T: Clone + PartialEq>(listed: &mut Vec<T>, now: &[T]) -> (Vec<T>, Vec<T>) {
+    let (still, gone): (Vec<T>, Vec<T>) = std::mem::take(listed)
+        .into_iter()
+        .partition(|seen| now.contains(seen));
+    let new: Vec<T> = now
+        .iter()
+        .filter(|seen| !still.contains(seen))
+        .cloned()
+        .collect();
+    *listed = still;
+    listed.extend(new.iter().cloned());
+    (gone, new)
 }
 
 /// What `drain` says once `serve` begins to stop, by what if anything.
@@ -162,6 +198,8 @@ pub fn render(said: &Said, colour: bool) -> String {
         Said::WaitingFor { run } => format!("waiting for: {run}"),
         Said::Ended { run } => format!("ended: {run}"),
         Said::BecameAStop => paint.yellow("drain: became a stop at its deadline"),
+        Said::WaitingForExit { what } => format!("waiting for: {what}"),
+        Said::EndedForExit { what } => format!("ended: {what}"),
         Said::Exited => "serve: exited".into(),
     };
     format!("{line}\n")

@@ -700,3 +700,57 @@ fn a_captured_case_keeps_the_attachments_of_its_sessions_but_not_what_a_symlink_
     );
     assert!(std::fs::symlink_metadata(copied.join("link.txt")).is_err());
 }
+
+/// `docs/specs/operation.md`, Stopping: "Logging the exit" and "The last
+/// line". A maintenance command that leaves a process ignoring SIGTERM keeps
+/// its clone's removal going for the grace before SIGKILL.
+#[test_log::test]
+fn a_replay_logs_its_wait_for_a_clones_removal_then_that_it_exits_with_status_0_last() {
+    let dir = tempfile::tempdir().unwrap();
+    spec_change_case(
+        dir.path(),
+        &[(
+            ".linewright/config.toml",
+            "maintenance = \"(trap '' TERM; sleep 30) &\"\n",
+        )],
+    );
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    fake_claude(
+        &bin,
+        r#"{"outcome": "nothing-to-build", "reason": "Nothing to build."}"#,
+    );
+
+    let log = replay_with(dir.path(), &bin, &[("LINEWRIGHT_LOG_FORMAT", "json")]);
+
+    let lines: Vec<serde_json::Value> = log
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let messages: Vec<&str> = lines
+        .iter()
+        .filter_map(|line| line["fields"]["message"].as_str())
+        .filter(|message| message.ends_with("exiting"))
+        .collect();
+    assert_eq!(
+        messages,
+        ["waiting before exiting", "waited before exiting", "exiting"],
+        "{log}"
+    );
+    let waited = lines
+        .iter()
+        .find(|line| line["fields"]["message"] == "waited before exiting")
+        .unwrap();
+    assert!(
+        waited["fields"]["waited_for"]
+            .as_str()
+            .is_some_and(|what| what.starts_with("the removal of clone issue-")),
+        "{waited}"
+    );
+    assert!(waited["fields"]["took"].is_string(), "{waited}");
+    assert_eq!(
+        lines.last().unwrap()["fields"],
+        json!({ "message": "exiting", "status": 0 }),
+        "{log}"
+    );
+}
