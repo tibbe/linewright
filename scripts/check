@@ -83,9 +83,9 @@ check_property() {
   if grep -qE "^\s*run $name\b" "$file"; then
     quint test --max-samples 100 --match "^$name\$" "$file"
     return
-  elif grep -qE "^\s*temporal $name\b" docs/model/*.qnt; then
+  elif grep -qE "^\s*temporal $name\b" quint/*.qnt; then
     args=(--temporal="$name")
-  elif grep -qE "^\s*(pure )?val $name\b" docs/model/*.qnt; then
+  elif grep -qE "^\s*(pure )?val $name\b" quint/*.qnt; then
     args=(--invariant="$name")
   else
     echo "$(basename "$file"): no scenario, temporal property or invariant $name"
@@ -132,7 +132,7 @@ check_one_model() {
 check_model-quick() {
   local name file status=0 row
   for name in $models; do
-    file="$PWD/docs/model/$name.qnt"
+    file="$PWD/quint/$name.qnt"
     if [ "$name" = pull_request ]; then
       for row in $(seq 0 14); do
         check_property "$file" "row${row}Unreached" || status=1
@@ -178,11 +178,11 @@ check_model() {
   local name status=0 file
   if [ ${#model_args[@]} -eq 0 ]; then
     for name in $models; do
-      check_one_model "$PWD/docs/model/$name.qnt" || status=1
+      check_one_model "$PWD/quint/$name.qnt" || status=1
     done
     return "$status"
   fi
-  file="$PWD/docs/model/${model_args[0]}.qnt"
+  file="$PWD/quint/${model_args[0]}.qnt"
   if [ ${#model_args[@]} -eq 1 ]; then
     check_one_model "$file"
     return

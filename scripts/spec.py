@@ -6,7 +6,7 @@ import glob, re
 from collections import namedtuple
 
 SPEC_FILES = sorted(glob.glob("docs/specs/**/*.md", recursive=True)) + ["GLOSSARY.md"]
-MODEL_FILES = sorted(glob.glob("docs/model/*.qnt"))
+MODEL_FILES = sorted(glob.glob("quint/*.qnt"))
 STATES_TABLE = ("docs/specs/design_system.md", "## States")
 COMMENT = re.compile(r"\s*(?:///?|/\*\*|\*(?!/))\s?(.*)")
 QUOTE = re.compile(r'"([^"]+)"')

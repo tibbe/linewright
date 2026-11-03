@@ -6,7 +6,7 @@ import os, re, subprocess, sys
 from collections import namedtuple
 
 VENDORED_OR_MODEL = re.compile(
-    r"^docs/model/|^assets/htmx\.min\.js$|^assets/hx-sse\.js$|^styles/daisyui(-theme)?\.mjs$"
+    r"^quint/|^assets/htmx\.min\.js$|^assets/hx-sse\.js$|^styles/daisyui(-theme)?\.mjs$"
 )
 LINK = re.compile(r"https?://")
 LICENSE = re.compile(r"@license|SPDX-License-Identifier")
