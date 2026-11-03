@@ -150,7 +150,7 @@ module pipeline {
   run n4AssignedToAliceTest = setup(NEEDS_TRIAGE, true, false, false, false, false)
     .then(personAssignsThemself(I)).expect(cardLine(world, I) == "assigned to alice")
   run n4BlockedTest = setup(NEEDS_TRIAGE, true, true, false, false, false)
-    .expect(cardLine(world, I) == "blocked by")
+    .expect(cardLine(world, I) == "blocked by #12")
   run n4UnassignedTest = setup(NEEDS_TRIAGE, true, false, false, false, false)
     .then(does("claim", I, "")).then(personUnassignsLinewright(I))
     .expect(cardLine(world, I) == "unassigned")
@@ -194,7 +194,7 @@ module pipeline {
   /// in Working, and no run starts.
   run blockedInWorkingTest = setup(READY_FOR_AGENT, true, true, false, false, false)
     .then(personAssignsLinewright(I))
-    .expect(column(stateOfI, false) == "Working" and cardLine(world, I) == "blocked by"
+    .expect(column(stateOfI, false) == "Working" and cardLine(world, I) == "blocked by #12"
             and not(mayNowStart(I, "design")))
 
   // ===========================================================================

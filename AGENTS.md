@@ -46,6 +46,11 @@ approval.
 - Fix what the checks report where a tool can, such as formatting and the
   generated files (`scripts/fix --help` lists them): `scripts/fix`, or
   `scripts/fix NAME...`
+- The model's TLC checks run only when named, and are long: `model-quick`
+  takes about 50 minutes and `model` over six hours. Run one only when the
+  human asks for it, in the background. To check a model change, check only
+  the properties it bears on, which takes minutes:
+  `scripts/check model MODEL NAME...` (the `verify-spec` skill).
 
 ## Area guides
 
