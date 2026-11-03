@@ -387,8 +387,9 @@ module linewright {
   /// that is unassigned, marked for it and that it can start: no open issue
   /// blocks it. It claims a pull request it opened. An item Linewright was
   /// unassigned from, by itself or by anyone, is not claimed again on its own
-  /// until its status label or the required label is applied again." A7: a
-  /// pull request it opened, on the same terms as an issue.
+  /// until its status label or the required label is applied again. A hold
+  /// holds claims as under Holds." A7: a pull request it opened, on the same
+  /// terms as an issue. Holds are not modelled: none is ever in force.
   pure def claimsOnItsOwn(w: World, i: int): bool = {
     val x = it(w, i)
     and {
@@ -1395,8 +1396,8 @@ module linewright {
   /// most one line that says what its column does not: what sets the item
   /// apart from the rest of its column, what a person acts on, or since when
   /// it has sat." The line of a card in column `col`: "Where more than one row
-  /// of a column holds, the line is the first." Holds (the usage limit, the
-  /// drain, max-runs) and checks are not modelled: their rows never hold.
+  /// of a column holds, the line is the first." Holds (U ## Holds), max-runs
+  /// and checks are not modelled: their rows never hold.
   // spec-table DS "### Cards" lines column=col
   pure def cardLineIn(w: World, i: int, col: str): str =
     // Triage | "blocked by #12" | an open issue blocks it | 
@@ -1407,8 +1408,8 @@ module linewright {
     else if (col == "Triage" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
     // Triage | "not marked for Linewright" | it is not marked for Linewright | 
     else if (col == "Triage" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
-    // Triage | "paused for the usage limit", "paused for the drain" | it would start, but for the hold | paused or queued
-    else if (col == "Triage" and when_it_would_start_but_for_the_hold(w, i)) "paused for the usage limit"
+    // Triage | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.toml" | it would start, but for a hold | paused or queued
+    else if (col == "Triage" and when_it_would_start_but_for_a_hold(w, i)) "paused until"
     // Triage | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
     else if (col == "Triage" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"
     // Triage | nothing but the time | otherwise: the next poll acts on it | 
@@ -1429,8 +1430,8 @@ module linewright {
     else if (col == "Ready" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
     // Ready | "not marked for Linewright" | it is not marked for Linewright | 
     else if (col == "Ready" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
-    // Ready | "paused for the usage limit", "paused for the drain" | it would start, but for the hold | paused or queued
-    else if (col == "Ready" and when_it_would_start_but_for_the_hold(w, i)) "paused for the usage limit"
+    // Ready | "paused until" what ends the hold, naming a file: "paused until the environment is built", "paused until the default branch fixes .linewright/config.toml" | it would start, but for a hold | paused or queued
+    else if (col == "Ready" and when_it_would_start_but_for_a_hold(w, i)) "paused until"
     // Ready | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
     else if (col == "Ready" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"
     // Ready | nothing but the time | otherwise: the next poll acts on it | 
@@ -1439,8 +1440,8 @@ module linewright {
     else if (col == "Working" and when_a_run_is_in_flight(w, i)) "implementation · 12m"
     // Working | "blocked by #12" | an open issue blocks it | 
     else if (col == "Working" and when_an_open_issue_blocks_it(w, i)) "blocked by #12"
-    // Working | "paused for the usage limit", "paused for the drain", "queued" | no run is in flight, as in Ready | paused or queued
-    else if (col == "Working" and when_no_run_is_in_flight_as_in_ready(w, i)) "paused for the usage limit"
+    // Working | "paused until" what ends the hold, or "queued" | no run is in flight, as in Ready | paused or queued
+    else if (col == "Working" and when_no_run_is_in_flight_as_in_ready(w, i)) "paused until"
     // In review | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging
     else if (col == "In review" and when_always_a_pull_request_opened_by_someone_else_is_42_by_alice(w, i)) result_its_pull_request_where_the_card_is_not_the_pull_request_itself_then_what_stops_it_merging_the_first_of_the_table_below_that_holds(w, i)
     // Done | "closed in #42", the pull request whose merge made it done | an issue a merged pull request made done | 
@@ -1497,7 +1498,7 @@ module linewright {
   /// A15.
   pure def when_linewright_was_unassigned_from_it(w: World, i: int): bool = it(w, i).unassignedSince
   pure def when_it_is_not_marked_for_linewright(w: World, i: int): bool = not(markedForLinewright(w, i))
-  pure def when_it_would_start_but_for_the_hold(w: World, i: int): bool = false
+  pure def when_it_would_start_but_for_a_hold(w: World, i: int): bool = false
   pure def when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w: World, i: int): bool = false
   /// No line.
   pure def result_nothing_but_the_time(w: World, i: int): str = ""
