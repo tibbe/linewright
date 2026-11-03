@@ -288,6 +288,7 @@ async fn sessions_running_at_once_get_different_scratch_directories() {
     }
 
     world.poll().await;
+    world.factory.winding_up().wait().await;
 
     let seen = seen.lock().unwrap().clone();
     assert_eq!(seen.len(), 2);
