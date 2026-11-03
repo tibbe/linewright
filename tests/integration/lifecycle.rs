@@ -552,6 +552,15 @@ fn an_issue_is_worked_by_the_first_row_of_the_working_an_item_table_that_holds()
             Some(Row::ClearStall),
         ),
         (
+            "done by a merge, still open, stalled, Linewright assigned",
+            issue(
+                &["ready-for-agent", label::DESIGNED, label::STALLED],
+                &[LINEWRIGHT],
+            ),
+            vec![linewrights(5, merged_at("2026-10-01T10:00:00Z"))],
+            None,
+        ),
+        (
             "in review",
             issue(&["ready-for-agent", label::DESIGNED], &[LINEWRIGHT]),
             vec![linewrights(5, OPEN)],
@@ -620,7 +629,22 @@ fn where_two_rows_hold_the_first_is_taken() {
                 stalled
             },
             vec![],
-            Row::Start(IssueStage::Triage),
+            Row::ClearStall,
+        ),
+        (
+            "being designed, unblocked, and stalled",
+            issue(&["ready-for-agent", label::STALLED], &[LINEWRIGHT]),
+            vec![],
+            Row::ClearStall,
+        ),
+        (
+            "being implemented, unblocked, and stalled",
+            issue(
+                &["ready-for-agent", label::DESIGNED, label::STALLED],
+                &[LINEWRIGHT],
+            ),
+            vec![],
+            Row::ClearStall,
         ),
     ];
 
@@ -852,7 +876,7 @@ fn a_pull_request_is_worked_by_the_first_row_that_holds() {
             "Linewright's, open, assigned, asking for a run, and stalled",
             stalled(pull_facts(Linewright, Claimed, Asked)),
             State::Open,
-            Some(PullRow::Work),
+            Some(PullRow::ClearStall),
         ),
         (
             "Linewright's, open, assigned, waiting, and stalled",

@@ -2594,12 +2594,12 @@ async fn with_auto_merge_a_merge_that_fails_twice_hands_the_pull_request_back_an
     world.store.assign_as("maintainer", pr, LINEWRIGHT).unwrap();
     world.clock.advance(chrono::TimeDelta::minutes(1));
     world.poll().await;
+    world.poll().await;
 
     assert!(
         linewright_assigned(&world, pr).await,
         "a failure after Linewright is reassigned is retried, not handed back"
     );
-    assert_eq!(world.store.pull_labels(pr), ["linewright:stalled"]);
 
     world.store.accept_merges(pr);
     world.poll().await;

@@ -483,10 +483,16 @@ impl World {
 
     /// What design leaves of `issue`, labeled `ready-for-agent` and not
     /// claimed, designed on the issue as [`design_issues`] scripts each
-    /// design. A stall it carries stays.
+    /// design. A stall it carries is cleared before the design.
     pub async fn designed_on_the_issue(&self, issue: Number) {
         design_issues(self);
         self.store.assign(issue).await.unwrap();
+        if self.issue(issue).has_label("linewright:stalled") {
+            self.store
+                .remove_label(issue, "linewright:stalled")
+                .await
+                .unwrap();
+        }
         self.store.comment(issue, BUILT_AS_ASKED).await.unwrap();
         self.store
             .add_label(issue, "linewright:designed")

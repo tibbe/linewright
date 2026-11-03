@@ -251,6 +251,8 @@ pub enum Row {
     Claim,
     Start(IssueStage),
     RemoveStaleStatusLabels(Vec<StatusLabel>),
+    /// Removes `linewright:stalled`, before any run starts on the issue
+    /// again (`docs/specs/repository.md`, Working an item, "Stalls").
     ClearStall,
 }
 
@@ -319,6 +321,9 @@ pub fn row(facts: &IssueFacts, state: Option<State>, policy: &Policy) -> Option<
     {
         return Some(Row::Claim);
     }
+    if issue.is_stalled() && assigned && state != Some(State::Done) {
+        return Some(Row::ClearStall);
+    }
     if let Some(stage) = state.and_then(State::stage)
         && issue.open_blockers().is_empty()
     {
@@ -327,9 +332,6 @@ pub fn row(facts: &IssueFacts, state: Option<State>, policy: &Policy) -> Option<
     let stale = issue.stale_status_labels();
     if !stale.is_empty() {
         return Some(Row::RemoveStaleStatusLabels(stale));
-    }
-    if issue.is_stalled() && assigned {
-        return Some(Row::ClearStall);
     }
     None
 }
@@ -518,9 +520,9 @@ pub enum PullRow {
     Work,
     /// Unassigns Linewright from a pull request it did not open, posting
     /// `comment` first.
-    LetGo {
-        comment: String,
-    },
+    LetGo { comment: String },
+    /// Removes `linewright:stalled`, before any run starts on the pull
+    /// request again (`docs/specs/repository.md`, Working an item, "Stalls").
     ClearStall,
 }
 
@@ -546,6 +548,8 @@ pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<P
     let claimed = claim == PullClaim::Claimed;
     if working == PullWorking::RunInFlight {
         None
+    } else if linewrights_open && claimed && stalled {
+        Some(PullRow::ClearStall)
     } else if linewrights_open && claim == PullClaim::NeverAssigned {
         Some(PullRow::Claim)
     } else if linewrights_open && claimed && working == PullWorking::Asked {
@@ -554,8 +558,6 @@ pub fn pull_row(facts: &PullFacts, state: State, linewright: &Login) -> Option<P
         Some(PullRow::LetGo {
             comment: not_its_own(linewright),
         })
-    } else if linewrights_open && claimed && stalled {
-        Some(PullRow::ClearStall)
     } else {
         None
     }
