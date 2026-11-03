@@ -44,12 +44,12 @@ jobs:
       - uses: actions/checkout@v7
       - run: scripts/check comments
 
-  model-quotes:
+  model:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - run: scripts/check model-quotes
+      - run: scripts/check model-tables model-quotes model-coverage
 
   clippy:
     needs: changes

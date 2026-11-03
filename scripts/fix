@@ -24,6 +24,12 @@ fix_test() {
   fi
 }
 
+# Regenerates what the model's spec-table directives encode of the spec's
+# tables (`scripts/model_tables.py` describes them).
+fix_model-tables() {
+  python3 -I -B scripts/model_tables.py
+}
+
 # Applies clippy's machine-applicable suggestions, then formats them.
 fix_clippy() {
   # Under `deny`, cargo skips the crates that depend on one with warnings:
@@ -33,13 +39,14 @@ fix_clippy() {
   cargo fmt
 }
 
-stages="fmt markdown css test clippy"
+stages="fmt markdown css model-tables test clippy"
 
 usage() {
   echo "usage: scripts/fix [NAME...]"
   echo "Fixes what scripts/check reports where a tool can, or only the named: $stages."
   echo "fmt formats the Rust; markdown fixes what rumdl can; css builds the web UI's"
-  echo "stylesheet; test makes every test #[test_log::test]; clippy applies clippy's"
+  echo "stylesheet; model-tables regenerates the model's encoding of the spec's tables;"
+  echo "test makes every test #[test_log::test]; clippy applies clippy's"
   echo "machine-applicable suggestions, then formats. scripts/check then reports"
   echo "what is left."
 }

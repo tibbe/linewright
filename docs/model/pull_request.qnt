@@ -34,8 +34,8 @@ module pull_request {
     // Linewright is assigned to it
     lw: bool,
     draft: bool,
-    // its checks, summed up: "none" appeared, one "running", one "failed", or
-    // all "green"
+    // "Its checks": "The check runs and commit statuses on its head.", summed
+    // up: "none" appeared, one "running", one "failed", or all "green"
     checks: str,
     // its last push was ci-grace ago or more
     graceOver: bool,
@@ -67,53 +67,119 @@ module pull_request {
     stalled: bool,
   }
 
-  /// P ## Working a pull request, its rows in order, as (when, what
-  /// Linewright does).
-  pure def rows(x: Pr, am: bool): List[(bool, str)] = [
-    // "feedback has come" | "starts a rework run"
-    (x.feedback, "rework"),
-    // "it conflicts with the default branch" | "starts an update run"
-    (x.conflict, "update"),
-    // "it cannot be merged by a method the repository allows, for a reason
-    // other than being behind, and no run has ended on it since its last
-    // push" | "starts an update run"
-    (x.unmergeable and not(x.ranSincePush), "update"),
-    // "none of its checks has appeared, and its last push was less than
-    // ci-grace ago" | "waits for its checks"
-    (x.checks == "none" and not(x.graceOver), "wait"),
-    // "a check is still running ci-timeout after its last push, or after
-    // Linewright was last assigned to it where that is later" | "hands it back"
-    (x.checks == "running" and x.timedOut, "hand back"),
-    // "a check is still running" | "waits for its checks"
-    (x.checks == "running", "wait"),
-    // "a check failed, and fewer than ci-attempts fix-ci runs have ended on it
-    // this round" | "starts a fix-ci run"
-    (x.checks == "failed" and x.fixes < CI_ATTEMPTS, "fix"),
-    // "a check failed" | "hands it back, naming the failing checks"
-    (x.checks == "failed", "hand back"),
-    // "it is behind the default branch, the repository requires it up to date
-    // to merge, and that alone keeps it from being ready to merge" | "starts an
-    // update run"
-    (x.behind and readyToMerge(x, am), "update"),
-    // draft | "otherwise" | "marks it ready for review"; the rows after it are
-    // ready for review's
-    (x.draft, "ready"),
-    // "auto-merge is off, or a person holds its merge" | "waits for review"
-    (not(am) or x.held, "wait"),
-    // "two merges of it have failed this round" | "hands it back with
-    // GitHub's reason"
-    (x.mergeFails >= MERGE_TRIES, "hand back"),
-    // ready for review | "GitHub blocks the merge, and Linewright has not
-    // commented on it this round naming what GitHub requires" | "comments
-    // naming what GitHub requires"
-    (x.github == "blocks" and not(x.commented), "comment on block"),
-    // "GitHub blocks the merge, or has not reported whether it allows it" |
-    // "waits for what GitHub requires"
-    (x.github != "allows", "wait"),
-    // "otherwise" | "merges it"
-    (true, "merge"),
-  ]
-  pure val ROWS = 15
+  /// P ## Working a pull request: "Linewright works a pull request it opened
+  /// as this table gives: at each poll, the first row that holds." "Its state
+  /// is GitHub's: a draft, or ready for review."
+  pure def inState(x: Pr, am: bool, states: Set[str]): bool =
+    states.contains(if (x.draft) "draft" else "ready for review")
+
+  /// What Linewright does: the first row that holds.
+  // spec-table P "## Working a pull request" rows else=noRow
+  pure def todo(x: Pr, am: bool): str =
+    // any | feedback has come | starts a rework run | unchanged
+    if (when_feedback_has_come(x, am)) does_starts_a_rework_run(x, am)
+    // any | it conflicts with the default branch | starts an update run | unchanged
+    else if (when_it_conflicts_with_the_default_branch(x, am)) does_starts_an_update_run(x, am)
+    // any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
+    else if (when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) does_starts_an_update_run(x, am)
+    // any | none of its checks has appeared, and its last push was less than ci-grace ago | waits for its checks | unchanged
+    else if (when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x, am)) does_waits_for_its_checks(x, am)
+    // any | a check is still running ci-timeout after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged
+    else if (when_a_check_is_still_running_ci_timeout_after_its_last_push_or_after_linewright_was_last_assigned_to_it_where_that_is_later(x, am)) does_hands_it_back_naming_the_checks_still_running(x, am)
+    // any | a check is still running | waits for its checks | unchanged
+    else if (when_a_check_is_still_running(x, am)) does_waits_for_its_checks(x, am)
+    // any | a check failed, and fewer than ci-attempts fix-ci runs have ended on it this round | starts a fix-ci run | unchanged
+    else if (when_a_check_failed_and_fewer_than_ci_attempts_fix_ci_runs_have_ended_on_it_this_round(x, am)) does_starts_a_fix_ci_run(x, am)
+    // any | a check failed | hands it back, naming the failing checks | unchanged
+    else if (when_a_check_failed(x, am)) does_hands_it_back_naming_the_failing_checks(x, am)
+    // any | it is behind the default branch, the repository requires it up to date to merge, and that alone keeps it from being ready to merge | starts an update run | unchanged
+    else if (when_it_is_behind_the_default_branch_the_repository_requires_it_up_to_date_to_merge_and_that_alone_keeps_it_from_being_ready_to_merge(x, am)) does_starts_an_update_run(x, am)
+    // draft | otherwise | marks it ready for review | ready for review
+    else if (inState(x, am, Set("draft"))) does_marks_it_ready_for_review(x, am)
+    // ready for review | auto-merge is off, or a person holds its merge | waits for review | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_auto_merge_is_off_or_a_person_holds_its_merge(x, am)) does_waits_for_review(x, am)
+    // ready for review | two merges of it have failed this round | hands it back with GitHub's reason | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_two_merges_of_it_have_failed_this_round(x, am)) does_hands_it_back_with_github_s_reason(x, am)
+    // ready for review | GitHub blocks the merge, and Linewright has not commented on it this round naming what GitHub requires | comments naming what GitHub requires | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_github_blocks_the_merge_and_linewright_has_not_commented_on_it_this_round_naming_what_github_requires(x, am)) does_comments_naming_what_github_requires(x, am)
+    // ready for review | GitHub blocks the merge, or has not reported whether it allows it | waits for what GitHub requires | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_github_blocks_the_merge_or_has_not_reported_whether_it_allows_it(x, am)) does_waits_for_what_github_requires(x, am)
+    // ready for review | otherwise | merges it | merged
+    else if (inState(x, am, Set("ready for review"))) does_merges_it(x, am)
+    else noRow(x, am)
+  // spec-table end
+  /// A pull request is a draft or ready for review, and each ends on an
+  /// "otherwise" row, so some row holds.
+  pure def noRow(x: Pr, am: bool): str = ""
+  /// The first row that holds, from 1.
+  // spec-table P "## Working a pull request" row
+  pure def firstRow(x: Pr, am: bool): int =
+    // any | feedback has come | starts a rework run | unchanged
+    if (when_feedback_has_come(x, am)) 1
+    // any | it conflicts with the default branch | starts an update run | unchanged
+    else if (when_it_conflicts_with_the_default_branch(x, am)) 2
+    // any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
+    else if (when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) 3
+    // any | none of its checks has appeared, and its last push was less than ci-grace ago | waits for its checks | unchanged
+    else if (when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x, am)) 4
+    // any | a check is still running ci-timeout after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged
+    else if (when_a_check_is_still_running_ci_timeout_after_its_last_push_or_after_linewright_was_last_assigned_to_it_where_that_is_later(x, am)) 5
+    // any | a check is still running | waits for its checks | unchanged
+    else if (when_a_check_is_still_running(x, am)) 6
+    // any | a check failed, and fewer than ci-attempts fix-ci runs have ended on it this round | starts a fix-ci run | unchanged
+    else if (when_a_check_failed_and_fewer_than_ci_attempts_fix_ci_runs_have_ended_on_it_this_round(x, am)) 7
+    // any | a check failed | hands it back, naming the failing checks | unchanged
+    else if (when_a_check_failed(x, am)) 8
+    // any | it is behind the default branch, the repository requires it up to date to merge, and that alone keeps it from being ready to merge | starts an update run | unchanged
+    else if (when_it_is_behind_the_default_branch_the_repository_requires_it_up_to_date_to_merge_and_that_alone_keeps_it_from_being_ready_to_merge(x, am)) 9
+    // draft | otherwise | marks it ready for review | ready for review
+    else if (inState(x, am, Set("draft"))) 10
+    // ready for review | auto-merge is off, or a person holds its merge | waits for review | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_auto_merge_is_off_or_a_person_holds_its_merge(x, am)) 11
+    // ready for review | two merges of it have failed this round | hands it back with GitHub's reason | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_two_merges_of_it_have_failed_this_round(x, am)) 12
+    // ready for review | GitHub blocks the merge, and Linewright has not commented on it this round naming what GitHub requires | comments naming what GitHub requires | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_github_blocks_the_merge_and_linewright_has_not_commented_on_it_this_round_naming_what_github_requires(x, am)) 13
+    // ready for review | GitHub blocks the merge, or has not reported whether it allows it | waits for what GitHub requires | ready for review
+    else if (inState(x, am, Set("ready for review")) and when_github_blocks_the_merge_or_has_not_reported_whether_it_allows_it(x, am)) 14
+    // ready for review | otherwise | merges it | merged
+    else if (inState(x, am, Set("ready for review"))) 15
+    else 0
+  // spec-table end
+
+  pure def when_feedback_has_come(x: Pr, am: bool): bool = x.feedback
+  pure def when_it_conflicts_with_the_default_branch(x: Pr, am: bool): bool = x.conflict
+  pure def when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x: Pr, am: bool): bool =
+    x.unmergeable and not(x.ranSincePush)
+  pure def when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x: Pr, am: bool): bool =
+    x.checks == "none" and not(x.graceOver)
+  pure def when_a_check_is_still_running_ci_timeout_after_its_last_push_or_after_linewright_was_last_assigned_to_it_where_that_is_later(x: Pr, am: bool): bool =
+    x.checks == "running" and x.timedOut
+  pure def when_a_check_is_still_running(x: Pr, am: bool): bool = x.checks == "running"
+  pure def when_a_check_failed_and_fewer_than_ci_attempts_fix_ci_runs_have_ended_on_it_this_round(x: Pr, am: bool): bool =
+    x.checks == "failed" and x.fixes < CI_ATTEMPTS
+  pure def when_a_check_failed(x: Pr, am: bool): bool = x.checks == "failed"
+  pure def when_it_is_behind_the_default_branch_the_repository_requires_it_up_to_date_to_merge_and_that_alone_keeps_it_from_being_ready_to_merge(x: Pr, am: bool): bool =
+    x.behind and readyToMerge(x, am)
+  pure def when_auto_merge_is_off_or_a_person_holds_its_merge(x: Pr, am: bool): bool = not(am) or x.held
+  pure def when_two_merges_of_it_have_failed_this_round(x: Pr, am: bool): bool = x.mergeFails >= MERGE_TRIES
+  pure def when_github_blocks_the_merge_and_linewright_has_not_commented_on_it_this_round_naming_what_github_requires(x: Pr, am: bool): bool =
+    x.github == "blocks" and not(x.commented)
+  pure def when_github_blocks_the_merge_or_has_not_reported_whether_it_allows_it(x: Pr, am: bool): bool =
+    x.github != "allows"
+
+  pure def does_starts_a_rework_run(x: Pr, am: bool): str = "rework"
+  pure def does_starts_an_update_run(x: Pr, am: bool): str = "update"
+  pure def does_waits_for_its_checks(x: Pr, am: bool): str = "wait"
+  pure def does_hands_it_back_naming_the_checks_still_running(x: Pr, am: bool): str = "hand back"
+  pure def does_starts_a_fix_ci_run(x: Pr, am: bool): str = "fix"
+  pure def does_hands_it_back_naming_the_failing_checks(x: Pr, am: bool): str = "hand back"
+  pure def does_marks_it_ready_for_review(x: Pr, am: bool): str = "ready"
+  pure def does_waits_for_review(x: Pr, am: bool): str = "wait"
+  pure def does_hands_it_back_with_github_s_reason(x: Pr, am: bool): str = "hand back"
+  pure def does_comments_naming_what_github_requires(x: Pr, am: bool): str = "comment on block"
+  pure def does_waits_for_what_github_requires(x: Pr, am: bool): str = "wait"
+  pure def does_merges_it(x: Pr, am: bool): str = "merge"
 
   /// P ## Working a pull request "Ready to merge": "it is ready for review",
   /// "no person holds its merge", "it has everything the repository requires
@@ -123,12 +189,6 @@ module pull_request {
   pure def readyToMerge(x: Pr, am: bool): bool =
     not(x.draft) and not(x.held) and x.github != "blocks" and (am or x.approved)
 
-  /// The first row that holds, from 0.
-  pure def firstRow(x: Pr, am: bool): int = {
-    val rs = rows(x, am)
-    range(0, rs.length()).foldl(-1, (acc, k) => if (acc == -1 and rs[k]._1) k else acc)
-  }
-  pure def todo(x: Pr, am: bool): str = rows(x, am)[firstRow(x, am)]._2
 
   /// R ## Assignment "Handing back": a comment saying why, linewright:stalled
   /// for a stall, then the unassignment ("the assignment" comes last, R ##
@@ -139,7 +199,9 @@ module pull_request {
   pure def pushed(x: Pr): Pr = { ...x, checks: "none", graceOver: false, timedOut: false,
                                  ranSincePush: false, github: "unknown" }
 
-  /// A round starts again: P ## Working a pull request "A round".
+  /// P ## Working a pull request "A round": "A round starts when Linewright
+  /// opens the pull request, when a rework run on it ends and when Linewright
+  /// is assigned to it again."
   pure def newRound(x: Pr): Pr = { ...x, commented: false, fixes: 0, mergeFails: 0 }
 
   /// Where the pull request rests (S6): merged or closed; handed back or
@@ -414,7 +476,7 @@ module pull_request {
   /// the pull request and is idle. Each is expected to be violated.
   def rowUnreached(k: int): bool =
     not(pr.status == "open" and pr.lw and inFlight == "" and series.length() == 0
-        and firstRow(pr, am) == k)
+        and firstRow(pr, am) == k + 1)
   val row0Unreached = rowUnreached(0)
   val row1Unreached = rowUnreached(1)
   val row2Unreached = rowUnreached(2)

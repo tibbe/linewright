@@ -9,8 +9,16 @@ The model's files are their own documentation:
 
 - `linewright.qnt`: the spec's rules, each definition named after the spec's
   term and quoting the clause it encodes; its header gives the letters for the
-  spec files and lists the assumptions (A1, A2, …), the readings the spec
-  leaves open. Each property (S1 to S7) is stated on its definition.
+  spec files, names the sections the model encodes in full and lists the
+  assumptions (A1, A2, …), the readings the spec leaves open. Each property
+  (S1 to S7) is stated on its definition.
+- The spec's tables are not copied into the model: `scripts/fix
+  model-tables` generates each table's definition from the spec, between a
+  `// spec-table` directive and `// spec-table end`, and `scripts/check
+  model-tables` fails where it is out of date. The model gives one
+  `when_<cell>` predicate per When cell, one `does_<cell>` per Linewright
+  cell and a `result_<cell>` per result that is not a literal, each named by
+  the cell's text. `scripts/model_tables.py` describes the directives.
 - `pipeline.qnt`, `cut.qnt`, `spec_change.qnt`: the three models, each header
   giving its items, bounds and starts; and their scenarios, named after the
   regressions (S8) and issues (S9) they replay.

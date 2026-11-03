@@ -8,6 +8,12 @@
  * design_system.md, M = monitoring.md. A reading the spec leaves open is an
  * assumption, A1 to A16, listed below.
  *
+ * Encoded in full: R ## State, R ## Working an item, R ## Managed items, R ##
+ * Writes, P ## Working a pull request, DS ## States. Their tables are read by
+ * the spec-table directives (`scripts/fix model-tables` generates what each
+ * encodes; scripts/model_tables.py describes them) and every other sentence of
+ * theirs is quoted where the model encodes it.
+ *
  * Three parties act. Linewright makes one GitHub write a step and may stop
  * (a crash or a kill) between any two. People act a bounded number of times
  * a trace. GitHub closes the issues a merged pull request closes, some time
@@ -98,10 +104,11 @@ module linewright {
   /// Where traces start.
   const STARTS: Set[Start]
 
-  /// A run in flight: its stage, the state it started in, and whether it is
-  /// applying its result.
-  type Run = { stage: str, start: str, applying: bool }
-  pure val NO_RUN: Run = { stage: "", start: "", applying: false }
+  /// A run in flight: its stage, the state it started in, whether it is
+  /// applying its result and, only while the Working an item rows are read for
+  /// how it ends, the outcome it ends with.
+  type Run = { stage: str, start: str, applying: bool, ending: str }
+  pure val NO_RUN: Run = { stage: "", start: "", applying: false, ending: "" }
 
   /// One GitHub write.
   type Write = { op: str, item: int, arg: str, n: int }
@@ -123,7 +130,8 @@ module linewright {
   var items: int -> Item
   var runs: int -> Run
   /// The writes left of the series Linewright is carrying out: one series at
-  /// a time (R ## Writes "One writer", A2).
+  /// a time (R ## Writes "One writer": "One of Linewright's runs or actions
+  /// writes an item at a time.", A2).
   var seq: List[Write]
   var seqOf: Option
   /// The outcome a run decides again after a stop interrupted applying it (A14).
@@ -218,46 +226,68 @@ module linewright {
     isIssue(w, x) and it(w, x).designed and ticketsCutFrom(w, x).size() > 0
 
   // ===========================================================================
-  // State (R ## State): the first row of its table that holds
+  // State (R ## State)
   // ===========================================================================
 
-  /// R ## State, the issue table, rows in the spec's order.
-  pure def issueState(w: World, i: int): str = {
-    val x = it(w, i)
-    // "is closed, or has had a pull request that closes it merge into the
-    // default branch since it was last opened or given a status label"
-    if (not(x.open) or x.mergedSince) "done"
-    // "has an open pull request that closes it"
-    else if (openPrClosesIt(w, i)) "in review"
-    // "is a tracking issue"
-    else if (isTrackingIssue(w, i)) "tracking"
-    // "holds needs-triage and is assigned to Linewright"
-    else if (x.status == NEEDS_TRIAGE and x.lw) "being triaged"
-    // "holds ready-for-agent, is assigned to Linewright and is without
-    // linewright:designed"
-    else if (x.status == READY_FOR_AGENT and x.lw and not(x.designed)) "being designed"
-    // "holds ready-for-agent and is assigned to Linewright"
-    else if (x.status == READY_FOR_AGENT and x.lw) "being implemented"
-    // "holds a status label": "its status label's"
-    else if (x.status != "") x.status
-    // "has a run in flight": "the one it was in when the run started"
-    else if (runInFlight(w, i)) w.runs.get(i).start
-    // "otherwise": "no state"
+  /// R ## State: "An item's state is the first row of its table below that
+  /// holds, derived from what GitHub shows and, while a run is in flight on the
+  /// item, from the run."
+  // spec-table R "## State" state
+  pure def issueState(w: World, i: int): str =
+    // is closed, or has had a pull request that closes it merge into the default branch since it was last opened or given a status label | done
+    if (when_is_closed_or_has_had_a_pull_request_that_closes_it_merge_into_the_default_branch_since_it_was_last_opened_or_given_a_status_label(w, i)) "done"
+    // has an open pull request that closes it | in review
+    else if (when_has_an_open_pull_request_that_closes_it(w, i)) "in review"
+    // is a tracking issue | tracking
+    else if (when_is_a_tracking_issue(w, i)) "tracking"
+    // holds needs-triage and is assigned to Linewright | being triaged
+    else if (when_holds_needs_triage_and_is_assigned_to_linewright(w, i)) "being triaged"
+    // holds ready-for-agent, is assigned to Linewright and is without linewright:designed | being designed
+    else if (when_holds_ready_for_agent_is_assigned_to_linewright_and_is_without_linewright_designed(w, i)) "being designed"
+    // holds ready-for-agent and is assigned to Linewright | being implemented
+    else if (when_holds_ready_for_agent_and_is_assigned_to_linewright(w, i)) "being implemented"
+    // holds a status label | its status label's, such as needs-info
+    else if (when_holds_a_status_label(w, i)) result_its_status_label_s_such_as_needs_info(w, i)
+    // has a run in flight | the one it was in when the run started
+    else if (when_has_a_run_in_flight(w, i)) result_the_one_it_was_in_when_the_run_started(w, i)
+    // otherwise | no state
     else ""
-  }
+  // spec-table end
 
-  /// R ## State, the pull request table.
-  pure def prState(w: World, p: int): str = {
-    val x = it(w, p)
-    if (x.open) "open"
-    else if (x.merged) "merged"
-    else "closed"
-  }
+  // spec-table R "## State" 2 state
+  pure def prState(w: World, p: int): str =
+    // is open | open
+    if (when_is_open(w, p)) "open"
+    // is merged | merged
+    else if (when_is_merged(w, p)) "merged"
+    // is closed without merging | closed
+    else if (when_is_closed_without_merging(w, p)) "closed"
+    else ""
+  // spec-table end
 
   pure def stateOf(w: World, i: int): str =
     if (not(it(w, i).exists)) ""
     else if (PRS.contains(i)) prState(w, i)
     else issueState(w, i)
+
+  pure def when_is_closed_or_has_had_a_pull_request_that_closes_it_merge_into_the_default_branch_since_it_was_last_opened_or_given_a_status_label(w: World, i: int): bool =
+    not(it(w, i).open) or it(w, i).mergedSince
+  pure def when_has_an_open_pull_request_that_closes_it(w: World, i: int): bool = openPrClosesIt(w, i)
+  pure def when_is_a_tracking_issue(w: World, i: int): bool = isTrackingIssue(w, i)
+  pure def when_holds_needs_triage_and_is_assigned_to_linewright(w: World, i: int): bool =
+    it(w, i).status == NEEDS_TRIAGE and it(w, i).lw
+  pure def when_holds_ready_for_agent_is_assigned_to_linewright_and_is_without_linewright_designed(w: World, i: int): bool =
+    it(w, i).status == READY_FOR_AGENT and it(w, i).lw and not(it(w, i).designed)
+  pure def when_holds_ready_for_agent_and_is_assigned_to_linewright(w: World, i: int): bool =
+    it(w, i).status == READY_FOR_AGENT and it(w, i).lw
+  pure def when_holds_a_status_label(w: World, i: int): bool = it(w, i).status != ""
+  pure def result_its_status_label_s_such_as_needs_info(w: World, i: int): str = it(w, i).status
+  pure def when_has_a_run_in_flight(w: World, i: int): bool = runInFlight(w, i)
+  pure def result_the_one_it_was_in_when_the_run_started(w: World, i: int): str = w.runs.get(i).start
+  pure def when_is_open(w: World, p: int): bool = it(w, p).open
+  pure def when_is_merged(w: World, p: int): bool = it(w, p).merged
+  pure def when_is_closed_without_merging(w: World, p: int): bool =
+    not(it(w, p).open) and not(it(w, p).merged)
 
   /// Every state the tables name.
   pure val ISSUE_STATES = Set("done", "in review", "tracking", "being triaged",
@@ -266,20 +296,37 @@ module linewright {
   pure val PR_STATES = Set("open", "merged", "closed")
 
   /// The row of each table that holds, for S1's witnesses.
-  pure def issueRow(w: World, i: int): int = {
-    val x = it(w, i)
-    if (not(x.open) or x.mergedSince) 1
-    else if (openPrClosesIt(w, i)) 2
-    else if (isTrackingIssue(w, i)) 3
-    else if (x.status == NEEDS_TRIAGE and x.lw) 4
-    else if (x.status == READY_FOR_AGENT and x.lw and not(x.designed)) 5
-    else if (x.status == READY_FOR_AGENT and x.lw) 6
-    else if (x.status != "") 7
-    else if (runInFlight(w, i)) 8
+  // spec-table R "## State" index
+  pure def issueRow(w: World, i: int): int =
+    // is closed, or has had a pull request that closes it merge into the default branch since it was last opened or given a status label | done
+    if (when_is_closed_or_has_had_a_pull_request_that_closes_it_merge_into_the_default_branch_since_it_was_last_opened_or_given_a_status_label(w, i)) 1
+    // has an open pull request that closes it | in review
+    else if (when_has_an_open_pull_request_that_closes_it(w, i)) 2
+    // is a tracking issue | tracking
+    else if (when_is_a_tracking_issue(w, i)) 3
+    // holds needs-triage and is assigned to Linewright | being triaged
+    else if (when_holds_needs_triage_and_is_assigned_to_linewright(w, i)) 4
+    // holds ready-for-agent, is assigned to Linewright and is without linewright:designed | being designed
+    else if (when_holds_ready_for_agent_is_assigned_to_linewright_and_is_without_linewright_designed(w, i)) 5
+    // holds ready-for-agent and is assigned to Linewright | being implemented
+    else if (when_holds_ready_for_agent_and_is_assigned_to_linewright(w, i)) 6
+    // holds a status label | its status label's, such as needs-info
+    else if (when_holds_a_status_label(w, i)) 7
+    // has a run in flight | the one it was in when the run started
+    else if (when_has_a_run_in_flight(w, i)) 8
+    // otherwise | no state
     else 9
-  }
+  // spec-table end
+  // spec-table R "## State" 2 index
   pure def prRow(w: World, p: int): int =
-    if (it(w, p).open) 1 else if (it(w, p).merged) 2 else 3
+    // is open | open
+    if (when_is_open(w, p)) 1
+    // is merged | merged
+    else if (when_is_merged(w, p)) 2
+    // is closed without merging | closed
+    else if (when_is_closed_without_merging(w, p)) 3
+    else 0
+  // spec-table end
 
   // ===========================================================================
   // Managed items (R ## Managed items)
@@ -380,98 +427,247 @@ module linewright {
     else ""
 
   pure def opt(act: str, i: int, arg: str): Option = { act: act, item: i, arg: arg }
-  pure def when(c: bool, o: Option): Set[Option] = if (c) Set(o) else Set()
-
-  /// The first row of a first-match table that holds.
-  pure def firstRow(rows: List[(bool, Option)]): Set[Option] =
-    rows.foldl(Set(), (acc, r) => if (acc.size() == 0 and r._1) Set(r._2) else acc)
 
   /// R ## Working an item: "Linewright changes an item's labels and
   /// assignees, and starts work on it, only as this table gives: at each poll,
-  /// the first row that holds for the item." The rows for an issue, in the
-  /// spec's order, as (when, what Linewright does). The last two are "any but
-  /// done" in the table: they hold only while the issue is open (A8).
-  pure def issueRows(w: World, i: int): List[(bool, Option)] = {
-    val x = it(w, i)
-    val st = issueState(w, i)
-    [
-      // any | "the issue has tickets cut from it among its sub-issues and is
-      // without linewright:designed" | "discards the cut"
-      (owesDiscard(w, i), opt("discard", i, "")),
-      // being designed, being implemented | "a person has closed without
-      // merging a pull request Linewright opened that closes it, since the
-      // issue was last opened or given a status label" | "hands it back"
-      (x.open and Set("being designed", "being implemented").contains(st) and x.noSince,
-        opt("hand back", i, "closed unmerged")),
-      // needs-info, ready-for-human, no state | "Linewright is assigned to the
-      // issue" | "unassigns itself, with a comment saying what the issue needs
-      // first where a person assigned it" (A8: the rows from here on are for
-      // an open issue)
-      (x.open and Set(NEEDS_INFO, READY_FOR_HUMAN, "").contains(st) and x.lw, opt("let go", i, "")),
-      // needs-triage, ready-for-agent | "a person Linewright asked is assigned
-      // to it" | "unassigns them"
-      (x.open and ASKS_FOR_LINEWRIGHTS_WORK.contains(st) and x.asked,
-        opt("unassign the people asked", i, "")),
-      // tracking | "it holds a status label or Linewright's assignment" |
-      // "removes the status label, then unassigns itself"
-      (x.open and st == "tracking" and (x.status != "" or x.older != "" or x.lw),
-        opt("tidy tracking issue", i, "")),
-      // tracking | "it has sub-issues and every one is closed" | "closes it"
-      (x.open and st == "tracking" and subIssues(w, i).size() > 0
-         and subIssues(w, i).forall(t => not(it(w, t).open)),
-        opt("close tracking issue", i, "")),
-      // needs-info | "a reply has come" | "labels it needs-triage"
-      (x.open and st == NEEDS_INFO and x.reply, opt("take the reply", i, "")),
-      // needs-triage, ready-for-agent | "Linewright may claim it" | "assigns
-      // itself"
-      (x.open and claimsOnItsOwn(w, i), opt("claim", i, "")),
-      // being triaged, being designed, being implemented | "no run is in
-      // flight on it" | "starts a ... run"; "Blocked": "A run starts on an
-      // issue only once no open issue blocks it."
-      (x.open and WORKING_STATES.contains(st) and not(blocked(w, i))
-         and outcomesOf(w, i, stageOf(st)).size() > 0,
-        opt("start run", i, stageOf(st))),
-      // any but done | "the issue carries more than one status label" |
-      // "removes all but the newest"
-      (x.open and st != "done" and x.older != "", opt("remove older label", i, x.older)),
-      // any but done, merged and closed | "it carries linewright:stalled and
-      // Linewright is assigned to it" | "removes linewright:stalled" (A16).
-      (x.open and st != "done" and x.stalled and x.lw, opt("clear stalled", i, "")),
-    ]
-  }
+  /// the first row that holds for the item." What it does on an item no run
+  /// is ending on: the first row that holds of those that do not end a run,
+  /// then of R ## Steering's; `inState` reads the State column.
+  // spec-table R "## Working an item" rows keep=endsNoRun else=steering
+  pure def working(w: World, i: int): Option =
+    // any | the issue has tickets cut from it among its sub-issues and is without linewright:designed | discards the cut | as State derives
+    if (when_the_issue_has_tickets_cut_from_it_among_its_sub_issues_and_is_without_linewright_designed(w, i) and endsNoRun(w, i, does_discards_the_cut(w, i))) does_discards_the_cut(w, i)
+    // being designed, being implemented | a person has closed without merging a pull request Linewright opened that closes it, since the issue was last opened or given a status label | hands it back | ready-for-human
+    else if (inState(w, i, Set("being designed", "being implemented")) and when_a_person_has_closed_without_merging_a_pull_request_linewright_opened_that_closes_it_since_the_issue_was_last_opened_or_given_a_status_label(w, i) and endsNoRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // needs-info, ready-for-human, no state | Linewright is assigned to the issue | unassigns itself, with a comment saying what the issue needs first where a person assigned it | unchanged
+    else if (inState(w, i, Set("needs-info", "ready-for-human", "")) and when_linewright_is_assigned_to_the_issue(w, i) and endsNoRun(w, i, does_unassigns_itself_with_a_comment_saying_what_the_issue_needs_first_where_a_person_assigned_it(w, i))) does_unassigns_itself_with_a_comment_saying_what_the_issue_needs_first_where_a_person_assigned_it(w, i)
+    // needs-triage, ready-for-agent | a person Linewright asked is assigned to it | unassigns them | unchanged
+    else if (inState(w, i, Set("needs-triage", "ready-for-agent")) and when_a_person_linewright_asked_is_assigned_to_it(w, i) and endsNoRun(w, i, does_unassigns_them(w, i))) does_unassigns_them(w, i)
+    // tracking | it holds a status label or Linewright's assignment | removes the status label, then unassigns itself | tracking
+    else if (inState(w, i, Set("tracking")) and when_it_holds_a_status_label_or_linewright_s_assignment(w, i) and endsNoRun(w, i, does_removes_the_status_label_then_unassigns_itself(w, i))) does_removes_the_status_label_then_unassigns_itself(w, i)
+    // tracking | it has sub-issues and every one is closed | closes it | done
+    else if (inState(w, i, Set("tracking")) and when_it_has_sub_issues_and_every_one_is_closed(w, i) and endsNoRun(w, i, does_closes_it(w, i))) does_closes_it(w, i)
+    // needs-info | a reply has come | labels it needs-triage | needs-triage
+    else if (inState(w, i, Set("needs-info")) and when_a_reply_has_come(w, i) and endsNoRun(w, i, does_labels_it_needs_triage(w, i))) does_labels_it_needs_triage(w, i)
+    // needs-triage, ready-for-agent | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries linewright:designed
+    else if (inState(w, i, Set("needs-triage", "ready-for-agent")) and when_linewright_may_claim_it(w, i) and endsNoRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+    // being triaged | no run is in flight on it | starts a triage run | being triaged
+    else if (inState(w, i, Set("being triaged")) and when_no_run_is_in_flight_on_it(w, i) and endsNoRun(w, i, does_starts_a_triage_run(w, i))) does_starts_a_triage_run(w, i)
+    // being triaged | the triage run ends with ready-for-agent | labels it ready-for-agent | being designed, or being implemented where it carries linewright:designed
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_ready_for_agent(w, i) and endsNoRun(w, i, does_labels_it_ready_for_agent(w, i))) does_labels_it_ready_for_agent(w, i)
+    // being triaged | the triage run ends with needs-info | labels it needs-info, then assigns the people asked whom GitHub lets it assign | needs-info
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_needs_info(w, i) and endsNoRun(w, i, does_labels_it_needs_info_then_assigns_the_people_asked_whom_github_lets_it_assign(w, i))) does_labels_it_needs_info_then_assigns_the_people_asked_whom_github_lets_it_assign(w, i)
+    // being triaged | the triage run ends with ready-for-human | labels it ready-for-human | ready-for-human
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_ready_for_human(w, i) and endsNoRun(w, i, does_labels_it_ready_for_human(w, i))) does_labels_it_ready_for_human(w, i)
+    // being designed | no run is in flight on it | starts a design run | being designed
+    else if (inState(w, i, Set("being designed")) and when_no_run_is_in_flight_on_it(w, i) and endsNoRun(w, i, does_starts_a_design_run(w, i))) does_starts_a_design_run(w, i)
+    // being designed | the design run builds it as it is | labels it linewright:designed | being implemented
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_builds_it_as_it_is(w, i) and endsNoRun(w, i, does_labels_it_linewright_designed(w, i))) does_labels_it_linewright_designed(w, i)
+    // being designed | the design run cuts it into tickets | creates the tickets, then labels it linewright:designed | tracking
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_cuts_it_into_tickets(w, i) and endsNoRun(w, i, does_creates_the_tickets_then_labels_it_linewright_designed(w, i))) does_creates_the_tickets_then_labels_it_linewright_designed(w, i)
+    // being designed | the design run finds nothing to build, in an issue Linewright created | closes it as completed | done
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_finds_nothing_to_build_in_an_issue_linewright_created(w, i) and endsNoRun(w, i, does_closes_it_as_completed(w, i))) does_closes_it_as_completed(w, i)
+    // being designed | the design run finds nothing to build in any other issue, or cannot make a design | hands it back | ready-for-human
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_finds_nothing_to_build_in_any_other_issue_or_cannot_make_a_design(w, i) and endsNoRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // being implemented | no run is in flight on it | starts an implement run | being implemented
+    else if (inState(w, i, Set("being implemented")) and when_no_run_is_in_flight_on_it(w, i) and endsNoRun(w, i, does_starts_an_implement_run(w, i))) does_starts_an_implement_run(w, i)
+    // being implemented | the implement run builds it | opens a pull request that closes it | in review
+    else if (inState(w, i, Set("being implemented")) and when_the_implement_run_builds_it(w, i) and endsNoRun(w, i, does_opens_a_pull_request_that_closes_it(w, i))) does_opens_a_pull_request_that_closes_it(w, i)
+    // being triaged, being designed, being implemented | its run cannot finish | hands it back | ready-for-human
+    else if (inState(w, i, Set("being triaged", "being designed", "being implemented")) and when_its_run_cannot_finish(w, i) and endsNoRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // merged | a spec change Linewright may take up | opens its issue | merged
+    else if (inState(w, i, Set("merged")) and when_a_spec_change_linewright_may_take_up(w, i) and endsNoRun(w, i, does_opens_its_issue(w, i))) does_opens_its_issue(w, i)
+    // open | a pull request Linewright opened, that it may claim | assigns itself | open
+    else if (inState(w, i, Set("open")) and when_a_pull_request_linewright_opened_that_it_may_claim(w, i) and endsNoRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+    // open | a pull request Linewright opened and is assigned to, whose first row of Working a pull request that holds does more than wait | does what that row gives | open, or merged
+    else if (inState(w, i, Set("open")) and when_a_pull_request_linewright_opened_and_is_assigned_to_whose_first_row_of_working_a_pull_request_that_holds_does_more_than_wait(w, i) and endsNoRun(w, i, does_does_what_that_row_gives(w, i))) does_does_what_that_row_gives(w, i)
+    // open | a run on it cannot finish | hands it back | open
+    else if (inState(w, i, Set("open")) and when_a_run_on_it_cannot_finish(w, i) and endsNoRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // any but done | the issue carries more than one status label | removes all but the newest | unchanged
+    else if (not(inState(w, i, Set("done"))) and when_the_issue_carries_more_than_one_status_label(w, i) and endsNoRun(w, i, does_removes_all_but_the_newest(w, i))) does_removes_all_but_the_newest(w, i)
+    // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
+    else if (not(inState(w, i, Set("done", "merged", "closed"))) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsNoRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
+    else steering(w, i)
+  // spec-table end
 
-  /// The table's rows for a pull request, in the spec's order, and the
-  /// Steering rows for one a person assigned to Linewright.
-  pure def prRows(w: World, p: int): List[(bool, Option)] = {
-    val x = it(w, p)
-    val spec = isSpecChange(w, p)
-    [
-      // merged | "a spec change Linewright may take up" | "opens its issue";
-      // S "Taking it up": "Linewright may take up a spec change that is not
-      // yet taken up, merged within the lookback window and marked for it";
-      // R ## Steering, merged | "assigns Linewright to a spec change not yet
-      // taken up" | "opens its issue, then unassigns itself".
-      (spec and not(takenUp(w, p)) and SPEC_ISSUE_SLOT.keys().contains(p)
-         and (x.lw or (x.inLookback and markedForLinewright(w, p))),
-        opt("take up", p, "")),
-      // open | "a pull request Linewright opened, that it may claim" |
-      // "assigns itself"; "Claiming": "It claims a pull request it opened" (A7).
-      (x.byLw and x.open and claimsOnItsOwn(w, p), opt("claim", p, "")),
-      // open | "a pull request Linewright opened and is assigned to, whose
-      // first row of Working a pull request that holds does more than wait" |
-      // "does what that row gives": here only its rework row, "feedback has
-      // come" | "starts a rework run", and, with auto-merge, its merge row;
-      // pull_request.qnt models that table in full.
-      (x.byLw and x.open and x.lw and x.feedback, opt("start run", p, "pr")),
-      (x.byLw and x.open and x.lw and w.autoMerge, opt("merge", p, "")),
-      // R ## Steering, open | "assigns Linewright to any other pull request it
-      // did not open" | "unassigns itself with a comment".
-      (not(x.byLw) and x.open and x.lw, opt("let go", p, "")),
-      // any | "it carries linewright:stalled and Linewright is assigned to
-      // it" | "removes linewright:stalled".
-      (x.byLw and x.open and x.stalled and x.lw, opt("clear stalled", p, "")),
-    ]
+  /// "A run in flight": "While a run is in flight on an item, only the rows
+  /// for how that run ends hold for it."
+  // spec-table R "## Working an item" rows keep=endsTheRun else=nothing
+  pure def runEnding(w: World, i: int): Option =
+    // any | the issue has tickets cut from it among its sub-issues and is without linewright:designed | discards the cut | as State derives
+    if (when_the_issue_has_tickets_cut_from_it_among_its_sub_issues_and_is_without_linewright_designed(w, i) and endsTheRun(w, i, does_discards_the_cut(w, i))) does_discards_the_cut(w, i)
+    // being designed, being implemented | a person has closed without merging a pull request Linewright opened that closes it, since the issue was last opened or given a status label | hands it back | ready-for-human
+    else if (inState(w, i, Set("being designed", "being implemented")) and when_a_person_has_closed_without_merging_a_pull_request_linewright_opened_that_closes_it_since_the_issue_was_last_opened_or_given_a_status_label(w, i) and endsTheRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // needs-info, ready-for-human, no state | Linewright is assigned to the issue | unassigns itself, with a comment saying what the issue needs first where a person assigned it | unchanged
+    else if (inState(w, i, Set("needs-info", "ready-for-human", "")) and when_linewright_is_assigned_to_the_issue(w, i) and endsTheRun(w, i, does_unassigns_itself_with_a_comment_saying_what_the_issue_needs_first_where_a_person_assigned_it(w, i))) does_unassigns_itself_with_a_comment_saying_what_the_issue_needs_first_where_a_person_assigned_it(w, i)
+    // needs-triage, ready-for-agent | a person Linewright asked is assigned to it | unassigns them | unchanged
+    else if (inState(w, i, Set("needs-triage", "ready-for-agent")) and when_a_person_linewright_asked_is_assigned_to_it(w, i) and endsTheRun(w, i, does_unassigns_them(w, i))) does_unassigns_them(w, i)
+    // tracking | it holds a status label or Linewright's assignment | removes the status label, then unassigns itself | tracking
+    else if (inState(w, i, Set("tracking")) and when_it_holds_a_status_label_or_linewright_s_assignment(w, i) and endsTheRun(w, i, does_removes_the_status_label_then_unassigns_itself(w, i))) does_removes_the_status_label_then_unassigns_itself(w, i)
+    // tracking | it has sub-issues and every one is closed | closes it | done
+    else if (inState(w, i, Set("tracking")) and when_it_has_sub_issues_and_every_one_is_closed(w, i) and endsTheRun(w, i, does_closes_it(w, i))) does_closes_it(w, i)
+    // needs-info | a reply has come | labels it needs-triage | needs-triage
+    else if (inState(w, i, Set("needs-info")) and when_a_reply_has_come(w, i) and endsTheRun(w, i, does_labels_it_needs_triage(w, i))) does_labels_it_needs_triage(w, i)
+    // needs-triage, ready-for-agent | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries linewright:designed
+    else if (inState(w, i, Set("needs-triage", "ready-for-agent")) and when_linewright_may_claim_it(w, i) and endsTheRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+    // being triaged | no run is in flight on it | starts a triage run | being triaged
+    else if (inState(w, i, Set("being triaged")) and when_no_run_is_in_flight_on_it(w, i) and endsTheRun(w, i, does_starts_a_triage_run(w, i))) does_starts_a_triage_run(w, i)
+    // being triaged | the triage run ends with ready-for-agent | labels it ready-for-agent | being designed, or being implemented where it carries linewright:designed
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_ready_for_agent(w, i) and endsTheRun(w, i, does_labels_it_ready_for_agent(w, i))) does_labels_it_ready_for_agent(w, i)
+    // being triaged | the triage run ends with needs-info | labels it needs-info, then assigns the people asked whom GitHub lets it assign | needs-info
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_needs_info(w, i) and endsTheRun(w, i, does_labels_it_needs_info_then_assigns_the_people_asked_whom_github_lets_it_assign(w, i))) does_labels_it_needs_info_then_assigns_the_people_asked_whom_github_lets_it_assign(w, i)
+    // being triaged | the triage run ends with ready-for-human | labels it ready-for-human | ready-for-human
+    else if (inState(w, i, Set("being triaged")) and when_the_triage_run_ends_with_ready_for_human(w, i) and endsTheRun(w, i, does_labels_it_ready_for_human(w, i))) does_labels_it_ready_for_human(w, i)
+    // being designed | no run is in flight on it | starts a design run | being designed
+    else if (inState(w, i, Set("being designed")) and when_no_run_is_in_flight_on_it(w, i) and endsTheRun(w, i, does_starts_a_design_run(w, i))) does_starts_a_design_run(w, i)
+    // being designed | the design run builds it as it is | labels it linewright:designed | being implemented
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_builds_it_as_it_is(w, i) and endsTheRun(w, i, does_labels_it_linewright_designed(w, i))) does_labels_it_linewright_designed(w, i)
+    // being designed | the design run cuts it into tickets | creates the tickets, then labels it linewright:designed | tracking
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_cuts_it_into_tickets(w, i) and endsTheRun(w, i, does_creates_the_tickets_then_labels_it_linewright_designed(w, i))) does_creates_the_tickets_then_labels_it_linewright_designed(w, i)
+    // being designed | the design run finds nothing to build, in an issue Linewright created | closes it as completed | done
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_finds_nothing_to_build_in_an_issue_linewright_created(w, i) and endsTheRun(w, i, does_closes_it_as_completed(w, i))) does_closes_it_as_completed(w, i)
+    // being designed | the design run finds nothing to build in any other issue, or cannot make a design | hands it back | ready-for-human
+    else if (inState(w, i, Set("being designed")) and when_the_design_run_finds_nothing_to_build_in_any_other_issue_or_cannot_make_a_design(w, i) and endsTheRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // being implemented | no run is in flight on it | starts an implement run | being implemented
+    else if (inState(w, i, Set("being implemented")) and when_no_run_is_in_flight_on_it(w, i) and endsTheRun(w, i, does_starts_an_implement_run(w, i))) does_starts_an_implement_run(w, i)
+    // being implemented | the implement run builds it | opens a pull request that closes it | in review
+    else if (inState(w, i, Set("being implemented")) and when_the_implement_run_builds_it(w, i) and endsTheRun(w, i, does_opens_a_pull_request_that_closes_it(w, i))) does_opens_a_pull_request_that_closes_it(w, i)
+    // being triaged, being designed, being implemented | its run cannot finish | hands it back | ready-for-human
+    else if (inState(w, i, Set("being triaged", "being designed", "being implemented")) and when_its_run_cannot_finish(w, i) and endsTheRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // merged | a spec change Linewright may take up | opens its issue | merged
+    else if (inState(w, i, Set("merged")) and when_a_spec_change_linewright_may_take_up(w, i) and endsTheRun(w, i, does_opens_its_issue(w, i))) does_opens_its_issue(w, i)
+    // open | a pull request Linewright opened, that it may claim | assigns itself | open
+    else if (inState(w, i, Set("open")) and when_a_pull_request_linewright_opened_that_it_may_claim(w, i) and endsTheRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+    // open | a pull request Linewright opened and is assigned to, whose first row of Working a pull request that holds does more than wait | does what that row gives | open, or merged
+    else if (inState(w, i, Set("open")) and when_a_pull_request_linewright_opened_and_is_assigned_to_whose_first_row_of_working_a_pull_request_that_holds_does_more_than_wait(w, i) and endsTheRun(w, i, does_does_what_that_row_gives(w, i))) does_does_what_that_row_gives(w, i)
+    // open | a run on it cannot finish | hands it back | open
+    else if (inState(w, i, Set("open")) and when_a_run_on_it_cannot_finish(w, i) and endsTheRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
+    // any but done | the issue carries more than one status label | removes all but the newest | unchanged
+    else if (not(inState(w, i, Set("done"))) and when_the_issue_carries_more_than_one_status_label(w, i) and endsTheRun(w, i, does_removes_all_but_the_newest(w, i))) does_removes_all_but_the_newest(w, i)
+    // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
+    else if (not(inState(w, i, Set("done", "merged", "closed"))) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsTheRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
+    else nothing(w, i)
+  // spec-table end
+  pure def endsTheRun(w: World, i: int, o: Option): bool = o.act == "end run"
+  pure def endsNoRun(w: World, i: int, o: Option): bool = o.act != "end run"
+  pure def nothing(w: World, i: int): Option = NO_OPTION
+
+  /// Whether the item's state is one of a row's: while the rows are read for
+  /// how a run ends, its stage's state (A5).
+  pure def inState(w: World, i: int, states: Set[str]): bool = {
+    val r = w.runs.get(i)
+    states.contains(if (r.ending != "") stateOfStage(r.stage) else stateOf(w, i))
   }
+  pure def stateOfStage(stage: str): str =
+    if (stage == "triage") "being triaged"
+    else if (stage == "design") "being designed"
+    else if (stage == "implement") "being implemented"
+    else "open"
+
+  /// The world as the rows read it for the run on `i` ending with `o`.
+  pure def withEnding(w: World, i: int, o: str): World =
+    { ...w, runs: w.runs.set(i, { ...w.runs.get(i), ending: o }) }
+  pure def ending(w: World, i: int): str = w.runs.get(i).ending
+  pure def endsWith(w: World, i: int, stage: str, o: str): bool =
+    w.runs.get(i).stage == stage and ending(w, i) == o
+  /// What Linewright does as a run ends: the writes of its outcome
+  /// (resultWrites).
+  pure def endRun(w: World, i: int): Option = opt("end run", i, ending(w, i))
+
+  pure def when_the_issue_has_tickets_cut_from_it_among_its_sub_issues_and_is_without_linewright_designed(w: World, i: int): bool =
+    owesDiscard(w, i)
+  pure def when_a_person_has_closed_without_merging_a_pull_request_linewright_opened_that_closes_it_since_the_issue_was_last_opened_or_given_a_status_label(w: World, i: int): bool =
+    it(w, i).noSince
+  pure def when_linewright_is_assigned_to_the_issue(w: World, i: int): bool = it(w, i).lw
+  pure def when_a_person_linewright_asked_is_assigned_to_it(w: World, i: int): bool = it(w, i).asked
+  pure def when_it_holds_a_status_label_or_linewright_s_assignment(w: World, i: int): bool =
+    it(w, i).status != "" or it(w, i).older != "" or it(w, i).lw
+  pure def when_it_has_sub_issues_and_every_one_is_closed(w: World, i: int): bool =
+    subIssues(w, i).size() > 0 and subIssues(w, i).forall(t => not(it(w, t).open))
+  pure def when_a_reply_has_come(w: World, i: int): bool = it(w, i).reply
+  pure def when_linewright_may_claim_it(w: World, i: int): bool = claimsOnItsOwn(w, i)
+  /// "Blocked": "A run starts on an issue only once no open issue blocks it",
+  /// read as part of the row's condition; and only where the bounds give the
+  /// run an outcome to end with.
+  pure def when_no_run_is_in_flight_on_it(w: World, i: int): bool =
+    not(runInFlight(w, i)) and not(blocked(w, i)) and outcomesOf(w, i, stageOf(stateOf(w, i))).size() > 0
+  pure def when_the_triage_run_ends_with_ready_for_agent(w: World, i: int): bool =
+    endsWith(w, i, "triage", READY_FOR_AGENT)
+  pure def when_the_triage_run_ends_with_needs_info(w: World, i: int): bool =
+    endsWith(w, i, "triage", NEEDS_INFO)
+  pure def when_the_triage_run_ends_with_ready_for_human(w: World, i: int): bool =
+    endsWith(w, i, "triage", READY_FOR_HUMAN)
+  pure def when_the_design_run_builds_it_as_it_is(w: World, i: int): bool = endsWith(w, i, "design", "uncut")
+  pure def when_the_design_run_cuts_it_into_tickets(w: World, i: int): bool = endsWith(w, i, "design", "cut")
+  pure def when_the_design_run_finds_nothing_to_build_in_an_issue_linewright_created(w: World, i: int): bool =
+    endsWith(w, i, "design", "nothing to build") and it(w, i).byLw
+  pure def when_the_design_run_finds_nothing_to_build_in_any_other_issue_or_cannot_make_a_design(w: World, i: int): bool =
+    (endsWith(w, i, "design", "nothing to build") and not(it(w, i).byLw)) or endsWith(w, i, "design", "handed back")
+  pure def when_the_implement_run_builds_it(w: World, i: int): bool = endsWith(w, i, "implement", "pr")
+  /// A stall (U ## Ending).
+  pure def when_its_run_cannot_finish(w: World, i: int): bool = ending(w, i) == "stall"
+  pure def when_a_run_on_it_cannot_finish(w: World, p: int): bool = ending(w, p) == "stall"
+  /// S "Taking it up": "Linewright may take up a spec change that is not yet
+  /// taken up, merged within the lookback window and marked for it", and that
+  /// the bounds give an issue.
+  pure def when_a_spec_change_linewright_may_take_up(w: World, p: int): bool =
+    isSpecChange(w, p) and not(takenUp(w, p)) and SPEC_ISSUE_SLOT.keys().contains(p)
+      and it(w, p).inLookback and markedForLinewright(w, p)
+  /// "Claiming": "It claims a pull request it opened" (A7).
+  pure def when_a_pull_request_linewright_opened_that_it_may_claim(w: World, p: int): bool =
+    it(w, p).byLw and claimsOnItsOwn(w, p)
+  /// Of Working a pull request, only its rework row, "feedback has come" |
+  /// "starts a rework run", its merge row with auto-merge, and the rework run's
+  /// end; pull_request.qnt models that table in full.
+  pure def when_a_pull_request_linewright_opened_and_is_assigned_to_whose_first_row_of_working_a_pull_request_that_holds_does_more_than_wait(w: World, p: int): bool =
+    it(w, p).byLw and it(w, p).lw
+      and (if (ending(w, p) != "") ending(w, p) == "done" else it(w, p).feedback or w.autoMerge)
+  pure def when_the_issue_carries_more_than_one_status_label(w: World, i: int): bool = it(w, i).older != ""
+  pure def when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w: World, i: int): bool =
+    it(w, i).stalled and it(w, i).lw
+
+  pure def does_discards_the_cut(w: World, i: int): Option = opt("discard", i, "")
+  /// A run's end hands back by its outcome; otherwise the pull request closed
+  /// unmerged.
+  pure def does_hands_it_back(w: World, i: int): Option =
+    if (ending(w, i) != "") endRun(w, i) else opt("hand back", i, "closed unmerged")
+  pure def does_unassigns_itself_with_a_comment_saying_what_the_issue_needs_first_where_a_person_assigned_it(w: World, i: int): Option =
+    opt("let go", i, "")
+  pure def does_unassigns_them(w: World, i: int): Option = opt("unassign the people asked", i, "")
+  pure def does_removes_the_status_label_then_unassigns_itself(w: World, i: int): Option =
+    opt("tidy tracking issue", i, "")
+  pure def does_closes_it(w: World, i: int): Option = opt("close tracking issue", i, "")
+  pure def does_labels_it_needs_triage(w: World, i: int): Option = opt("take the reply", i, "")
+  /// A16: one write.
+  pure def does_assigns_itself(w: World, i: int): Option = opt("claim", i, "")
+  pure def does_starts_a_triage_run(w: World, i: int): Option = opt("start run", i, "triage")
+  pure def does_starts_a_design_run(w: World, i: int): Option = opt("start run", i, "design")
+  pure def does_starts_an_implement_run(w: World, i: int): Option = opt("start run", i, "implement")
+  pure def does_labels_it_ready_for_agent(w: World, i: int): Option = endRun(w, i)
+  pure def does_labels_it_needs_info_then_assigns_the_people_asked_whom_github_lets_it_assign(w: World, i: int): Option =
+    endRun(w, i)
+  pure def does_labels_it_ready_for_human(w: World, i: int): Option = endRun(w, i)
+  pure def does_labels_it_linewright_designed(w: World, i: int): Option = endRun(w, i)
+  pure def does_creates_the_tickets_then_labels_it_linewright_designed(w: World, i: int): Option = endRun(w, i)
+  pure def does_closes_it_as_completed(w: World, i: int): Option = endRun(w, i)
+  pure def does_opens_a_pull_request_that_closes_it(w: World, i: int): Option = endRun(w, i)
+  pure def does_opens_its_issue(w: World, p: int): Option = opt("take up", p, "")
+  pure def does_does_what_that_row_gives(w: World, p: int): Option =
+    if (ending(w, p) != "") endRun(w, p)
+    else if (it(w, p).feedback) opt("start run", p, "pr")
+    else opt("merge", p, "")
+  pure def does_removes_all_but_the_newest(w: World, i: int): Option = opt("remove older label", i, it(w, i).older)
+  pure def does_removes_linewright_stalled(w: World, i: int): Option = opt("clear stalled", i, "")
+
+  /// R ## Steering, the rows Linewright follows at a poll: merged | "assigns
+  /// Linewright to a spec change not yet taken up" | "opens its issue, then
+  /// unassigns itself"; open | "assigns Linewright to any other pull request it
+  /// did not open" | "unassigns itself with a comment".
+  pure def steering(w: World, p: int): Option =
+    if (isSpecChange(w, p) and not(takenUp(w, p)) and SPEC_ISSUE_SLOT.keys().contains(p) and it(w, p).lw)
+      opt("take up", p, "")
+    else if (PRS.contains(p) and not(it(w, p).byLw) and it(w, p).open and it(w, p).lw) opt("let go", p, "")
+    else NO_OPTION
 
   /// Everything Linewright may do on `i` now, whether or not it is in the
   /// middle of a series of writes.
@@ -483,21 +679,22 @@ module linewright {
       // R ## Steering: "cancels a run"; U ## Ending "Cancelling" (A4: a step
       // of Linewright's; not while the run applies its result).
       else if (not(asksForRun(w, i, r.stage))) Set(opt("cancel", i, r.stage))
-      // R ## Writes "A person's change during a run": "Linewright acts on a
-      // person's change to it when the run ends"; the table's rows for how
-      // the run ends (A5: by the run's stage).
-      else outcomesOf(w, i, r.stage).map(o => opt("end run", i, o))
+      // "A run in flight": "While a run is in flight on an item, only the rows
+      // for how that run ends hold for it." It ends with each outcome within
+      // the bounds; R ## Writes "A person's change during a run": "Linewright
+      // acts on a person's change to it when the run ends".
+      else outcomesOf(w, i, r.stage).map(o => runEnding(withEnding(w, i, o), i)).exclude(Set(NO_OPTION))
     }
-    else if (PRS.contains(i)) firstRow(prRows(w, i))
-    else firstRow(issueRows(w, i))
+    else Set(working(w, i)).exclude(Set(NO_OPTION))
 
   pure def optionsIn(w: World): Set[Option] = ITEMS.map(i => optionsOn(w, i)).flatten()
 
   val options: Set[Option] = optionsIn(world)
 
   // ===========================================================================
-  // The writes of each series (R ## Writes "Order", the table's "Linewright
-  // writes" column)
+  // The writes of each series, R ## Writes "Order": "The writes that change
+  // what an item asks for, such as linewright:designed, its status label, its
+  // assignment or a pull request that closes it, come last."
   // ===========================================================================
 
   pure def wr(op: str, i: int, arg: str, n: int): Write = { op: op, item: i, arg: arg, n: n }
@@ -593,7 +790,8 @@ module linewright {
     }
   }
 
-  /// The writes an option carries out.
+  /// The writes an option carries out: R ## Working an item: "Its writes are
+  /// made in their order."
   pure def optionWrites(w: World, o: Option): List[Write] = {
     val i = o.item
     val x = it(w, i)
@@ -641,7 +839,9 @@ module linewright {
 
   /// R ## Managed items "Worked": "GitHub shows Linewright opening the item,
   /// claiming it, applying a label to it or opening a pull request that closes
-  /// it"; R ## Writes "Its own writes": they carry its name.
+  /// it. A comment alone is not working it." R ## Writes "Its own writes":
+  /// "Linewright tells its own writes from a person's by their author." Here
+  /// they carry its name.
   pure def applyWrite(w: World, wt: Write, born: int): int -> Item = {
     val i = wt.item
     val its = w.items
@@ -809,7 +1009,7 @@ module linewright {
 
   /// Linewright starts a run: no GitHub write.
   action startRun(i: int, stage: str): bool = {
-    val runs2 = runs.set(i, { stage: stage, start: stateOf(world, i), applying: false })
+    val runs2 = runs.set(i, { stage: stage, start: stateOf(world, i), applying: false, ending: "" })
     lwMoves(items, ghPending, seq, seqOf, runs2, redo, clock,
       s4ok and s4StartOk(world, i, stage), s7ok, flapped, lwDid)
   }
@@ -1129,21 +1329,24 @@ module linewright {
   // ===========================================================================
 
   /// DS ## States: "An item's state is shown in these words."
-  pure val WORDS: str -> str = Map(
-    NEEDS_TRIAGE -> "Waiting for triage",
-    "being triaged" -> "Being triaged",
-    NEEDS_INFO -> "Waiting for an answer",
-    READY_FOR_HUMAN -> "Waiting for a decision",
-    READY_FOR_AGENT -> "Waiting for Linewright",
-    "being designed" -> "Being designed",
-    "being implemented" -> "Being implemented",
-    "in review" -> "In review",
-    "tracking" -> "Tracking",
-    "done" -> "Done",
-    "open" -> "Open",
-    "merged" -> "Merged",
-    "closed" -> "Closed",
-  )
+  // spec-table DS "## States" map
+  pure val WORDS: str -> str =
+    Map(
+      "needs-triage" -> "Waiting for triage",
+      "being triaged" -> "Being triaged",
+      "needs-info" -> "Waiting for an answer",
+      "ready-for-human" -> "Waiting for a decision",
+      "ready-for-agent" -> "Waiting for Linewright",
+      "being designed" -> "Being designed",
+      "being implemented" -> "Being implemented",
+      "in review" -> "In review",
+      "tracking" -> "Tracking",
+      "done" -> "Done",
+      "open" -> "Open",
+      "merged" -> "Merged",
+      "closed" -> "Closed",
+    )
+  // spec-table end
 
   /// M ## explain "State in JSON": "its name under State, in kebab-case".
   pure val JSON: str -> str = Map(
@@ -1155,16 +1358,20 @@ module linewright {
     "merged" -> "merged", "closed" -> "closed",
   )
 
-  /// DS ### The board, the column table: (column, an issue's states, a pull
-  /// request's states), in the board's order.
-  pure val COLUMNS: List[(str, Set[str], Set[str])] = [
-    ("Triage", Set(NEEDS_TRIAGE), Set()),
-    ("Needs a person", Set(NEEDS_INFO, READY_FOR_HUMAN), Set()),
-    ("Ready", Set(READY_FOR_AGENT), Set()),
-    ("Working", Set("being triaged", "being designed", "being implemented"), Set()),
-    ("In review", Set("in review"), Set("open")),
-    ("Done", Set("done"), Set("merged", "closed")),
-  ]
+  /// DS ### The board: "The board shows the managed items as cards in six
+  /// columns, in this order, each card in the column of its item's state."
+  /// (column, an issue's states, a pull request's states).
+  // spec-table DS "### The board" board
+  pure val COLUMNS: List[(str, Set[str], Set[str])] =
+    [
+      ("Triage", Set("needs-triage"), Set()),
+      ("Needs a person", Set("needs-info", "ready-for-human"), Set()),
+      ("Ready", Set("ready-for-agent"), Set()),
+      ("Working", Set("being triaged", "being designed", "being implemented"), Set()),
+      ("In review", Set("in review"), Set("open")),
+      ("Done", Set("done"), Set("merged", "closed")),
+    ]
+  // spec-table end
 
   pure def columnsOf(state: str, pr: bool): Set[str] =
     COLUMNS.foldl(Set(), (acc, c) =>
@@ -1184,56 +1391,143 @@ module linewright {
     else "card"
   pure def hasOwnCard(w: World, i: int): bool = managed(w, i) and placement(w, i) == "card"
 
-  /// DS ### Cards, the line in Ready (and Triage: "as in Ready"), the first
-  /// that holds. Holds (the usage limit, the drain, max-runs) are not modelled.
-  pure def readyLine(w: World, i: int): str = {
-    val x = it(w, i)
-    // "blocked by #12": "an open issue blocks it"
-    if (ISSUES.contains(i) and blocked(w, i)) "blocked by"
-    // "assigned to alice": "someone other than Linewright is assigned to it"
-    else if (x.alice or x.asked) "assigned to alice"
-    // "unassigned": "Linewright was unassigned from it" (A15)
-    else if (x.unassignedSince) "unassigned"
-    // "not marked for Linewright": "it is not marked for Linewright"
-    else if (not(markedForLinewright(w, i))) "not marked for Linewright"
-    // "nothing but the time": "otherwise: the next poll acts on it"
+  /// DS ### Cards: "A card is the item's number and title and, under them, at
+  /// most one line that says what its column does not: what sets the item
+  /// apart from the rest of its column, what a person acts on, or since when
+  /// it has sat." The line of a card in column `col`: "Where more than one row
+  /// of a column holds, the line is the first." Holds (the usage limit, the
+  /// drain, max-runs) and checks are not modelled: their rows never hold.
+  // spec-table DS "### Cards" lines column=col
+  pure def cardLineIn(w: World, i: int, col: str): str =
+    // Triage | "blocked by #12" | an open issue blocks it | 
+    if (col == "Triage" and when_an_open_issue_blocks_it(w, i)) "blocked by #12"
+    // Triage | "assigned to alice" | someone other than Linewright is assigned to it | 
+    else if (col == "Triage" and when_someone_other_than_linewright_is_assigned_to_it(w, i)) "assigned to alice"
+    // Triage | "unassigned" | Linewright was unassigned from it | 
+    else if (col == "Triage" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
+    // Triage | "not marked for Linewright" | it is not marked for Linewright | 
+    else if (col == "Triage" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
+    // Triage | "paused for the usage limit", "paused for the drain" | it would start, but for the hold | paused or queued
+    else if (col == "Triage" and when_it_would_start_but_for_the_hold(w, i)) "paused for the usage limit"
+    // Triage | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
+    else if (col == "Triage" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"
+    // Triage | nothing but the time | otherwise: the next poll acts on it | 
+    else if (col == "Triage") result_nothing_but_the_time(w, i)
+    // Needs a person | "stalled" | it holds linewright:stalled | failed
+    else if (col == "Needs a person" and when_it_holds_linewright_stalled(w, i)) "stalled"
+    // Needs a person | "asked alice", "asked alice and bob", "asked alice, bob and carol": the issue's assignees, in GitHub's order; "people asked" with none | it holds needs-info | waiting for a person
+    else if (col == "Needs a person" and when_it_holds_needs_info(w, i)) "asked alice"
+    // Needs a person | "handed back" | Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged | waiting for a person
+    else if (col == "Needs a person" and when_linewright_s_last_act_on_it_was_letting_go_of_it_a_run_handed_it_back_or_its_pull_request_closed_unmerged(w, i)) "handed back"
+    // Needs a person | "decision needed" | otherwise | waiting for a person
+    else if (col == "Needs a person") "decision needed"
+    // Ready | "blocked by #12" | an open issue blocks it | 
+    else if (col == "Ready" and when_an_open_issue_blocks_it(w, i)) "blocked by #12"
+    // Ready | "assigned to alice" | someone other than Linewright is assigned to it | 
+    else if (col == "Ready" and when_someone_other_than_linewright_is_assigned_to_it(w, i)) "assigned to alice"
+    // Ready | "unassigned" | Linewright was unassigned from it | 
+    else if (col == "Ready" and when_linewright_was_unassigned_from_it(w, i)) "unassigned"
+    // Ready | "not marked for Linewright" | it is not marked for Linewright | 
+    else if (col == "Ready" and when_it_is_not_marked_for_linewright(w, i)) "not marked for Linewright"
+    // Ready | "paused for the usage limit", "paused for the drain" | it would start, but for the hold | paused or queued
+    else if (col == "Ready" and when_it_would_start_but_for_the_hold(w, i)) "paused for the usage limit"
+    // Ready | "queued" | it would start, but the runs in flight are at max-runs | paused or queued
+    else if (col == "Ready" and when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w, i)) "queued"
+    // Ready | nothing but the time | otherwise: the next poll acts on it | 
+    else if (col == "Ready") result_nothing_but_the_time(w, i)
+    // Working | its stage and how long it has run, "implementation · 12m" | a run is in flight | in flight
+    else if (col == "Working" and when_a_run_is_in_flight(w, i)) "implementation · 12m"
+    // Working | "blocked by #12" | an open issue blocks it | 
+    else if (col == "Working" and when_an_open_issue_blocks_it(w, i)) "blocked by #12"
+    // Working | "paused for the usage limit", "paused for the drain", "queued" | no run is in flight, as in Ready | paused or queued
+    else if (col == "Working" and when_no_run_is_in_flight_as_in_ready(w, i)) "paused for the usage limit"
+    // In review | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging
+    else if (col == "In review" and when_always_a_pull_request_opened_by_someone_else_is_42_by_alice(w, i)) result_its_pull_request_where_the_card_is_not_the_pull_request_itself_then_what_stops_it_merging_the_first_of_the_table_below_that_holds(w, i)
+    // Done | "closed in #42", the pull request whose merge made it done | an issue a merged pull request made done | 
+    else if (col == "Done" and when_an_issue_a_merged_pull_request_made_done(w, i)) "closed in #42"
+    // Done | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known | an issue closed otherwise | 
+    else if (col == "Done" and when_an_issue_closed_otherwise(w, i)) "closed as completed"
+    // Done | "merged" | a pull request merged | 
+    else if (col == "Done" and when_a_pull_request_merged(w, i)) "merged"
+    // Done | "closed without merging" | a pull request closed unmerged | 
+    else if (col == "Done" and when_a_pull_request_closed_unmerged(w, i)) "closed without merging"
     else ""
-  }
+  // spec-table end
+  pure def cardLine(w: World, i: int): str = cardLineIn(w, i, column(stateOf(w, i), PRS.contains(i)))
 
-  /// DS ### Cards, the line in Needs a person: "stalled", "asked alice",
-  /// "handed back", or "decision needed" otherwise.
-  pure def needsAPersonLine(w: World, i: int): str = {
-    val x = it(w, i)
-    if (x.stalled) "stalled"
-    else if (x.status == NEEDS_INFO) "asked"
-    else if (x.letGo) "handed back"
-    else "decision needed"
-  }
+  /// DS ### Cards: "What stops a pull request merging, in the order the line
+  /// picks from".
+  // spec-table DS "### Cards" 2 lines
+  pure def stopsItMerging(w: World, p: int): str =
+    // "stalled" | it holds linewright:stalled | failed
+    if (when_it_holds_linewright_stalled(w, p)) "stalled"
+    // "handed back" | Linewright opened it, is not assigned to it, and its last act on it was letting go of it | waiting for a person
+    else if (when_linewright_opened_it_is_not_assigned_to_it_and_its_last_act_on_it_was_letting_go_of_it(w, p)) "handed back"
+    // "unassigned" | Linewright opened it and is not assigned to it otherwise | 
+    else if (when_linewright_opened_it_and_is_not_assigned_to_it_otherwise(w, p)) "unassigned"
+    // its stage and how long it has run, as in Working | a run is in flight on it | in flight
+    else if (when_a_run_is_in_flight_on_it(w, p)) result_its_stage_and_how_long_it_has_run_as_in_working(w, p)
+    // "checks failed" | a check failed | failed
+    else if (when_a_check_failed(w, p)) "checks failed"
+    // "checks running" | a check has not finished | in flight
+    else if (when_a_check_has_not_finished(w, p)) "checks running"
+    // "conflicts" | it cannot merge cleanly | failed
+    else if (when_it_cannot_merge_cleanly(w, p)) "conflicts"
+    // "behind main", naming the default branch | it is behind the default branch | 
+    else if (when_it_is_behind_the_default_branch(w, p)) "behind main"
+    // "draft" | it is a draft | 
+    else if (when_it_is_a_draft(w, p)) "draft"
+    // "changes requested" | GitHub's review decision is that changes are requested | waiting for a person
+    else if (when_github_s_review_decision_is_that_changes_are_requested(w, p)) "changes requested"
+    // "review required" | GitHub requires a review before it merges, such as a code owner's, that it has not had | waiting for a person
+    else if (when_github_requires_a_review_before_it_merges_such_as_a_code_owner_s_that_it_has_not_had(w, p)) "review required"
+    // "approved" | GitHub's review decision is approved | 
+    else if (when_github_s_review_decision_is_approved(w, p)) "approved"
+    // nothing | otherwise | 
+    else result_nothing(w, p)
+  // spec-table end
 
-  /// DS ### Cards, the line in Working.
-  pure def workingLine(w: World, i: int): str =
-    if (runInFlight(w, i)) "its stage"
-    else if (ISSUES.contains(i) and blocked(w, i)) "blocked by"
-    // "paused ...", "queued": "no run is in flight, as in Ready" (holds only)
-    else ""
-
-  pure def cardLine(w: World, i: int): str = {
-    val col = column(stateOf(w, i), PRS.contains(i))
-    if (col == "Triage" or col == "Ready") readyLine(w, i)
-    else if (col == "Needs a person") needsAPersonLine(w, i)
-    else if (col == "Working") workingLine(w, i)
-    else ""
-  }
-
-  /// DS ### Cards, "What stops a pull request merging", its first rows.
-  pure def stopsItMerging(w: World, p: int): str = {
-    val x = it(w, p)
-    if (x.stalled) "stalled"
-    else if (x.byLw and not(x.lw) and x.letGo) "handed back"
-    else if (x.byLw and not(x.lw)) "unassigned"
-    else if (runInFlight(w, p)) "its stage"
-    else ""
-  }
+  pure def when_it_holds_linewright_stalled(w: World, i: int): bool = it(w, i).stalled
+  pure def when_it_holds_needs_info(w: World, i: int): bool = it(w, i).status == NEEDS_INFO
+  pure def when_linewright_s_last_act_on_it_was_letting_go_of_it_a_run_handed_it_back_or_its_pull_request_closed_unmerged(w: World, i: int): bool =
+    it(w, i).letGo
+  pure def when_an_open_issue_blocks_it(w: World, i: int): bool = ISSUES.contains(i) and blocked(w, i)
+  pure def when_someone_other_than_linewright_is_assigned_to_it(w: World, i: int): bool =
+    it(w, i).alice or it(w, i).asked
+  /// A15.
+  pure def when_linewright_was_unassigned_from_it(w: World, i: int): bool = it(w, i).unassignedSince
+  pure def when_it_is_not_marked_for_linewright(w: World, i: int): bool = not(markedForLinewright(w, i))
+  pure def when_it_would_start_but_for_the_hold(w: World, i: int): bool = false
+  pure def when_it_would_start_but_the_runs_in_flight_are_at_max_runs(w: World, i: int): bool = false
+  /// No line.
+  pure def result_nothing_but_the_time(w: World, i: int): str = ""
+  pure def when_a_run_is_in_flight(w: World, i: int): bool = runInFlight(w, i)
+  pure def when_no_run_is_in_flight_as_in_ready(w: World, i: int): bool = false
+  pure def when_always_a_pull_request_opened_by_someone_else_is_42_by_alice(w: World, i: int): bool = true
+  pure def result_its_pull_request_where_the_card_is_not_the_pull_request_itself_then_what_stops_it_merging_the_first_of_the_table_below_that_holds(w: World, i: int): str =
+    "its pull request"
+  pure def when_an_issue_a_merged_pull_request_made_done(w: World, i: int): bool =
+    ISSUES.contains(i) and it(w, i).mergedSince
+  pure def when_an_issue_closed_otherwise(w: World, i: int): bool = ISSUES.contains(i) and not(it(w, i).open)
+  pure def when_a_pull_request_merged(w: World, i: int): bool = it(w, i).merged
+  pure def when_a_pull_request_closed_unmerged(w: World, i: int): bool =
+    PRS.contains(i) and not(it(w, i).open) and not(it(w, i).merged)
+  pure def when_linewright_opened_it_is_not_assigned_to_it_and_its_last_act_on_it_was_letting_go_of_it(w: World, p: int): bool =
+    it(w, p).byLw and not(it(w, p).lw) and it(w, p).letGo
+  pure def when_linewright_opened_it_and_is_not_assigned_to_it_otherwise(w: World, p: int): bool =
+    it(w, p).byLw and not(it(w, p).lw)
+  pure def when_a_run_is_in_flight_on_it(w: World, p: int): bool = runInFlight(w, p)
+  pure def result_its_stage_and_how_long_it_has_run_as_in_working(w: World, p: int): str = "its stage"
+  pure def when_a_check_failed(w: World, p: int): bool = false
+  pure def when_a_check_has_not_finished(w: World, p: int): bool = false
+  pure def when_it_cannot_merge_cleanly(w: World, p: int): bool = false
+  pure def when_it_is_behind_the_default_branch(w: World, p: int): bool = false
+  pure def when_it_is_a_draft(w: World, p: int): bool = false
+  pure def when_github_s_review_decision_is_that_changes_are_requested(w: World, p: int): bool = false
+  pure def when_github_requires_a_review_before_it_merges_such_as_a_code_owner_s_that_it_has_not_had(w: World, p: int): bool = false
+  pure def when_github_s_review_decision_is_approved(w: World, p: int): bool = false
+  /// No line.
+  pure def result_nothing(w: World, p: int): str = ""
 
   // ===========================================================================
   // Properties

@@ -126,9 +126,9 @@ check_one_model() {
   return "$status"
 }
 
-# The checks of every model that take minutes, not hours: its scenarios, its
-# invariants and, for Working a pull request, each row's witness. It leaves
-# out S6's flaps and the temporal properties.
+# The checks of every model short of S6's flaps and the temporal properties:
+# its scenarios, its invariants and, for Working a pull request, each row's
+# witness.
 check_model-quick() {
   local name file status=0 row
   for name in $models; do
@@ -145,47 +145,25 @@ check_model-quick() {
   return "$status"
 }
 
+# Fails where what a spec-table directive in the model generates is not what
+# the spec's table reads now, on a `when_`, `does_` or `result_` definition a
+# table needs and the model lacks, and on one no table needs
+# (`scripts/model_tables.py` describes the directives).
+check_model-tables() {
+  python3 -I -B scripts/model_tables.py --check
+}
+
 # Fails on a clause the model's comments quote that is not in the spec. A
 # quote may elide with "...", and leave out the spec's parenthetical links and
 # code. Whitespace and Markdown's emphasis, code and links are not compared.
 check_model-quotes() {
-  python3 -I - docs/model/*.qnt <<'EOF'
-import glob, re, sys
+  python3 -I -B scripts/check_model.py quotes
+}
 
-def plain(s):
-    s = re.sub(r" \((?:\[[^\]]*\]\([^)]*\)|`[^`]*`)[^()]*\)", "", s)
-    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)
-    return re.sub(r"\s+", " ", s.replace("`", "").replace("**", "").replace("_", " "))
-
-spec_files = glob.glob("docs/specs/**/*.md", recursive=True) + ["GLOSSARY.md"]
-spec = plain(" ".join(open(f).read() for f in spec_files))
-comment = re.compile(r"\s*(?:///?|/\*\*|\*(?!/))\s?(.*)")
-status = 0
-for path in sys.argv[1:]:
-    runs, run = [], []
-    for number, line in enumerate(open(path), 1):
-        m = comment.match(line)
-        if m:
-            run.append((number, m.group(1)))
-        elif run:
-            runs.append(run)
-            run = []
-    runs += [run] if run else []
-    for run in runs:
-        text, starts = "", []
-        for number, line in run:
-            starts.append((len(text), number))
-            text += line + " "
-        for m in re.finditer(r'"([^"]+)"', text):
-            parts = [plain(p).strip() for p in re.split(r"\.\.\.|…", m.group(1))]
-            if all(p in spec for p in parts if p):
-                continue
-            number = max(n for at, n in starts if at <= m.start())
-            quote = re.sub(r"\s+", " ", m.group(1))
-            print(f'{path}:{number}: "{quote}" is not in the spec')
-            status = 1
-sys.exit(status)
-EOF
+# Fails on a sentence of a section the model says it encodes in full that the
+# model does not quote, and on a table in one without a spec-table directive.
+check_model-coverage() {
+  python3 -I -B scripts/check_model.py coverage
 }
 
 # Fails on every comment that is not one of the four kinds CODING_STANDARDS.md
@@ -215,7 +193,7 @@ check_model() {
   return "$status"
 }
 
-stages=("fmt markdown compose css comments model-quotes" "clippy" "test doc")
+stages=("fmt markdown compose css comments model-tables model-quotes model-coverage" "clippy" "test doc")
 named_only="model-quick model"
 
 usage() {
