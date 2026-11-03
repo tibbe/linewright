@@ -31,7 +31,7 @@ use crate::git::{self, Updated, WorkState};
 use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
-use crate::prompts::{self, DesignOf, PullTask, Repo, SpecChangeAndDiff, Ticket, TicketRead};
+use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop, rebases_to_repair};
 use crate::repo_files::RepoLayer;
 use crate::results::{
@@ -658,37 +658,42 @@ struct Workspace {
 }
 
 impl Workspace {
-    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace, Failure> {
+    /// A session's clone of `branch`, with the environment copied into it
+    /// (docs/specs/sessions.md, "Environment").
+    async fn make(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
+        let ws = Workspace::clone(shell, purpose, branch).await?;
+        if let Some(lease) = shell.environment.lease() {
+            lease
+                .copy_into(&ws.dir)
+                .await
+                .context("copying the environment into the clone")?;
+        }
+        Ok(ws)
+    }
+
+    /// A run's own clone of `branch`, for work that needs no session.
+    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
         let clones = shell.work_dir.join("clones");
         tokio::fs::create_dir_all(&clones)
             .await
-            .context("creating the clones directory")
-            .map_err(infra)?;
+            .context("creating the clones directory")?;
         let temp = tempfile::Builder::new()
             .prefix(&format!("{}-", purpose_name(purpose)))
             .tempdir_in(&clones)
-            .context("creating a clone directory")
-            .map_err(infra)?;
+            .context("creating a clone directory")?;
         let dir = temp.path().join("repo");
         let config = [
             ("user.name", shell.identity.name.as_str()),
             ("user.email", shell.identity.email.as_str()),
             ("maintenance.auto", "false"),
         ];
-        shell
-            .store
-            .clone_repo(&dir, branch, &config)
-            .await
-            .map_err(infra)?;
+        shell.store.clone_repo(&dir, branch, &config).await?;
         let scratch = temp.path().join("tmp");
         tokio::fs::create_dir(&scratch)
             .await
-            .context("creating a scratch directory")
-            .map_err(infra)?;
+            .context("creating a scratch directory")?;
         let plugin = temp.path().join("plugin");
-        Briefs::write_plugin(&plugin)
-            .context("writing Linewright's plugin")
-            .map_err(infra)?;
+        Briefs::write_plugin(&plugin).context("writing Linewright's plugin")?;
         Ok(Workspace {
             leftovers: None,
             temp: Some(temp),
@@ -1004,22 +1009,24 @@ struct Opened<'a> {
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
-    /// When the session times out, its maintenance command included.
+    /// When the session times out, the making of its clone and its
+    /// maintenance command included.
     deadline: tokio::time::Instant,
 }
 
-/// Opens the session of `purpose` in `ws`, with its record and its
-/// attachments directory, registered with the run, copies the environment
-/// into its clone (docs/specs/sessions.md, "Environment"), and runs its
-/// maintenance command (docs/specs/runs.md, "Maintenance"). The command's
-/// output is under the session whether or not the agent starts, and its
-/// time counts against the session's timeout.
-async fn open_session<'a>(
+/// Opens the session of `purpose`, with its record and its attachments
+/// directory, registered with the run, then makes its clone of `branch`
+/// and runs `check_out` on it, then runs its maintenance command
+/// (docs/specs/runs.md, "Stages"). Making the clone, `check_out` included,
+/// and the maintenance command count against the session's timeout, and the
+/// command's output is under the session whether or not the agent starts.
+async fn open_session<'a, T>(
     shell: &Shell,
     ctx: &'a Ctx,
     purpose: Purpose,
-    ws: &mut Workspace,
-) -> Result<Opened<'a>, Failure> {
+    branch: &str,
+    check_out: impl AsyncFnOnce(&Path) -> Result<T>,
+) -> Result<(Opened<'a>, Workspace, T), Failure> {
     let settings = &ctx.with.settings;
     let record = record_dir(shell, &purpose, shell.clock.now())?;
     let attachments = Dir::create(&record)
@@ -1027,17 +1034,26 @@ async fn open_session<'a>(
         .map_err(infra)?;
     let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
     let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
-    if let Some(lease) = shell.environment.lease() {
-        lease
-            .copy_into(&ws.dir)
-            .await
-            .context("copying the environment into the clone")
-            .map_err(infra)?;
-    }
+    let making = async {
+        let ws = Workspace::make(shell, &purpose, branch).await?;
+        let checked_out = check_out(&ws.dir).await?;
+        Ok::<_, anyhow::Error>((ws, checked_out))
+    };
+    let (mut ws, checked_out) = tokio::select! {
+        biased;
+        () = ctx.cancel.cancelled() => return Err(Failure::Cancelled),
+        () = tokio::time::sleep_until(deadline) => {
+            return Err(Failure::HandBack(hand_back::timed_out(
+                &settings.timeout_setting,
+                None,
+            )));
+        }
+        made = making => made.context("making the session's clone").map_err(infra)?,
+    };
     if let Maintenance::Command(command) = &settings.maintenance.value {
-        run_maintenance(shell, ctx, command, &record, deadline, ws).await?;
+        run_maintenance(shell, ctx, command, &record, deadline, &mut ws).await?;
     }
-    Ok(Opened {
+    let opened = Opened {
         settings,
         purpose,
         record,
@@ -1047,7 +1063,20 @@ async fn open_session<'a>(
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
         deadline,
-    })
+    };
+    Ok((opened, ws, checked_out))
+}
+
+/// Opens the session of `purpose` on the default branch, as the clone
+/// checked it out.
+async fn open_on_default_branch<'a>(
+    shell: &Shell,
+    ctx: &'a Ctx,
+    purpose: Purpose,
+) -> Result<(Opened<'a>, Workspace), Failure> {
+    let branch = &shell.settings.default_branch;
+    let (opened, ws, ()) = open_session(shell, ctx, purpose, branch, async |_| Ok(())).await?;
+    Ok((opened, ws))
 }
 
 /// Runs the maintenance `command` in `ws`, which keeps what it leaves running,
@@ -1236,9 +1265,8 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         subject: Subject::Issue(issue.number),
         kind: WorkKind::Triage,
     };
-    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let categories = shell.settings.categories.names();
-    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
+    let (opened, _ws) = open_on_default_branch(shell, ctx, purpose).await?;
     let (mut spec, dir) = opened.spec(|attachments| {
         prompts::triage(
             &ctx.with.briefs.prompts,
@@ -1315,8 +1343,7 @@ async fn design_session(
         subject,
         kind: WorkKind::Design,
     };
-    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
+    let (opened, _ws) = open_on_default_branch(shell, ctx, purpose).await?;
     let (mut spec, dir) = opened.spec(prompt);
     let dir = &dir;
     let begin = |mut result: DesignResult<IssueWork>| async move {
@@ -1621,12 +1648,15 @@ async fn implement(
         subject: Subject::Issue(ticket.number()),
         kind: WorkKind::Implement,
     };
-    let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
     let upstream = shell.upstream();
-    let start = git::check_out_branch(&ws.dir, &branch, &upstream)
-        .await
-        .map_err(infra)?;
-    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
+    let (opened, ws, start) = open_session(
+        shell,
+        ctx,
+        purpose,
+        &shell.settings.default_branch,
+        async |dir| git::check_out_branch(dir, &branch, &upstream).await,
+    )
+    .await?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::implement(
             &ctx.with.briefs.prompts,
@@ -1834,8 +1864,10 @@ async fn update_branch(
 }
 
 /// Works `pr`, of `ticket`, at `task`, bringing the branch up to date first
-/// for an update or a fix-ci and for a rework that asks for it. The maintenance
-/// command runs on the branch as it was cloned, before any update
+/// for an update or a fix-ci and for a rework that asks for it. An update is
+/// tried in a clone of the run's own, and only one with a conflict opens a
+/// session, which repeats it in the session's clone. The maintenance command
+/// runs on the branch as it was cloned, before any update
 /// (docs/specs/runs.md, "Maintenance").
 /// Feedback that arrives while the session works goes to it before anything
 /// is pushed, for as long as it keeps coming within the session's time.
@@ -1854,18 +1886,20 @@ async fn pull_work(
     };
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
-    let mut ws = Workspace::clone(shell, &purpose, &pr.head_ref).await?;
-    let start = git::head(&ws.dir).await.map_err(infra)?;
     if let Task::Update = task {
+        let ws = Workspace::clone(shell, &purpose, &pr.head_ref)
+            .await
+            .map_err(infra)?;
+        let start = git::head(&ws.dir).await.map_err(infra)?;
         let conflict = update_branch(shell, pr, &ws.dir).await?;
-        let Some(PullTask::Update(conflict)) =
-            pull_work::session_task(PullJob::Update, conflict.as_ref())
-        else {
+        if conflict.is_none() {
             return push_update(shell, ctx, pr, &ws.dir, &start).await;
-        };
-        git::abort_update(&ws.dir, conflict).await.map_err(infra)?;
+        }
     }
-    let opened = open_session(shell, ctx, purpose, &mut ws).await?;
+    let (opened, ws, start) = open_session(shell, ctx, purpose, &pr.head_ref, async |dir| {
+        git::head(dir).await
+    })
+    .await?;
     let conflict = match task {
         Task::Rework { update: false } => None,
         Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
@@ -2104,8 +2138,7 @@ pub(crate) async fn automation(
 ) -> Result<AutomationEnd> {
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
-        let mut ws = Workspace::clone(shell, &purpose, &shell.settings.default_branch).await?;
-        let opened = open_session(shell, &ctx, purpose, &mut ws).await?;
+        let (opened, _ws) = open_on_default_branch(shell, &ctx, purpose).await?;
         let (mut spec, dir) = opened.spec(|attachments| {
             prompts::automation(
                 &ctx.with.briefs.prompts,

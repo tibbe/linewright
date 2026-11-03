@@ -111,6 +111,10 @@ pub enum Write {
     Attach {
         name: String,
     },
+    /// A clone of `branch`, written to the clone's directory.
+    Clone {
+        branch: String,
+    },
 }
 
 /// How [`LocalStore::refuse_attachments`] has GitHub refuse an upload.
@@ -2092,7 +2096,11 @@ impl Store for LocalStore {
     }
 
     async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()> {
-        git::clone(url(&self.repository())?, dir, branch, config, &[]).await
+        git::clone(url(&self.repository())?, dir, branch, config, &[]).await?;
+        self.paused(Write::Clone {
+            branch: branch.into(),
+        })
+        .await
     }
 
     async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {

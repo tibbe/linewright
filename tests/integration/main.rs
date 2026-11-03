@@ -53,6 +53,7 @@ mod repository_files;
 mod required_label;
 mod runs;
 mod secrets;
+mod session_clone;
 mod startup;
 mod status;
 mod store;
