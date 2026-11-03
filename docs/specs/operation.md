@@ -64,14 +64,24 @@ once.
 
 - **Logging a signal.** `serve` logs the way a signal takes and that the
   next signal takes the next one.
+- **Exiting.** Once its runs have ended, Linewright waits however long for
+  what is left before it exits, such as the removal of their clones
+  ([Stages](runs.md#stages)).
+- **Logging the exit.** Linewright logs each thing it waits for before it
+  exits as the wait begins, and how long it took as it ends.
+- **The last line.** Last, Linewright logs that it exits, with its exit
+  status. An exit at once logs no such line.
+- **A signal under `once` or `automation run`.** It ends the command at once,
+  cutting its runs short.
 - **Draining.** All else `serve` does goes on until it exits, polls and
   deliveries included, and it waits for every run in flight however long,
   one waiting out the usage limit included.
 - **Exit status.** 0 after a drain or a stop; 128 plus the signal's number
   after an exit at once.
 - **`drain`.** `drain` asks the `serve` of the configured `repo` on the same
-  host to drain, prints the runs it waits for and each as it ends, and
-  returns once `serve` has exited; `--no-wait` returns once `serve` has taken
+  host to drain, prints the runs it waits for and each as it ends, then each
+  thing `serve` waits for before it exits and each as it ends, and returns
+  once `serve` has exited; `--no-wait` returns once `serve` has taken
   the request. Ending `drain` itself leaves the drain in place, and a `drain`
   sent to a `serve` already draining or stopping says so and waits the same
   way. Its output and exit statuses are the monitoring commands'
