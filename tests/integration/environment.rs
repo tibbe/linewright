@@ -471,6 +471,10 @@ async fn without_an_environment_once_starts_no_session_and_an_automation_run_fai
             "{error}"
         );
         assert!(error.contains("status 3"), "{error}");
+        assert!(
+            error.contains("`lw environment` shows its output"),
+            "{error}"
+        );
     }
     assert!(installed(&seen).is_empty(), "no session started");
     assert_eq!(*automations.lock().unwrap(), 0);

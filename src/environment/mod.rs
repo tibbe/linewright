@@ -329,11 +329,8 @@ impl Environment {
     /// Builds the environment again, as asked of `serve`: once the build in
     /// progress ends, if there is one.
     pub fn rebuild(&mut self) -> RebuildTaken {
-        if self.setup.active().is_none() {
-            return RebuildTaken::NoSetupCommand;
-        }
-        if let Some(reason) = self.held_because() {
-            return RebuildTaken::Refused { reason };
+        if let Some(refused) = self.refused() {
+            return refused;
         }
         info!("a rebuild of the environment was asked for");
         self.on(Event::Triggered, None);
@@ -349,6 +346,18 @@ impl Environment {
             | State::Rebuilding { queued: false } => RebuildTaken::Started {
                 build: self.tally.started,
             },
+        }
+    }
+
+    /// Why a build asked for doesn't start, if it doesn't: builds are held,
+    /// or there is no setup command, the holds being asked first.
+    fn refused(&self) -> Option<RebuildTaken> {
+        if let Some(reason) = self.held_because() {
+            Some(RebuildTaken::Refused { reason })
+        } else if self.setup.active().is_none() {
+            Some(RebuildTaken::NoSetupCommand)
+        } else {
+            None
         }
     }
 
@@ -372,13 +381,13 @@ impl Environment {
 
     /// Builds the environment now, with the `setup` table `read`, and waits
     /// for the build, as `lw environment rebuild` without `serve` does.
-    /// `None` without a setup command; `Err` when builds are held.
+    /// `Err` when builds are held; otherwise `None` without a setup command.
     pub async fn rebuild_now(&mut self, read: SetupRead) -> Result<Option<BuildEnded>> {
-        if self.take_read(read).is_none() {
-            return Ok(None);
-        }
-        if let Some(reason) = self.held_because() {
-            bail!("no build starts: {reason}");
+        self.take_read(read);
+        match self.refused() {
+            Some(RebuildTaken::Refused { reason }) => bail!("no build starts: {reason}"),
+            Some(_) => return Ok(None),
+            None => {}
         }
         self.on(Event::Triggered, None);
         let build = self.tally.started;
@@ -486,7 +495,7 @@ impl Environment {
             return Ok(());
         }
         Err(anyhow!(
-            "the build of the environment failed: {}",
+            "the build of the environment failed: {}; `lw environment` shows its output",
             self.failure.as_deref().unwrap_or("it ended")
         ))
     }

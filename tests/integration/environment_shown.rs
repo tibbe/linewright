@@ -202,7 +202,7 @@ async fn a_rebuild_starts_now_or_after_the_build_in_progress_and_a_drain_refuses
 }
 
 #[test_log::test(tokio::test)]
-async fn a_config_file_linewright_cannot_use_refuses_a_rebuild_and_without_a_setup_command_there_is_none()
+async fn a_config_file_linewright_cannot_use_refuses_a_rebuild_even_from_the_start_and_without_a_setup_command_there_is_none()
  {
     let world = World::new().await;
     let dir = tempfile::tempdir().unwrap();
@@ -214,15 +214,41 @@ async fn a_config_file_linewright_cannot_use_refuses_a_rebuild_and_without_a_set
     environment.settle().await;
     environment.poll(SetupRead::Unusable, world.clock.now());
     let refused = environment.rebuild();
+    let other_dir = tempfile::tempdir().unwrap();
+    let mut unusable_from_the_start = environment_of(&world, other_dir.path()).await;
+    unusable_from_the_start.poll(SetupRead::Unusable, world.clock.now());
+    let refused_from_the_start = unusable_from_the_start.rebuild();
 
+    let reason = "`.linewright/config.toml` cannot be used, which holds the builds";
     assert_eq!(
-        [none, refused],
+        [none, refused, refused_from_the_start],
         [
             RebuildTaken::NoSetupCommand,
             RebuildTaken::Refused {
-                reason: "`.linewright/config.toml` cannot be used, which holds the builds".into()
+                reason: reason.into()
+            },
+            RebuildTaken::Refused {
+                reason: reason.into()
             },
         ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn without_serve_a_config_file_linewright_cannot_use_refuses_a_rebuild_before_there_is_a_setup_command()
+ {
+    let world = World::new().await;
+    let dir = tempfile::tempdir().unwrap();
+    let mut environment = environment_of(&world, dir.path()).await;
+
+    let refused = environment
+        .rebuild_now(SetupRead::Unusable)
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        format!("{refused:#}"),
+        "no build starts: `.linewright/config.toml` cannot be used, which holds the builds"
     );
 }
 
