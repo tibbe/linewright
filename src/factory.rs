@@ -16,6 +16,7 @@ use crate::apply;
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
+use crate::clones::Clones;
 use crate::domain::{
     AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
     Timestamp, UpdateMethod, Windows, label,
@@ -37,6 +38,7 @@ use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::Store;
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::webhook::{self, Pending};
+use crate::winding_up::WindingUp;
 use crate::work_settings::{Environments, RunKind, WorkSettings};
 
 #[derive(Clone, Debug)]
@@ -73,6 +75,9 @@ pub struct FactoryConfig {
     pub secrets: Secrets,
     /// What drains and stops the factory.
     pub ends: Ends,
+    /// What Linewright waits for before it exits, such as the removal of
+    /// the runs' clones.
+    pub winding_up: WindingUp,
 }
 
 /// The GitHub token agent sessions are given.
@@ -152,6 +157,7 @@ pub struct Factory {
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
     ends: Ends,
+    winding_up: WindingUp,
     schedule_automations: bool,
     last_scheduled_runs: LastScheduledRuns,
     automation_files: AutomationFiles,
@@ -270,9 +276,11 @@ impl Factory {
                 redaction: config.secrets.redaction().clone(),
                 given: config.environments.pipeline.clone(),
                 default_branch: settings.default_branch.clone(),
+                winding_up: config.winding_up.clone(),
             },
         )
         .await?;
+        let clones = Clones::new(&config.work_dir, config.winding_up.clone());
         let shell = Shell {
             policy: Policy {
                 linewright: identity.login.clone(),
@@ -304,6 +312,7 @@ impl Factory {
             secrets: config.secrets,
             report_refusal,
             environment: environment.source(),
+            clones,
         };
         Ok(Factory {
             shell: Arc::new(shell),
@@ -311,6 +320,7 @@ impl Factory {
             refusals,
             live: HashMap::new(),
             ends: config.ends,
+            winding_up: config.winding_up,
             schedule_automations: config.schedule_automations,
             last_scheduled_runs,
             automation_files: AutomationFiles::default(),
@@ -335,6 +345,11 @@ impl Factory {
 
     pub fn ends(&self) -> Ends {
         self.ends.clone()
+    }
+
+    /// What the factory's work leaves to wait for before Linewright exits.
+    pub fn winding_up(&self) -> WindingUp {
+        self.winding_up.clone()
     }
 
     /// Cancelling it begins a drain: no item is claimed and no run starts

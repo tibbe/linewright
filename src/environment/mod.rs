@@ -27,6 +27,7 @@ use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::store::Store;
 use crate::transcript::MaintenanceEnded;
+use crate::winding_up::{Remaining, WindingUp};
 use crate::work_settings::SetupSettings;
 
 pub use kept::BuildId;
@@ -60,6 +61,8 @@ pub struct Builder {
     /// is given too.
     pub given: Arc<Given>,
     pub default_branch: String,
+    /// What removes the builds retired or abandoned.
+    pub winding_up: WindingUp,
 }
 
 impl Builder {
@@ -281,7 +284,11 @@ impl Environment {
             .await
             .context("opening the environment's builds")?
             .map(|built| {
-                let build = Arc::new(BuildDir::new(builds.build_dir(built.id)));
+                let build = Arc::new(BuildDir::new(
+                    built.id,
+                    builds.build_dir(built.id),
+                    builder.winding_up.clone(),
+                ));
                 (built, build)
             });
         Ok(Environment {
@@ -596,7 +603,7 @@ impl Environment {
         );
         let (builder, builds) = (self.builder.clone(), self.builds.clone());
         self.building = Some(tokio::spawn(async move {
-            let abandoned = Abandoned::default();
+            let abandoned = Abandoned::new(builder.winding_up.clone());
             build(&builder, &builds, &settings, fingerprint, &abandoned).await
         }));
     }
@@ -604,7 +611,11 @@ impl Environment {
     /// Makes `built`, which the state file names, the environment. The build
     /// it replaces is removed once no copy from it is in progress.
     fn replace(&mut self, built: Built) {
-        let build = Arc::new(BuildDir::new(self.builds.build_dir(built.id)));
+        let build = Arc::new(BuildDir::new(
+            built.id,
+            self.builds.build_dir(built.id),
+            self.builder.winding_up.clone(),
+        ));
         if let Some((_, replaced)) = self.built.replace((built, build)) {
             replaced.retire();
         }
@@ -614,14 +625,21 @@ impl Environment {
 
 /// Abandoning a build mid-way aborts its task, which drops this: what is
 /// left of the build is removed, as at the next start.
-#[derive(Default)]
 struct Abandoned {
-    dir: Mutex<Option<PathBuf>>,
+    dir: Mutex<Option<(BuildId, PathBuf)>>,
+    winding_up: WindingUp,
 }
 
 impl Abandoned {
-    fn building_in(&self, dir: &Path) {
-        *self.dir.lock().expect("never poisoned") = Some(dir.to_path_buf());
+    fn new(winding_up: WindingUp) -> Abandoned {
+        Abandoned {
+            dir: Mutex::new(None),
+            winding_up,
+        }
+    }
+
+    fn building_in(&self, id: BuildId, dir: &Path) {
+        *self.dir.lock().expect("never poisoned") = Some((id, dir.to_path_buf()));
     }
 
     fn done(&self) {
@@ -631,24 +649,20 @@ impl Abandoned {
 
 impl Drop for Abandoned {
     fn drop(&mut self) {
-        if let Some(dir) = self.dir.get_mut().ok().and_then(Option::take) {
-            remove_aside(dir);
+        if let Some((id, dir)) = self.dir.get_mut().ok().and_then(Option::take) {
+            remove_aside(&self.winding_up, id, dir);
         }
     }
 }
 
-/// Removes the build `dir` unless a copy from it is in progress, off the
-/// runtime's threads when there is one.
-fn remove_aside(dir: PathBuf) {
-    let remove = move || {
+/// Removes the build `id` in `dir` through `winding_up`, unless a copy from
+/// it is in progress.
+fn remove_aside(winding_up: &WindingUp, id: BuildId, dir: PathBuf) {
+    winding_up.spawn_blocking(Remaining::Build { id }, move || {
         if let Err(e) = kept::remove_unleased(&dir) {
             warn!(error = format!("{e:#}"), "removing a build failed");
         }
-    };
-    match tokio::runtime::Handle::try_current() {
-        Ok(runtime) => drop(runtime.spawn_blocking(remove)),
-        Err(_) => remove(),
-    }
+    });
 }
 
 /// Builds the environment with `settings` under `builds`' lock, and names
@@ -663,7 +677,7 @@ async fn build(
     let _lock = builds.lock().await.map_err(|e| format!("{e:#}"))?;
     let id = builds.next_id().map_err(|e| format!("{e:#}"))?;
     let dir = builds.build_dir(id);
-    abandoned.building_in(&dir);
+    abandoned.building_in(id, &dir);
     let at = builder.clock.now();
     let mut record = BuildRecord::started(builder.redaction.apply(settings.command.as_str()), at);
     let why = match run(builder, &dir, settings, &mut record).await {
@@ -790,15 +804,19 @@ async fn run(
 /// in progress.
 #[derive(Debug)]
 struct BuildDir {
+    id: BuildId,
     path: PathBuf,
     retired: AtomicBool,
+    winding_up: WindingUp,
 }
 
 impl BuildDir {
-    fn new(path: PathBuf) -> BuildDir {
+    fn new(id: BuildId, path: PathBuf, winding_up: WindingUp) -> BuildDir {
         BuildDir {
+            id,
             path,
             retired: AtomicBool::new(false),
+            winding_up,
         }
     }
 
@@ -810,7 +828,7 @@ impl BuildDir {
 impl Drop for BuildDir {
     fn drop(&mut self) {
         if self.retired.load(Ordering::Relaxed) {
-            remove_aside(std::mem::take(&mut self.path));
+            remove_aside(&self.winding_up, self.id, std::mem::take(&mut self.path));
         }
     }
 }

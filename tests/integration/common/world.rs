@@ -188,6 +188,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         session_token: SessionToken::Withheld,
         secrets: Secrets::default(),
         ends: linewright::ending::Ends::new(),
+        winding_up: linewright::winding_up::WindingUp::default(),
     }
 }
 
