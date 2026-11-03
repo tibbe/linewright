@@ -29,8 +29,8 @@ use crate::logs::{Following, LogsError, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, EntryLine, FollowedLine, Header, Line, Made, MaintenanceEnded, MaintenanceLine, Stamped,
-    ToolLine, Under, Verbosity,
+    self, CloneLine, EntryLine, FollowedLine, Header, Line, Made, MaintenanceEnded,
+    MaintenanceLine, Stamped, ToolLine, Under, Verbosity,
 };
 
 /// A change to the page's transcript that a line of it makes.
@@ -59,6 +59,27 @@ impl Patch {
     }
 }
 
+/// The patch that shows an entry that runs, `what`, again once it has ended,
+/// where `entry` keeps it in `session`; `None` when it is new, which `entry`
+/// then keeps as the next of `session`'s entries.
+fn again(
+    session: &mut SessionView,
+    entry: fn(&mut SessionView) -> &mut Option<usize>,
+    what: &EntryLine,
+    verbose: bool,
+) -> Option<Vec<Patch>> {
+    let next = session.entries.len();
+    let Some(known) = *entry(session) else {
+        *entry(session) = Some(next);
+        return None;
+    };
+    session.entries[known].what = what.clone();
+    Some(vec![Patch::Replace {
+        id: entry_id(session, known),
+        html: entry_html(session, known, verbose),
+    }])
+}
+
 /// A run's transcript as the page shows it, built up from its lines.
 struct RunView {
     run: RunId,
@@ -85,6 +106,8 @@ struct SessionView {
     own: Vec<usize>,
     /// Each call's entry, by the ID the agent gives it.
     calls: HashMap<String, usize>,
+    /// Its clone's entry, once its line has come.
+    clone: Option<usize>,
     /// Its maintenance command's entry, once its line has come.
     maintenance: Option<usize>,
 }
@@ -141,6 +164,7 @@ impl RunView {
                     entries: vec![],
                     own: vec![],
                     calls: HashMap::new(),
+                    clone: None,
                     maintenance: None,
                 });
                 let added = self.sessions.last().expect("just pushed");
@@ -172,15 +196,17 @@ impl RunView {
                 }
                 session.calls.insert(call.tool_use_id.clone(), i);
             }
-            EntryLine::Maintenance { .. } => {
-                if let Some(known) = session.maintenance {
-                    session.entries[known].what = stamped.what.clone();
-                    return vec![Patch::Replace {
-                        id: entry_id(session, known),
-                        html: entry_html(session, known, verbose),
-                    }];
+            EntryLine::Clone(_) => {
+                if let Some(patches) = again(session, |s| &mut s.clone, &stamped.what, verbose) {
+                    return patches;
                 }
-                session.maintenance = Some(i);
+            }
+            EntryLine::Maintenance(_) => {
+                if let Some(patches) =
+                    again(session, |s| &mut s.maintenance, &stamped.what, verbose)
+                {
+                    return patches;
+                }
             }
             EntryLine::Brief { .. }
             | EntryLine::FollowUp { .. }
@@ -349,6 +375,24 @@ pub(super) fn command_html(
     )
 }
 
+/// The clone's line, opening to its error once it has ended with one, open
+/// from the start (`docs/specs/design_system.md`, The run page, Folding).
+fn clone_html(stamp: &str, ended: Option<&transcript::CloneEnded>) -> String {
+    let Some(ended) = ended else {
+        let running = status_html(Tone::InProgress, "running");
+        return format!(r#"<div class="line">{stamp} clone → {running}</div>"#);
+    };
+    let Some(error) = &ended.error else {
+        let account = html::escape(&ended.account());
+        return format!(r#"<div class="line">{stamp} clone → {account}</div>"#);
+    };
+    let account = status_html(Tone::Failure, &ended.account());
+    let error = output_html(error);
+    format!(
+        r#"<details open><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} clone → {account}</span></summary>{error}</details>"#
+    )
+}
+
 /// A command's line that does not open, `account` after its arrow.
 pub(super) fn command_line_html(stamp: &str, label: &str, command: &str, account: &str) -> String {
     let command = html::escape(&transcript::shown_command(command));
@@ -395,6 +439,7 @@ fn shown(what: &EntryLine, verbose: bool) -> bool {
         EntryLine::Message { .. }
         | EntryLine::FollowUp { .. }
         | EntryLine::Tool(_)
+        | EntryLine::Clone(_)
         | EntryLine::Maintenance { .. } => true,
         EntryLine::Brief { .. }
         | EntryLine::Thinking { .. }
@@ -428,6 +473,7 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
     let stamp = stamp_html(&id, entry.stamp);
     let (kind, body) = match &entry.what {
         EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
+        EntryLine::Clone(CloneLine { ended }) => ("clone", clone_html(&stamp, ended.as_ref())),
         EntryLine::Maintenance(MaintenanceLine { command, ended }) => (
             "maintenance",
             command_html(&stamp, "maintenance", command, ended.as_ref(), verbose),

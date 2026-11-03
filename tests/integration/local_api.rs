@@ -838,6 +838,7 @@ pub(crate) fn turn_1() -> Turn1 {
 #[test_log::test(tokio::test)]
 async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_produces_it() {
     let world = with_issue_for_triage().await;
+    before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();
@@ -884,6 +885,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         so_far,
         "run: 1/triage-1\n\
          session 1: started 2026-10-13 10:09:08 UTC\n \
+         0:00  clone → 0s\n \
          0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
     );
     assert_eq!(
@@ -893,7 +895,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         )
     );
     assert_eq!(code, Some(0));
-    assert_eq!(shown.lines().count(), 18, "{shown}");
+    assert_eq!(shown.lines().count(), 19, "{shown}");
     assert!(
         shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
         "{shown}"
@@ -974,6 +976,7 @@ fn event(id: Option<&str>, event: &str, data: &str) -> api::ServerEvent {
 #[test_log::test(tokio::test)]
 async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_id() {
     let world = with_issue_for_triage().await;
+    before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let runtime_dir = answering.runtime_dir.path();
@@ -1015,10 +1018,10 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
             ),
         ]
     );
-    assert_eq!(resumed[0].id.as_deref(), Some("1/triage-1:1.3.1"));
+    assert_eq!(resumed[0].id.as_deref(), Some("1/triage-1:1.1.1"));
     assert_eq!([&first[..], &resumed[..]].concat(), whole);
     let (end, lines) = whole.split_last().unwrap();
-    assert_eq!(lines.len(), 19);
+    assert_eq!(lines.len(), 21);
     assert_eq!(*end, event(None, "end", r#"{"run":"1/triage-1"}"#));
     answering.stop().await;
 }
@@ -1092,6 +1095,7 @@ async fn logs_follow_carries_on_from_the_records_when_serve_hangs_up_part_way_as
 
 async fn triage_under_way() -> (HeldTurn, Answering, tempfile::TempDir) {
     let world = with_issue_for_triage().await;
+    before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     agent.writes(&turn_1().through_the_first_bash_result);
@@ -1186,6 +1190,7 @@ fn stops_as_asked(
 #[test_log::test(tokio::test)]
 async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let world = with_issue_for_triage().await;
+    before_the_recorded_transcript(&world);
     let agent = world.harness.hold();
     let answering = Answering::start(world, false).await;
     let turn = turn_1();

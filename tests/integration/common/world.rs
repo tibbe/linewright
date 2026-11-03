@@ -932,3 +932,12 @@ pub async fn view_served(world: World) -> View {
     serving.stop().await;
     view
 }
+
+/// Moves `world`'s clock to just before the agent's events in the recorded
+/// transcript (`fixtures/transcript`), so that the sessions that replay it
+/// start, with their clones, as the recorded one did.
+pub fn before_the_recorded_transcript(world: &World) {
+    world.clock.advance(
+        super::clock::at("2026-10-13T10:08:58Z") - super::clock::at("2026-10-01T12:00:00Z"),
+    );
+}

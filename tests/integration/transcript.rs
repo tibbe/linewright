@@ -1397,3 +1397,214 @@ fn following_a_session_yet_to_write_anything_shows_the_runs_header_once() {
         ]
     );
 }
+
+/// The lines of a session's clone that started being made at `start`, then,
+/// if it has, ended `seconds` later with `error`, as `ended` gives them.
+#[track_caller]
+fn cloning(start: &str, ended: Option<(f64, Option<&str>)>) -> String {
+    let start = time(start);
+    let mut events = transcript::clone_started(start) + "\n";
+    if let Some((seconds, error)) = ended {
+        let at = start
+            + chrono::TimeDelta::from_std(std::time::Duration::from_secs_f64(seconds)).unwrap();
+        events += &(transcript::clone_ended(at, seconds, error) + "\n");
+    }
+    events
+}
+
+/// The recorded session after its clone was made in 6.2 seconds and its
+/// maintenance command succeeded, then a session whose clone could not be
+/// made.
+fn after_cloning() -> [SessionRecord; 2] {
+    let [set_up, _] = after_setting_up();
+    [
+        SessionRecord {
+            output: cloning("2026-10-13T10:08:50Z", Some((6.2, None))) + &set_up.output,
+            ..set_up
+        },
+        SessionRecord {
+            output: cloning(
+                "2026-10-13T10:20:00Z",
+                Some((
+                    3.0,
+                    Some("fetching origin: fatal: could not read from remote"),
+                )),
+            ),
+            ..SessionRecord::default()
+        },
+    ]
+}
+
+/// `docs/specs/design_system.md`, Transcripts, The clone.
+#[test_log::test]
+fn the_clone_is_its_sessions_first_entry_at_its_start_with_how_long_it_took_and_its_error_if_it_failed()
+ {
+    let transcript = of(&after_cloning());
+
+    let shown = transcript::render(&transcript, Verbosity::Compact, false);
+
+    let shown: Vec<&str> = shown.lines().collect();
+    assert_eq!(
+        shown[..4],
+        [
+            "run: 105/implement-1",
+            "session 1: started 2026-10-13 10:08:50 UTC",
+            " 0:00  clone → 6s",
+            " 0:06  maintenance: npm ci → exit 0, 12s",
+        ]
+    );
+    assert_eq!(
+        shown[shown.len() - 3..],
+        [
+            "session 2: started 2026-10-13 10:20:00 UTC",
+            " 0:00  clone → 3s",
+            "         fetching origin: fatal: could not read from remote",
+        ]
+    );
+    let coloured = transcript::render(&of(&after_cloning()[1..]), Verbosity::Compact, true);
+    assert!(
+        coloured.contains("\u{1b}[31mfetching origin: fatal: could not read from remote"),
+        "{coloured:?}"
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test_log::test]
+fn the_clone_shows_running_until_it_is_made() {
+    let running = SessionRecord {
+        output: cloning("2026-10-13T10:00:00Z", None),
+        ..SessionRecord::default()
+    };
+    let transcript = Transcript {
+        in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
+            session: 1,
+            line: 1,
+        })),
+        ..of(&[running])
+    };
+
+    let shown = transcript::render(&transcript, Verbosity::Full, false);
+
+    assert_eq!(
+        shown,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:00  clone → running\n"
+    );
+}
+
+/// `docs/specs/monitoring.md`, logs, The clone and Running in JSON.
+#[test_log::test]
+fn json_gives_the_clone_with_how_long_it_took_and_its_error_null_until_it_is_made() {
+    let running = SessionRecord {
+        output: cloning("2026-10-13T10:00:00Z", None),
+        ..SessionRecord::default()
+    };
+    let clone = |seconds: serde_json::Value, error: serde_json::Value, session, at| {
+        json!({
+            "type": "clone",
+            "session": session,
+            "at": at,
+            "elapsed_seconds": 0,
+            "depth": 0,
+            "duration_seconds": seconds,
+            "error": error,
+        })
+    };
+
+    let running = json_objects(&transcript::json_lines(&of(&[running]), Verbosity::Compact));
+    let made = json_objects(&transcript::json_lines(
+        &of(&after_cloning()),
+        Verbosity::Full,
+    ));
+
+    assert_eq!(
+        running[2],
+        clone(json!(null), json!(null), 1, "2026-10-13T10:00:00Z")
+    );
+    assert_eq!(
+        made[2],
+        clone(json!(6.2), json!(null), 1, "2026-10-13T10:08:50Z")
+    );
+    assert_eq!(made[3]["type"], "maintenance");
+    assert_eq!(
+        made[made.len() - 1],
+        clone(
+            json!(3.0),
+            json!("fetching origin: fatal: could not read from remote"),
+            2,
+            "2026-10-13T10:20:00Z"
+        )
+    );
+    let line = serde_json::from_value::<transcript::Line>(made[made.len() - 1].clone()).unwrap();
+    assert_eq!(
+        transcript::render_line(&line, Verbosity::Compact, false),
+        " 0:00  clone → 3s\n         fetching origin: fatal: could not read from remote\n"
+    );
+    let error_alone = with_keys(
+        clone(json!(null), json!("cancelled"), 1, "2026-10-13T10:00:00Z"),
+        json!({}),
+    );
+    assert!(serde_json::from_value::<transcript::Line>(error_alone).is_err());
+}
+
+/// `docs/specs/monitoring.md`, logs, Following in JSON.
+#[test_log::test]
+fn following_gives_the_clone_as_it_starts_and_again_once_it_ends() {
+    let [made, failed] = after_cloning();
+    let started = made.output.find('\n').unwrap() + 1;
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
+
+    let once_started = follower.update(&[written(&made, started)]);
+    let mut rest = follower.update(std::slice::from_ref(&made));
+    rest.extend(follower.end(&[made, failed]));
+
+    assert_eq!(
+        text(&once_started),
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:08:50 UTC\n \
+         0:00  clone → running\n"
+    );
+    let objects = json(&[once_started, rest.clone()].concat());
+    let clones: Vec<&serde_json::Value> = objects
+        .iter()
+        .filter(|line| line["type"] == "clone" && line["session"] == 1)
+        .collect();
+    assert_eq!(clones.len(), 2, "{objects:#?}");
+    assert_eq!(clones[0]["duration_seconds"], json!(null));
+    assert_eq!(clones[1]["duration_seconds"], json!(6.2));
+    assert_eq!(clones[1]["elapsed_seconds"], json!(6));
+    assert_eq!(
+        text(&rest[..2]),
+        " 0:06  clone → 6s\n 0:06  maintenance: npm ci → running\n"
+    );
+    assert_eq!(
+        text(&rest[rest.len() - 3..]),
+        "session 2: started 2026-10-13 10:20:00 UTC\n \
+         0:00  clone → running\n \
+         0:03  clone → 3s\n         \
+         fetching origin: fatal: could not read from remote\n"
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts: a session recorded before its
+/// clone was an entry starts with its maintenance command, as it did.
+#[test_log::test]
+fn a_session_recorded_before_its_clone_was_an_entry_reads_as_before() {
+    let [set_up, _] = after_setting_up();
+
+    let shown = transcript::render(&of(&[set_up]), Verbosity::Compact, false);
+
+    let shown: Vec<&str> = shown.lines().collect();
+    assert_eq!(
+        shown[1..3],
+        [
+            "session 1: started 2026-10-13 10:08:56 UTC",
+            " 0:00  maintenance: npm ci → exit 0, 12s",
+        ]
+    );
+}
