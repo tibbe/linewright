@@ -275,6 +275,7 @@ What stops a pull request merging, in the order the line picks from:
 | "handed back"                                             | Linewright opened it, is not assigned to it, and its last act on it was letting go of it | waiting for a person |
 | "unassigned"                                              | Linewright opened it and is not assigned to it otherwise | |
 | its stage and how long it has run, as in Working          | a run is in flight on it                   | in flight |
+| "paused until" what ends the hold, or "queued", as in Ready | Linewright would start a run on it, as in Ready | paused or queued |
 | "checks failed"                                           | a check failed                             | failed |
 | "checks running"                                          | a check has not finished                   | in flight |
 | "conflicts"                                               | it cannot merge cleanly                    | failed |
