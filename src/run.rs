@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -22,6 +21,7 @@ use crate::automation::Automation;
 use crate::bash_command;
 use crate::briefs::{Briefs, OperatorPrompts};
 use crate::clock::Clock;
+use crate::clones::{CloneDir, Clones};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
     Timestamp, Windows, label,
@@ -74,6 +74,7 @@ pub(crate) struct Shell {
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
     /// What each session's clone starts from.
     pub environment: environment::Source,
+    pub clones: Clones,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -651,22 +652,21 @@ struct Workspace {
     /// What the maintenance command left running, ended before the clone is
     /// removed.
     leftovers: Option<bash_command::Leftovers>,
-    /// `None` once dropped.
-    temp: Option<TempDir>,
+    clone_dir: CloneDir,
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
 }
 
 impl Workspace {
-    /// A session's clone in `temp`: a copy of the environment with `branch`
-    /// checked out in it, or a plain clone of `branch` without an environment
-    /// (docs/specs/sessions.md, Environment, "A session's clone").
-    async fn make(shell: &Shell, temp: TempDir, branch: &str) -> Result<Workspace> {
+    /// A session's clone in `clone_dir`: a copy of the environment with
+    /// `branch` checked out in it, or a plain clone of `branch` without an
+    /// environment (docs/specs/sessions.md, Environment, "A session's clone").
+    async fn make(shell: &Shell, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
         let Some(lease) = shell.environment.lease() else {
-            return Workspace::clone_in(shell, temp, branch).await;
+            return Workspace::clone_in(shell, clone_dir, branch).await;
         };
-        Workspace::create(shell, temp, async |dir| {
+        Workspace::create(shell, clone_dir, async |dir| {
             lease.copy_to(dir).await?;
             drop(lease);
             shell
@@ -681,56 +681,49 @@ impl Workspace {
 
     /// A run's own clone of `branch`, for work that needs no session.
     async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
-        Workspace::clone_in(shell, Workspace::temp(shell, purpose).await?, branch).await
+        Workspace::clone_in(shell, Workspace::clone_dir(shell, purpose).await?, branch).await
     }
 
-    /// A plain clone of `branch` in `temp`.
-    async fn clone_in(shell: &Shell, temp: TempDir, branch: &str) -> Result<Workspace> {
-        Workspace::create(shell, temp, async |dir| {
+    /// A plain clone of `branch` in `clone_dir`.
+    async fn clone_in(shell: &Shell, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
+        Workspace::create(shell, clone_dir, async |dir| {
             shell.store.clone_repo(dir, branch, &[]).await
         })
         .await
     }
 
-    /// The directory a clone for `purpose` is made in, under the work
-    /// directory's `clones`, its repository in [`Workspace::repo_in`].
-    async fn temp(shell: &Shell, purpose: &Purpose) -> Result<TempDir> {
-        let clones = shell.work_dir.join("clones");
-        tokio::fs::create_dir_all(&clones)
-            .await
-            .context("creating the clones directory")?;
-        tempfile::Builder::new()
-            .prefix(&format!("{}-", purpose_name(purpose)))
-            .tempdir_in(&clones)
-            .context("creating a clone directory")
+    /// The directory a clone for `purpose` is made in, its repository in
+    /// [`Workspace::repo_in`].
+    async fn clone_dir(shell: &Shell, purpose: &Purpose) -> Result<CloneDir> {
+        shell.clones.make(&purpose_name(purpose)).await
     }
 
-    /// Where the repository of a clone made in `temp` is.
-    fn repo_in(temp: &Path) -> PathBuf {
-        temp.join("repo")
+    /// Where the repository of a clone made in `clone_dir` is.
+    fn repo_in(clone_dir: &Path) -> PathBuf {
+        clone_dir.join("repo")
     }
 
-    /// A new workspace in `temp`, whose repository `fill` makes at the path
-    /// it is given, which does not exist yet. The repository is then given
-    /// [`clone_config`], and the workspace a scratch directory and
+    /// A new workspace in `clone_dir`, whose repository `fill` makes at the
+    /// path it is given, which does not exist yet. The repository is then
+    /// given [`clone_config`], and the workspace a scratch directory and
     /// Linewright's plugin.
     async fn create(
         shell: &Shell,
-        temp: TempDir,
+        clone_dir: CloneDir,
         fill: impl AsyncFnOnce(&Path) -> Result<()>,
     ) -> Result<Workspace> {
-        let dir = Workspace::repo_in(temp.path());
+        let dir = Workspace::repo_in(clone_dir.path());
         fill(&dir).await?;
         git::configure(&dir, &clone_config(shell)).await?;
-        let scratch = temp.path().join("tmp");
+        let scratch = clone_dir.path().join("tmp");
         tokio::fs::create_dir(&scratch)
             .await
             .context("creating a scratch directory")?;
-        let plugin = temp.path().join("plugin");
+        let plugin = clone_dir.path().join("plugin");
         Briefs::write_plugin(&plugin).context("writing Linewright's plugin")?;
         Ok(Workspace {
             leftovers: None,
-            temp: Some(temp),
+            clone_dir,
             dir,
             scratch,
             plugin,
@@ -750,17 +743,8 @@ fn clone_config(shell: &Shell) -> [(&str, &str); 3] {
 
 impl Drop for Workspace {
     fn drop(&mut self) {
-        let temp = self.temp.take();
-        let Some(leftovers) = self.leftovers.take() else {
-            return;
-        };
-        let end_after_grace = move || {
-            leftovers.end();
-            drop(temp);
-        };
-        match tokio::runtime::Handle::try_current() {
-            Ok(runtime) => drop(runtime.spawn_blocking(end_after_grace)),
-            Err(_) => end_after_grace(),
+        if let Some(leftovers) = self.leftovers.take() {
+            self.clone_dir.then_remove(move || leftovers.end());
         }
     }
 }
@@ -1139,9 +1123,9 @@ async fn open_session<'a, T>(
         .map_err(infra)?;
     let mut repo = None;
     let making = async {
-        let temp = Workspace::temp(shell, &purpose).await?;
-        repo = Some(Workspace::repo_in(temp.path()));
-        let ws = Workspace::make(shell, temp, branch).await?;
+        let clone_dir = Workspace::clone_dir(shell, &purpose).await?;
+        repo = Some(Workspace::repo_in(clone_dir.path()));
+        let ws = Workspace::make(shell, clone_dir, branch).await?;
         let checked_out = check_out(&ws.dir).await?;
         Ok::<_, anyhow::Error>((ws, checked_out))
     };

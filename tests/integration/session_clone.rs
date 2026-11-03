@@ -23,6 +23,17 @@ fn sessions_per_run(world: &World) -> Vec<usize> {
         .collect()
 }
 
+/// The clones left in `world`'s work directory once every removal pending
+/// has ended.
+async fn clones_left(world: &World) -> Vec<std::ffi::OsString> {
+    world.factory.winding_up().wait().await;
+    match std::fs::read_dir(world.dir.path().join("work").join("clones")) {
+        Ok(entries) => entries.map(|entry| entry.unwrap().file_name()).collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(e) => panic!("reading the clones: {e}"),
+    }
+}
+
 fn clone_of(branch: &str) -> Write {
     Write::Clone {
         branch: branch.into(),
@@ -44,7 +55,7 @@ fn reached(paused: &mut Paused) -> impl Future<Output = ()> + '_ {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a_session_for_each_try()
+async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a_session_for_each_try_and_is_removed()
  {
     let mut world = World::new().await;
     let issue =
@@ -66,6 +77,7 @@ async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a
         Vec::<String>::new()
     );
     assert_eq!(sessions_per_run(&world), [2]);
+    assert_eq!(clones_left(&world).await, Vec::<std::ffi::OsString>::new());
     let issue = world.issue(issue);
     assert!(labels(&issue).contains(&"ready-for-human"));
     let comment = last_comment(&issue);
@@ -135,7 +147,7 @@ async fn a_clone_still_being_made_at_its_sessions_deadline_is_the_session_timing
 }
 
 #[test_log::test(tokio::test)]
-async fn cancelling_a_run_while_its_clone_is_being_made_ends_it_cancelled() {
+async fn cancelling_a_run_while_its_clone_is_being_made_ends_it_cancelled_and_removes_the_clone() {
     let mut world = World::new().await;
     implement(&world);
     let ticket = open_ticket(&world, "Do the thing");
@@ -149,6 +161,7 @@ async fn cancelling_a_run_while_its_clone_is_being_made_ends_it_cancelled() {
 
     assert_eq!(ended_runs(&world), [Ending::Cancelled]);
     assert_eq!(sessions_per_run(&world), [1]);
+    assert_eq!(clones_left(&world).await, Vec::<std::ffi::OsString>::new());
     assert_eq!(
         world.harness.prompts(WorkKind::Implement),
         Vec::<String>::new()

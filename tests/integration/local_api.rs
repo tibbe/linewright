@@ -4,13 +4,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use common::*;
-use linewright::api::{self, Api, ClaimError, Sources};
+use linewright::api::{self, Api, ClaimError, Listeners, Sources};
 use linewright::clock::Clock;
 use linewright::ending::{Ends, Event, Signal};
 use linewright::factory::ServeEnd;
 use linewright::host::UiHosts;
 use linewright::web;
 use linewright::webhook::{Listener, Pending};
+use linewright::winding_up::{Remaining, WindingUp};
 use tokio_util::sync::CancellationToken;
 
 struct Answering {
@@ -21,6 +22,7 @@ struct Answering {
     listener: Option<Listener>,
     /// The web UI, on a port the system chose.
     ui: web::Listener,
+    winding_up: WindingUp,
     runtime_dir: tempfile::TempDir,
     _dir: tempfile::TempDir,
 }
@@ -93,6 +95,7 @@ impl Answering {
             ..
         } = world;
         let ends = factory.ends();
+        let winding_up = factory.winding_up();
         let since = clock.now();
         let work_dir = dir.path().join("work");
         let serving = Serving::start(factory, poll_interval, pending);
@@ -122,6 +125,7 @@ impl Answering {
             clock,
             listener,
             ui,
+            winding_up,
             runtime_dir,
             _dir: dir,
         }
@@ -139,17 +143,24 @@ impl Answering {
             api,
             listener,
             ui,
+            winding_up,
             runtime_dir,
             _dir,
             ..
         } = self;
         tokio::spawn(async move {
             let end = serving.finished().await;
-            if let Some(listener) = listener {
-                within(STOPPING, "the webhook listener stops", listener.stop()).await;
-            }
-            within(STOPPING, "the web UI stops", ui.stop()).await;
-            within(STOPPING, "the API stops", api.stop()).await;
+            let listeners = Listeners {
+                webhooks: listener,
+                ui: Some(ui),
+                api,
+            };
+            within(
+                STOPPING,
+                "serve lets go of the repository",
+                listeners.let_go_after(&winding_up),
+            )
+            .await;
             drop((runtime_dir, _dir));
             end
         })
@@ -1283,6 +1294,51 @@ async fn drain_no_wait_returns_once_serve_has_taken_it_and_serve_goes_on_drainin
     assert!(!answering.serving.has_ended());
     let exited = answering.exits_once_served();
     drop(agent);
+    assert_eq!(
+        within(STOPPING, "serve exits", exited).await.unwrap(),
+        ServeEnd::Drained
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn serve_lets_go_of_the_repository_only_once_a_removal_pending_at_exit_has_ended() {
+    let (agent, answering) = triage_held().await;
+    let runtime_dir = answering.runtime_dir.path().to_path_buf();
+    let winding_up = answering.winding_up.clone();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    winding_up.spawn_blocking(
+        Remaining::Clone {
+            name: "issue-1-held".into(),
+        },
+        move || {
+            let _released = held.recv();
+        },
+    );
+    let mut exiting = winding_up.exiting();
+    let exited = answering.exits_once_served();
+    let drain = Watching::start(&runtime_dir, &["drain"]);
+    drain.shows("waiting for: 1/triage-1\n").await;
+
+    drop(agent);
+    within(
+        STOPPING,
+        "the wait before exiting begins",
+        exiting.wait_for(|waits| !waits.is_empty()),
+    )
+    .await
+    .unwrap();
+    let claimed_while_pending = api::is_claimed(&socket_dir_in(&runtime_dir), REPO).unwrap();
+    let shown_while_pending = drain.shown();
+    release.send(()).unwrap();
+    let (code, shown, stderr) = drain.exits().await;
+
+    assert!(claimed_while_pending);
+    assert!(
+        !shown_while_pending.contains("serve: exited"),
+        "{shown_while_pending}"
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(shown.ends_with("serve: exited\n"), "{shown}");
     assert_eq!(
         within(STOPPING, "serve exits", exited).await.unwrap(),
         ServeEnd::Drained

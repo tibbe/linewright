@@ -153,6 +153,7 @@ fn environment_of<'a>(world: &'a World, dir: &'a Path) -> impl Future<Output = E
             redaction: Redaction::default(),
             given: Arc::default(),
             default_branch: "main".into(),
+            winding_up: linewright::winding_up::WindingUp::default(),
         };
         Environment::open(dir.to_path_buf(), builder)
             .await

@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
-use linewright::api::{self, Api, EventId, Publish, RequestError, Resume, Sources, Unanswered};
+use linewright::api::{
+    self, Api, EventId, Listeners, Publish, RequestError, Resume, Sources, Unanswered,
+};
 use linewright::briefs::OperatorPrompts;
 use linewright::case;
 use linewright::child;
@@ -31,6 +33,7 @@ use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES}
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::{Listener, Pending};
+use linewright::winding_up::WindingUp;
 use linewright::work_settings::{Environments, RepoSettings};
 use linewright::{COMMAND, COMMIT, VERSION};
 use linewright::{contain, explain, status, web};
@@ -387,7 +390,12 @@ async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) ->
 
 /// Asks `serve` to build the environment and, unless `no_wait`, waits for
 /// the build to end; without `serve`, builds it here.
-async fn rebuild_environment(config: &Config, no_wait: bool, json: bool) -> ExitCode {
+async fn rebuild_environment(
+    config: &Config,
+    no_wait: bool,
+    json: bool,
+    winding_up: &WindingUp,
+) -> ExitCode {
     let say = |said: &RebuildSaid| {
         if json {
             println!(
@@ -409,7 +417,7 @@ async fn rebuild_environment(config: &Config, no_wait: bool, json: bool) -> Exit
             Ok(taken) => taken,
             Err(e) => return print_answer(Err(e)),
         },
-        Err(RequestError::NotServing { .. }) => return rebuild_here(config, say).await,
+        Err(RequestError::NotServing { .. }) => return rebuild_here(config, say, winding_up).await,
         Err(e) => return print_answer(Err(refused(&e))),
     };
     let build = match &taken {
@@ -438,9 +446,13 @@ async fn rebuild_environment(config: &Config, no_wait: bool, json: bool) -> Exit
 }
 
 /// Builds the environment without `serve`, and says how the build ended.
-async fn rebuild_here(config: &Config, say: impl Fn(&RebuildSaid)) -> ExitCode {
+async fn rebuild_here(
+    config: &Config,
+    say: impl Fn(&RebuildSaid),
+    winding_up: &WindingUp,
+) -> ExitCode {
     let ended = async {
-        let mut factory = start(config, OnUsageLimit::End, Ends::new()).await?;
+        let mut factory = start(config, OnUsageLimit::End, Ends::new(), winding_up).await?;
         factory.rebuild_environment().await
     }
     .await;
@@ -729,7 +741,16 @@ fn socket_dir() -> PathBuf {
     )
 }
 
+/// Runs `command`, then waits for what its work left before Linewright
+/// exits.
 async fn run(command: Command, config: Config) -> Result<ExitCode> {
+    let winding_up = WindingUp::default();
+    let done = work(command, config, &winding_up).await;
+    winding_up.wait().await;
+    done
+}
+
+async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Result<ExitCode> {
     let done = match command {
         Command::Status { json } => {
             let resource = "/api/status";
@@ -753,7 +774,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
             command: Some(EnvironmentCommand::Rebuild { no_wait, json }),
             ..
         } => {
-            return Ok(rebuild_environment(&config, no_wait, json).await);
+            return Ok(rebuild_environment(&config, no_wait, json, winding_up).await);
         }
         Command::Explain { number, json } => {
             let resource = format!("/api/items/{number}");
@@ -824,16 +845,17 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),
                 None => None,
             };
-            let api = Api::serve(claimed, sources);
-            let stopped = serve(&config, &ends, &pending, &publish).await;
-            if let Some(listener) = listener {
-                listener.stop().await;
-            }
-            stop_ui_then_release_claim(ui, api).await;
+            let listeners = Listeners {
+                webhooks: listener,
+                ui,
+                api: Api::serve(claimed, sources),
+            };
+            let stopped = serve(&config, &ends, &pending, &publish, winding_up).await;
+            listeners.let_go_after(winding_up).await;
             stopped
         }
         Command::Once => {
-            let mut factory = start(&config, OnUsageLimit::End, Ends::new()).await?;
+            let mut factory = start(&config, OnUsageLimit::End, Ends::new(), winding_up).await?;
             let prepared = factory.prepare_environment().await;
             if let Err(e) = &prepared {
                 error!(
@@ -848,7 +870,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
-            start(&config, OnUsageLimit::End, Ends::new())
+            start(&config, OnUsageLimit::End, Ends::new(), winding_up)
                 .await?
                 .run_automation(&name)
                 .await
@@ -885,6 +907,7 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
                 OnUsageLimit::End,
                 sessions,
                 Ends::new(),
+                winding_up.clone(),
             );
             case::replay(
                 &case_dir,
@@ -901,19 +924,15 @@ async fn run(command: Command, config: Config) -> Result<ExitCode> {
     done.map(|()| ExitCode::SUCCESS)
 }
 
-/// Stops the web UI, and only once it has stopped releases the repository's
-/// claim, so that a `serve` that starts once the claim is released can
-/// listen on the same `ui-address`.
-async fn stop_ui_then_release_claim(ui: Option<web::Listener>, api: Api) {
-    if let Some(ui) = ui {
-        ui.stop().await;
-    }
-    api.stop().await;
-}
-
-async fn serve(config: &Config, ends: &Ends, pending: &Pending, publish: &Publish) -> Result<()> {
+async fn serve(
+    config: &Config,
+    ends: &Ends,
+    pending: &Pending,
+    publish: &Publish,
+    winding_up: &WindingUp,
+) -> Result<()> {
     let mut factory = tokio::select! {
-        factory = start(config, OnUsageLimit::Wait, ends.clone()) => factory?,
+        factory = start(config, OnUsageLimit::Wait, ends.clone(), winding_up) => factory?,
         () = ends.drain_or_stop_begun() => {
             info!("ended while starting");
             return Ok(());
@@ -1061,6 +1080,7 @@ fn factory_config(
     on_usage_limit: OnUsageLimit,
     sessions: SessionCredentials,
     ends: Ends,
+    winding_up: WindingUp,
 ) -> FactoryConfig {
     FactoryConfig {
         spec_glob: config.spec_glob.clone(),
@@ -1084,6 +1104,7 @@ fn factory_config(
         session_token: sessions.token,
         secrets: sessions.secrets,
         ends,
+        winding_up,
     }
 }
 
@@ -1093,7 +1114,12 @@ enum OnUsageLimit {
     End,
 }
 
-async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Result<Factory> {
+async fn start(
+    config: &Config,
+    on_usage_limit: OnUsageLimit,
+    ends: Ends,
+    winding_up: &WindingUp,
+) -> Result<Factory> {
     let prompts = prompts(config)?;
     require_tool("git").await?;
     let bash = require_bash()?;
@@ -1115,6 +1141,7 @@ async fn start(config: &Config, on_usage_limit: OnUsageLimit, ends: Ends) -> Res
         on_usage_limit,
         sessions,
         ends,
+        winding_up.clone(),
     );
     Factory::start(
         Arc::new(github),

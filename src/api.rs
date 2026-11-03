@@ -37,7 +37,9 @@ use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Polling, Serving, Status, StatusSources, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
-use crate::webhook::Tally;
+use crate::web;
+use crate::webhook::{self, Tally};
+use crate::winding_up::WindingUp;
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
@@ -363,6 +365,31 @@ impl Api {
             );
         }
         drop(self.lock);
+    }
+}
+
+/// What `serve` listens on, the API holding the repository's claim.
+pub struct Listeners {
+    pub webhooks: Option<webhook::Listener>,
+    pub ui: Option<web::Listener>,
+    pub api: Api,
+}
+
+impl Listeners {
+    /// Once all `winding_up` waits for has ended, stops the webhook
+    /// listener, then the web UI, and only once it has stopped the API,
+    /// releasing the claim, so that a `serve` that starts once the claim is
+    /// released can listen on the same `ui-address`
+    /// (`docs/specs/operation.md`, Stopping, "Exiting").
+    pub async fn let_go_after(self, winding_up: &WindingUp) {
+        winding_up.wait().await;
+        if let Some(webhooks) = self.webhooks {
+            webhooks.stop().await;
+        }
+        if let Some(ui) = self.ui {
+            ui.stop().await;
+        }
+        self.api.stop().await;
     }
 }
 
