@@ -454,6 +454,8 @@ module linewright {
       else if (Set("needs-info").contains(state) and when_a_reply_has_come(w, i) and endsNoRun(w, i, does_labels_it_needs_triage(w, i))) does_labels_it_needs_triage(w, i)
       // needs-triage, ready-for-agent | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries linewright:designed
       else if (Set("needs-triage", "ready-for-agent").contains(state) and when_linewright_may_claim_it(w, i) and endsNoRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+      // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
+      else if (not(Set("done", "merged", "closed").contains(state)) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsNoRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
       // being triaged | no run is in flight on it | starts a triage run | being triaged
       else if (Set("being triaged").contains(state) and when_no_run_is_in_flight_on_it(w, i) and endsNoRun(w, i, does_starts_a_triage_run(w, i))) does_starts_a_triage_run(w, i)
       // being triaged | the triage run ends with ready-for-agent | labels it ready-for-agent | being designed, or being implemented where it carries linewright:designed
@@ -488,8 +490,6 @@ module linewright {
       else if (Set("open").contains(state) and when_a_run_on_it_cannot_finish(w, i) and endsNoRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
       // any but done | the issue carries more than one status label | removes all but the newest | unchanged
       else if (not(Set("done").contains(state)) and when_the_issue_carries_more_than_one_status_label(w, i) and endsNoRun(w, i, does_removes_all_but_the_newest(w, i))) does_removes_all_but_the_newest(w, i)
-      // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
-      else if (not(Set("done", "merged", "closed").contains(state)) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsNoRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
       else steering(w, i)
     }
   // spec-table end
@@ -516,6 +516,8 @@ module linewright {
       else if (Set("needs-info").contains(state) and when_a_reply_has_come(w, i) and endsTheRun(w, i, does_labels_it_needs_triage(w, i))) does_labels_it_needs_triage(w, i)
       // needs-triage, ready-for-agent | Linewright may claim it | assigns itself | being triaged, being designed, or being implemented where it carries linewright:designed
       else if (Set("needs-triage", "ready-for-agent").contains(state) and when_linewright_may_claim_it(w, i) and endsTheRun(w, i, does_assigns_itself(w, i))) does_assigns_itself(w, i)
+      // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
+      else if (not(Set("done", "merged", "closed").contains(state)) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsTheRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
       // being triaged | no run is in flight on it | starts a triage run | being triaged
       else if (Set("being triaged").contains(state) and when_no_run_is_in_flight_on_it(w, i) and endsTheRun(w, i, does_starts_a_triage_run(w, i))) does_starts_a_triage_run(w, i)
       // being triaged | the triage run ends with ready-for-agent | labels it ready-for-agent | being designed, or being implemented where it carries linewright:designed
@@ -550,8 +552,6 @@ module linewright {
       else if (Set("open").contains(state) and when_a_run_on_it_cannot_finish(w, i) and endsTheRun(w, i, does_hands_it_back(w, i))) does_hands_it_back(w, i)
       // any but done | the issue carries more than one status label | removes all but the newest | unchanged
       else if (not(Set("done").contains(state)) and when_the_issue_carries_more_than_one_status_label(w, i) and endsTheRun(w, i, does_removes_all_but_the_newest(w, i))) does_removes_all_but_the_newest(w, i)
-      // any but done, merged and closed | it carries linewright:stalled and Linewright is assigned to it | removes linewright:stalled | unchanged
-      else if (not(Set("done", "merged", "closed").contains(state)) and when_it_carries_linewright_stalled_and_linewright_is_assigned_to_it(w, i) and endsTheRun(w, i, does_removes_linewright_stalled(w, i))) does_removes_linewright_stalled(w, i)
       else nothing(w, i)
     }
   // spec-table end
@@ -664,6 +664,9 @@ module linewright {
     else if (it(w, p).feedback) opt("start run", p, "pr")
     else opt("merge", p, "")
   pure def does_removes_all_but_the_newest(w: World, i: int): Option = opt("remove older label", i, it(w, i).older)
+  /// R ## Working an item "Stalls": "Linewright removes linewright:stalled
+  /// before it starts work on the item again." Its row precedes every row
+  /// that starts a run (A16: a write of its own).
   pure def does_removes_linewright_stalled(w: World, i: int): Option = opt("clear stalled", i, "")
 
   /// R ## Steering, the rows Linewright follows at a poll: merged | "assigns
