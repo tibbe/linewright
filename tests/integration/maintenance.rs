@@ -3,6 +3,7 @@
 
 use crate::common;
 
+use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,8 +11,11 @@ use std::time::Duration;
 use common::*;
 use linewright::domain::Number;
 use linewright::reconcile::WorkKind;
+use linewright::run::{AfterMaintenance, after_maintenance};
 use linewright::runs::Ending;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
+use linewright::transcript::{self, MaintenanceEnded, MaintenanceRan, MaintenanceStatus};
+use rstest::rstest;
 use serde_json::json;
 
 const CONFIG: &str = ".linewright/config.toml";
@@ -22,27 +26,6 @@ async fn commit_config(world: &World, config: &str) {
         .commit("maintainer", "main", &[(CONFIG, config)], "Set up")
         .await
         .unwrap();
-}
-
-/// Each triage records what `file` in its clone holds, `None` when it is
-/// missing, and answers that the issue is ready for an agent.
-fn triage_reading(world: &World, file: &'static str) -> Arc<Mutex<Vec<Option<String>>>> {
-    let read = Arc::new(Mutex::new(vec![]));
-    world.harness.on(WorkKind::Triage, {
-        let read = read.clone();
-        move |call| {
-            read.lock()
-                .unwrap()
-                .push(std::fs::read_to_string(call.spec.dir.join(file)).ok());
-            Ok(json!({
-                "outcome": "ready-for-agent",
-                "category": "bug",
-                "comment": "## Agent Brief\n\n**Summary:** It crashes."
-            })
-            .to_string())
-        }
-    });
-    read
 }
 
 fn open_for_triage(world: &World) -> linewright::domain::Number {
@@ -104,38 +87,110 @@ fn lines_of(marks: &Path, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// A triage session as its agent saw it: its prompt, with its attachments
+/// directory as `ATTACHMENTS`, and how the maintenance command ended as its
+/// transcript says.
+#[derive(Debug)]
+struct Triaged {
+    prompt: String,
+    maintenance: Option<MaintenanceEnded>,
+}
+
+/// Triages an issue in a world maintaining with `command`, each triage
+/// answering that the issue is ready for an agent, and gives the sessions and
+/// the issue's labels then.
+#[track_caller]
+fn triaged_maintaining_with(command: &str) -> impl Future<Output = (Vec<Triaged>, Vec<String>)> {
+    let caller = Location::caller();
+    async move {
+        let mut world = World::with(|config| {
+            maintaining_with(config, command);
+        })
+        .await;
+        let triaged = Arc::new(Mutex::new(vec![]));
+        world.harness.on(WorkKind::Triage, {
+            let triaged = triaged.clone();
+            move |call| {
+                let record = transcript::SessionRecord::read(&call.spec.record)
+                    .unwrap_or_else(|e| panic!("reading the transcript at {caller}: {e:#}"));
+                let maintenance = transcript::parse(&record)
+                    .maintenance
+                    .and_then(|maintenance| match maintenance.ran {
+                        MaintenanceRan::Started { ended, .. } => ended,
+                        MaintenanceRan::Recorded(ended) => Some(ended),
+                    });
+                triaged.lock().unwrap().push(Triaged {
+                    prompt: call
+                        .spec
+                        .prompt
+                        .replace(&call.spec.attachments.display().to_string(), "ATTACHMENTS"),
+                    maintenance,
+                });
+                Ok(json!({
+                    "outcome": "ready-for-agent",
+                    "category": "bug",
+                    "comment": "## Agent Brief\n\n**Summary:** It crashes."
+                })
+                .to_string())
+            }
+        });
+        let issue = open_for_triage(&world);
+
+        world.poll().await;
+
+        let labels = labels(&world.issue(issue))
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        (std::mem::take(&mut *triaged.lock().unwrap()), labels)
+    }
+}
+
+/// `docs/specs/runs.md`, Stages, 2a, and Out of scope: the agent is not told.
 #[test_log::test(tokio::test)]
-async fn a_maintenance_command_that_fails_twice_hands_the_item_back_with_the_end_of_its_output() {
+async fn a_maintenance_command_that_exits_non_zero_runs_once_and_its_session_goes_on_as_after_one_that_succeeded()
+ {
     let marks = marks();
     let command = format!(
         "echo ran >> '{}/runs'; echo 'npm ERR! missing lockfile'; exit 3",
         marks.path().display()
     );
-    let mut world = World::with(|config| {
-        maintaining_with(config, &command);
-    })
-    .await;
-    let read = triage_reading(&world, "README.md");
-    let issue = open_for_triage(&world);
+    let (succeeded, _) = triaged_maintaining_with("true").await;
 
-    world.poll().await;
+    let (triaged, labels) = triaged_maintaining_with(&command).await;
 
-    assert_eq!(lines_of(marks.path(), "runs"), ["ran", "ran"]);
-    assert!(read.lock().unwrap().is_empty(), "no session started");
-    assert!(labels(&world.issue(issue)).contains(&"ready-for-human"));
-    let issue = world.issue(issue);
-    let comment = last_comment(&issue);
-    assert!(
-        comment.contains("The run failed twice on its infrastructure"),
-        "{comment}"
-    );
-    assert!(comment.contains("status 3"), "{comment}");
-    assert!(
-        comment.contains(
-            "<summary>The end of the maintenance command's output</summary>\n\n```\nnpm ERR! missing lockfile\n```"
-        ),
-        "{comment}"
-    );
+    assert_eq!(lines_of(marks.path(), "runs"), ["ran"]);
+    let [
+        Triaged {
+            prompt,
+            maintenance: Some(ended),
+        },
+    ] = &triaged[..]
+    else {
+        panic!("one session, after its maintenance command ended: {triaged:?}");
+    };
+    assert_eq!(*prompt, succeeded[0].prompt);
+    assert_eq!(ended.status, MaintenanceStatus::Exited(3));
+    assert_eq!(ended.output, "npm ERR! missing lockfile\n");
+    assert!(labels.iter().any(|l| l == "ready-for-agent"), "{labels:?}");
+}
+
+/// `docs/specs/runs.md`, Stages, 2a: a command that does not exit with
+/// status 0 fails, and its session goes on all the same.
+#[rstest]
+#[case::exiting_with_status_0(MaintenanceStatus::Exited(0), AfterMaintenance::GoesOn)]
+#[case::exiting_with_another_status(
+    MaintenanceStatus::Exited(3),
+    AfterMaintenance::GoesOnPastAFailure
+)]
+#[case::ended_by_a_signal(MaintenanceStatus::Signalled(9), AfterMaintenance::GoesOnPastAFailure)]
+#[case::still_running_at_the_deadline(MaintenanceStatus::TimedOut, AfterMaintenance::TimesOut)]
+#[case::cancelled(MaintenanceStatus::Cancelled, AfterMaintenance::Cancelled)]
+fn a_session_goes_on_after_its_maintenance_command_unless_it_timed_out_or_was_cancelled(
+    #[case] status: MaintenanceStatus,
+    #[case] expected: AfterMaintenance,
+) {
+    assert_eq!(after_maintenance(status), expected);
 }
 
 #[test_log::test(tokio::test)]
@@ -332,7 +387,7 @@ async fn gone(pid: &str) -> bool {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_automations_run_whose_maintenance_command_fails_fails_with_the_end_of_its_output() {
+async fn an_automations_run_whose_maintenance_command_fails_goes_on_to_its_prompt() {
     let mut world = World::new().await;
     world
         .store
@@ -352,19 +407,15 @@ async fn an_automations_run_whose_maintenance_command_fails_fails_with_the_end_o
         .unwrap();
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
-    let error = world
+    world
         .factory
         .run_automation(&"look".parse().unwrap())
         .await
-        .unwrap_err();
+        .unwrap();
 
-    let error = format!("{error:#}");
-    assert!(error.contains("status 127"), "{error}");
-    assert!(
-        error.contains("The end of the maintenance command's output:\nno such tool"),
-        "{error}"
-    );
-    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
+    let prompts = world.harness.automation_prompts();
+    assert_eq!(prompts.len(), 1, "{prompts:?}");
+    assert!(prompts[0].contains("Look."), "{}", prompts[0]);
 }
 
 #[test_log::test(tokio::test)]

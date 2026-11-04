@@ -456,11 +456,11 @@ pub fn retries_infrastructure_failure(retries: u32) -> bool {
 
 /// The hand-back of a run whose retry failed on its infrastructure too, with
 /// `error`, then `note`.
-pub fn failed_twice(error: &anyhow::Error, note: &str, log_tail: Option<LogTail>) -> HandBack {
+pub fn failed_twice(error: &anyhow::Error, note: &str) -> HandBack {
     HandBack {
         kind: HandBackKind::Stall,
         reason: format!("The run failed twice on its infrastructure: {error:#}{note}"),
-        log_tail,
+        log_tail: None,
     }
 }
 

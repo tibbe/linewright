@@ -46,7 +46,7 @@ use crate::store::{
     AnyItem, AttachError, FoundSecrets, Identity, PushError, PushMode, RepoSettings, Store,
 };
 use crate::tracking::FiledTicket;
-use crate::transcript;
+use crate::transcript::{self, MaintenanceStatus};
 use crate::work_settings::{
     Environments, Maintenance, MaintenanceCommand, RunKind, SessionSettings, WorkSettings,
 };
@@ -152,8 +152,6 @@ enum Failure {
         error: anyhow::Error,
         /// What the hand-back adds after the reason.
         note: String,
-        /// The tail the hand-back gives, when the failure ends the run.
-        log_tail: Option<LogTail>,
     },
     HandBack(HandBack),
     Apply {
@@ -267,11 +265,9 @@ impl Failure {
             Failure::Infrastructure {
                 error,
                 note: before,
-                log_tail,
             } => Failure::Infrastructure {
                 error,
                 note: before + note,
-                log_tail,
             },
             Failure::Apply {
                 error,
@@ -300,7 +296,6 @@ fn infra(error: anyhow::Error) -> Failure {
     Failure::Infrastructure {
         error,
         note: String::new(),
-        log_tail: None,
     }
 }
 
@@ -389,11 +384,9 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 }
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
             }
-            Err(Failure::Infrastructure {
-                error: e,
-                note,
-                log_tail,
-            }) => break hand_back::failed_twice(&e, &note, log_tail),
+            Err(Failure::Infrastructure { error: e, note }) => {
+                break hand_back::failed_twice(&e, &note);
+            }
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
                 return Ending::Cancelled;
@@ -1165,7 +1158,7 @@ async fn open_session<'a, T>(
         }
     };
     if let Maintenance::Command(command) = &settings.maintenance.value {
-        run_maintenance(shell, ctx, command, &record, deadline, &mut ws).await?;
+        run_maintenance(shell, ctx, &purpose, command, &record, deadline, &mut ws).await?;
     }
     let opened = Opened {
         settings,
@@ -1193,13 +1186,14 @@ async fn open_on_default_branch<'a>(
     Ok((opened, ws))
 }
 
-/// Runs the maintenance `command` in `ws`, which keeps what it leaves running,
-/// until the session's `deadline`, with its start and end in the session's
-/// transcript in `record` and its output beside it. It fails as the session
-/// would end.
+/// Runs the maintenance `command` of the session of `purpose` in `ws`, which
+/// keeps what it leaves running, until the session's `deadline`, with its
+/// start and end in the session's transcript in `record` and its output beside
+/// it. It fails as the session would end.
 async fn run_maintenance(
     shell: &Shell,
     ctx: &Ctx,
+    purpose: &Purpose,
     command: &MaintenanceCommand,
     record: &Path,
     deadline: tokio::time::Instant,
@@ -1241,35 +1235,47 @@ async fn run_maintenance(
     )
     .context("writing the maintenance command's end")
     .map_err(infra)?;
-    maintenance_failure(&ran, &ws.dir, settings).map_or(Ok(()), Err)
+    match after_maintenance(ran.status) {
+        AfterMaintenance::GoesOn => Ok(()),
+        AfterMaintenance::GoesOnPastAFailure => {
+            warn!(
+                subject = purpose_name(purpose),
+                status = ran.status.account(),
+                "the maintenance command failed; going on to the agent"
+            );
+            Ok(())
+        }
+        AfterMaintenance::TimesOut => Err(Failure::HandBack(hand_back::timed_out(
+            &settings.timeout_setting,
+            LogTail::maintenance(&scrub(&ran.output, &ws.dir)),
+        ))),
+        AfterMaintenance::Cancelled => Err(Failure::Cancelled),
+    }
 }
 
-/// Why the session ends after the maintenance command ran in `dir` as `ran`, if
-/// it does (docs/specs/runs.md, "Maintenance", Failing): a command still running
-/// at the session's deadline is the session timing out.
-fn maintenance_failure(
-    ran: &bash_command::Ran,
-    dir: &Path,
-    settings: &SessionSettings,
-) -> Option<Failure> {
-    let log_tail = || LogTail::maintenance(&scrub(&ran.output, dir));
-    let failed = match ran.status {
-        bash_command::Status::Exited(0) => return None,
-        bash_command::Status::Exited(code) => format!("exited with status {code}"),
-        bash_command::Status::Signalled(signal) => format!("was ended by signal {signal}"),
-        bash_command::Status::TimedOut => {
-            return Some(Failure::HandBack(hand_back::timed_out(
-                &settings.timeout_setting,
-                log_tail(),
-            )));
+/// How a session goes on after its maintenance command.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AfterMaintenance {
+    /// To the agent's first prompt.
+    GoesOn,
+    /// To the agent's first prompt all the same (docs/specs/runs.md, Stages,
+    /// 2a).
+    GoesOnPastAFailure,
+    /// It times out: the command was still running at its deadline.
+    TimesOut,
+    Cancelled,
+}
+
+/// How a session goes on after its maintenance command ended as `status`.
+pub fn after_maintenance(status: MaintenanceStatus) -> AfterMaintenance {
+    match status {
+        MaintenanceStatus::Exited(0) => AfterMaintenance::GoesOn,
+        MaintenanceStatus::Exited(_) | MaintenanceStatus::Signalled(_) => {
+            AfterMaintenance::GoesOnPastAFailure
         }
-        bash_command::Status::Cancelled => return Some(Failure::Cancelled),
-    };
-    Some(Failure::Infrastructure {
-        error: anyhow::anyhow!("the maintenance command {failed}"),
-        note: String::new(),
-        log_tail: log_tail(),
-    })
+        MaintenanceStatus::TimedOut => AfterMaintenance::TimesOut,
+        MaintenanceStatus::Cancelled => AfterMaintenance::Cancelled,
+    }
 }
 
 impl Opened<'_> {
@@ -2288,11 +2294,6 @@ pub(crate) async fn automation(
     match ended {
         Ok(result) => Ok(AutomationEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
-        Err(Failure::Infrastructure {
-            error: e,
-            log_tail: Some(log_tail),
-            ..
-        }) => Err(with_tail(&e, &log_tail)),
         Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
         Err(Failure::HandBack(HandBack {
             reason,
