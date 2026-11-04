@@ -59,6 +59,8 @@ steps:
 
 - **1a. The clone cannot be made.** The session ends, as an infrastructure
   failure ([Ending](#ending)).
+- **2a. The maintenance command does not exit with status 0.** The agent is
+  sent its first prompt all the same.
 
 ## Maintenance
 
@@ -74,9 +76,6 @@ and ready for the agent.
 - **When.** On the branch as the clone checked it out, before any update of
   the branch with the default branch
   ([Keeping up to date](pull_requests.md#keeping-up-to-date)).
-- **Failing.** A maintenance command that exits with a non-zero status ends its
-  session, as an infrastructure failure
-  ([Ending](#ending)).
 - **What it leaves running.** Processes the maintenance command leaves running
   end once the run is done with the clone.
 - **Its output** is kept with the session's transcript
@@ -247,5 +246,6 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 
 - Resuming, after a restart, a session that was waiting out the usage limit.
 - Slowing down as the usage limit approaches, before a session is refused.
+- Telling the agent that its session's maintenance command failed.
 - A teardown command, run as a clone is removed to release what lives outside
   it, such as a container its maintenance command started.
