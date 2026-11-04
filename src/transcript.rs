@@ -44,8 +44,8 @@ pub struct MaintenanceRecord {
 pub use crate::bash_command::Status as MaintenanceStatus;
 
 impl MaintenanceStatus {
-    /// Whether the command failed (`docs/specs/runs.md`, Maintenance, Failing):
-    /// a cancelled one did not.
+    /// Whether the command failed (`docs/specs/design_system.md`,
+    /// Transcripts, Maintenance): a cancelled one did not.
     pub fn failed(self) -> bool {
         !matches!(
             self,
@@ -53,7 +53,7 @@ impl MaintenanceStatus {
         )
     }
 
-    fn account(self) -> String {
+    pub(crate) fn account(self) -> String {
         match self {
             MaintenanceStatus::Exited(code) => format!("exit {code}"),
             MaintenanceStatus::Signalled(signal) => format!("signal {signal}"),

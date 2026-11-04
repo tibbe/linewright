@@ -840,7 +840,7 @@ fn setting_up(
 }
 
 /// The recorded session after a maintenance command that succeeded, then one
-/// whose maintenance command failed, so that it never started.
+/// whose maintenance command failed, recorded before its agent's first turn.
 fn after_setting_up() -> [SessionRecord; 2] {
     let set_up = setting_up(
         "2026-10-13T10:08:56Z",

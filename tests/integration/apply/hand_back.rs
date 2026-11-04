@@ -604,31 +604,20 @@ fn a_session_that_ended_unexpectedly_stalls(#[case] session_log: &str, #[case] e
 #[rstest]
 #[case::with_the_errors_causes(
     "",
-    None,
-    hand_back_of(
-        HandBackKind::Stall,
-        "The run failed twice on its infrastructure: cloning: connection reset",
-        None,
-    )
+    "The run failed twice on its infrastructure: cloning: connection reset"
 )]
-#[case::with_a_note_and_a_log(
+#[case::with_a_note(
     "\n\nThe work so far is on the branch `7-gadgets`.",
-    Some(log(Logged::Maintenance, "npm ERR!")),
-    hand_back_of(
-        HandBackKind::Stall,
-        "The run failed twice on its infrastructure: cloning: connection reset\n\n\
-         The work so far is on the branch `7-gadgets`.",
-        Some(log(Logged::Maintenance, "npm ERR!")),
-    )
+    "The run failed twice on its infrastructure: cloning: connection reset\n\n\
+     The work so far is on the branch `7-gadgets`."
 )]
-fn a_run_that_failed_twice_on_its_infrastructure_stalls(
-    #[case] note: &str,
-    #[case] log_tail: Option<LogTail>,
-    #[case] expected: HandBack,
-) {
+fn a_run_that_failed_twice_on_its_infrastructure_stalls(#[case] note: &str, #[case] reason: &str) {
     let error = anyhow::anyhow!("connection reset").context("cloning");
 
-    assert_eq!(failed_twice(&error, note, log_tail), expected);
+    assert_eq!(
+        failed_twice(&error, note),
+        hand_back_of(HandBackKind::Stall, reason, None)
+    );
 }
 
 #[rstest]
