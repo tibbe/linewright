@@ -44,8 +44,13 @@ The command is `lw`.
 | `capture`             | write a case from GitHub (see [Replay](replay.md))                       |
 | `replay`              | run a case against a local store (see [Replay](replay.md))               |
 
-- **The version.** `--version` and the server's first log line name the
-  version and the commit it was built from.
+- **The version.** `--version` names the version and the commit it was
+  built from.
+- **Conventions.** Every command follows the conventions of Unix command-line
+  tools, such as its answer going to standard output and all else to
+  standard error.
+- **Errors outside a log.** A command that keeps no log, or fails before its
+  log begins, says why in one line, `lw: <why>`.
 
 ## Stopping
 
@@ -67,11 +72,9 @@ once.
 - **Exiting.** Once its runs have ended, Linewright waits however long for
   what is left before it exits, such as the removal of their clones
   ([Stages](runs.md#stages)).
-- **Logging the exit.** Linewright logs each thing it waits for before it
+- **Logging the waits.** Linewright logs each thing it waits for before it
   exits as the wait begins, and how long it took as it ends.
-- **The last line.** Last, Linewright logs that it exits, with its exit
-  status. An exit at once logs no such line.
-- **A signal under `once` or `automation run`.** It ends the command at once,
+- **A signal under any command but `serve`.** It ends the command at once,
   cutting its runs short.
 - **Draining.** All else `serve` does goes on until it exits, polls and
   deliveries included, and it waits for every run in flight however long,
@@ -251,15 +254,25 @@ image the operator builds with those in it.
 - **Behind a proxy.** Event streams ask a reverse proxy in front to pass each
   event on as it is sent, unchanged, and to keep no copy, and send something
   at least every 15 seconds, so that the proxy never closes one as idle.
-- **The log.** The server logs each decision and action, readable for a
-  person tailing it and structured (JSON lines) for machines, by the
-  `log-format` setting. That includes, while it serves the web UI, its
-  address and each request it refuses and why, and, with webhooks on, the
-  address it listens on for them, each delivery and what it names, and each
-  delivery refused and why.
 - **Systems.** Unix-like systems: Linux and macOS.
 - **git.** Linewright finds, once, the git binary that the `git` on its path
   runs, and runs that binary directly from then on.
+
+## The log
+
+A command that does work itself logs each decision and action; a command
+that answers a question, or asks `serve` to act, logs nothing.
+
+- **Format.** The log is readable for a person tailing it and structured
+  (JSON lines) for machines, by the `log-format` setting.
+- **What `serve` logs.** It includes, while `serve` serves the web UI, its
+  address and each request it refuses and why, and, with webhooks on, the
+  address it listens on for them, each delivery and what it names, and each
+  delivery refused and why.
+- **The first line.** It names the version and the commit, as `--version`
+  does.
+- **The last line.** It is the exit, with the exit status. An exit at once
+  logs no such line.
 
 ## Out of scope
 
