@@ -129,10 +129,10 @@ Keep it quick when nothing has changed: every session runs it.
 
 - **Its timeout** is the session's, `session-timeout`, which counts from when
   the session's clone starts being made.
-- **A command that fails**, exiting with a non-zero status, ends its session
-  before the agent starts. Linewright retries the run once, then hands the item
-  back with the end of the command's output. A command that times out hands back
-  at once.
+- **A command that fails**, not exiting with status 0, doesn't stop its
+  session: the agent starts all the same, in the clone as the command left it,
+  and isn't told. The command's output shows in the session's transcript. A
+  command that times out hands back at once.
 - **What it leaves running**, such as a dev server, ends when the run is done
   with the clone: Linewright sends its process group SIGTERM, then SIGKILL. A
   process that leaves the group, or a container it starts, outlives the run.
