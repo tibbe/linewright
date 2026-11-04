@@ -175,7 +175,7 @@ a terminal.
   JSON object per transcript entry and line, two for an entry that runs when
   followed. Each of a tool call's objects carries the ID the agent gives the
   call, and a sub-agent's objects carry the ID of the call that started it.
-- **Errors.** They go to standard error. The exit status is:
+- **Exit status.** It is:
 
   | status | meaning                                      |
   | ------ | -------------------------------------------- |
