@@ -64,14 +64,14 @@ fn main() -> ExitCode {
         Ok(config) => config,
         Err(status) => return ExitCode::from(status),
     };
-    init_logging(config.log_format);
+    let log = Log::new(config.log_format);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("the runtime builds");
-    let status = runtime.block_on(run(command, config));
+    let status = runtime.block_on(run(command, config, &log));
     drop(runtime);
-    info!(status, "exiting");
+    log.exit(status);
     ExitCode::from(status)
 }
 
@@ -97,15 +97,52 @@ fn complain(message: impl std::fmt::Display) {
     eprintln!("{COMMAND}: {message}");
 }
 
-fn init_logging(format: LogFormat) {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("LINEWRIGHT_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr);
-    match format {
-        LogFormat::Text => builder.init(),
-        LogFormat::Json => builder.json().init(),
+/// The log a command keeps when it does work itself, begun by the command as
+/// it starts that work; a command that never begins it logs nothing.
+struct Log {
+    format: LogFormat,
+    begun: std::sync::Once,
+}
+
+impl Log {
+    fn new(format: LogFormat) -> Log {
+        Log {
+            format,
+            begun: std::sync::Once::new(),
+        }
+    }
+
+    /// Begins the log with its first line, once: events before it are lost.
+    fn begin(&self) {
+        self.begun.call_once(|| {
+            let filter = tracing_subscriber::EnvFilter::try_from_env("LINEWRIGHT_LOG")
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            let builder = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_writer(std::io::stderr);
+            match self.format {
+                LogFormat::Text => builder.init(),
+                LogFormat::Json => builder.json().init(),
+            }
+            info!(version = %VERSION, commit = %COMMIT, "starting");
+        });
+    }
+
+    /// Says why the command failed: in the log if it began, else in one
+    /// line.
+    fn fail(&self, e: &anyhow::Error) {
+        if self.begun.is_completed() {
+            error!(error = format!("{e:#}"), "failed");
+        } else {
+            complain(format!("{e:#}"));
+        }
+    }
+
+    /// Ends the log, if it began, with the exit `status`.
+    fn exit(&self, status: u8) {
+        if self.begun.is_completed() {
+            info!(status, "exiting");
+        }
     }
 }
 
@@ -413,7 +450,8 @@ async fn rebuild_environment(
     no_wait: bool,
     json: bool,
     winding_up: &WindingUp,
-) -> u8 {
+    log: &Log,
+) -> Result<u8> {
     let say = |said: &RebuildSaid| {
         if json {
             println!(
@@ -427,30 +465,32 @@ async fn rebuild_environment(
     };
     let repo = match config.required_repo() {
         Ok(repo) => repo,
-        Err(e) => return print_answer(Err(failed(&e))),
+        Err(e) => return Ok(print_answer(Err(failed(&e)))),
     };
     let dir = socket_dir();
     let taken = match api::post_answer(&dir, &repo, "/api/environment/rebuild").await {
         Ok(body) => match read_as::<RebuildTaken>(&body, "a rebuild taken") {
             Ok(taken) => taken,
-            Err(e) => return print_answer(Err(e)),
+            Err(e) => return Ok(print_answer(Err(e))),
         },
-        Err(RequestError::NotServing { .. }) => return rebuild_here(config, say, winding_up).await,
-        Err(e) => return print_answer(Err(refused(&e))),
+        Err(RequestError::NotServing { .. }) => {
+            return rebuild_here(config, say, winding_up, log).await;
+        }
+        Err(e) => return Ok(print_answer(Err(refused(&e)))),
     };
     let build = match &taken {
         RebuildTaken::Started { build } | RebuildTaken::Queued { build } => *build,
-        RebuildTaken::NoSetupCommand => return no_setup_command(),
+        RebuildTaken::NoSetupCommand => return Ok(no_setup_command()),
         RebuildTaken::Refused { reason } => {
-            return print_answer(Err((1, format!("no build starts: {reason}"))));
+            return Ok(print_answer(Err((1, format!("no build starts: {reason}")))));
         }
     };
     say(&RebuildSaid::Taken(taken));
     if no_wait {
-        return SUCCESS;
+        return Ok(SUCCESS);
     }
     let resource = format!("/api/environment/rebuild/{build}");
-    match api::get_answer(&dir, &repo, &resource).await {
+    Ok(match api::get_answer(&dir, &repo, &resource).await {
         Ok(body) => match read_as::<BuildEnded>(&body, "a build ended") {
             Ok(ended) => {
                 let code = ended_code(&ended);
@@ -460,32 +500,33 @@ async fn rebuild_environment(
             Err(e) => print_answer(Err(e)),
         },
         Err(e) => print_answer(Err(refused(&e))),
-    }
+    })
 }
 
-/// Builds the environment without `serve`, and says how the build ended.
-async fn rebuild_here(config: &Config, say: impl Fn(&RebuildSaid), winding_up: &WindingUp) -> u8 {
-    let ended = async {
-        let mut factory = start(config, OnUsageLimit::End, Ends::new(), winding_up).await?;
-        factory.rebuild_environment().await
-    }
-    .await;
-    match ended {
-        Ok(Some(ended)) => {
-            let code = ended_code(&ended);
-            say(&RebuildSaid::Ended(ended));
-            code
-        }
-        Ok(None) => no_setup_command(),
-        Err(e) => print_answer(Err(failed(&e))),
-    }
+/// Builds the environment without `serve`, logging as it does the work, and
+/// says how the build ended.
+async fn rebuild_here(
+    config: &Config,
+    say: impl Fn(&RebuildSaid),
+    winding_up: &WindingUp,
+    log: &Log,
+) -> Result<u8> {
+    log.begin();
+    let mut factory = start(config, OnUsageLimit::End, Ends::new(), winding_up).await?;
+    let ended = factory
+        .rebuild_environment()
+        .await?
+        .context(NO_SETUP_COMMAND)?;
+    let code = ended_code(&ended);
+    say(&RebuildSaid::Ended(ended));
+    Ok(code)
 }
+
+const NO_SETUP_COMMAND: &str =
+    "there is no setup command: set `setup.command` to build the environment";
 
 fn no_setup_command() -> u8 {
-    print_answer(Err((
-        1,
-        "there is no setup command: set `setup.command` to build the environment".into(),
-    )))
+    print_answer(Err((1, NO_SETUP_COMMAND.into())))
 }
 
 fn ended_code(ended: &BuildEnded) -> u8 {
@@ -757,17 +798,18 @@ fn socket_dir() -> PathBuf {
 
 /// Runs `command`, then waits for what its work left before Linewright
 /// exits; returns the exit status.
-async fn run(command: Command, config: Config) -> u8 {
+async fn run(command: Command, config: Config, log: &Log) -> u8 {
     let winding_up = WindingUp::default();
-    let done = work(command, config, &winding_up).await;
+    let done = work(command, config, &winding_up, log).await;
     winding_up.wait().await;
     done.unwrap_or_else(|e| {
-        error!(error = format!("{e:#}"), "failed");
+        log.fail(&e);
         FAILURE
     })
 }
 
-async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Result<u8> {
+/// Does what `command` says, beginning `log` first if it does work itself.
+async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Log) -> Result<u8> {
     let done = match command {
         Command::Status { json } => {
             let resource = "/api/status";
@@ -791,7 +833,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
             command: Some(EnvironmentCommand::Rebuild { no_wait, json }),
             ..
         } => {
-            return Ok(rebuild_environment(&config, no_wait, json, winding_up).await);
+            return rebuild_environment(&config, no_wait, json, winding_up, log).await;
         }
         Command::Explain { number, json } => {
             let resource = format!("/api/items/{number}");
@@ -826,7 +868,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
             return Ok(show_logs(&config, &which, printing, follow).await);
         }
         Command::Serve => {
-            info!(version = %VERSION, commit = %COMMIT, "starting");
+            log.begin();
             // PID 1, as `lw` can be in a container, is sent only the signals
             // it has a handler for:
             // https://man7.org/linux/man-pages/man2/kill.2.html#NOTES
@@ -873,6 +915,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
             stopped
         }
         Command::Once => {
+            log.begin();
             let mut factory = start(&config, OnUsageLimit::End, Ends::new(), winding_up).await?;
             let prepared = factory.prepare_environment().await;
             if let Err(e) = &prepared {
@@ -888,12 +931,14 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
+            log.begin();
             start(&config, OnUsageLimit::End, Ends::new(), winding_up)
                 .await?
                 .run_automation(&name)
                 .await
         }
         Command::Capture { target, dir } => {
+            log.begin();
             let (repo, number) = target
                 .split_once('#')
                 .with_context(|| format!("{target:?} is not owner/name#N"))?;
@@ -910,6 +955,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp) -> Resul
             case: case_dir,
             out,
         } => {
+            log.begin();
             let prompts = prompts(&config)?;
             let bash = require_bash()?;
             require_tool(HARNESS_PROGRAM).await?;

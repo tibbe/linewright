@@ -445,16 +445,49 @@ async fn a_second_serve_for_the_repository_exits_saying_one_already_runs() {
     answering.stop().await;
 }
 
+/// `docs/specs/operation.md`, Commands: "A command that keeps no log … says
+/// why in one line, `lw: <why>`", whatever the log format.
 #[test_log::test(tokio::test)]
-async fn status_without_serve_running_exits_3_saying_so() {
+async fn status_without_serve_running_exits_3_saying_so_in_one_line() {
     let runtime_dir = tempfile::tempdir().unwrap();
 
-    let output = lw(runtime_dir.path(), &["status"]).await;
+    for format in ["text", "json"] {
+        let args = ["--repo", REPO, "status"];
+        let env = [("LINEWRIGHT_LOG_FORMAT", format)];
+        let output = lw_with(runtime_dir.path(), &args, &env).await;
 
-    assert_eq!(output.code, Some(3));
-    assert_eq!(output.stdout, "");
-    assert!(output.stderr.contains("not running"), "{}", output.stderr);
-    assert!(output.stderr.contains(REPO), "{}", output.stderr);
+        assert_eq!(output.code, Some(3));
+        assert_eq!(output.stdout, "");
+        assert_eq!(output.stderr.lines().count(), 1, "{}", output.stderr);
+        assert!(output.stderr.starts_with("lw: "), "{}", output.stderr);
+        assert!(output.stderr.contains("not running"), "{}", output.stderr);
+        assert!(output.stderr.contains(REPO), "{}", output.stderr);
+    }
+}
+
+/// `docs/specs/operation.md`, The log: "a command that answers a question,
+/// or asks `serve` to act, logs nothing".
+#[test_log::test(tokio::test)]
+async fn a_command_that_answers_or_asks_serve_to_act_writes_nothing_to_stderr() {
+    let answering = Answering::start(with_ticket_and_automation().await, false).await;
+    let runtime_dir = answering.runtime_dir.path();
+
+    for format in ["text", "json"] {
+        let env = [("LINEWRIGHT_LOG_FORMAT", format)];
+        for args in [
+            &["status"][..],
+            &["runs"],
+            &["explain", "1"],
+            &["drain", "--no-wait"],
+        ] {
+            let args: Vec<&str> = ["--repo", REPO].iter().chain(args).copied().collect();
+            let output = lw_with(runtime_dir, &args, &env).await;
+
+            assert_eq!(output.code, Some(0), "{args:?}: {}", output.stderr);
+            assert_eq!(output.stderr, "", "{args:?} under {format}");
+        }
+    }
+    answering.stop().await;
 }
 
 #[test_log::test(tokio::test)]

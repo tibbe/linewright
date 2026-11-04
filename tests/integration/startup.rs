@@ -428,23 +428,25 @@ fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
 /// What `serve` logs as JSON lines, with `ui_address` as its `ui-address`,
 /// until startup fails for want of `git`.
 fn serve_log_lines(ui_address: &str) -> Vec<serde_json::Value> {
+    json_log(&["--ui-address", ui_address, "serve"]).0
+}
+
+/// The lines of the JSON log of `lw` on `owner/name` with `args` until it
+/// fails for want of `git`, and the log as it is.
+#[track_caller]
+fn json_log(args: &[&str]) -> (Vec<serde_json::Value>, String) {
     let empty = tempfile::tempdir().unwrap();
-    let (_, log) = lw(
-        empty.path(),
-        &[
-            "--repo",
-            "owner/name",
-            "--ui-address",
-            ui_address,
-            "--log-format",
-            "json",
-            "serve",
-        ],
-        &[],
-    );
-    log.lines()
+    let args: Vec<&str> = ["--repo", "owner/name", "--log-format", "json"]
+        .iter()
+        .chain(args)
+        .copied()
+        .collect();
+    let (_, log) = lw(empty.path(), &args, &[]);
+    let lines = log
+        .lines()
         .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
+        .collect();
+    (lines, log)
 }
 
 #[test_log::test]
@@ -632,6 +634,27 @@ fn serve_first_logs_the_version_and_the_commit() {
     assert!(fields["commit"].as_str().is_some_and(names_head), "{log}");
     assert_eq!(
         lines[1]["fields"]["message"], "listening for webhook deliveries",
+        "{log}"
+    );
+}
+
+/// `docs/specs/operation.md`, The log: "The first line" and "The last line",
+/// for a command that does work other than `serve`, and one that learns only
+/// as it runs that it does the work.
+#[rstest::rstest]
+#[case::once(&["once"])]
+#[case::environment_rebuild_without_serve(&["environment", "rebuild"])]
+#[test_log::test]
+fn a_command_that_does_work_logs_the_version_first_and_the_exit_last(#[case] args: &[&str]) {
+    let (lines, log) = json_log(args);
+
+    let first = &lines[0]["fields"];
+    assert_eq!(first["message"], "starting", "{log}");
+    assert_eq!(first["version"], version().as_str(), "{log}");
+    assert!(first["commit"].as_str().is_some_and(names_head), "{log}");
+    assert_eq!(
+        lines.last().unwrap()["fields"],
+        serde_json::json!({ "message": "exiting", "status": 1 }),
         "{log}"
     );
 }
