@@ -243,8 +243,13 @@ fn lock_path(clone: &Path) -> PathBuf {
 }
 
 /// Removes the clone at `clone`, its directory and then its lock file, as
-/// far as they are there.
+/// far as they are there, the fastest way the host's filesystem offers.
 fn remove_clone(clone: &Path) -> Result<()> {
+    // No platform removes a tree faster than unlinking each entry: macOS's
+    // `removefile(3)` (https://keith.github.io/xcode-man-pages/removefile.3.html)
+    // unlinks entry by entry too, and on APFS measured slower than
+    // `remove_dir_all`, as did a parallel unlink
+    // (https://docs.rs/crate/decmpfs/0.1.2/source/src/remove.rs).
     unless_missing(std::fs::remove_dir_all(clone))
         .with_context(|| format!("removing {}", clone.display()))?;
     remove_file(&lock_path(clone))
@@ -258,7 +263,7 @@ fn remove_file(path: &Path) -> Result<()> {
 }
 
 /// `None` where `result` failed for want of the file.
-fn unless_missing<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
+pub(crate) fn unless_missing<T>(result: std::io::Result<T>) -> std::io::Result<Option<T>> {
     match result {
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),

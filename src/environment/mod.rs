@@ -868,9 +868,10 @@ pub struct Lease {
 
 impl Lease {
     /// Copies the build's repository, `.git` included, to `dest`, which
-    /// does not exist, sharing disk space where the filesystem allows
-    /// (`docs/specs/sessions.md`, Environment, "A session's clone"). No
-    /// process removes the build while the copy is in progress.
+    /// does not exist, the fastest way the filesystem offers, sharing disk
+    /// space where it allows (`docs/specs/sessions.md`, Environment, "A
+    /// session's clone"). No process removes the build while the copy is in
+    /// progress.
     pub async fn copy_to(&self, dest: &Path) -> Result<()> {
         let _copying = kept::lease(self.build.path()).await?;
         copy_absent(&self.build.path().join(kept::REPO), dest)
@@ -879,13 +880,17 @@ impl Lease {
     }
 }
 
-/// Copies `from` to `to`, which does not exist, as a copy-on-write copy
-/// where the filesystem allows one.
+/// Copies `from` to `to`, which does not exist, the fastest way the
+/// filesystem offers, as a copy-on-write copy where it allows one.
 async fn copy_absent(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    // GNU cp clones with `--reflink=auto`
+    #[cfg(target_os = "macos")]
+    if clone_whole(from, to).await? {
+        return Ok(());
+    }
+    // GNU cp clones each file with `--reflink=auto`
     // (https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html),
     // and macOS's with `-c`, falling back to a plain copy where cloning is
     // not supported (https://keith.github.io/xcode-man-pages/cp.1.html).
@@ -905,4 +910,31 @@ async fn copy_absent(from: &Path, to: &Path) -> Result<()> {
         bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
     }
     Ok(())
+}
+
+/// Clones the directory `from` to `to`, which does not exist, in one call:
+/// `false`, leaving `to` absent, where the volume can't clone this copy.
+///
+/// APFS clones a whole hierarchy in one `clonefile(2)` call, failing with
+/// `ENOTSUP` where the volume can't clone and `EXDEV` across volumes
+/// (https://keith.github.io/xcode-man-pages/clonefile.2.html), where
+/// `cp -c` and `copyfile(3)` clone each entry in turn.
+/// `reflink_copy::reflink` is that call on macOS
+/// (https://docs.rs/reflink-copy/latest/reflink_copy/fn.reflink.html).
+#[cfg(target_os = "macos")]
+async fn clone_whole(from: &Path, to: &Path) -> Result<bool> {
+    use rustix::io::Errno;
+    let (from, to) = (from.to_owned(), to.to_owned());
+    tokio::task::spawn_blocking(move || match reflink_copy::reflink(&from, &to) {
+        Ok(()) => Ok(true),
+        // std reads `ENOTSUP` as no `ErrorKind` on macOS, only `EOPNOTSUPP`
+        // (https://github.com/rust-lang/rust/pull/158580).
+        Err(e) if matches!(Errno::from_io_error(&e), Some(Errno::NOTSUP | Errno::XDEV)) => {
+            crate::clones::unless_missing(std::fs::remove_dir_all(&to))
+                .with_context(|| format!("removing {}", to.display()))?;
+            Ok(false)
+        }
+        Err(e) => Err(e).context("running clonefile"),
+    })
+    .await?
 }
