@@ -656,7 +656,8 @@ async fn a_session_leaves_the_environment_as_it_was_built() {
 #[test_log::test(tokio::test)]
 async fn a_copy_of_the_environment_that_fails_is_an_infrastructure_failure() {
     let mut world = World::new().await;
-    set_up_with(&world, "echo secret > unreadable && chmod 000 unreadable").await;
+    let _removable = Removable(world.dir.path().to_owned());
+    set_up_with(&world, "mkdir unreadable && chmod 000 unreadable").await;
     world.poll().await;
     let seen = implement_reading(&world);
     let ticket = open_ticket(&world, "Do the thing");
@@ -670,4 +671,18 @@ async fn a_copy_of_the_environment_that_fails_is_an_infrastructure_failure() {
         comment.contains("The run failed twice on its infrastructure"),
         "{comment}"
     );
+}
+
+/// Gives back, once dropped, the permissions a setup took away under its
+/// directory, every copy Linewright made included, so that the directory can
+/// be removed.
+struct Removable(PathBuf);
+
+impl Drop for Removable {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("chmod")
+            .args(["-R", "u+rwx"])
+            .arg(&self.0)
+            .status();
+    }
 }
