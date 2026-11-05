@@ -121,7 +121,7 @@ in each session, much as a container starts from its image.
   leaves running end when it ends; only its files are kept.
 - **A session's clone.** A copy of the environment with the session's branch
   checked out in it, sharing the environment's disk space where the filesystem
-  allows.
+  allows, made the fastest way the filesystem offers for such a copy.
 
 ### Building
 
