@@ -917,10 +917,10 @@ async fn copy_absent(from: &Path, to: &Path) -> Result<()> {
 ///
 /// APFS clones a whole hierarchy in one `clonefile(2)` call, failing with
 /// `ENOTSUP` where the volume can't clone and `EXDEV` across volumes
-/// (https://keith.github.io/xcode-man-pages/clonefile.2.html), where
+/// (<https://keith.github.io/xcode-man-pages/clonefile.2.html>), where
 /// `cp -c` and `copyfile(3)` clone each entry in turn.
 /// `reflink_copy::reflink` is that call on macOS
-/// (https://docs.rs/reflink-copy/latest/reflink_copy/fn.reflink.html).
+/// (<https://docs.rs/reflink-copy/latest/reflink_copy/fn.reflink.html>).
 #[cfg(target_os = "macos")]
 async fn clone_whole(from: &Path, to: &Path) -> Result<bool> {
     use rustix::io::Errno;
