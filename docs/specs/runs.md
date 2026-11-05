@@ -43,7 +43,7 @@ has no item.
   fresh and in its own clone, or in none where its work needs no agent, such as
   an update without a conflict.
 - **A clone's end.** A clone is removed once its run is done with it, even
-  one made only partway.
+  one made only partway, the fastest way the host's filesystem offers.
 - **Clones left behind.** As it starts, Linewright removes, alongside its
   work, every clone that no running Linewright is using, such as one left by
   an exit at once ([Stopping](operation.md#stopping)). It logs the clones as
