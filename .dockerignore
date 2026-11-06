@@ -6,7 +6,6 @@
 !briefs/
 !templates/
 !assets/
-!docs/specs/results/
 !rust-toolchain.toml
 !linewright.toml
 !deploy/sccache

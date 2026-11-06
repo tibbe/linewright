@@ -261,8 +261,9 @@ values!(LateFeedback {
     conversation
 });
 
-/// A prompt from `briefs/prompts/`, or a part of one from `src/prompts/`:
-/// Markdown with a `{{name}}` placeholder for each of the values `V`.
+/// A prompt from `briefs/prompts/`, or a part of one from `briefs/parts/` or
+/// `briefs/outputs/`: Markdown with a `{{name}}` placeholder for each of the
+/// values `V`.
 struct Template<V> {
     text: String,
     values: PhantomData<fn(&V)>,
@@ -295,20 +296,16 @@ macro_rules! template {
     };
 }
 
-/// Linewright's own template at `$path` under `src/prompts/`, without its
-/// trailing newline.
+/// Linewright's own template at `$path` under `briefs/`, which no layer
+/// overrides, without its trailing newline.
 macro_rules! own_template {
     ($path:literal) => {
         Template::parse(
-            include_str!(concat!("prompts/", $path))
+            include_str!(concat!("../briefs/", $path))
                 .trim_end()
                 .to_string(),
         )
-        .expect(concat!(
-            "src/prompts/",
-            $path,
-            " has its values' placeholders"
-        ))
+        .expect(concat!("briefs/", $path, " has its values' placeholders"))
     };
 }
 

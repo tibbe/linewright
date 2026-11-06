@@ -4,7 +4,11 @@ What Linewright gives its agents, built into the binary:
 
 - `plugin/`: the skills, a Claude Code plugin given to every session;
 - `prompts/`: what Linewright sends a session, from its first message to the
-  follow-ups.
+  follow-ups;
+- `parts/` and `outputs/`: Linewright's own wording of what it fills into the
+  prompts' placeholders, which no layer overrides;
+- `results/`: each stage's result schema, which Linewright checks a session's
+  result against.
 
 The skills are always these. The `prompts` setting names a directory laid out
 as `prompts/` is, the operator's layer over it. Linewright takes each file in
@@ -67,6 +71,15 @@ know.
 When a placeholder alone on its line is filled with nothing, its line and the
 blank line after it go too. A prompt's line breaks reach the session as they
 are, so the prompts are not wrapped.
+
+## `parts/` and `outputs/`
+
+What Linewright fills into a prompt's placeholders: `outputs/` holds each
+stage's result contract, which fills `{{output}}`, and `parts/` the rest, such
+as the attachments contract appended to every `{{output}}` and the parts of a
+follow-up. No layer overrides them, so a prompt written over keeps the contract
+Linewright reads, and the `prompts` setting's directory may not hold them. Like
+the prompts, they are not wrapped.
 
 [`src/prompts.rs`](../src/prompts.rs) declares, beside the templates
 (`readers`), which runs read each file. Every run gets the plugin.

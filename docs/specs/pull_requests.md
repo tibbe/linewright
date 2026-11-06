@@ -161,11 +161,11 @@ A fix, rework or update session is sent `fix-ci.md`, `rework.md` or
 | `{{pr_title}}`     | its title                                                                                                                           |
 | `{{description}}`  | its description                                                                                                                     |
 | `{{ticket}}`       | the issue the pull request closes, as the implementer is given its ticket ([Implementation](implementation.md#the-session))       |
-| `{{unfinished}}`   | the unfinished commits on the branch, or nothing                                                                                    |
-| `{{conflict}}`     | where the update stopped and the files in conflict; for a fix or a rework, nothing unless it starts with an update that stopped     |
-| `{{failures}}`     | a fix's alone: each failing check, as under [CI](#ci)                                                                               |
+| `{{unfinished}}`   | the unfinished commits on the branch (`unfinished.md`), or nothing |
+| `{{conflict}}`     | where the update stopped and the files in conflict (`update-rebase.md` or `update-merge.md`); for a fix or a rework, nothing unless it starts with an update that stopped (`conflict-rebase.md` or `conflict-merge.md`) |
+| `{{failures}}`     | a fix's alone: each failing check, as under [CI](#ci), with how to read its full log (`full-log.md`) |
 | `{{feedback}}`     | a rework's alone: the new comments, reviews and comments in threads                                                                 |
 | `{{conversation}}` | a rework's alone: the pull request's comments and its unresolved threads                                                            |
 
 The session ends with a result that matches
-[`results/pull-request.schema.json`](results/pull-request.schema.json).
+[`briefs/results/pull-request.schema.json`](../../briefs/results/pull-request.schema.json).

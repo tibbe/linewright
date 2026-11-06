@@ -75,9 +75,9 @@ those of every prompt ([Contract](runs.md#contract)).
 | placeholder      | value                                                                                                                       |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `{{kind}}`       | `spec change` for a spec change's issue, and `issue` otherwise                                                              |
-| `{{item}}`       | the issue and its comments, and for a spec change's issue the spec change's number, title, author, body and spec diff      |
-| `{{filed_gaps}}` | the spec gaps already filed for the issue, or nothing                                                                      |
-| `{{cutting}}`    | how the work is cut ([Cutting](#cutting))                                                                                   |
+| `{{item}}`       | the issue and its comments, and for a spec change's issue the spec change's number, title, author, body and spec diff (`spec-change.md`) |
+| `{{filed_gaps}}` | the spec gaps already filed for the issue (`filed-gaps.md`), or nothing |
+| `{{cutting}}`    | how the work is cut (`cut-issue.md`, [Cutting](#cutting)) |
 
 The session ends with a result that matches
-[`results/design-issue.schema.json`](results/design-issue.schema.json).
+[`briefs/results/design-issue.schema.json`](../../briefs/results/design-issue.schema.json).

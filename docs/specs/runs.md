@@ -87,26 +87,30 @@ Each stage's area decides its session's contract: the value Linewright fills
 into each of its prompt's placeholders, and the result the session ends with,
 which Linewright parses. What the agent does between the two is the prompt's.
 A stage's session is sent the prompt [Stages](#stages) names, and an
-automation's `automation.md` ([Prompts](operation.md#prompts)).
+automation's `automation.md` ([Prompts](operation.md#prompts)). Where
+Linewright fills a placeholder with its own wording rather than the item's
+data, the wording is a part in `briefs/parts/`, and the placeholder's row names
+it.
 
 - **Every prompt.** `{{facts}}` is the repository, its default branch and the
-  spec glob, and `{{output}}` is Linewright's wording of the stage's result
-  contract, with the session's attachments directory and the kinds of file
-  Linewright attaches ([Attachments](#attachments)).
+  spec glob (`facts.md`), and `{{output}}` is the stage's result contract,
+  `briefs/outputs/<stage>.md`, followed by the session's attachments directory
+  and the kinds of file Linewright attaches (`attachments.md`,
+  [Attachments](#attachments)).
 - **The result** is a JSON object in the session's final message: the whole
   message when it is one, else its last fenced code block when that holds one,
   else the text from its first `{` to its last `}`. Linewright checks it against
-  its stage's JSON Schema (draft 2020-12) in [`results/`](results/), whose
-  descriptions say what each key holds. A result that does not match, or that
-  breaks a rule its schema's descriptions state, is sent back to the session
-  ([Ending](#ending)).
+  its stage's JSON Schema (draft 2020-12) in
+  [`briefs/results/`](../../briefs/results/), whose descriptions say what each
+  key holds. A result that does not match, or that breaks a rule its schema's
+  descriptions state, is sent back to the session ([Ending](#ending)).
 - **Follow-ups.** A session sent back to work is sent a follow-up, with these
   placeholders filled.
 
   | follow-up                         | placeholder        | value                                                                                                                                  |
   | --------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-  | `follow-ups/result-error.md`      | `{{error}}`        | why the result could not be used                                                                                                       |
-  | `follow-ups/loose-ends.md`        | `{{problem}}`      | what is still wrong with the session's work: unfinished commits on its branch, or a secret in its commits, its push or its attachments |
+  | `follow-ups/result-error.md`      | `{{error}}`        | why the result could not be used; for an attachment GitHub refuses, `attachment-refused.md` |
+  | `follow-ups/loose-ends.md`        | `{{problem}}`      | what is still wrong with the session's work: unfinished commits on its branch (`fold-unfinished.md`), or a secret in its commits (`held-credential.md`), its push (`pushed-secret.md`) or its attachments (`attachment-secret.md`) |
   | `follow-ups/late-feedback.md`     | `{{feedback}}`     | the feedback posted while the session worked ([Rework](pull_requests.md#rework))                                                       |
   | `follow-ups/late-feedback.md`     | `{{conversation}}` | the pull request's comments and its unresolved threads                                                                                 |
   | `follow-ups/usage-limit-reset.md` | none               |                                                                                                                                        |

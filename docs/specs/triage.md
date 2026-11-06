@@ -62,4 +62,4 @@ those of every prompt ([Contract](runs.md#contract)).
 | `{{issue}}`            | the issue: its number, title, author, labels, body and comments         |
 
 The session ends with a result that matches
-[`results/triage.schema.json`](results/triage.schema.json).
+[`briefs/results/triage.schema.json`](../../briefs/results/triage.schema.json).
