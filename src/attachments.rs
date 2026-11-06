@@ -57,6 +57,15 @@ pub enum Refusal {
         path.display()
     )]
     Outside { path: PathBuf },
+    /// A regular file in the directory of a kind Linewright doesn't attach.
+    #[error(
+        "`{}` is not an image or a video: only {} files can be attached. Put anything else, \
+         such as text output or a log, in the Markdown itself, in a fenced code block or a \
+         `<details>` block when it is long, or take the reference out",
+        path.display(),
+        attachable()
+    )]
+    Kind { path: PathBuf },
     /// A referenced file holding one of Linewright's secrets.
     #[error(
         "`{}` holds the secret of `{variable}`: take the secret out of the file, \
@@ -131,9 +140,10 @@ impl Resolved {
 }
 
 /// Finds the references in `markdown`, the texts a result posts, and judges
-/// each: a path in `dir` must be a regular file holding none of `secrets`,
-/// and an absolute path outside it must not name a file. Other references
-/// are left as written. It reads the files only to look for secrets.
+/// each: a path in `dir` must be a regular file of a kind Linewright
+/// attaches ([`attachable`]) holding none of `secrets`, and an absolute path
+/// outside it must not name a file. Other references are left as written.
+/// It reads the files only to look for secrets.
 pub fn resolve(dir: &Dir, markdown: &[&str], secrets: &Secrets) -> Result<Resolved, Refusal> {
     let mut files: Vec<File> = Vec::new();
     let mut splices = Vec::new();
@@ -233,9 +243,14 @@ fn judge(
             break;
         }
         if wanted == Entry::File {
+            let Some(kind) = kind(&path) else {
+                return Err(Refusal::Kind {
+                    path: PathBuf::from(written),
+                });
+            };
             return Ok(Some(File {
                 name: component.as_os_str().to_string_lossy().into_owned(),
-                content_type: content_type(&path),
+                content_type: kind.content_type,
                 path,
             }));
         }
@@ -262,35 +277,112 @@ fn lexically_normal(path: &Path) -> PathBuf {
     normal
 }
 
-/// Whether `written` names a video, by the extensions GitHub plays
-/// ([Attaching files](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files)).
-fn is_video(written: &str) -> bool {
-    content_type(Path::new(written)).starts_with("video/")
+/// A kind of file Linewright attaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Kind {
+    /// Lower case, without the dot.
+    extension: &'static str,
+    content_type: &'static str,
+    media: Media,
 }
 
-fn content_type(path: &Path) -> &'static str {
-    let extension = path
-        .extension()
-        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_default();
-    match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "mp4" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "pdf" => "application/pdf",
-        "zip" => "application/zip",
-        "gz" => "application/gzip",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        "md" => "text/markdown",
-        "txt" | "log" => "text/plain",
-        _ => "application/octet-stream",
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Media {
+    Image,
+    /// GitHub plays it
+    /// ([Attaching files](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files)).
+    Video,
+}
+
+/// The only files Linewright attaches: the images and videos GitHub's
+/// attachment upload takes
+/// ([Attaching files](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files)).
+const KINDS: [Kind; 9] = [
+    Kind {
+        extension: "png",
+        content_type: "image/png",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "jpg",
+        content_type: "image/jpeg",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "jpeg",
+        content_type: "image/jpeg",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "gif",
+        content_type: "image/gif",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "webp",
+        content_type: "image/webp",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "svg",
+        content_type: "image/svg+xml",
+        media: Media::Image,
+    },
+    Kind {
+        extension: "mp4",
+        content_type: "video/mp4",
+        media: Media::Video,
+    },
+    Kind {
+        extension: "mov",
+        content_type: "video/quicktime",
+        media: Media::Video,
+    },
+    Kind {
+        extension: "webm",
+        content_type: "video/webm",
+        media: Media::Video,
+    },
+];
+
+/// Every kind of file Linewright attaches, as a list such as "`.png`, …,
+/// `.mov` and `.webm`".
+pub fn attachable() -> String {
+    listed(KINDS.into_iter(), "and")
+}
+
+/// The kinds of video Linewright attaches, as a list such as "`.mp4`,
+/// `.mov` or `.webm`".
+pub fn videos() -> String {
+    listed(
+        KINDS.into_iter().filter(|kind| kind.media == Media::Video),
+        "or",
+    )
+}
+
+/// `kinds`' extensions, each with its dot in backticks, in a list whose
+/// last two are joined by `last`.
+fn listed(kinds: impl Iterator<Item = Kind>, last: &str) -> String {
+    let written: Vec<String> = kinds.map(|kind| format!("`.{}`", kind.extension)).collect();
+    match written.split_last() {
+        None => String::new(),
+        Some((only, [])) => only.clone(),
+        Some((final_one, rest)) => format!("{} {last} {final_one}", rest.join(", ")),
     }
+}
+
+/// The kind of the file at `path`, told by its extension whatever its
+/// letter case, or `None` when Linewright doesn't attach it.
+fn kind(path: &Path) -> Option<Kind> {
+    let extension = path.extension()?.to_str()?;
+    KINDS
+        .into_iter()
+        .find(|kind| kind.extension.eq_ignore_ascii_case(extension))
+}
+
+/// Whether `written` names a video.
+fn is_video(written: &str) -> bool {
+    kind(Path::new(written)).is_some_and(|kind| kind.media == Media::Video)
 }
 
 /// A reference to an absolute path, found in one text.

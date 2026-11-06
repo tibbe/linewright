@@ -247,7 +247,11 @@ values!(HeldSecret {
 values!(PushedSecret { secrets });
 values!(
     /// The attachments contract, from `parts/attachments.md`.
-    Attachments { directory }
+    Attachments {
+        directory,
+        kinds,
+        videos
+    }
 );
 values!(AttachmentSecret { variable, file });
 values!(AttachmentRefused { file, reason });
@@ -747,11 +751,13 @@ fn design_output(of: DesignOf, attachments: &Path) -> String {
 }
 
 /// A stage's result contract `output`, followed by the attachments
-/// contract naming the session's `attachments` directory
-/// (docs/specs/runs.md, "Every prompt").
+/// contract naming the session's `attachments` directory and the kinds of
+/// file Linewright attaches (docs/specs/runs.md, "Every prompt").
 fn with_attachments(output: &str, attachments: &Path) -> String {
     let contract = OWN_TEMPLATES.attachments.fill(&Attachments {
         directory: attachments.display().to_string(),
+        kinds: crate::attachments::attachable(),
+        videos: crate::attachments::videos(),
     });
     format!("{output}\n\n{contract}")
 }
