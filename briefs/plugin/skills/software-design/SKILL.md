@@ -31,12 +31,28 @@ sub-agents, so each search stays out of the others' context and yours.
    documenting it; products like ours using it; and, for a library to adopt, its
    GitHub stars, package downloads and recent releases. Under 400 words."
 
-### 2. Choose
+### 2. Prototype
 
-Compare the reported options and, for each decision, follow the consensus: the
-option most sources converge on, counting a solution the platform documents for
-this problem as strong evidence. Any other option, whether fewer sources take it
-or none do, has to win against it.
+1. Once every research sub-agent has returned its report, list every option
+   the reports give.
+2. Spawn one sub-agent per option, together, in the foreground. Give each:
+   - the framing from step 1 of Research, word for word;
+   - the option, as the research reports give it;
+   - this brief: "Call the Skill tool with `linewright:prototype`, and build
+     the smallest version of the option above that does what the framing
+     states. End with what happened, in this form and nothing else, no code,
+     under 60 words: `**{the option}**: {works | works, with … | doesn't
+     work}. Ran {what} against {what}, {how many times}, at {the size and
+     shape}: {the observation}.`"
+
+### 3. Choose
+
+Compare the reported options on the quality attributes the framing states,
+using their prototypes' results, and, for each decision, follow the consensus:
+the option most sources converge on, counting a solution the platform documents
+for this problem as strong evidence. Any other option, whether fewer sources
+take it or none do, has to win against it: on an attribute the framing states,
+by what its prototype showed.
 
 Before choosing, write down the case against each option. The case against the
 consensus first says why its adopters chose it, then why that reasoning doesn't
@@ -76,16 +92,17 @@ because {why, in one sentence}.}
 
 {what it is, in a sentence or two}. Taken by {the sources that take it}.
 
+{its prototype's result, as the sub-agent gave it}
+
 * Good, because {why its adopters chose it}
+* {Good | Bad}, because {what its prototype showed}
 * Bad, because {an argument}
 * ~~{a reason, for or against}~~ (struck: {the rule that struck it})
 
 #### {title of option 2}
 
-{what it is, in a sentence or two}. Taken by {the sources that take it}.
-
-* Good, because {why its adopters chose it}
-* Bad, because {an argument}
+…
 ```
 
-One Good line per option: why its adopters chose it.
+From the research, one Good line per option: why its adopters chose it.
+Each prototype's result is a Good or a Bad line on its option.

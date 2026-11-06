@@ -33,16 +33,15 @@ license (`plugin/LICENSE`). Linewright makes them non-interactive:
 
 The plugin's name is `linewright`, and every session gets a copy of it. A
 prompt's task is the steps the session takes, in order, and the step a skill
-covers has the session call it with the Skill tool. The implement prompt calls
-`linewright:implement`, which calls `linewright:tdd`, `linewright:code-review`
-and `linewright:pr`. The design prompt calls `linewright:software-design`, then
-`linewright:to-tickets`. The namespace keeps them apart from the harness's own
-skills and the repository's, which sessions can use too.
+covers has the session call it with the Skill tool. The namespace keeps them
+apart from the harness's own skills and the repository's, which sessions can
+use too.
 
 | file | origin | used by |
 |---|---|---|
 | `skills/triage/` | `mattpocock/skills`: `triage` (with `AGENT-BRIEF.md`, `OUT-OF-SCOPE.md`) | triage |
 | `skills/software-design/` | [`tibbe/skills`](https://github.com/tibbe/skills): `prior-art` | design |
+| `skills/prototype/` | `mattpocock/skills`: `prototype`, kept to the claims a design choice turns on | called by `software-design` |
 | `skills/to-tickets/` | `mattpocock/skills`: `to-tickets` | design |
 | `skills/implement/` | `mattpocock/skills`: `implement` | implementation |
 | `skills/tdd/` | `mattpocock/skills`: `tdd` | called by `implement` |
