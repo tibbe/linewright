@@ -10,29 +10,18 @@ It is written in Rust and built with cargo.
 
 ## Specs
 
-- `docs/specs/product.md`: the product spec on one page: problem, principles and
-  the list of areas.
-- The area files in `docs/specs/`, listed in `product.md`'s Areas table: one per
-  area of the product, with its user stories and, a section per topic, what
-  Linewright does in it.
-- `docs/specs/architecture.md`: the architecturally significant decisions, the
-  ones costly to change later, e.g. languages and frameworks.
-- `GLOSSARY.md`: the vocabulary the specs and the code use, each term defined
-  once.
+Write and change the specs with the `spec-writing` skill. Their supporting
+material, the files they name by path such as the briefs in `briefs/`, is part
+of what they decide, each in its own form rather than spec prose.
 
-How the code does what the specs say belongs in the code and its comments. Write
-specs as what Linewright should do, not as an account of what follows from it or
-of what other systems such as GitHub do. Keep the specs in step with
-user-visible behavior changes.
-
-Every state machine in the specs is expressed as a table.
-
-Changes to specs require human approval.
+Keep the specs in step with user-visible behavior changes. Changes to specs
+require human approval.
 
 ## Briefs
 
-Edit `briefs/` only in an interactive session. Changes to briefs require human
-approval.
+The briefs are what people write for Linewright's agents: the skills, the
+prompts, Linewright's own wording of what it fills into them, and the result
+schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
 
 ## Coding standards
 

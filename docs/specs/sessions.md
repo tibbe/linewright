@@ -31,7 +31,8 @@ costs its work nothing.
 - **Its capabilities.** A shell, the web and GitHub, which its agent is
   trusted to use for its work.
 - **A session's skills and tools.** A session or sub-agent has Linewright's
-  skills and the repository's own, and only the tools its work needs.
+  skills (`briefs/plugin/`) and the repository's own, and only the tools its
+  work needs.
 - **Not prevented.** An agent writing to GitHub outside its result is not
   prevented.
 - **The sessions' token.** Optionally, a GitHub token for agent sessions

@@ -482,7 +482,7 @@ impl Contract for AutomationResult {
     const SCHEMA: ResultSchema = ResultSchema::Automation;
 }
 
-/// A stage's result schema in `docs/specs/results/`.
+/// A stage's result schema in `briefs/results/`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSchema {
     Triage,
@@ -506,23 +506,23 @@ impl ResultSchema {
         match self {
             ResultSchema::Triage => (
                 "triage.schema.json",
-                include_str!("../docs/specs/results/triage.schema.json"),
+                include_str!("../briefs/results/triage.schema.json"),
             ),
             ResultSchema::DesignIssue => (
                 "design-issue.schema.json",
-                include_str!("../docs/specs/results/design-issue.schema.json"),
+                include_str!("../briefs/results/design-issue.schema.json"),
             ),
             ResultSchema::Implement => (
                 "implement.schema.json",
-                include_str!("../docs/specs/results/implement.schema.json"),
+                include_str!("../briefs/results/implement.schema.json"),
             ),
             ResultSchema::PullRequest => (
                 "pull-request.schema.json",
-                include_str!("../docs/specs/results/pull-request.schema.json"),
+                include_str!("../briefs/results/pull-request.schema.json"),
             ),
             ResultSchema::Automation => (
                 "automation.schema.json",
-                include_str!("../docs/specs/results/automation.schema.json"),
+                include_str!("../briefs/results/automation.schema.json"),
             ),
         }
     }
@@ -531,7 +531,7 @@ impl ResultSchema {
 /// What every result schema shares, reached through their `$ref`s.
 const COMMON: (&str, &str) = (
     "common.schema.json",
-    include_str!("../docs/specs/results/common.schema.json"),
+    include_str!("../briefs/results/common.schema.json"),
 );
 
 /// Where the schemas are registered, so that their relative `$ref`s resolve

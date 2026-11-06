@@ -97,7 +97,7 @@ filled besides those of every prompt ([Contract](runs.md#contract)).
 | `{{max_issues}}`   | its `max-issues`               |
 
 The session ends with a result that matches
-[`results/automation.schema.json`](results/automation.schema.json).
+[`briefs/results/automation.schema.json`](../../briefs/results/automation.schema.json).
 
 ## Out of scope
 

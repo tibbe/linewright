@@ -44,8 +44,6 @@ during the session.
   one harness interface.
 - **Sessions are processes beside Linewright**
   ([Isolation](sessions.md#isolation)).
-- **Briefs are files**: the skills in `briefs/plugin/` and the prompts in
-  `briefs/prompts/` ([Prompts](operation.md#prompts)).
 
 ## The protocol between Linewright and an agent
 
