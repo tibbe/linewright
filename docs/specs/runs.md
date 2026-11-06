@@ -91,8 +91,8 @@ automation's `automation.md` ([Prompts](operation.md#prompts)).
 
 - **Every prompt.** `{{facts}}` is the repository, its default branch and the
   spec glob, and `{{output}}` is Linewright's wording of the stage's result
-  contract, with the session's attachments directory
-  ([Attachments](#attachments)).
+  contract, with the session's attachments directory and the kinds of file
+  Linewright attaches ([Attachments](#attachments)).
 - **The result** is a JSON object in the session's final message: the whole
   message when it is one, else its last fenced code block when that holds one,
   else the text from its first `{` to its last `}`. Linewright checks it against
@@ -114,24 +114,27 @@ automation's `automation.md` ([Prompts](operation.md#prompts)).
 ## Attachments
 
 Markdown that Linewright posts to GitHub from a session's result shows the
-attachments it refers to, each uploaded as a GitHub attachment, as a file
-dropped into a comment is.
+attachments it refers to.
 
 - **The directory.** Each session has an attachments directory of its own,
   outside its clone.
+- **Kinds.** Linewright attaches images and videos, which it tells by the
+  file's extension, whatever its letter case: `.png`, `.jpg`, `.jpeg`, `.gif`,
+  `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`.
 - **References.** The Markdown refers to an attachment by its absolute path
   in the directory, in a reference: the destination of a Markdown image or
   link, or an HTML `img`'s `src`. Any other mention of a path is left as
   written.
 - **Refused.** The result goes back to its session ([Ending](#ending)) when
   a reference names a path in the directory that is not a regular file,
-  such as a missing file or a symlink, or an absolute path to a file outside
-  the directory, or when GitHub refuses an attachment over the file itself,
-  such as for its size.
+  such as a missing file or a symlink, or a file of a kind Linewright does
+  not attach, or an absolute path to a file outside the directory, or when
+  GitHub refuses an attachment over the file itself, such as for its size.
 - **Posting.** Linewright uploads each attachment the result's posted
-  Markdown refers to, once however many references it has, and puts its URL
-  in place of each path. A video embedded alone in its paragraph becomes its
-  bare URL; embedded anywhere else, it becomes a link to it.
+  Markdown refers to as a GitHub attachment, once however many references it
+  has, and puts its URL in place of each path. A video embedded alone in its
+  paragraph becomes its bare URL; embedded anywhere else, it becomes a link to
+  it.
 - **Uploads first.** Applying a result uploads its attachments before any
   other write it makes, the push included.
 - **Unused uploads.** An attachment uploaded for a result that is not then
