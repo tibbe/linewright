@@ -638,6 +638,7 @@ async fn every_turn_leaves_out_the_skills_the_harness_ships() {
         [
             "linewright:triage",
             "linewright:software-design",
+            "linewright:prototype",
             "linewright:to-tickets",
             "linewright:implement",
             "linewright:code-review",
@@ -646,7 +647,7 @@ async fn every_turn_leaves_out_the_skills_the_harness_ships() {
             "prior-art"
         ]
         .map(|skill| overrides.get(skill).is_some()),
-        [false; 8]
+        [false; 9]
     );
 }
 
