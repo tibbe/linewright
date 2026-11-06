@@ -1333,7 +1333,9 @@ async fn post_attachments(
         Err(Refusal::Secret { variable, path }) => {
             return sent_back(prompts::attachment_secret(prompts, &variable, &path));
         }
-        Err(refusal @ (Refusal::NotAFile { .. } | Refusal::Outside { .. })) => {
+        Err(
+            refusal @ (Refusal::NotAFile { .. } | Refusal::Kind { .. } | Refusal::Outside { .. }),
+        ) => {
             return sent_back(prompts::result_error(prompts, &refusal.to_string()));
         }
     };

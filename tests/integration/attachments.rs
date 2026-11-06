@@ -93,11 +93,11 @@ fn an_image_s_path_becomes_its_url() {
 #[test_log::test]
 fn a_link_s_path_becomes_its_url() {
     let record = Record::new();
-    record.put("logs/run.txt", b"log");
+    record.put("logs/run.png", b"png");
     let dir = record.path();
     assert_eq!(
-        record.rewritten(&format!("See [the log](<{dir}/logs/run.txt> \"Run\").")),
-        "See [the log](<https://github.com/user-attachments/assets/run.txt> \"Run\")."
+        record.rewritten(&format!("See [the run](<{dir}/logs/run.png> \"Run\").")),
+        "See [the run](<https://github.com/user-attachments/assets/run.png> \"Run\")."
     );
 }
 
@@ -341,6 +341,69 @@ fn a_missing_file_is_refused() {
             "`{dir}/missing.png` is in the attachments directory but is not a regular file there: \
              put the file itself at that path, not a symlink to it, or take the reference out"
         )
+    );
+}
+
+#[test_log::test]
+fn a_file_of_a_kind_linewright_does_not_attach_is_refused() {
+    let record = Record::new();
+    record.put("tree.txt", b"tree");
+    let dir = record.path();
+    let refusal = record
+        .resolve(&format!("[The tree]({dir}/tree.txt)"))
+        .unwrap_err();
+    assert_eq!(
+        refusal,
+        Refusal::Kind {
+            path: format!("{dir}/tree.txt").into()
+        }
+    );
+    assert_eq!(
+        refusal.to_string(),
+        format!(
+            "`{dir}/tree.txt` is not an image or a video: only `.png`, `.jpg`, `.jpeg`, \
+             `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm` files can be attached. Put \
+             anything else, such as text output or a log, in the Markdown itself, in a fenced \
+             code block or a `<details>` block when it is long, or take the reference out"
+        )
+    );
+}
+
+#[test_log::test]
+fn a_kind_is_told_by_its_extension_whatever_its_letter_case() {
+    let record = Record::new();
+    record.put("SHOT.PNG", b"png");
+    let dir = record.path();
+    let resolved = record.resolve(&format!("![x]({dir}/SHOT.PNG)")).unwrap();
+    assert_eq!(resolved.files()[0].content_type(), "image/png");
+}
+
+#[test_log::test]
+fn a_missing_file_of_a_kind_linewright_does_not_attach_is_not_a_file() {
+    let record = Record::new();
+    let dir = record.path();
+    assert_eq!(
+        record
+            .resolve(&format!("[notes]({dir}/notes.txt)"))
+            .unwrap_err(),
+        Refusal::NotAFile {
+            path: format!("{dir}/notes.txt").into()
+        }
+    );
+}
+
+#[test_log::test]
+fn a_file_of_a_kind_linewright_does_not_attach_is_refused_for_its_kind_before_its_secrets() {
+    let record = Record::new();
+    record.put("env.txt", b"GITHUB_TOKEN=ghp_s3cr3tt0k3n");
+    let dir = record.path();
+    let secrets = secrets_unnamed(&[("GITHUB_TOKEN", "ghp_s3cr3tt0k3n")]);
+    assert_eq!(
+        attachments::resolve(&record.dir, &[&format!("[env]({dir}/env.txt)")], &secrets)
+            .unwrap_err(),
+        Refusal::Kind {
+            path: format!("{dir}/env.txt").into()
+        }
     );
 }
 

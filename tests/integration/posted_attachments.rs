@@ -234,6 +234,41 @@ async fn an_attachment_github_refuses_is_sent_back_with_its_reason() {
 }
 
 #[test_log::test(tokio::test)]
+async fn a_reference_to_a_file_of_a_kind_linewright_does_not_attach_is_sent_back_before_any_upload()
+{
+    let mut world = World::new().await;
+    let store = world.store.clone();
+    implement_with_body(&world, move |call| {
+        if call.followup.is_none() {
+            store.refuse_attachments(AttachRefusal::Token("Not Found".into()));
+            let tree = call.spec.attachments.join("tree.txt");
+            std::fs::write(&tree, "tree").unwrap();
+            format!(
+                "![The gadgets]({})\n\n[The tree]({})",
+                save_shot(call),
+                tree.display()
+            )
+        } else {
+            store.accept_attachments();
+            "Shows them.".into()
+        }
+    });
+    open_ticket(&world, "Gadgets");
+
+    world.poll().await;
+
+    let prompts = world.harness.prompts(WorkKind::Implement);
+    assert_eq!(prompts.len(), 2);
+    assert!(
+        prompts[1].starts_with("Your final message could not be used: `")
+            && prompts[1].contains("tree.txt` is not an image or a video"),
+        "{}",
+        prompts[1]
+    );
+    assert_eq!(world.store.pulls().len(), 1);
+}
+
+#[test_log::test(tokio::test)]
 async fn an_attachment_github_refuses_over_linewrights_token_hands_the_ticket_back_at_once_keeping_the_work()
  {
     let mut world = World::new().await;
