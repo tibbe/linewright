@@ -51,17 +51,26 @@ pub fn output_of(events: &[serde_json::Value]) -> String {
     events.iter().map(|event| format!("{event}\n")).collect()
 }
 
-/// The events of each session of each run `world` recorded, in the order of
-/// its runs' records, each as its session's transcript holds it.
+/// The record of each session of each run `world` recorded, in the order of
+/// its runs' records.
 #[track_caller]
-pub fn session_events(world: &super::World) -> Vec<Vec<serde_json::Value>> {
+pub fn session_records(world: &super::World) -> Vec<linewright::transcript::SessionRecord> {
     let runs = linewright::runs::Runs::new(&world.dir.path().join("work"))
         .read()
         .unwrap();
     runs.iter()
         .flat_map(|run| &run.sessions)
-        .map(|session| {
-            let record = linewright::transcript::SessionRecord::read(&session.dir).unwrap();
+        .map(|session| linewright::transcript::SessionRecord::read(&session.dir).unwrap())
+        .collect()
+}
+
+/// The events of each session of each run `world` recorded, in the order of
+/// its runs' records, each as its session's transcript holds it.
+#[track_caller]
+pub fn session_events(world: &super::World) -> Vec<Vec<serde_json::Value>> {
+    session_records(world)
+        .into_iter()
+        .map(|record| {
             record
                 .output
                 .lines()

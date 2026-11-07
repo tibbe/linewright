@@ -8,7 +8,7 @@ use common::*;
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
 use linewright::harness::{
-    Harness, NextTurn, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
+    Harness, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
 };
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
@@ -715,6 +715,16 @@ fn refused_for_the_usage_limit(rate_limit_info: &Value) -> Vec<Value> {
         json!({"type": "system", "subtype": "init", "session_id": session}),
         json!({"type": "rate_limit_event", "rate_limit_info": rate_limit_info, "session_id": session}),
         json!({
+            "type": "assistant",
+            "message": {
+                "model": "<synthetic>",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "You've hit your session limit \u{b7} resets 7:50am (UTC)"}],
+            },
+            "error": "rate_limit",
+            "session_id": session,
+        }),
+        json!({
             "type": "result",
             "subtype": "success",
             "is_error": true,
@@ -747,29 +757,28 @@ async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
         .await
         .unwrap_err();
 
-    let SessionError::UsageLimit { limit, underway } = error else {
+    let SessionError::UsageLimit { limit, session } = error else {
         panic!("expected the usage limit, got {error:?}");
     };
     assert_eq!(limit.resets_at.to_rfc3339(), "2026-10-13T07:50:00+00:00");
-    assert_eq!(underway, None, "refused before the agent said anything");
+    let started = flag_value(&turn_args(dir.path())[0], "--session-id").map(str::to_string);
+    assert_eq!(Some(session), started);
 }
 
 #[test_log::test(tokio::test)]
-async fn a_turn_refused_part_way_for_the_usage_limit_names_its_session_to_resume() {
+async fn a_resumed_turn_refused_for_the_usage_limit_names_the_resumed_session() {
     let dir = tempfile::tempdir().unwrap();
-    let mut stream = refused_for_the_usage_limit(&rejected());
-    stream.insert(1, saying("Reading the ticket."));
-    let harness = harness_streaming(dir.path(), &stream);
+    let harness = harness_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
 
     let error = harness
         .resume(&triage_session(dir.path()), "c0ffee", "Go on.")
         .await
         .unwrap_err();
 
-    let SessionError::UsageLimit { underway, .. } = error else {
+    let SessionError::UsageLimit { session, .. } = error else {
         panic!("expected the usage limit, got {error:?}");
     };
-    assert_eq!(underway.as_deref(), Some("c0ffee"));
+    assert_eq!(session, "c0ffee");
 }
 
 #[test_log::test(tokio::test)]
@@ -1168,40 +1177,6 @@ fn a_refused_session_waits_until(#[case] resets_at: &str, #[case] until: &str) {
     };
 
     assert_eq!(limit.wait_until(at("2026-10-13T06:00:00Z")), at(until));
-}
-
-fn resume(session: &str, prompt: &str) -> NextTurn {
-    NextTurn::Resume {
-        session: session.into(),
-        prompt: prompt.into(),
-    }
-}
-
-#[rstest]
-#[case::a_first_turn_refused_before_it_began_is_taken_again(NextTurn::Start, None, NextTurn::Start)]
-#[case::a_follow_up_refused_before_it_began_is_taken_again(
-    resume("s-1", "Answer with JSON."),
-    None,
-    resume("s-1", "Answer with JSON.")
-)]
-#[case::a_first_turn_under_way_resumes_its_session(
-    NextTurn::Start,
-    Some("s-1"),
-    resume("s-1", "The limit reset; carry on.")
-)]
-#[case::a_follow_up_under_way_resumes_its_session(
-    resume("s-1", "Answer with JSON."),
-    Some("s-1"),
-    resume("s-1", "The limit reset; carry on.")
-)]
-fn a_turn_refused_for_the_usage_limit_is_followed_once_it_resets_by(
-    #[case] refused: NextTurn,
-    #[case] underway: Option<&str>,
-    #[case] expected: NextTurn,
-) {
-    let next = refused.after_refusal(underway.map(str::to_string), "The limit reset; carry on.");
-
-    assert_eq!(next, expected);
 }
 
 #[rstest]

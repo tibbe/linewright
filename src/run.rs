@@ -989,9 +989,9 @@ async fn take_turn(
                 cancellable(ctx, shell.harness.resume(spec, session, prompt)).await?
             }
         };
-        let (limit, underway) = match turn {
+        let (limit, session) = match turn {
             Ok(turn) => return Ok(turn),
-            Err(SessionError::UsageLimit { limit, underway }) => (limit, underway),
+            Err(SessionError::UsageLimit { limit, session }) => (limit, session),
             Err(SessionError::Infrastructure(reason)) => {
                 return Err(infra(anyhow::anyhow!(reason)));
             }
@@ -1030,15 +1030,11 @@ async fn take_turn(
         .map_err(infra)?;
         spec.deadline =
             UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
-        if underway.is_some() {
-            info!(subject, %resets_at, "usage limit reset; resuming the session");
-        } else {
-            info!(subject, %resets_at, "usage limit reset; taking the refused turn again");
-        }
-        next = next.after_refusal(
-            underway,
-            &prompts::usage_limit_reset(&ctx.with.briefs.prompts),
-        );
+        info!(subject, %resets_at, "usage limit reset; resuming the session");
+        next = NextTurn::Resume {
+            session,
+            prompt: prompts::usage_limit_reset(&ctx.with.briefs.prompts),
+        };
     }
 }
 

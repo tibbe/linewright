@@ -266,9 +266,7 @@ fn the_command_that_runs_one_now_is_named_after_automations() {
 #[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     let mut world = with_automation("weekly", WEEKLY).await;
-    world
-        .harness
-        .on_automation(|_| refused_for_the_usage_limit());
+    world.harness.on_automation(refused_for_the_usage_limit);
     let (log, _guard) = Log::capture();
 
     world

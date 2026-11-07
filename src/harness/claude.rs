@@ -404,7 +404,6 @@ impl ClaudeCode {
             let mut lines = BufReader::new(stdout).lines();
             let mut result = None;
             let mut refusal = None;
-            let mut underway = false;
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = self.redaction.apply(&line);
                 if let Some(file) = output.as_mut() {
@@ -429,7 +428,6 @@ impl ClaudeCode {
                         refusal = event.and_then(|e| e.refusal()).or(refusal);
                     }
                     Some("assistant") => {
-                        underway = true;
                         let mut log = log.lock().expect("the log's lock is not poisoned");
                         for text in assistant_text(&event) {
                             log.said.push_back(text);
@@ -441,7 +439,7 @@ impl ClaudeCode {
                     _ => {}
                 }
             }
-            (result, refusal, underway)
+            (result, refusal)
         };
         let read_stderr = async {
             let mut errors = String::new();
@@ -450,9 +448,8 @@ impl ClaudeCode {
                 self.redaction.apply(&errors);
         };
         let outcome = tokio::time::timeout_at(spec.deadline, async {
-            let ((result, refusal, underway), (), ()) =
-                tokio::join!(read_stdout, read_stderr, feed);
-            (result, refusal, underway, child.wait().await)
+            let ((result, refusal), (), ()) = tokio::join!(read_stdout, read_stderr, feed);
+            (result, refusal, child.wait().await)
         })
         .await;
         let session = session.id().to_string();
@@ -464,7 +461,7 @@ impl ClaudeCode {
         .await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
-        let Ok((result, refusal, underway, status)) = outcome else {
+        let Ok((result, refusal, status)) = outcome else {
             child.end().await;
             return Err(SessionError::TimedOut {
                 log_tail: log.tail(),
@@ -480,10 +477,7 @@ impl ClaudeCode {
                 message,
                 log_tail: log.tail(),
             }),
-            _ if let Some(limit) = refusal => Err(SessionError::UsageLimit {
-                limit,
-                underway: underway.then_some(session),
-            }),
+            _ if let Some(limit) = refusal => Err(SessionError::UsageLimit { limit, session }),
             Some(event)
                 if event.terminal_reason.as_deref() == Some("api_error")
                     || event
