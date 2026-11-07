@@ -13,8 +13,8 @@ use super::kept::{self, BuildId, BuildRecord, Builds, Built};
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
 use crate::status::{Fact, Paint};
-use crate::transcript;
 use crate::transcript::lines::maintenance_account;
+use crate::transcript::{self, Course, Lasted, MaintenanceEnded};
 
 /// The environment as `status` shows it (`docs/specs/monitoring.md`,
 /// status).
@@ -284,6 +284,26 @@ pub(crate) fn account(build: &BuildShown) -> Account {
         (None, Some(ended)) if ended.status.failed() => Account::Failed(maintenance_account(ended)),
         (None, Some(ended)) => Account::Ended(maintenance_account(ended)),
         (None, None) => Account::Running,
+    }
+}
+
+/// How far `build`'s command has run, and how long it ran, as a
+/// transcript's maintenance command's are told
+/// (`docs/specs/design_system.md`, Transcripts, Running).
+pub(crate) fn course(build: &BuildShown) -> (Course<&MaintenanceEnded>, Lasted) {
+    match &build.record.line.ended {
+        Some(ended) => (
+            Course::Ended(ended),
+            Lasted::Took {
+                seconds: Some(ended.duration_seconds),
+            },
+        ),
+        None => (
+            Course::Running,
+            Lasted::Running {
+                since: Some(build.record.at),
+            },
+        ),
     }
 }
 

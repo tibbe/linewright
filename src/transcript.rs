@@ -167,7 +167,7 @@ impl<T> Course<T> {
 }
 
 /// The account of an entry that runs still.
-const RUNNING: &str = "running";
+pub(crate) const RUNNING: &str = "running";
 
 /// The account of an entry its session ended first.
 pub(crate) const INTERRUPTED: &str = "interrupted";

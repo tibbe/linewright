@@ -163,12 +163,26 @@
     @apply mr-4;
   }
 
-  .transcript .entry:target > .line,
-  .transcript .entry:target > details > summary {
-    @apply bg-warning/20;
+  /* The chevron of a line that opens, drawn in place of the browser's own
+     marker (https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/summary#changing_the_summarys_icon). */
+  summary.line {
+    @apply cursor-pointer list-none;
   }
 
-  .transcript :is(.thinking, .context, .event, .other, .brief) .text {
+  summary.line::-webkit-details-marker {
+    display: none;
+  }
+
+  summary.line > .chevron::before {
+    @apply inline-block transition-transform;
+    content: "\203A" / "";
+  }
+
+  details[open] > summary.line > .chevron::before {
+    @apply rotate-90;
+  }
+
+  .transcript .thinking .text {
     @apply text-muted;
   }
 }

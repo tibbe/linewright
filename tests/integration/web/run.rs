@@ -98,22 +98,26 @@ async fn implemented_after(maintenance: &str, maintenance_log: Option<&str>) -> 
     pages
 }
 
-/// The run page's headers and entries in order, each entry as its line,
-/// and with `io` its fold's input and result too, as a reader reads them.
-fn transcript_shown(html: &Html, io: bool) -> Vec<String> {
-    let parts = Selector::parse(if io { ".line, .io" } else { ".line" }).unwrap();
+/// The run page's headers and entries in order, each entry as its line
+/// with its text cut to `chars` characters, and with `io` its fold's input
+/// and result too, as a reader reads them.
+fn transcript_shown(html: &Html, chars: usize, io: bool) -> Vec<String> {
     select(html, "#transcript h1, #transcript h2, #transcript .entry")
         .into_iter()
         .map(|shown| {
             if !shown.value().classes().any(|class| class == "entry") {
                 return text(shown);
             }
-            let own: Vec<String> = shown
-                .select(&parts)
+            let line = line_of(shown, chars);
+            if !io {
+                return line;
+            }
+            let parts: Vec<String> = select_in(shown, ".io")
+                .into_iter()
                 .filter(|part| entry_of(*part) == Some(shown))
                 .map(text)
                 .collect();
-            own.join(" ")
+            [vec![line], parts].concat().join(" ")
         })
         .collect()
 }
@@ -134,83 +138,124 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
         .collect()
 }
 
+/// The own line of `entry`, as a reader reads it: its text cut to `chars`
+/// characters, then, where it shows one, ` | ` and its duration, which
+/// reads `since` its start while it ticks.
+#[track_caller]
+fn line_of(entry: ElementRef, chars: usize) -> String {
+    let line = select_in(entry, ".line")
+        .into_iter()
+        .find(|line| entry_of(*line) == Some(entry))
+        .expect("an entry has a line");
+    read_line(line, chars)
+}
+
+/// `line` as [`line_of`] reads an entry's.
+#[track_caller]
+fn read_line(line: ElementRef, chars: usize) -> String {
+    let said: String = text(select_in(line, ".text")[0])
+        .chars()
+        .take(chars)
+        .collect();
+    let durations = select_in(line, "time.duration");
+    match durations.first() {
+        None => said,
+        Some(duration) => match duration.attr("data-since") {
+            Some(since) => format!("{said} | since {since}"),
+            None => format!("{said} | {}", text(*duration)),
+        },
+    }
+}
+
+/// The session's settings, as their line and the lines they open to, and
+/// whether they start open.
+#[track_caller]
+fn settings_shown(html: &Html) -> (String, Vec<String>, bool) {
+    let settings = select(html, "#s1 .settings > details");
+    assert_eq!(settings.len(), 1, "one settings fold");
+    let line = text(select_in(settings[0], "summary .ran")[0]);
+    let layers = select_in(settings[0], ".layers li")
+        .into_iter()
+        .map(text)
+        .collect();
+    (line, layers, settings[0].attr("open").is_some())
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's settings and
+/// Verbose.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_above_each_session_its_model_effort_and_where_its_settings_and_prompts_came_from()
+async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_and_verbose_opens_them()
  {
     let pages = implemented_as_recorded().await;
 
     let html = pages.page("/runs/1/implement-1").await;
+    let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
-    let texts =
-        |selector: &str| -> Vec<String> { select(&html, selector).into_iter().map(text).collect() };
-    assert_eq!(
-        texts("#s1 .ran"),
-        ["model the harness's choice, effort the harness's choice"]
-    );
-    assert_eq!(
-        texts("#s1 .layers .setting"),
-        [
-            "model: the harness's",
-            "effort: the harness's",
-            "session-timeout: the operator's",
-            "session-env: Linewright's own",
-            "session-pass-env: Linewright's own",
-            "maintenance: Linewright's own",
-        ]
-    );
-    assert_eq!(
-        texts("#s1 .layers .prompt"),
-        [
-            "follow-ups/result-error.md: Linewright's own",
-            "implement.md: the operator's",
-        ]
-    );
+    let layers: Vec<String> = [
+        "model: the harness's",
+        "effort: the harness's",
+        "session-timeout: the operator's",
+        "session-env: Linewright's own",
+        "session-pass-env: Linewright's own",
+        "maintenance: Linewright's own",
+        "follow-ups/result-error.md: Linewright's own",
+        "implement.md: the operator's",
+    ]
+    .map(String::from)
+    .to_vec();
+    let line = "model the harness's choice, effort the harness's choice".to_string();
+    assert_eq!(settings_shown(&html), (line.clone(), layers.clone(), false));
+    assert_eq!(settings_shown(&verbose), (line, layers, true));
+    let chevron = select(&html, "#s1 .settings > details > summary > .chevron");
+    assert_eq!(chevron.len(), 1);
 }
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
 /// Muted text.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_a_sessions_ran_with_line_its_layers_and_each_entrys_time_in_muted_text()
-{
+async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_muted_text() {
     let pages = implemented_as_recorded().await;
 
     let html = pages.page("/runs/1/implement-1").await;
 
-    for selector in ["#s1 .ran", "#s1 .layers", "#transcript a.at"] {
+    for selector in ["#s1 .ran", "#s1 .layers", "#transcript time.duration"] {
         assert_in_muted_text(&html, selector);
     }
 }
 
+/// `docs/specs/design_system.md`, The run page, Views, Prompts, Durations
+/// and Folding.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_line() {
+async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_to_its_line() {
     let pages = implemented_as_recorded().await;
 
     let html = pages.page("/runs/1/implement-1").await;
 
     assert_eq!(
-        cut(&transcript_shown(&html, false), 100),
+        transcript_shown(&html, 95, false),
         [
             "1/implement-1",
             "session 1: started 2026-10-13 10:09:08 UTC",
-            "0:03 Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit ",
-            "0:14 Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2",
-            "0:15 Skill(linewright:tdd) → loaded",
-            "0:18 Can't build images here (no Docker), and the repo has no test seam for the Dockerfile, so I'll ",
-            "0:27 Read(Dockerfile) → 16 lines",
-            "0:35 Edit(Dockerfile) → edited",
-            "2:00 Agent(Standards review) → done, 2 tool uses, 16s",
-            "2:02 Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0",
-            "2:45 Both reviews came back clean. One optional fix: the README and the image label use the serial c",
-            "2:59 {\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
-            "3:22 follow-up: Your final message could not be used: The final message holds no JSON object. End wi",
-            "3:25 Bash(git commit -qam \"Ship gh and python3 in the base image…) → exit 0, 1 line",
-            "3:28 {\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
+            "brief: # Your task",
+            "Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit  | 0s",
+            "Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2 | 0s",
+            "Skill(linewright:tdd) → loaded | 0s",
+            "Can't build images here (no Docker), and the repo has no test seam for the Dockerfile, so I'll ",
+            "Read(Dockerfile) → 16 lines | 0s",
+            "Edit(Dockerfile) → edited | 0s",
+            "Agent(Standards review) → done, 2 tool uses 1 entry | 16s",
+            "Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0 | 0s",
+            "Both reviews came back clean. One optional fix: the README and the image label use the serial c",
+            "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
+            "follow-up: Your final message could not be used: The final message holds no JSON object. End wi",
+            "Bash(git commit -qam \"Ship gh and python3 in the base image…) → exit 0, 1 line | 0s",
+            "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
         ]
     );
-    let calls = select(&html, "#transcript .entry > details.call");
+    let calls = select(&html, "#transcript .entry.tool > details");
     assert_eq!(calls.len(), 8);
     for call in &calls {
-        let line = text(select_in(*call, "summary .line")[0]);
+        let line = text(select_in(*call, "summary.line .text")[0]);
         let failed = line.ends_with("→ exit 2");
         assert_eq!(call.attr("open").is_some(), failed, "{line}");
         let io: Vec<String> = select_in(*call, ".io > *")
@@ -228,42 +273,74 @@ async fn the_run_page_shows_what_logs_shows_with_each_tool_call_folded_to_its_li
             "{line}: {io:?}"
         );
     }
-    let counted = select(&html, "#transcript details.call > summary > .count");
+    let counted = select(&html, "#transcript summary.line .count");
     assert_eq!(counted.len(), 1);
     let agent_call = counted[0]
         .ancestors()
-        .find_map(ElementRef::wrap)
-        .and_then(|summary| ElementRef::wrap(summary.parent().unwrap()))
+        .filter_map(ElementRef::wrap)
+        .find(|ancestor| ancestor.value().name() == "details")
         .unwrap();
     assert_eq!(agent_call.attr("open"), None);
-    assert_eq!(
-        text(select_in(agent_call, "summary")[0]),
-        "2:00 Agent(Standards review) → done, 2 tool uses, 16s 1 entry"
-    );
-    let work: Vec<String> = entry_lines_in(agent_call)
+    let work: Vec<String> = select_in(agent_call, ".entry")
         .into_iter()
-        .map(|(_, line)| line)
+        .map(|entry| line_of(entry, 30))
         .collect();
-    assert_eq!(cut(&work, 30), ["2:02 Bash(git diff origin/main"]);
+    assert_eq!(work, ["Bash(git diff origin/main...HE | 0s"]);
+    let brief = select(&html, "#transcript .entry.brief > details");
+    assert_eq!(brief.len(), 1);
+    assert_eq!(brief[0].attr("open"), None);
+    assert_eq!(
+        text(select_in(brief[0], ".prompt")[0]),
+        "# Your task Implement the ticket below."
+    );
     assert_no_status_by_colour_alone(&html);
 }
 
+/// `docs/specs/web/design_system.md`, Transcripts, Lines.
 #[test_log::test(tokio::test)]
-async fn the_run_pages_entry_stamp_shows_when_the_entry_happened_in_the_pages_tooltip() {
+async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_opens_fills() {
     let pages = implemented_as_recorded().await;
 
-    let html = pages.page("/runs/1/implement-1").await;
+    for path in ["/runs/1/implement-1", "/runs/1/implement-1?verbose="] {
+        let html = pages.page(path).await;
 
-    let stamp = select(&html, "#transcript a.at")
-        .into_iter()
-        .find(|stamp| text(*stamp) == "0:03")
-        .unwrap();
-    assert_eq!(stamp.attr("data-tip"), Some("2026-10-13 10:09:11 UTC"));
-    assert_eq!(select(&html, "[title]").len(), 0);
+        let entries = select(&html, "#transcript .entry");
+        assert_ne!(entries.len(), 0);
+        for entry in entries {
+            let line = select_in(entry, ".line")
+                .into_iter()
+                .find(|line| entry_of(*line) == Some(entry))
+                .unwrap();
+            let first = line.children().find_map(ElementRef::wrap).unwrap();
+            assert!(
+                first.value().classes().any(|class| class == "chevron"),
+                "{}",
+                line.html()
+            );
+            let opens = line.value().name() == "summary";
+            let folds = select_in(entry, "details")
+                .into_iter()
+                .any(|fold| entry_of(fold) == Some(entry));
+            assert_eq!(opens, folds, "{}", entry.html());
+        }
+    }
 }
 
+/// `docs/specs/design_system.md`, Out of scope: a link of its own to each
+/// transcript entry.
 #[test_log::test(tokio::test)]
-async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everything_open() {
+async fn no_entry_on_the_run_page_has_a_link_of_its_own() {
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1?verbose=").await;
+
+    assert_eq!(select(&html, "#transcript .entry a").len(), 0);
+    assert_eq!(select(&html, "a[href^='#']").len(), 0);
+}
+
+/// `docs/specs/design_system.md`, The run page, Views and Verbose.
+#[test_log::test(tokio::test)]
+async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everything_open() {
     let pages = implemented_as_recorded().await;
     let html = pages.page("/runs/1/implement-1").await;
     let switch = select(&html, "[role=switch]");
@@ -274,52 +351,44 @@ async fn the_run_pages_verbose_switch_shows_what_logs_verbose_shows_with_everyth
     let verbose = pages.page(&verbose_path).await;
 
     assert_eq!(
-        cut(&transcript_shown(&verbose, true), 40),
+        cut(&transcript_shown(&verbose, usize::MAX, true), 40),
         [
             "1/implement-1",
             "session 1: started 2026-10-13 10:09:08 U",
-            "0:00 brief: # Your task Implement the ti",
-            "0:00 event: {\"analytics_disabled\":false,",
-            "0:03 Bash(ls; cat Dockerfile; ls deploy;",
-            "0:04 thinking: The listing has a Dockerf",
-            "0:14 Bash(which podman buildah nerdctl h",
-            "0:15 Skill(linewright:tdd) → loaded inpu",
-            "0:15 context: Base directory for this sk",
-            "0:18 Can't build images here (no Docker)",
-            "0:27 Read(Dockerfile) → 16 lines input: ",
-            "0:35 Edit(Dockerfile) → edited input: { ",
-            "2:00 Agent(Standards review) → done, 2 t",
-            "2:00 context: Review a diff in /srv/line",
-            "2:02 Bash(git diff origin/main...HEAD --",
-            "2:00 event: {\"description\":\"Standards re",
-            "2:02 event: {\"output_file\":\"/srv/linewri",
-            "2:45 Both reviews came back clean. One o",
-            "2:59 {\"outcome\":\"done\",\"pr_title\":\"Ship ",
-            "2:59 event: {\"api_error_status\":null,\"du",
-            "3:22 follow-up: Your final message could",
-            "3:22 event: {\"analytics_disabled\":false,",
-            "3:25 Bash(git commit -qam \"Ship gh and p",
-            "3:28 {\"outcome\":\"done\",\"pr_title\":\"Ship ",
-            "3:28 event: {\"api_error_status\":null,\"du",
+            "brief: # Your task",
+            "Bash(ls; cat Dockerfile; ls deploy; cat ",
+            "thinking: The listing has a Dockerfile. ",
+            "Bash(which podman buildah nerdctl hadoli",
+            "Skill(linewright:tdd) → loaded | 0s inpu",
+            "Can't build images here (no Docker), and",
+            "Read(Dockerfile) → 16 lines | 0s input: ",
+            "Edit(Dockerfile) → edited | 0s input: { ",
+            "Agent(Standards review) → done, 2 tool u",
+            "Bash(git diff origin/main...HEAD --stat ",
+            "Both reviews came back clean. One option",
+            "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
+            "follow-up: Your final message could not ",
+            "Bash(git commit -qam \"Ship gh and python",
+            "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
         ]
     );
-    let shown = transcript_shown(&verbose, true);
+    let shown = transcript_shown(&verbose, 200, true);
     assert!(
-        shown[4].contains(
-            r#"→ exit 0, 19 lines input: { "command": "ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"image\\|git\\b\" README.md | head -50; cat CODING_STANDARDS.md | head -80" } result: AGENTS.md CODING_STANDARDS.md"#
+        shown[3].contains(
+            r#"→ exit 0, 19 lines | 0s input: { "command": "ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"image\\|git\\b\" README.md | head -50; cat CODING_STANDARDS.md | head -80" } result: AGENTS.md CODING_STANDARDS.md"#
         ),
         "{}",
-        shown[4]
+        shown[3]
     );
     assert_eq!(
-        shown[5],
-        "0:04 thinking: The listing has a Dockerfile. I'll check what the image ships."
+        shown[4],
+        "thinking: The listing has a Dockerfile. I'll check what the image ships."
     );
     let folds = select(&verbose, "#transcript details");
-    assert_eq!(folds.len(), 8);
+    assert_eq!(folds.len(), 10);
     assert!(folds.iter().all(|fold| fold.attr("open").is_some()));
-    let count = select(&verbose, "#transcript details.call > summary > .count");
-    assert_eq!(text(count[0]), "2 entries");
+    let count = select(&verbose, "#transcript summary.line .count");
+    assert_eq!(text(count[0]), "1 entry");
     let back = select(&verbose, "[role=switch]");
     assert_eq!(back[0].attr("aria-checked"), Some("true"));
     assert_eq!(back[0].attr("href"), Some("/runs/1/implement-1"));
@@ -406,21 +475,15 @@ fn patches(event: &str) -> Vec<(String, String, Html)> {
         .collect()
 }
 
-/// Each entry's line, by its anchor.
+/// Each entry's line, as [`line_of`] reads it, by its ID.
 fn entry_lines(html: &Html) -> Vec<(String, String)> {
-    entry_lines_in(html.root_element())
-}
-
-fn entry_lines_in(element: ElementRef) -> Vec<(String, String)> {
-    select_in(element, ".entry")
+    select(html, ".entry")
         .into_iter()
         .map(|entry| {
-            let line = entry
-                .select(&Selector::parse(".line").unwrap())
-                .find(|line| entry_of(*line) == Some(entry))
-                .map(text)
-                .unwrap_or_default();
-            (entry.attr("id").unwrap().to_string(), line)
+            (
+                entry.attr("id").unwrap().to_string(),
+                line_of(entry, usize::MAX),
+            )
         })
         .collect()
 }
@@ -476,7 +539,9 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     );
     let call_id = entry_lines(call)[0].0.clone();
     assert!(
-        entry_lines(call)[0].1.ends_with("2>&1) → running"),
+        entry_lines(call)[0]
+            .1
+            .contains("2>&1) → running | since 2026-"),
         "{:?}",
         entry_lines(call)
     );
@@ -488,11 +553,15 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     };
     assert_eq!(
         (replaced_at.as_str(), replaced_by.as_str()),
-        (format!("#{call_id}-call").as_str(), "outerHTML")
+        (format!("#{call_id}-fold").as_str(), "outerHTML")
     );
-    let replaced = select(account, "details.call");
+    let replaced = select(account, "details");
     assert!(replaced[0].attr("open").is_some());
-    assert!(text(select_in(replaced[0], "summary")[0]).ends_with("2>&1) → exit 2"));
+    let returned_line = read_line(select_in(replaced[0], "summary.line")[0], usize::MAX);
+    assert!(
+        returned_line.ends_with("2>&1) → exit 2 | 0s"),
+        "{returned_line}"
+    );
     let accounts: Vec<Vec<(String, String)>> = rest
         .iter()
         .map(|(_, data)| {
@@ -524,10 +593,10 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
                     shown.push((id, line));
                 }
             } else if let Some(entry) = target.strip_prefix('#').and_then(|id| {
-                id.strip_suffix("-call")
+                id.strip_suffix("-fold")
                     .or_else(|| id.strip_suffix("-line"))
             }) {
-                let line = text(select(&html, ".line")[0]);
+                let line = read_line(select(&html, ".line")[0], usize::MAX);
                 shown.iter_mut().find(|(id, _)| id == entry).unwrap().1 = line;
             }
         }
@@ -764,7 +833,7 @@ fn maintenances_shown(html: &Html) -> Vec<(String, String, bool)> {
     select(html, ".entry.maintenance")
         .into_iter()
         .map(|maintenance| {
-            let line = text(select_in(maintenance, ".line")[0]);
+            let line = read_line(select_in(maintenance, ".line")[0], usize::MAX);
             let output = select_in(maintenance, ".output")
                 .into_iter()
                 .map(text)
@@ -777,8 +846,8 @@ fn maintenances_shown(html: &Html) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Times and Maintenance; The run
-/// page, Folding and Verbose.
+/// `docs/specs/design_system.md`, Transcripts, Maintenance; The run page,
+/// Durations, Folding and Verbose.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_maintenance_command_as_its_sessions_first_entry_folded_to_its_line() {
     let pages = implemented_after(
@@ -795,7 +864,7 @@ async fn the_run_page_shows_a_maintenance_command_as_its_sessions_first_entry_fo
     let html = pages.page("/runs/1/implement-1").await;
     let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
-    let line = "0:00 maintenance: echo 'added 3 packages' → exit 0, 0s".to_string();
+    let line = "maintenance: echo 'added 3 packages' → exit 0 | 0s".to_string();
     assert_eq!(
         maintenances_shown(&html),
         [(line.clone(), "added 3 packages".to_string(), false)]
@@ -859,7 +928,7 @@ async fn the_page_of_a_run_whose_maintenance_command_failed_shows_it_open_under_
         ]
     );
     let failed = (
-        "0:00 maintenance: echo 'npm ERR! missing lockfile'; exit 3 → exit 3, 0s".to_string(),
+        "maintenance: echo 'npm ERR! missing lockfile'; exit 3 → exit 3 | 0s".to_string(),
         "npm ERR! missing lockfile".to_string(),
         true,
     );
@@ -906,7 +975,7 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
     assert_eq!(
         maintenances_shown(&read),
         [(
-            "0:00 maintenance: npm ci → running".to_string(),
+            "maintenance: npm ci → running | since 2026-10-14T12:00:00Z".to_string(),
             String::new(),
             false
         )]
@@ -918,7 +987,7 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
     assert_eq!(
         maintenances_shown(html),
         [(
-            "0:00 maintenance: npm ci → exit 0, 12s".to_string(),
+            "maintenance: npm ci → exit 0 | 12s".to_string(),
             "installing".to_string(),
             false
         )]
@@ -944,7 +1013,7 @@ fn clones_shown(html: &Html) -> Vec<(String, String, bool)> {
     select(html, ".entry.clone")
         .into_iter()
         .map(|clone| {
-            let line = text(select_in(clone, ".line")[0]);
+            let line = read_line(select_in(clone, ".line")[0], usize::MAX);
             let error = select_in(clone, ".output")
                 .into_iter()
                 .map(text)
@@ -980,7 +1049,7 @@ async fn the_run_page_shows_the_clone_as_its_sessions_first_entry_before_the_mai
 
     assert_eq!(
         clones_shown(&html),
-        [("0:00 clone → 6s".to_string(), String::new(), false)]
+        [("clone → done | 6s".to_string(), String::new(), false)]
     );
     let entries = select(&html, "#s1-entries > .entry");
     assert_eq!(entries[0].attr("id"), Some("s1-e1"));
@@ -1024,7 +1093,7 @@ async fn the_page_of_a_run_whose_clone_could_not_be_made_shows_its_error_open() 
     assert_eq!(
         clones_shown(&html),
         [(
-            "0:00 clone → 3s".to_string(),
+            "clone → failed | 3s".to_string(),
             "fetching origin: fatal: could not read from remote".to_string(),
             true
         )]
@@ -1065,7 +1134,11 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
 
     assert_eq!(
         clones_shown(&read),
-        [("0:00 clone → running".to_string(), String::new(), false)]
+        [(
+            "clone → running | since 2026-10-14T12:00:00Z".to_string(),
+            String::new(),
+            false
+        )]
     );
     let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
         panic!("{ended:?}")
@@ -1073,7 +1146,7 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
     assert_eq!(
         clones_shown(html),
-        [("0:00 clone → 12s".to_string(), String::new(), false)]
+        [("clone → done | 12s".to_string(), String::new(), false)]
     );
 }
 
@@ -1120,15 +1193,50 @@ async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
     .await;
 
     assert!(
-        entry_lines(&read)[1]
-            .1
-            .ends_with("Bash(cargo test) → running"),
+        entry_lines(&read)[1].1 == "Bash(cargo test) → running | since 2026-10-14T12:00:20Z",
         "{:?}",
         entry_lines(&read)
     );
     let lines: Vec<String> = patches(&ended.last().unwrap().1)
         .iter()
-        .filter_map(|(_, _, html)| select(html, ".line").first().map(|line| text(*line)))
+        .filter_map(|(_, _, html)| {
+            select(html, ".line")
+                .first()
+                .map(|line| read_line(*line, usize::MAX))
+        })
         .collect();
-    assert_eq!(lines, ["0:20 Bash(cargo test) → interrupted"]);
+    assert_eq!(lines, ["Bash(cargo test) → interrupted | 10s"]);
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// Durations.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessions_end_is_not_known()
+ {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let dir = "sessions/issue-1/20261014T120000Z-triage";
+    let call = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-14T12:00:20Z",
+        "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+        ]},
+    });
+    pages.write(&[(&format!("{dir}/output.jsonl"), &format!("{call}\n"))]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
+        "sessions": [ran(dir)],
+    }));
+
+    let html = pages.page("/runs/1/triage-1").await;
+
+    let lines: Vec<String> = entry_lines(&html)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(lines, ["Bash(cargo test) → interrupted"]);
 }
