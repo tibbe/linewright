@@ -379,3 +379,57 @@ fn a_session_yet_to_write_anything_counts_as_started() {
         "{\"type\":\"run\",\"run\":\"1/triage-1\",\"sessions\":1}\n"
     );
 }
+
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test_log::test]
+fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_interrupted() {
+    let made = |at: &str| {
+        output_of(&[
+            json!({"type": "linewright-turn", "started_at": at, "started_by": "brief"}),
+            json!({
+                "type": "assistant",
+                "timestamp": at,
+                "message": {"content": [
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+                ]},
+            }),
+        ])
+    };
+    let shown = |ending: Option<&str>| {
+        let sessions = json!(["sessions/5/rework-1", "sessions/5/rework-1-2"]);
+        let record = item_run_record(5, "rework", 1, ending, &sessions);
+        let (base, work_dir) = work_dir_holding(&[
+            ("runs/items/5/rework-1.json", &record),
+            (
+                "sessions/5/rework-1/output.jsonl",
+                &made("2026-10-14T12:00:05Z"),
+            ),
+            (
+                "sessions/5/rework-1-2/output.jsonl",
+                &made("2026-10-14T12:00:30Z"),
+            ),
+        ]);
+        let _lock = ending
+            .is_none()
+            .then(|| lock_of(&base.path().join(REPO).join("runs/items/5/rework-1.json")));
+        let transcript = logs::answer(&work_dir, &item(5)).unwrap();
+        transcript::render(&transcript, Verbosity::Compact, false)
+    };
+
+    assert_eq!(
+        shown(None),
+        "run: 5/rework-1\n\
+         session 1: started 2026-10-14 12:00:05 UTC\n \
+         0:00  Bash(cargo test) → interrupted\n\
+         session 2: started 2026-10-14 12:00:30 UTC\n \
+         0:00  Bash(cargo test) → running\n"
+    );
+    assert_eq!(
+        shown(Some("done")),
+        "run: 5/rework-1\n\
+         session 1: started 2026-10-14 12:00:05 UTC\n \
+         0:00  Bash(cargo test) → interrupted\n\
+         session 2: started 2026-10-14 12:00:30 UTC\n \
+         0:00  Bash(cargo test) → interrupted\n"
+    );
+}

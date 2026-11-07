@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::domain::Timestamp;
-use crate::phrase::Phrase;
 use crate::runs::{Ran, Started};
 
 pub use lines::{
@@ -83,10 +82,10 @@ pub struct Maintenance {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MaintenanceRan {
-    /// It started `at`, and has ended once `ended` is there.
+    /// It started `at`, and has run as far as `course` says.
     Started {
         at: Timestamp,
-        ended: Option<MaintenanceEnded>,
+        course: Course<MaintenanceEnded>,
     },
     /// It ended, recorded before its start was, so when is not known.
     Recorded(MaintenanceEnded),
@@ -101,11 +100,108 @@ impl Maintenance {
         }
     }
 
-    /// How it ended, once it has.
-    pub(crate) fn ended(&self) -> Option<&MaintenanceEnded> {
+    /// How far it has run.
+    pub(crate) fn course(&self) -> Course<&MaintenanceEnded> {
         match &self.ran {
-            MaintenanceRan::Started { ended, .. } => ended.as_ref(),
-            MaintenanceRan::Recorded(ended) => Some(ended),
+            MaintenanceRan::Started { course, .. } => course.as_ref(),
+            MaintenanceRan::Recorded(ended) => Course::Ended(ended),
+        }
+    }
+}
+
+/// How far an entry that runs has run (`docs/specs/design_system.md`,
+/// Transcripts, Running).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Course<T> {
+    Running,
+    /// It ended, as `T` says.
+    Ended(T),
+    /// Its session ended first.
+    Interrupted,
+}
+
+impl<T> Course<T> {
+    pub fn as_ref(&self) -> Course<&T> {
+        match self {
+            Course::Running => Course::Running,
+            Course::Ended(ended) => Course::Ended(ended),
+            Course::Interrupted => Course::Interrupted,
+        }
+    }
+
+    /// How it ended, once it has, unless its session ended first.
+    pub fn ended(&self) -> Option<&T> {
+        match self {
+            Course::Ended(ended) => Some(ended),
+            Course::Running | Course::Interrupted => None,
+        }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Course<U> {
+        match self {
+            Course::Running => Course::Running,
+            Course::Ended(ended) => Course::Ended(f(ended)),
+            Course::Interrupted => Course::Interrupted,
+        }
+    }
+
+    /// How it ended, or else the account of an entry that has not:
+    /// `running` or `interrupted`.
+    pub(crate) fn ended_or_account(&self) -> Result<&T, &'static str> {
+        match self {
+            Course::Ended(ended) => Ok(ended),
+            Course::Running => Err(RUNNING),
+            Course::Interrupted => Err(INTERRUPTED),
+        }
+    }
+
+    /// Ends it as interrupted, unless it has ended: whether it was running.
+    fn interrupt(&mut self) -> bool {
+        let running = matches!(self, Course::Running);
+        if running {
+            *self = Course::Interrupted;
+        }
+        running
+    }
+}
+
+/// The account of an entry that runs still.
+const RUNNING: &str = "running";
+
+/// The account of an entry its session ended first.
+pub(crate) const INTERRUPTED: &str = "interrupted";
+
+/// How long an entry that runs ran (`docs/specs/design_system.md`,
+/// Transcripts, Running), each where the times it is told from are known.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Lasted {
+    /// It still runs, since `since`.
+    Running {
+        since: Option<Timestamp>,
+    },
+    Took {
+        seconds: Option<f64>,
+    },
+    /// Its session ended first, `seconds` after it started.
+    Interrupted {
+        seconds: Option<f64>,
+    },
+}
+
+/// What an entry's line says of how it went, leaving out how long it ran,
+/// with the duration the agent reported, if any, such as a sub-agent's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Account {
+    pub said: String,
+    pub reported_seconds: Option<u64>,
+}
+
+impl Account {
+    fn said(said: impl Into<String>) -> Account {
+        Account {
+            said: said.into(),
+            reported_seconds: None,
         }
     }
 }
@@ -126,11 +222,9 @@ impl MaintenanceEnded {
         full || self.status.failed()
     }
 
-    /// How it ended and how long it ran, as its line shows them.
-    pub(crate) fn account(&self) -> String {
-        Phrase::from(format!("{}, ", self.status.account()))
-            .duration(whole_seconds(self.duration_seconds), None)
-            .to_string()
+    /// How it ended, leaving out how long it ran.
+    pub(crate) fn account(&self) -> Account {
+        Account::said(self.status.account())
     }
 }
 
@@ -188,7 +282,7 @@ fn says_maintenance_ended(line: &str) -> bool {
 pub struct SessionClone {
     /// When it started being made.
     pub at: Timestamp,
-    pub ended: Option<CloneEnded>,
+    pub course: Course<CloneEnded>,
 }
 
 /// How the making of a session's clone ended.
@@ -199,19 +293,18 @@ pub struct CloneEnded {
     pub error: Option<String>,
 }
 
-impl CloneEnded {
-    /// How long it took, as its line shows it.
-    pub(crate) fn account(&self) -> String {
-        Phrase::default()
-            .duration(whole_seconds(self.duration_seconds), None)
-            .to_string()
-    }
-}
-
 /// `seconds` as the whole seconds a line shows: none for a time that is not
 /// one.
-fn whole_seconds(seconds: f64) -> u64 {
+pub(crate) fn whole_seconds(seconds: f64) -> u64 {
     std::time::Duration::try_from_secs_f64(seconds).map_or(0, |duration| duration.as_secs())
+}
+
+/// The seconds from `start` to `end`: none when `end` comes first, as it can
+/// on clocks that disagree.
+fn seconds_between(start: Timestamp, end: Timestamp) -> f64 {
+    (end - start)
+        .to_std()
+        .map_or(0.0, |duration| duration.as_secs_f64())
 }
 
 /// The lines Linewright writes to [`OUTPUT`] as a session's clone starts
@@ -244,6 +337,35 @@ pub fn clone_ended(at: Timestamp, duration_seconds: f64, error: Option<&str>) ->
         error: error.map(str::to_string),
     })
     .expect("a clone event serializes")
+}
+
+/// The lines Linewright writes to [`OUTPUT`] as the session waits out the
+/// usage limit and as its work stops.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "type")]
+enum SessionEvent {
+    #[serde(rename = "linewright-usage-limit")]
+    Waiting { at: Timestamp, until: Timestamp },
+    #[serde(rename = "linewright-usage-limit-ended")]
+    Waited { at: Timestamp },
+    #[serde(rename = "linewright-session-ended")]
+    Ended { at: Timestamp },
+}
+
+/// The line that says the session ended `at`, whatever its outcome.
+pub fn session_ended(at: Timestamp) -> String {
+    serde_json::to_string(&SessionEvent::Ended { at }).expect("a session event serializes")
+}
+
+/// The line that says the session started `at` to wait out the usage limit
+/// `until` then.
+pub fn usage_limit_waiting(at: Timestamp, until: Timestamp) -> String {
+    serde_json::to_string(&SessionEvent::Waiting { at, until }).expect("a session event serializes")
+}
+
+/// The line that says the session's wait for the usage limit ended `at`.
+pub fn usage_limit_waited(at: Timestamp) -> String {
+    serde_json::to_string(&SessionEvent::Waited { at }).expect("a session event serializes")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,6 +503,41 @@ pub struct Session {
     /// Its entry before its turns, if it ran a maintenance command.
     pub maintenance: Option<Maintenance>,
     pub turns: Vec<Turn>,
+    #[serde(default)]
+    pub end: End,
+    /// Its waits for the usage limit to reset, in order.
+    #[serde(default)]
+    pub waits: Vec<Wait>,
+}
+
+/// Whether a session or a wait in it has ended, and when.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum End {
+    #[default]
+    Going,
+    At(Timestamp),
+    /// It ended, but when is not known, as when a restart interrupted its
+    /// session's run.
+    NotKnown,
+}
+
+impl End {
+    fn at(self) -> Option<Timestamp> {
+        match self {
+            End::At(at) => Some(at),
+            End::Going | End::NotKnown => None,
+        }
+    }
+}
+
+/// A session's wait for the usage limit to reset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Wait {
+    pub at: Timestamp,
+    /// When it was to end.
+    pub until: Timestamp,
+    pub end: End,
 }
 
 impl Session {
@@ -400,6 +557,49 @@ impl Session {
             entries = &call.entries;
         }
         &entries[*last]
+    }
+
+    /// How long the entry at `place` ran, unless it is not one that runs.
+    pub fn lasted(&self, place: &Place) -> Option<Lasted> {
+        let (since, course) = match place {
+            Place::Clone => {
+                let clone = self.clone.as_ref()?;
+                let took = clone
+                    .course
+                    .as_ref()
+                    .map(|ended| Some(ended.duration_seconds));
+                (Some(clone.at), took)
+            }
+            Place::Maintenance => {
+                let maintenance = self.maintenance.as_ref()?;
+                let took = maintenance
+                    .course()
+                    .map(|ended| Some(ended.duration_seconds));
+                (maintenance.at(), took)
+            }
+            Place::Entry(at) => {
+                let entry = self.entry(at);
+                let What::Tool(call) = &entry.what else {
+                    return None;
+                };
+                let took = call.end.map(|end| {
+                    entry
+                        .at
+                        .zip(end)
+                        .map(|(start, end)| seconds_between(start, end))
+                });
+                (entry.at, took)
+            }
+        };
+        Some(match course {
+            Course::Running => Lasted::Running { since },
+            Course::Ended(seconds) => Lasted::Took { seconds },
+            Course::Interrupted => Lasted::Interrupted {
+                seconds: since
+                    .zip(self.end.at())
+                    .map(|(start, end)| seconds_between(start, end)),
+            },
+        })
     }
 }
 
@@ -444,6 +644,10 @@ pub struct Call {
     /// How a call that went on in the background ended, once it has.
     pub background: Option<String>,
     pub entries: Vec<Entry>,
+    /// It ends when it returns or, for one that went on in the background,
+    /// when it ends there, at the time its record gives, if any.
+    #[serde(default = "Call::running")]
+    pub end: Course<Option<Timestamp>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -577,11 +781,46 @@ impl Call {
         one_line(&value, ARGUMENT_CHARS)
     }
 
-    /// How it went, as its line shows it: `running` until it returns.
-    pub(crate) fn account(&self) -> String {
+    fn running() -> Course<Option<Timestamp>> {
+        Course::Running
+    }
+
+    /// The status its sub-agent returned, for a call that started one and
+    /// returned no error.
+    fn sub_agent_status(&self) -> Option<&str> {
+        let result = self.result.as_ref().filter(|result| !result.error)?;
+        matches!(self.tool, Tool::Agent | Tool::Task)
+            .then(|| result.details["status"].as_str())
+            .flatten()
+    }
+
+    /// Whether it went on in the background as it returned.
+    fn goes_on_in_background(&self) -> bool {
+        let bash = self.tool == Tool::Bash
+            && self.result.as_ref().is_some_and(|result| {
+                !result.error && result.details["backgroundTaskId"].is_string()
+            });
+        bash || self.sub_agent_status() == Some("async_launched")
+    }
+
+    /// How it went: `running` until it returns, and `interrupted` once its
+    /// session ended first.
+    pub fn account(&self) -> Account {
+        if self.end == Course::Interrupted {
+            return Account::said(INTERRUPTED);
+        }
         let Some(result) = &self.result else {
-            return "running".into();
+            return Account::said(RUNNING);
         };
+        let sub_agent_done = self.sub_agent_status() == Some("completed");
+        Account {
+            said: self.returned(result),
+            reported_seconds: sub_agent_done
+                .then(|| result.details["totalDurationMs"].as_u64().unwrap_or(0) / 1000),
+        }
+    }
+
+    fn returned(&self, result: &CallResult) -> String {
         let details = &result.details;
         let lines = |n: usize| format!("{n} {}", if n == 1 { "line" } else { "lines" });
         let in_background = |started: &str| match &self.background {
@@ -628,14 +867,11 @@ impl Call {
             ),
             Tool::Edit | Tool::MultiEdit | Tool::NotebookEdit => "edited".into(),
             Tool::Skill => "loaded".into(),
-            Tool::Agent | Tool::Task => match details["status"].as_str() {
+            Tool::Agent | Tool::Task => match self.sub_agent_status() {
                 Some("completed") => {
                     let uses = details["totalToolUseCount"].as_u64().unwrap_or(0);
-                    let seconds = details["totalDurationMs"].as_u64().unwrap_or(0) / 1000;
                     let uses_word = if uses == 1 { "use" } else { "uses" };
-                    Phrase::from(format!("done, {uses} tool {uses_word}, "))
-                        .duration(seconds, None)
-                        .to_string()
+                    format!("done, {uses} tool {uses_word}")
                 }
                 Some("async_launched") => in_background("started in the background"),
                 _ => one_line(&result.text, ARGUMENT_CHARS),
@@ -685,12 +921,38 @@ pub(crate) fn parts(input: &Value, returned: Option<&CallResult>) -> Vec<(&'stat
     parts
 }
 
+/// How much of a session's record has been written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Written {
+    /// It may yet grow.
+    SoFar,
+    /// It is whole, and the session has ended, when its record says or else
+    /// at a time not known.
+    Whole,
+}
+
+impl Written {
+    /// How much has been written of the record of the `session`th of a run's
+    /// `sessions` sessions, from 1: all of it once the run has `ended` or a
+    /// later session has started.
+    pub fn of(session: usize, sessions: usize, ended: bool) -> Written {
+        if ended || session < sessions {
+            Written::Whole
+        } else {
+            Written::SoFar
+        }
+    }
+}
+
 /// Lines that do not read as events, such as one being written, are skipped.
-pub fn parse(record: &SessionRecord) -> Session {
+pub fn parse(record: &SessionRecord, written: Written) -> Session {
     let mut parser = Parser::default();
     parser.recorded_maintenance(record);
     for line in record.output.lines() {
         parser.read(line, record);
+    }
+    if written == Written::Whole {
+        parser.end(None);
     }
     parser.session
 }
@@ -740,8 +1002,15 @@ pub enum Change {
     /// Its `n`th turn, from 0, began.
     Turn(usize),
     Added(Place),
-    /// An entry that runs ended, at the time its record gives, if any.
+    /// An entry that runs ended, or was interrupted as its session ended,
+    /// at the time its record gives, if any.
     Ended(Place, Option<Timestamp>),
+    /// Its `n`th wait for the usage limit, from 0, began.
+    WaitBegan(usize),
+    /// Its `n`th wait for the usage limit, from 0, ended.
+    WaitEnded(usize),
+    /// The session ended, after each entry it interrupted.
+    SessionEnded,
 }
 
 /// An entry that a change is of.
@@ -769,6 +1038,10 @@ impl Parser {
         }
         if let Ok(maintenance) = MaintenanceEvent::deserialize(&event) {
             self.maintenance(maintenance, record);
+            return;
+        }
+        if let Ok(session) = SessionEvent::deserialize(&event) {
+            self.session_event(session);
             return;
         }
         if let Ok(marker) = serde_json::from_value::<TurnMarker>(event.clone()) {
@@ -813,7 +1086,10 @@ impl Parser {
     fn session_clone(&mut self, event: CloneEvent) {
         match event {
             CloneEvent::Started { at } => {
-                self.session.clone = Some(SessionClone { at, ended: None });
+                self.session.clone = Some(SessionClone {
+                    at,
+                    course: Course::Running,
+                });
                 self.changed.push(Change::Added(Place::Clone));
                 self.last_at = Some(at);
             }
@@ -825,7 +1101,7 @@ impl Parser {
                 let Some(clone) = &mut self.session.clone else {
                     return;
                 };
-                clone.ended = Some(CloneEnded {
+                clone.course = Course::Ended(CloneEnded {
                     duration_seconds,
                     error,
                 });
@@ -840,7 +1116,10 @@ impl Parser {
             MaintenanceEvent::Started { at, command } => {
                 self.session.maintenance = Some(Maintenance {
                     command,
-                    ran: MaintenanceRan::Started { at, ended: None },
+                    ran: MaintenanceRan::Started {
+                        at,
+                        course: Course::Running,
+                    },
                 });
                 self.changed.push(Change::Added(Place::Maintenance));
                 self.last_at = Some(at);
@@ -851,13 +1130,13 @@ impl Parser {
                 duration_seconds,
             } => {
                 let Some(Maintenance {
-                    ran: MaintenanceRan::Started { ended, .. },
+                    ran: MaintenanceRan::Started { course, .. },
                     ..
                 }) = &mut self.session.maintenance
                 else {
                     return;
                 };
-                *ended = Some(MaintenanceEnded {
+                *course = Course::Ended(MaintenanceEnded {
                     status,
                     duration_seconds,
                     output: record.maintenance_output.clone().unwrap_or_default(),
@@ -867,6 +1146,60 @@ impl Parser {
                 self.last_at = Some(at);
             }
         }
+    }
+
+    fn session_event(&mut self, event: SessionEvent) {
+        match event {
+            SessionEvent::Waiting { at, until } => {
+                self.session.waits.push(Wait {
+                    at,
+                    until,
+                    end: End::Going,
+                });
+                self.changed
+                    .push(Change::WaitBegan(self.session.waits.len() - 1));
+            }
+            SessionEvent::Waited { at } => self.end_wait(End::At(at)),
+            SessionEvent::Ended { at } => self.end(Some(at)),
+        }
+    }
+
+    /// Ends the session's wait under way, if any, as `end` says.
+    fn end_wait(&mut self, end: End) {
+        let n = self.session.waits.len().checked_sub(1);
+        if let Some(n) = n
+            && self.session.waits[n].end == End::Going
+        {
+            self.session.waits[n].end = end;
+            self.changed.push(Change::WaitEnded(n));
+        }
+    }
+
+    /// Ends the session `at`, or at a time not known, unless it has ended,
+    /// interrupting each entry still running.
+    fn end(&mut self, at: Option<Timestamp>) {
+        if self.session.end != End::Going {
+            return;
+        }
+        self.session.end = at.map_or(End::NotKnown, End::At);
+        self.end_wait(self.session.end);
+        if let Some(clone) = &mut self.session.clone
+            && clone.course.interrupt()
+        {
+            self.changed.push(Change::Ended(Place::Clone, at));
+        }
+        if let Some(Maintenance {
+            ran: MaintenanceRan::Started { course, .. },
+            ..
+        }) = &mut self.session.maintenance
+            && course.interrupt()
+        {
+            self.changed.push(Change::Ended(Place::Maintenance, at));
+        }
+        for (turn, Turn { entries, .. }) in self.session.turns.iter_mut().enumerate() {
+            interrupt(entries, turn, &mut vec![], at, &mut self.changed);
+        }
+        self.changed.push(Change::SessionEnded);
     }
 
     fn begin_turn(&mut self, started_at: Option<Timestamp>, prompt: Prompt) {
@@ -907,6 +1240,7 @@ impl Parser {
                             result: None,
                             background: None,
                             entries: vec![],
+                            end: Course::Running,
                         }),
                         _ => What::Other(block),
                     };
@@ -942,6 +1276,9 @@ impl Parser {
                                         Value::Null
                                     },
                                 });
+                                if call.background.is_some() || !call.goes_on_in_background() {
+                                    call.end = Course::Ended(at);
+                                }
                                 self.changed.push(Change::Ended(Place::Entry(returned), at));
                             }
                             continue;
@@ -968,6 +1305,7 @@ impl Parser {
                         if let Some((ended, call)) = self.call(&event["tool_use_id"]) {
                             call.background = event["status"].as_str().map(str::to_string);
                             if call.result.is_some() {
+                                call.end = Course::Ended(at);
                                 self.changed.push(Change::Ended(Place::Entry(ended), at));
                             }
                         }
@@ -1004,6 +1342,33 @@ impl Parser {
         let at = self.calls.get(id.as_str()?)?.clone();
         let call = call_at(&mut self.session.turns[at.turn].entries, &at.path);
         Some((at, call))
+    }
+}
+
+/// Interrupts each call still running among `entries`, at `path` in `turn`,
+/// and among the work of their sub-agents, noting each change in `changed`
+/// as ended `at`.
+fn interrupt(
+    entries: &mut [Entry],
+    turn: usize,
+    path: &mut Vec<usize>,
+    at: Option<Timestamp>,
+    changed: &mut Vec<Change>,
+) {
+    for (i, entry) in entries.iter_mut().enumerate() {
+        let What::Tool(call) = &mut entry.what else {
+            continue;
+        };
+        path.push(i);
+        if call.end.interrupt() {
+            let at_path = EntryAt {
+                turn,
+                path: path.clone(),
+            };
+            changed.push(Change::Ended(Place::Entry(at_path), at));
+        }
+        interrupt(&mut call.entries, turn, path, at, changed);
+        path.pop();
     }
 }
 
@@ -1207,7 +1572,8 @@ impl Feed {
     /// read before, giving `layout` that the run's transcript began, then each
     /// change with its session's model as the line it was read from left it.
     /// A line still being written waits, unless the run has `ended` or a
-    /// later session has started.
+    /// later session has started, which makes the session whole: it then
+    /// ends, if its record has not said so, at a time not known.
     pub fn read(&mut self, records: &[SessionRecord], ended: bool, layout: &mut impl Layout) {
         if !self.began && (!records.is_empty() || ended) {
             self.began = true;
@@ -1220,7 +1586,7 @@ impl Feed {
                 self.sessions.push(Fed::default());
             }
             let fed = &mut self.sessions[i];
-            let whole = ended || session < records.len();
+            let whole = Written::of(session, records.len(), ended) == Written::Whole;
             let unread = &record.output[fed.bytes_read.min(record.output.len())..];
             let complete = if whole { unread } else { whole_lines(unread) };
             fed.parser.recorded_maintenance(record);
@@ -1233,6 +1599,8 @@ impl Feed {
             fed.bytes_read += complete.len();
             fed.give(session, &mut changed);
             if whole {
+                fed.parser.end(None);
+                fed.give(session, &mut changed);
                 fed.open(session, &mut changed);
             }
         }

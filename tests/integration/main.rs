@@ -54,6 +54,7 @@ mod required_label;
 mod runs;
 mod secrets;
 mod session_clone;
+mod session_end;
 mod startup;
 mod status;
 mod store;

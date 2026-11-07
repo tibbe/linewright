@@ -12,7 +12,7 @@ use tracing::warn;
 
 use super::lifecycle::{Basis, Fingerprint};
 use crate::domain::Timestamp;
-use crate::transcript::lines::MaintenanceLine;
+use crate::transcript::lines::BuildMaintenanceLine;
 
 /// A build's clone, in its directory.
 pub const REPO: &str = "repo";
@@ -84,7 +84,7 @@ impl Built {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BuildRecord {
     #[serde(flatten)]
-    pub line: MaintenanceLine,
+    pub line: BuildMaintenanceLine,
     /// `None` until the default branch is cloned.
     pub commit: Option<String>,
     /// When it started.
@@ -98,7 +98,7 @@ impl BuildRecord {
     /// The record of a build of `command`, redacted, started `at`.
     pub fn started(command: String, at: Timestamp) -> BuildRecord {
         BuildRecord {
-            line: MaintenanceLine {
+            line: BuildMaintenanceLine {
                 command,
                 ended: None,
             },

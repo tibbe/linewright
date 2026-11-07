@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    After, CallResult, Change, Changed, Clock, CloneEnded, Entry, EntryAt, Feed, Layout, Made,
-    Maintenance, MaintenanceEnded, MaintenanceRan, MaintenanceStatus, Numbering, Place, Prompt,
-    ReadTo, START, Session, SessionClone, SessionRecord, Transcript, Turn, What, shown_command,
-    summary,
+    Account, After, CallResult, Change, Changed, Clock, CloneEnded, Course, Entry, EntryAt, Feed,
+    INTERRUPTED, Layout, Made, Maintenance, MaintenanceEnded, MaintenanceRan, MaintenanceStatus,
+    Numbering, Place, Prompt, ReadTo, START, Session, SessionClone, SessionRecord, Transcript,
+    Turn, What, shown_command, summary, whole_seconds,
 };
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
@@ -157,34 +157,58 @@ pub(crate) enum EntryLine {
     },
     Tool(ToolLine),
     Clone(CloneLine),
-    Maintenance(MaintenanceLine),
+    Maintenance(SessionMaintenanceLine),
+}
+
+/// The `account` key of a line of an entry whose fields as JSON hold how far
+/// it ran, `course`: there only for one that was interrupted.
+fn interrupted<T>(course: &Course<T>) -> Option<String> {
+    matches!(course, Course::Interrupted).then(|| INTERRUPTED.to_string())
+}
+
+/// `ended` as far as an entry's line as JSON says it ran: running when it
+/// says neither, unless its `account` says it was interrupted.
+fn course_of<T>(ended: Option<T>, account: Option<String>) -> Result<Course<T>, &'static str> {
+    match (ended, account) {
+        (None, None) => Ok(Course::Running),
+        (Some(ended), None) => Ok(Course::Ended(ended)),
+        (None, Some(account)) if account == INTERRUPTED => Ok(Course::Interrupted),
+        (None, Some(_)) => Err("an entry's line may have an account only once interrupted"),
+        (Some(_), Some(_)) => Err("an interrupted entry's line must say nothing of its end"),
+    }
 }
 
 /// The line of the making of a session's clone: how it ended, once it has.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "CloneFields", into = "CloneFields")]
 pub(crate) struct CloneLine {
-    pub(crate) ended: Option<CloneEnded>,
+    pub(crate) course: Course<CloneEnded>,
 }
 
-/// A clone line as JSON: both null while the clone is being made, and the
-/// error null when it was made (`docs/specs/monitoring.md`, logs, The clone).
+/// A clone line as JSON: both null while the clone is being made or once it
+/// was interrupted, and the error null when it was made
+/// (`docs/specs/monitoring.md`, logs, The clone).
 #[derive(Serialize, Deserialize)]
 struct CloneFields {
     duration_seconds: Option<f64>,
     error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
 }
 
 impl From<CloneLine> for CloneFields {
     fn from(line: CloneLine) -> CloneFields {
-        match line.ended {
-            None => CloneFields {
+        let account = interrupted(&line.course);
+        match line.course {
+            Course::Running | Course::Interrupted => CloneFields {
                 duration_seconds: None,
                 error: None,
+                account,
             },
-            Some(ended) => CloneFields {
+            Course::Ended(ended) => CloneFields {
                 duration_seconds: Some(ended.duration_seconds),
                 error: ended.error,
+                account,
             },
         }
     }
@@ -202,61 +226,111 @@ impl TryFrom<CloneFields> for CloneLine {
             }),
             (None, Some(_)) => return Err("a clone line with an error must have a duration"),
         };
-        Ok(CloneLine { ended })
+        Ok(CloneLine {
+            course: course_of(ended, fields.account)?,
+        })
     }
 }
 
-/// A session's maintenance command's line: the command, and how it ended once it
-/// has.
+/// A build's line, as a maintenance command's: the command, and how it
+/// ended once it has.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
-pub(crate) struct MaintenanceLine {
+pub(crate) struct BuildMaintenanceLine {
     pub(crate) command: String,
     pub(crate) ended: Option<MaintenanceEnded>,
 }
 
+/// A session's maintenance command's line: the command, and how far it ran.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
+pub(crate) struct SessionMaintenanceLine {
+    pub(crate) command: String,
+    pub(crate) course: Course<MaintenanceEnded>,
+}
+
 /// A maintenance line as JSON: what it holds once the command has ended is null
-/// until then (`docs/specs/monitoring.md`, logs, Running in JSON).
+/// until then, and once it was interrupted (`docs/specs/monitoring.md`, logs,
+/// Running in JSON).
 #[derive(Serialize, Deserialize)]
 struct MaintenanceFields {
     command: String,
     status: Option<MaintenanceStatus>,
     duration_seconds: Option<f64>,
     output: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<String>,
 }
 
-impl From<MaintenanceLine> for MaintenanceFields {
-    fn from(line: MaintenanceLine) -> MaintenanceFields {
-        let ended = line.ended;
+impl MaintenanceFields {
+    fn of(command: String, ended: Option<MaintenanceEnded>, account: Option<String>) -> Self {
         MaintenanceFields {
-            command: line.command,
+            command,
             status: ended.as_ref().map(|ended| ended.status),
             duration_seconds: ended.as_ref().map(|ended| ended.duration_seconds),
             output: ended.map(|ended| ended.output),
+            account,
+        }
+    }
+
+    /// How the command ended, as the fields say, if they do.
+    fn ended(&mut self) -> Result<Option<MaintenanceEnded>, &'static str> {
+        match (
+            self.status.take(),
+            self.duration_seconds.take(),
+            self.output.take(),
+        ) {
+            (None, None, None) => Ok(None),
+            (Some(status), Some(duration_seconds), Some(output)) => Ok(Some(MaintenanceEnded {
+                status,
+                duration_seconds,
+                output,
+            })),
+            _ => Err(
+                "a maintenance line must have a status, a duration and an output, or none of them",
+            ),
         }
     }
 }
 
-impl TryFrom<MaintenanceFields> for MaintenanceLine {
+impl From<BuildMaintenanceLine> for MaintenanceFields {
+    fn from(line: BuildMaintenanceLine) -> MaintenanceFields {
+        MaintenanceFields::of(line.command, line.ended, None)
+    }
+}
+
+impl TryFrom<MaintenanceFields> for BuildMaintenanceLine {
     type Error = &'static str;
 
-    fn try_from(fields: MaintenanceFields) -> Result<MaintenanceLine, &'static str> {
-        let ended = match (fields.status, fields.duration_seconds, fields.output) {
-            (None, None, None) => None,
-            (Some(status), Some(duration_seconds), Some(output)) => Some(MaintenanceEnded {
-                status,
-                duration_seconds,
-                output,
-            }),
-            _ => {
-                return Err(
-                    "a maintenance line must have a status, a duration and an output, or none of them",
-                );
-            }
-        };
-        Ok(MaintenanceLine {
+    fn try_from(mut fields: MaintenanceFields) -> Result<BuildMaintenanceLine, &'static str> {
+        if fields.account.is_some() {
+            return Err("a build's maintenance line is never interrupted");
+        }
+        Ok(BuildMaintenanceLine {
+            ended: fields.ended()?,
             command: fields.command,
-            ended,
+        })
+    }
+}
+
+impl From<SessionMaintenanceLine> for MaintenanceFields {
+    fn from(line: SessionMaintenanceLine) -> MaintenanceFields {
+        let account = interrupted(&line.course);
+        let ended = match line.course {
+            Course::Ended(ended) => Some(ended),
+            Course::Running | Course::Interrupted => None,
+        };
+        MaintenanceFields::of(line.command, ended, account)
+    }
+}
+
+impl TryFrom<MaintenanceFields> for SessionMaintenanceLine {
+    type Error = &'static str;
+
+    fn try_from(mut fields: MaintenanceFields) -> Result<SessionMaintenanceLine, &'static str> {
+        Ok(SessionMaintenanceLine {
+            course: course_of(fields.ended()?, fields.account)?,
+            command: fields.command,
         })
     }
 }
@@ -575,7 +649,7 @@ impl Stamper {
     /// The line of the making of `clone` at `at`.
     fn clone_line(&mut self, clone: &SessionClone, at: Timestamp) -> Line {
         let what = EntryLine::Clone(CloneLine {
-            ended: clone.ended.clone(),
+            course: clone.course.clone(),
         });
         self.line(Some(at), Under::Session, what)
     }
@@ -583,9 +657,9 @@ impl Stamper {
     /// The line of `maintenance` at `at`, or with no time for one recorded
     /// before its start was.
     fn maintenance(&mut self, maintenance: &Maintenance, at: Option<Timestamp>) -> Line {
-        let what = EntryLine::Maintenance(MaintenanceLine {
+        let what = EntryLine::Maintenance(SessionMaintenanceLine {
             command: maintenance.command.clone(),
-            ended: maintenance.ended().cloned(),
+            course: maintenance.course().map(Clone::clone),
         });
         match maintenance.ran {
             MaintenanceRan::Started { .. } => self.line(at, Under::Session, what),
@@ -623,7 +697,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
             tool_use_id: call.id.clone(),
             tool: call.tool.name().to_string(),
             argument: call.argument(session.dir.as_deref()),
-            account: call.account(),
+            account: composed(call.account()),
             shown: if full {
                 ToolShown::Full {
                     input: call.input.clone(),
@@ -743,6 +817,7 @@ fn changed_line(
         }
         Change::Added(place) => (place, None),
         Change::Ended(place, ended_at) => (place, Some(ended_at)),
+        Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => return None,
     };
     let at = match place {
         Place::Clone => {
@@ -846,25 +921,25 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
                     .collect(),
             )
         }
-        EntryLine::Clone(CloneLine { ended }) => match ended {
-            None => ("clone → running".to_string(), vec![]),
-            Some(ended) => (
-                format!("clone → {}", ended.account()),
+        EntryLine::Clone(CloneLine { course }) => match course.ended_or_account() {
+            Err(account) => (format!("clone → {account}"), vec![]),
+            Ok(ended) => (
+                format!("clone → {}", clone_account(ended)),
                 ended.error.as_deref().map_or(vec![], |error| {
                     let red: Vec<String> = error.lines().map(|part| paint.red(part)).collect();
                     indented("", &red.join("\n"))
                 }),
             ),
         },
-        EntryLine::Maintenance(MaintenanceLine { command, ended }) => {
+        EntryLine::Maintenance(SessionMaintenanceLine { command, course }) => {
             let command = shown_command(command);
-            let (account, output) = match ended {
-                None => ("running".to_string(), vec![]),
-                Some(ended) => (
+            let (account, output) = match course.ended_or_account() {
+                Err(account) => (account.to_string(), vec![]),
+                Ok(ended) => (
                     if ended.status.failed() {
-                        paint.red(ended.account())
+                        paint.red(maintenance_account(ended))
                     } else {
-                        ended.account()
+                        maintenance_account(ended)
                     },
                     if ended.output_shown(verbosity == Verbosity::Full)
                         && !ended.output.trim().is_empty()
@@ -887,6 +962,36 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
         }
     }
     shown
+}
+
+/// `account` as a line says it, with the duration the agent reported.
+pub(crate) fn composed(account: Account) -> String {
+    match account.reported_seconds {
+        Some(seconds) => with_duration(&account.said, seconds),
+        None => account.said,
+    }
+}
+
+/// How a maintenance command or a build ended and how long it ran, as its
+/// line says them.
+pub(crate) fn maintenance_account(ended: &MaintenanceEnded) -> String {
+    with_duration(&ended.account().said, whole_seconds(ended.duration_seconds))
+}
+
+/// How long the making of a clone took, as its line says it: its line says
+/// nothing else, its error showing under it.
+pub(crate) fn clone_account(ended: &CloneEnded) -> String {
+    with_duration("", whole_seconds(ended.duration_seconds))
+}
+
+/// `said`, then `seconds` as a duration.
+fn with_duration(said: &str, seconds: u64) -> String {
+    let said = if said.is_empty() {
+        Phrase::default()
+    } else {
+        Phrase::from(format!("{said}, "))
+    };
+    said.duration(seconds, None).to_string()
 }
 
 fn indented(label: &str, text: &str) -> Vec<String> {

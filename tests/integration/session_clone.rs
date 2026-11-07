@@ -272,6 +272,41 @@ async fn logs_shows_why_a_sessions_clone_could_not_be_made() {
     assert_eq!(json[2]["error"], error);
 }
 
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test_log::test(tokio::test)]
+async fn a_session_whose_clone_could_not_be_made_ends_with_its_end() {
+    let mut world = World::new().await;
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+    let mut first = world.store.pause_after(clone_of("main"));
+    world.factory.cycle().await.unwrap();
+    reached(&mut first).await;
+    let mut second = world.store.pause_after(clone_of("main"));
+    first.fail();
+    reached(&mut second).await;
+    second.fail();
+    world.factory.settle().await;
+
+    let sessions = session_events(&world);
+
+    let kinds: Vec<Vec<&str>> = sessions
+        .iter()
+        .map(|session| {
+            session
+                .iter()
+                .map(|event| event["type"].as_str().unwrap())
+                .collect()
+        })
+        .collect();
+    let ended = [
+        "linewright-clone",
+        "linewright-clone-ended",
+        "linewright-session-ended",
+    ];
+    assert_eq!(kinds, [ended, ended]);
+}
+
 /// `docs/specs/runs.md`, Stages; Ending.
 #[test_log::test(tokio::test)]
 async fn a_clone_still_being_made_at_its_sessions_deadline_or_when_its_run_is_cancelled_says_so() {
