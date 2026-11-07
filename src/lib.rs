@@ -50,6 +50,7 @@ pub mod results;
 pub mod run;
 pub mod runs;
 pub mod secrets;
+pub mod serving;
 pub mod session_env;
 pub mod spec_gap;
 pub mod spec_glob;
