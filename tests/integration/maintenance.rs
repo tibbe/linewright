@@ -113,10 +113,10 @@ fn triaged_maintaining_with(command: &str) -> impl Future<Output = (Vec<Triaged>
             move |call| {
                 let record = transcript::SessionRecord::read(&call.spec.record)
                     .unwrap_or_else(|e| panic!("reading the transcript at {caller}: {e:#}"));
-                let maintenance = transcript::parse(&record)
+                let maintenance = transcript::parse(&record, transcript::Written::SoFar)
                     .maintenance
                     .and_then(|maintenance| match maintenance.ran {
-                        MaintenanceRan::Started { ended, .. } => ended,
+                        MaintenanceRan::Started { course, .. } => course.ended().cloned(),
                         MaintenanceRan::Recorded(ended) => Some(ended),
                     });
                 triaged.lock().unwrap().push(Triaged {

@@ -1,8 +1,8 @@
 use linewright::domain::Timestamp;
 use linewright::runs::{RunId, Started, StartedBy};
 use linewright::transcript::{
-    self, After, Follower, MaintenanceRecord, MaintenanceStatus, SessionRecord, Transcript,
-    Verbosity,
+    self, After, End, EntryAt, Follower, Lasted, MaintenanceRecord, MaintenanceStatus, Place,
+    SessionRecord, Transcript, Verbosity, Wait, Written,
 };
 use serde_json::json;
 
@@ -27,11 +27,28 @@ fn item_run(id: RunId) -> Started {
     Started::new(id, None).unwrap()
 }
 
+/// The transcript of an ended run whose sessions are `sessions`.
 fn of(sessions: &[SessionRecord]) -> Transcript {
     Transcript {
         run: item_run("105/implement-1".parse().unwrap()),
         in_flight: None,
-        sessions: sessions.iter().map(transcript::parse).collect(),
+        sessions: sessions
+            .iter()
+            .map(|record| transcript::parse(record, Written::Whole))
+            .collect(),
+    }
+}
+
+/// The transcript of a run in flight whose only session is `record`, read to
+/// its end.
+fn in_flight(record: &SessionRecord) -> Transcript {
+    Transcript {
+        run: item_run("105/implement-1".parse().unwrap()),
+        in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
+            session: 1,
+            line: record.output.lines().count(),
+        })),
+        sessions: vec![transcript::parse(record, Written::SoFar)],
     }
 }
 
@@ -281,12 +298,7 @@ fn json_gives_a_tool_call_null_for_what_it_holds_once_it_returns() {
         .collect(),
         ..SessionRecord::default()
     };
-    let json = |verbosity| {
-        json_objects(&transcript::json_lines(
-            &of(std::slice::from_ref(&record)),
-            verbosity,
-        ))
-    };
+    let json = |verbosity| json_objects(&transcript::json_lines(&in_flight(&record), verbosity));
     let with_stamp = |line| {
         with_keys(
             line,
@@ -585,7 +597,8 @@ fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
     );
     assert_eq!(
         two,
-        "session 2: started 2026-10-13 11:00:00 UTC\n \
+        " 0:02  Bash(cargo test) → interrupted\n\
+         session 2: started 2026-10-13 11:00:00 UTC\n \
          0:05  Starting over.\n"
     );
     assert_eq!(text(&nothing.update(&[])), "");
@@ -935,13 +948,7 @@ fn a_maintenance_command_shows_how_it_ended_and_its_output_unless_it_succeeded_o
 #[test_log::test]
 fn a_maintenance_command_shows_running_until_it_ends() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
-    let transcript = Transcript {
-        in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
-            session: 1,
-            line: 1,
-        })),
-        ..of(&[running])
-    };
+    let transcript = in_flight(&running);
 
     let shown = transcript::render(&transcript, Verbosity::Full, false);
 
@@ -967,7 +974,10 @@ fn json_gives_a_maintenance_command_with_its_account_and_output_null_until_it_ha
     };
 
     assert_eq!(
-        json(&[running], Verbosity::Compact)[2],
+        json_objects(&transcript::json_lines(
+            &in_flight(&running),
+            Verbosity::Compact
+        ))[2],
         json!({
             "type": "maintenance",
             "session": 1,
@@ -1043,14 +1053,11 @@ fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_
     let recorded = recorded();
     let running = first_call_made(&recorded);
     let snapshot = |record: &SessionRecord| -> Vec<serde_json::Value> {
-        json_objects(&transcript::json_lines(
-            &of(std::slice::from_ref(record)),
-            Verbosity::Full,
-        ))
-        .into_iter()
-        .filter(|line| line["type"] == "tool")
-        .take(1)
-        .collect()
+        json_objects(&transcript::json_lines(&in_flight(record), Verbosity::Full))
+            .into_iter()
+            .filter(|line| line["type"] == "tool")
+            .take(1)
+            .collect()
     };
     let mut follower = Follower::new(
         item_run("105/implement-1".parse().unwrap()),
@@ -1475,13 +1482,7 @@ fn the_clone_shows_running_until_it_is_made() {
         output: cloning("2026-10-13T10:00:00Z", None),
         ..SessionRecord::default()
     };
-    let transcript = Transcript {
-        in_flight: Some(transcript::InFlight::ReadTo(transcript::ReadTo {
-            session: 1,
-            line: 1,
-        })),
-        ..of(&[running])
-    };
+    let transcript = in_flight(&running);
 
     let shown = transcript::render(&transcript, Verbosity::Full, false);
 
@@ -1512,7 +1513,10 @@ fn json_gives_the_clone_with_how_long_it_took_and_its_error_null_until_it_is_mad
         })
     };
 
-    let running = json_objects(&transcript::json_lines(&of(&[running]), Verbosity::Compact));
+    let running = json_objects(&transcript::json_lines(
+        &in_flight(&running),
+        Verbosity::Compact,
+    ));
     let made = json_objects(&transcript::json_lines(
         &of(&after_cloning()),
         Verbosity::Full,
@@ -1607,4 +1611,305 @@ fn a_session_recorded_before_its_clone_was_an_entry_reads_as_before() {
             " 0:00  maintenance: npm ci → exit 0, 12s",
         ]
     );
+}
+
+/// A session that started at 10:00:00 with a turn whose `Bash` call `t1`,
+/// made at 10:00:02, is followed by `events`.
+fn calling(events: &[serde_json::Value]) -> SessionRecord {
+    let mut all = vec![
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+        json!({
+            "type": "assistant",
+            "timestamp": "2026-10-13T10:00:02Z",
+            "message": {"content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+            ]},
+        }),
+    ];
+    all.extend_from_slice(events);
+    SessionRecord {
+        output: output_of(&all),
+        ..SessionRecord::default()
+    }
+}
+
+#[track_caller]
+fn session_ended(at: &str) -> serde_json::Value {
+    serde_json::from_str(&transcript::session_ended(time(at))).unwrap()
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test_log::test]
+fn a_tool_call_its_session_ends_first_shows_interrupted_where_it_showed_running() {
+    let known = calling(&[session_ended("2026-10-13T10:00:09Z")]);
+    let unknown = calling(&[]);
+
+    for record in [known, unknown] {
+        let shown = transcript::render(&of(&[record]), Verbosity::Compact, false);
+
+        assert_eq!(
+            shown,
+            "run: 105/implement-1\n\
+             session 1: started 2026-10-13 10:00:00 UTC\n \
+             0:02  Bash(cargo test) → interrupted\n"
+        );
+    }
+}
+
+fn returned(at: &str, result: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "type": "user",
+        "timestamp": at,
+        "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "Done."},
+        ]},
+        "tool_use_result": result.clone(),
+    })
+}
+
+/// How long the call `t1` that `record` makes lasted, as much of it
+/// `written`.
+#[track_caller]
+fn call_lasted(record: &SessionRecord, written: Written) -> Option<Lasted> {
+    let first = Place::Entry(EntryAt {
+        turn: 0,
+        path: vec![0],
+    });
+    transcript::parse(record, written).lasted(&first)
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running and Followed.
+#[test_log::test]
+fn a_tool_call_runs_until_it_returns_or_ends_in_the_background_or_its_session_ends() {
+    let returned_at_5 = calling(&[returned("2026-10-13T10:00:05Z", &json!({}))]);
+    let moved = returned("2026-10-13T10:00:03Z", &json!({"backgroundTaskId": "b1"}));
+    let in_the_background = calling(std::slice::from_ref(&moved));
+    let ended_in_the_background = calling(&[
+        moved,
+        json!({"type": "system", "subtype": "task_notification", "timestamp": "2026-10-13T10:00:12Z", "tool_use_id": "t1", "status": "completed"}),
+    ]);
+    let ended_at_9 = calling(&[session_ended("2026-10-13T10:00:09Z")]);
+    let made = calling(&[]);
+
+    assert_eq!(
+        call_lasted(&returned_at_5, Written::Whole),
+        Some(Lasted::Took { seconds: Some(3.0) })
+    );
+    assert_eq!(
+        call_lasted(&in_the_background, Written::SoFar),
+        Some(Lasted::Running {
+            since: Some(time("2026-10-13T10:00:02Z"))
+        })
+    );
+    assert_eq!(
+        call_lasted(&ended_in_the_background, Written::Whole),
+        Some(Lasted::Took {
+            seconds: Some(10.0)
+        })
+    );
+    assert_eq!(
+        call_lasted(&ended_at_9, Written::SoFar),
+        Some(Lasted::Interrupted { seconds: Some(7.0) })
+    );
+    assert_eq!(
+        call_lasted(&made, Written::SoFar),
+        Some(Lasted::Running {
+            since: Some(time("2026-10-13T10:00:02Z"))
+        })
+    );
+    assert_eq!(
+        call_lasted(&made, Written::Whole),
+        Some(Lasted::Interrupted { seconds: None })
+    );
+    assert_eq!(
+        call_lasted(&in_the_background, Written::Whole),
+        Some(Lasted::Interrupted { seconds: None })
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running.
+#[test_log::test]
+fn the_clone_and_the_maintenance_command_last_until_they_end_or_their_session_does() {
+    let cloned = SessionRecord {
+        output: cloning("2026-10-13T10:00:00Z", Some((6.2, None))),
+        ..SessionRecord::default()
+    };
+    let cloning_cut = SessionRecord {
+        output: cloning("2026-10-13T10:00:00Z", None)
+            + &transcript::session_ended(time("2026-10-13T10:00:04Z"))
+            + "\n",
+        ..SessionRecord::default()
+    };
+    let maintaining = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
+    let maintained = setting_up(
+        "2026-10-13T10:00:00Z",
+        "npm ci",
+        Some((MaintenanceStatus::Exited(0), 12.4)),
+        "",
+    );
+    let lasted =
+        |record: &SessionRecord, whole, place| transcript::parse(record, whole).lasted(&place);
+
+    assert_eq!(
+        lasted(&cloned, Written::Whole, Place::Clone),
+        Some(Lasted::Took { seconds: Some(6.2) })
+    );
+    assert_eq!(
+        lasted(&cloning_cut, Written::SoFar, Place::Clone),
+        Some(Lasted::Interrupted { seconds: Some(4.0) })
+    );
+    assert_eq!(
+        lasted(&maintaining, Written::SoFar, Place::Maintenance),
+        Some(Lasted::Running {
+            since: Some(time("2026-10-13T10:00:00Z"))
+        })
+    );
+    assert_eq!(
+        lasted(&maintaining, Written::Whole, Place::Maintenance),
+        Some(Lasted::Interrupted { seconds: None })
+    );
+    assert_eq!(
+        lasted(&maintained, Written::Whole, Place::Maintenance),
+        Some(Lasted::Took {
+            seconds: Some(12.4)
+        })
+    );
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading and
+/// Working.
+#[test_log::test]
+fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
+    let line = |event: String| -> serde_json::Value { serde_json::from_str(&event).unwrap() };
+    let waited = calling(&[
+        line(transcript::usage_limit_waiting(
+            time("2026-10-13T10:00:05Z"),
+            time("2026-10-13T12:00:00Z"),
+        )),
+        line(transcript::usage_limit_waited(time("2026-10-13T12:00:01Z"))),
+        line(transcript::usage_limit_waiting(
+            time("2026-10-13T12:00:30Z"),
+            time("2026-10-13T14:00:00Z"),
+        )),
+        session_ended("2026-10-13T12:01:00Z"),
+    ]);
+
+    let going = transcript::parse(&calling(&[]), Written::SoFar);
+    let not_known = transcript::parse(&calling(&[]), Written::Whole);
+    let ended = transcript::parse(&waited, Written::Whole);
+
+    assert_eq!(going.end, End::Going);
+    assert_eq!(going.waits, []);
+    assert_eq!(not_known.end, End::NotKnown);
+    assert_eq!(ended.end, End::At(time("2026-10-13T12:01:00Z")));
+    assert_eq!(
+        ended.waits,
+        [
+            Wait {
+                at: time("2026-10-13T10:00:05Z"),
+                until: time("2026-10-13T12:00:00Z"),
+                end: End::At(time("2026-10-13T12:00:01Z")),
+            },
+            Wait {
+                at: time("2026-10-13T12:00:30Z"),
+                until: time("2026-10-13T14:00:00Z"),
+                end: End::At(time("2026-10-13T12:01:00Z")),
+            },
+        ]
+    );
+    assert_eq!(
+        transcript::render(&of(&[waited]), Verbosity::Full, false),
+        transcript::render(
+            &of(&[calling(&[session_ended("2026-10-13T12:01:00Z")])]),
+            Verbosity::Full,
+            false
+        ),
+        "a wait shows no line"
+    );
+}
+
+/// `docs/specs/monitoring.md`, logs, Running in JSON.
+#[test_log::test]
+fn json_gives_an_interrupted_entry_the_account_interrupted_and_what_it_holds_as_if_running() {
+    let call = calling(&[]);
+    let clone = SessionRecord {
+        output: cloning("2026-10-13T10:00:00Z", None),
+        ..SessionRecord::default()
+    };
+    let maintenance = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
+    let entry =
+        |record: &SessionRecord, transcript: fn(&SessionRecord) -> Transcript, verbosity| {
+            let lines = transcript::json_lines(&transcript(record), verbosity);
+            for line in lines.lines() {
+                let read: transcript::Line = serde_json::from_str(line).unwrap();
+                assert_eq!(transcript::json_line(&read), format!("{line}\n"));
+            }
+            json_objects(&lines).swap_remove(2)
+        };
+    let ended = |record: &SessionRecord| of(std::slice::from_ref(record));
+
+    for verbosity in [Verbosity::Compact, Verbosity::Full] {
+        assert_eq!(
+            entry(&call, ended, verbosity),
+            with_keys(
+                entry(&call, in_flight, verbosity),
+                json!({"account": "interrupted"})
+            )
+        );
+    }
+    assert_eq!(
+        entry(&clone, ended, Verbosity::Compact),
+        with_keys(
+            entry(&clone, in_flight, Verbosity::Compact),
+            json!({"account": "interrupted"})
+        )
+    );
+    assert_eq!(
+        entry(&maintenance, ended, Verbosity::Full),
+        with_keys(
+            entry(&maintenance, in_flight, Verbosity::Full),
+            json!({"account": "interrupted"})
+        )
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running and Followed.
+#[test_log::test]
+fn following_shows_each_entry_still_running_again_as_interrupted_once_its_session_ends() {
+    let maintaining = cloning("2026-10-13T10:00:00Z", Some((2.0, None)))
+        + &transcript::maintenance_started(time("2026-10-13T10:00:02Z"), "npm ci")
+        + "\n";
+    let cut = SessionRecord {
+        output: maintaining + &transcript::session_ended(time("2026-10-13T10:00:30Z")) + "\n",
+        ..SessionRecord::default()
+    };
+    let cloning_only = SessionRecord {
+        output: cloning("2026-10-13T11:00:00Z", None),
+        ..SessionRecord::default()
+    };
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
+
+    let ended_itself = text(&follower.update(std::slice::from_ref(&cut)));
+    let so_far = text(&follower.update(&[cut.clone(), cloning_only.clone()]));
+    let run_ended = text(&follower.end(&[cut, cloning_only]));
+
+    assert_eq!(
+        ended_itself,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:00  clone → running\n \
+         0:02  clone → 2s\n \
+         0:02  maintenance: npm ci → running\n \
+         0:30  maintenance: npm ci → interrupted\n"
+    );
+    assert_eq!(
+        so_far,
+        "session 2: started 2026-10-13 11:00:00 UTC\n \
+         0:00  clone → running\n"
+    );
+    assert_eq!(run_ended, " 0:00  clone → interrupted\n");
 }

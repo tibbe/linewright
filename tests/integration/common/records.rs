@@ -50,3 +50,23 @@ pub fn lock_of(record: &Path) -> std::fs::File {
 pub fn output_of(events: &[serde_json::Value]) -> String {
     events.iter().map(|event| format!("{event}\n")).collect()
 }
+
+/// The events of each session of each run `world` recorded, in the order of
+/// its runs' records, each as its session's transcript holds it.
+#[track_caller]
+pub fn session_events(world: &super::World) -> Vec<Vec<serde_json::Value>> {
+    let runs = linewright::runs::Runs::new(&world.dir.path().join("work"))
+        .read()
+        .unwrap();
+    runs.iter()
+        .flat_map(|run| &run.sessions)
+        .map(|session| {
+            let record = linewright::transcript::SessionRecord::read(&session.dir).unwrap();
+            record
+                .output
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect()
+        })
+        .collect()
+}

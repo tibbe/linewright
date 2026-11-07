@@ -307,3 +307,36 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     eventually(|| served.usage_limit().is_none()).await;
     served.stop().await;
 }
+
+/// `docs/specs/design_system.md`, The run page, Working.
+#[test_log::test(tokio::test)]
+async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start_to_its_end() {
+    let mut world = World::serving().await;
+    implement_turns(&world, vec![refused_part_way]);
+    open_ticket(&world, "Do the thing");
+    world.factory.cycle().await.unwrap();
+    assert_eq!(world.clock.next_sleep().await, usage_limit_resets_at());
+
+    advance_past_the_reset(&world, 0);
+    world.factory.settle().await;
+
+    let sessions = session_events(&world);
+    assert_eq!(sessions.len(), 1);
+    let ours: Vec<&serde_json::Value> = sessions[0]
+        .iter()
+        .filter(|event| {
+            event["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("linewright-") && !kind.contains("clone"))
+        })
+        .collect();
+    assert_eq!(ours.len(), 3, "{ours:#?}");
+    assert_eq!(ours[0]["type"], "linewright-usage-limit");
+    assert_eq!(ours[0]["until"], json!(usage_limit_resets_at()));
+    assert_eq!(ours[1]["type"], "linewright-usage-limit-ended");
+    assert_eq!(ours[2]["type"], "linewright-session-ended");
+    let at =
+        |event: &serde_json::Value| -> Timestamp { event["at"].as_str().unwrap().parse().unwrap() };
+    assert!(at(ours[0]) < usage_limit_resets_at(), "{ours:#?}");
+    assert!(at(ours[1]) >= usage_limit_resets_at(), "{ours:#?}");
+}

@@ -873,7 +873,7 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
         .unwrap();
 
     let record = linewright::transcript::SessionRecord::read(dir.path()).unwrap();
-    let session = linewright::transcript::parse(&record);
+    let session = linewright::transcript::parse(&record, linewright::transcript::Written::Whole);
     let turns: Vec<(&Prompt, Vec<&What>)> = session
         .turns
         .iter()

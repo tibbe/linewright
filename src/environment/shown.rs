@@ -14,6 +14,7 @@ use crate::domain::Timestamp;
 use crate::phrase::Phrase;
 use crate::status::{Fact, Paint};
 use crate::transcript;
+use crate::transcript::lines::maintenance_account;
 
 /// The environment as `status` shows it (`docs/specs/monitoring.md`,
 /// status).
@@ -280,8 +281,8 @@ pub(crate) enum Account {
 pub(crate) fn account(build: &BuildShown) -> Account {
     match (&build.record.error, &build.record.line.ended) {
         (Some(error), _) => Account::Failed(format!("failed: {error}")),
-        (None, Some(ended)) if ended.status.failed() => Account::Failed(ended.account()),
-        (None, Some(ended)) => Account::Ended(ended.account()),
+        (None, Some(ended)) if ended.status.failed() => Account::Failed(maintenance_account(ended)),
+        (None, Some(ended)) => Account::Ended(maintenance_account(ended)),
         (None, None) => Account::Running,
     }
 }
@@ -416,7 +417,7 @@ impl FollowingBuild {
 mod tests {
     use super::*;
     use crate::environment::lifecycle::Fingerprint;
-    use crate::transcript::lines::MaintenanceLine;
+    use crate::transcript::lines::BuildMaintenanceLine;
     use crate::transcript::{MaintenanceEnded, MaintenanceStatus};
 
     fn at(time: &str) -> Timestamp {
@@ -427,7 +428,7 @@ mod tests {
     /// `status`, if any.
     fn record(started: &str, status: Option<MaintenanceStatus>) -> BuildRecord {
         BuildRecord {
-            line: MaintenanceLine {
+            line: BuildMaintenanceLine {
                 command: "npm ci".into(),
                 ended: status.map(|status| MaintenanceEnded {
                     status,

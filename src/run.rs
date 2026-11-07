@@ -861,8 +861,40 @@ fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
 
 /// Runs a session until `accept` takes its result, in session, and `begin`
 /// has made the result's first writes, once applying it has begun. A result
-/// either rejects goes back to the session.
+/// either rejects goes back to the session. The session's end is in its
+/// transcript once it returns, however it ends.
 async fn converse<T, U, F, Fut, B, BFut>(
+    shell: &Shell,
+    ctx: &Ctx,
+    spec: &mut SessionSpec,
+    first: NextTurn,
+    accept: F,
+    begin: B,
+) -> Result<(U, Turn), Unbegun>
+where
+    F: Fn(String) -> Fut,
+    Fut: Future<Output = Result<T, Rejection>>,
+    B: Fn(T) -> BFut,
+    BFut: Future<Output = Result<U, Refused>>,
+{
+    let conversed = conversation(shell, ctx, spec, first, accept, begin).await;
+    record_end(shell, &spec.record);
+    conversed
+}
+
+/// Writes that the session whose record is `record` ended now, or else logs
+/// that its end is not recorded: the session has ended either way.
+fn record_end(shell: &Shell, record: &Path) {
+    if let Err(unrecorded) = append_event(record, &transcript::session_ended(shell.clock.now())) {
+        warn!(
+            error = format!("{unrecorded:#}"),
+            "the session's end is not recorded"
+        );
+    }
+}
+
+/// [`converse`], up to the session's end.
+async fn conversation<T, U, F, Fut, B, BFut>(
     shell: &Shell,
     ctx: &Ctx,
     spec: &mut SessionSpec,
@@ -982,10 +1014,20 @@ async fn take_turn(
         }
         let resets_at = limit.resets_at;
         let refused_at = tokio::time::Instant::now();
-        let until = limit.wait_until(shell.clock.now());
+        let now = shell.clock.now();
+        let until = limit.wait_until(now);
         warn!(subject, %resets_at, "session refused for the usage limit");
         info!(subject, %resets_at, %until, "waiting out the usage limit");
+        append_event(&spec.record, &transcript::usage_limit_waiting(now, until))
+            .context("writing the wait for the usage limit")
+            .map_err(infra)?;
         cancellable(ctx, shell.clock.sleep_until(until)).await?;
+        append_event(
+            &spec.record,
+            &transcript::usage_limit_waited(shell.clock.now()),
+        )
+        .context("writing the end of the wait for the usage limit")
+        .map_err(infra)?;
         spec.deadline =
             UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
         if underway.is_some() {
@@ -1094,7 +1136,8 @@ struct Opened<'a> {
 /// (docs/specs/runs.md, "Stages"). Making the clone, `check_out` included,
 /// and the maintenance command count against the session's timeout. Each is
 /// an entry in the session's transcript, its start and end written there
-/// whether or not the agent starts.
+/// whether or not the agent starts, and the session's end too when it fails
+/// once its record is made.
 async fn open_session<'a, T>(
     shell: &Shell,
     ctx: &'a Ctx,
@@ -1102,8 +1145,24 @@ async fn open_session<'a, T>(
     branch: &str,
     check_out: impl AsyncFnOnce(&Path) -> Result<T>,
 ) -> Result<(Opened<'a>, Workspace, T), Failure> {
-    let settings = &ctx.with.settings;
     let record = record_dir(shell, &purpose, shell.clock.now())?;
+    let opened = open_in(shell, ctx, purpose, branch, check_out, record.clone()).await;
+    if opened.is_err() {
+        record_end(shell, &record);
+    }
+    opened
+}
+
+/// [`open_session`], in its `record`.
+async fn open_in<'a, T>(
+    shell: &Shell,
+    ctx: &'a Ctx,
+    purpose: Purpose,
+    branch: &str,
+    check_out: impl AsyncFnOnce(&Path) -> Result<T>,
+    record: PathBuf,
+) -> Result<(Opened<'a>, Workspace, T), Failure> {
+    let settings = &ctx.with.settings;
     let attachments = Dir::create(&record)
         .context("creating the attachments directory")
         .map_err(infra)?;
@@ -1279,6 +1338,13 @@ pub fn after_maintenance(status: MaintenanceStatus) -> AfterMaintenance {
 }
 
 impl Opened<'_> {
+    /// `failure`, with the session's end written to its transcript: the
+    /// session ends before its agent starts.
+    fn ended(&self, shell: &Shell, failure: Failure) -> Failure {
+        record_end(shell, &self.record);
+        failure
+    }
+
     /// The session, sent the `prompt` made for its attachments directory,
     /// and that directory.
     fn spec(self, prompt: impl FnOnce(&Path) -> String) -> (SessionSpec, Dir) {
@@ -2016,10 +2082,11 @@ async fn pull_work(
         git::head(dir).await
     })
     .await?;
+    let ended = |failure| opened.ended(shell, failure);
     let conflict = match task {
         Task::Rework { update: false } => None,
         Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
-            update_branch(shell, pr, &ws.dir).await?
+            update_branch(shell, pr, &ws.dir).await.map_err(ended)?
         }
     };
     let store = &shell.store;
@@ -2030,7 +2097,8 @@ async fn pull_work(
         Task::FixCi(names) => store
             .check_failures(pr.number, names)
             .await
-            .map_err(infra)?,
+            .map_err(infra)
+            .map_err(ended)?,
         Task::Rework { .. } | Task::Update => vec![],
     };
     let given = feedback(pr, linewright, ctx.reworked);
@@ -2041,6 +2109,7 @@ async fn pull_work(
         Task::Update => PullJob::Update,
     };
     let Some(pull_task) = pull_work::session_task(job, conflict.as_ref()) else {
+        record_end(shell, &opened.record);
         return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };
     let dir = &ws.dir;
@@ -2048,7 +2117,9 @@ async fn pull_work(
     let own_commits_tip = if conflict.is_some() { &start } else { "HEAD" };
     let left_unfinished = git::unfinished_commits(dir, &upstream, own_commits_tip)
         .await
-        .map_err(infra)?;
+        .map_err(infra)
+        .map_err(ended)?;
+    let before = git::work_state(dir).await.map_err(infra).map_err(ended)?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::pull_work(
             &ctx.with.briefs.prompts,
@@ -2060,7 +2131,6 @@ async fn pull_work(
             attachments,
         )
     });
-    let before = git::work_state(dir).await.map_err(infra)?;
     let (upstream, base) = (&upstream, start.as_str());
     let check_result = |message: String, pr_threads: Vec<String>| async move {
         let result: PullWorkResult = results::parse(&message).map_err(parse_retry(ctx))?;

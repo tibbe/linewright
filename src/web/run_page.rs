@@ -30,8 +30,10 @@ use crate::logs::{LogsError, RunRecords, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, After, Call, Change, Changed, Clock, EntryAt, Feed, Layout, Made, Maintenance,
-    MaintenanceEnded, MaintenanceRan, Numbering, Place, Prompt, Session, SessionClone, What,
+    self, After, Call, Change, Changed, Clock, Course, EntryAt, Feed, INTERRUPTED, Layout, Made,
+    Maintenance, MaintenanceEnded, MaintenanceRan, Numbering, Place, Prompt, Session, SessionClone,
+    What,
+    lines::{clone_account, composed, maintenance_account},
 };
 
 /// A change to the page's transcript that a change to the run's makes.
@@ -293,6 +295,7 @@ impl SessionView {
                 }
                 self.again(self.maintenance, model)
             }
+            Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => vec![],
             Change::Ended(Place::Entry(at), ended_at) => {
                 self.stamp_tick(ended_at);
                 let Some(&i) = self.at.get(&at) else {
@@ -449,9 +452,9 @@ pub(super) fn command_html(
     };
     let command = html::escape(&transcript::shown_command(command));
     let account = if ended.status.failed() {
-        status_html(Tone::Failure, &ended.account())
+        status_html(Tone::Failure, &maintenance_account(ended))
     } else {
-        html::escape(&ended.account()).to_string()
+        html::escape(&maintenance_account(ended)).to_string()
     };
     let open = if ended.output_shown(verbose) {
         " open"
@@ -466,16 +469,22 @@ pub(super) fn command_html(
 
 /// The clone's line, opening to its error once it has ended with one, open
 /// from the start (`docs/specs/design_system.md`, The run page, Folding).
-fn clone_html(stamp: &str, ended: Option<&transcript::CloneEnded>) -> String {
-    let Some(ended) = ended else {
-        let running = status_html(Tone::InProgress, "running");
-        return format!(r#"<div class="line">{stamp} clone → {running}</div>"#);
+fn clone_html(stamp: &str, course: Course<&transcript::CloneEnded>) -> String {
+    let ended = match course.ended_or_account() {
+        Ok(ended) => *ended,
+        Err(account) => {
+            let account = match course {
+                Course::Running => status_html(Tone::InProgress, account),
+                Course::Ended(_) | Course::Interrupted => account.to_string(),
+            };
+            return format!(r#"<div class="line">{stamp} clone → {account}</div>"#);
+        }
     };
     let Some(error) = &ended.error else {
-        let account = html::escape(&ended.account());
+        let account = html::escape(&clone_account(ended));
         return format!(r#"<div class="line">{stamp} clone → {account}</div>"#);
     };
-    let account = status_html(Tone::Failure, &ended.account());
+    let account = status_html(Tone::Failure, &clone_account(ended));
     let error = output_html(error);
     format!(
         r#"<details open><summary class="cursor-pointer wrap-anywhere"><span class="line">{stamp} clone → {account}</span></summary>{error}</details>"#
@@ -584,16 +593,21 @@ impl Drawn<'_> {
         let stamp = stamp_html(&id, self.session.entries[i].stamp);
         let (kind, body) = match self.kind(i) {
             Kind::Tool(call) => ("tool", self.call_html(i, call)),
-            Kind::Clone(clone) => ("clone", clone_html(&stamp, clone.ended.as_ref())),
+            Kind::Clone(clone) => ("clone", clone_html(&stamp, clone.course.as_ref())),
             Kind::Maintenance(maintenance) => (
                 "maintenance",
-                command_html(
-                    &stamp,
-                    "maintenance",
-                    &maintenance.command,
-                    maintenance.ended(),
-                    self.verbose,
-                ),
+                match maintenance.course() {
+                    Course::Interrupted => {
+                        command_line_html(&stamp, "maintenance", &maintenance.command, INTERRUPTED)
+                    }
+                    course @ (Course::Running | Course::Ended(_)) => command_html(
+                        &stamp,
+                        "maintenance",
+                        &maintenance.command,
+                        course.ended().copied(),
+                        self.verbose,
+                    ),
+                },
             ),
             Kind::Message(text) => ("message", line_html(&stamp, "", text)),
             Kind::Thinking(text) => ("thinking", line_html(&stamp, "thinking: ", text)),
@@ -638,10 +652,10 @@ impl Drawn<'_> {
     fn call_line_html(&self, i: usize, call: &Call) -> String {
         let id = self.entry_id(i);
         let stamp = stamp_html(&id, self.session.entries[i].stamp);
-        let account = call.account();
+        let account = composed(call.account());
         let account = if call.failed() {
             status_html(Tone::Failure, &account)
-        } else if call.result.is_none() {
+        } else if call.end == Course::Running && call.result.is_none() {
             status_html(Tone::InProgress, &account)
         } else {
             html::escape(&account).to_string()

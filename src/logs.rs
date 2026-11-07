@@ -154,10 +154,19 @@ pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsE
             })
         })
     });
+    let last = records.len();
+    let sessions = records
+        .iter()
+        .enumerate()
+        .map(|(i, record)| {
+            let written = transcript::Written::of(i + 1, last, in_flight.is_none());
+            transcript::parse(record, written)
+        })
+        .collect();
     Ok(Transcript {
         run: run.started(),
         in_flight,
-        sessions: records.iter().map(transcript::parse).collect(),
+        sessions,
     })
 }
 

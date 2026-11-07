@@ -2,6 +2,7 @@ use super::*;
 
 use linewright::transcript::{
     MaintenanceStatus, clone_ended, clone_started, maintenance_ended, maintenance_started,
+    session_ended,
 };
 use serde_json::json;
 
@@ -1074,4 +1075,60 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
         clones_shown(html),
         [("0:00 clone → 12s".to_string(), String::new(), false)]
     );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// Following.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    let dir = "sessions/issue-1/20261014T120000Z-triage";
+    let start = at("2026-10-14T12:00:00Z");
+    let call = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-14T12:00:20Z",
+        "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "cargo test"}},
+        ]},
+    });
+    pages.write(&[(
+        &format!("{dir}/output.jsonl"),
+        &format!(
+            "{}\n{}\n{call}\n",
+            clone_started(start),
+            clone_ended(start + chrono::TimeDelta::seconds(2), 2.0, None),
+        ),
+    )]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": null,
+        "sessions": [ran(dir)],
+    }));
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    let end = session_ended(start + chrono::TimeDelta::seconds(30));
+    pages.append(&format!("{dir}/output.jsonl"), &format!("{end}\n"));
+    let ended = transcript_events(&mut events, |sent| {
+        sent.iter().any(|(_, data)| data.contains("interrupted"))
+    })
+    .await;
+
+    assert!(
+        entry_lines(&read)[1]
+            .1
+            .ends_with("Bash(cargo test) → running"),
+        "{:?}",
+        entry_lines(&read)
+    );
+    let lines: Vec<String> = patches(&ended.last().unwrap().1)
+        .iter()
+        .filter_map(|(_, _, html)| select(html, ".line").first().map(|line| text(*line)))
+        .collect();
+    assert_eq!(lines, ["0:20 Bash(cargo test) → interrupted"]);
 }
