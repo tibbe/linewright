@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
@@ -25,15 +26,15 @@ use super::{
 };
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
-use crate::logs::{Following, LogsError, Which};
+use crate::logs::{LogsError, RunRecords, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, CloneLine, EntryLine, FollowedLine, Header, Line, Made, MaintenanceEnded,
-    MaintenanceLine, Stamped, ToolLine, Under, Verbosity,
+    self, After, Call, Change, Changed, Clock, EntryAt, Feed, Layout, Made, Maintenance,
+    MaintenanceEnded, MaintenanceRan, Numbering, Place, Prompt, Session, SessionClone, What,
 };
 
-/// A change to the page's transcript that a line of it makes.
+/// A change to the page's transcript that a change to the run's makes.
 enum Patch {
     /// `html` added at the end of the element `into`.
     Append { into: String, html: String },
@@ -59,37 +60,17 @@ impl Patch {
     }
 }
 
-/// The patch that shows an entry that runs, `what`, again once it has ended,
-/// where `entry` keeps it in `session`; `None` when it is new, which `entry`
-/// then keeps as the next of `session`'s entries.
-fn again(
-    session: &mut SessionView,
-    entry: fn(&mut SessionView) -> &mut Option<usize>,
-    what: &EntryLine,
-    verbose: bool,
-) -> Option<Vec<Patch>> {
-    let next = session.entries.len();
-    let Some(known) = *entry(session) else {
-        *entry(session) = Some(next);
-        return None;
-    };
-    session.entries[known].what = what.clone();
-    Some(vec![Patch::Replace {
-        id: entry_id(session, known),
-        html: entry_html(session, known, verbose),
-    }])
-}
-
-/// A run's transcript as the page shows it, built up from its lines.
+/// A run's transcript as the page shows it, built up from its changes.
 struct RunView {
     run: RunId,
     /// What the run is of, as the Item column of a list of runs names it
     /// (`docs/specs/design_system.md`, The run page, Heading).
     item: Html,
     verbose: bool,
-    /// The number of sessions its header gave, once it has come.
+    /// The number of sessions the run had when its transcript started, once
+    /// it has.
     sessions_started: Option<usize>,
-    /// Whether its header said it ran by hand.
+    /// Whether it ran by hand, once its transcript has started.
     by_hand: bool,
     sessions: Vec<SessionView>,
 }
@@ -99,27 +80,52 @@ struct SessionView {
     started_at: Option<Timestamp>,
     /// `None` for a session recorded before Linewright kept it.
     ran: Option<Ran>,
-    /// In the order they first appeared: the `k`th's anchor is
+    /// In the order they were added: the `k`th's anchor is
     /// `s{number}-e{k}`.
     entries: Vec<EntryView>,
     /// The session's own entries, as against its sub-agents'.
     own: Vec<usize>,
-    /// Each call's entry, by the ID the agent gives it.
-    calls: HashMap<String, usize>,
-    /// Its clone's entry, once its line has come.
+    /// Its clone's entry, once it has been added.
     clone: Option<usize>,
-    /// Its maintenance command's entry, once its line has come.
+    /// Its maintenance command's entry, once it has been added.
     maintenance: Option<usize>,
+    /// The entries of its turns, by where each is.
+    at: HashMap<EntryAt, usize>,
+    clock: Clock,
+    verbose: bool,
 }
 
 struct EntryView {
     stamp: StampView,
-    what: EntryLine,
+    of: Of,
     /// A sub-agent's entries, for the call that started it.
     children: Vec<usize>,
 }
 
-/// When an entry happened, as its first line gives it.
+/// What of a session's transcript an entry shows.
+enum Of {
+    Clone,
+    Maintenance,
+    /// The brief or follow-up that started its `n`th turn.
+    Prompt(usize),
+    Entry(EntryAt),
+}
+
+/// What an entry shows, as its session's transcript holds it now.
+enum Kind<'a> {
+    Clone(&'a SessionClone),
+    Maintenance(&'a Maintenance),
+    Brief(&'a str),
+    FollowUp(Option<&'a str>),
+    Message(&'a str),
+    Thinking(&'a str),
+    Context(&'a str),
+    Event(&'a Value),
+    Other(&'a Value),
+    Tool(&'a Call),
+}
+
+/// When an entry happened, as it was added.
 #[derive(Clone, Copy)]
 struct StampView {
     at: Option<Timestamp>,
@@ -138,134 +144,52 @@ impl RunView {
         }
     }
 
-    /// Takes the next line of the transcript, giving what it changes on the
-    /// page, from `following`, which made it.
-    fn apply_line(&mut self, line: &Line, following: &Following) -> Vec<Patch> {
-        match line {
-            Line::Header(Header::Run { run, sessions }) => {
-                self.sessions_started = Some(*sessions);
-                self.by_hand = run.by_hand();
-                vec![Patch::Replace {
-                    id: "run".into(),
-                    html: self.heading(),
-                }]
-            }
-            Line::Header(Header::Session {
-                session,
-                started_at,
-            }) => {
-                if *session != self.sessions.len() + 1 {
-                    return vec![];
-                }
-                self.sessions.push(SessionView {
-                    number: *session,
-                    started_at: *started_at,
-                    ran: following.ran(*session).cloned(),
-                    entries: vec![],
-                    own: vec![],
-                    calls: HashMap::new(),
-                    clone: None,
-                    maintenance: None,
-                });
-                let added = self.sessions.last().expect("just pushed");
-                vec![Patch::Append {
-                    into: "sessions".into(),
-                    html: self.session_html(added),
-                }]
-            }
-            Line::Entry(stamped) => self.entry(stamped),
-        }
+    /// That the run's transcript started, with `sessions` sessions, giving
+    /// what it changes on the page.
+    fn start(&mut self, sessions: usize, by_hand: bool) -> Vec<Patch> {
+        self.sessions_started = Some(sessions);
+        self.by_hand = by_hand;
+        vec![Patch::Replace {
+            id: "run".into(),
+            html: self.heading(),
+        }]
     }
 
-    fn entry(&mut self, stamped: &Stamped) -> Vec<Patch> {
-        let verbose = self.verbose;
-        let Some(session) = stamped
-            .stamp
+    /// Takes the next change to the transcript, of a session whose
+    /// transcript the line it was read from left as `model`, and which ran
+    /// with `ran`, giving what it changes on the page.
+    fn apply(&mut self, changed: Changed, model: &Session, ran: Option<&Ran>) -> Vec<Patch> {
+        let Changed { read, change } = changed;
+        if change == Change::Opened {
+            if read.session != self.sessions.len() + 1 {
+                return vec![];
+            }
+            self.sessions.push(SessionView {
+                number: read.session,
+                started_at: model.started_at,
+                ran: ran.cloned(),
+                entries: vec![],
+                own: vec![],
+                clone: None,
+                maintenance: None,
+                at: HashMap::new(),
+                clock: Clock::new(model.started_at),
+                verbose: self.verbose,
+            });
+            let added = self.sessions.last().expect("just pushed");
+            return vec![Patch::Append {
+                into: "sessions".into(),
+                html: added.html(model),
+            }];
+        }
+        let Some(session) = read
             .session
             .checked_sub(1)
             .and_then(|i| self.sessions.get_mut(i))
         else {
             return vec![];
         };
-        let i = session.entries.len();
-        match &stamped.what {
-            EntryLine::Tool(call) => {
-                if let Some(&known) = session.calls.get(&call.tool_use_id) {
-                    session.entries[known].what = stamped.what.clone();
-                    return account_patches(session, known, call, verbose);
-                }
-                session.calls.insert(call.tool_use_id.clone(), i);
-            }
-            EntryLine::Clone(_) => {
-                if let Some(patches) = again(session, |s| &mut s.clone, &stamped.what, verbose) {
-                    return patches;
-                }
-            }
-            EntryLine::Maintenance(_) => {
-                if let Some(patches) =
-                    again(session, |s| &mut s.maintenance, &stamped.what, verbose)
-                {
-                    return patches;
-                }
-            }
-            EntryLine::Brief { .. }
-            | EntryLine::FollowUp { .. }
-            | EntryLine::Message { .. }
-            | EntryLine::Thinking { .. }
-            | EntryLine::Context { .. }
-            | EntryLine::Event { .. }
-            | EntryLine::Other { .. } => {}
-        }
-        session.entries.push(EntryView {
-            stamp: StampView {
-                at: stamped.stamp.at,
-                elapsed_seconds: stamped.stamp.elapsed_seconds,
-            },
-            what: stamped.what.clone(),
-            children: vec![],
-        });
-        let parent = match &stamped.stamp.under {
-            Under::Session => None,
-            Under::SubAgent { parent, .. } => session.calls.get(parent).copied(),
-        };
-        match parent {
-            Some(parent) => session.entries[parent].children.push(i),
-            None => session.own.push(i),
-        }
-        let session = &*session;
-        if !shown(&session.entries[i].what, verbose) {
-            return vec![];
-        }
-        let Some(parent) = parent else {
-            return vec![Patch::Append {
-                into: format!("s{}-entries", session.number),
-                html: entry_html(session, i, verbose),
-            }];
-        };
-        let id = entry_id(session, parent);
-        if shown_children(session, parent, verbose).count() == 1 {
-            vec![
-                Patch::Append {
-                    into: format!("{id}-summary"),
-                    html: count_html(session, parent, verbose),
-                },
-                Patch::Append {
-                    into: format!("{id}-call"),
-                    html: sub_agent_html(session, parent, verbose),
-                },
-            ]
-        } else {
-            vec![
-                Patch::Append {
-                    into: format!("{id}-entries"),
-                    html: entry_html(session, i, verbose),
-                },
-                Patch::Replace {
-                    id: format!("{id}-count"),
-                    html: count_html(session, parent, verbose),
-                },
-            ]
-        }
+        session.change(change, model)
     }
 
     fn heading(&self) -> String {
@@ -282,33 +206,198 @@ impl RunView {
         )
     }
 
-    fn session_html(&self, session: &SessionView) -> String {
-        let n = session.number;
-        let heading = match session.started_at {
+    /// The transcript as the page shows it whole, its sessions as `feed`
+    /// has read them.
+    fn html(&self, feed: &Feed) -> String {
+        let sessions: String = self
+            .sessions
+            .iter()
+            .map(|session| {
+                let model = feed
+                    .session(session.number)
+                    .expect("a session shown has opened");
+                session.html(model)
+            })
+            .collect();
+        format!(r#"{}<div id="sessions">{sessions}</div>"#, self.heading())
+    }
+}
+
+impl SessionView {
+    /// The session as the page shows it, its transcript as `model` holds it.
+    fn html(&self, model: &Session) -> String {
+        let n = self.number;
+        let heading = match self.started_at {
             Some(at) => format!("session {n}: started {}", html::time(at)),
             None => format!("session {n}"),
         };
-        let entries: String = session
+        let drawn = self.drawn(model);
+        let entries: String = self
             .own
             .iter()
-            .filter(|&&i| shown(&session.entries[i].what, self.verbose))
-            .map(|&i| entry_html(session, i, self.verbose))
+            .filter(|&&i| drawn.shown(i))
+            .map(|&i| drawn.entry_html(i))
             .collect();
-        let ran = ran_html(session.ran.as_ref());
+        let ran = ran_html(self.ran.as_ref());
         format!(
             r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{ran}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
         )
     }
 
-    /// The transcript as the page shows it whole.
-    fn html(&self) -> String {
-        let sessions: String = self
-            .sessions
-            .iter()
-            .map(|session| self.session_html(session))
-            .collect();
-        format!(r#"{}<div id="sessions">{sessions}</div>"#, self.heading())
+    /// Takes the next change to its transcript, which the line it was read
+    /// from left as `model`, giving what it changes on the page.
+    fn change(&mut self, change: Change, model: &Session) -> Vec<Patch> {
+        self.clock.started(model.started_at);
+        match change {
+            Change::Opened => vec![],
+            Change::Turn(turn) => {
+                let started = &model.turns[turn];
+                if matches!(started.prompt, Prompt::Brief(None)) {
+                    return vec![];
+                }
+                let stamp = self.stamp_tick(started.started_at);
+                self.add(stamp, Of::Prompt(turn), None, model)
+            }
+            Change::Added(Place::Clone) => {
+                let clone = model.clone.as_ref().expect("a changed clone is there");
+                let stamp = self.stamp_tick(Some(clone.at));
+                self.clone = Some(self.entries.len());
+                self.add(stamp, Of::Clone, None, model)
+            }
+            Change::Added(Place::Maintenance) => {
+                let maintenance = maintenance(model);
+                let stamp = match maintenance.ran {
+                    MaintenanceRan::Started { .. } => self.stamp_tick(maintenance.at()),
+                    MaintenanceRan::Recorded(_) => StampView {
+                        at: None,
+                        elapsed_seconds: None,
+                    },
+                };
+                self.maintenance = Some(self.entries.len());
+                self.add(stamp, Of::Maintenance, None, model)
+            }
+            Change::Added(Place::Entry(at)) => {
+                let stamp = self.stamp_tick(model.entry(&at).at);
+                let parent = at.parent().and_then(|parent| self.at.get(&parent).copied());
+                self.at.insert(at.clone(), self.entries.len());
+                self.add(stamp, Of::Entry(at), parent, model)
+            }
+            Change::Ended(Place::Clone, at) => {
+                let clone = model.clone.as_ref().expect("a changed clone is there");
+                self.stamp_tick(Some(at.unwrap_or(clone.at)));
+                self.again(self.clone, model)
+            }
+            Change::Ended(Place::Maintenance, at) => {
+                if let MaintenanceRan::Started { .. } = maintenance(model).ran {
+                    self.stamp_tick(at);
+                }
+                self.again(self.maintenance, model)
+            }
+            Change::Ended(Place::Entry(at), ended_at) => {
+                self.stamp_tick(ended_at);
+                let Some(&i) = self.at.get(&at) else {
+                    return vec![];
+                };
+                let What::Tool(call) = &model.entry(&at).what else {
+                    return vec![];
+                };
+                self.drawn(model).account_patches(i, call)
+            }
+        }
     }
+
+    /// When something shown that happened `at` happened.
+    fn stamp_tick(&mut self, at: Option<Timestamp>) -> StampView {
+        let at = self.clock.tick(at);
+        StampView {
+            at,
+            elapsed_seconds: self.clock.since_started(at),
+        }
+    }
+
+    /// Its entries, drawn from its transcript as `model` holds it.
+    fn drawn<'a>(&'a self, model: &'a Session) -> Drawn<'a> {
+        Drawn {
+            session: self,
+            model,
+            verbose: self.verbose,
+        }
+    }
+
+    /// Adds an entry that shows `of`, under the call `parent` if it is of a
+    /// sub-agent's work, giving what it changes on the page.
+    fn add(
+        &mut self,
+        stamp: StampView,
+        of: Of,
+        parent: Option<usize>,
+        model: &Session,
+    ) -> Vec<Patch> {
+        let i = self.entries.len();
+        self.entries.push(EntryView {
+            stamp,
+            of,
+            children: vec![],
+        });
+        match parent {
+            Some(parent) => self.entries[parent].children.push(i),
+            None => self.own.push(i),
+        }
+        let drawn = self.drawn(model);
+        if !drawn.shown(i) {
+            return vec![];
+        }
+        let Some(parent) = parent else {
+            return vec![Patch::Append {
+                into: format!("s{}-entries", self.number),
+                html: drawn.entry_html(i),
+            }];
+        };
+        let id = drawn.entry_id(parent);
+        if drawn.shown_children(parent).count() == 1 {
+            vec![
+                Patch::Append {
+                    into: format!("{id}-summary"),
+                    html: drawn.count_html(parent),
+                },
+                Patch::Append {
+                    into: format!("{id}-call"),
+                    html: drawn.sub_agent_html(parent),
+                },
+            ]
+        } else {
+            vec![
+                Patch::Append {
+                    into: format!("{id}-entries"),
+                    html: drawn.entry_html(i),
+                },
+                Patch::Replace {
+                    id: format!("{id}-count"),
+                    html: drawn.count_html(parent),
+                },
+            ]
+        }
+    }
+
+    /// The patch that shows the entry `entry` that runs again once it has
+    /// ended.
+    fn again(&self, entry: Option<usize>, model: &Session) -> Vec<Patch> {
+        let Some(i) = entry else {
+            return vec![];
+        };
+        let drawn = self.drawn(model);
+        vec![Patch::Replace {
+            id: drawn.entry_id(i),
+            html: drawn.entry_html(i),
+        }]
+    }
+}
+
+fn maintenance(model: &Session) -> &Maintenance {
+    model
+        .maintenance
+        .as_ref()
+        .expect("a changed maintenance command is there")
 }
 
 /// A session's model and effort, and where each of its settings and prompt
@@ -410,86 +499,180 @@ pub(super) fn output_html(output: &str) -> String {
     )
 }
 
-/// What a call's account changes: its line and its result, leaving its fold
-/// as the reader left it, unless it failed, which opens it.
-fn account_patches(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) -> Vec<Patch> {
-    let id = entry_id(session, i);
-    if call.failed() {
-        return vec![Patch::Replace {
-            id: format!("{id}-call"),
-            html: call_html(session, i, call, verbose),
-        }];
-    }
-    vec![
-        Patch::Replace {
-            id: format!("{id}-line"),
-            html: call_line_html(session, i, call),
-        },
-        Patch::Replace {
-            id: format!("{id}-io"),
-            html: io_html(&id, call),
-        },
-    ]
-}
-
-/// Whether the page shows an entry: as a transcript shows it, or with
-/// `verbose` as a transcript in full does.
-fn shown(what: &EntryLine, verbose: bool) -> bool {
-    match what {
-        EntryLine::Message { .. }
-        | EntryLine::FollowUp { .. }
-        | EntryLine::Tool(_)
-        | EntryLine::Clone(_)
-        | EntryLine::Maintenance { .. } => true,
-        EntryLine::Brief { .. }
-        | EntryLine::Thinking { .. }
-        | EntryLine::Context { .. }
-        | EntryLine::Event { .. }
-        | EntryLine::Other { .. } => verbose,
-    }
-}
-
-fn shown_children(
-    session: &SessionView,
-    call: usize,
+/// A session's entries, drawn from its transcript as `model` holds it.
+struct Drawn<'a> {
+    session: &'a SessionView,
+    model: &'a Session,
     verbose: bool,
-) -> impl Iterator<Item = usize> + '_ {
-    session.entries[call]
-        .children
-        .iter()
-        .copied()
-        .filter(move |&i| shown(&session.entries[i].what, verbose))
 }
 
-/// The entry's anchor: its number in the order entries first appeared in
-/// its session.
-fn entry_id(session: &SessionView, i: usize) -> String {
-    format!("s{}-e{}", session.number, i + 1)
-}
-
-fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
-    let entry = &session.entries[i];
-    let id = entry_id(session, i);
-    let stamp = stamp_html(&id, entry.stamp);
-    let (kind, body) = match &entry.what {
-        EntryLine::Tool(call) => ("tool", call_html(session, i, call, verbose)),
-        EntryLine::Clone(CloneLine { ended }) => ("clone", clone_html(&stamp, ended.as_ref())),
-        EntryLine::Maintenance(MaintenanceLine { command, ended }) => (
-            "maintenance",
-            command_html(&stamp, "maintenance", command, ended.as_ref(), verbose),
-        ),
-        EntryLine::Message { text } => ("message", line_html(&stamp, "", text)),
-        EntryLine::Thinking { text } => ("thinking", line_html(&stamp, "thinking: ", text)),
-        EntryLine::Context { text } => ("context", line_html(&stamp, "context: ", text)),
-        EntryLine::Brief { text } => ("brief", line_html(&stamp, "brief: ", text)),
-        EntryLine::FollowUp { summary, text } => {
-            let text = text.as_ref().filter(|_| verbose).unwrap_or(summary);
-            ("follow-up", line_html(&stamp, "follow-up: ", text))
+impl Drawn<'_> {
+    fn kind(&self, i: usize) -> Kind<'_> {
+        match &self.session.entries[i].of {
+            Of::Clone => Kind::Clone(self.model.clone.as_ref().expect("an added clone is there")),
+            Of::Maintenance => Kind::Maintenance(maintenance(self.model)),
+            Of::Prompt(turn) => match &self.model.turns[*turn].prompt {
+                Prompt::Brief(text) => Kind::Brief(text.as_deref().unwrap_or_default()),
+                Prompt::FollowUp(text) => Kind::FollowUp(text.as_deref()),
+            },
+            Of::Entry(at) => match &self.model.entry(at).what {
+                What::Message(text) => Kind::Message(text),
+                What::Thinking(text) => Kind::Thinking(text),
+                What::Context(text) => Kind::Context(text),
+                What::Tool(call) => Kind::Tool(call),
+                What::Event(event) => Kind::Event(event),
+                What::Other(other) => Kind::Other(other),
+            },
         }
-        EntryLine::Event { event } => ("event", line_html(&stamp, "event: ", &event.to_string())),
-        EntryLine::Other { other } => ("other", line_html(&stamp, "other: ", &other.to_string())),
-    };
-    format!(r#"<li class="entry {kind} py-0.5" id="{id}">{body}</li>"#)
+    }
+
+    /// What a call's account changes: its line and its result, leaving its
+    /// fold as the reader left it, unless it failed, which opens it.
+    fn account_patches(&self, i: usize, call: &Call) -> Vec<Patch> {
+        let id = self.entry_id(i);
+        if call.failed() {
+            return vec![Patch::Replace {
+                id: format!("{id}-call"),
+                html: self.call_html(i, call),
+            }];
+        }
+        vec![
+            Patch::Replace {
+                id: format!("{id}-line"),
+                html: self.call_line_html(i, call),
+            },
+            Patch::Replace {
+                id: format!("{id}-io"),
+                html: io_html(&id, call),
+            },
+        ]
+    }
+
+    /// Whether the page shows an entry: as a transcript shows it, or with
+    /// `verbose` as a transcript in full does.
+    fn shown(&self, i: usize) -> bool {
+        match self.kind(i) {
+            Kind::Message(_)
+            | Kind::FollowUp(_)
+            | Kind::Tool(_)
+            | Kind::Clone(_)
+            | Kind::Maintenance(_) => true,
+            Kind::Brief(_)
+            | Kind::Thinking(_)
+            | Kind::Context(_)
+            | Kind::Event(_)
+            | Kind::Other(_) => self.verbose,
+        }
+    }
+
+    fn shown_children(&self, call: usize) -> impl Iterator<Item = usize> + '_ {
+        self.session.entries[call]
+            .children
+            .iter()
+            .copied()
+            .filter(move |&i| self.shown(i))
+    }
+
+    /// The entry's anchor: its number in the order entries were added to its
+    /// session.
+    fn entry_id(&self, i: usize) -> String {
+        format!("s{}-e{}", self.session.number, i + 1)
+    }
+
+    fn entry_html(&self, i: usize) -> String {
+        let id = self.entry_id(i);
+        let stamp = stamp_html(&id, self.session.entries[i].stamp);
+        let (kind, body) = match self.kind(i) {
+            Kind::Tool(call) => ("tool", self.call_html(i, call)),
+            Kind::Clone(clone) => ("clone", clone_html(&stamp, clone.ended.as_ref())),
+            Kind::Maintenance(maintenance) => (
+                "maintenance",
+                command_html(
+                    &stamp,
+                    "maintenance",
+                    &maintenance.command,
+                    maintenance.ended(),
+                    self.verbose,
+                ),
+            ),
+            Kind::Message(text) => ("message", line_html(&stamp, "", text)),
+            Kind::Thinking(text) => ("thinking", line_html(&stamp, "thinking: ", text)),
+            Kind::Context(text) => ("context", line_html(&stamp, "context: ", text)),
+            Kind::Brief(text) => ("brief", line_html(&stamp, "brief: ", text)),
+            Kind::FollowUp(text) => {
+                let text = match text {
+                    Some(text) if self.verbose => text.to_string(),
+                    _ => text.map_or(String::new(), transcript::summary),
+                };
+                ("follow-up", line_html(&stamp, "follow-up: ", &text))
+            }
+            Kind::Event(event) => ("event", line_html(&stamp, "event: ", &event.to_string())),
+            Kind::Other(other) => ("other", line_html(&stamp, "other: ", &other.to_string())),
+        };
+        format!(r#"<li class="entry {kind} py-0.5" id="{id}">{body}</li>"#)
+    }
+
+    /// A call's line, opening to its full input and result and to the work
+    /// of the sub-agent it started, with the count of its entries; open from
+    /// the start when it failed, and with `verbose`.
+    fn call_html(&self, i: usize, call: &Call) -> String {
+        let id = self.entry_id(i);
+        let sub_agent = self.shown_children(i).next().is_some();
+        let (count, entries) = if sub_agent {
+            (self.count_html(i), self.sub_agent_html(i))
+        } else {
+            (String::new(), String::new())
+        };
+        let open = if call.failed() || self.verbose {
+            " open"
+        } else {
+            ""
+        };
+        format!(
+            r#"<details class="call" id="{id}-call"{open}><summary class="cursor-pointer wrap-anywhere" id="{id}-summary">{line}{count}</summary>{io}{entries}</details>"#,
+            line = self.call_line_html(i, call),
+            io = io_html(&id, call),
+        )
+    }
+
+    fn call_line_html(&self, i: usize, call: &Call) -> String {
+        let id = self.entry_id(i);
+        let stamp = stamp_html(&id, self.session.entries[i].stamp);
+        let account = call.account();
+        let account = if call.failed() {
+            status_html(Tone::Failure, &account)
+        } else if call.result.is_none() {
+            status_html(Tone::InProgress, &account)
+        } else {
+            html::escape(&account).to_string()
+        };
+        format!(
+            r#"<span class="line" id="{id}-line">{stamp} <b>{tool}</b>({argument}) → {account}</span>"#,
+            tool = html::escape(call.tool.name()),
+            argument = html::escape(&call.argument(self.model.dir.as_deref())),
+        )
+    }
+
+    /// The work of the sub-agent a call started.
+    fn sub_agent_html(&self, call: usize) -> String {
+        let entries: String = self
+            .shown_children(call)
+            .map(|i| self.entry_html(i))
+            .collect();
+        format!(
+            r#"<ol class="entries border-l-2 border-base-300 pl-6" id="{}-entries">{entries}</ol>"#,
+            self.entry_id(call)
+        )
+    }
+
+    fn count_html(&self, call: usize) -> String {
+        let n = self.shown_children(call).count();
+        let entries = if n == 1 { "entry" } else { "entries" };
+        format!(
+            r#" <span class="count badge badge-sm badge-ghost ml-2" id="{}-count">{n} {entries}</span>"#,
+            self.entry_id(call)
+        )
+    }
 }
 
 /// The time since the session started, linking to the entry, with when it
@@ -497,7 +680,7 @@ fn entry_html(session: &SessionView, i: usize, verbose: bool) -> String {
 fn stamp_html(id: &str, stamp: StampView) -> String {
     let elapsed = stamp
         .elapsed_seconds
-        .map_or(String::new(), transcript::elapsed);
+        .map_or(String::new(), transcript::lines::elapsed);
     let tip = stamp.at.map_or(String::new(), |at| {
         format!(r#" data-tip="{}""#, html::utc(at))
     });
@@ -514,53 +697,10 @@ fn line_html(stamp: &str, label: &str, text: &str) -> String {
     )
 }
 
-/// A call's line, opening to its full input and result and to the work of
-/// the sub-agent it started, with the count of its entries; open from the
-/// start when it failed, and with `verbose`.
-fn call_html(session: &SessionView, i: usize, call: &ToolLine, verbose: bool) -> String {
-    let id = entry_id(session, i);
-    let sub_agent = shown_children(session, i, verbose).next().is_some();
-    let (count, entries) = if sub_agent {
-        (
-            count_html(session, i, verbose),
-            sub_agent_html(session, i, verbose),
-        )
-    } else {
-        (String::new(), String::new())
-    };
-    let open = if call.failed() || verbose {
-        " open"
-    } else {
-        ""
-    };
-    format!(
-        r#"<details class="call" id="{id}-call"{open}><summary class="cursor-pointer wrap-anywhere" id="{id}-summary">{line}{count}</summary>{io}{entries}</details>"#,
-        line = call_line_html(session, i, call),
-        io = io_html(&id, call),
-    )
-}
-
-fn call_line_html(session: &SessionView, i: usize, call: &ToolLine) -> String {
-    let id = entry_id(session, i);
-    let stamp = stamp_html(&id, session.entries[i].stamp);
-    let account = if call.failed() {
-        status_html(Tone::Failure, &call.account)
-    } else if call.running() {
-        status_html(Tone::InProgress, &call.account)
-    } else {
-        html::escape(&call.account).to_string()
-    };
-    format!(
-        r#"<span class="line" id="{id}-line">{stamp} <b>{tool}</b>({argument}) → {account}</span>"#,
-        tool = html::escape(&call.tool),
-        argument = html::escape(&call.argument),
-    )
-}
-
 /// A call's full input and result, as a transcript in full shows them.
-fn io_html(id: &str, call: &ToolLine) -> String {
+fn io_html(id: &str, call: &Call) -> String {
     let mut io = String::new();
-    for (label, text) in call.shown.parts() {
+    for (label, text) in call.parts() {
         let _ = writeln!(
             io,
             r#"<div>{label}: <pre class="mt-0.5 mb-1.5 max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre></div>"#,
@@ -568,26 +708,6 @@ fn io_html(id: &str, call: &ToolLine) -> String {
         );
     }
     format!(r#"<div class="io my-1 ml-[4.5em]" id="{id}-io">{io}</div>"#)
-}
-
-/// The work of the sub-agent a call started.
-fn sub_agent_html(session: &SessionView, call: usize, verbose: bool) -> String {
-    let entries: String = shown_children(session, call, verbose)
-        .map(|i| entry_html(session, i, verbose))
-        .collect();
-    format!(
-        r#"<ol class="entries border-l-2 border-base-300 pl-6" id="{}-entries">{entries}</ol>"#,
-        entry_id(session, call)
-    )
-}
-
-fn count_html(session: &SessionView, call: usize, verbose: bool) -> String {
-    let n = shown_children(session, call, verbose).count();
-    let entries = if n == 1 { "entry" } else { "entries" };
-    format!(
-        r#" <span class="count badge badge-sm badge-ghost ml-2" id="{}-count">{n} {entries}</span>"#,
-        entry_id(session, call)
-    )
 }
 
 #[derive(Template)]
@@ -687,10 +807,112 @@ fn run_id(id: &str) -> Result<RunId, RunError> {
     })
 }
 
-/// Following the run `id` from its first line, at full verbosity.
-fn following(sources: &Sources, id: RunId) -> Result<Following, LogsError> {
-    let which = Which::Run { id, item: None };
-    Following::start(&sources.work_dir, &which, Verbosity::Full, None)
+/// A run's transcript followed for its page.
+struct FollowedRun {
+    records: RunRecords,
+    page: PageFollower,
+}
+
+/// What the page makes of a run's records as they grow.
+struct PageFollower {
+    feed: Feed,
+    view: RunView,
+    numbering: Numbering,
+}
+
+impl FollowedRun {
+    /// Following the run `id` from its start, giving what comes after the
+    /// change made at `after`, if one is given.
+    fn start(
+        sources: &Sources,
+        id: &RunId,
+        verbose: bool,
+        after: Option<Made>,
+    ) -> Result<FollowedRun, LogsError> {
+        let which = Which::Run {
+            id: id.clone(),
+            item: None,
+        };
+        Ok(FollowedRun {
+            records: RunRecords::start(&sources.work_dir, &which)?,
+            page: PageFollower {
+                feed: Feed::default(),
+                view: RunView::new(id.clone(), item_line(sources, id), verbose),
+                numbering: Numbering::new(after.map(After::Line)),
+            },
+        })
+    }
+
+    /// One event per change the page has yet to show that changes it, once
+    /// there are changes or the run has ended, each with its change's event
+    /// ID, so that a reader resumes after the last it took; `None` once the
+    /// run has ended and every change has been given.
+    async fn next(&mut self) -> anyhow::Result<Option<Vec<Event>>> {
+        let FollowedRun { records, page } = self;
+        let made = records.next(|records| page.made(records)).await?;
+        Ok(made.map(|made| events(records.run(), made)))
+    }
+}
+
+impl PageFollower {
+    /// What the page has yet to show of `records` as last read: each
+    /// change's patches, with where it was made.
+    fn made(&mut self, records: &RunRecords) -> Vec<(Made, Vec<Patch>)> {
+        let mut layout = PageLayout {
+            view: &mut self.view,
+            numbering: &mut self.numbering,
+            records,
+            made: vec![],
+        };
+        self.feed
+            .read(records.sessions(), records.ended(), &mut layout);
+        layout.made
+    }
+}
+
+/// The patches a [`PageFollower`] makes of one read.
+struct PageLayout<'a> {
+    view: &'a mut RunView,
+    numbering: &'a mut Numbering,
+    records: &'a RunRecords,
+    made: Vec<(Made, Vec<Patch>)>,
+}
+
+impl Layout for PageLayout<'_> {
+    fn began(&mut self, sessions: usize) {
+        let patches = self.view.start(sessions, self.records.started().by_hand());
+        if let Some(made) = self.numbering.next(transcript::START) {
+            self.made.push((made, patches));
+        }
+    }
+
+    fn changed(&mut self, changed: Changed, session: &Session) {
+        let read = changed.read;
+        let ran = self
+            .records
+            .sessions()
+            .get(read.session - 1)
+            .and_then(|record| record.ran.as_ref());
+        let patches = self.view.apply(changed, session, ran);
+        if let Some(made) = self.numbering.next(read) {
+            self.made.push((made, patches));
+        }
+    }
+}
+
+/// An event of `run`'s for each change made that changes the page.
+fn events(run: &RunId, made: Vec<(Made, Vec<Patch>)>) -> Vec<Event> {
+    made.into_iter()
+        .filter(|(_, patches)| !patches.is_empty())
+        .map(|(made, patches)| {
+            let id = EventId {
+                run: run.clone(),
+                made,
+            };
+            let data: String = patches.iter().map(Patch::partial).collect();
+            Event::default().id(id.to_string()).data(data)
+        })
+        .collect()
 }
 
 /// What `id` is of, as the Item column of a list of runs names it, its item
@@ -708,20 +930,20 @@ fn item_line(sources: &Sources, id: &RunId) -> Html {
 /// The transcript as its records hold it now, and while the run is in
 /// flight where its page's stream follows it from.
 fn read(sources: &Sources, id: RunId, verbose: bool) -> Result<(String, Option<Follow>), RunError> {
-    let mut following = following(sources, id.clone())?;
-    let lines = following.read().map_err(LogsError::Other)?;
-    let mut view = RunView::new(id.clone(), item_line(sources, &id), verbose);
-    for FollowedLine { line, .. } in &lines {
-        view.apply_line(line, &following);
-    }
-    let follow = (!following.ended()).then(|| match lines.last() {
-        Some(last) => Follow::After(EventId {
+    let FollowedRun {
+        mut records,
+        mut page,
+    } = FollowedRun::start(sources, &id, verbose, None)?;
+    records.read().map_err(LogsError::Other)?;
+    let made = page.made(&records);
+    let follow = (!records.ended()).then(|| match made.last() {
+        Some((last, _)) => Follow::After(EventId {
             run: id,
-            made: last.made,
+            made: *last,
         }),
         None => Follow::Start,
     });
-    Ok((view.html(), follow))
+    Ok((page.view.html(&page.feed), follow))
 }
 
 fn page_path(id: &RunId, prefix: &str, verbose: bool, follow: Option<&Follow>) -> String {
@@ -768,35 +990,6 @@ pub(super) async fn run_page(
     }
 }
 
-/// A run's transcript being followed for its page.
-struct FollowedTranscript {
-    following: Following,
-    view: RunView,
-    /// The last line the page has shown, if any.
-    after: Option<Made>,
-}
-
-impl FollowedTranscript {
-    /// One event per line the page has yet to show, with that line's event
-    /// ID, so that a reader resumes after the last it took.
-    fn events(&mut self, lines: &[FollowedLine]) -> Vec<Event> {
-        let mut events = vec![];
-        for FollowedLine { made, line } in lines {
-            let patches = self.view.apply_line(line, &self.following);
-            if self.after.is_some_and(|after| *made <= after) || patches.is_empty() {
-                continue;
-            }
-            let id = EventId {
-                run: self.following.run().clone(),
-                made: *made,
-            };
-            let data: String = patches.iter().map(Patch::partial).collect();
-            events.push(Event::default().id(id.to_string()).data(data));
-        }
-        events
-    }
-}
-
 const LAST_EVENT_ID: &str = "last-event-id";
 
 /// The run page's regions: the frame's and, while the run is in flight, the
@@ -830,12 +1023,8 @@ pub(super) async fn run_events(
                     .into_response();
                 }
             };
-            match following(&sources, run.clone()) {
-                Ok(following) => Some(FollowedTranscript {
-                    following,
-                    view: RunView::new(run.clone(), item_line(&sources, &run), query.verbose()),
-                    after,
-                }),
+            match FollowedRun::start(&sources, &run, query.verbose(), after) {
+                Ok(followed) => Some(followed),
                 Err(e) => {
                     let e = RunError::from(e);
                     error!(run = %run, error = e.error, "following a transcript for its page failed");
@@ -863,14 +1052,14 @@ struct RunStream {
     sent: Sent,
     samples: tokio::time::Interval,
     /// `None` once the run has ended, or with the page not following it.
-    transcript: Option<FollowedTranscript>,
+    transcript: Option<FollowedRun>,
     sources: Sources,
     stopping: CancellationToken,
 }
 
 /// What a stream woke for.
 enum Wake {
-    Lines(anyhow::Result<Option<Vec<FollowedLine>>>),
+    Transcript(anyhow::Result<Option<Vec<Event>>>),
     Sample,
 }
 
@@ -881,20 +1070,16 @@ impl RunStream {
         loop {
             let wake = tokio::select! {
                 () = self.stopping.cancelled() => return None,
-                lines = next_lines(self.transcript.as_mut()) => Wake::Lines(lines),
+                events = next_events(self.transcript.as_mut()) => Wake::Transcript(events),
                 _ = self.samples.tick() => Wake::Sample,
             };
             let events = match wake {
-                Wake::Lines(Ok(Some(lines))) => self
-                    .transcript
-                    .as_mut()
-                    .map(|transcript| transcript.events(&lines))
-                    .unwrap_or_default(),
-                Wake::Lines(Ok(None)) => {
+                Wake::Transcript(Ok(Some(events))) => events,
+                Wake::Transcript(Ok(None)) => {
                     self.transcript = None;
                     vec![]
                 }
-                Wake::Lines(Err(e)) => {
+                Wake::Transcript(Err(e)) => {
                     error!(error = format!("{e:#}"), "following a transcript failed");
                     self.transcript = None;
                     vec![]
@@ -914,12 +1099,10 @@ impl RunStream {
     }
 }
 
-/// The next lines of the transcript being followed; never, with none.
-async fn next_lines(
-    transcript: Option<&mut FollowedTranscript>,
-) -> anyhow::Result<Option<Vec<FollowedLine>>> {
+/// The next events of the transcript being followed; never, with none.
+async fn next_events(transcript: Option<&mut FollowedRun>) -> anyhow::Result<Option<Vec<Event>>> {
     match transcript {
-        Some(transcript) => transcript.following.next().await,
+        Some(transcript) => transcript.next().await,
         None => std::future::pending().await,
     }
 }
