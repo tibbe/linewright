@@ -53,6 +53,7 @@ mod repository_files;
 mod required_label;
 mod runs;
 mod secrets;
+mod serve_fake;
 mod session_clone;
 mod session_end;
 mod startup;

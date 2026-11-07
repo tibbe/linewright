@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use super::{Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
+use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
 use crate::session_env::Given;
@@ -28,6 +29,8 @@ pub struct ClaudeCode {
     /// The `lw` that runs each turn's `claude` inside the wrapper that ends
     /// what it leaves running ([`child::contained`]).
     pub container: PathBuf,
+    /// What tells each turn when it started.
+    pub clock: Arc<dyn Clock>,
 }
 
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
@@ -398,7 +401,7 @@ impl ClaudeCode {
                 .await
                 .ok();
             if let Some(file) = output.as_mut() {
-                let marker = transcript::turn_marker(chrono::Utc::now(), session.started_by());
+                let marker = transcript::turn_marker(self.clock.now(), session.started_by());
                 let _ = file.write_all(format!("{marker}\n").as_bytes()).await;
             }
             let mut lines = BufReader::new(stdout).lines();

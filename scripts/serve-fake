@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+cargo build --quiet --features fake-claude --bins
+exec "${CARGO_TARGET_DIR:-target}/debug/serve-fake" "$@"

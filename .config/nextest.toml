@@ -9,3 +9,7 @@ fail-fast = false
 
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+filter = 'test(/^serve_fake::/)'
+slow-timeout = { period = "30s", terminate-after = 2 }

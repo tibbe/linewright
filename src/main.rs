@@ -21,10 +21,7 @@ use linewright::factory::{Factory, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir};
-use linewright::serving::{
-    self, OnUsageLimit, SessionCredentials, environments, factory_config, harness, prompts,
-    require_bash, require_tool,
-};
+use linewright::serving::{self, OnUsageLimit, Starting, prompts};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
@@ -914,20 +911,13 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             out,
         } => {
             log.begin();
-            let prompts = prompts(&config)?;
-            let bash = require_bash()?;
-            require_tool(HARNESS_PROGRAM).await?;
-            let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
-            let environments = environments(&config, &sessions);
-            let harness = harness(HARNESS_PROGRAM, own_program()?, bash.clone(), &sessions);
-            let factory_config = factory_config(
+            let starting =
+                Starting::new(&config, HARNESS_PROGRAM, || Ok(SessionToken::Withheld)).await?;
+            let harness = starting.harness(own_program()?, Arc::new(SystemClock));
+            let factory_config = starting.factory_config(
                 &config,
-                bash,
-                prompts,
-                environments,
                 out.clone(),
                 OnUsageLimit::End,
-                sessions,
                 Ends::new(),
                 winding_up.clone(),
             );
@@ -973,26 +963,19 @@ async fn start(
     ends: Ends,
     winding_up: &WindingUp,
 ) -> Result<Factory> {
-    let prompts = prompts(config)?;
-    require_tool("git").await?;
-    let bash = require_bash()?;
-    require_tool(HARNESS_PROGRAM).await?;
-    let token = token()?;
-    let sessions = SessionCredentials::new(
-        SessionToken::new(token.clone(), std::env::var(SESSION_TOKEN_VARIABLE).ok()),
-        &config.secrets,
-    )?;
-    let environments = environments(config, &sessions);
-    let harness = harness(HARNESS_PROGRAM, own_program()?, bash.clone(), &sessions);
-    let github = connect(config, token).await?;
-    let factory_config = factory_config(
+    let starting = Starting::new(config, HARNESS_PROGRAM, || {
+        Ok(SessionToken::new(
+            token()?,
+            std::env::var(SESSION_TOKEN_VARIABLE).ok(),
+        ))
+    })
+    .await?;
+    let harness = starting.harness(own_program()?, Arc::new(SystemClock));
+    let github = connect(config, token()?).await?;
+    let factory_config = starting.factory_config(
         config,
-        bash,
-        prompts,
-        environments,
         work_dir(config, &github),
         on_usage_limit,
-        sessions,
         ends,
         winding_up.clone(),
     );

@@ -11,7 +11,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use scenario::{Scenario, Step};
+use scenario::{STAGE_VARIABLE, Scenario, Step};
 
 /// The first argument the fake starts itself again with, to stand in for a
 /// process left in a session of its own; the second names the file it
@@ -43,12 +43,15 @@ fn main() -> anyhow::Result<()> {
         }
         _ => {}
     }
-    let scenario = scenario(&invoked)?;
+    let mut scenario = scenario(&invoked)?;
     let steps = if args.first().is_some_and(|arg| arg == "--version") {
         scenario.version
     } else {
         std::io::copy(&mut std::io::stdin(), &mut std::io::sink())?;
-        scenario.turn
+        std::env::var(STAGE_VARIABLE)
+            .ok()
+            .and_then(|stage| scenario.stages.remove(&stage))
+            .unwrap_or(scenario.turn)
     };
     for step in steps {
         if let Some(status) = carry_out(step, &args)? {
@@ -123,10 +126,43 @@ fn carry_out(step: Step, args: &[OsString]) -> anyhow::Result<Option<i32>> {
                 .stdin(Stdio::null())
                 .spawn()?;
         }
+        Step::Sleep(millis) => std::thread::sleep(Duration::from_millis(millis)),
+        Step::Commit {
+            path,
+            contents,
+            message,
+        } => commit(&path, &contents, &message)?,
         Step::Hang => std::thread::sleep(LEFT_FOR),
         Step::Exit(status) => return Ok(Some(status)),
     }
     Ok(None)
+}
+
+/// Writes `contents` to `path` and commits it, as [`Step::Commit`] says.
+fn commit(path: &Path, contents: &str, message: &str) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, contents)?;
+    git(&[OsStr::new("add"), OsStr::new("--"), path.as_os_str()])?;
+    git(&[
+        OsStr::new("-c"),
+        OsStr::new("user.name=fake-claude"),
+        OsStr::new("-c"),
+        OsStr::new("user.email=fake-claude@example.com"),
+        OsStr::new("commit"),
+        OsStr::new("--quiet"),
+        OsStr::new("--message"),
+        OsStr::new(message),
+    ])
+}
+
+fn git(args: &[&OsStr]) -> anyhow::Result<()> {
+    let status = Command::new("git").args(args).status()?;
+    if !status.success() {
+        anyhow::bail!("git {args:?}: {status}");
+    }
+    Ok(())
 }
 
 /// Writes `line` to standard output and flushes it.
