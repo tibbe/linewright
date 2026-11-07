@@ -128,9 +128,11 @@ that started a session.
 - **Another run.** `--run ID` picks another run.
 - **The transcripts.** `logs` shows the run's transcripts as
   [Transcripts](design_system.md#transcripts) says, as far as text that only
-  ever grows allows, with a sub-agent's work indented under the call that
-  started it. `logs --json` gives what the agent gives about them, following
-  the agent's own JSON output.
+  ever grows allows. `logs --json` gives what the agent gives about them,
+  following the agent's own JSON output.
+- **Times.** Each entry starts with the time since its session started, as
+  h:mm:ss with the hours left out under an hour, such as `2:10` or
+  `1:02:10`, not as a duration is shown, so that the entries align.
 - **`--verbose`.** It shows the transcripts in full.
 - **`--follow`.** It shows the transcripts so far, then follows them, and ends
   when the run ends.
