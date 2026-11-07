@@ -242,6 +242,7 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **The refused session.** A session refused for the usage limit has not
   failed. It waits in its clone and, once the limit resets, resumes as the
   same session with the time it had left, however long the wait.
+- **Resuming.** The resumed session is sent `follow-ups/usage-limit-reset.md`.
 - **A reset time already passed.** It is waited out for a short time.
 - **No reset time.** A refusal that does not say when the limit resets is an
   infrastructure failure.
