@@ -28,8 +28,9 @@ sub-agents, so each search stays out of the others' context and yours.
    solved. Report every principled option the sources take, each with its
    trade-offs, the evidence of its adoption, why its adopters chose it, and the
    sources it comes from. Evidence of adoption: the platform providing or
-   documenting it; products like ours using it; and, for a library to adopt, its
-   GitHub stars, package downloads and recent releases. Under 400 words."
+   documenting it; products like ours using it, with each product's users,
+   downloads or GitHub stars; and, for a library to adopt, its GitHub stars,
+   package downloads and recent releases. Under 400 words."
 
 ### 2. Prototype
 
@@ -49,10 +50,11 @@ sub-agents, so each search stays out of the others' context and yours.
 
 Compare the reported options on the quality attributes the framing states,
 using their prototypes' results, and, for each decision, follow the consensus:
-the option most sources converge on, counting a solution the platform documents
-for this problem as strong evidence. Any other option, whether fewer sources
-take it or none do, has to win against it: on an attribute the framing states,
-by what its prototype showed.
+the most widely adopted option, by the evidence of adoption the reports give,
+counting a solution the platform documents for this problem as strong
+evidence. Any other option, whether less widely adopted or adopted by none,
+has to win against it: on an attribute the framing states, by what its
+prototype showed.
 
 Before choosing, write down the case against each option. The case against the
 consensus first says why its adopters chose it, then why that reasoning doesn't
