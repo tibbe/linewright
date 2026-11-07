@@ -26,6 +26,7 @@ fn claude_code(program: &Path) -> ClaudeCode {
         github_token: None,
         redaction: Redaction::default(),
         container: env!("CARGO_BIN_EXE_lw").into(),
+        clock: Arc::new(FakeClock::new()),
     }
 }
 
@@ -905,6 +906,39 @@ async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it
         ]
     );
     assert!(session.turns.iter().all(|kept| kept.started_at.is_some()));
+}
+
+#[test_log::test(tokio::test)]
+async fn each_turn_starts_when_the_harnesss_clock_says() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(FakeClock::new());
+    let harness = ClaudeCode {
+        clock: clock.clone(),
+        ..harness_streaming(dir.path(), &[done()])
+    };
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    clock.advance(chrono::TimeDelta::minutes(5));
+    harness
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let record = linewright::transcript::SessionRecord::read(dir.path()).unwrap();
+    let started: Vec<_> =
+        linewright::transcript::parse(&record, linewright::transcript::Written::Whole)
+            .turns
+            .iter()
+            .map(|kept| kept.started_at)
+            .collect();
+    assert_eq!(
+        started,
+        [
+            Some(at("2026-10-01T12:00:01Z")),
+            Some(at("2026-10-01T12:05:02Z"))
+        ]
+    );
 }
 
 #[test_log::test(tokio::test)]

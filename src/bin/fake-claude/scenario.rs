@@ -1,9 +1,14 @@
 //! What the fake `claude` does, read from `<the fake's path>.json`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// The variable that names the stage a session is in, for the fake to take
+/// that stage's steps from [`Scenario::stages`].
+pub const STAGE_VARIABLE: &str = "FAKE_CLAUDE_STAGE";
 
 /// The steps the fake carries out, in order, on each invocation; running out
 /// of steps exits 0.
@@ -13,6 +18,9 @@ pub struct Scenario {
     pub version: Vec<Step>,
     /// On any other invocation, once it has read standard input to its end.
     pub turn: Vec<Step>,
+    /// In place of `turn`, the steps for the stage [`STAGE_VARIABLE`] names.
+    #[serde(default)]
+    pub stages: BTreeMap<String, Vec<Step>>,
 }
 
 impl Default for Scenario {
@@ -21,6 +29,7 @@ impl Default for Scenario {
         Scenario {
             version: vec![Step::Say("fake claude".into())],
             turn: Vec::new(),
+            stages: BTreeMap::new(),
         }
     }
 }
@@ -55,6 +64,15 @@ pub enum Step {
     /// Starts a process in the background that shares its standard output
     /// and sleeps 300 s.
     LeaveHoldingOutput,
+    /// Sleeps this many milliseconds.
+    Sleep(u64),
+    /// Writes `contents` to `path`, relative to the directory the fake runs
+    /// in, and commits it there with `message`.
+    Commit {
+        path: PathBuf,
+        contents: String,
+        message: String,
+    },
     /// Sleeps until killed, for at most 300 s.
     Hang,
     /// Exits with the status.

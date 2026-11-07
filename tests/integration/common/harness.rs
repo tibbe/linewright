@@ -15,6 +15,10 @@ use linewright::work_settings::Effort;
 use serde_json::Value;
 
 #[path = "../../../src/bin/fake-claude/scenario.rs"]
+#[expect(
+    dead_code,
+    reason = "the tests' fake runs one scenario whatever the stage, so it names none"
+)]
 mod scenario;
 pub use scenario::{Scenario, Step};
 

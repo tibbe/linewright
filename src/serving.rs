@@ -160,9 +160,99 @@ impl Signals {
     }
 }
 
+/// What a factory starts with besides its store and its clock: `bash`,
+/// the operator's prompts, the token sessions are given and the secrets
+/// redacted from what they say, and their environments.
+pub struct Starting {
+    program: String,
+    bash: PathBuf,
+    prompts: OperatorPrompts,
+    sessions: SessionCredentials,
+    environments: Environments,
+}
+
+impl Starting {
+    /// Reads them from `config` and Linewright's environment, for sessions
+    /// of Claude Code as `program` given what `token` reads, once the tools
+    /// are found.
+    ///
+    /// # Errors
+    ///
+    /// When the operator's prompts cannot be read, `git`, `bash` or
+    /// `program` is not on the path, `token` fails, or a secret cannot be
+    /// read.
+    pub async fn new(
+        config: &Config,
+        program: &str,
+        token: impl FnOnce() -> Result<SessionToken>,
+    ) -> Result<Starting> {
+        let prompts = prompts(config)?;
+        require_tool("git").await?;
+        let bash = require_bash()?;
+        require_tool(program).await?;
+        let sessions = SessionCredentials::new(token()?, &config.secrets)?;
+        let environments = environments(config, &sessions);
+        Ok(Starting {
+            program: program.into(),
+            bash,
+            prompts,
+            sessions,
+            environments,
+        })
+    }
+
+    /// Claude Code, each turn of it run inside `container`'s wrapper
+    /// ([`child::contained`]) and told when it started by `clock`.
+    pub fn harness(&self, container: PathBuf, clock: Arc<dyn Clock>) -> ClaudeCode {
+        ClaudeCode {
+            program: self.program.clone(),
+            bash: self.bash.clone(),
+            github_token: self.sessions.token.given().map(str::to_string),
+            redaction: self.sessions.secrets.redaction().clone(),
+            container,
+            clock,
+        }
+    }
+
+    /// The factory's config, keeping its work in `work_dir`.
+    pub fn factory_config(
+        self,
+        config: &Config,
+        work_dir: PathBuf,
+        on_usage_limit: OnUsageLimit,
+        ends: Ends,
+        winding_up: WindingUp,
+    ) -> FactoryConfig {
+        FactoryConfig {
+            spec_glob: config.spec_glob.clone(),
+            spec_lookback: config.spec_lookback,
+            done_window: config.done_window,
+            max_runs: config.max_runs,
+            ci_grace: config.ci_grace,
+            ci_timeout: config.ci_timeout,
+            ci_attempts: config.ci_attempts,
+            result_retries: config.result_retries,
+            bash: self.bash,
+            work: config.work.clone(),
+            environments: self.environments,
+            update_method: config.update_branch,
+            auto_merge: config.auto_merge,
+            require_label: config.require_label.clone(),
+            prompts: self.prompts,
+            work_dir,
+            schedule_automations: true,
+            waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
+            session_token: self.sessions.token,
+            secrets: self.sessions.secrets,
+            ends,
+            winding_up,
+        }
+    }
+}
+
 /// The token sessions are given, and Linewright's secrets, which are
 /// redacted from what sessions say.
-pub struct SessionCredentials {
+struct SessionCredentials {
     token: SessionToken,
     secrets: Secrets,
 }
@@ -170,11 +260,7 @@ pub struct SessionCredentials {
 impl SessionCredentials {
     /// Reads the secrets to redact from Linewright's environment, `names`
     /// being the `secrets` setting, warning of those too short to redact.
-    ///
-    /// # Errors
-    ///
-    /// When a variable `names` names is not one Linewright can read.
-    pub fn new(token: SessionToken, names: &VariableNames) -> Result<SessionCredentials> {
+    fn new(token: SessionToken, names: &VariableNames) -> Result<SessionCredentials> {
         let secrets = Secrets::of(names, std::env::vars_os()).map_err(|e| anyhow!(e))?;
         for variable in secrets.short() {
             warn!(
@@ -187,28 +273,11 @@ impl SessionCredentials {
     }
 }
 
-/// Claude Code, as `program`, each turn of it run inside `container`'s
-/// wrapper ([`child::contained`]).
-pub fn harness(
-    program: &str,
-    container: PathBuf,
-    bash: PathBuf,
-    sessions: &SessionCredentials,
-) -> ClaudeCode {
-    ClaudeCode {
-        program: program.into(),
-        bash,
-        github_token: sessions.token.given().map(str::to_string),
-        redaction: sessions.secrets.redaction().clone(),
-        container,
-    }
-}
-
 /// What sessions are given of Linewright's environment. Logs the names of
 /// the variables they are not given and, of those, the ones each stage's
 /// table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
-pub fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
+fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
     let split = config.work.environments(
         &config.session_env,
         std::env::vars_os(),
@@ -262,57 +331,14 @@ pub fn prompts(config: &Config) -> Result<OperatorPrompts> {
     Ok(prompts)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "`serve` and `replay` each give most of them differently"
-)]
-pub fn factory_config(
-    config: &Config,
-    bash: PathBuf,
-    prompts: OperatorPrompts,
-    environments: Environments,
-    work_dir: PathBuf,
-    on_usage_limit: OnUsageLimit,
-    sessions: SessionCredentials,
-    ends: Ends,
-    winding_up: WindingUp,
-) -> FactoryConfig {
-    FactoryConfig {
-        spec_glob: config.spec_glob.clone(),
-        spec_lookback: config.spec_lookback,
-        done_window: config.done_window,
-        max_runs: config.max_runs,
-        ci_grace: config.ci_grace,
-        ci_timeout: config.ci_timeout,
-        ci_attempts: config.ci_attempts,
-        result_retries: config.result_retries,
-        bash,
-        work: config.work.clone(),
-        environments,
-        update_method: config.update_branch,
-        auto_merge: config.auto_merge,
-        require_label: config.require_label.clone(),
-        prompts,
-        work_dir,
-        schedule_automations: true,
-        waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
-        session_token: sessions.token,
-        secrets: sessions.secrets,
-        ends,
-        winding_up,
-    }
-}
-
 #[derive(Clone, Copy)]
 pub enum OnUsageLimit {
     Wait,
     End,
 }
 
-/// # Errors
-///
-/// When `program --version` does not run and succeed.
-pub async fn require_tool(program: &str) -> Result<()> {
+/// Fails when `program --version` does not run and succeed.
+async fn require_tool(program: &str) -> Result<()> {
     let found = child::command(program)
         .arg("--version")
         .output()
@@ -324,12 +350,9 @@ pub async fn require_tool(program: &str) -> Result<()> {
     Ok(())
 }
 
-/// The absolute path of the first `bash` on the `PATH`.
-///
-/// # Errors
-///
-/// When there is none.
-pub fn require_bash() -> Result<PathBuf> {
+/// The absolute path of the first `bash` on the `PATH`, failing when there
+/// is none.
+fn require_bash() -> Result<PathBuf> {
     let found = std::env::var_os("PATH")
         .iter()
         .flat_map(std::env::split_paths)

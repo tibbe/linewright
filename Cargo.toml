@@ -18,6 +18,11 @@ name = "fake-claude"
 path = "src/bin/fake-claude/main.rs"
 required-features = ["fake-claude"]
 
+[[bin]]
+name = "serve-fake"
+path = "src/bin/serve-fake/main.rs"
+required-features = ["fake-claude"]
+
 [[test]]
 name = "contract"
 path = "tests/contract/main.rs"
