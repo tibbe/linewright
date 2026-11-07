@@ -2,7 +2,7 @@ use super::*;
 
 use linewright::transcript::{
     MaintenanceStatus, clone_ended, clone_started, maintenance_ended, maintenance_started,
-    session_ended,
+    session_ended, usage_limit_waited, usage_limit_waiting,
 };
 use serde_json::json;
 
@@ -105,6 +105,9 @@ fn transcript_shown(html: &Html, chars: usize, io: bool) -> Vec<String> {
     select(html, "#transcript h1, #transcript h2, #transcript .entry")
         .into_iter()
         .map(|shown| {
+            if shown.value().name() == "h2" {
+                return read_line(shown, usize::MAX);
+            }
             if !shown.value().classes().any(|class| class == "entry") {
                 return text(shown);
             }
@@ -235,7 +238,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
         transcript_shown(&html, 95, false),
         [
             "1/implement-1",
-            "session 1: started 2026-10-13 10:09:08 UTC",
+            "session 1: started 2026-10-13 10:09:08 UTC | 3m 28s",
             "brief: # Your task",
             "Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit  | 0s",
             "Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2 | 0s",
@@ -511,7 +514,8 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let mut events = stream_with_ids(&web, &events_path, None).await;
 
     agent.writes(&turn.the_second_bash_call);
-    let made = transcript_events(&mut events, |sent| !sent.is_empty()).await;
+    let added = |sent: &[(String, String)]| sent.iter().any(|(_, data)| data.contains("beforeend"));
+    let made = transcript_events(&mut events, added).await;
     agent.writes(&turn.its_result);
     let returned = transcript_events(&mut events, |sent| !sent.is_empty()).await;
     agent.writes(&turn.the_rest);
@@ -521,21 +525,29 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     })
     .await;
     let rest = transcript_events(&mut events, |sent| {
-        sent.iter().any(|(_, data)| {
+        let outcome = sent.iter().position(|(_, data)| {
             data.contains("{&quot;outcome&quot;") || data.contains(r#"{"outcome""#)
+        });
+        outcome.is_some_and(|outcome| {
+            sent[outcome..]
+                .iter()
+                .any(|(_, data)| data.contains(r#"id="s1-working"></ol>"#))
         })
     })
     .await;
 
-    let [(_, made_data)] = &made[..] else {
-        panic!("one event for the call made: {made:?}")
-    };
-    let [(added_to, added_by, call)] = &patches(made_data)[..] else {
+    let (_, made_data) = made.last().unwrap();
+    let [(added_to, added_by, call), (gone_at, _, gone)] = &patches(made_data)[..] else {
         panic!("{made_data}")
     };
     assert_eq!(
         (added_to.as_str(), added_by.as_str()),
         ("#s1-entries", "beforeend")
+    );
+    assert_eq!(
+        (gone_at.as_str(), working_step(gone)),
+        ("#s1-working", None),
+        "the step goes as the call runs"
     );
     let call_id = entry_lines(call)[0].0.clone();
     assert!(
@@ -548,9 +560,16 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let [(_, returned_data)] = &returned[..] else {
         panic!("one event for the call returned: {returned:?}")
     };
-    let [(replaced_at, replaced_by, account)] = &patches(returned_data)[..] else {
+    let [(replaced_at, replaced_by, account), (step_at, _, step)] = &patches(returned_data)[..]
+    else {
         panic!("{returned_data}")
     };
+    assert_eq!(step_at, "#s1-working");
+    assert!(
+        working_step(step).is_some_and(|step| step.starts_with("working | since 2026-")),
+        "{:?}",
+        working_step(step)
+    );
     assert_eq!(
         (replaced_at.as_str(), replaced_by.as_str()),
         (format!("#{call_id}-fold").as_str(), "outerHTML")
@@ -578,13 +597,21 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
             (format!("#{entry}-io"), "outerHTML".to_string()),
         ]
     };
-    assert!(accounts.contains(&replaced_line("s1-e7")), "{accounts:?}");
+    assert!(
+        accounts
+            .iter()
+            .any(|patches| patches.starts_with(&replaced_line("s1-e7"))),
+        "{accounts:?}"
+    );
 
     let followed: Vec<(String, String)> = [made, returned, rest.clone()].concat();
     let mut shown = entry_lines(&read);
     for (_, data) in &followed {
         for (target, swap, html) in patches(data) {
-            if swap == "beforeend" {
+            if target == "#s1-working" {
+                shown.retain(|(id, _)| id != "s1-step");
+                shown.extend(entry_lines(&html));
+            } else if swap == "beforeend" {
                 for (id, line) in entry_lines(&html) {
                     assert!(
                         shown.iter().all(|(shown, _)| *shown != id),
@@ -624,10 +651,15 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     web.stop().await;
 }
 
+/// The run's heading, then each session's, as [`read_line`] reads an
+/// entry's line.
 fn heading(html: &Html) -> Vec<String> {
     select(html, "#transcript h1, #transcript h2")
         .into_iter()
-        .map(text)
+        .map(|heading| match heading.value().name() {
+            "h2" => read_line(heading, usize::MAX),
+            _ => text(heading),
+        })
         .collect()
 }
 
@@ -725,7 +757,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
         heading(&html),
         [
             "weekly/1, by hand",
-            "session 1: started 2026-10-14 12:00:05 UTC"
+            "session 1: started 2026-10-14 12:00:05 UTC | 4s"
         ]
     );
     assert!(
@@ -923,8 +955,8 @@ async fn the_page_of_a_run_whose_maintenance_command_failed_shows_it_open_under_
         heading(&html),
         [
             "1/triage-1",
-            "session 1: started 2026-10-14 12:00:00 UTC",
-            "session 2: started 2026-10-14 12:00:10 UTC",
+            "session 1: started 2026-10-14 12:00:00 UTC | 0s",
+            "session 2: started 2026-10-14 12:00:10 UTC | 0s",
         ]
     );
     let failed = (
@@ -980,10 +1012,15 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
             false
         )]
     );
-    let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
+    let [(target, swap, html), (step_at, _, step)] = &patches(&ended.last().unwrap().1)[..] else {
         panic!("{ended:?}")
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
+    assert_eq!(
+        (step_at.as_str(), working_step(step).as_deref()),
+        ("#s1-working", Some("working | since 2026-10-14T12:00:12Z")),
+        "the agent works once no entry runs"
+    );
     assert_eq!(
         maintenances_shown(html),
         [(
@@ -1062,7 +1099,7 @@ async fn the_run_page_shows_the_clone_as_its_sessions_first_entry_before_the_mai
     );
     assert_eq!(
         heading(&html)[1],
-        "session 1: started 2026-10-13 10:09:02 UTC"
+        "session 1: started 2026-10-13 10:09:02 UTC | 3m 34s"
     );
 }
 
@@ -1140,10 +1177,15 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
             false
         )]
     );
-    let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
+    let [(target, swap, html), (step_at, _, step)] = &patches(&ended.last().unwrap().1)[..] else {
         panic!("{ended:?}")
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
+    assert_eq!(
+        (step_at.as_str(), working_step(step).as_deref()),
+        ("#s1-working", Some("working | since 2026-10-14T12:00:12Z")),
+        "the agent works once no entry runs"
+    );
     assert_eq!(
         clones_shown(html),
         [("clone → done | 12s".to_string(), String::new(), false)]
@@ -1239,4 +1281,237 @@ async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessi
         .map(|(_, line)| line)
         .collect();
     assert_eq!(lines, ["Bash(cargo test) → interrupted"]);
+}
+
+/// A Bash call `id` of `command` made `at`.
+fn bash_call(at: &str, id: &str, command: &str) -> serde_json::Value {
+    json!({
+        "type": "assistant",
+        "timestamp": at,
+        "message": {"content": [
+            {"type": "tool_use", "id": id, "name": "Bash", "input": {"command": command}},
+        ]},
+    })
+}
+
+/// The call `id`'s return `at`.
+fn bash_returned(at: &str, id: &str) -> serde_json::Value {
+    json!({
+        "type": "user",
+        "timestamp": at,
+        "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": "ok"},
+        ]},
+    })
+}
+
+/// Where #1's triaging session keeps its record.
+const TRIAGING: &str = "sessions/issue-1/20261014T120000Z-triage";
+
+/// #1 triaged in run 1/triage-1, started at 12:00:00, of one session whose
+/// output is `output`, and which ended as `end` says.
+async fn triaged(output: &str, end: serde_json::Value) -> Pages {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    pages.write(&[(&format!("{TRIAGING}/output.jsonl"), output)]);
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": end,
+        "sessions": [ran(TRIAGING)],
+    }));
+    pages
+}
+
+/// The output of a session whose clone took 2s from 12:00:00, then whose
+/// call `t1` ran from 12:00:20 to 12:00:25.
+fn cloned_and_called() -> String {
+    format!(
+        "{}{}\n{}\n",
+        cloning("2026-10-14T12:00:00Z", 2.0, None),
+        bash_call("2026-10-14T12:00:20Z", "t1", "cargo test"),
+        bash_returned("2026-10-14T12:00:25Z", "t1"),
+    )
+}
+
+/// The heading of session 1, as [`read_line`] reads an entry's line.
+#[track_caller]
+fn session_heading(html: &Html) -> String {
+    let headings = select(html, "#s1-heading");
+    assert_eq!(headings.len(), 1, "one heading");
+    read_line(headings[0], usize::MAX)
+}
+
+/// Session 1's working step, as [`read_line`] reads an entry's line, with
+/// the time it names, if any.
+#[track_caller]
+fn working_step(html: &Html) -> Option<String> {
+    let steps = select(html, "#s1-working .entry");
+    assert!(steps.len() <= 1, "at most one step");
+    steps.first().map(|step| {
+        let line = line_of(*step, usize::MAX);
+        match select_in(*step, ".text time").first() {
+            Some(until) => format!("{line} @ {}", until.attr("datetime").unwrap()),
+            None => line,
+        }
+    })
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading;
+/// `docs/specs/web/design_system.md`, Transcripts, Durations.
+#[test_log::test(tokio::test)]
+async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_muted_text() {
+    let output = cloned_and_called() + &session_ended(at("2026-10-14T12:00:40Z")) + "\n";
+    let pages = triaged(
+        &output,
+        json!({"at": "2026-10-14T12:05:00Z", "ending": "handed-back"}),
+    )
+    .await;
+
+    let html = pages.page("/runs/1/triage-1").await;
+
+    assert_eq!(
+        session_heading(&html),
+        "session 1: started 2026-10-14 12:00:00 UTC | 40s"
+    );
+    assert_eq!(working_step(&html), None, "the run is not followed");
+    assert_in_muted_text(&html, "#s1-heading time.duration");
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading,
+/// Working and Following.
+#[test_log::test(tokio::test)]
+async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_step_while_no_entry_runs()
+ {
+    let pages = triaged(&cloned_and_called(), serde_json::Value::Null).await;
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    let output = format!("{TRIAGING}/output.jsonl");
+    let mut next = async |line: String, last: &str| {
+        pages.append(&output, &format!("{line}\n"));
+        let sent = transcript_events(&mut events, |sent| {
+            sent.iter().any(|(_, data)| data.contains(last))
+        })
+        .await;
+        let patched: Vec<(String, Html)> = sent
+            .iter()
+            .flat_map(|(_, data)| patches(data))
+            .filter(|(_, swap, _)| swap == "outerHTML")
+            .map(|(target, _, html)| (target, html))
+            .collect();
+        patched
+    };
+    let waiting = next(
+        usage_limit_waiting(at("2026-10-14T12:00:30Z"), at("2026-10-14T14:30:00Z")),
+        "#s1-working",
+    )
+    .await;
+    let waited = next(
+        usage_limit_waited(at("2026-10-14T12:10:30Z")),
+        "#s1-working",
+    )
+    .await;
+    let called = next(
+        bash_call("2026-10-14T12:10:40Z", "t2", "cargo build").to_string(),
+        "#s1-working",
+    )
+    .await;
+    let ended = next(session_ended(at("2026-10-14T12:10:50Z")), "#s1-heading").await;
+
+    assert_eq!(
+        session_heading(&read),
+        "session 1: started 2026-10-14 12:00:00 UTC | since 2026-10-14T12:00:00Z"
+    );
+    assert_eq!(
+        working_step(&read).as_deref(),
+        Some("working | since 2026-10-14T12:00:25Z")
+    );
+    let shown = |patched: &[(String, Html)]| -> Vec<(String, Option<String>)> {
+        patched
+            .iter()
+            .map(|(target, html)| {
+                let shown = match target.as_str() {
+                    "#s1-heading" => Some(session_heading(html)),
+                    "#s1-working" => working_step(html),
+                    _ => Some(text(html.root_element())),
+                };
+                (target.clone(), shown)
+            })
+            .collect()
+    };
+    let heading = |duration: &str| {
+        (
+            "#s1-heading".to_string(),
+            Some(format!(
+                "session 1: started 2026-10-14 12:00:00 UTC | {duration}"
+            )),
+        )
+    };
+    let step = |step: Option<&str>| ("#s1-working".to_string(), step.map(String::from));
+    assert_eq!(
+        shown(&waiting),
+        [
+            heading("30s"),
+            step(Some(
+                "waiting for the usage limit, until 2026-10-14 14:30:00 UTC | 5s @ 2026-10-14T14:30:00Z"
+            ))
+        ]
+    );
+    assert_eq!(
+        shown(&waited),
+        [
+            heading("since 2026-10-14T12:10:00Z"),
+            step(Some("working | since 2026-10-14T12:10:25Z"))
+        ],
+        "both move on by the 10m waited"
+    );
+    let called_step: Vec<_> = shown(&called)
+        .into_iter()
+        .filter(|(target, _)| target == "#s1-working")
+        .collect();
+    assert_eq!(called_step, [step(None)], "an entry runs");
+    let ended_heading: Vec<_> = shown(&ended)
+        .into_iter()
+        .filter(|(target, _)| target == "#s1-heading" || target == "#s1-working")
+        .collect();
+    assert_eq!(ended_heading, [heading("50s")]);
+}
+
+/// `docs/specs/design_system.md`, The run page, Working.
+#[test_log::test(tokio::test)]
+async fn the_working_step_goes_once_the_run_ends() {
+    let pages = triaged(&cloned_and_called(), serde_json::Value::Null).await;
+    let in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+
+    let read = pages.page("/runs/1/triage-1").await;
+    let events_path = events_path(&read).unwrap().to_string();
+    let mut events = stream_with_ids(&pages, &events_path, None).await;
+    pages.record(&json!({
+        "item": 1,
+        "stage": "triage",
+        "n": 1,
+        "started_at": "2026-10-14T12:00:00Z",
+        "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
+        "sessions": [ran(TRIAGING)],
+    }));
+    drop(in_flight);
+    let ended = transcript_events(&mut events, |sent| {
+        sent.iter().any(|(_, data)| data.contains("s1-working"))
+    })
+    .await;
+
+    assert_eq!(
+        working_step(&read).as_deref(),
+        Some("working | since 2026-10-14T12:00:25Z")
+    );
+    let step: Vec<Option<String>> = patches(&ended.last().unwrap().1)
+        .into_iter()
+        .filter(|(target, _, _)| target == "#s1-working")
+        .map(|(_, _, html)| working_step(&html))
+        .collect();
+    assert_eq!(step, [None]);
 }

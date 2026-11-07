@@ -2,7 +2,7 @@ use linewright::domain::Timestamp;
 use linewright::runs::{RunId, Started, StartedBy};
 use linewright::transcript::{
     self, After, End, EntryAt, Follower, Lasted, MaintenanceRecord, MaintenanceStatus, Place,
-    SessionRecord, Transcript, Verbosity, Wait, Written,
+    SessionLasted, SessionRecord, Transcript, Verbosity, Wait, Written,
 };
 use serde_json::json;
 
@@ -1826,6 +1826,114 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
         ),
         "a wait shows no line"
     );
+}
+
+fn waiting(at: &str, until: &str) -> serde_json::Value {
+    serde_json::from_str(&transcript::usage_limit_waiting(time(at), time(until))).unwrap()
+}
+
+fn waited(at: &str) -> serde_json::Value {
+    serde_json::from_str(&transcript::usage_limit_waited(time(at))).unwrap()
+}
+
+/// How long the session `record` holds has run, as much of it `written`.
+#[track_caller]
+fn session_lasted(record: &SessionRecord, written: Written) -> Option<SessionLasted> {
+    transcript::parse(record, written).lasted_so_far()
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading.
+#[test_log::test]
+fn a_session_lasts_from_its_start_to_its_end_leaving_out_its_waits_for_the_usage_limit() {
+    let ended_at_9 = calling(&[session_ended("2026-10-13T10:00:09Z")]);
+    let waited_twice = calling(&[
+        waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+        waited("2026-10-13T12:00:01Z"),
+        waiting("2026-10-13T12:00:30Z", "2026-10-13T14:00:00Z"),
+        session_ended("2026-10-13T12:01:00Z"),
+    ]);
+
+    assert_eq!(
+        session_lasted(&ended_at_9, Written::Whole),
+        Some(SessionLasted::Held { seconds: 9.0 })
+    );
+    assert_eq!(
+        session_lasted(&waited_twice, Written::Whole),
+        Some(SessionLasted::Held { seconds: 34.0 }),
+        "5s, then 29s between the waits"
+    );
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading.
+#[test_log::test]
+fn a_session_whose_end_is_not_known_lasts_to_its_last_entry() {
+    let returned_at_5 = calling(&[returned("2026-10-13T10:00:05Z", &json!({}))]);
+    let cut_off_waiting = calling(&[
+        returned("2026-10-13T10:00:05Z", &json!({})),
+        waiting("2026-10-13T10:00:06Z", "2026-10-13T12:00:00Z"),
+    ]);
+    let waited_between = calling(&[
+        waiting("2026-10-13T10:00:03Z", "2026-10-13T12:00:00Z"),
+        waited("2026-10-13T12:00:00Z"),
+        returned("2026-10-13T12:00:05Z", &json!({})),
+    ]);
+
+    assert_eq!(
+        session_lasted(&returned_at_5, Written::Whole),
+        Some(SessionLasted::Held { seconds: 5.0 })
+    );
+    assert_eq!(
+        session_lasted(&cut_off_waiting, Written::Whole),
+        Some(SessionLasted::Held { seconds: 5.0 })
+    );
+    assert_eq!(
+        session_lasted(&waited_between, Written::Whole),
+        Some(SessionLasted::Held { seconds: 8.0 })
+    );
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading.
+#[test_log::test]
+fn a_session_that_goes_on_lasts_to_now_and_holds_still_while_it_waits_for_the_usage_limit() {
+    let going = calling(&[]);
+    let after_a_wait = calling(&[
+        waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z"),
+        waited("2026-10-13T10:00:15Z"),
+    ]);
+    let waiting_since_5 = calling(&[waiting("2026-10-13T10:00:05Z", "2026-10-13T12:00:00Z")]);
+    let now = time("2026-10-13T10:01:00Z");
+
+    let going = session_lasted(&going, Written::SoFar).unwrap();
+    assert_eq!(
+        going,
+        SessionLasted::Going {
+            since: time("2026-10-13T10:00:00Z")
+        }
+    );
+    assert_eq!(going.seconds(now), 60.0);
+    let after_a_wait = session_lasted(&after_a_wait, Written::SoFar).unwrap();
+    assert_eq!(
+        after_a_wait,
+        SessionLasted::Going {
+            since: time("2026-10-13T10:00:10Z")
+        },
+        "its start moved on by the 10s it waited"
+    );
+    assert_eq!(after_a_wait.seconds(now), 50.0);
+    let waiting_since_5 = session_lasted(&waiting_since_5, Written::SoFar).unwrap();
+    assert_eq!(waiting_since_5, SessionLasted::Held { seconds: 5.0 });
+    assert_eq!(waiting_since_5.seconds(now), 5.0);
+}
+
+/// `docs/specs/design_system.md`, The run page, A session's heading.
+#[test_log::test]
+fn a_session_with_no_start_has_no_duration() {
+    let record = SessionRecord {
+        output: output_of(&[session_ended("2026-10-13T10:00:09Z")]),
+        ..SessionRecord::default()
+    };
+
+    assert_eq!(session_lasted(&record, Written::Whole), None);
 }
 
 /// `docs/specs/monitoring.md`, logs, Running in JSON.

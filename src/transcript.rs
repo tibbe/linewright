@@ -9,6 +9,7 @@ use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -600,6 +601,139 @@ impl Session {
                     .map(|(start, end)| seconds_between(start, end)),
             },
         })
+    }
+    /// How long it has run so far, leaving out its waits for the usage
+    /// limit to reset, unless when it started is not known
+    /// (`docs/specs/design_system.md`, The run page, A session's heading).
+    pub fn lasted_so_far(&self) -> Option<SessionLasted> {
+        self.started_at.map(|start| self.lasted_from(start))
+    }
+
+    /// How long it has run from `from`, leaving out its waits for the usage
+    /// limit to reset: up to its end or, where that is not known, to its last
+    /// entry; while it goes on, to now, holding still while it waits.
+    pub fn lasted_from(&self, from: Timestamp) -> SessionLasted {
+        let to = match self.end {
+            End::At(at) => at,
+            End::NotKnown => self.last_at().map_or(from, |last| last.max(from)),
+            End::Going => match self.waiting() {
+                Some(wait) => wait.at.max(from),
+                None => {
+                    return SessionLasted::Going {
+                        since: from + self.waited(from, None),
+                    };
+                }
+            },
+        };
+        let lasted = (to - from - self.waited(from, Some(to))).max(TimeDelta::zero());
+        SessionLasted::Held {
+            seconds: lasted.as_seconds_f64(),
+        }
+    }
+
+    /// Its wait for the usage limit under way, if any.
+    pub fn waiting(&self) -> Option<&Wait> {
+        self.waits.last().filter(|wait| wait.end == End::Going)
+    }
+
+    /// How long it waited for the usage limit between `from` and `to`, or
+    /// since `from` where `to` is not given: a wait whose end is not known
+    /// lasting to `to`.
+    fn waited(&self, from: Timestamp, to: Option<Timestamp>) -> TimeDelta {
+        self.waits
+            .iter()
+            .filter_map(|wait| {
+                let end = match (wait.end.at(), to) {
+                    (Some(end), Some(to)) => end.min(to),
+                    (end, to) => end.or(to)?,
+                };
+                Some((end - wait.at.max(from)).max(TimeDelta::zero()))
+            })
+            .sum()
+    }
+
+    /// When the latest of its entries happened, as it began or ended, or
+    /// else when its latest turn began, if any of those is known.
+    pub fn last_at(&self) -> Option<Timestamp> {
+        let clone = self.clone.as_ref().map(|clone| {
+            let took = clone.course.ended().map(|ended| ended.duration_seconds);
+            last_of(clone.at, took)
+        });
+        let maintenance = self.maintenance.as_ref().and_then(|maintenance| {
+            let took = maintenance
+                .course()
+                .ended()
+                .map(|ended| ended.duration_seconds);
+            maintenance.at().map(|at| last_of(at, took))
+        });
+        let turns = self.turns.iter().flat_map(|turn| {
+            std::iter::once(turn.started_at).chain(turn.entries.iter().map(Entry::last_at))
+        });
+        [clone, maintenance]
+            .into_iter()
+            .chain(turns)
+            .flatten()
+            .max()
+    }
+}
+
+/// How long a session has run, leaving out its waits for the usage limit to
+/// reset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SessionLasted {
+    /// It goes on: as long as since `since`, its start moved on by how long
+    /// it waited.
+    Going { since: Timestamp },
+    /// It has ended, or waits for the usage limit, having run `seconds`.
+    Held { seconds: f64 },
+}
+
+impl SessionLasted {
+    /// How long it has run `now`, in seconds.
+    pub fn seconds(self, now: Timestamp) -> f64 {
+        match self {
+            SessionLasted::Going { since } => seconds_between(since, now),
+            SessionLasted::Held { seconds } => seconds,
+        }
+    }
+}
+
+impl From<SessionLasted> for Lasted {
+    /// As an entry that runs from where the session's duration is told
+    /// from: running while the session goes on, else having taken as long.
+    fn from(lasted: SessionLasted) -> Lasted {
+        match lasted {
+            SessionLasted::Going { since } => Lasted::Running { since: Some(since) },
+            SessionLasted::Held { seconds } => Lasted::Took {
+                seconds: Some(seconds),
+            },
+        }
+    }
+}
+
+/// The latest time known of an entry that started `at` and, once it ended,
+/// `took` that many seconds: when it ended, or else when it started.
+fn last_of(at: Timestamp, took: Option<f64>) -> Timestamp {
+    let took = std::time::Duration::try_from_secs_f64(took.unwrap_or_default())
+        .ok()
+        .and_then(|duration| TimeDelta::from_std(duration).ok())
+        .unwrap_or_default();
+    at + took
+}
+
+impl Entry {
+    /// When the latest of it and the work of a sub-agent it started
+    /// happened, as each began or ended, if that is known.
+    fn last_at(&self) -> Option<Timestamp> {
+        let What::Tool(call) = &self.what else {
+            return self.at;
+        };
+        let ended = call.end.ended().copied().flatten();
+        [self.at, ended]
+            .into_iter()
+            .chain(call.entries.iter().map(Entry::last_at))
+            .flatten()
+            .max()
     }
 }
 
