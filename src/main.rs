@@ -1,17 +1,12 @@
 use std::io::{IsTerminal, Write as _};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use linewright::api::{
-    self, Api, EventId, Listeners, Publish, RequestError, Resume, Sources, Unanswered,
-};
-use linewright::briefs::OperatorPrompts;
+use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::case;
-use linewright::child;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -19,26 +14,25 @@ use linewright::config::{
 };
 use linewright::domain::{Number, Timestamp};
 use linewright::drain::{self, Asked, Exiting, Said, Stop, Taken, Timeout, Waiting, Was};
-use linewright::ending::{Ends, Event, Signal, Step, StopBy};
+use linewright::ending::{Ends, StopBy};
 use linewright::environment::shown::{self, Followed, FollowingBuild};
 use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
-use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
-use linewright::harness::claude::ClaudeCode;
+use linewright::factory::{Factory, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir};
-use linewright::secrets::Secrets;
+use linewright::serving::{
+    self, OnUsageLimit, SessionCredentials, environments, factory_config, harness, prompts,
+    require_bash, require_tool,
+};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
-use linewright::variable_names::VariableNames;
-use linewright::webhook::{Listener, Pending};
 use linewright::winding_up::{Remaining, WindingUp};
-use linewright::work_settings::{Environments, RepoSettings};
+use linewright::work_settings::RepoSettings;
 use linewright::{COMMAND, COMMIT, VERSION};
-use linewright::{contain, explain, status, web};
-use tokio::signal::unix::signal;
-use tracing::{error, info, warn};
+use linewright::{contain, explain, status};
+use tracing::{error, info};
 
 const HARNESS_PROGRAM: &str = "claude";
 
@@ -869,50 +863,14 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         }
         Command::Serve => {
             log.begin();
-            // PID 1, as `lw` can be in a container, is sent only the signals
-            // it has a handler for:
-            // https://man7.org/linux/man-pages/man2/kill.2.html#NOTES
-            let signals = Signals::new().context("listening for stop signals")?;
-            let ends = Ends::new();
-            end_on(signals, ends.clone());
-            let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-            let since = clock.now();
-            let work_dir = config.repo_work_dir()?;
-            let claimed = api::claim(&socket_dir(), &work_dir.repo)?;
-            let pending = Pending::default();
-            let listener = match &config.webhooks {
-                Some(webhooks) => {
-                    Some(Listener::bind(webhooks, pending.clone(), clock.clone()).await?)
-                }
-                None => None,
-            };
-            let (publish, served, polling, environment) = Publish::new();
-            let sources = Sources {
-                serving: status::Serving {
-                    since,
-                    max_runs: config.max_runs,
-                },
-                served,
-                polling,
-                deliveries: listener.as_ref().map(Listener::tally),
-                clock,
-                work_dir,
-                ends: ends.clone(),
-                environment,
-                exiting: winding_up.exiting(),
-            };
-            let ui = match &config.ui {
-                Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),
-                None => None,
-            };
-            let listeners = Listeners {
-                webhooks: listener,
-                ui,
-                api: Api::serve(claimed, sources),
-            };
-            let stopped = serve(&config, &ends, &pending, &publish, winding_up).await;
-            listeners.let_go_after(winding_up).await;
-            stopped
+            serving::serve(
+                &config,
+                Arc::new(SystemClock),
+                &socket_dir(),
+                winding_up,
+                |ends| start(&config, OnUsageLimit::Wait, ends, winding_up),
+            )
+            .await
         }
         Command::Once => {
             log.begin();
@@ -961,7 +919,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             require_tool(HARNESS_PROGRAM).await?;
             let sessions = SessionCredentials::new(SessionToken::Withheld, &config.secrets)?;
             let environments = environments(&config, &sessions);
-            let harness = harness(bash.clone(), &sessions)?;
+            let harness = harness(HARNESS_PROGRAM, own_program()?, bash.clone(), &sessions);
             let factory_config = factory_config(
                 &config,
                 bash,
@@ -988,46 +946,6 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
     done.map(|()| SUCCESS)
 }
 
-async fn serve(
-    config: &Config,
-    ends: &Ends,
-    pending: &Pending,
-    publish: &Publish,
-    winding_up: &WindingUp,
-) -> Result<()> {
-    let mut factory = tokio::select! {
-        factory = start(config, OnUsageLimit::Wait, ends.clone(), winding_up) => factory?,
-        () = ends.drain_or_stop_begun() => {
-            info!("ended while starting");
-            return Ok(());
-        }
-    };
-    match factory.serve(config.poll_interval, pending, publish).await {
-        ServeEnd::Drained => {}
-        ServeEnd::Stop => {
-            info!("stopping: cancelling the runs in flight");
-            factory.stop().await;
-        }
-    }
-    Ok(())
-}
-
-/// Takes each signal as `ends` has it, exiting at once when it says so.
-fn end_on(mut signals: Signals, ends: Ends) {
-    tokio::spawn(async move {
-        loop {
-            let signal = signals.next().await;
-            if let (_, Step::Exit) = ends.on(Event::Signal(signal)) {
-                #[expect(
-                    clippy::exit,
-                    reason = "a signal while stopping exits at once, without waiting for the runs in flight"
-                )]
-                std::process::exit(signal.exit_status());
-            }
-        }
-    });
-}
-
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
 fn token() -> Result<String> {
     TOKEN_VARIABLES
@@ -1040,142 +958,13 @@ async fn connect(config: &Config, token: String) -> Result<GitHub> {
     GitHub::connect(&config.required_repo()?, token).await
 }
 
+/// The `lw` running, which wraps each session's turns.
+fn own_program() -> Result<PathBuf> {
+    std::env::current_exe().context("finding Linewright's own program")
+}
+
 fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
     config.work_dir.join(github.full_name())
-}
-
-/// The token sessions are given, and Linewright's secrets, which are
-/// redacted from what sessions say.
-struct SessionCredentials {
-    token: SessionToken,
-    secrets: Secrets,
-}
-
-impl SessionCredentials {
-    /// Reads the secrets to redact from Linewright's environment, `names`
-    /// being the `secrets` setting, warning of those too short to redact.
-    fn new(token: SessionToken, names: &VariableNames) -> Result<SessionCredentials> {
-        let secrets = Secrets::of(names, std::env::vars_os()).map_err(|e| anyhow!(e))?;
-        for variable in secrets.short() {
-            warn!(
-                variable,
-                "this secret is 1 to 5 characters, so Linewright neither redacts it \
-                 nor refuses commits that hold it"
-            );
-        }
-        Ok(SessionCredentials { token, secrets })
-    }
-}
-
-fn harness(bash: PathBuf, sessions: &SessionCredentials) -> Result<ClaudeCode> {
-    Ok(ClaudeCode {
-        program: HARNESS_PROGRAM.into(),
-        bash,
-        github_token: sessions.token.given().map(str::to_string),
-        redaction: sessions.secrets.redaction().clone(),
-        container: std::env::current_exe().context("finding Linewright's own program")?,
-    })
-}
-
-/// What sessions are given of Linewright's environment. Logs the names of
-/// the variables they are not given and, of those, the ones each stage's
-/// table gives its sessions; and the names, never the values, that
-/// `session-env` sets.
-fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
-    let split = config.work.environments(
-        &config.session_env,
-        std::env::vars_os(),
-        &ClaudeCode::variables_set_for_sessions(sessions.token.given()),
-    );
-    info!(
-        variables = split.withheld.join(" "),
-        "agent sessions are not given these variables of Linewright's environment; \
-         `session-pass-env` names the ones they need"
-    );
-    for (stage, added) in &split.added {
-        info!(
-            stage = stage.name(),
-            variables = added.join(" "),
-            "of those, the stage's sessions are given these, which `session-pass-env` in its \
-             table names"
-        );
-    }
-    if !split.set.is_empty() {
-        info!(
-            set = split.set.join(" "),
-            "`session-env` sets these variables in agent sessions"
-        );
-    }
-    for (stage, set) in &split.stages_set {
-        info!(
-            stage = stage.name(),
-            set = set.own.join(" "),
-            taken = set.taken.join(" "),
-            "`session-env` in the stage's table sets these variables in its sessions, \
-             besides those it takes from the whole pipeline's"
-        );
-    }
-    split.environments
-}
-
-/// The operator's prompts. Logs which files they provide.
-fn prompts(config: &Config) -> Result<OperatorPrompts> {
-    let prompts = OperatorPrompts::read(config.prompts.as_deref())?;
-    if config.prompts.is_some() {
-        let provided: Vec<&str> = prompts.layer().files.keys().map(String::as_str).collect();
-        info!(
-            files = provided.join(" "),
-            "the operator's prompts provide these files"
-        );
-    }
-    Ok(prompts)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "`serve` and `replay` each give most of them differently"
-)]
-fn factory_config(
-    config: &Config,
-    bash: PathBuf,
-    prompts: OperatorPrompts,
-    environments: Environments,
-    work_dir: std::path::PathBuf,
-    on_usage_limit: OnUsageLimit,
-    sessions: SessionCredentials,
-    ends: Ends,
-    winding_up: WindingUp,
-) -> FactoryConfig {
-    FactoryConfig {
-        spec_glob: config.spec_glob.clone(),
-        spec_lookback: config.spec_lookback,
-        done_window: config.done_window,
-        max_runs: config.max_runs,
-        ci_grace: config.ci_grace,
-        ci_timeout: config.ci_timeout,
-        ci_attempts: config.ci_attempts,
-        result_retries: config.result_retries,
-        bash,
-        work: config.work.clone(),
-        environments,
-        update_method: config.update_branch,
-        auto_merge: config.auto_merge,
-        require_label: config.require_label.clone(),
-        prompts,
-        work_dir,
-        schedule_automations: true,
-        waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
-        session_token: sessions.token,
-        secrets: sessions.secrets,
-        ends,
-        winding_up,
-    }
-}
-
-#[derive(Clone, Copy)]
-enum OnUsageLimit {
-    Wait,
-    End,
 }
 
 async fn start(
@@ -1194,7 +983,7 @@ async fn start(
         &config.secrets,
     )?;
     let environments = environments(config, &sessions);
-    let harness = harness(bash.clone(), &sessions)?;
+    let harness = harness(HARNESS_PROGRAM, own_program()?, bash.clone(), &sessions);
     let github = connect(config, token).await?;
     let factory_config = factory_config(
         config,
@@ -1214,60 +1003,4 @@ async fn start(
         factory_config,
     )
     .await
-}
-
-struct Signals {
-    quit: tokio::signal::unix::Signal,
-    interrupt: tokio::signal::unix::Signal,
-    terminate: tokio::signal::unix::Signal,
-}
-
-impl Signals {
-    fn new() -> std::io::Result<Signals> {
-        Ok(Signals {
-            quit: signal(Signal::Quit.kind())?,
-            interrupt: signal(Signal::Interrupt.kind())?,
-            terminate: signal(Signal::Terminate.kind())?,
-        })
-    }
-
-    /// Signals that arrive before the last one was read count as one, so two
-    /// sent back to back take a single way.
-    async fn next(&mut self) -> Signal {
-        tokio::select! {
-            _ = self.quit.recv() => Signal::Quit,
-            _ = self.interrupt.recv() => Signal::Interrupt,
-            _ = self.terminate.recv() => Signal::Terminate,
-        }
-    }
-}
-
-async fn require_tool(program: &str) -> Result<()> {
-    let found = child::command(program)
-        .arg("--version")
-        .output()
-        .await
-        .is_ok_and(|o| o.status.success());
-    if !found {
-        bail!("`{program}` is not on the path");
-    }
-    Ok(())
-}
-
-/// The absolute path of the first `bash` on the `PATH`, or an error when
-/// there is none.
-fn require_bash() -> Result<PathBuf> {
-    let found = std::env::var_os("PATH")
-        .iter()
-        .flat_map(std::env::split_paths)
-        .map(|dir| dir.join("bash"))
-        .find(|candidate| is_executable(candidate));
-    match found {
-        Some(bash) => std::path::absolute(&bash).context("locating `bash`"),
-        None => bail!("`bash` is not on the path"),
-    }
-}
-
-fn is_executable(path: &Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
