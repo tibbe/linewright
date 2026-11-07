@@ -12,7 +12,7 @@ use tracing::warn;
 
 use super::lifecycle::{Basis, Fingerprint};
 use crate::domain::Timestamp;
-use crate::transcript::MaintenanceLine;
+use crate::transcript::lines::MaintenanceLine;
 
 /// A build's clone, in its directory.
 pub const REPO: &str = "repo";

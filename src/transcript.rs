@@ -1,7 +1,11 @@
+//! A run's transcripts (`docs/specs/design_system.md`, Transcripts): its
+//! sessions' records, read into what they say and followed as they grow,
+//! for each place to lay out its own way.
+
+pub mod lines;
+
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
-use std::num::NonZeroUsize;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -11,7 +15,10 @@ use serde_json::Value;
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
 use crate::runs::{Ran, Started};
-use crate::status::Paint;
+
+pub use lines::{
+    FollowedLine, Follower, Line, Verbosity, json_line, json_lines, render, render_line,
+};
 
 pub const OUTPUT: &str = "output.jsonl";
 
@@ -87,7 +94,7 @@ pub enum MaintenanceRan {
 
 impl Maintenance {
     /// When it started, if that is known.
-    fn at(&self) -> Option<Timestamp> {
+    pub(crate) fn at(&self) -> Option<Timestamp> {
         match &self.ran {
             MaintenanceRan::Started { at, .. } => Some(*at),
             MaintenanceRan::Recorded(_) => None,
@@ -95,7 +102,7 @@ impl Maintenance {
     }
 
     /// How it ended, once it has.
-    fn ended(&self) -> Option<&MaintenanceEnded> {
+    pub(crate) fn ended(&self) -> Option<&MaintenanceEnded> {
         match &self.ran {
             MaintenanceRan::Started { ended, .. } => ended.as_ref(),
             MaintenanceRan::Recorded(ended) => Some(ended),
@@ -376,6 +383,26 @@ pub struct Session {
     pub turns: Vec<Turn>,
 }
 
+impl Session {
+    /// The entry `at`.
+    ///
+    /// # Panics
+    ///
+    /// When there is no entry `at`, as there is for each place a change
+    /// names.
+    pub fn entry(&self, at: &EntryAt) -> &Entry {
+        let mut entries = &self.turns[at.turn].entries;
+        let (last, holders) = at.path.split_last().expect("an entry's path is not empty");
+        for &i in holders {
+            let What::Tool(call) = &entries[i].what else {
+                unreachable!("a path leads through calls only")
+            };
+            entries = &call.entries;
+        }
+        &entries[*last]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Turn {
     pub started_at: Option<Timestamp>,
@@ -517,14 +544,155 @@ pub struct CallResult {
     pub details: Value,
 }
 
+impl CallResult {
+    /// What it returned besides its text, unless it returned nothing else.
+    pub(crate) fn content(&self) -> Option<&[Value]> {
+        Some(self.other.as_slice()).filter(|other| !other.is_empty())
+    }
+
+    /// Its details, unless it returned none.
+    pub(crate) fn details(&self) -> Option<&Value> {
+        Some(&self.details).filter(|details| !details.is_null())
+    }
+}
+
+impl Call {
+    /// Its main argument, as its line shows it, with the session's `dir`
+    /// left out of paths.
+    pub(crate) fn argument(&self, dir: Option<&str>) -> String {
+        let value = self
+            .tool
+            .main_argument()
+            .and_then(|key| self.input[key].as_str())
+            .or_else(|| {
+                self.input
+                    .as_object()
+                    .and_then(|input| input.values().find_map(Value::as_str))
+            })
+            .unwrap_or_default();
+        let value = match dir {
+            Some(dir) => value.replace(&format!("{dir}/"), ""),
+            None => value.to_string(),
+        };
+        one_line(&value, ARGUMENT_CHARS)
+    }
+
+    /// How it went, as its line shows it: `running` until it returns.
+    pub(crate) fn account(&self) -> String {
+        let Some(result) = &self.result else {
+            return "running".into();
+        };
+        let details = &result.details;
+        let lines = |n: usize| format!("{n} {}", if n == 1 { "line" } else { "lines" });
+        let in_background = |started: &str| match &self.background {
+            Some(status) => format!("{status} in the background"),
+            None => started.to_string(),
+        };
+        if result.error {
+            let text = result.text.trim();
+            if self.tool == Tool::Bash
+                && let Some(code) = text
+                    .lines()
+                    .next()
+                    .and_then(|first| first.strip_prefix("Exit code "))
+            {
+                return format!("exit {code}");
+            }
+            let text = text
+                .trim_start_matches("<tool_use_error>")
+                .trim_end_matches("</tool_use_error>");
+            return format!("failed: {}", one_line(text, ARGUMENT_CHARS));
+        }
+        match self.tool {
+            Tool::Bash if details["interrupted"] == true => "interrupted".into(),
+            Tool::Bash if details["backgroundTaskId"].is_string() => {
+                in_background("moved to the background")
+            }
+            Tool::Bash => match result.text.lines().count() {
+                0 => "exit 0, no output".into(),
+                n => format!("exit 0, {}", lines(n)),
+            },
+            Tool::Read => lines(details["file"]["numLines"].as_u64().map_or_else(
+                || result.text.lines().count(),
+                |n| usize::try_from(n).unwrap_or(usize::MAX),
+            )),
+            Tool::Write => format!(
+                "wrote {}",
+                lines(
+                    self.input["content"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .count()
+                )
+            ),
+            Tool::Edit | Tool::MultiEdit | Tool::NotebookEdit => "edited".into(),
+            Tool::Skill => "loaded".into(),
+            Tool::Agent | Tool::Task => match details["status"].as_str() {
+                Some("completed") => {
+                    let uses = details["totalToolUseCount"].as_u64().unwrap_or(0);
+                    let seconds = details["totalDurationMs"].as_u64().unwrap_or(0) / 1000;
+                    let uses_word = if uses == 1 { "use" } else { "uses" };
+                    Phrase::from(format!("done, {uses} tool {uses_word}, "))
+                        .duration(seconds, None)
+                        .to_string()
+                }
+                Some("async_launched") => in_background("started in the background"),
+                _ => one_line(&result.text, ARGUMENT_CHARS),
+            },
+            Tool::Grep
+            | Tool::Glob
+            | Tool::WebFetch
+            | Tool::WebSearch
+            | Tool::ToolSearch
+            | Tool::Other(_) => {
+                if result.text.trim().is_empty() {
+                    "done".into()
+                } else {
+                    one_line(&result.text, ARGUMENT_CHARS)
+                }
+            }
+        }
+    }
+
+    /// Whether it has returned an error.
+    pub(crate) fn failed(&self) -> bool {
+        self.result.as_ref().is_some_and(|result| result.error)
+    }
+
+    /// Its parts as a transcript in full shows them, each with its label.
+    pub(crate) fn parts(&self) -> Vec<(&'static str, String)> {
+        parts(&self.input, self.result.as_ref())
+    }
+}
+
+/// A call's parts as a transcript in full shows them, each with its label:
+/// its `input`, and once it has `returned`, its result, and its content and
+/// details unless it returned none.
+pub(crate) fn parts(input: &Value, returned: Option<&CallResult>) -> Vec<(&'static str, String)> {
+    let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
+    let mut parts = vec![("input", pretty(input))];
+    if let Some(returned) = returned {
+        parts.push(("result", returned.text.clone()));
+        if let Some(content) = returned.content() {
+            let content: Vec<String> = content.iter().map(Value::to_string).collect();
+            parts.push(("content", content.join("\n")));
+        }
+        if let Some(details) = returned.details() {
+            parts.push(("details", pretty(details)));
+        }
+    }
+    parts
+}
+
 /// Lines that do not read as events, such as one being written, are skipped.
 pub fn parse(record: &SessionRecord) -> Session {
     let mut parser = Parser::default();
     parser.recorded_maintenance(record);
     for line in record.output.lines() {
-        parser.line(line, record);
+        parser.read(line, record);
     }
-    parser.finish()
+    parser.session
 }
 
 fn is_progress(event: &Value) -> bool {
@@ -538,7 +706,7 @@ struct Parser {
     session: Session,
     calls: HashMap<String, EntryAt>,
     followups: usize,
-    touched: Vec<Touch>,
+    changed: Vec<Change>,
     /// When the latest event that said so happened, or else its turn
     /// started.
     last_at: Option<Timestamp>,
@@ -546,26 +714,51 @@ struct Parser {
 
 /// Where an entry is: its turn, and its path through the calls that hold
 /// it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct EntryAt {
-    turn: usize,
-    path: Vec<usize>,
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EntryAt {
+    pub turn: usize,
+    pub path: Vec<usize>,
 }
 
-enum Touch {
+impl EntryAt {
+    /// Where the call that holds it is, for an entry of a sub-agent's work.
+    pub fn parent(&self) -> Option<EntryAt> {
+        let (_, holders) = self.path.split_last()?;
+        (!holders.is_empty()).then(|| EntryAt {
+            turn: self.turn,
+            path: holders.to_vec(),
+        })
+    }
+}
+
+/// A change to a session's transcript, as reading its records makes it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
+    /// The session's transcript opened: its first line was read, or the
+    /// session was whole with none.
+    Opened,
+    /// Its `n`th turn, from 0, began.
     Turn(usize),
     Added(Place),
+    /// An entry that runs ended, at the time its record gives, if any.
     Ended(Place, Option<Timestamp>),
 }
 
-/// An entry that a touch is of.
-enum Place {
+/// An entry that a change is of.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Place {
     Clone,
     Maintenance,
-    Turn(EntryAt),
+    Entry(EntryAt),
 }
 
 impl Parser {
+    /// Reads `line` of `record`'s output into the session.
+    fn read(&mut self, line: &str, record: &SessionRecord) {
+        self.line(line, record);
+        self.session.started_at = started_at(&self.session);
+    }
+
     fn line(&mut self, line: &str, record: &SessionRecord) {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             return;
@@ -614,14 +807,14 @@ impl Parser {
                 output: record.maintenance_output.clone().unwrap_or_default(),
             }),
         });
-        self.touched.push(Touch::Added(Place::Maintenance));
+        self.changed.push(Change::Added(Place::Maintenance));
     }
 
     fn session_clone(&mut self, event: CloneEvent) {
         match event {
             CloneEvent::Started { at } => {
                 self.session.clone = Some(SessionClone { at, ended: None });
-                self.touched.push(Touch::Added(Place::Clone));
+                self.changed.push(Change::Added(Place::Clone));
                 self.last_at = Some(at);
             }
             CloneEvent::Ended {
@@ -636,7 +829,7 @@ impl Parser {
                     duration_seconds,
                     error,
                 });
-                self.touched.push(Touch::Ended(Place::Clone, Some(at)));
+                self.changed.push(Change::Ended(Place::Clone, Some(at)));
                 self.last_at = Some(at);
             }
         }
@@ -649,7 +842,7 @@ impl Parser {
                     command,
                     ran: MaintenanceRan::Started { at, ended: None },
                 });
-                self.touched.push(Touch::Added(Place::Maintenance));
+                self.changed.push(Change::Added(Place::Maintenance));
                 self.last_at = Some(at);
             }
             MaintenanceEvent::Ended {
@@ -669,17 +862,11 @@ impl Parser {
                     duration_seconds,
                     output: record.maintenance_output.clone().unwrap_or_default(),
                 });
-                self.touched
-                    .push(Touch::Ended(Place::Maintenance, Some(at)));
+                self.changed
+                    .push(Change::Ended(Place::Maintenance, Some(at)));
                 self.last_at = Some(at);
             }
         }
-    }
-
-    fn finish(self) -> Session {
-        let mut session = self.session;
-        session.started_at = started_at(&session);
-        session
     }
 
     fn begin_turn(&mut self, started_at: Option<Timestamp>, prompt: Prompt) {
@@ -689,7 +876,8 @@ impl Parser {
             prompt,
             entries: vec![],
         });
-        self.touched.push(Touch::Turn(self.session.turns.len() - 1));
+        self.changed
+            .push(Change::Turn(self.session.turns.len() - 1));
     }
 
     fn event(&mut self, event: Value) {
@@ -754,7 +942,7 @@ impl Parser {
                                         Value::Null
                                     },
                                 });
-                                self.touched.push(Touch::Ended(Place::Turn(returned), at));
+                                self.changed.push(Change::Ended(Place::Entry(returned), at));
                             }
                             continue;
                         }
@@ -780,7 +968,7 @@ impl Parser {
                         if let Some((ended, call)) = self.call(&event["tool_use_id"]) {
                             call.background = event["status"].as_str().map(str::to_string);
                             if call.result.is_some() {
-                                self.touched.push(Touch::Ended(Place::Turn(ended), at));
+                                self.changed.push(Change::Ended(Place::Entry(ended), at));
                             }
                         }
                     }
@@ -809,7 +997,7 @@ impl Parser {
         if let Some(id) = id {
             self.calls.insert(id, at.clone());
         }
-        self.touched.push(Touch::Added(Place::Turn(at)));
+        self.changed.push(Change::Added(Place::Entry(at)));
     }
 
     fn call(&mut self, id: &Value) -> Option<(EntryAt, &mut Call)> {
@@ -857,693 +1045,6 @@ fn call_at<'a>(entries: &'a mut [Entry], path: &[usize]) -> &'a mut Call {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Verbosity {
-    Compact,
-    Full,
-}
-
-impl Verbosity {
-    pub fn of(verbose: bool) -> Verbosity {
-        if verbose {
-            Verbosity::Full
-        } else {
-            Verbosity::Compact
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum Line {
-    Header(Header),
-    Entry(Box<Stamped>),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Header {
-    Run {
-        #[serde(flatten)]
-        run: Started,
-        sessions: usize,
-    },
-    Session {
-        session: usize,
-        started_at: Option<Timestamp>,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Stamped {
-    #[serde(flatten)]
-    pub(crate) stamp: Stamp,
-    #[serde(flatten)]
-    pub(crate) what: EntryLine,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Stamp {
-    /// The session's number in the run, from 1.
-    pub(crate) session: usize,
-    pub(crate) at: Option<Timestamp>,
-    /// Since the session started.
-    pub(crate) elapsed_seconds: Option<i64>,
-    #[serde(flatten)]
-    pub(crate) under: Under,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "UnderFields", into = "UnderFields")]
-pub(crate) enum Under {
-    Session,
-    SubAgent { depth: NonZeroUsize, parent: String },
-}
-
-impl Under {
-    fn depth(&self) -> usize {
-        match self {
-            Under::Session => 0,
-            Under::SubAgent { depth, .. } => depth.get(),
-        }
-    }
-
-    fn sub_agent(&self, call: &str) -> Under {
-        Under::SubAgent {
-            depth: NonZeroUsize::MIN.saturating_add(self.depth()),
-            parent: call.to_string(),
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct UnderFields {
-    depth: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    parent_tool_use_id: Option<String>,
-}
-
-impl From<Under> for UnderFields {
-    fn from(under: Under) -> UnderFields {
-        UnderFields {
-            depth: under.depth(),
-            parent_tool_use_id: match under {
-                Under::Session => None,
-                Under::SubAgent { parent, .. } => Some(parent),
-            },
-        }
-    }
-}
-
-impl TryFrom<UnderFields> for Under {
-    type Error = &'static str;
-
-    fn try_from(fields: UnderFields) -> Result<Under, &'static str> {
-        match (NonZeroUsize::new(fields.depth), fields.parent_tool_use_id) {
-            (None, None) => Ok(Under::Session),
-            (Some(depth), Some(parent)) => Ok(Under::SubAgent { depth, parent }),
-            (None, Some(_)) => Err("a line of the session's own work must have no parent call"),
-            (Some(_), None) => Err("a line of a sub-agent's work must have a parent call"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub(crate) enum EntryLine {
-    Brief {
-        text: String,
-    },
-    FollowUp {
-        summary: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        text: Option<String>,
-    },
-    Message {
-        text: String,
-    },
-    Thinking {
-        text: String,
-    },
-    Context {
-        text: String,
-    },
-    Event {
-        event: Value,
-    },
-    Other {
-        other: Value,
-    },
-    Tool(ToolLine),
-    Clone(CloneLine),
-    Maintenance(MaintenanceLine),
-}
-
-/// The line of the making of a session's clone: how it ended, once it has.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "CloneFields", into = "CloneFields")]
-pub(crate) struct CloneLine {
-    pub(crate) ended: Option<CloneEnded>,
-}
-
-/// A clone line as JSON: both null while the clone is being made, and the
-/// error null when it was made (`docs/specs/monitoring.md`, logs, The clone).
-#[derive(Serialize, Deserialize)]
-struct CloneFields {
-    duration_seconds: Option<f64>,
-    error: Option<String>,
-}
-
-impl From<CloneLine> for CloneFields {
-    fn from(line: CloneLine) -> CloneFields {
-        match line.ended {
-            None => CloneFields {
-                duration_seconds: None,
-                error: None,
-            },
-            Some(ended) => CloneFields {
-                duration_seconds: Some(ended.duration_seconds),
-                error: ended.error,
-            },
-        }
-    }
-}
-
-impl TryFrom<CloneFields> for CloneLine {
-    type Error = &'static str;
-
-    fn try_from(fields: CloneFields) -> Result<CloneLine, &'static str> {
-        let ended = match (fields.duration_seconds, fields.error) {
-            (None, None) => None,
-            (Some(duration_seconds), error) => Some(CloneEnded {
-                duration_seconds,
-                error,
-            }),
-            (None, Some(_)) => return Err("a clone line with an error must have a duration"),
-        };
-        Ok(CloneLine { ended })
-    }
-}
-
-/// A session's maintenance command's line: the command, and how it ended once it
-/// has.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
-pub(crate) struct MaintenanceLine {
-    pub(crate) command: String,
-    pub(crate) ended: Option<MaintenanceEnded>,
-}
-
-/// A maintenance line as JSON: what it holds once the command has ended is null
-/// until then (`docs/specs/monitoring.md`, logs, Running in JSON).
-#[derive(Serialize, Deserialize)]
-struct MaintenanceFields {
-    command: String,
-    status: Option<MaintenanceStatus>,
-    duration_seconds: Option<f64>,
-    output: Option<String>,
-}
-
-impl From<MaintenanceLine> for MaintenanceFields {
-    fn from(line: MaintenanceLine) -> MaintenanceFields {
-        let ended = line.ended;
-        MaintenanceFields {
-            command: line.command,
-            status: ended.as_ref().map(|ended| ended.status),
-            duration_seconds: ended.as_ref().map(|ended| ended.duration_seconds),
-            output: ended.map(|ended| ended.output),
-        }
-    }
-}
-
-impl TryFrom<MaintenanceFields> for MaintenanceLine {
-    type Error = &'static str;
-
-    fn try_from(fields: MaintenanceFields) -> Result<MaintenanceLine, &'static str> {
-        let ended = match (fields.status, fields.duration_seconds, fields.output) {
-            (None, None, None) => None,
-            (Some(status), Some(duration_seconds), Some(output)) => Some(MaintenanceEnded {
-                status,
-                duration_seconds,
-                output,
-            }),
-            _ => {
-                return Err(
-                    "a maintenance line must have a status, a duration and an output, or none of them",
-                );
-            }
-        };
-        Ok(MaintenanceLine {
-            command: fields.command,
-            ended,
-        })
-    }
-}
-
-/// A tool call's line.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "ToolFields", into = "ToolFields")]
-pub(crate) struct ToolLine {
-    pub(crate) tool_use_id: String,
-    pub(crate) tool: String,
-    pub(crate) argument: String,
-    pub(crate) account: String,
-    pub(crate) shown: ToolShown,
-}
-
-/// What a tool call's line shows beyond its account, by verbosity.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ToolShown {
-    /// Whether it failed, once it has returned.
-    Compact { error: Option<bool> },
-    /// Its input, and what it returned once it has.
-    Full {
-        input: Value,
-        returned: Option<ToolReturned>,
-    },
-}
-
-/// What a tool call returned, as a transcript in full shows it.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ToolReturned {
-    pub(crate) error: bool,
-    pub(crate) result: String,
-    /// Empty when it returned none.
-    pub(crate) content: Vec<Value>,
-    /// Null when it returned none.
-    pub(crate) details: Value,
-}
-
-impl ToolShown {
-    /// Its parts as a transcript in full shows them, each with its label:
-    /// none at compact verbosity.
-    pub(crate) fn parts(&self) -> Vec<(&'static str, String)> {
-        let pretty = |value: &Value| serde_json::to_string_pretty(value).unwrap_or_default();
-        let ToolShown::Full { input, returned } = self else {
-            return vec![];
-        };
-        let mut parts = vec![("input", pretty(input))];
-        if let Some(returned) = returned {
-            parts.push(("result", returned.result.clone()));
-            if let Some(content) = returned.content() {
-                let content: Vec<String> = content.iter().map(Value::to_string).collect();
-                parts.push(("content", content.join("\n")));
-            }
-            if let Some(details) = returned.details() {
-                parts.push(("details", pretty(details)));
-            }
-        }
-        parts
-    }
-}
-
-impl ToolReturned {
-    /// Its content, unless it returned none.
-    fn content(&self) -> Option<&[Value]> {
-        Some(self.content.as_slice()).filter(|content| !content.is_empty())
-    }
-
-    /// Its details, unless it returned none.
-    fn details(&self) -> Option<&Value> {
-        Some(&self.details).filter(|details| !details.is_null())
-    }
-}
-
-impl ToolLine {
-    /// Whether it has returned an error.
-    pub(crate) fn failed(&self) -> bool {
-        self.error() == Some(true)
-    }
-
-    /// Whether it has yet to return.
-    pub(crate) fn running(&self) -> bool {
-        self.error().is_none()
-    }
-
-    fn error(&self) -> Option<bool> {
-        match &self.shown {
-            ToolShown::Compact { error } => *error,
-            ToolShown::Full { returned, .. } => returned.as_ref().map(|returned| returned.error),
-        }
-    }
-}
-
-/// A tool line as JSON: `error`, and in full `result`, `content` and
-/// `details`, are null while the call runs, and `content` and `details`
-/// also when it returned none (`docs/specs/monitoring.md`, logs, Running in
-/// JSON). A compact line has none of the keys only a line in full has.
-#[derive(Serialize, Deserialize)]
-struct ToolFields {
-    tool_use_id: String,
-    tool: String,
-    argument: String,
-    account: String,
-    error: Option<bool>,
-    #[serde(default, skip_serializing_if = "InFull::is_absent")]
-    input: InFull<Value>,
-    #[serde(default, skip_serializing_if = "InFull::is_absent")]
-    result: InFull<String>,
-    #[serde(default, skip_serializing_if = "InFull::is_absent")]
-    content: InFull<Vec<Value>>,
-    #[serde(default, skip_serializing_if = "InFull::is_absent")]
-    details: InFull<Value>,
-}
-
-/// A key only a tool line in full has: there in full, even when null.
-#[derive(Default)]
-enum InFull<T> {
-    #[default]
-    Absent,
-    Null,
-    Is(T),
-}
-
-impl<T> InFull<T> {
-    fn is_absent(&self) -> bool {
-        matches!(self, InFull::Absent)
-    }
-
-    fn or_null(value: Option<T>) -> InFull<T> {
-        value.map_or(InFull::Null, InFull::Is)
-    }
-
-    /// Its value, or `T`'s default when it is null or not there.
-    fn unwrap_or_default(self) -> T
-    where
-        T: Default,
-    {
-        match self {
-            InFull::Is(value) => value,
-            InFull::Absent | InFull::Null => T::default(),
-        }
-    }
-}
-
-impl<T: Serialize> Serialize for InFull<T> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            InFull::Is(value) => value.serialize(serializer),
-            InFull::Absent | InFull::Null => serializer.serialize_none(),
-        }
-    }
-}
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for InFull<T> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<InFull<T>, D::Error> {
-        Option::deserialize(deserializer).map(InFull::or_null)
-    }
-}
-
-impl From<ToolLine> for ToolFields {
-    fn from(line: ToolLine) -> ToolFields {
-        let (error, input, content, details, result) = match line.shown {
-            ToolShown::Compact { error } => (
-                error,
-                InFull::Absent,
-                InFull::Absent,
-                InFull::Absent,
-                InFull::Absent,
-            ),
-            ToolShown::Full {
-                input,
-                returned: None,
-            } => (
-                None,
-                InFull::Is(input),
-                InFull::Null,
-                InFull::Null,
-                InFull::Null,
-            ),
-            ToolShown::Full {
-                input,
-                returned: Some(returned),
-            } => (
-                Some(returned.error),
-                InFull::Is(input),
-                InFull::or_null(returned.content().map(<[Value]>::to_vec)),
-                InFull::or_null(returned.details().cloned()),
-                InFull::Is(returned.result),
-            ),
-        };
-        ToolFields {
-            tool_use_id: line.tool_use_id,
-            tool: line.tool,
-            argument: line.argument,
-            account: line.account,
-            error,
-            input,
-            result,
-            content,
-            details,
-        }
-    }
-}
-
-impl TryFrom<ToolFields> for ToolLine {
-    type Error = &'static str;
-
-    fn try_from(fields: ToolFields) -> Result<ToolLine, &'static str> {
-        use InFull::{Absent, Is, Null};
-        let shown = match (
-            fields.error,
-            fields.input,
-            fields.result,
-            fields.content,
-            fields.details,
-        ) {
-            (error, Absent, Absent, Absent, Absent) => ToolShown::Compact { error },
-            (None, called @ (Is(_) | Null), Null, Null, Null) => ToolShown::Full {
-                input: called.unwrap_or_default(),
-                returned: None,
-            },
-            (
-                Some(error),
-                called @ (Is(_) | Null),
-                Is(result),
-                content @ (Is(_) | Null),
-                details @ (Is(_) | Null),
-            ) => ToolShown::Full {
-                input: called.unwrap_or_default(),
-                returned: Some(ToolReturned {
-                    error,
-                    result,
-                    content: content.unwrap_or_default(),
-                    details: details.unwrap_or_default(),
-                }),
-            },
-            _ => {
-                return Err(
-                    "a tool line in full must have an input, a result, content and details, \
-                     null until the call returns and only then with an error",
-                );
-            }
-        };
-        Ok(ToolLine {
-            tool_use_id: fields.tool_use_id,
-            tool: fields.tool,
-            argument: fields.argument,
-            account: fields.account,
-            shown,
-        })
-    }
-}
-
-fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
-    let mut lines = vec![Line::Header(Header::Run {
-        run: transcript.run.clone(),
-        sessions: transcript.sessions.len(),
-    })];
-    for (i, session) in transcript.sessions.iter().enumerate() {
-        let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        let nothing_read =
-            session.clone.is_none() && session.maintenance.is_none() && session.turns.is_empty();
-        if current && nothing_read {
-            continue;
-        }
-        let mut stamper = Stamper::new(i + 1, session.started_at);
-        lines.push(stamper.header());
-        if let Some(clone) = &session.clone {
-            lines.push(stamper.clone_line(clone, clone.at));
-        }
-        if let Some(maintenance) = &session.maintenance {
-            lines.push(stamper.maintenance(maintenance, maintenance.at()));
-        }
-        for turn in &session.turns {
-            if let Some(what) = prompt_line(turn, verbosity) {
-                lines.push(stamper.line(turn.started_at, Under::Session, what));
-            }
-            entry_lines(
-                &turn.entries,
-                &Under::Session,
-                session,
-                verbosity,
-                &mut stamper,
-                &mut lines,
-            );
-        }
-    }
-    lines
-}
-
-fn entry_lines(
-    entries: &[Entry],
-    under: &Under,
-    session: &Session,
-    verbosity: Verbosity,
-    stamper: &mut Stamper,
-    lines: &mut Vec<Line>,
-) {
-    for entry in entries {
-        if let Some(what) = entry_line(entry, session, verbosity) {
-            lines.push(stamper.line(entry.at, under.clone(), what));
-        }
-        if let What::Tool(call) = &entry.what {
-            let sub_agent = under.sub_agent(&call.id);
-            entry_lines(
-                &call.entries,
-                &sub_agent,
-                session,
-                verbosity,
-                stamper,
-                lines,
-            );
-        }
-    }
-}
-
-struct Stamper {
-    number: usize,
-    started_at: Option<Timestamp>,
-    last: Option<Timestamp>,
-}
-
-impl Stamper {
-    fn new(number: usize, started_at: Option<Timestamp>) -> Stamper {
-        Stamper {
-            number,
-            started_at,
-            last: started_at,
-        }
-    }
-
-    /// That the session started at `at`, unless when is already known.
-    fn started(&mut self, at: Option<Timestamp>) {
-        if self.started_at.is_none() {
-            self.started_at = at;
-            self.last = self.last.or(at);
-        }
-    }
-
-    fn header(&self) -> Line {
-        Line::Header(Header::Session {
-            session: self.number,
-            started_at: self.started_at,
-        })
-    }
-
-    fn line(&mut self, at: Option<Timestamp>, under: Under, what: EntryLine) -> Line {
-        let at = at.or(self.last);
-        self.last = at;
-        self.stamped(at, under, what)
-    }
-
-    fn stamped(&self, at: Option<Timestamp>, under: Under, what: EntryLine) -> Line {
-        let stamp = Stamp {
-            session: self.number,
-            at,
-            elapsed_seconds: at
-                .zip(self.started_at)
-                .map(|(at, started)| (at - started).num_seconds()),
-            under,
-        };
-        Line::Entry(Box::new(Stamped { stamp, what }))
-    }
-
-    /// The line of the making of `clone` at `at`.
-    fn clone_line(&mut self, clone: &SessionClone, at: Timestamp) -> Line {
-        let what = EntryLine::Clone(CloneLine {
-            ended: clone.ended.clone(),
-        });
-        self.line(Some(at), Under::Session, what)
-    }
-
-    /// The line of `maintenance` at `at`, or with no time for one recorded
-    /// before its start was.
-    fn maintenance(&mut self, maintenance: &Maintenance, at: Option<Timestamp>) -> Line {
-        let what = EntryLine::Maintenance(MaintenanceLine {
-            command: maintenance.command.clone(),
-            ended: maintenance.ended().cloned(),
-        });
-        match maintenance.ran {
-            MaintenanceRan::Started { .. } => self.line(at, Under::Session, what),
-            MaintenanceRan::Recorded(_) => self.stamped(None, Under::Session, what),
-        }
-    }
-}
-
-fn prompt_line(turn: &Turn, verbosity: Verbosity) -> Option<EntryLine> {
-    let full = verbosity == Verbosity::Full;
-    match &turn.prompt {
-        Prompt::Brief(Some(text)) if full => Some(EntryLine::Brief { text: text.clone() }),
-        Prompt::Brief(_) => None,
-        Prompt::FollowUp(prompt) => Some(EntryLine::FollowUp {
-            summary: prompt.as_deref().map_or(String::new(), summary),
-            text: prompt.clone().filter(|_| full),
-        }),
-    }
-}
-
-fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<EntryLine> {
-    let full = verbosity == Verbosity::Full;
-    Some(match &entry.what {
-        What::Message(text) => EntryLine::Message { text: text.clone() },
-        What::Thinking(text) if full => EntryLine::Thinking { text: text.clone() },
-        What::Context(text) if full => EntryLine::Context { text: text.clone() },
-        What::Event(event) if full => EntryLine::Event {
-            event: event.clone(),
-        },
-        What::Other(other) if full => EntryLine::Other {
-            other: other.clone(),
-        },
-        What::Thinking(_) | What::Context(_) | What::Event(_) | What::Other(_) => return None,
-        What::Tool(call) => {
-            let returned = |result: &CallResult| ToolReturned {
-                error: result.error,
-                result: result.text.clone(),
-                content: result.other.clone(),
-                details: result.details.clone(),
-            };
-            EntryLine::Tool(ToolLine {
-                tool_use_id: call.id.clone(),
-                tool: call.tool.name().to_string(),
-                argument: argument(call, session.dir.as_deref()),
-                account: account(call),
-                shown: if full {
-                    ToolShown::Full {
-                        input: call.input.clone(),
-                        returned: call.result.as_ref().map(returned),
-                    }
-                } else {
-                    ToolShown::Compact {
-                        error: call.result.as_ref().map(|result| result.error),
-                    }
-                },
-            })
-        }
-    })
-}
-
-/// The lines shown only ever grow, the same whatever pieces the records are read in.
-pub struct Follower {
-    run: Started,
-    verbosity: Verbosity,
-    sessions: Vec<Followed>,
-    after: Option<After>,
-    /// Where the last line was made, so that the lines made at the same
-    /// point by a later read number on from it.
-    last: Option<Made>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum InFlight {
@@ -1561,8 +1062,8 @@ pub struct ReadTo {
     pub line: usize,
 }
 
-/// Where a line of a followed transcript was made: the `nth`, from 1, of
-/// those made once the transcript was read to `read`.
+/// Where something shown of a followed transcript, such as a line, was made:
+/// the `nth`, from 1, of those made once the transcript was read to `read`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Made {
     pub read: ReadTo,
@@ -1576,7 +1077,7 @@ pub enum After {
 }
 
 impl After {
-    /// Whether the line made at `made` comes after `self`.
+    /// Whether what was made at `made` comes after `self`.
     fn precedes(self, made: Made) -> bool {
         match self {
             After::Line(line) => made > line,
@@ -1585,199 +1086,205 @@ impl After {
     }
 }
 
+/// Numbers what a layout makes of a followed transcript by where it was
+/// made, giving only what comes after where it follows from.
+pub struct Numbering {
+    after: Option<After>,
+    /// Where the last was made, so that what is made at the same point by a
+    /// later read numbers on from it.
+    last: Option<Made>,
+}
+
+impl Numbering {
+    pub fn new(after: Option<After>) -> Numbering {
+        Numbering { after, last: None }
+    }
+
+    /// Where the next thing made once the transcript was read to `read`
+    /// was made, unless it comes no later than where this follows from.
+    pub fn next(&mut self, read: ReadTo) -> Option<Made> {
+        let nth = self
+            .last
+            .filter(|last| last.read == read)
+            .map_or(0, |last| last.nth);
+        let made = Made { read, nth: nth + 1 };
+        self.last = Some(made);
+        self.after
+            .is_none_or(|after| after.precedes(made))
+            .then_some(made)
+    }
+}
+
+/// When a session's entries happened, as a place shows the time beside
+/// each: something with no time of its own happened when what was shown
+/// before it did.
+pub(crate) struct Clock {
+    started_at: Option<Timestamp>,
+    last: Option<Timestamp>,
+}
+
+impl Clock {
+    pub(crate) fn new(started_at: Option<Timestamp>) -> Clock {
+        Clock {
+            started_at,
+            last: started_at,
+        }
+    }
+
+    /// When the session started, if that is known.
+    pub(crate) fn started_at(&self) -> Option<Timestamp> {
+        self.started_at
+    }
+
+    /// That the session started at `at`, unless when is already known.
+    pub(crate) fn started(&mut self, at: Option<Timestamp>) {
+        if self.started_at.is_none() {
+            self.started_at = at;
+            self.last = self.last.or(at);
+        }
+    }
+
+    /// When something shown that happened `at` happened, if that is known.
+    pub(crate) fn tick(&mut self, at: Option<Timestamp>) -> Option<Timestamp> {
+        let at = at.or(self.last);
+        self.last = at;
+        at
+    }
+
+    /// The time from the session's start to `at`, in seconds, if both are
+    /// known.
+    pub(crate) fn since_started(&self, at: Option<Timestamp>) -> Option<i64> {
+        at.zip(self.started_at)
+            .map(|(at, started)| (at - started).num_seconds())
+    }
+}
+
+/// Where a run's transcript starts: before the first line of its first
+/// session.
+pub const START: ReadTo = ReadTo {
+    session: 1,
+    line: 0,
+};
+
+/// A change to a followed run's transcript, with where it was read: a change
+/// of the session `read.session`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct FollowedLine {
-    pub made: Made,
-    pub line: Line,
+pub struct Changed {
+    pub read: ReadTo,
+    pub change: Change,
+}
+
+/// A run's sessions followed as their records grow, read into the model,
+/// each change given as it is read. The changes are the same whatever pieces
+/// the records are read in.
+#[derive(Default)]
+pub struct Feed {
+    began: bool,
+    sessions: Vec<Fed>,
+}
+
+/// What a place makes of a followed transcript as [`Feed`] reads it.
+pub trait Layout {
+    /// The run's transcript began, at [`START`], with the `sessions` sessions
+    /// the run had then: once its first session's record came, or the run
+    /// ended with none.
+    fn began(&mut self, sessions: usize);
+
+    /// `changed` was read, leaving its session's model as `session`.
+    fn changed(&mut self, changed: Changed, session: &Session);
+}
+
+#[derive(Default)]
+struct Fed {
+    parser: Parser,
+    bytes_read: usize,
+    lines_read: usize,
+    opened: bool,
+}
+
+impl Feed {
+    /// Reads what `records`, a run's sessions in order, hold beyond what was
+    /// read before, giving `layout` that the run's transcript began, then each
+    /// change with its session's model as the line it was read from left it.
+    /// A line still being written waits, unless the run has `ended` or a
+    /// later session has started.
+    pub fn read(&mut self, records: &[SessionRecord], ended: bool, layout: &mut impl Layout) {
+        if !self.began && (!records.is_empty() || ended) {
+            self.began = true;
+            layout.began(records.len());
+        }
+        let mut changed = |changed, session: &Session| layout.changed(changed, session);
+        for (i, record) in records.iter().enumerate() {
+            let session = i + 1;
+            if i == self.sessions.len() {
+                self.sessions.push(Fed::default());
+            }
+            let fed = &mut self.sessions[i];
+            let whole = ended || session < records.len();
+            let unread = &record.output[fed.bytes_read.min(record.output.len())..];
+            let complete = if whole { unread } else { whole_lines(unread) };
+            fed.parser.recorded_maintenance(record);
+            for line in complete.lines() {
+                fed.parser.read(line, record);
+                fed.open(session, &mut changed);
+                fed.lines_read += 1;
+                fed.give(session, &mut changed);
+            }
+            fed.bytes_read += complete.len();
+            fed.give(session, &mut changed);
+            if whole {
+                fed.open(session, &mut changed);
+            }
+        }
+    }
+
+    /// The model of session `n`, from 1, as far as it has been read: `None`
+    /// before it opened.
+    pub fn session(&self, n: usize) -> Option<&Session> {
+        let fed = self.sessions.get(n.checked_sub(1)?)?;
+        fed.opened.then_some(&fed.parser.session)
+    }
+}
+
+impl Fed {
+    fn read_to(&self, session: usize) -> ReadTo {
+        ReadTo {
+            session,
+            line: self.lines_read,
+        }
+    }
+
+    /// Gives that it opened, unless it has.
+    fn open(&mut self, session: usize, changed: &mut impl FnMut(Changed, &Session)) {
+        if !self.opened {
+            self.opened = true;
+            let read = self.read_to(session);
+            changed(
+                Changed {
+                    read,
+                    change: Change::Opened,
+                },
+                &self.parser.session,
+            );
+        }
+    }
+
+    /// Gives the changes read since it last gave, opening it first.
+    fn give(&mut self, session: usize, changed: &mut impl FnMut(Changed, &Session)) {
+        let changes = std::mem::take(&mut self.parser.changed);
+        if changes.is_empty() {
+            return;
+        }
+        self.open(session, changed);
+        let read = self.read_to(session);
+        for change in changes {
+            changed(Changed { read, change }, &self.parser.session);
+        }
+    }
 }
 
 pub fn whole_lines(text: &str) -> &str {
     &text[..text.rfind('\n').map_or(0, |end| end + 1)]
-}
-
-struct Followed {
-    number: usize,
-    parser: Parser,
-    bytes_read: usize,
-    lines_read: usize,
-    stamper: Option<Stamper>,
-}
-
-impl Follower {
-    pub fn new(run: Started, verbosity: Verbosity, after: Option<After>) -> Follower {
-        Follower {
-            run,
-            verbosity,
-            sessions: vec![],
-            after,
-            last: None,
-        }
-    }
-
-    /// A line still being written waits.
-    pub fn update(&mut self, sessions: &[SessionRecord]) -> Vec<FollowedLine> {
-        self.read(sessions, false)
-    }
-
-    pub fn end(&mut self, sessions: &[SessionRecord]) -> Vec<FollowedLine> {
-        let mut lines = self.read(sessions, true);
-        if self.sessions.is_empty() {
-            let read = ReadTo {
-                session: 1,
-                line: 0,
-            };
-            let header = vec![self.header(0)];
-            lines.extend(made(self.after, &mut self.last, read, header));
-        }
-        lines
-    }
-
-    fn header(&self, sessions: usize) -> Line {
-        Line::Header(Header::Run {
-            run: self.run.clone(),
-            sessions,
-        })
-    }
-
-    fn read(&mut self, sessions: &[SessionRecord], ended: bool) -> Vec<FollowedLine> {
-        let mut lines = vec![];
-        for (i, record) in sessions.iter().enumerate() {
-            let session = i + 1;
-            let mut shown = vec![];
-            if i == self.sessions.len() {
-                if i == 0 {
-                    shown.push(self.header(sessions.len()));
-                }
-                self.sessions.push(Followed::new(session));
-            }
-            let followed = &mut self.sessions[i];
-            let whole = ended || i + 1 < sessions.len();
-            let unread = &record.output[followed.bytes_read.min(record.output.len())..];
-            let complete = if whole { unread } else { whole_lines(unread) };
-            followed.parser.recorded_maintenance(record);
-            for line in complete.lines() {
-                followed.parser.line(line, record);
-                followed.open(&mut shown);
-                let read = ReadTo {
-                    session,
-                    line: followed.lines_read,
-                };
-                lines.extend(made(
-                    self.after,
-                    &mut self.last,
-                    read,
-                    std::mem::take(&mut shown),
-                ));
-                followed.lines_read += 1;
-                followed.show(self.verbosity, &mut shown);
-            }
-            followed.bytes_read += complete.len();
-            followed.show(self.verbosity, &mut shown);
-            if whole {
-                followed.open(&mut shown);
-            }
-            let read = ReadTo {
-                session,
-                line: followed.lines_read,
-            };
-            lines.extend(made(self.after, &mut self.last, read, shown));
-        }
-        lines
-    }
-}
-
-/// `lines` as made at `read`, after the `last` made, those after `after`.
-fn made(
-    after: Option<After>,
-    last: &mut Option<Made>,
-    read: ReadTo,
-    lines: Vec<Line>,
-) -> Vec<FollowedLine> {
-    let mut nth = last
-        .filter(|last| last.read == read)
-        .map_or(0, |last| last.nth);
-    lines
-        .into_iter()
-        .map(|line| {
-            nth += 1;
-            let made = Made { read, nth };
-            *last = Some(made);
-            FollowedLine { made, line }
-        })
-        .filter(|followed| after.is_none_or(|after| after.precedes(followed.made)))
-        .collect()
-}
-
-impl Followed {
-    fn new(number: usize) -> Followed {
-        Followed {
-            number,
-            parser: Parser::default(),
-            bytes_read: 0,
-            lines_read: 0,
-            stamper: None,
-        }
-    }
-
-    /// Shows its header, unless it has shown.
-    fn open(&mut self, lines: &mut Vec<Line>) {
-        open(&mut self.stamper, self.number, &self.parser.session, lines);
-    }
-
-    fn show(&mut self, verbosity: Verbosity, lines: &mut Vec<Line>) {
-        let session = &self.parser.session;
-        for touch in std::mem::take(&mut self.parser.touched) {
-            let stamper = open(&mut self.stamper, self.number, session, lines);
-            stamper.started(started_at(session));
-            let (place, ended_at) = match touch {
-                Touch::Turn(turn) => {
-                    let turn = &session.turns[turn];
-                    if let Some(what) = prompt_line(turn, verbosity) {
-                        lines.push(stamper.line(turn.started_at, Under::Session, what));
-                    }
-                    continue;
-                }
-                Touch::Added(place) => (place, None),
-                Touch::Ended(place, ended_at) => (place, Some(ended_at)),
-            };
-            let at = match place {
-                Place::Clone => {
-                    let clone = session.clone.as_ref().expect("a touched clone is there");
-                    lines.push(stamper.clone_line(clone, ended_at.flatten().unwrap_or(clone.at)));
-                    continue;
-                }
-                Place::Maintenance => {
-                    let maintenance = session
-                        .maintenance
-                        .as_ref()
-                        .expect("a touched maintenance command is there");
-                    lines.push(
-                        stamper.maintenance(maintenance, ended_at.unwrap_or(maintenance.at())),
-                    );
-                    continue;
-                }
-                Place::Turn(at) => at,
-            };
-            let (entry, under) = entry_at(session, &at);
-            let time = ended_at.unwrap_or(entry.at);
-            if let Some(what) = entry_line(entry, session, verbosity) {
-                lines.push(stamper.line(time, under, what));
-            }
-        }
-    }
-}
-
-fn open<'a>(
-    opened: &'a mut Option<Stamper>,
-    number: usize,
-    session: &Session,
-    lines: &mut Vec<Line>,
-) -> &'a mut Stamper {
-    opened.get_or_insert_with(|| {
-        let stamper = Stamper::new(number, started_at(session));
-        lines.push(stamper.header());
-        stamper
-    })
 }
 
 fn started_at(session: &Session) -> Option<Timestamp> {
@@ -1792,40 +1299,8 @@ fn started_at(session: &Session) -> Option<Timestamp> {
         })
 }
 
-fn entry_at<'a>(session: &'a Session, at: &EntryAt) -> (&'a Entry, Under) {
-    let mut entries = &session.turns[at.turn].entries;
-    let mut under = Under::Session;
-    let (last, holders) = at.path.split_last().expect("an entry's path is not empty");
-    for &i in holders {
-        let What::Tool(call) = &entries[i].what else {
-            unreachable!("a path leads through calls only")
-        };
-        entries = &call.entries;
-        under = under.sub_agent(&call.id);
-    }
-    (&entries[*last], under)
-}
-
 /// The longest a tool's argument shows, in characters.
 const ARGUMENT_CHARS: usize = 80;
-
-fn argument(call: &Call, dir: Option<&str>) -> String {
-    let value = call
-        .tool
-        .main_argument()
-        .and_then(|key| call.input[key].as_str())
-        .or_else(|| {
-            call.input
-                .as_object()
-                .and_then(|input| input.values().find_map(Value::as_str))
-        })
-        .unwrap_or_default();
-    let value = match dir {
-        Some(dir) => value.replace(&format!("{dir}/"), ""),
-        None => value.to_string(),
-    };
-    one_line(&value, ARGUMENT_CHARS)
-}
 
 fn one_line(text: &str, chars: usize) -> String {
     let text = text.trim();
@@ -1838,7 +1313,8 @@ fn one_line(text: &str, chars: usize) -> String {
     }
 }
 
-fn summary(prompt: &str) -> String {
+/// A prompt's first line, with an ellipsis when it has more.
+pub(crate) fn summary(prompt: &str) -> String {
     let prompt = prompt.trim();
     match prompt.split_once('\n') {
         Some((first, _)) => format!("{} …", first.trim_end()),
@@ -1846,233 +1322,7 @@ fn summary(prompt: &str) -> String {
     }
 }
 
-fn account(call: &Call) -> String {
-    let Some(result) = &call.result else {
-        return "running".into();
-    };
-    let details = &result.details;
-    let lines = |n: usize| format!("{n} {}", if n == 1 { "line" } else { "lines" });
-    let in_background = |started: &str| match &call.background {
-        Some(status) => format!("{status} in the background"),
-        None => started.to_string(),
-    };
-    if result.error {
-        let text = result.text.trim();
-        if call.tool == Tool::Bash
-            && let Some(code) = text
-                .lines()
-                .next()
-                .and_then(|first| first.strip_prefix("Exit code "))
-        {
-            return format!("exit {code}");
-        }
-        let text = text
-            .trim_start_matches("<tool_use_error>")
-            .trim_end_matches("</tool_use_error>");
-        return format!("failed: {}", one_line(text, ARGUMENT_CHARS));
-    }
-    match call.tool {
-        Tool::Bash if details["interrupted"] == true => "interrupted".into(),
-        Tool::Bash if details["backgroundTaskId"].is_string() => {
-            in_background("moved to the background")
-        }
-        Tool::Bash => match result.text.lines().count() {
-            0 => "exit 0, no output".into(),
-            n => format!("exit 0, {}", lines(n)),
-        },
-        Tool::Read => lines(details["file"]["numLines"].as_u64().map_or_else(
-            || result.text.lines().count(),
-            |n| usize::try_from(n).unwrap_or(usize::MAX),
-        )),
-        Tool::Write => format!(
-            "wrote {}",
-            lines(
-                call.input["content"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .lines()
-                    .count()
-            )
-        ),
-        Tool::Edit | Tool::MultiEdit | Tool::NotebookEdit => "edited".into(),
-        Tool::Skill => "loaded".into(),
-        Tool::Agent | Tool::Task => match details["status"].as_str() {
-            Some("completed") => {
-                let uses = details["totalToolUseCount"].as_u64().unwrap_or(0);
-                let seconds = details["totalDurationMs"].as_u64().unwrap_or(0) / 1000;
-                let uses_word = if uses == 1 { "use" } else { "uses" };
-                Phrase::from(format!("done, {uses} tool {uses_word}, "))
-                    .duration(seconds, None)
-                    .to_string()
-            }
-            Some("async_launched") => in_background("started in the background"),
-            _ => one_line(&result.text, ARGUMENT_CHARS),
-        },
-        Tool::Grep
-        | Tool::Glob
-        | Tool::WebFetch
-        | Tool::WebSearch
-        | Tool::ToolSearch
-        | Tool::Other(_) => {
-            if result.text.trim().is_empty() {
-                "done".into()
-            } else {
-                one_line(&result.text, ARGUMENT_CHARS)
-            }
-        }
-    }
-}
-
-pub fn render(transcript: &Transcript, verbosity: Verbosity, colour: bool) -> String {
-    lines(transcript, verbosity)
-        .iter()
-        .map(|line| render_line(line, verbosity, colour))
-        .collect()
-}
-
-/// `line` as text, coloured if `colour`, ending in a newline. `verbosity`
-/// is that of the transcript `line` is of.
-pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
-    let paint = Paint(colour);
-    let mut shown = String::new();
-    let Stamped { stamp, what } = match line {
-        Line::Header(header) => {
-            let _ = match header {
-                Header::Run { run, sessions } => {
-                    let by_hand = if run.by_hand() { ", by hand" } else { "" };
-                    let run = paint.bold(run.id());
-                    let none = if *sessions == 0 {
-                        " (it started no session)"
-                    } else {
-                        ""
-                    };
-                    writeln!(shown, "run: {run}{by_hand}{none}")
-                }
-                Header::Session {
-                    session,
-                    started_at: Some(at),
-                } => {
-                    let started = Phrase::from(format!("session {session}: started ")).time(*at);
-                    writeln!(shown, "{started}")
-                }
-                Header::Session { session, .. } => writeln!(shown, "session {session}"),
-            };
-            return shown;
-        }
-        Line::Entry(stamped) => &**stamped,
-    };
-    let time = stamp.elapsed_seconds.map_or(String::new(), elapsed);
-    let indent = "  ".repeat(stamp.under.depth());
-    let (first, rest): (String, Vec<String>) = match what {
-        EntryLine::Message { text } => block("", text),
-        EntryLine::Thinking { text } => block(&paint.yellow("thinking: "), text),
-        EntryLine::Context { text } => block("context: ", text),
-        EntryLine::Event { event } => (format!("event: {event}"), vec![]),
-        EntryLine::Other { other } => (format!("other: {other}"), vec![]),
-        EntryLine::Brief { text } => block("brief: ", text),
-        EntryLine::FollowUp {
-            text: Some(text), ..
-        } => block("follow-up: ", text),
-        EntryLine::FollowUp { summary, .. } => (format!("follow-up: {summary}"), vec![]),
-        EntryLine::Tool(call) => {
-            let ToolLine {
-                tool,
-                argument,
-                account,
-                ..
-            } = call;
-            let account = if call.failed() {
-                paint.red(account)
-            } else {
-                account.clone()
-            };
-            (
-                format!("{}({argument}) → {account}", paint.bold(tool)),
-                call.shown
-                    .parts()
-                    .into_iter()
-                    .flat_map(|(label, text)| indented(&format!("{label}: "), &text))
-                    .collect(),
-            )
-        }
-        EntryLine::Clone(CloneLine { ended }) => match ended {
-            None => ("clone → running".to_string(), vec![]),
-            Some(ended) => (
-                format!("clone → {}", ended.account()),
-                ended.error.as_deref().map_or(vec![], |error| {
-                    let red: Vec<String> = error.lines().map(|part| paint.red(part)).collect();
-                    indented("", &red.join("\n"))
-                }),
-            ),
-        },
-        EntryLine::Maintenance(MaintenanceLine { command, ended }) => {
-            let command = shown_command(command);
-            let (account, output) = match ended {
-                None => ("running".to_string(), vec![]),
-                Some(ended) => (
-                    if ended.status.failed() {
-                        paint.red(ended.account())
-                    } else {
-                        ended.account()
-                    },
-                    if ended.output_shown(verbosity == Verbosity::Full)
-                        && !ended.output.trim().is_empty()
-                    {
-                        indented("", &ended.output)
-                    } else {
-                        vec![]
-                    },
-                ),
-            };
-            (format!("maintenance: {command} → {account}"), output)
-        }
-    };
-    let _ = writeln!(shown, "{time:>5}  {indent}{first}");
-    for more in rest {
-        if more.trim().is_empty() {
-            shown.push('\n');
-        } else {
-            let _ = writeln!(shown, "       {indent}{more}");
-        }
-    }
-    shown
-}
-
 /// A maintenance command, as its line shows it.
 pub(crate) fn shown_command(command: &str) -> String {
     one_line(command, ARGUMENT_CHARS)
-}
-
-fn indented(label: &str, text: &str) -> Vec<String> {
-    let (first, rest) = block(label, text);
-    std::iter::once(first)
-        .chain(rest)
-        .map(|line| format!("  {line}"))
-        .collect()
-}
-
-fn block(label: &str, text: &str) -> (String, Vec<String>) {
-    let mut lines = text.trim_end().lines();
-    let first = format!("{label}{}", lines.next().unwrap_or_default());
-    (first, lines.map(str::to_string).collect())
-}
-
-/// The time since a session started, as an entry's line starts with it.
-pub(crate) fn elapsed(seconds: i64) -> String {
-    let seconds = seconds.max(0);
-    let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
-}
-
-pub fn json_lines(transcript: &Transcript, verbosity: Verbosity) -> String {
-    lines(transcript, verbosity).iter().map(json_line).collect()
-}
-
-/// `line` as JSON, ending in a newline.
-pub fn json_line(line: &Line) -> String {
-    serde_json::to_string(line).expect("the lines serialize") + "\n"
 }

@@ -416,7 +416,8 @@ impl FollowingBuild {
 mod tests {
     use super::*;
     use crate::environment::lifecycle::Fingerprint;
-    use crate::transcript::{MaintenanceEnded, MaintenanceLine, MaintenanceStatus};
+    use crate::transcript::lines::MaintenanceLine;
+    use crate::transcript::{MaintenanceEnded, MaintenanceStatus};
 
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()

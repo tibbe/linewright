@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
-use crate::runs::{self, Ran, Recorded, RepoWorkDir, RunId, Runs, SessionEntry, State};
+use crate::runs::{self, Recorded, RepoWorkDir, RunId, Runs, SessionEntry, Started, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
@@ -200,72 +200,44 @@ impl TryFrom<FollowQueryString> for FollowQuery {
     }
 }
 
+/// How often a followed run's records are read again.
 const FOLLOW_EVERY: Duration = Duration::from_millis(100);
 
-pub struct Following {
+/// A run's records, read as they grow.
+pub struct RunRecords {
     runs: Runs,
-    run: RunId,
-    follower: Follower,
+    run: Started,
     sessions: Vec<SessionRecord>,
     ended: bool,
 }
 
-impl Following {
-    pub fn start(
-        work_dir: &RepoWorkDir,
-        which: &Which,
-        verbosity: Verbosity,
-        after: Option<After>,
-    ) -> Result<Following, LogsError> {
+impl RunRecords {
+    pub fn start(work_dir: &RepoWorkDir, which: &Which) -> Result<RunRecords, LogsError> {
         let runs = Runs::new(&work_dir.resolve());
         let run = pick_from(&runs, which)?.started();
-        Ok(Following {
+        Ok(RunRecords {
             runs,
-            run: run.id().clone(),
-            follower: Follower::new(run, verbosity, after),
+            run,
             sessions: vec![],
             ended: false,
         })
     }
 
     pub fn run(&self) -> &RunId {
+        self.run.id()
+    }
+
+    pub fn started(&self) -> &Started {
         &self.run
     }
 
-    /// What session `session`, numbered from 1, ran with, as of the records
-    /// last read: `None` for a session recorded before Linewright kept it.
-    pub fn ran(&self, session: usize) -> Option<&Ran> {
-        self.sessions.get(session.checked_sub(1)?)?.ran.as_ref()
-    }
-
-    /// The next lines to show, each with where it was made, once there are
-    /// some or the run has ended; `None` once it has and every line has
-    /// been given.
-    pub async fn next(&mut self) -> anyhow::Result<Option<Vec<FollowedLine>>> {
-        if self.ended {
-            return Ok(None);
-        }
-        loop {
-            let lines = self.read()?;
-            if !lines.is_empty() || self.ended {
-                return Ok(Some(lines));
-            }
-            tokio::time::sleep(FOLLOW_EVERY).await;
-        }
-    }
-
-    /// Whether the run had ended when its records were last read.
-    pub fn ended(&self) -> bool {
-        self.ended
-    }
-
-    /// The next lines to show of what the run's records hold now, without
-    /// waiting for more.
-    pub fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
+    /// Reads what the run's records hold now: whether it has ended, and
+    /// each of its sessions' records, with what it ran with.
+    pub fn read(&mut self) -> anyhow::Result<()> {
         let recorded = self
             .runs
-            .read_run(&self.run)
-            .with_context(|| format!("reading the record of {}", self.run))?;
+            .read_run(self.run.id())
+            .with_context(|| format!("reading the record of {}", self.run.id()))?;
         self.ended = recorded.state != State::InFlight;
         for (i, SessionEntry { dir, ran }) in recorded.sessions.iter().enumerate() {
             if i == self.sessions.len() {
@@ -278,10 +250,88 @@ impl Following {
                 .read_more(dir)
                 .with_context(|| format!("reading the session in {}", dir.display()))?;
         }
-        Ok(if self.ended {
-            self.follower.end(&self.sessions)
-        } else {
-            self.follower.update(&self.sessions)
-        })
+        Ok(())
+    }
+
+    /// What `made` makes of the run's records, read again until it makes
+    /// something or the run has ended; `None` once the run had ended when
+    /// they were last read.
+    pub async fn next<T>(
+        &mut self,
+        mut made: impl FnMut(&RunRecords) -> Vec<T>,
+    ) -> anyhow::Result<Option<Vec<T>>> {
+        if self.ended {
+            return Ok(None);
+        }
+        loop {
+            self.read()?;
+            let made = made(self);
+            if !made.is_empty() || self.ended {
+                return Ok(Some(made));
+            }
+            tokio::time::sleep(FOLLOW_EVERY).await;
+        }
+    }
+
+    /// Its sessions' records, as last read, in order.
+    pub fn sessions(&self) -> &[SessionRecord] {
+        &self.sessions
+    }
+
+    /// Whether the run had ended when its records were last read.
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+}
+
+/// A run's transcript followed as `logs` shows it.
+pub struct Following {
+    records: RunRecords,
+    follower: Follower,
+}
+
+impl Following {
+    pub fn start(
+        work_dir: &RepoWorkDir,
+        which: &Which,
+        verbosity: Verbosity,
+        after: Option<After>,
+    ) -> Result<Following, LogsError> {
+        let records = RunRecords::start(work_dir, which)?;
+        let follower = Follower::new(records.started().clone(), verbosity, after);
+        Ok(Following { records, follower })
+    }
+
+    pub fn run(&self) -> &RunId {
+        self.records.run()
+    }
+
+    /// The next lines to show, each with where it was made, once there are
+    /// some or the run has ended; `None` once it has and every line has
+    /// been given.
+    pub async fn next(&mut self) -> anyhow::Result<Option<Vec<FollowedLine>>> {
+        let Following { records, follower } = self;
+        records.next(|records| lines(follower, records)).await
+    }
+
+    /// Whether the run had ended when its records were last read.
+    pub fn ended(&self) -> bool {
+        self.records.ended()
+    }
+
+    /// The next lines to show of what the run's records hold now, without
+    /// waiting for more.
+    pub fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
+        self.records.read()?;
+        Ok(lines(&mut self.follower, &self.records))
+    }
+}
+
+/// The next lines `follower` makes of `records` as last read.
+fn lines(follower: &mut Follower, records: &RunRecords) -> Vec<FollowedLine> {
+    if records.ended() {
+        follower.end(records.sessions())
+    } else {
+        follower.update(records.sessions())
     }
 }
