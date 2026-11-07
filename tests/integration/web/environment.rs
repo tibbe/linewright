@@ -121,5 +121,30 @@ async fn the_server_page_follows_a_build_shows_those_that_ended_and_asks_for_att
         "{}",
         built.html()
     );
+    let lines: Vec<(String, bool, bool)> = select(&built, "#server .build .line")
+        .into_iter()
+        .map(|line| {
+            let chevron = line
+                .children()
+                .find_map(ElementRef::wrap)
+                .is_some_and(|first| first.value().classes().any(|class| class == "chevron"));
+            let settled = !select_in(line, "time.duration[datetime^=PT]").is_empty();
+            (text(select_in(line, ".text")[0]), chevron, settled)
+        })
+        .collect();
+    assert_eq!(
+        lines[0],
+        ("setup: echo ready → exit 0".to_string(), true, true)
+    );
+    assert!(
+        lines[1].0.ends_with("→ exit 1") && lines[1].1 && lines[1].2,
+        "{lines:?}"
+    );
+    assert_eq!(
+        select(&building, "#server .build .line time.duration[data-since]").len(),
+        1,
+        "{}",
+        building.html()
+    );
     web.stop().await;
 }

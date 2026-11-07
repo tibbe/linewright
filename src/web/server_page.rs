@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
-use super::run_page::{command_html, command_line_html, output_html, status_html};
+use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
 use super::{Frame, Hold, Page, Read, events, frame_regions, render};
 use crate::api::{self, Sources};
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown};
@@ -189,30 +189,32 @@ fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
     (Frame::of_read(sources, &read), facts)
 }
 
-/// A build as a transcript's maintenance command shows, opening the same
-/// way, under a line saying when it started and from what, and with the
-/// output so far of a build in progress.
+/// A build as a transcript's maintenance command shows, on the same line
+/// with its duration at the right, opening the same way, under a line
+/// saying when it started and from what, and with the output so far of a
+/// build in progress.
 fn build_html(build: &BuildShown, names: &Names) -> Html {
     let heading = html::phrase(&shown::heading(build), names);
-    let command = &build.record.line.command;
+    let record = &build.record;
+    let command = &record.line.command;
     let line = match shown::account(build) {
-        Account::Failed(account) if build.record.line.ended.is_none() => {
-            command_line_html("", "setup", command, &status_html(Tone::Failure, &account))
+        Account::Failed(account) if record.line.ended.is_none() => entry_row(&Row {
+            id: None,
+            text: command_text("setup", command, &status_html(Tone::Failure, &account)),
+            lasted: None,
+            fold: None,
+        }),
+        Account::Running | Account::Ended(_) | Account::Failed(_) => {
+            let (course, lasted) = shown::course(build);
+            command_row(None, "setup", command, course, Some(lasted), false)
         }
-        Account::Running | Account::Ended(_) | Account::Failed(_) => command_html(
-            "",
-            "setup",
-            command,
-            build.record.line.ended.as_ref(),
-            false,
-        ),
     };
     let so_far = build
         .so_far
         .as_ref()
         .map_or_else(String::new, |so_far| output_html(&so_far.output));
     html::built(format!(
-        r#"<div class="build font-mono text-sm" id="build-{}"><div class="text-muted">{heading}</div>{line}{so_far}</div>"#,
+        r#"<div class="build font-mono text-sm" id="build-{}"><div class="text-muted">{heading}</div>{line}<div class="ml-6">{so_far}</div></div>"#,
         build.build
     ))
 }

@@ -48,13 +48,7 @@ pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
             Segment::Item(number) => html.push_str(&names.item(*number).0),
             Segment::Time(at) => html.push_str(&time(*at).0),
             Segment::Duration { seconds, since } => {
-                let text = escape(&Phrase::default().duration(*seconds, None).to_string()).0;
-                let _ = match since {
-                    Some(since) => {
-                        write!(html, r#"<time data-since="{}">{text}</time>"#, iso(*since))
-                    }
-                    None => write!(html, r#"<time datetime="PT{seconds}S">{text}</time>"#),
-                };
+                html.push_str(&duration(None, *seconds, *since).0);
             }
             Segment::Code(code) => {
                 let _ = write!(html, "<code>{}</code>", escape(code));
@@ -62,6 +56,20 @@ pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
         }
     }
     Html(html)
+}
+
+/// `seconds` as a duration, or one running `since` a time and `seconds`
+/// long when shown, as a `<time>`, of `class` if one is given, that the
+/// page's script keeps up.
+pub(crate) fn duration(class: Option<&str>, seconds: u64, since: Option<Timestamp>) -> Html {
+    let text = escape(&Phrase::default().duration(seconds, None).to_string());
+    let class = class.map_or(String::new(), |class| {
+        format!(r#" class="{}""#, escape(class))
+    });
+    Html(match since {
+        Some(since) => format!(r#"<time{class} data-since="{}">{text}</time>"#, iso(since)),
+        None => format!(r#"<time{class} datetime="PT{seconds}S">{text}</time>"#),
+    })
 }
 
 /// #`number`, linking to its page, and a link to it on GitHub.

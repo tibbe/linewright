@@ -7,7 +7,7 @@ use super::*;
 
 /// Stand-ins for what the script reads of the browser at load, with
 /// `htmx.registerExtension` keeping each extension by name in `extensions`.
-const BROWSER: &str = r#"
+const BROWSER: &str = r"
 var extensions = {};
 var htmx = { registerExtension: (name, extension) => { extensions[name] = extension; } };
 var Intl = { RelativeTimeFormat: function () {}, DateTimeFormat: function () {} };
@@ -20,10 +20,9 @@ var document = {
   querySelectorAll() { return []; },
 };
 var window = { addEventListener() {}, innerHeight: 0, scrollY: 0 };
-var location = { hash: "" };
 function setInterval() {}
 function setTimeout() {}
-"#;
+";
 
 /// The script the board serves.
 async fn served_script() -> String {

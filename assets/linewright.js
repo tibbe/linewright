@@ -108,8 +108,7 @@
   const latest = document.getElementById("latest");
   const atBottom = () =>
     window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
-  const followed = (document.body.getAttribute("hx-sse:connect") || "").includes("follow=");
-  let stuck = followed && !location.hash;
+  let stuck = (document.body.getAttribute("hx-sse:connect") || "").includes("follow=");
 
   function toBottom() {
     window.scrollTo(0, document.documentElement.scrollHeight);
@@ -137,16 +136,6 @@
       latest.hidden = true;
       toBottom();
     });
-  }
-
-  /** Opens the folds that hold the entry linked to, and scrolls to it. */
-  function reveal() {
-    const target = location.hash && document.getElementById(location.hash.slice(1));
-    if (!target) return;
-    for (let fold = target.closest("details"); fold; fold = fold.parentElement.closest("details")) {
-      fold.open = true;
-    }
-    target.scrollIntoView();
   }
 
   /**
@@ -369,7 +358,5 @@
 
   tick();
   setInterval(tick, 1000);
-  reveal();
-  window.addEventListener("hashchange", reveal);
   if (stuck) toBottom();
 })();
