@@ -88,27 +88,29 @@ An item's state ([State](repository.md#state)) is shown in these words.
 
 ## Transcripts
 
+- **Where it shows.** How a transcript is laid out is each place's own,
+  [The run page](#the-run-page)'s and [`logs`](monitoring.md#logs)'s, and each
+  may show more than the rules below.
 - **Sessions and turns.** A run's transcripts show in the order of its
   sessions, each as the agent itself shows it where the rules below leave a
   choice, marking each turn after the first with the follow-up that started
   it.
-- **Times.** Each entry starts with the time since its session started, as
-  h:mm:ss with the hours left out under an hour, such as `2:10` or
-  `1:02:10`, not as a duration is shown, so that the entries align.
 - **Entries.** The agent's messages show in full. Each tool call shows on one
   line: the tool, its main argument and a short account of its result, such
   as the lines read, the exit status or, for a sub-agent, the count of its
-  tool calls and how long it ran. A sub-agent's work shows under the call that
-  started it.
+  tool calls and how long it ran. A sub-agent's work shows indented under the
+  call that started it.
 - **The clone.** The making of a session's clone
   ([Stages](runs.md#stages)) is an entry: a line with how long it took, then,
   when it failed, the error.
 - **Maintenance.** The maintenance command is an entry
   ([Maintenance](runs.md#maintenance)): a line with the command, its exit status
-  and how long it ran, then its output, which shows only in full or when the
-  command failed. An empty one shows nothing.
+  and how long it ran, then its output, which shows as a tool call's full
+  result does, and always when the command failed. An empty one shows
+  nothing.
 - **Running.** A tool call, the clone and the maintenance command are entries
-  that run: each shows `running` in place of its account until it ends.
+  that run: each shows `running` in place of its account until it ends, and
+  one its session ends first shows `interrupted`.
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -129,8 +131,8 @@ An item's state ([State](repository.md#state)) is shown in these words.
 ## Type
 
 - Secondary text, text that qualifies the text it sits beside, such as a
-  card's line under its title, a fact's label or a time beside a transcript
-  entry, is quieter than it.
+  card's line under its title, a fact's label or a transcript entry's
+  time or duration, is quieter than it.
 
 ## Colour scheme
 
@@ -334,21 +336,40 @@ A list of runs is a table with a row per run, newest first.
 ### The run page
 
 The run page shows the run's transcripts ([Transcripts](#transcripts)), each
-under its session's model and effort and where its settings and prompt files
-came from.
+under its session's heading.
 
 - **Heading.** The run ID, then ", by hand" for an automation's run by hand
   and "(it started no session)" for a run that ended without one, and under
   them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
-- **Folding.** An entry that runs opens on click to the rest of it, a tool
-  call's full input and result, the clone's error or the maintenance command's
-  output, and one that failed starts open. A sub-agent's work starts folded to
-  the line of the call that started it, with the count of its entries.
-- **Verbose.** A switch, set once for the page, shows the transcripts in full,
-  with everything open.
+- **A session's heading.** The session's number and when it started, such as
+  "session 1: started 5 minutes ago", with how long it has run, leaving out a
+  wait for the usage limit to reset, and up to its last entry where its end is
+  not known, as when a restart interrupted its run.
+- **A session's settings.** Under its heading, the session's model and effort
+  open on click to where its settings and prompt files came from.
+- **Views.** The page shows the transcripts as the agent's own default view
+  does or, with the verbose switch, as its verbose view does, such as the
+  agent's thinking only with the switch, but never what the agent was told
+  besides its prompts.
+- **Prompts.** The brief and each follow-up are entries, each shown as its
+  first line.
+- **Durations.** Each entry that runs shows how long it ran, keeping up while
+  it runs and stopping where its session ends first, or none where that end is
+  not known, and its line leaves that out of its account.
+- **Working.** While a followed session goes on with no entry running, it ends
+  with the agent's step in progress: an entry that runs from the session's last
+  entry, saying "working". While the session waits for the usage limit to
+  reset, the step says so and until when instead, such as "waiting for the
+  usage limit, until 14:30".
+- **Folding.** An entry opens on click to what its line leaves out: a tool
+  call's full input and result and its sub-agent's work, the clone's error, the
+  maintenance command's output, or the full text of the brief or a follow-up.
+  One that failed starts open. A sub-agent's work starts folded to the line of
+  the call that started it, with the count of its entries.
+- **Verbose.** The verbose switch is set once for the page, and opens
+  everything, a session's settings too.
 - **Following.** A run in flight is followed. The page stays at the bottom
   until the reader scrolls up, and then offers to jump to the latest entry.
-- **Permalinks.** Each entry has a link of its own.
 
 ### The automations page
 
@@ -389,3 +410,4 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 - A layout of the board for narrow screens.
 - A status of a lane's own: its cards carry theirs.
 - Acting from the UI on `serve` or on the work.
+- A link of its own to each transcript entry.
