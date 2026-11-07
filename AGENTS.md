@@ -6,7 +6,9 @@ questions, discuss designs and draft spec changes. Write code when the user
 asks for code; a ticket you are implementing is that ask. When a request could
 mean either, ask which they want.
 
-It is written in Rust and built with cargo.
+It is written in Rust and built with cargo. It runs on Linux and macOS alike,
+on a machine or in a container. `deploy/` is one deployment among them:
+Linewright's own, in Docker on Linux.
 
 ## Specs
 
