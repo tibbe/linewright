@@ -273,8 +273,9 @@ pub fn usage_limit_resets_at() -> Timestamp {
     "2026-10-13T07:50:00Z".parse().unwrap()
 }
 
-pub fn refused_for_the_usage_limit() -> Result<String, SessionError> {
-    refused_until(usage_limit_resets_at(), None)
+/// The end of `call`, refused for the usage limit.
+pub fn refused_for_the_usage_limit(call: &Call) -> Result<String, SessionError> {
+    refused_until(usage_limit_resets_at(), call)
 }
 
 /// A session that ended unexpectedly, for `reason`.
@@ -285,19 +286,12 @@ pub fn failed_session(reason: &str) -> Result<String, SessionError> {
     })
 }
 
-pub fn refused_part_way(call: &Call) -> Result<String, SessionError> {
-    refused_until(usage_limit_resets_at(), Some(call))
-}
-
-/// The end of a turn the harness refuses for the usage limit that resets at
-/// `resets_at`: part way through `call`, or before the turn began.
-pub fn refused_until(
-    resets_at: Timestamp,
-    part_way: Option<&Call>,
-) -> Result<String, SessionError> {
+/// The end of `call`, refused for the usage limit that resets at
+/// `resets_at`.
+pub fn refused_until(resets_at: Timestamp, call: &Call) -> Result<String, SessionError> {
     Err(SessionError::UsageLimit {
         limit: UsageLimit { resets_at },
-        underway: part_way.map(|call| call.session.to_string()),
+        session: call.session.to_string(),
     })
 }
 

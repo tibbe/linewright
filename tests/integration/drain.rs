@@ -128,7 +128,7 @@ async fn a_drain_waits_for_a_run_waiting_out_the_usage_limit() {
         .harness
         .on(linewright::reconcile::WorkKind::Implement, move |call| {
             if !refused.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                return refused_part_way(call);
+                return refused_for_the_usage_limit(call);
             }
             commit_in(&call.spec.dir, &[("src/thing.txt", "done\n")], "Do it");
             Ok::<_, SessionError>(

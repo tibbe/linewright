@@ -126,22 +126,6 @@ pub enum NextTurn {
     Resume { session: String, prompt: String },
 }
 
-impl NextTurn {
-    /// The turn to take once the usage limit that refused this one resets:
-    /// in `underway`, the session it got under way in, resumed with
-    /// `reset_prompt`, or else this turn again.
-    #[must_use]
-    pub fn after_refusal(self, underway: Option<String>, reset_prompt: &str) -> NextTurn {
-        match underway {
-            Some(session) => NextTurn::Resume {
-                session,
-                prompt: reset_prompt.to_string(),
-            },
-            None => self,
-        }
-    }
-}
-
 /// What a session that ran past its deadline did, as its error says.
 pub const TIMED_OUT: &str = "it timed out";
 
@@ -153,10 +137,10 @@ pub enum SessionError {
     #[error("the agents' usage limit was reached; it resets at {}", .limit.resets_at)]
     UsageLimit {
         limit: UsageLimit,
-        /// The session the turn got under way in, to carry on in with a
-        /// resume; `None` when the turn was refused before it began, so
-        /// that it is to be taken again.
-        underway: Option<String>,
+        /// The refused session, to be resumed (docs/specs/runs.md, "Usage
+        /// limit", Resuming). Claude Code keeps the refused prompt in it:
+        /// <https://code.claude.com/docs/en/interactive-mode#wait-for-a-usage-limit-to-reset>.
+        session: String,
     },
     /// Ran past its deadline.
     #[error("{TIMED_OUT}")]

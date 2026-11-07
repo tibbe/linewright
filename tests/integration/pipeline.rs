@@ -2667,7 +2667,7 @@ async fn a_run_refused_for_the_usage_limit_ends_keeping_its_claim_and_its_work()
             &[("src/half.txt", "half\n")],
             "Start the ticket",
         );
-        refused_for_the_usage_limit()
+        refused_for_the_usage_limit(call)
     });
     let ticket = world.store.open_issue(
         "maintainer",
@@ -2708,7 +2708,7 @@ async fn a_run_refused_for_the_usage_limit_whose_work_cannot_be_pushed_still_kee
             .status()
             .unwrap();
         assert!(moved.success());
-        refused_for_the_usage_limit()
+        refused_for_the_usage_limit(call)
     });
     let ticket = world.store.open_issue(
         "maintainer",

@@ -95,7 +95,7 @@ fn implement_turns(world: &World, turns: Vec<fn(&Call) -> Answer>) -> Turns {
 
 async fn refused() -> (World, Number) {
     let mut world = World::serving().await;
-    implement_turns(&world, vec![|_| refused_for_the_usage_limit()]);
+    implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
     assert_eq!(world.clock.next_sleep().await, usage_limit_resets_at());
@@ -140,11 +140,12 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
     assert_eq!(world.store.pulls().len(), 1);
 }
 
+/// `docs/specs/runs.md`, Usage limit, The refused session and Resuming.
 #[test_log::test(tokio::test)]
-async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() {
+async fn a_refused_session_resumes_after_the_reset_in_the_same_clone_with_the_reset_follow_up() {
     let (log, _guard) = Log::capture();
     let mut world = World::serving().await;
-    let turns = implement_turns(&world, vec![refused_part_way]);
+    let turns = implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
 
@@ -156,7 +157,16 @@ async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() 
     assert_eq!(turns.len(), 2, "{turns:?}");
     assert_eq!(turns[1].session, turns[0].session);
     assert_eq!(turns[1].dir, turns[0].dir);
-    assert!(turns[1].followup.is_some(), "resumed, not started");
+    let reset = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/briefs/prompts/follow-ups/usage-limit-reset.md"
+    ))
+    .unwrap();
+    assert_eq!(turns[1].followup, Some(reset.trim_end().to_string()));
+    let sessions = session_records(&world);
+    assert_eq!(sessions.len(), 1, "one session, not started again");
+    assert!(sessions[0].brief.is_some());
+    assert_eq!(sessions[0].followups, [reset.trim_end()]);
     assert_eq!(world.store.pulls().len(), 1);
     let branch = format!("{}-do-the-thing", ticket.0);
     for file in ["src/turn-0.txt", "src/turn-1.txt"] {
@@ -185,7 +195,7 @@ async fn a_session_refused_part_way_resumes_after_the_reset_in_the_same_clone() 
 async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_branch() {
     let (log, _guard) = Log::capture();
     let mut world = World::serving().await;
-    implement_turns(&world, vec![refused_part_way]);
+    implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
     world.clock.next_sleep().await;
@@ -215,7 +225,7 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
 #[test_log::test(tokio::test)]
 async fn a_stop_during_the_wait_drops_the_run() {
     let mut world = World::serving().await;
-    implement_turns(&world, vec![refused_part_way]);
+    implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
     world.clock.next_sleep().await;
@@ -232,7 +242,7 @@ async fn a_stop_during_the_wait_drops_the_run() {
 #[test_log::test(tokio::test)]
 async fn once_ends_the_refused_run_without_waiting() {
     let mut world = World::new().await;
-    implement_turns(&world, vec![refused_part_way]);
+    implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
 
     world.poll().await;
@@ -291,7 +301,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     let world = World::new().await;
     world
         .harness
-        .on(WorkKind::Implement, |_| refused_for_the_usage_limit());
+        .on(WorkKind::Implement, refused_for_the_usage_limit);
     world.store.open_issue(
         "maintainer",
         "Do the thing",
@@ -312,7 +322,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
 #[test_log::test(tokio::test)]
 async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start_to_its_end() {
     let mut world = World::serving().await;
-    implement_turns(&world, vec![refused_part_way]);
+    implement_turns(&world, vec![refused_for_the_usage_limit]);
     open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
     assert_eq!(world.clock.next_sleep().await, usage_limit_resets_at());
