@@ -30,9 +30,9 @@ use crate::logs::{LogsError, RunRecords, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::{
-    self, After, Call, Change, Changed, CloneEnded, Course, EntryAt, Feed, INTERRUPTED, Lasted,
-    Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING, Session, What,
-    whole_seconds,
+    self, After, Call, Change, Changed, CloneEnded, Course, End, Entry, EntryAt, Feed, INTERRUPTED,
+    Lasted, Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING,
+    Session, What, whole_seconds,
 };
 
 /// A change to the page's transcript that a change to the run's makes.
@@ -92,6 +92,9 @@ struct SessionView {
     /// The entries of its turns, by where each is.
     at: HashMap<EntryAt, usize>,
     verbose: bool,
+    /// Its working step as the page shows it: the list that holds it, empty
+    /// of any step while it shows none.
+    working: String,
 }
 
 struct EntryView {
@@ -178,6 +181,7 @@ impl RunView {
                 maintenance: None,
                 at: HashMap::new(),
                 verbose: self.verbose,
+                working: working_html(read.session, model),
             });
             let added = self.sessions.last().expect("just pushed");
             return vec![Patch::Append {
@@ -230,10 +234,8 @@ impl SessionView {
     /// The session as the page shows it, its transcript as `model` holds it.
     fn html(&self, model: &Session) -> String {
         let n = self.number;
-        let heading = match self.started_at {
-            Some(at) => format!("session {n}: started {}", html::time(at)),
-            None => format!("session {n}"),
-        };
+        let heading = self.heading_html(model);
+        let working = working_html(n, model);
         let drawn = self.drawn(model);
         let entries: String = self
             .own
@@ -242,13 +244,57 @@ impl SessionView {
             .collect();
         let settings = settings_html(self.ran.as_ref(), self.verbose);
         format!(
-            r#"<section class="session" id="s{n}"><h2 class="mt-4 mb-1 font-semibold">{heading}</h2>{settings}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol></section>"#
+            r#"<section class="session" id="s{n}">{heading}{settings}<ol class="entries font-mono text-sm" id="s{n}-entries">{entries}</ol>{working}</section>"#
+        )
+    }
+
+    /// Its number and when it started, with how long it has run at the
+    /// right (`docs/specs/design_system.md`, The run page, A session's
+    /// heading).
+    fn heading_html(&self, model: &Session) -> String {
+        let n = self.number;
+        let Some(started_at) = self.started_at else {
+            return format!(
+                r#"<h2 class="mt-4 mb-1 font-semibold" id="s{n}-heading"><span class="text">session {n}</span></h2>"#
+            );
+        };
+        let lasted = duration_html(model.lasted_so_far().map(Lasted::from));
+        format!(
+            r#"<h2 class="mt-4 mb-1 flex items-baseline font-semibold" id="s{n}-heading"><span class="text grow">session {n}: started {}</span>{lasted}</h2>"#,
+            html::time(started_at),
         )
     }
 
     /// Takes the next change to its transcript, which the line it was read
-    /// from left as `model`, giving what it changes on the page.
+    /// from left as `model`, giving what it changes on the page: the
+    /// entries it changes, then its heading and its working step where
+    /// those change.
     fn change(&mut self, change: Change, model: &Session) -> Vec<Patch> {
+        let heading_changes = matches!(
+            change,
+            Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded
+        );
+        let mut patches = self.entries_change(change, model);
+        if heading_changes {
+            patches.push(Patch::Replace {
+                id: format!("s{}-heading", self.number),
+                html: self.heading_html(model),
+            });
+        }
+        let working = working_html(self.number, model);
+        if working != self.working {
+            patches.push(Patch::Replace {
+                id: format!("s{}-working", self.number),
+                html: working.clone(),
+            });
+            self.working = working;
+        }
+        patches
+    }
+
+    /// What a change to its transcript, which the line it was read from left
+    /// as `model`, changes of its entries.
+    fn entries_change(&mut self, change: Change, model: &Session) -> Vec<Patch> {
         match change {
             Change::Opened | Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => {
                 vec![]
@@ -362,6 +408,61 @@ impl SessionView {
     }
 }
 
+/// The session `n`'s working step, as `model` holds its transcript: while it
+/// goes on with no entry running, the agent's step in progress, which runs
+/// from its last entry and says "working", or while it waits for the usage
+/// limit, says so and until when (`docs/specs/design_system.md`, The run
+/// page, Working).
+fn working_html(n: usize, model: &Session) -> String {
+    let step = (model.end == End::Going && !runs_an_entry(model)).then(|| {
+        let text = match model.waiting() {
+            Some(wait) => format!(
+                "waiting for the usage limit, until {}",
+                html::time(wait.until)
+            ),
+            None => "working".to_string(),
+        };
+        let lasted = model
+            .last_at()
+            .or(model.started_at)
+            .map(|from| Lasted::from(model.lasted_from(from)));
+        let row = entry_row(&Row {
+            id: Some(&format!("s{n}-step")),
+            text,
+            lasted,
+            fold: None,
+        });
+        format!(r#"<li class="entry working py-px" id="s{n}-step">{row}</li>"#)
+    });
+    format!(
+        r#"<ol class="entries font-mono text-sm" id="s{n}-working">{}</ol>"#,
+        step.unwrap_or_default()
+    )
+}
+
+/// Whether any of a session's entries that run runs still.
+fn runs_an_entry(model: &Session) -> bool {
+    fn running(entries: &[Entry]) -> bool {
+        entries.iter().any(|entry| match &entry.what {
+            What::Tool(call) => call.end == Course::Running || running(&call.entries),
+            What::Message(_)
+            | What::Thinking(_)
+            | What::Context(_)
+            | What::Event(_)
+            | What::Other(_) => false,
+        })
+    }
+    let clone = model
+        .clone
+        .as_ref()
+        .is_some_and(|clone| clone.course == Course::Running);
+    let maintenance = model
+        .maintenance
+        .as_ref()
+        .is_some_and(|maintenance| matches!(maintenance.course(), Course::Running));
+    clone || maintenance || model.turns.iter().any(|turn| running(&turn.entries))
+}
+
 fn maintenance(model: &Session) -> &Maintenance {
     model
         .maintenance
@@ -469,6 +570,9 @@ fn line_html(row: &Row) -> String {
     )
 }
 
+/// The class of a duration at the right of its line.
+const DURATION: &str = "duration pl-4 text-right whitespace-nowrap text-muted font-normal";
+
 /// How long an entry that runs ran, ticking while it runs, and nothing
 /// where that is not known (`docs/specs/design_system.md`, The run page,
 /// Durations).
@@ -488,12 +592,7 @@ fn duration_html(lasted: Option<Lasted>) -> String {
         | Lasted::Took { seconds: None }
         | Lasted::Interrupted { seconds: None } => return String::new(),
     };
-    html::duration(
-        Some("duration pl-4 text-right whitespace-nowrap text-muted"),
-        seconds,
-        since,
-    )
-    .to_string()
+    html::duration(Some(DURATION), seconds, since).to_string()
 }
 
 /// A command's text on its line, such as a maintenance command's, labeled
