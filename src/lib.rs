@@ -58,6 +58,7 @@ pub mod status;
 pub mod store;
 pub mod tracking;
 pub mod transcript;
+pub mod tree;
 pub mod variable_names;
 pub mod web;
 pub mod webhook;
