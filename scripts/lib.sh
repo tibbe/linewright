@@ -25,7 +25,7 @@ has_sha256() {
 install_tool() {
   local dir=$1 name=$2 url=$3 sha=$4 member=${5:-} tmp
   tmp="$(mktemp -d)"
-  if curl -fsSL -o "$tmp/download" "$url" &&
+  if curl -fsSL --retry 5 -o "$tmp/download" "$url" &&
     has_sha256 "$tmp/download" "$sha" &&
     if [ -n "$member" ]; then
       tar -xzf "$tmp/download" -C "$tmp" && mv "$tmp/$member" "$tmp/download"
@@ -51,7 +51,7 @@ no_release() {
 install_tree() {
   local dir=$1 member=$2 url=$3 sha=$4 tmp
   tmp="$(mktemp -d)"
-  if curl -fsSL -o "$tmp/download" "$url" &&
+  if curl -fsSL --retry 5 -o "$tmp/download" "$url" &&
     has_sha256 "$tmp/download" "$sha" &&
     mkdir "$tmp/tree" && tar -xzf "$tmp/download" -C "$tmp/tree" &&
     mkdir -p "$dir" &&
