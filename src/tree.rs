@@ -2,11 +2,18 @@
 //! fastest known way (`docs/specs/runs.md`, Performance), which
 //! `scripts/check bench` checks on the host it runs on.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::fs::{self, Metadata, Permissions};
+use std::io;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::process::CommandExt as _;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
-
-use crate::child;
+use rayon::prelude::*;
+use rustix::fs::{AtFlags, CWD, Timespec, Timestamps};
 
 /// Copies the directory `from` to `to`, which does not exist, sharing disk
 /// space where the filesystem allows, within the margin of the fastest
@@ -22,25 +29,167 @@ pub async fn copy(from: &Path, to: &Path) -> Result<()> {
     if clone_whole(from, to).await? {
         return Ok(());
     }
-    // GNU cp clones each file with `--reflink=auto`
-    // (https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html),
-    // and macOS's with `-c`, falling back to a plain copy where cloning is
-    // not supported (https://keith.github.io/xcode-man-pages/cp.1.html).
-    let clone = if cfg!(target_os = "macos") {
-        "-c"
-    } else {
-        "--reflink=auto"
-    };
-    let output = child::command("cp")
-        .args(["-a", clone])
+    walk(from, to).await
+}
+
+/// Copies the directory `from` to `to`, which does not exist, entry by
+/// entry, keeping what `cp -a` keeps: [`copy`] where one call can't clone
+/// the whole tree.
+async fn walk(from: &Path, to: &Path) -> Result<()> {
+    let walk = Walk::default();
+    let _stop = StopOnDrop(Arc::clone(&walk.stopped));
+    let (from, to) = (from.to_owned(), to.to_owned());
+    tokio::task::spawn_blocking(move || walk.entry(&from, &to)).await?
+}
+
+/// Stops a [`Walk`] once dropped, as [`copy`]'s future is where its caller
+/// stops waiting for it.
+struct StopOnDrop(Arc<AtomicBool>);
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// A copy of a tree in progress, keeping what `cp -a` keeps
+/// (<https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html>):
+/// modes, access and modification times, symlinks' included, symlinks, and
+/// hard links within the tree.
+#[derive(Default)]
+struct Walk {
+    /// The copy of each file linked more than once.
+    linked: Mutex<HashMap<Inode, FirstCopy>>,
+    /// Whether to copy no more entries.
+    stopped: Arc<AtomicBool>,
+}
+
+/// A file, by its device and inode number.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Inode {
+    device: u64,
+    number: u64,
+}
+
+impl From<&Metadata> for Inode {
+    fn from(metadata: &Metadata) -> Inode {
+        Inode {
+            device: metadata.dev(),
+            number: metadata.ino(),
+        }
+    }
+}
+
+/// The first copy of a file linked more than once, once it is made.
+type FirstCopy = Arc<Mutex<Option<PathBuf>>>;
+
+impl Walk {
+    /// Copies the entry `from` to `to`, which does not exist, a directory's
+    /// entries in parallel: an error once the walk is stopped.
+    fn entry(&self, from: &Path, to: &Path) -> Result<()> {
+        if self.stopped.load(Ordering::Relaxed) {
+            bail!("the copy was stopped");
+        }
+        let copying = || format!("copying {}", from.display());
+        let metadata = fs::symlink_metadata(from).with_context(copying)?;
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            let entries = fs::create_dir(to)
+                .and_then(|()| fs::read_dir(from)?.collect::<io::Result<Vec<_>>>())
+                .with_context(copying)?;
+            entries
+                .par_iter()
+                .try_for_each(|entry| self.entry(&entry.path(), &to.join(entry.file_name())))?;
+            return keep_mode(to, &metadata)
+                .and_then(|()| keep_times(to, &metadata))
+                .with_context(copying);
+        }
+        let copied = if file_type.is_symlink() {
+            fs::read_link(from)
+                .and_then(|target| std::os::unix::fs::symlink(target, to))
+                .and_then(|()| keep_times(to, &metadata))
+        } else if !file_type.is_file() {
+            special(from, to)
+        } else if metadata.nlink() > 1 {
+            self.linked_file(from, to, &metadata)
+        } else {
+            file(from, to, &metadata)
+        };
+        copied.with_context(copying)
+    }
+
+    /// Copies the file `from`, linked more than once, to `to`: a hard link
+    /// to its first copy, once there is one.
+    fn linked_file(&self, from: &Path, to: &Path, metadata: &Metadata) -> io::Result<()> {
+        let copy = Arc::clone(
+            self.linked
+                .lock()
+                .expect("no copy panics holding it")
+                .entry(Inode::from(metadata))
+                .or_default(),
+        );
+        let mut copy = copy.lock().expect("no copy panics holding it");
+        match &*copy {
+            Some(first) => fs::hard_link(first, to),
+            None => {
+                file(from, to, metadata)?;
+                *copy = Some(to.to_owned());
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Copies the regular file `from`, whose metadata is `metadata`, to `to`,
+/// cloning it where the filesystem can: `FICLONE` on Linux
+/// (<https://man7.org/linux/man-pages/man2/ioctl_ficlone.2.html>) and
+/// `clonefile(2)` on macOS
+/// (<https://keith.github.io/xcode-man-pages/clonefile.2.html>).
+fn file(from: &Path, to: &Path, metadata: &Metadata) -> io::Result<()> {
+    reflink_copy::reflink_or_copy(from, to)?;
+    keep_mode(to, metadata)?;
+    keep_times(to, metadata)
+}
+
+/// Copies `from`, neither a directory, a symlink nor a regular file, such as
+/// a FIFO or a socket, with `cp -a`, which makes such files anew
+/// (<https://pubs.opengroup.org/onlinepubs/9799919799/utilities/cp.html>,
+/// `-R`), out of the reach of a terminal's Ctrl-C, as
+/// [`crate::child::command`]'s programs are.
+fn special(from: &Path, to: &Path) -> io::Result<()> {
+    let output = std::process::Command::new("cp")
+        .process_group(0)
+        .arg("-a")
         .arg(from)
         .arg(to)
-        .output()
-        .await
-        .context("running cp")?;
+        .output()?;
     if !output.status.success() {
-        bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        ));
     }
+    Ok(())
+}
+
+/// Gives `to` the permission bits of `metadata`.
+fn keep_mode(to: &Path, metadata: &Metadata) -> io::Result<()> {
+    fs::set_permissions(to, Permissions::from_mode(metadata.mode() & 0o7777))
+}
+
+/// Gives `to`, or the symlink `to` itself, the access and modification
+/// times of `metadata`.
+fn keep_times(to: &Path, metadata: &Metadata) -> io::Result<()> {
+    let times = Timestamps {
+        last_access: Timespec {
+            tv_sec: metadata.atime(),
+            tv_nsec: metadata.atime_nsec(),
+        },
+        last_modification: Timespec {
+            tv_sec: metadata.mtime(),
+            tv_nsec: metadata.mtime_nsec(),
+        },
+    };
+    rustix::fs::utimensat(CWD, to, &times, AtFlags::SYMLINK_NOFOLLOW)?;
     Ok(())
 }
 
@@ -91,5 +240,91 @@ pub(crate) fn unless_missing<T>(result: std::io::Result<T>) -> std::io::Result<O
         Ok(t) => Ok(Some(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+
+    /// The file type and permission bits of `path`, itself where it is a
+    /// symlink.
+    #[track_caller]
+    fn mode(path: &Path) -> u32 {
+        fs::symlink_metadata(path).unwrap().mode()
+    }
+
+    /// Through the walk: macOS's whole-tree `clonefile(2)` clones each link of
+    /// a file as a file of its own.
+    #[test_log::test(tokio::test)]
+    async fn copies_a_file_linked_in_many_directories_as_one_file_linked_as_often() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        fs::create_dir_all(from.join("0")).unwrap();
+        fs::write(from.join("0/file"), "text").unwrap();
+        for i in 1..50 {
+            fs::create_dir(from.join(i.to_string())).unwrap();
+            fs::hard_link(from.join("0/file"), from.join(format!("{i}/file"))).unwrap();
+        }
+        let to = dir.path().join("to");
+
+        walk(&from, &to).await.unwrap();
+
+        let original = fs::metadata(from.join("0/file")).unwrap();
+        let first = fs::metadata(to.join("0/file")).unwrap();
+        assert_ne!(first.ino(), original.ino(), "a copy, not a link out");
+        assert_eq!(first.nlink(), 50);
+        for i in 1..50 {
+            let copied = fs::metadata(to.join(format!("{i}/file"))).unwrap();
+            assert_eq!(copied.ino(), first.ino(), "{i}/file");
+        }
+        assert_eq!(fs::read_to_string(to.join("7/file")).unwrap(), "text");
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn copies_a_read_only_directory_with_its_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        fs::create_dir_all(from.join("read-only/sub")).unwrap();
+        fs::write(from.join("read-only/sub/file"), "text").unwrap();
+        fs::set_permissions(
+            from.join("read-only/sub/file"),
+            Permissions::from_mode(0o640),
+        )
+        .unwrap();
+        fs::set_permissions(from.join("read-only"), Permissions::from_mode(0o555)).unwrap();
+        let to = dir.path().join("to");
+
+        let copied = copy(&from, &to).await;
+
+        let read_only = [
+            mode(&to.join("read-only")),
+            mode(&to.join("read-only/sub/file")),
+        ];
+        for tree in [&from, &to] {
+            fs::set_permissions(tree.join("read-only"), Permissions::from_mode(0o755)).unwrap();
+        }
+        copied.unwrap();
+        assert_eq!(read_only, [0o040_555, 0o100_640]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn makes_a_fifo_anew() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        fs::create_dir(&from).unwrap();
+        let status = Command::new("mkfifo")
+            .args(["-m", "640"])
+            .arg(from.join("fifo"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let to = dir.path().join("to");
+
+        copy(&from, &to).await.unwrap();
+
+        assert_eq!(mode(&to.join("fifo")), 0o010_640);
     }
 }
