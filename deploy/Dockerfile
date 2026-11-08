@@ -17,7 +17,7 @@ RUN npm ci --no-audit --no-fund \
 FROM runtime
 USER root
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev curl procps nodejs \
+    && apt-get install -y --no-install-recommends gcc libc6-dev curl procps nodejs hyperfine \
     && rm -rf /var/lib/apt/lists/*
 COPY --link --from=playwright /opt/playwright /opt/playwright
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
