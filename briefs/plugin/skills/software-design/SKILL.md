@@ -69,8 +69,8 @@ For each decision:
 3. Rate each other option against the reference on each criterion as better,
    same, worse or unknown, with the reason and where it comes from: its
    prototype or a research report.
-4. Where an unknown could change the choice, settle it with a prototype, as in
-   Prototype, before choosing.
+4. Where a rating is unknown, say whether the choice would change if it went
+   either way.
 5. Follow the reference unless another option's better ratings outweigh its
    worse ones, weighed by each criterion's rank and by how far apart the
    options are on it, not by their count.
