@@ -8,11 +8,11 @@ RUN apt-get update \
 WORKDIR /opt/playwright
 COPY deploy/playwright/package.json deploy/playwright/package-lock.json ./
 RUN npm ci --no-audit --no-fund \
-    && test ! -e node_modules/@playwright/mcp/node_modules \
+    && test ! -e node_modules/@playwright/cli/node_modules \
     && node -e ' \
-        const want = require("@playwright/mcp/package.json").dependencies.playwright; \
+        const want = require("@playwright/cli/package.json").dependencies.playwright; \
         const got = require("playwright/package.json").version; \
-        if (got !== want) throw new Error(`playwright ${got}, @playwright/mcp wants ${want}`);'
+        if (got !== want) throw new Error(`playwright ${got}, @playwright/cli wants ${want}`);'
 
 FROM runtime
 USER root
@@ -26,11 +26,7 @@ RUN ln -s "$NODE_PATH/playwright/cli.js" /usr/local/bin/playwright \
     && playwright install --with-deps chromium \
     && apt-get install -y --no-install-recommends fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
-COPY --chmod=755 deploy/playwright-mcp /usr/local/bin/playwright-mcp
-# Takes exclusive control of MCP, so that a repository's .mcp.json, plugins'
-# servers and --mcp-config don't load:
-# https://code.claude.com/docs/en/mcp#managed-mcp-configuration
-COPY deploy/managed-mcp.json /etc/claude-code/managed-mcp.json
+COPY --chmod=755 deploy/playwright-cli /usr/local/bin/playwright-cli
 ARG SCCACHE_VERSION=0.18.0 TARGETARCH
 RUN <<EOF
 set -eu
