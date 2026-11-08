@@ -110,7 +110,7 @@ services:
 Agent sessions have a headless Chromium, which they drive with
 [`playwright-cli`](https://github.com/microsoft/playwright-cli): they serve the
 web UI with `serve-fake`, open its pages, take screenshots and videos, at a
-narrow viewport too, and inspect the page.
+narrow viewport too, and inspect the page (`.agents/skills/verify-web-ui/`).
 `playwright` is installed too, with `NODE_PATH` and `PLAYWRIGHT_BROWSERS_PATH`
 set, so an agent can run a Playwright script against the same Chromium
 revision: `chromium.launch()` runs its headless shell, and
