@@ -60,16 +60,20 @@ Spawn one sub-agent per option, together, in the foreground. Give each:
 
 ### 4. Choose
 
-For each decision, rule out any option that fails a must-have. Of the rest,
-take the consensus as the reference: the most widely adopted, by the evidence
-of adoption the reports give, counting a solution the platform documents for
-this problem as strong evidence. Rate each other option against the reference
-on each criterion as better, same, worse or unknown, with the reason and where
-it comes from: its prototype or a research report. Where an unknown could
-change the choice, settle it with a prototype, as in Prototype, before
-choosing. Follow the reference unless another option's better ratings outweigh
-its worse ones, weighed by each criterion's rank and by how far apart the
-options are on it, not by their count.
+For each decision:
+
+1. Rule out any option that fails a must-have.
+2. Of the rest, take the consensus as the reference: the most widely adopted,
+   by the evidence of adoption the reports give, counting a solution the
+   platform documents for this problem as strong evidence.
+3. Rate each other option against the reference on each criterion as better,
+   same, worse or unknown, with the reason and where it comes from: its
+   prototype or a research report.
+4. Where an unknown could change the choice, settle it with a prototype, as in
+   Prototype, before choosing.
+5. Follow the reference unless another option's better ratings outweigh its
+   worse ones, weighed by each criterion's rank and by how far apart the
+   options are on it, not by their count.
 
 Before choosing, write down the case against each option. The case against the
 consensus first says why its adopters chose it, then why that reasoning doesn't
