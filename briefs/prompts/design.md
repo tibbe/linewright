@@ -12,7 +12,7 @@ Design the code for the {{kind}} below. You may read GitHub but must not write t
 
 ### 1. Research prior art and choose an option
 
-Read the {{kind}}, `GLOSSARY.md` if present, the spec and the code the {{kind}} touches. Then call the Skill tool with `linewright:software-design`, and find how the problem has been solved before and choose an option from it, as it says. Start its research sub-agents together, in the foreground, and choose from the reports they return.
+Read the {{kind}}, `GLOSSARY.md` if present, the spec and the code the {{kind}} touches. Then call the Skill tool with `linewright:software-design`, and find how the problem has been solved before and choose an option from it, as it says.
 
 ### 2. Design the code
 
