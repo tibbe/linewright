@@ -69,9 +69,18 @@ For each decision:
 3. Rate each other option against the reference on each criterion as better,
    same, worse or unknown, with the reason and where it comes from: its
    prototype or a research report.
-4. Where a rating is unknown, say whether the choice would change if it went
+4. Once every prototype has reported and every option is rated, improve and
+   combine options, the ones step 1 ruled out among them:
+   - **Improve:** where an option rates well but for one criterion, because of
+     one part of it, change that part.
+   - **Combine:** where two options are each better on a different criterion,
+     put the parts that make each better into one option.
+
+   Prototype each new option in a second round, as in Prototype, and rate it
+   with the rest.
+5. Where a rating is unknown, say whether the choice would change if it went
    either way.
-5. Follow the reference unless another option's better ratings outweigh its
+6. Follow the reference unless another option's better ratings outweigh its
    worse ones, weighed by each criterion's rank and by how far apart the
    options are on it, not by their count.
 
@@ -115,7 +124,8 @@ because {why, in one sentence}.}
 
 #### {title of option 1}
 
-{what it is, in a sentence or two}. Taken by {the sources that take it}.
+{what it is, in a sentence or two}. {Taken by {the sources that take it}. |
+Made from "{title of option}" by {the change, or the combination}.}
 
 {its prototype's result, as the sub-agent gave it}
 
@@ -135,7 +145,8 @@ because {why, in one sentence}.}
 …
 ```
 
-From the research, one Good line per option: why its adopters chose it. A Bad
+From the research, one Good line per option a source takes: why its adopters
+chose it. A Bad
 line for each must-have an option fails. Every option but the reference has one
 line per criterion, comparing it with the reference: Good, Neutral, Bad or
 Unknown.
