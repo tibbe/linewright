@@ -18,7 +18,8 @@ sub-agents, so each search stays out of the others' context and yours.
    attributes the spec states, and the platform it must run on and its
    language. The current design is open to change, down to the libraries and
    components it builds on.
-2. Spawn one sub-agent per kind of prior art the problem has:
+2. Spawn one sub-agent per kind of prior art the problem has, together, in
+   the foreground:
    - **Platform**: the platform's, framework's or library's own recommended
      approach, from its documentation or design guidelines.
    - **Products**: how other products of the same kind as ours, and others
