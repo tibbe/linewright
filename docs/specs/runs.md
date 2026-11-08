@@ -43,7 +43,7 @@ has no item.
   fresh and in its own clone, or in none where its work needs no agent, such as
   an update without a conflict.
 - **A clone's end.** A clone is removed once its run is done with it, even
-  one made only partway, the fastest way the host's filesystem offers.
+  one made only partway.
 - **Clones left behind.** As it starts, Linewright removes, alongside its
   work, every clone that no running Linewright is using, such as one left by
   an exit at once ([Stopping](operation.md#stopping)). It logs the clones as
@@ -80,6 +80,17 @@ and ready for the agent.
   end once the run is done with the clone.
 - **Its output** is kept with the session's transcript
   ([Transcripts](design_system.md#transcripts)).
+
+## Performance
+
+Linewright copies the environment and removes clones within a margin of the
+fastest known way.
+
+- **The fastest known way.** The fastest way that works on the host's
+  filesystem, of those its platform documents or other software uses.
+- **The margin.** Making a copy of the environment
+  ([Environment](sessions.md#environment)), or removing a clone, takes at most
+  1.2 times as long as the fastest known way to do it.
 
 ## Contract
 
@@ -257,3 +268,4 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - Telling the agent that its session's maintenance command failed.
 - A teardown command, run as a clone is removed to release what lives outside
   it, such as a container its maintenance command started.
+- A bound on how long a plain clone of a branch takes, which the network sets.
