@@ -4,6 +4,7 @@
 
 use crate::common;
 
+use std::os::unix::fs::MetadataExt as _;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -651,6 +652,73 @@ async fn a_session_leaves_the_environment_as_it_was_built() {
         git_in(&repo, &["rev-parse", "--abbrev-ref", "HEAD"]),
         "main"
     );
+}
+
+/// What a faithful copy keeps of one entry: its type and mode, its mtime to
+/// the nanosecond and its symlink target.
+#[derive(Debug, PartialEq)]
+struct Kept {
+    mode: u32,
+    mtime: (i64, i64),
+    target: Option<PathBuf>,
+}
+
+/// What [`Kept`] reads of each of `paths` under `dir`.
+#[track_caller]
+fn kept_of(dir: &Path, paths: &[&str]) -> Vec<Kept> {
+    let mut kept = vec![];
+    for path in paths {
+        let path = dir.join(path);
+        let metadata = std::fs::symlink_metadata(&path).unwrap();
+        kept.push(Kept {
+            mode: metadata.mode(),
+            mtime: (metadata.mtime(), metadata.mtime_nsec()),
+            target: std::fs::read_link(&path).ok(),
+        });
+    }
+    kept
+}
+
+#[test_log::test(tokio::test)]
+async fn a_sessions_clone_keeps_the_environments_modes_mtimes_and_symlinks() {
+    let mut world = World::new().await;
+    set_up_with(
+        &world,
+        "mkdir -p node_modules/bin && echo run > node_modules/bin/run && \
+         chmod 750 node_modules/bin/run && TZ=UTC touch -t 200001020304.05 node_modules/bin/run && \
+         ln -s bin/run node_modules/link && TZ=UTC touch -h -t 200102030405.06 node_modules/link && \
+         echo fresh > node_modules/fresh",
+    )
+    .await;
+    world.poll().await;
+    let paths = [
+        "node_modules/bin/run",
+        "node_modules/link",
+        "node_modules/fresh",
+    ];
+    let environment = kept_of(&built_repo(&world), &paths);
+    let seen = Arc::new(Mutex::new(vec![]));
+    world.harness.on(WorkKind::Implement, {
+        let seen = seen.clone();
+        move |call| {
+            seen.lock().unwrap().push(kept_of(&call.spec.dir, &paths));
+            failed_session("looked")
+        }
+    });
+    open_ticket(&world, "Do the thing");
+
+    world.poll().await;
+
+    assert_eq!(
+        [
+            (environment[0].mode, environment[0].mtime),
+            (environment[1].mode & 0o170_000, environment[1].mtime),
+        ],
+        [(0o100_750, (946_782_245, 0)), (0o120_000, (981_173_106, 0))],
+        "the setup made the environment"
+    );
+    assert_eq!(environment[1].target.as_deref(), Some(Path::new("bin/run")));
+    assert_eq!(*seen.lock().unwrap(), [environment]);
 }
 
 #[test_log::test(tokio::test)]

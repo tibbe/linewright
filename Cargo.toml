@@ -35,7 +35,7 @@ harness = false
 
 [features]
 fake-claude = []
-bench = ["dep:rayon", "dep:reflink-copy", "dep:remove_dir_all", "rustix/fs"]
+bench = ["dep:remove_dir_all"]
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -92,13 +92,13 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 jsonschema = { version = "0.60.2", default-features = false }
 percent-encoding = "2.3"
-rayon = { version = "1", optional = true }
+rayon = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
-reflink-copy = { version = "0.1", optional = true }
+reflink-copy = "0.1"
 remove_dir_all = { version = "1", features = ["parallel"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
@@ -112,9 +112,6 @@ toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 uuid = { version = "1", features = ["v4"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-reflink-copy = "0.1"
 
 [dev-dependencies]
 boa_engine = { version = "0.22", default-features = false }
