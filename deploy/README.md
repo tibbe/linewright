@@ -107,24 +107,23 @@ services:
 
 ## The agents' browser
 
-Agent sessions have a headless Chromium, which they drive through
-[Playwright MCP](https://github.com/microsoft/playwright-mcp): they serve the
-web UI on `localhost`, open its pages, take screenshots, at a narrow viewport
-too, and inspect the page. `playwright` is installed too, with `NODE_PATH` and
-`PLAYWRIGHT_BROWSERS_PATH` set, so an agent can run a Playwright script
-against the same Chromium revision: `chromium.launch()` runs its headless
-shell, and `channel: 'chromium'` the full browser that Playwright MCP drives.
+Agent sessions have a headless Chromium, which they drive with
+[`playwright-cli`](https://github.com/microsoft/playwright-cli): they serve the
+web UI with `serve-fake`, open its pages, take screenshots and videos, at a
+narrow viewport too, and inspect the page.
+`playwright` is installed too, with `NODE_PATH` and `PLAYWRIGHT_BROWSERS_PATH`
+set, so an agent can run a Playwright script against the same Chromium
+revision: `chromium.launch()` runs its headless shell, and
+`channel: 'chromium'` the full browser that `playwright-cli` drives.
 `deploy/playwright/` pins both packages, and the image installs the Chromium
-revision they expect.
+revision they expect. `.agents/skills/playwright-cli/` is the skill
+`playwright-cli install --skills agents` writes for the pinned version: write it
+again when the pin moves.
 
 Chromium runs with `--no-sandbox`. `linewright` drops every capability, sets
 `no-new-privileges` and keeps Docker's default seccomp profile, which leaves
 Chromium no sandbox it can start. The pages it loads are the agent's own code,
 which already runs in the container without one.
-
-Claude Code loads the server from `/etc/claude-code/managed-mcp.json`, which
-[takes exclusive control of MCP](https://code.claude.com/docs/en/mcp#managed-mcp-configuration):
-in this image, a repository's `.mcp.json` doesn't load.
 
 ## Deploying and watching it
 

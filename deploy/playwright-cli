@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# playwright-cli takes Playwright MCP's settings from these variables:
+# https://github.com/microsoft/playwright-mcp#configuration
+export PLAYWRIGHT_MCP_BROWSER=chromium PLAYWRIGHT_MCP_HEADLESS=true \
+  PLAYWRIGHT_MCP_SANDBOX=false \
+  PLAYWRIGHT_MCP_OUTPUT_DIR="${TMPDIR:-/tmp}/playwright-cli"
+exec node "$NODE_PATH/@playwright/cli/playwright-cli.js" "$@"
