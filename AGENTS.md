@@ -43,6 +43,18 @@ schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
   the properties it bears on, which takes minutes:
   `scripts/check model MODEL NAME...` (the `verify-spec` skill).
 
+## Verifying a change in the web UI
+
+Call the Skill tool with "verify-web-ui" to drive the web UI in a browser over
+fakes; it captures what the pages did. Use it to reproduce a web UI bug, too.
+
+**Any change with a visible effect in the web UI, in a ticket you are
+implementing, is checked in the browser with "verify-web-ui" before the PR is
+opened.** Passing tests and a green `scripts/check` do not replace it. The PR
+body states what you clicked and what you saw, with before and after
+screenshots, or a short recording when the interaction is the change. A change
+with no UI effect says so in one line — `No UI change` — instead.
+
 ## Area guides
 
 Before working in one of these areas, read its guide:
@@ -50,6 +62,8 @@ Before working in one of these areas, read its guide:
 - [Commits](./docs/commits.md)
 - [Tuning the briefs](./docs/tuning-briefs.md)
 - [Releasing](./docs/releasing.md)
+- [Deploying Linewright on this repository](./deploy/README.md): its image is
+  what Linewright's own sessions run in, so a tool they need goes there
 
 ## User-facing documentation
 
