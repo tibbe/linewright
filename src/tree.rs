@@ -1,5 +1,6 @@
 //! Copying and removing a directory tree, each within the margin of the
-//! fastest known way (`docs/specs/runs.md`, Performance).
+//! fastest known way (`docs/specs/runs.md`, Performance), which
+//! `scripts/check bench` checks on the host it runs on.
 
 use std::path::Path;
 

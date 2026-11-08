@@ -42,6 +42,11 @@ schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
   human asks for it, in the background. To check a model change, check only
   the properties it bears on, which takes minutes:
   `scripts/check model MODEL NAME...` (the `verify-spec` skill).
+- The benchmark of copying the environment and removing a clone against the
+  known ways (`docs/specs/runs.md`, Performance) runs only when named, on the
+  host's filesystem, and takes minutes: `scripts/check bench`. It times them
+  on the filesystem of `BENCH_DIR` (default `TMPDIR`), on the tree
+  `BENCH_TREE` or a generated one.
 
 ## Verifying a change in the web UI
 

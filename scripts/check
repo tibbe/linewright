@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+invoked_in="$PWD"
 cd "$(dirname "$0")/.."
 # shellcheck source=scripts/lib.sh
 . scripts/lib.sh
@@ -193,8 +194,83 @@ check_model() {
   return "$status"
 }
 
+# Runs the way `way` to `operation` (copy or remove) the tree `tree` once,
+# leaving its log in `log`: fails where the way fails or, for a copy, makes a
+# copy that is not faithful.
+bench_way_works() {
+  local operation=$1 way=$2 tree=$3 status=0
+  if [ "$operation" = copy ]; then
+    tree-bench copy "$way" "$tree" copy >log 2>&1 && tree-bench same "$tree" copy >>log 2>&1 || status=1
+  else
+    tree-bench copy linewright "$tree" clone >log 2>&1 && tree-bench remove "$way" clone >>log 2>&1 || status=1
+  fi
+  tree-bench remove linewright copy && tree-bench remove linewright clone && return "$status"
+}
+
+# Fails where Linewright copies a tree, or removes one, in more than 1.2
+# times the fastest known way that works on the filesystem of BENCH_DIR
+# (default TMPDIR), timed by hyperfine on BENCH_TREE, a directory on that
+# filesystem relative to where the script runs, or else on a tree shaped like an environment
+# (`docs/specs/runs.md`, Performance). A way that fails, or makes a copy
+# that is not faithful, is named and left out.
+check_bench() {
+  (
+    local work tree quoted_tree operation way ways status=0
+    if ! command -v hyperfine >/dev/null; then
+      echo "bench needs hyperfine: https://github.com/sharkdp/hyperfine#installation"
+      return 1
+    fi
+    if [ -n "${BENCH_TREE:-}" ]; then
+      tree="$(cd "$invoked_in" && cd "$BENCH_TREE" && pwd)" || return 1
+    fi
+    cargo build --release --locked --quiet --features bench --bin tree-bench || return 1
+    export PATH="$PWD/target/release:$PATH"
+    work="$(mktemp -d "${BENCH_DIR:-${TMPDIR:-/tmp}}/tree-bench.XXXXXX")"
+    trap 'tree-bench remove linewright "$work"' EXIT
+    cd "$work"
+    if [ -z "${tree:-}" ]; then
+      tree=tree
+      echo "Generating the tree in $work/tree"
+      tree-bench tree tree || return 1
+    fi
+    quoted_tree="$(printf %q "$tree")"
+    for operation in copy remove; do
+      ways=()
+      for way in $(tree-bench ways "$operation"); do
+        if bench_way_works "$operation" "$way" "$tree"; then
+          if [ "$operation" = copy ]; then
+            ways+=("tree-bench copy $way $quoted_tree copy")
+          else
+            ways+=("tree-bench remove $way clone")
+          fi
+        elif [ "$way" = linewright ]; then
+          echo "$operation: Linewright's way does not work:"
+          cat log
+          return 1
+        else
+          echo "$operation: $way does not work, so it is left out:"
+          head -n 5 log
+        fi
+      done
+      if [ "$operation" = copy ]; then
+        hyperfine --runs 5 --export-json copy.json \
+          --prepare "tree-bench remove linewright copy" \
+          --cleanup "tree-bench remove linewright copy" \
+          --reference "${ways[0]}" "${ways[@]:1}" || return 1
+      else
+        hyperfine --runs 5 --export-json remove.json \
+          --prepare "tree-bench remove linewright clone && tree-bench copy linewright $quoted_tree clone" \
+          --reference "${ways[0]}" "${ways[@]:1}" || return 1
+      fi
+    done
+    tree-bench verdict copy copy.json || status=1
+    tree-bench verdict remove remove.json || status=1
+    return "$status"
+  )
+}
+
 stages=("fmt markdown compose css comments model-tables model-quotes model-coverage" "clippy" "test doc")
-named_only="model-quick model"
+named_only="model-quick model bench"
 
 usage() {
   echo "usage: scripts/check [NAME...]"
@@ -205,6 +281,9 @@ usage() {
   echo "With a model ($models),"
   echo "it checks only that model, or only its named scenarios, invariants and"
   echo "temporal properties."
+  echo "bench times Linewright's copy and removal of a tree against the known ways,"
+  echo "on the filesystem of BENCH_DIR (default TMPDIR), on the tree BENCH_TREE or a"
+  echo "generated one. It needs hyperfine and takes minutes."
 }
 
 if [ "${1:-}" = --help ] || [ "${1:-}" = -h ]; then
@@ -236,8 +315,8 @@ log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 for i in "${!stages[@]}"; do
   for name in ${stages[$i]}; do
-    if [ "$name" = test ]; then
-      if check_test; then
+    if [ "$name" = test ] || [ "$name" = bench ]; then
+      if "check_$name"; then
         passed="$passed $name"
       else
         printf '✗ %s\n' "$name"

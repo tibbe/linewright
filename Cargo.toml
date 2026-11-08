@@ -23,6 +23,11 @@ name = "serve-fake"
 path = "src/bin/serve-fake/main.rs"
 required-features = ["fake-claude"]
 
+[[bin]]
+name = "tree-bench"
+path = "src/bin/tree-bench/main.rs"
+required-features = ["bench"]
+
 [[test]]
 name = "contract"
 path = "tests/contract/main.rs"
@@ -30,6 +35,7 @@ harness = false
 
 [features]
 fake-claude = []
+bench = ["dep:rayon", "dep:reflink-copy", "dep:remove_dir_all", "rustix/fs"]
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -86,7 +92,10 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 jsonschema = { version = "0.60.2", default-features = false }
 percent-encoding = "2.3"
+rayon = { version = "1", optional = true }
 pulldown-cmark = { version = "0.13", default-features = false }
+reflink-copy = { version = "0.1", optional = true }
+remove_dir_all = { version = "1", features = ["parallel"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
 rustix = { version = "1", features = ["process"] }
@@ -112,7 +121,7 @@ boa_engine = { version = "0.22", default-features = false }
 libtest-mimic = "0.8"
 # Cargo has no test-only binaries:
 # https://github.com/rust-lang/cargo/issues/4356
-linewright = { path = ".", features = ["fake-claude"] }
+linewright = { path = ".", features = ["bench", "fake-claude"] }
 rstest = { version = "0.28", default-features = false }
 scraper = "0.29"
 test-log = { version = "0.2.21", default-features = false, features = ["trace"] }
