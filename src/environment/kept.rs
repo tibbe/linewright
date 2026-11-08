@@ -13,6 +13,7 @@ use tracing::warn;
 use super::lifecycle::{Basis, Fingerprint};
 use crate::domain::Timestamp;
 use crate::transcript::lines::BuildMaintenanceLine;
+use crate::tree;
 
 /// A build's clone, in its directory.
 pub const REPO: &str = "repo";
@@ -352,11 +353,8 @@ pub fn remove_unleased(dir: &Path) -> Result<()> {
     remove(dir)
 }
 
-/// Removes `path`, a directory, if it is there.
+/// Removes `path`, a directory, if it is there, within the bound of
+/// [`tree::remove`].
 pub fn remove(path: &Path) -> Result<()> {
-    match std::fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
-    }
+    tree::remove(path)
 }
