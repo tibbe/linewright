@@ -210,9 +210,9 @@ bench_way_works() {
 # Fails where Linewright copies a tree, or removes one, in more than 1.2
 # times the fastest known way that works on the filesystem of BENCH_DIR
 # (default TMPDIR), timed by hyperfine on BENCH_TREE, a directory on that
-# filesystem relative to where the script runs, or else on a tree shaped like an environment
-# (`docs/specs/runs.md`, Performance). A way that fails, or makes a copy
-# that is not faithful, is named and left out.
+# filesystem relative to where the script runs, or else on a tree shaped
+# like an environment (`docs/specs/runs.md`, Performance). A way that fails,
+# or makes a copy that is not faithful, is named and left out.
 check_bench() {
   (
     local work tree quoted_tree operation way ways status=0
