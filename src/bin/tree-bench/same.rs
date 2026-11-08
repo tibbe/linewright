@@ -1,5 +1,10 @@
 //! Whether one tree is a faithful copy of another: the same entries, of the
 //! same types, with the same modes, mtimes and symlink targets.
+//!
+//! A directory's mtime is left out. It is when the directory's entries last
+//! changed, which nothing reading the environment reads (cargo's freshness
+//! checks read files'), and one `clonefile(2)` of a whole tree, Linewright's
+//! copy on macOS, sets it anew as it makes each directory's entries.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -16,6 +21,20 @@ pub struct Entry {
     pub mode: u32,
     pub mtime: Mtime,
     pub target: Option<PathBuf>,
+}
+
+impl Entry {
+    /// Whether this entry, as a copy of `original`, keeps all a faithful copy
+    /// keeps of it.
+    fn keeps(&self, original: &Entry) -> bool {
+        // `S_IFMT` and `S_IFDIR`, which Linux and macOS give the
+        // traditional values
+        // (https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/sys_stat.h.html).
+        let directory = self.mode & 0o170_000 == 0o040_000;
+        self.mode == original.mode
+            && self.target == original.target
+            && (directory || self.mtime == original.mtime)
+    }
 }
 
 /// A modification time, to the nanosecond.
@@ -62,7 +81,7 @@ pub fn differences(original: &Entries, copy: &Entries) -> Vec<Difference> {
     for (path, entry) in original {
         match copy.get(path) {
             None => differences.push(Difference::Missing(path.clone())),
-            Some(copied) if copied != entry => differences.push(Difference::Changed {
+            Some(copied) if !copied.keeps(entry) => differences.push(Difference::Changed {
                 path: path.clone(),
                 original: entry.clone(),
                 copy: copied.clone(),
@@ -176,8 +195,22 @@ mod tests {
     #[test_log::test]
     fn finds_a_changed_mtime_to_the_nanosecond() {
         let mut copy = original();
-        copy.insert(PathBuf::new(), entry(DIRECTORY, 100, 6, None));
+        copy.insert("file".into(), entry(FILE, 100, 2, None));
         assert_eq!(differences(&original(), &copy).len(), 1);
+    }
+
+    #[test_log::test]
+    fn finds_a_symlinks_changed_mtime() {
+        let mut copy = original();
+        copy.insert("link".into(), entry(SYMLINK, 100, 3, Some("file")));
+        assert_eq!(differences(&original(), &copy).len(), 1);
+    }
+
+    #[test_log::test]
+    fn finds_none_in_a_directorys_changed_mtime() {
+        let mut copy = original();
+        copy.insert(PathBuf::new(), entry(DIRECTORY, 200, 6, None));
+        assert_eq!(differences(&original(), &copy), []);
     }
 
     #[test_log::test]

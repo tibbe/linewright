@@ -43,7 +43,8 @@ enum Command {
         files: usize,
     },
     /// Fails, naming each difference, unless DST is a faithful copy of SRC:
-    /// the same entries, types, modes, mtimes and symlink targets.
+    /// the same entries, types, modes, mtimes (but directories') and
+    /// symlink targets.
     Same { src: PathBuf, dst: PathBuf },
     /// Reads hyperfine's `--export-json` output, run with Linewright's way
     /// as `--reference`, and fails where Linewright's way took more than
