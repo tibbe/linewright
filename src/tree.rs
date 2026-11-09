@@ -221,17 +221,48 @@ async fn clone_whole(from: &Path, to: &Path) -> Result<bool> {
 
 /// Removes the directory `path` and all it holds, as far as it is there,
 /// within the margin of the fastest known way (`docs/specs/runs.md`,
-/// Performance): `Ok` where `path` is already gone. Blocks until it is
-/// done.
+/// Performance): `Ok` where `path` is already gone. Where `path`, or an
+/// entry in it, is a symlink, removes the link and leaves what it points
+/// to. Blocks until it is done.
 pub fn remove(path: &Path) -> Result<()> {
-    // On macOS, `removefile(3)`
+    #[cfg(target_os = "linux")]
+    let removed = remove_in_parallel(path);
+    // Off Linux, std's serial unlink: on macOS, `removefile(3)`
     // (https://keith.github.io/xcode-man-pages/removefile.3.html) unlinks
     // entry by entry, and on APFS measured slower than `remove_dir_all`, as
     // did a parallel unlink
     // (https://docs.rs/crate/decmpfs/0.1.2/source/src/remove.rs).
-    unless_missing(std::fs::remove_dir_all(path))
-        .with_context(|| format!("removing {}", path.display()))?;
+    #[cfg(not(target_os = "linux"))]
+    let removed = std::fs::remove_dir_all(path);
+    unless_missing(removed).with_context(|| format!("removing {}", path.display()))?;
     Ok(())
+}
+
+/// Removes `path` as [`remove`] promises, with the `remove_dir_all` crate's
+/// parallel unlink (<https://docs.rs/remove_dir_all/1.0.0/remove_dir_all/>).
+///
+/// The crate's `remove_dir_all` resolves symlinks in `path`
+/// (<https://docs.rs/crate/remove_dir_all/1.0.0/source/src/lib.rs>), so
+/// given a symlink it would empty what the link points to. This opens `path`
+/// without following a symlink instead and leaves anything but a directory
+/// to `std::fs::remove_dir_all`, which removes only a link.
+#[cfg(target_os = "linux")]
+fn remove_in_parallel(path: &Path) -> std::io::Result<()> {
+    use remove_dir_all::RemoveDir;
+    use rustix::fs::{Mode, OFlags};
+    use rustix::io::Errno;
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    match rustix::fs::open(path, flags, Mode::empty()) {
+        Ok(dir) => {
+            std::fs::File::from(dir).remove_dir_contents(Some(path))?;
+            std::fs::remove_dir(path)
+        }
+        // On a symlink, `O_NOFOLLOW` fails with `ELOOP`, or `O_DIRECTORY`
+        // first with `ENOTDIR`, as on any other entry that is not a
+        // directory (https://man7.org/linux/man-pages/man2/open.2.html).
+        Err(Errno::LOOP | Errno::NOTDIR) => std::fs::remove_dir_all(path),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// `None` where `result` failed for want of the file.
@@ -326,5 +357,60 @@ mod tests {
         copy(&from, &to).await.unwrap();
 
         assert_eq!(mode(&to.join("fifo")), 0o010_640);
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_tree_and_all_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("tree");
+        for d in 0..20 {
+            let sub = tree.join(format!("d{d}")).join("nested");
+            fs::create_dir_all(&sub).unwrap();
+            for f in 0..20 {
+                fs::write(sub.join(format!("f{f}")), "x").unwrap();
+            }
+        }
+
+        remove(&tree).unwrap();
+
+        assert!(!tree.exists());
+    }
+
+    #[test_log::test]
+    fn remove_is_ok_where_the_tree_is_already_gone() {
+        let dir = tempfile::tempdir().unwrap();
+
+        remove(&dir.path().join("gone")).unwrap();
+    }
+
+    #[test_log::test]
+    fn remove_leaves_what_a_symlink_in_the_tree_points_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("kept"), "x").unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("link")).unwrap();
+
+        remove(&tree).unwrap();
+
+        assert!(!tree.exists());
+        assert!(outside.join("kept").exists());
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_symlink_and_leaves_what_it_points_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("kept"), "x").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        remove(&link).unwrap();
+
+        assert!(link.symlink_metadata().is_err());
+        assert!(target.join("kept").exists());
     }
 }
