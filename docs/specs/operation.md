@@ -119,7 +119,7 @@ repository's file, the operator's file, default.
 | `session-env` (variables' values)            | none                                        |
 | `session-pass-env` (variable names)          | none                                        |
 | `secrets` (variable names)                   | none                                        |
-| `session-timeout`                            | 60m                                         |
+| `session-timeout`                            | 6h                                          |
 | `setup.command` ([Environment](sessions.md#environment)) | none                            |
 | `setup.max-age`                              | 24h                                         |
 | `setup.timeout`                              | 60m                                         |
