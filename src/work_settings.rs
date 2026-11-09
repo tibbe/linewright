@@ -16,7 +16,7 @@ use crate::reconcile::WorkKind;
 use crate::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 
 /// `session-timeout`'s default.
-pub const SESSION_TIMEOUT: Duration = Duration::from_mins(60);
+pub const SESSION_TIMEOUT: Duration = Duration::from_hours(6);
 
 /// `setup.max-age`'s default.
 pub const SETUP_MAX_AGE: Duration = Duration::from_hours(24);
