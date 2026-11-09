@@ -6,7 +6,7 @@ ARG DEBIAN_RELEASE=trixie
 # and Claude Code's from
 # https://downloads.claude.ai/claude-code-releases/<version>/manifest.json
 # (platforms.linux-x64 and linux-arm64, .checksum).
-ARG CLAUDE_CODE_VERSION=2.1.309 GH_VERSION=2.103.3
+ARG CLAUDE_CODE_VERSION=2.1.311 GH_VERSION=2.103.3
 
 FROM rust:1-slim-${DEBIAN_RELEASE} AS build
 WORKDIR /src
@@ -29,14 +29,14 @@ FROM scratch AS tools-amd64
 ARG GH_VERSION CLAUDE_CODE_VERSION
 ADD --checksum=sha256:e3bafef96328d1a67de3a968bdfe1cc2ffd58cf6aba8b5e201356897ed06bb3d \
     https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb /gh.deb
-ADD --chmod=755 --checksum=sha256:4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658 \
+ADD --chmod=755 --checksum=sha256:86dc1fcc69498159eaf15f446613e847010f9036bfbbdffd4c49350be8489ada \
     https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-x64/claude /claude
 
 FROM scratch AS tools-arm64
 ARG GH_VERSION CLAUDE_CODE_VERSION
 ADD --checksum=sha256:cac3ff84b60b68e64cca69f31f303210c26320361cc3286b773655d4226b7b06 \
     https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_arm64.deb /gh.deb
-ADD --chmod=755 --checksum=sha256:9796dd26899337f687739a0b39a7353b639f062a3436a7b941fcf19a1b757a9b \
+ADD --chmod=755 --checksum=sha256:2e2496c9a8065df93acb0fca2d341f59a6b8777649b2e025ab8c9bcd5eef61f3 \
     https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-arm64/claude /claude
 
 FROM tools-${TARGETARCH} AS tools
