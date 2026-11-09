@@ -329,7 +329,7 @@ pub struct Settings {
     #[arg(long, global = true, value_name = "NAMES")]
     pub secrets: Option<String>,
     /// Each agent session's timeout; a stage's table in the config file,
-    /// `[stage.NAME]`, can set its own [default: 60m]
+    /// `[stage.NAME]`, can set its own [default: 6h]
     #[arg(long, global = true)]
     pub session_timeout: Option<String>,
     /// The command that makes each agent session's clone ready before the
