@@ -258,7 +258,7 @@ check_bench() {
           --cleanup "tree-bench remove linewright copy" \
           --reference "${ways[0]}" "${ways[@]:1}" || return 1
       else
-        hyperfine --runs 5 --export-json remove.json \
+        hyperfine --warmup 3 --runs 5 --export-json remove.json \
           --prepare "tree-bench remove linewright clone && tree-bench copy linewright $quoted_tree clone" \
           --reference "${ways[0]}" "${ways[@]:1}" || return 1
       fi
