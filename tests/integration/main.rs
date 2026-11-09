@@ -45,6 +45,7 @@ mod push_protection;
 mod rate_limit;
 mod reconcile;
 mod recording;
+mod redaction;
 mod refresh;
 mod rendered_prompts;
 mod replay;
