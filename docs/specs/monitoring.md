@@ -129,7 +129,8 @@ that started a session.
 - **The transcripts.** `logs` shows the run's transcripts as
   [Transcripts](design_system.md#transcripts) says, as far as text that only
   ever grows allows. `logs --json` gives what the agent gives about them,
-  following the agent's own JSON output.
+  following the agent's own JSON output, and so leaves out the "thought" and
+  "worked for" entries, which are Linewright's.
 - **Times.** Each entry starts with the time since its session started, as
   h:mm:ss with the hours left out under an hour, such as `2:10` or
   `1:02:10`, not as a duration is shown, so that the entries align.

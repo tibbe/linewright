@@ -100,6 +100,17 @@ An item's state ([State](repository.md#state)) is shown in these words.
   as the lines read, the exit status or, for a sub-agent, the count of its
   tool calls and how long it ran. A sub-agent's work shows indented under the
   call that started it.
+- **Thinking.** Where the agent thought before what it did next, an entry
+  saying "thought" shows how long it thought: from the last thing that
+  happened before it, such as its prompt being sent, a tool call returning
+  or, for a sub-agent's first thinking, the call that started the sub-agent,
+  to the end of its thinking.
+- **A turn's length.** Each turn ends with an entry saying "worked for" and
+  how long the turn took, from its prompt to its last entry.
+- **Cut short.** A "thought" entry its turn ends first, as when the session
+  ends or the harness refuses it for the usage limit, and a "worked for" entry
+  its session ends first, show `interrupted`, with how long each went on up
+  to that end, or none where that end is not known.
 - **The clone.** The making of a session's clone
   ([Stages](runs.md#stages)) is an entry: a line with how long it took, then,
   when it failed, the error.
@@ -349,21 +360,23 @@ under its session's heading.
   open on click to where its settings and prompt files came from.
 - **Views.** The page shows the transcripts as the agent's own default view
   does or, with the verbose switch, as its verbose view does, such as the
-  agent's thinking only with the switch, but never what the agent was told
-  besides its prompts.
+  agent's thinking open only with the switch, but never what the agent was
+  told besides its prompts.
 - **Prompts.** The brief and each follow-up are entries, each shown as its
   first line.
 - **Durations.** Each entry that runs shows how long it ran, keeping up while
   it runs and stopping where its session ends first, or none where that end is
   not known, and its line leaves that out of its account.
 - **Working.** While a followed session goes on with no entry running, it ends
-  with the agent's step in progress: an entry that runs from the session's last
-  entry, saying "working". While the session waits for the usage limit to
-  reset, the step says so and until when instead, such as "waiting for the
-  usage limit, until 14:30".
+  with a line saying "working" and how long its turn has gone on so far,
+  keeping up. While the session waits for the usage limit to reset, the line
+  says so and until when instead, such as "waiting for the usage limit, until
+  14:30".
 - **Folding.** An entry opens on click to what its line leaves out: a tool
   call's full input and result and its sub-agent's work, the clone's error, the
-  maintenance command's output, or the full text of the brief or a follow-up.
+  maintenance command's output, the full text of the brief or a follow-up, or
+  the thinking a "thought" entry stands for; a "thought" entry with no
+  thinking text does not open.
   One that failed starts open. A sub-agent's work starts folded to the line of
   the call that started it, with the count of its entries.
 - **Verbose.** The verbose switch is set once for the page, and opens
