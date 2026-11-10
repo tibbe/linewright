@@ -694,7 +694,7 @@ async fn follow_logs(
                         Event::default()
                             .event(LINE_EVENT)
                             .id(id.to_string())
-                            .data(transcript::json_line(line).trim_end())
+                            .data(transcript::wire_line(line))
                     })
                     .collect(),
                 Ok(None) => {

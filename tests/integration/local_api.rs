@@ -936,14 +936,26 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     assert_eq!(
         before_its_result,
         format!(
-            "{so_far} 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running\n"
+            "{so_far} 0:04  thought, 1s\n 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running\n"
         )
     );
     assert_eq!(code, Some(0));
-    assert_eq!(shown.lines().count(), 19, "{shown}");
+    assert_eq!(shown.lines().count(), 21, "{shown}");
     assert!(
         shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
         "{shown}"
+    );
+    assert!(shown.ends_with("\n 2:59  worked for 2m 59s\n"), "{shown}");
+    let kinds: Vec<serde_json::Value> = json_objects(&json)
+        .into_iter()
+        .map(|line| line["type"].clone())
+        .filter(|kind| !["tool", "event", "context"].contains(&kind.as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "run", "session", "clone", "brief", "thinking", "message", "message", "message"
+        ]
     );
     let second_call = |lines: &str| -> Vec<serde_json::Value> {
         json_objects(lines)
@@ -1066,7 +1078,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
     assert_eq!(resumed[0].id.as_deref(), Some("1/triage-1:1.1.1"));
     assert_eq!([&first[..], &resumed[..]].concat(), whole);
     let (end, lines) = whole.split_last().unwrap();
-    assert_eq!(lines.len(), 21);
+    assert_eq!(lines.len(), 23);
     assert_eq!(*end, event(None, "end", r#"{"run":"1/triage-1"}"#));
     answering.stop().await;
 }

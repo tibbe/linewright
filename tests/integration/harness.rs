@@ -13,7 +13,7 @@ use linewright::harness::{
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
 use linewright::session_env::{Given, PassEnv, SessionEnv, SetEnv};
-use linewright::transcript::{Prompt, What};
+use linewright::transcript::{Course, Prompt, What};
 use linewright::work_settings::Effort;
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -936,9 +936,32 @@ async fn each_turn_starts_when_the_harnesss_clock_says() {
         started,
         [
             Some(at("2026-10-01T12:00:01Z")),
-            Some(at("2026-10-01T12:05:02Z"))
+            Some(at("2026-10-01T12:05:03Z"))
         ]
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn each_turn_ends_when_the_harnesss_clock_says_the_agents_output_ended() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(FakeClock::new());
+    let harness = ClaudeCode {
+        clock: clock.clone(),
+        ..harness_streaming(dir.path(), &[saying("Not done.")])
+    };
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await;
+
+    assert!(turn.is_err(), "a turn with no result fails");
+    let record = linewright::transcript::SessionRecord::read(dir.path()).unwrap();
+    let ends: Vec<_> =
+        linewright::transcript::parse(&record, linewright::transcript::Written::Whole)
+            .turns
+            .iter()
+            .map(|kept| kept.end)
+            .collect();
+    assert_eq!(ends, [Course::Ended(Some(at("2026-10-01T12:00:02Z")))]);
 }
 
 #[test_log::test(tokio::test)]

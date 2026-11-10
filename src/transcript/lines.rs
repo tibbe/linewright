@@ -9,9 +9,9 @@ use serde_json::Value;
 
 use super::{
     Account, After, CallResult, Change, Changed, Clock, CloneEnded, Course, Entry, EntryAt, Feed,
-    INTERRUPTED, Layout, Made, Maintenance, MaintenanceEnded, MaintenanceRan, MaintenanceStatus,
-    Numbering, Place, Prompt, ReadTo, START, Session, SessionClone, SessionRecord, Transcript,
-    Turn, What, shown_command, summary, whole_seconds,
+    Held, INTERRUPTED, Lasted, Layout, Made, Maintenance, MaintenanceEnded, MaintenanceRan,
+    MaintenanceStatus, Numbering, Place, Prompt, ReadTo, START, Session, SessionClone,
+    SessionRecord, Transcript, Turn, What, shown_command, summary, whole_seconds,
 };
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
@@ -143,9 +143,8 @@ pub(crate) enum EntryLine {
     Message {
         text: String,
     },
-    Thinking {
-        text: String,
-    },
+    Thought(ThoughtLine),
+    WorkedFor(Span),
     Context {
         text: String,
     },
@@ -159,6 +158,87 @@ pub(crate) enum EntryLine {
     Clone(CloneLine),
     Maintenance(SessionMaintenanceLine),
 }
+
+/// A thought's line: how long it went on and, in full, what its record
+/// holds of it, if anything.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ThoughtLine {
+    #[serde(flatten)]
+    pub(crate) span: Span,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) in_full: Option<ThoughtInFull>,
+}
+
+/// What a thought's line in full shows of it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ThoughtInFull {
+    Text(String),
+    /// The agent's block that holds it encrypted.
+    Other(Value),
+}
+
+/// How long a thought or a turn went on, where that is known, and whether
+/// what it is of was cut short (`docs/specs/design_system.md`, Transcripts,
+/// Cut short).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Span {
+    pub(crate) duration_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) interrupted: bool,
+}
+
+impl Span {
+    /// How long something that has ended `lasted`, unless it runs still.
+    fn of(lasted: Lasted) -> Option<Span> {
+        let (duration_seconds, interrupted) = match lasted {
+            Lasted::Running { .. } => return None,
+            Lasted::Took { seconds } => (seconds, false),
+            Lasted::Interrupted { seconds } => (seconds, true),
+        };
+        Some(Span {
+            duration_seconds,
+            interrupted,
+        })
+    }
+
+    /// A thought's line as text: `thought`, `interrupted` if it was cut
+    /// short, then how long it went on.
+    fn thought(self) -> String {
+        let said = cut_short(THOUGHT, self.interrupted);
+        match self.duration_seconds {
+            Some(seconds) => with_duration(&said, whole_seconds(seconds)),
+            None => said,
+        }
+    }
+
+    /// A turn's last line as text: `worked for` and how long, then
+    /// `interrupted` if its session ended first.
+    fn worked_for(self) -> String {
+        let worked = match self.duration_seconds {
+            Some(seconds) => Phrase::from(format!("{WORKED_FOR} "))
+                .duration(whole_seconds(seconds), None)
+                .to_string(),
+            None => WORKED_FOR.to_string(),
+        };
+        cut_short(&worked, self.interrupted)
+    }
+}
+
+/// `said`, then `interrupted` if what it says is of was `interrupted`.
+pub(crate) fn cut_short(said: &str, interrupted: bool) -> String {
+    if interrupted {
+        format!("{said}, {INTERRUPTED}")
+    } else {
+        said.to_string()
+    }
+}
+
+/// What a thought's line says it is.
+pub(crate) const THOUGHT: &str = "thought";
+
+/// What a turn's last line says it is.
+pub(crate) const WORKED_FOR: &str = "worked for";
 
 /// The `account` key of a line of an entry whose fields as JSON hold how far
 /// it ran, `course`: there only for one that was interrupted.
@@ -563,7 +643,7 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
         if let Some(maintenance) = &session.maintenance {
             lines.push(stamper.maintenance(maintenance, maintenance.at()));
         }
-        for turn in &session.turns {
+        for (n, turn) in session.turns.iter().enumerate() {
             if let Some(what) = prompt_line(turn, verbosity) {
                 lines.push(stamper.line(turn.started_at, Under::Session, what));
             }
@@ -575,6 +655,7 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
                 &mut stamper,
                 &mut lines,
             );
+            lines.extend(worked_for_line(session, n, &mut stamper));
         }
     }
     lines
@@ -590,7 +671,7 @@ fn entry_lines(
 ) {
     for entry in entries {
         if let Some(what) = entry_line(entry, session, verbosity) {
-            lines.push(stamper.line(entry.at, under.clone(), what));
+            lines.push(stamper.line(shown_at(entry), under.clone(), what));
         }
         if let What::Tool(call) = &entry.what {
             let sub_agent = under.sub_agent(&call.id);
@@ -680,11 +761,38 @@ fn prompt_line(turn: &Turn, verbosity: Verbosity) -> Option<EntryLine> {
     }
 }
 
+/// The line that ends the `turn`th turn, from 0, of `session`, once it has
+/// ended.
+fn worked_for_line(session: &Session, turn: usize, stamper: &mut Stamper) -> Option<Line> {
+    let span = Span::of(session.worked_for(turn)?)?;
+    let at = session.turn_ended_at(turn);
+    Some(stamper.line(at, Under::Session, EntryLine::WorkedFor(span)))
+}
+
+/// When `entry` happened as its line shows it: a thought once it ended,
+/// where that is known.
+fn shown_at(entry: &Entry) -> Option<Timestamp> {
+    match &entry.what {
+        What::Thought(thought) => thought.ended_at().or(entry.at),
+        What::Message(_) | What::Context(_) | What::Tool(_) | What::Event(_) | What::Other(_) => {
+            entry.at
+        }
+    }
+}
+
 fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<EntryLine> {
     let full = verbosity == Verbosity::Full;
     Some(match &entry.what {
         What::Message(text) => EntryLine::Message { text: text.clone() },
-        What::Thinking(text) if full => EntryLine::Thinking { text: text.clone() },
+        What::Thought(thought) => EntryLine::Thought(ThoughtLine {
+            span: Span::of(thought.lasted(entry.at))?,
+            in_full: match &thought.held {
+                _ if !full => None,
+                Held::Text(text) if text.trim().is_empty() => None,
+                Held::Text(text) => Some(ThoughtInFull::Text(text.clone())),
+                Held::Redacted(block) => Some(ThoughtInFull::Other(block.clone())),
+            },
+        }),
         What::Context(text) if full => EntryLine::Context { text: text.clone() },
         What::Event(event) if full => EntryLine::Event {
             event: event.clone(),
@@ -692,7 +800,7 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
         What::Other(other) if full => EntryLine::Other {
             other: other.clone(),
         },
-        What::Thinking(_) | What::Context(_) | What::Event(_) | What::Other(_) => return None,
+        What::Context(_) | What::Event(_) | What::Other(_) => return None,
         What::Tool(call) => EntryLine::Tool(ToolLine {
             tool_use_id: call.id.clone(),
             tool: call.tool.name().to_string(),
@@ -815,6 +923,7 @@ fn changed_line(
             let what = prompt_line(turn, verbosity)?;
             return Some(stamper.line(turn.started_at, Under::Session, what));
         }
+        Change::TurnEnded(turn) => return worked_for_line(session, turn, stamper),
         Change::Added(place) => (place, None),
         Change::Ended(place, ended_at) => (place, Some(ended_at)),
         Change::WaitBegan(_) | Change::WaitEnded(_) | Change::SessionEnded => return None,
@@ -835,7 +944,11 @@ fn changed_line(
     };
     let entry = session.entry(&at);
     let what = entry_line(entry, session, verbosity)?;
-    Some(stamper.line(ended_at.unwrap_or(entry.at), under(session, &at), what))
+    Some(stamper.line(
+        ended_at.unwrap_or(shown_at(entry)),
+        under(session, &at),
+        what,
+    ))
 }
 
 /// What the entry `at` is under: its session, or the calls that started the
@@ -891,7 +1004,15 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
     let indent = "  ".repeat(stamp.under.depth());
     let (first, rest): (String, Vec<String>) = match what {
         EntryLine::Message { text } => block("", text),
-        EntryLine::Thinking { text } => block(&paint.yellow("thinking: "), text),
+        EntryLine::Thought(ThoughtLine { span, in_full }) => (
+            paint.yellow(span.thought()),
+            match in_full {
+                None => vec![],
+                Some(ThoughtInFull::Text(text)) => indented("", text),
+                Some(ThoughtInFull::Other(other)) => vec![format!("  other: {other}")],
+            },
+        ),
+        EntryLine::WorkedFor(span) => (span.worked_for(), vec![]),
         EntryLine::Context { text } => block("context: ", text),
         EntryLine::Event { event } => (format!("event: {event}"), vec![]),
         EntryLine::Other { other } => (format!("other: {other}"), vec![]),
@@ -1020,10 +1141,62 @@ pub(crate) fn elapsed(seconds: i64) -> String {
 }
 
 pub fn json_lines(transcript: &Transcript, verbosity: Verbosity) -> String {
-    lines(transcript, verbosity).iter().map(json_line).collect()
+    lines(transcript, verbosity)
+        .iter()
+        .filter_map(json_line)
+        .collect()
 }
 
-/// `line` as JSON, ending in a newline.
-pub fn json_line(line: &Line) -> String {
-    serde_json::to_string(line).expect("the lines serialize") + "\n"
+/// `line` as `logs --json` gives it, ending in a newline, following the
+/// agent's own JSON output: none of a turn's "worked for" line, and of a
+/// thought only its text, in full, where its record holds any
+/// (`docs/specs/monitoring.md`, logs, The transcripts).
+pub fn json_line(line: &Line) -> Option<String> {
+    let json = match line {
+        Line::Entry(stamped) => match &stamped.what {
+            EntryLine::Thought(ThoughtLine {
+                in_full: Some(ThoughtInFull::Text(text)),
+                ..
+            }) => serde_json::to_string(&Thinking {
+                stamp: &stamped.stamp,
+                text,
+            }),
+            EntryLine::Thought(ThoughtLine {
+                in_full: Some(ThoughtInFull::Other(other)),
+                ..
+            }) => serde_json::to_string(&Line::Entry(Box::new(Stamped {
+                stamp: stamped.stamp.clone(),
+                what: EntryLine::Other {
+                    other: other.clone(),
+                },
+            }))),
+            EntryLine::Thought(_) | EntryLine::WorkedFor(_) => return None,
+            EntryLine::Brief { .. }
+            | EntryLine::FollowUp { .. }
+            | EntryLine::Message { .. }
+            | EntryLine::Context { .. }
+            | EntryLine::Event { .. }
+            | EntryLine::Other { .. }
+            | EntryLine::Tool(_)
+            | EntryLine::Clone(_)
+            | EntryLine::Maintenance(_) => serde_json::to_string(line),
+        },
+        Line::Header(_) => serde_json::to_string(line),
+    };
+    Some(json.expect("the lines serialize") + "\n")
+}
+
+/// `line` whole as JSON, as the API's events carry it for the CLI to show as
+/// text or as JSON.
+pub fn wire_line(line: &Line) -> String {
+    serde_json::to_string(line).expect("the lines serialize")
+}
+
+/// A thought as the agent's own JSON output gives it.
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "thinking")]
+struct Thinking<'a> {
+    #[serde(flatten)]
+    stamp: &'a Stamp,
+    text: &'a str,
 }
