@@ -207,7 +207,8 @@ async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it
     paused.reached().await;
 
     let stop = tokio::spawn(served.serving.stop());
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    eventually(|| !info_with(&log, "the run is applying its result; left to finish").is_empty())
+        .await;
     let stopped_before_release = stop.is_finished();
     paused.release();
 
@@ -223,11 +224,6 @@ async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it
     assert_eq!(labels(&triaged), ["bug", "ready-for-agent"]);
     assert_eq!(last_comment(&triaged), TRIAGE_BRIEF);
     assert_eq!(ended_runs(&served.world), [Ending::Done]);
-    assert!(
-        !info_with(&log, "the run is applying its result; left to finish").is_empty(),
-        "{}",
-        log.text()
-    );
 }
 
 fn run(id: &str) -> linewright::runs::RunId {
