@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or(scenario.turn)
     };
     for step in steps {
-        if let Some(status) = carry_out(step, &args)? {
+        if let Some(status) = carry_out(step, &args, scenario.stamped_ahead_millis)? {
             std::process::exit(status);
         }
     }
@@ -82,12 +82,27 @@ fn scenario(invoked: &OsStr) -> anyhow::Result<Scenario> {
 }
 
 /// Carries out `step`, the fake having been given `args`, returning the
-/// status to exit with if the step ends the fake.
-fn carry_out(step: Step, args: &[OsString]) -> anyhow::Result<Option<i32>> {
+/// status to exit with if the step ends the fake. Streamed events are
+/// stamped as [`Scenario::stamped_ahead_millis`], `stamped_ahead_millis`,
+/// says.
+fn carry_out(
+    step: Step,
+    args: &[OsString],
+    stamped_ahead_millis: Option<i64>,
+) -> anyhow::Result<Option<i32>> {
     match step {
         Step::Say(line) => say(&line)?,
         Step::Stream(events) => {
-            for event in events {
+            for mut event in events {
+                if let Some(ahead) = stamped_ahead_millis
+                    && event.get("timestamp").is_none()
+                {
+                    let now = std::time::SystemTime::now();
+                    let by = Duration::from_millis(ahead.unsigned_abs());
+                    let at = if ahead < 0 { now - by } else { now + by };
+                    event["timestamp"] =
+                        serde_json::Value::String(humantime::format_rfc3339_millis(at).to_string());
+                }
                 say(&event.to_string())?;
             }
         }

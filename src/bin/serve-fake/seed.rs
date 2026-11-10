@@ -130,6 +130,7 @@ fn designing() -> Vec<Step> {
 
 fn implementing() -> Vec<Step> {
     let reading = [
+        thinking("The ticket asks for the session's duration at the heading's right."),
         said("I'll read the ticket and the code the heading comes from."),
         called("i1", "Bash", &json!({"command": "git log --oneline -5"})),
         returned("i1", "c0ffee1 Start"),
@@ -140,6 +141,7 @@ fn implementing() -> Vec<Step> {
     let testing = (1..=8).flat_map(|round| {
         let id = format!("test-{round}");
         [
+            thought(),
             said(&format!("Round {round}: running the run page's tests.")),
             called(&id, "Bash", &json!({"command": "cargo test run_page"})),
             returned(
@@ -186,6 +188,22 @@ fn said(text: &str) -> Value {
     json!({
         "type": "assistant",
         "message": {"content": [{"type": "text", "text": text}]},
+    })
+}
+
+/// Thinking that shows `text`.
+fn thinking(text: &str) -> Value {
+    json!({
+        "type": "assistant",
+        "message": {"content": [{"type": "thinking", "thinking": text, "signature": "s"}]},
+    })
+}
+
+/// Thinking that shows no text, as Claude Code omits it by default.
+fn thought() -> Value {
+    json!({
+        "type": "assistant",
+        "message": {"content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
     })
 }
 
