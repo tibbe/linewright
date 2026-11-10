@@ -367,11 +367,11 @@ under its session's heading.
 - **Durations.** Each entry that runs shows how long it ran, keeping up while
   it runs and stopping where its session ends first, or none where that end is
   not known, and its line leaves that out of its account.
-- **Working.** While a followed session goes on with no entry running, it ends
-  with a line saying "working" and how long its turn has gone on so far,
-  keeping up. While the session waits for the usage limit to reset, the line
-  says so and until when instead, such as "waiting for the usage limit, until
-  14:30".
+- **Working.** While a followed session's turn goes on with no entry running,
+  the session ends with a line saying "working" and how long its turn has
+  gone on so far, keeping up; between turns no such line shows. While the
+  session waits for the usage limit to reset, the line says so and until when
+  instead, such as "waiting for the usage limit, until 14:30".
 - **Folding.** An entry opens on click to what its line leaves out: a tool
   call's full input and result and its sub-agent's work, the clone's error, the
   maintenance command's output, the full text of the brief or a follow-up, or
