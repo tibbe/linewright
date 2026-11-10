@@ -61,6 +61,7 @@ mod startup;
 mod status;
 mod store;
 mod transcript;
+mod update_push;
 mod usage_limit;
 mod web;
 mod webhook;

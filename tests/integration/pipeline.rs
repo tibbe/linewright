@@ -2199,7 +2199,7 @@ pub(crate) async fn moved_past_with(
     (world, pr)
 }
 
-fn resolve_in(dir: &std::path::Path, files: &[(&str, &str)]) {
+pub(crate) fn resolve_in(dir: &std::path::Path, files: &[(&str, &str)]) {
     for (path, contents) in files {
         std::fs::write(dir.join(path), contents).unwrap();
     }

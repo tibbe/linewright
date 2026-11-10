@@ -27,7 +27,7 @@ use crate::domain::{
     Timestamp, Windows, label,
 };
 use crate::environment;
-use crate::git::{self, Updated, WorkState};
+use crate::git::{self, CommitId, WorkState};
 use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
@@ -310,8 +310,15 @@ enum Pushed {
     Failed(anyhow::Error),
 }
 
-async fn push(shell: &Shell, dir: &Path, branch: &str, mode: PushMode) -> Pushed {
-    match shell.store.push(dir, branch, mode).await {
+/// Pushes `commit` of the clone in `dir` to `branch`.
+async fn push(
+    shell: &Shell,
+    dir: &Path,
+    commit: &CommitId,
+    branch: &str,
+    mode: PushMode,
+) -> Pushed {
+    match shell.store.push(dir, commit, branch, mode).await {
         Ok(()) => Pushed::Done,
         Err(PushError::PushProtection { secrets }) => {
             Pushed::Protected(secrets.redacted(shell.secrets.redaction()))
@@ -336,19 +343,20 @@ fn pushed(branch: &str, pushed: Pushed, again: TryAgain) -> Result<(), Failure> 
     }
 }
 
-/// Pushes a session's finished result to `branch`. A push GitHub's push
-/// protection refuses over a secret sends the result back to its session,
-/// and one GitHub refuses for a missing permission is handed back with how
-/// to `again`.
+/// Pushes `commit` of a session's finished result to `branch`. A push
+/// GitHub's push protection refuses over a secret sends the result back to
+/// its session, and one GitHub refuses for a missing permission is handed
+/// back with how to `again`.
 async fn push_result(
     shell: &Shell,
     ctx: &Ctx,
     dir: &Path,
+    commit: &CommitId,
     branch: &str,
     mode: PushMode,
     again: TryAgain,
 ) -> Result<(), Rejection> {
-    match push(shell, dir, branch, mode).await {
+    match push(shell, dir, commit, branch, mode).await {
         Pushed::Protected(secrets) => Err(Rejection::Retry {
             followup: prompts::pushed_secret(&ctx.with.briefs.prompts, &secrets),
             note: Some(hand_back::protected_note(&secrets)),
@@ -662,6 +670,7 @@ impl Workspace {
         Workspace::create(shell, clone_dir, async |dir| {
             lease.copy_to(dir).await?;
             drop(lease);
+            git::configure(dir, &[KEEPS_REFLOGS]).await?;
             shell
                 .store
                 .fetch(dir)
@@ -680,7 +689,7 @@ impl Workspace {
     /// A plain clone of `branch` in `clone_dir`.
     async fn clone_in(shell: &Shell, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
         Workspace::create(shell, clone_dir, async |dir| {
-            shell.store.clone_repo(dir, branch, &[]).await
+            shell.store.clone_repo(dir, branch, &[KEEPS_REFLOGS]).await
         })
         .await
     }
@@ -723,6 +732,10 @@ impl Workspace {
         })
     }
 }
+
+/// The git setting that has a run's clone log its branch's updates from
+/// its checkout on, whatever the environment or the host's git config say.
+const KEEPS_REFLOGS: (&str, &str) = ("core.logAllRefUpdates", "true");
 
 /// The git settings of every clone a run makes: Linewright's identity, and
 /// no maintenance git starts by itself.
@@ -1728,13 +1741,15 @@ async fn keep_unfinished_work(shell: &Shell, dir: &Path, upstream: &str, branch:
 /// Keeps the work of a run on a pull request that stopped before it finished
 /// on the pull request's branch, unless its session changed nothing since
 /// the clone stood at `before`, the pull request closed or the work holds a
-/// secret: docs/specs/runs.md, "Ending". The push leases the branch at
-/// `start`, so commits others pushed since are not overwritten.
+/// secret: docs/specs/runs.md, "Ending". The work is what the branch holds
+/// past `start`, and the push leases the branch at `pushed`, what the run
+/// last pushed to it, so commits others pushed since are not overwritten.
 async fn keep_unfinished_pull_work(
     shell: &Shell,
     dir: &Path,
     pr: &Pull,
     start: &str,
+    pushed: &str,
     before: &WorkState,
 ) -> Kept {
     let kept = async {
@@ -1744,7 +1759,7 @@ async fn keep_unfinished_pull_work(
             return Ok(Kept::Nothing);
         }
         let lease = PushMode::Lease {
-            expected: start.to_string(),
+            expected: pushed.to_string(),
         };
         let upstream = shell.upstream();
         push_unfinished(shell, dir, &pr.head_ref, start, &[&upstream], lease).await
@@ -1772,7 +1787,8 @@ async fn push_unfinished(
     if let Some(held) = held_secret(shell, dir, &bases).await? {
         return Ok(Kept::Held(held));
     }
-    match push(shell, dir, branch, mode).await {
+    let head = git::head(dir).await?;
+    match push(shell, dir, &head, branch, mode).await {
         Pushed::Done => Ok(Kept::Pushed),
         Pushed::Protected(secrets) => Ok(Kept::Protected(secrets)),
         Pushed::Refused(reason) => Ok(Kept::Refused(reason)),
@@ -1890,10 +1906,12 @@ async fn implement(
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
+        let head = git::head(&ws.dir).await?;
         let pushing = push_result(
             shell,
             ctx,
             &ws.dir,
+            &head,
             &branch,
             PushMode::Replace,
             TryAgain::Relabel,
@@ -1998,7 +2016,8 @@ async fn push_update(
 ) -> Result<(), Failure> {
     let store = &shell.store;
     let linewright = &shell.policy.linewright;
-    if git::head(dir).await.map_err(infra)? == start {
+    let head = git::head(dir).await.map_err(infra)?;
+    if head.as_str() == start {
         info!(pr = pr.number.0, "already up to date");
         return Ok(());
     }
@@ -2017,25 +2036,18 @@ async fn push_update(
         expected: start.to_string(),
     };
     ctx.cancel.begin_applying()?;
-    let outcome = push(shell, dir, &pr.head_ref, lease).await;
+    let outcome = push(shell, dir, &head, &pr.head_ref, lease).await;
     pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
 
 /// Brings the branch checked out in `dir` up to date with the default
-/// branch, by the merge method's update method, and returns the conflict it
-/// stopped on, if any.
-async fn update_branch(shell: &Shell, dir: &Path) -> Result<Option<git::Conflict>, Failure> {
+/// branch, by the merge method's update method.
+async fn update_branch(shell: &Shell, dir: &Path) -> Result<git::Updated, Failure> {
     let default_branch = &shell.settings.default_branch;
     let method = shell.policy.merge_method.update_method();
-    Ok(
-        match git::update(dir, default_branch, method)
-            .await
-            .map_err(infra)?
-        {
-            Updated::Conflict(conflict) => Some(conflict),
-            Updated::UpToDate | Updated::Updated => None,
-        },
-    )
+    git::update(dir, default_branch, method)
+        .await
+        .map_err(infra)
 }
 
 /// Works `pr`, of `ticket`, at `task`, bringing the branch up to date first
@@ -2066,8 +2078,8 @@ async fn pull_work(
             .await
             .map_err(infra)?;
         let start = git::head(&ws.dir).await.map_err(infra)?;
-        let conflict = update_branch(shell, &ws.dir).await?;
-        if conflict.is_none() {
+        let updated = update_branch(shell, &ws.dir).await?;
+        if updated.conflict().is_none() {
             return push_update(shell, ctx, pr, &ws.dir, &start).await;
         }
     }
@@ -2076,16 +2088,21 @@ async fn pull_work(
     })
     .await?;
     let ended = |failure| opened.ended(shell, failure);
-    let conflict = match task {
-        Task::Rework { update: false } => None,
+    let updated = match task {
+        Task::Rework { update: false } => git::Updated::UpToDate,
         Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
             update_branch(shell, &ws.dir).await.map_err(ended)?
         }
     };
-    let store = &shell.store;
-    let lease = PushMode::Lease {
-        expected: start.clone(),
+    let upstream = shell.upstream();
+    let took_in = if updated.took_in() {
+        let upstream = git::commit(&ws.dir, &upstream).await;
+        Some(upstream.map_err(infra).map_err(ended)?)
+    } else {
+        None
     };
+    let conflict = updated.conflict();
+    let store = &shell.store;
     let failures = match task {
         Task::FixCi(names) => store
             .check_failures(pr.number, names)
@@ -2107,7 +2124,6 @@ async fn pull_work(
         return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };
     let dir = &ws.dir;
-    let upstream = shell.upstream();
     let own_commits_tip = if conflict.is_some() { &start } else { "HEAD" };
     let left_unfinished = git::unfinished_commits(dir, &upstream, own_commits_tip)
         .await
@@ -2157,9 +2173,13 @@ async fn pull_work(
         }
         Ok(result)
     };
+    let on_remote = &Mutex::new(start.clone());
     let keep = async || Stopped {
         branch: &pr.head_ref,
-        kept: keep_unfinished_pull_work(shell, dir, pr, &start, &before).await,
+        kept: {
+            let pushed = lock_set_whole(on_remote).clone();
+            keep_unfinished_pull_work(shell, dir, pr, &start, &pushed, &before).await
+        },
         try_again: TryAgain::Reassign,
     };
     let shown = Mutex::new(Shown {
@@ -2195,23 +2215,35 @@ async fn pull_work(
             &arrived,
         )))
     };
-    let (start, lease) = (&start, &lease);
+    let (start, took_in) = (&start, took_in.as_ref());
     let (filed_gaps, attachments) = (&ticket.filed_gaps(), &attachments);
     let begin = |(mut result, pr_now, read_at): (PullWorkResult, Pull, Timestamp)| async move {
         drop_filed_gaps(&mut result, filed_gaps);
         post_attachments(shell, ctx, attachments, &mut result).await?;
-        if !matches!(result, PullWorkResult::Done { .. }) || git::head(dir).await? == *start {
+        if !matches!(result, PullWorkResult::Done { .. }) {
             return Ok((result, pr_now, read_at));
         }
-        let pushing = push_result(
-            shell,
-            ctx,
-            dir,
-            &pr.head_ref,
-            lease.clone(),
-            TryAgain::Reassign,
-        );
-        pushing.await.map_err(Refused::Writing)?;
+        let head = git::head(dir).await?;
+        let pushed = lock_set_whole(on_remote).clone();
+        let update_tip = match took_in {
+            Some(default) => git::update_tip(dir, &pr.head_ref, start, default).await?,
+            None => None,
+        };
+        for push in pull_work::result_pushes(start, &pushed, update_tip.as_ref(), &head) {
+            let pushing = push_result(
+                shell,
+                ctx,
+                dir,
+                push.commit,
+                &pr.head_ref,
+                PushMode::Lease {
+                    expected: push.expected.to_string(),
+                },
+                TryAgain::Reassign,
+            );
+            pushing.await.map_err(Refused::Writing)?;
+            lock_set_whole(on_remote).clone_from(push.commit);
+        }
         Ok((result, pr_now, read_at))
     };
     let ((result, pr_now, read_at), turn) =

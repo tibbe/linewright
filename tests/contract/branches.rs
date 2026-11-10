@@ -34,7 +34,11 @@ async fn a_clone_is_of_the_branch_asked_with_the_settings_given(sandbox: Sandbox
         .clone_repo(&clone, &pushed.name, &[("user.name", "Cloner")])
         .await?;
 
-    equal("the head", &git::head(&clone).await?, &pushed.head)?;
+    equal(
+        "the head",
+        &String::from(git::head(&clone).await?),
+        &pushed.head,
+    )?;
     let branch = git::git(&clone, &["branch", "--show-current"]).await?;
     equal("the branch checked out", branch.trim(), &pushed.name)?;
     let contents = tokio::fs::read_to_string(clone.join("cloned.txt")).await?;
@@ -201,7 +205,12 @@ async fn a_push_with_a_stale_lease_is_refused_and_leaves_the_branch(
     let expected = pushed.head.clone();
     let refused = sandbox
         .store()
-        .push(&stale, &pushed.name, PushMode::Lease { expected })
+        .push(
+            &stale,
+            &git::head(&stale).await?,
+            &pushed.name,
+            PushMode::Lease { expected },
+        )
         .await;
 
     if let Ok(()) = refused {
@@ -209,7 +218,7 @@ async fn a_push_with_a_stale_lease_is_refused_and_leaves_the_branch(
     }
     replaced_reads(&sandbox, &pushed.name, Some("moved\n")).await?;
     let clone = sandbox.clone(&pushed.name).await?;
-    equal("the head", &git::head(&clone).await?, &head)
+    equal("the head", &String::from(git::head(&clone).await?), &head)
 }
 
 async fn a_deleted_branch_is_gone(sandbox: Sandbox) -> Result<()> {

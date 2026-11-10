@@ -780,7 +780,7 @@ async fn run(
         )
         .await
         .context("cloning the default branch")?;
-    let commit = git::head(&repo).await?;
+    let commit: String = git::head(&repo).await?.into();
     record.commit = Some(commit.clone());
     record.save(dir)?;
     let tmp = dir.join(kept::TMP);

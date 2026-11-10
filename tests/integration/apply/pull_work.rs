@@ -4,7 +4,7 @@ use linewright::domain::{
     CheckFailure, Comment, Login, Mergeability, Number, Pull, PullState, Rebaseability, Review,
     ReviewState, Thread, Timestamp, UpdateMethod,
 };
-use linewright::git::Conflict;
+use linewright::git::{CommitId, Conflict};
 use linewright::prompts::{History, PullTask};
 use linewright::reconcile::WorkKind;
 use linewright::results::ThreadReply;
@@ -307,6 +307,60 @@ fn late_feedback_in_a_thread_keeps_only_its_late_comments() {
 #[case::unchanged_work_on_a_closed_pull_request_is_not(false, false, false)]
 fn a_stopped_pull_request_runs_work(#[case] changed: bool, #[case] open: bool, #[case] kept: bool) {
     assert_eq!(keeps_work(changed, open), kept);
+}
+
+/// The pushes, as `(commit, leased on)`, that apply a result at `head` of a
+/// run that started at `start`, whose branch holds `on_remote` and whose
+/// update ended at `update_tip`.
+fn pushes(
+    start: &str,
+    on_remote: &str,
+    update_tip: Option<&str>,
+    head: &str,
+) -> Vec<(String, String)> {
+    let [start, on_remote, head] = [start, on_remote, head].map(CommitId::from);
+    let update_tip = update_tip.map(CommitId::from);
+    result_pushes(&start, &on_remote, update_tip.as_ref(), &head)
+        .into_iter()
+        .map(|push| (push.commit.to_string(), push.expected.to_string()))
+        .collect()
+}
+
+fn pushed(pushes: &[(&str, &str)]) -> Vec<(String, String)> {
+    pushes
+        .iter()
+        .map(|(commit, expected)| (commit.to_string(), expected.to_string()))
+        .collect()
+}
+
+#[rstest]
+#[case::a_run_that_updated_and_then_changed_the_branch_pushes_the_update_then_its_work(
+    "start", "start", Some("tip"), "head", &[("tip", "start"), ("head", "tip")]
+)]
+#[case::a_run_whose_update_changed_nothing_pushes_once(
+    "start", "start", None, "head", &[("head", "start")]
+)]
+#[case::a_run_whose_session_changed_nothing_after_the_update_pushes_once(
+    "start", "start", Some("head"), "head", &[("head", "start")]
+)]
+#[case::a_run_whose_update_tip_is_its_start_pushes_once(
+    "start", "start", Some("start"), "head", &[("head", "start")]
+)]
+#[case::a_retry_after_the_update_was_pushed_pushes_only_the_runs_work(
+    "start", "tip", Some("tip"), "head", &[("head", "tip")]
+)]
+#[case::a_run_whose_work_is_on_the_remote_already_pushes_nothing(
+    "start", "head", Some("tip"), "head", &[]
+)]
+#[case::a_run_that_changed_nothing_pushes_nothing("start", "start", None, "start", &[])]
+fn the_pushes_that_apply_a_pull_request_runs_result(
+    #[case] start: &str,
+    #[case] on_remote: &str,
+    #[case] update_tip: Option<&str>,
+    #[case] head: &str,
+    #[case] expected: &[(&str, &str)],
+) {
+    assert_eq!(pushes(start, on_remote, update_tip, head), pushed(expected));
 }
 
 /// The work of a case, which owns what it refers to.
