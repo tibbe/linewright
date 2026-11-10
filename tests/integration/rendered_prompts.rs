@@ -219,6 +219,7 @@ fn rework_is_filled_as_before() {
                 threads: vec![],
             },
             conflict: Some(&conflict),
+            history: prompts::History::Series,
         },
         Some(&unfinished()),
         std::path::Path::new(ATTACHMENTS),
@@ -245,6 +246,7 @@ fn fix_ci_is_filled_as_before() {
         &PullTask::FixCi {
             failures: &failures,
             conflict: None,
+            history: prompts::History::Series,
         },
         None,
         std::path::Path::new(ATTACHMENTS),
@@ -386,6 +388,7 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
                 threads: vec![],
             },
             conflict: None,
+            history: prompts::History::OnTop,
         },
         None,
         std::path::Path::new(ATTACHMENTS),

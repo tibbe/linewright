@@ -64,6 +64,19 @@ impl Policy {
         Windows::at(now, self.spec_lookback, self.done_window)
     }
 
+    /// Whether the repository's pull requests are squashed when they merge
+    /// (`docs/specs/pull_requests.md`, "Merging"): the auto-merge method is
+    /// squash, or, without auto-merge, squash is the only method allowed.
+    pub fn squashes(&self) -> bool {
+        match self.auto_merge {
+            Some(method) => method == MergeMethod::Squash,
+            None => {
+                !self.allowed_merge_methods.contains(MergeMethod::Merge)
+                    && !self.allowed_merge_methods.contains(MergeMethod::Rebase)
+            }
+        }
+    }
+
     /// Whether Linewright rebases a pull request GitHub reports not
     /// rebaseable: when the repository allows rebase merges and updates do
     /// not always merge.

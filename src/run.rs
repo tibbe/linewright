@@ -2104,7 +2104,12 @@ async fn pull_work(
         Task::FixCi(_) => PullJob::FixCi(&failures),
         Task::Update => PullJob::Update,
     };
-    let Some(pull_task) = pull_work::session_task(job, conflict.as_ref()) else {
+    let history = if shell.policy.squashes() {
+        prompts::History::OnTop
+    } else {
+        prompts::History::Series
+    };
+    let Some(pull_task) = pull_work::session_task(job, conflict.as_ref(), history) else {
         record_end(shell, &opened.record);
         return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };

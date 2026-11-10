@@ -263,15 +263,16 @@ Linewright records every outcome in a comment on the item it concerns.
 
 Linewright exits with an error at startup when it cannot work.
 
-- **Checks.** The token can push to the repository; the sessions' token, when
-  set, can read it; with `--auto-merge`, the repository allows the merge
-  method and the update method keeps the branch mergeable with it
-  (`update-branch` `merge` cannot keep a branch rebase-mergeable); with
-  webhooks on, `serve` can listen on `webhook-address`; every setting's
-  value is one it takes, and every setting of a feature that is off is at
-  its default ([Configuration](operation.md#configuration)); every file in
-  the operator's layer of prompts is one of Linewright's and has its
-  placeholders ([Prompts](operation.md#prompts)); and, unless `ui-address`
-  is empty, `serve` can listen on it.
+- **Checks.** Linewright checks that:
+  - the token can push to the repository;
+  - the sessions' token, when set, can read it;
+  - the repository allows the merge method, a merge commit only where it does
+    not require linear history ([Merging](pull_requests.md#merging));
+  - with webhooks on, `serve` can listen on `webhook-address`;
+  - every setting's value is one it takes, and every setting of a feature that
+    is off is at its default ([Configuration](operation.md#configuration));
+  - every file in the operator's layer of prompts is one of Linewright's and
+    has its placeholders ([Prompts](operation.md#prompts));
+  - unless `ui-address` is empty, `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.

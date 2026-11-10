@@ -128,9 +128,8 @@ repository's file, the operator's file, default.
 | `ci-grace`                                   | 5m                                          |
 | `ci-timeout`                                 | 6h                                          |
 | `ci-attempts`                                | 2                                           |
-| `update-branch` (`rebase`, `merge`)          | from the repository's settings              |
-| `auto-merge`                                 | off                                         |
 | `merge-method` (`merge`, `squash`, `rebase`) | from the repository's settings              |
+| `auto-merge`                                 | off                                         |
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
@@ -157,8 +156,7 @@ repository's file, the operator's file, default.
 - **A feature's settings.** A setting that only one feature uses is an error
   at startup when it is not at its default while that feature is off
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
-  secret, `ui-hosts` with `ui-address` empty, `merge-method` without
-  `auto-merge`.
+  secret, `ui-hosts` with `ui-address` empty.
 - **Model and effort.** A model or effort set for a session wins over what the
   session's environment variables and the harness's own settings say. Linewright
   sets no model or effort for a session's sub-agents.

@@ -51,7 +51,7 @@ module pull_request {
     behind: bool,
     // a person has approved it
     approved: bool,
-    // it cannot be merged by a method the repository allows
+    // it cannot be merged by its merge method
     unmergeable: bool,
     // a run has ended on it since its last push
     ranSincePush: bool,
@@ -81,8 +81,8 @@ module pull_request {
       if (when_feedback_has_come(x, am)) does_starts_a_rework_run(x, am)
       // any | it conflicts with the default branch | starts an update run | unchanged
       else if (when_it_conflicts_with_the_default_branch(x, am)) does_starts_an_update_run(x, am)
-      // any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
-      else if (when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) does_starts_an_update_run(x, am)
+      // any | it cannot be merged by its merge method, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
+      else if (when_it_cannot_be_merged_by_its_merge_method_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) does_starts_an_update_run(x, am)
       // any | none of its checks has appeared, and its last push was less than ci-grace ago | waits for its checks | unchanged
       else if (when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x, am)) does_waits_for_its_checks(x, am)
       // any | a check is still running ci-timeout after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged
@@ -122,8 +122,8 @@ module pull_request {
       if (when_feedback_has_come(x, am)) 1
       // any | it conflicts with the default branch | starts an update run | unchanged
       else if (when_it_conflicts_with_the_default_branch(x, am)) 2
-      // any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
-      else if (when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) 3
+      // any | it cannot be merged by its merge method, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged
+      else if (when_it_cannot_be_merged_by_its_merge_method_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x, am)) 3
       // any | none of its checks has appeared, and its last push was less than ci-grace ago | waits for its checks | unchanged
       else if (when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x, am)) 4
       // any | a check is still running ci-timeout after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged
@@ -154,7 +154,7 @@ module pull_request {
 
   pure def when_feedback_has_come(x: Pr, am: bool): bool = x.feedback
   pure def when_it_conflicts_with_the_default_branch(x: Pr, am: bool): bool = x.conflict
-  pure def when_it_cannot_be_merged_by_a_method_the_repository_allows_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x: Pr, am: bool): bool =
+  pure def when_it_cannot_be_merged_by_its_merge_method_for_a_reason_other_than_being_behind_and_no_run_has_ended_on_it_since_its_last_push(x: Pr, am: bool): bool =
     x.unmergeable and not(x.ranSincePush)
   pure def when_none_of_its_checks_has_appeared_and_its_last_push_was_less_than_ci_grace_ago(x: Pr, am: bool): bool =
     x.checks == "none" and not(x.graceOver)
@@ -292,11 +292,11 @@ module pull_request {
 
   /// The run in flight ends: R ## Working an item, "a run on it cannot
   /// finish" hands it back; otherwise it pushes, or finds nothing to push.
-  /// "Feedback posted while a run works goes to its session before the run
+  /// "Feedback posted while a run works goes to its session before the run's
   /// pushes". P ## Keeping up to date "Which runs": an update or a fix-ci run
   /// brings the branch up to date; a rework run does "where the branch
-  /// conflicts with the default branch or cannot be merged by a method the
-  /// repository allows", as it started, read as it may or may not have, and
+  /// conflicts with the default branch or cannot be merged by its merge
+  /// method", as it started, read as it may or may not have, and
   /// never for being behind.
   action runEnds: bool = {
     nondet end = Set("push", "nothing", "cannot finish").oneOf()

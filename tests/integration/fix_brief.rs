@@ -75,6 +75,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         &PullTask::FixCi {
             failures,
             conflict: None,
+            history: prompts::History::Series,
         },
         None,
         std::path::Path::new("/attachments"),

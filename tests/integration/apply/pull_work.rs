@@ -5,7 +5,7 @@ use linewright::domain::{
     ReviewState, Thread, Timestamp, UpdateMethod,
 };
 use linewright::git::Conflict;
-use linewright::prompts::PullTask;
+use linewright::prompts::{History, PullTask};
 use linewright::reconcile::WorkKind;
 use linewright::results::ThreadReply;
 use linewright::working_pull::Feedback;
@@ -350,16 +350,18 @@ fn a_pull_request_runs_session_is_asked(
         Job::Update => PullJob::Update,
     };
 
-    let task = session_task(pull_job, conflict);
+    let task = session_task(pull_job, conflict, History::Series);
 
     let expected = asked.map(|asked| match asked {
         Job::Rework => PullTask::Rework {
             feedback: feedback(),
             conflict,
+            history: History::Series,
         },
         Job::FixCi => PullTask::FixCi {
             failures: &failures,
             conflict,
+            history: History::Series,
         },
         Job::Update => PullTask::Update(conflict.unwrap()),
     });

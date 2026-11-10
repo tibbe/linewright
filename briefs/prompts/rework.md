@@ -33,7 +33,7 @@ Make the changes the feedback asks for, with tests where a change needs them. Th
 
 ### 3. Commit
 
-Commit your work to the current branch, with messages that say why. Leave no uncommitted changes and no rebase or merge in progress.
+Commit your work to the current branch. {{history}} Leave no uncommitted changes and no rebase or merge in progress.
 
 ### 4. Output
 
