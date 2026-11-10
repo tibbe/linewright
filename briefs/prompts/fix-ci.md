@@ -33,7 +33,7 @@ Fix the cause, in the test if the test is wrong. Keep to the pull request's work
 
 ### 3. Commit
 
-Commit your work to the current branch, with messages that say why. Leave no uncommitted changes and no rebase or merge in progress.
+Commit your work to the current branch. {{history}} Leave no uncommitted changes and no rebase or merge in progress.
 
 ### 4. Output
 

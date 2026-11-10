@@ -17,14 +17,17 @@ to review again; the maintainer approves and merges.
    me nothing.
 3. As an operator, I want my review comments addressed and answered where I
    wrote them, so that review is a conversation with the branch.
-4. As an operator, I want branches kept mergeable by every method my
-   repository allows and brought up to date with the default branch only when
-   merging needs it, rewriting history only when they must, so that I pick how
-   to merge, my review is not disturbed and CI does not rerun for nothing.
-5. As an operator, I want to merge myself, so that nothing lands without me.
-6. As an operator, I want closing a PR to mean rejection, so that the factory
+4. As an operator, I want a PR's commits kept a coherent series where my
+   repository merges them as they are, so that merging needs no round of
+   cleaning up its history.
+5. As an operator, I want branches kept mergeable by my repository's merge
+   method and brought up to date with the default branch only when merging
+   needs it, so that my review is not disturbed and CI does not rerun for
+   nothing.
+6. As an operator, I want to merge myself, so that nothing lands without me.
+7. As an operator, I want closing a PR to mean rejection, so that the factory
    does not redo what I refused.
-7. As an operator, I want to let Linewright merge its own green PRs, except
+8. As an operator, I want to let Linewright merge its own green PRs, except
    those my repository requires a person to review, so that only the changes I
    have reserved for myself wait for me.
 
@@ -61,7 +64,7 @@ Its state is GitHub's: a draft, or ready for review.
 | --- | --- | --- | --- |
 | any | feedback has come ([Rework](#rework)) | starts a rework run | unchanged |
 | any | it conflicts with the default branch | starts an update run ([Keeping up to date](#keeping-up-to-date)) | unchanged |
-| any | it cannot be merged by a method the repository allows, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged |
+| any | it cannot be merged by its merge method, for a reason other than being behind, and no run has ended on it since its last push | starts an update run | unchanged |
 | any | none of its checks has appeared, and its last push was less than `ci-grace` ago | waits for its checks | unchanged |
 | any | a check is still running `ci-timeout` after its last push, or after Linewright was last assigned to it where that is later | hands it back, naming the checks still running | unchanged |
 | any | a check is still running | waits for its checks | unchanged |
@@ -107,10 +110,10 @@ that only approves is not feedback.
 - **Resolving threads.** A reply that asks to resolve its thread resolves it
   when a bot opened the thread; people resolve their own threads.
 - **Feedback during a run.** Feedback posted while a run works goes to its
-  session before the run pushes.
+  session before the run's pushes.
 - **Its push.** Unlike Linewright's other writes
-  ([Writes](repository.md#writes)), the push comes before the replies, which
-  describe it.
+  ([Writes](repository.md#writes)), its pushes come before the replies, which
+  describe them.
 
 ## Keeping up to date
 
@@ -119,29 +122,33 @@ A branch is brought up to date with the default branch where a row of
 holds, and by every fix-ci run.
 
 - **Which runs.** An update run does only that. A rework run starts with it
-  where the branch conflicts with the default branch or cannot be merged by a
-  method the repository allows, as those rows give. A fix-ci run always starts
-  with it.
-- **Merge or rebase.** By default an update merges the default branch into
-  the branch, so reviewed history stays as it is, unless the branch would then
-  not be mergeable by every method the repository allows; then the branch is
-  rebased onto it. For example, a repository that requires linear history
-  refuses a merge commit, and a conflict resolved in a merge commit leaves the
-  branch impossible to rebase-merge.
-- **`update-branch`.** The setting overrides the default: `merge` never
-  rewrites history, at the cost of the methods a merge commit rules out, and
-  `rebase` always rebases.
+  where the branch conflicts with the default branch or cannot be merged by
+  its merge method, as those rows give. A fix-ci run always starts with it, so
+  that its session can reproduce a failure the default branch's changes
+  caused.
+- **Merge or rebase.** An update rebases the branch onto the default branch
+  where the merge method is merge or rebase, so the branch holds no merge
+  commit, and merges the default branch into the branch where it is squash,
+  so reviewed commits stay as they are.
+- **Its own push.** A run that brings the branch up to date and then changes
+  it further pushes, as it applies its result, the update on its own first
+  and its other work right after, so that each push's comparison on GitHub
+  shows either the default branch's changes or the run's, not both.
 
 ## Merging
 
 With `--auto-merge`, Linewright merges the PRs it opened
 ([Working a pull request](#working-a-pull-request)); without it, the
-maintainer merges them, with whatever method the repository allows.
+maintainer merges them.
 
-- **Method.** Linewright merges with the `merge-method` setting: by default a
-  rebase where the repository requires linear history, and otherwise the first
-  method of merge, squash and rebase that the repository allows. This is
-  Linewright merging, not GitHub's auto-merge feature.
+- **Merge method.** The repository's PRs are merged with the `merge-method`
+  setting, whoever merges them.
+- **The default.** By default the merge method is the first of merge, rebase
+  and squash that the repository allows, merge only where the repository does
+  not require linear history. A repository that allows none of them so
+  fails the startup checks ([Startup](repository.md#startup)).
+- **Linewright merging.** With `--auto-merge`, Linewright merges with the
+  merge method. This is Linewright merging, not GitHub's auto-merge feature.
 - **Review.** A person who has commented on or reviewed a PR holds its merge
   until their newest comment or review is an approval. Bots' comments don't
   hold a merge.
@@ -164,6 +171,7 @@ A fix, rework or update session is sent `fix-ci.md`, `rework.md` or
 | `{{unfinished}}`   | the unfinished commits on the branch (`unfinished.md`), or nothing |
 | `{{conflict}}`     | where the update stopped and the files in conflict (`update-rebase.md` or `update-merge.md`); for a fix or a rework, nothing unless it starts with an update that stopped (`conflict-rebase.md` or `conflict-merge.md`) |
 | `{{failures}}`     | a fix's alone: each failing check, as under [CI](#ci), with how to read its full log (`full-log.md`) |
+| `{{history}}`      | a fix's and a rework's: how to commit for the merge method ([Merging](#merging)): as a coherent series where it is merge or rebase (`history-series.md`), or on top of the branch's commits where it is squash (`history-on-top.md`) |
 | `{{feedback}}`     | a rework's alone: the new comments, reviews and comments in threads                                                                 |
 | `{{conversation}}` | a rework's alone: the pull request's comments and its unresolved threads                                                            |
 

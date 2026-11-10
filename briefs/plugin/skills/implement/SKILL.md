@@ -25,8 +25,10 @@ opens or updates the pull request and posts what your result says.
    work. Apply its findings (see
    _Review findings_), then run the repository's full checks again and fix
    what fails. Don't review a second time.
-5. Commit your work to the current branch, with messages that say why. Leave
-   no uncommitted changes and no rebase or merge in progress.
+5. Commit your work to the current branch as a coherent series: each commit
+   makes one change, its message says what the change is and why, and none
+   corrects another. Leave no uncommitted changes and no rebase or merge in
+   progress.
 
 ## The ticket's scope
 

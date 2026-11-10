@@ -128,6 +128,10 @@ A comment or review on a pull request Linewright opened, from anyone else,
 that a rework run is to address.
 _Avoid_: review comments, change requests
 
+**Merge method**:
+How a repository's pull requests land on its default branch.
+_Avoid_: merge strategy, merge style
+
 **Round**:
 Of a pull request Linewright works: the stretch of its work over which
 Linewright counts its fix attempts and failed merges.

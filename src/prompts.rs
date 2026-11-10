@@ -103,16 +103,29 @@ impl<'a> Ticket<'a> {
     }
 }
 
+/// How a fix or a rework commits, for the merge method
+/// (`docs/specs/pull_requests.md`, "Commits").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum History {
+    /// The commits land as they are: a coherent series, corrections folded in.
+    Series,
+    /// The commits are squashed into one: new commits on top, none rewritten.
+    OnTop,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum PullTask<'a> {
-    /// `conflict` is where the update the run starts with stopped, if it did.
+    /// `conflict` is where the update the run starts with stopped, if it did,
+    /// and `history` how the session commits.
     Rework {
         feedback: Feedback<'a>,
         conflict: Option<&'a Conflict>,
+        history: History,
     },
     FixCi {
         failures: &'a [CheckFailure],
         conflict: Option<&'a Conflict>,
+        history: History,
     },
     /// Only bring the branch up to date: the session resolves the conflict
     /// the update stopped on.
@@ -215,10 +228,11 @@ values!(
     }
 );
 values!(Rework: PullRequest {
+    history,
     feedback,
     conversation
 });
-values!(FixCi: PullRequest { failures });
+values!(FixCi: PullRequest { history, failures });
 values!(AutomationRun: Shared {
     max_issues,
     name,
@@ -434,6 +448,8 @@ struct OwnTemplates {
     unfinished_or_discard: Template<Commits>,
     conflict_rebase: Template<Stopped>,
     conflict_merge: Template<Stopped>,
+    history_series: Template<NoValues>,
+    history_on_top: Template<NoValues>,
     update_rebase: Template<Stopped>,
     update_merge: Template<Stopped>,
     full_log: Template<FullLog>,
@@ -463,6 +479,8 @@ static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
     unfinished_or_discard: own_template!("parts/unfinished-or-discard.md"),
     conflict_rebase: own_template!("parts/conflict-rebase.md"),
     conflict_merge: own_template!("parts/conflict-merge.md"),
+    history_series: own_template!("parts/history-series.md"),
+    history_on_top: own_template!("parts/history-on-top.md"),
     update_rebase: own_template!("parts/update-rebase.md"),
     update_merge: own_template!("parts/update-merge.md"),
     full_log: own_template!("parts/full-log.md"),
@@ -826,17 +844,34 @@ pub fn pull_work(
             })
             .unwrap_or_default()
     };
+    let history = |history: &History| {
+        match history {
+            History::Series => &OWN_TEMPLATES.history_series,
+            History::OnTop => &OWN_TEMPLATES.history_on_top,
+        }
+        .fill(&NoValues {})
+    };
     match work {
-        PullTask::Rework { feedback, conflict } => {
+        PullTask::Rework {
+            feedback,
+            conflict,
+            history: how,
+        } => {
             let (feedback, conversation) = render_feedback(pr, feedback);
             prompts.rework.fill(&Rework {
                 base: pull_request(first_update(*conflict), &OWN_TEMPLATES.rework_output),
+                history: history(how),
                 feedback,
                 conversation,
             })
         }
-        PullTask::FixCi { failures, conflict } => prompts.fix_ci.fill(&FixCi {
+        PullTask::FixCi {
+            failures,
+            conflict,
+            history: how,
+        } => prompts.fix_ci.fill(&FixCi {
             base: pull_request(first_update(*conflict), &OWN_TEMPLATES.fix_ci_output),
+            history: history(how),
             failures: render_failures(failures),
         }),
         PullTask::Update(conflict) => prompts.update.fill(&pull_request(

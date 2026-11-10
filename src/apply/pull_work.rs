@@ -5,7 +5,7 @@
 use super::closing;
 use crate::domain::{CheckFailure, Login, Pull, Timestamp};
 use crate::git::Conflict;
-use crate::prompts::PullTask;
+use crate::prompts::{History, PullTask};
 use crate::reconcile::WorkKind;
 use crate::results::ThreadReply;
 use crate::working_pull::Feedback;
@@ -131,13 +131,26 @@ pub enum PullJob<'a> {
 }
 
 /// What the session of a run on a pull request is asked to do for `job`,
-/// `conflict` being where the update it starts with stopped, if it did;
+/// `conflict` being where the update it starts with stopped, if it did, and
+/// `history` how it commits;
 /// `None` when the run starts no session, as an update without a conflict
 /// does (docs/specs/runs.md, Stages, "Sessions").
-pub fn session_task<'a>(job: PullJob<'a>, conflict: Option<&'a Conflict>) -> Option<PullTask<'a>> {
+pub fn session_task<'a>(
+    job: PullJob<'a>,
+    conflict: Option<&'a Conflict>,
+    history: History,
+) -> Option<PullTask<'a>> {
     match (job, conflict) {
-        (PullJob::Rework(feedback), conflict) => Some(PullTask::Rework { feedback, conflict }),
-        (PullJob::FixCi(failures), conflict) => Some(PullTask::FixCi { failures, conflict }),
+        (PullJob::Rework(feedback), conflict) => Some(PullTask::Rework {
+            feedback,
+            conflict,
+            history,
+        }),
+        (PullJob::FixCi(failures), conflict) => Some(PullTask::FixCi {
+            failures,
+            conflict,
+            history,
+        }),
         (PullJob::Update, Some(conflict)) => Some(PullTask::Update(conflict)),
         (PullJob::Update, None) => None,
     }
