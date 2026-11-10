@@ -239,48 +239,18 @@ pub struct Conflict {
 }
 
 /// Brings the checked-out branch up to date with `origin/<default_branch>`,
-/// as fresh as the clone, with the method `rule` picks.
-pub async fn update(dir: &Path, default_branch: &str, rule: UpdateRule) -> Result<Updated> {
+/// as fresh as the clone, by `method`. A rebase replays the branch's commits
+/// even when it already contains the default branch, which drops the merge
+/// commits on it. It is up to date when `HEAD` did not move.
+pub async fn update(dir: &Path, default_branch: &str, method: UpdateMethod) -> Result<Updated> {
+    let before = head(dir).await?;
     let upstream = format!("origin/{default_branch}");
-    if git(dir, &["merge-base", "--is-ancestor", &upstream, "HEAD"])
-        .await
-        .is_ok()
-    {
-        return Ok(Updated::UpToDate);
-    }
-    match rule {
-        UpdateRule::Always(method) => update_with(dir, &upstream, method).await,
-        UpdateRule::RebaseOnConflict => {
-            match update_with(dir, &upstream, UpdateMethod::Merge).await? {
-                Updated::Conflict(_) => {
-                    git(dir, &["merge", "--abort"]).await?;
-                    update_with(dir, &upstream, UpdateMethod::Rebase).await
-                }
-                updated @ (Updated::UpToDate | Updated::Updated) => Ok(updated),
-            }
-        }
-    }
-}
-
-/// Rebases the checked-out branch onto `origin/<default_branch>`, as fresh
-/// as the clone, even when it already contains it: replaying the branch's
-/// commits drops the merge commits on it. A branch with none that contains
-/// it is left as it is.
-pub async fn rebase(dir: &Path, default_branch: &str) -> Result<Updated> {
-    update_with(
-        dir,
-        &format!("origin/{default_branch}"),
-        UpdateMethod::Rebase,
-    )
-    .await
-}
-
-async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result<Updated> {
     let attempt = match method {
-        UpdateMethod::Rebase => git(dir, &["rebase", "--quiet", upstream]).await,
-        UpdateMethod::Merge => git(dir, &["merge", "--quiet", "--no-edit", upstream]).await,
+        UpdateMethod::Rebase => git(dir, &["rebase", "--quiet", &upstream]).await,
+        UpdateMethod::Merge => git(dir, &["merge", "--quiet", "--no-edit", &upstream]).await,
     };
     match attempt {
+        Ok(_) if head(dir).await? == before => Ok(Updated::UpToDate),
         Ok(_) => Ok(Updated::Updated),
         Err(error) => {
             let files: Vec<String> = git(dir, &["diff", "--name-only", "--diff-filter=U"])
@@ -292,6 +262,22 @@ async fn update_with(dir: &Path, upstream: &str, method: UpdateMethod) -> Result
                 Err(error)
             } else {
                 Ok(Updated::Conflict(Conflict { method, files }))
+            }
+        }
+    }
+}
+
+/// [`update`], by the method `rule` picks.
+pub async fn update_by_rule(dir: &Path, default_branch: &str, rule: UpdateRule) -> Result<Updated> {
+    match rule {
+        UpdateRule::Always(method) => update(dir, default_branch, method).await,
+        UpdateRule::RebaseOnConflict => {
+            match update(dir, default_branch, UpdateMethod::Merge).await? {
+                Updated::Conflict(_) => {
+                    git(dir, &["merge", "--abort"]).await?;
+                    update(dir, default_branch, UpdateMethod::Rebase).await
+                }
+                updated @ (Updated::UpToDate | Updated::Updated) => Ok(updated),
             }
         }
     }

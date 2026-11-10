@@ -432,11 +432,14 @@ fn behind_main(path: &str) -> Repository {
     repository
 }
 
-/// The method of the update `git::update` stops in on a conflict in
+/// The method of the update `git::update_by_rule` stops in on a conflict in
 /// `src/gadgets.txt`, if it stops, and the subjects of the commits then on
 /// the branch's first-parent line, oldest first.
 async fn updated(repository: &Repository, rule: UpdateRule) -> (Option<UpdateMethod>, Vec<String>) {
-    let stopped = match git::update(&repository.clone, "main", rule).await.unwrap() {
+    let stopped = match git::update_by_rule(&repository.clone, "main", rule)
+        .await
+        .unwrap()
+    {
         Updated::Conflict(conflict) => {
             assert_eq!(conflict.files, ["src/gadgets.txt"]);
             assert!(repository.mid_operation());
@@ -484,4 +487,32 @@ async fn an_update_always_rebasing_rebases_onto_the_default_branch_and_stops_in_
         updated(&behind_main("src/gadgets.txt"), rule).await.0,
         Some(UpdateMethod::Rebase)
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_rebase_update_drops_the_merge_commits_of_a_branch_that_contains_the_default_branch() {
+    let repository = behind_main("src/other.txt");
+    repository.git(&["merge", "--quiet", "--no-edit", "origin/main"]);
+
+    let updated = git::update(&repository.clone, "main", UpdateMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert!(matches!(updated, Updated::Updated));
+    assert_eq!(repository.subjects(), ["Move on", "Start"]);
+    repository.git(&["merge-base", "--is-ancestor", "origin/main", "HEAD"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_rebase_update_leaves_an_up_to_date_linear_branch_at_its_commit() {
+    let repository = Repository::new();
+    repository.branch("12-gadgets", &[(&[("src/gadgets.txt", "ours\n")], "Start")]);
+    let before = repository.git(&["rev-parse", "HEAD"]);
+
+    let updated = git::update(&repository.clone, "main", UpdateMethod::Rebase)
+        .await
+        .unwrap();
+
+    assert!(matches!(updated, Updated::UpToDate));
+    assert_eq!(repository.git(&["rev-parse", "HEAD"]), before);
 }
