@@ -7,7 +7,7 @@ use serde_json::Value;
 use tracing::info;
 
 use crate::clock::Clock;
-use crate::domain::{Filed, Login, MergeMethods, Number, UpdateMethod, UpdateRule, label};
+use crate::domain::{Filed, Login, MergeMethods, Number, UpdateMethod, label};
 use crate::factory::{Factory, FactoryConfig};
 use crate::git;
 use crate::harness::Harness;
@@ -169,11 +169,10 @@ pub async fn capture(github: &GitHub, number: Number, dir: &Path, sessions: &Pat
             Categories::IssueTypes(types) => Some(types),
             Categories::Labels => None,
         },
-        update_method: match settings.update_rule {
-            UpdateRule::Always(UpdateMethod::Rebase) => UpdateMethod::Rebase,
-            UpdateRule::Always(UpdateMethod::Merge) | UpdateRule::RebaseOnConflict => {
-                UpdateMethod::Merge
-            }
+        update_method: if settings.linear_history {
+            UpdateMethod::Rebase
+        } else {
+            UpdateMethod::Merge
         },
         allowed_merge_methods: settings.allowed_merge_methods,
         requires_up_to_date: false,

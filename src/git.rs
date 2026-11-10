@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use tokio::io::AsyncWriteExt;
 
 use crate::child;
-use crate::domain::{UpdateMethod, UpdateRule};
+use crate::domain::UpdateMethod;
 
 pub type GitEnv = [(String, String)];
 
@@ -262,22 +262,6 @@ pub async fn update(dir: &Path, default_branch: &str, method: UpdateMethod) -> R
                 Err(error)
             } else {
                 Ok(Updated::Conflict(Conflict { method, files }))
-            }
-        }
-    }
-}
-
-/// [`update`], by the method `rule` picks.
-pub async fn update_by_rule(dir: &Path, default_branch: &str, rule: UpdateRule) -> Result<Updated> {
-    match rule {
-        UpdateRule::Always(method) => update(dir, default_branch, method).await,
-        UpdateRule::RebaseOnConflict => {
-            match update(dir, default_branch, UpdateMethod::Merge).await? {
-                Updated::Conflict(_) => {
-                    git(dir, &["merge", "--abort"]).await?;
-                    update(dir, default_branch, UpdateMethod::Rebase).await
-                }
-                updated @ (Updated::UpToDate | Updated::Updated) => Ok(updated),
             }
         }
     }

@@ -5,8 +5,7 @@ use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::OperatorPrompts;
 use linewright::domain::{
-    AutoMerge, CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows,
-    label,
+    CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::{Subject, WorkKind};
@@ -52,7 +51,7 @@ pub fn open_issue_linewright_labeled(
 pub const REQUIRED: &str = "linewright";
 
 /// Auto-merge on, by the repository's merge method.
-pub const AUTO_MERGE: Option<AutoMerge> = Some(AutoMerge { merge_method: None });
+pub const AUTO_MERGE: bool = true;
 
 /// The secrets of an environment holding `variables`, each named in
 /// `secrets`.
@@ -178,8 +177,8 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
             ..WorkSettings::default()
         },
         environments: Environments::default(),
-        update_method: None,
-        auto_merge: None,
+        merge_method: None,
+        auto_merge: false,
         require_label: None,
         prompts: OperatorPrompts::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),

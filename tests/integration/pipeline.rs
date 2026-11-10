@@ -3,8 +3,7 @@ use crate::common;
 use chrono::TimeDelta;
 use common::*;
 use linewright::domain::{
-    Assignment, AutoMerge, ClosedKind, Issue, IssueCloseReason, IssueEvent, Linked, Number,
-    PullState,
+    Assignment, ClosedKind, Issue, IssueCloseReason, IssueEvent, Linked, Number, PullState,
 };
 use linewright::reconcile::{Discard, ParentNote, WorkKind};
 use linewright::store::local::{LocalStore, Paused, Write};
@@ -2161,8 +2160,8 @@ async fn a_pull_request_behind_the_default_branch_is_brought_up_to_date_once_tha
             contains(&world, &view.head_ref, &before),
             merges(&world, &view.head_ref)
         ),
-        (true, 1),
-        "merged in, the branch's commits kept"
+        (false, 0),
+        "rebased by the default merge method, merge"
     );
 }
 
@@ -2190,7 +2189,7 @@ pub(crate) async fn moved_past_with(
         .merge_change("maintainer", "Other work", "", &[(&file, "other\n")])
         .await
         .unwrap();
-    for kind in [WorkKind::Update, WorkKind::Rework] {
+    for kind in [WorkKind::Update, WorkKind::Rework, WorkKind::FixCi] {
         let file = file.clone();
         world.harness.on(kind, move |call| {
             resolve_in(&call.spec.dir, &[(&file, "done\nother\n")]);
@@ -2298,6 +2297,71 @@ async fn a_rework_run_first_updates_the_branch_by_the_same_rules() {
 }
 
 #[test_log::test(tokio::test)]
+async fn a_rework_or_fix_ci_run_updates_and_commits_by_the_merge_method_with_auto_merge_on_or_off()
+{
+    use linewright::domain::MergeMethod;
+
+    const SERIES: &str = "leave the commits the branch adds to it a coherent series";
+    const ON_TOP: &str = "add your commits on top of the branch";
+    for (method, auto_merge, kind, update, history) in [
+        (
+            MergeMethod::Rebase,
+            false,
+            WorkKind::Rework,
+            Stopped::Rebase,
+            SERIES,
+        ),
+        (
+            MergeMethod::Squash,
+            true,
+            WorkKind::FixCi,
+            Stopped::Merge,
+            ON_TOP,
+        ),
+    ] {
+        let case = format!("{method}, auto-merge {auto_merge}, {kind:?}");
+        let fixing = kind == WorkKind::FixCi;
+        let (mut world, pr) = moved_past_with(
+            Repository::default(),
+            |config| {
+                config.merge_method = Some(method);
+                config.auto_merge = auto_merge;
+            },
+            !fixing,
+        )
+        .await;
+        if fixing {
+            world
+                .store
+                .set_checks(pr, vec![check("test", CheckState::Failed, "it failed")])
+                .await
+                .unwrap();
+            world.harness.on(WorkKind::FixCi, |_| {
+                Ok(json!({"outcome": "done", "comment": "Fixed."}).to_string())
+            });
+        } else {
+            world
+                .store
+                .comment_as("maintainer", pr, "Tidy up.")
+                .unwrap();
+        }
+
+        world.poll().await;
+
+        let prompts = world.harness.prompts(kind);
+        assert_eq!(prompts.len(), 1, "{case}");
+        assert!(prompts[0].contains(history), "{case}: {}", prompts[0]);
+        if fixing {
+            let branch = world.store.snapshot_pull(pr).await.head_ref;
+            let merges_in = usize::from(update == Stopped::Merge);
+            assert_eq!(merges(&world, &branch), merges_in, "{case}");
+        } else {
+            assert_eq!(world.harness.stopped(kind), [update], "{case}");
+        }
+    }
+}
+
+#[test_log::test(tokio::test)]
 async fn a_rework_run_on_a_branch_merely_behind_leaves_it_behind() {
     let mut world = World::new().await;
     let (_, pr) = world.ticket_in_review().await;
@@ -2348,6 +2412,10 @@ async fn merge_default_branch_in(world: &World, branch: &str, files: &[(&str, &s
     .unwrap();
 }
 
+fn by_rebase(config: &mut linewright::factory::FactoryConfig) {
+    config.merge_method = Some(linewright::domain::MergeMethod::Rebase);
+}
+
 async fn merged_in_conflict(
     adjust: impl FnOnce(&mut linewright::factory::FactoryConfig),
 ) -> (World, linewright::domain::Number, String) {
@@ -2367,10 +2435,11 @@ async fn merged_in_conflict(
 }
 
 #[test_log::test(tokio::test)]
-async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_update_run() {
+async fn with_merge_method_rebase_a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_update_run()
+ {
     use linewright::domain::{Mergeability, Rebaseability};
 
-    let (mut world, pr, file) = merged_in_conflict(|_| {}).await;
+    let (mut world, pr, file) = merged_in_conflict(by_rebase).await;
 
     world.poll().await;
     world.poll().await;
@@ -2391,7 +2460,7 @@ async fn a_branch_with_a_merge_commit_github_cannot_rebase_is_rebased_by_an_upda
 #[test_log::test(tokio::test)]
 async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tried_again_also_after_a_restart()
  {
-    let (mut world, pr, _) = merged_in_conflict(|_| {}).await;
+    let (mut world, pr, _) = merged_in_conflict(by_rebase).await;
     let before = world.store.snapshot_pull(pr).await;
     world.harness.on(WorkKind::Update, |call| {
         let aborted = std::process::Command::new("git")
@@ -2406,7 +2475,7 @@ async fn a_rebase_that_leaves_the_branch_as_it_was_pushes_nothing_and_is_not_tri
     world.poll().await;
     world.poll().await;
     world.poll().await;
-    world.restart(|_| {}).await;
+    world.restart(by_rebase).await;
     world.poll().await;
     world.poll().await;
 
@@ -2442,9 +2511,8 @@ async fn with_auto_merge_a_green_pull_request_is_merged_and_the_ticket_it_blocke
     use linewright::store::Store;
 
     let mut world = World::with(|config| {
-        config.auto_merge = Some(AutoMerge {
-            merge_method: Some(MergeMethod::Squash),
-        });
+        config.auto_merge = true;
+        config.merge_method = Some(MergeMethod::Squash);
     })
     .await;
     let (first, pr) = world.ticket_in_review().await;

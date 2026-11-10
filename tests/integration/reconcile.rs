@@ -2206,6 +2206,19 @@ fn deciding(world: &Snapshot, memory: &Memory, policy: &Policy) -> Vec<Action> {
     deciding_at(world, memory, policy, 10)
 }
 
+/// Pull requests merge by rebase, so one GitHub reports not rebaseable
+/// cannot be merged by its merge method.
+fn by_rebase() -> Policy {
+    Policy {
+        merge_method: MergeMethod::Rebase,
+        ..policy()
+    }
+}
+
+fn after_runs_by_rebase(world: &Snapshot, runs: &[EndedRun]) -> Vec<Action> {
+    deciding(world, &remembering(runs), &by_rebase())
+}
+
 #[test_log::test]
 fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_until_a_run_ends_on_it_after_its_last_push()
  {
@@ -2216,47 +2229,44 @@ fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_until_a_run_e
         at: t(6),
     });
 
-    assert_eq!(at(&world, 10), vec![update(2, 20)]);
+    assert_eq!(after_runs_by_rebase(&world, &[]), vec![update(2, 20)]);
     for run in [
         done(20, WorkKind::Update, 5),
         ended(20, WorkKind::FixCi, Ending::Failed, 5),
         ended(20, WorkKind::Rework, Ending::HandedBack, 5),
     ] {
         assert_eq!(
-            after_runs(&world, std::slice::from_ref(&run), 10),
+            after_runs_by_rebase(&world, std::slice::from_ref(&run)),
             vec![],
             "{run:?}"
         );
         assert_eq!(
-            after_runs(&in_review(pushed_since.clone()), &[run], 10),
+            after_runs_by_rebase(&in_review(pushed_since.clone()), &[run]),
             vec![update(2, 20)]
         );
     }
 }
 
 #[test_log::test]
-fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_only_where_rebase_merging_is_allowed()
+fn a_pull_request_github_reports_not_rebaseable_gets_an_update_run_only_where_the_merge_method_is_rebase()
  {
     let world = in_review(not_rebaseable());
-    let no_rebase_merging = Policy {
-        allowed_merge_methods: [MergeMethod::Merge, MergeMethod::Squash]
-            .into_iter()
-            .collect(),
-        ..policy()
-    };
-    let update_branch_merge = Policy {
-        update_rule: UpdateRule::Always(UpdateMethod::Merge),
-        ..policy()
-    };
 
-    assert_eq!(
-        deciding(&world, &Memory::default(), &no_rebase_merging),
-        vec![]
-    );
-    assert_eq!(
-        deciding(&world, &Memory::default(), &update_branch_merge),
-        vec![update(2, 20)]
-    );
+    for (merge_method, actions) in [
+        (MergeMethod::Merge, vec![]),
+        (MergeMethod::Squash, vec![]),
+        (MergeMethod::Rebase, vec![update(2, 20)]),
+    ] {
+        let policy = Policy {
+            merge_method,
+            ..policy()
+        };
+        assert_eq!(
+            deciding(&world, &Memory::default(), &policy),
+            actions,
+            "{merge_method}"
+        );
+    }
 }
 
 #[test_log::test]
@@ -2264,7 +2274,7 @@ fn a_pull_request_whose_rebaseability_is_not_known_yet_waits_rather_than_startin
     let mut pr = not_rebaseable();
     pr.rebaseability = Rebaseability::Unknown;
 
-    assert_eq!(at(&in_review(pr), 10), vec![]);
+    assert_eq!(after_runs_by_rebase(&in_review(pr), &[]), vec![]);
 }
 
 #[test_log::test]

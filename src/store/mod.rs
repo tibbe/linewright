@@ -10,9 +10,8 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 
 use crate::domain::{
-    AutoMerge, CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking,
-    MergeMethod, MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, UpdateMethod, UpdateRule,
-    Windows, label,
+    CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
+    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::redaction::Redaction;
@@ -46,13 +45,18 @@ impl Categories {
 pub struct RepoSettings {
     pub repo: Repo,
     pub default_branch: String,
-    pub update_rule: UpdateRule,
+    /// The `merge-method` setting, or its default.
     pub merge_method: MergeMethod,
     pub allowed_merge_methods: MergeMethods,
+    /// The default branch requires linear history, which refuses merge
+    /// commits.
+    pub linear_history: bool,
     pub categories: Categories,
 }
 
 impl RepoSettings {
+    /// The settings GitHub gives, with the default merge method
+    /// (`docs/specs/pull_requests.md`, "Merging").
     pub fn new(
         repo: Repo,
         default_branch: String,
@@ -60,71 +64,66 @@ impl RepoSettings {
         allowed_merge_methods: MergeMethods,
         categories: Categories,
     ) -> Self {
-        let (update_rule, merge_method) = if linear_history {
-            (
-                UpdateRule::Always(UpdateMethod::Rebase),
-                MergeMethod::Rebase,
-            )
-        } else {
-            let update_rule = if allowed_merge_methods.contains(MergeMethod::Rebase) {
-                UpdateRule::RebaseOnConflict
-            } else {
-                UpdateRule::Always(UpdateMethod::Merge)
-            };
-            let first_allowed = MergeMethod::ALL
-                .into_iter()
-                .find(|&method| allowed_merge_methods.contains(method));
-            // A repository allows at least one method
-            // (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>).
-            (update_rule, first_allowed.unwrap_or(MergeMethod::Merge))
-        };
-        RepoSettings {
+        let mut settings = RepoSettings {
             repo,
             default_branch,
-            update_rule,
-            merge_method,
+            merge_method: MergeMethod::Merge,
             allowed_merge_methods,
+            linear_history,
             categories,
+        };
+        if let Some(&first) = settings.usable_merge_methods().first() {
+            settings.merge_method = first;
         }
+        settings
     }
 
-    /// The settings with the `update-branch` and, with auto-merge, the
-    /// `merge-method` settings applied over the repository's, refused where
-    /// auto-merge cannot work with them.
-    pub fn configured(
-        mut self,
-        update_branch: Option<UpdateMethod>,
-        auto_merge: Option<AutoMerge>,
-    ) -> Result<RepoSettings> {
-        if let Some(method) = update_branch {
-            self.update_rule = UpdateRule::Always(method);
-        }
-        if let Some(auto_merge) = auto_merge {
-            if let Some(method) = auto_merge.merge_method {
-                self.merge_method = method;
+    /// The settings with the `merge-method` setting applied over the
+    /// default, refused where the repository cannot merge by it
+    /// (`docs/specs/repository.md`, "Startup").
+    pub fn configured(mut self, merge_method: Option<MergeMethod>) -> Result<RepoSettings> {
+        let usable = self.usable_merge_methods();
+        if usable.is_empty() {
+            if self.linear_history && self.allowed_merge_methods.contains(MergeMethod::Merge) {
+                bail!(
+                    "the repository requires linear history and allows only merge commits, so \
+                     it allows no merge method: allow rebase or squash merging in its settings"
+                );
             }
-            self.check_auto_merge(update_branch)?;
+            bail!(
+                "the repository allows no merge method: allow merge, rebase or squash merging \
+                 in its settings"
+            );
+        }
+        if let Some(method) = merge_method {
+            self.merge_method = method;
+        }
+        let method = self.merge_method;
+        if !usable.contains(&method) {
+            let allows: MergeMethods = usable.into_iter().collect();
+            if self.allowed_merge_methods.contains(method) {
+                bail!(
+                    "the repository requires linear history, so it doesn't allow the merge \
+                     method `{method}`: it allows {allows}; set `merge-method` to a method it \
+                     allows"
+                );
+            }
+            bail!(
+                "the repository doesn't allow the merge method `{method}`: it allows {allows}; \
+                 set `merge-method` to a method it allows"
+            );
         }
         Ok(self)
     }
 
-    fn check_auto_merge(&self, update_branch: Option<UpdateMethod>) -> Result<()> {
-        let method = self.merge_method;
-        let allowed = &self.allowed_merge_methods;
-        if !allowed.contains(method) {
-            bail!(
-                "the repository doesn't allow the merge method `{method}`: it allows {allowed}; \
-                 set `merge-method` to a method it allows"
-            );
-        }
-        if method == MergeMethod::Rebase && update_branch == Some(UpdateMethod::Merge) {
-            bail!(
-                "`update-branch` `merge` cannot keep branches rebase-mergeable, and the merge \
-                 method is `rebase`: set `update-branch` to `rebase`, or `merge-method` to \
-                 another method the repository allows (it allows {allowed})"
-            );
-        }
-        Ok(())
+    /// The merge methods the repository can merge by, in the order of the
+    /// default: those it allows, a merge commit only without linear history.
+    fn usable_merge_methods(&self) -> Vec<MergeMethod> {
+        MergeMethod::ALL
+            .into_iter()
+            .filter(|&method| self.allowed_merge_methods.contains(method))
+            .filter(|&method| !(self.linear_history && method == MergeMethod::Merge))
+            .collect()
     }
 }
 

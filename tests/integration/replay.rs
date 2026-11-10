@@ -9,7 +9,7 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use common::*;
 use linewright::case::{Case, Event, copy_sessions, replay};
-use linewright::domain::{AutoMerge, Login, MergeMethod, Number, UpdateMethod};
+use linewright::domain::{Login, MergeMethod, Number, UpdateMethod};
 use linewright::reconcile::{Subject, WorkKind};
 use serde_json::json;
 
@@ -617,14 +617,12 @@ async fn a_replay_with_auto_merge_merges_each_pull_request_and_runs_the_tickets_
 }
 
 #[test_log::test(tokio::test)]
-async fn a_replay_with_auto_merge_refuses_a_merge_method_the_case_repository_does_not_allow() {
+async fn a_replay_refuses_a_merge_method_the_case_repository_does_not_allow() {
     let dir = tempfile::tempdir().unwrap();
     spec_change_case_allowing(dir.path(), &[], &[MergeMethod::Rebase]);
     let out = dir.path().join("out");
     let mut config = config(&out);
-    config.auto_merge = Some(AutoMerge {
-        merge_method: Some(MergeMethod::Merge),
-    });
+    config.merge_method = Some(MergeMethod::Merge);
 
     let error = replay(
         &dir.path().join("case"),

@@ -376,11 +376,11 @@ pub fn feedback<'a>(
     }
 }
 
-/// It cannot be merged by a method the repository allows: GitHub reports it
-/// not rebaseable, and the repository allows rebase.
+/// It cannot be merged by its merge method, for a reason other than being
+/// behind or conflicting: GitHub reports it not rebaseable, and the merge
+/// method is rebase.
 fn unmergeable(pr: &Pull, policy: &Policy) -> bool {
-    pr.rebaseability == Rebaseability::NotRebaseable
-        && policy.allowed_merge_methods.contains(MergeMethod::Rebase)
+    pr.rebaseability == Rebaseability::NotRebaseable && policy.merge_method == MergeMethod::Rebase
 }
 
 /// When the round of `pr` began: the latest of its opening, the end of the

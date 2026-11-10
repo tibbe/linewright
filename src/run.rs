@@ -24,7 +24,7 @@ use crate::clock::Clock;
 use crate::clones::{CloneDir, Clones};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
-    Timestamp, UpdateMethod, Windows, label,
+    Timestamp, Windows, label,
 };
 use crate::environment;
 use crate::git::{self, Updated, WorkState};
@@ -32,7 +32,7 @@ use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
 use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
-use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop, rebases_to_repair};
+use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
 use crate::redaction::Redaction;
 use crate::repo_files::RepoLayer;
 use crate::results::{
@@ -2021,24 +2021,21 @@ async fn push_update(
     pushed(&pr.head_ref, outcome, TryAgain::Reassign)
 }
 
-/// Brings `pr`'s branch, checked out in `dir`, up to date with the default
-/// branch, and returns the conflict it stopped on, if any.
-async fn update_branch(
-    shell: &Shell,
-    pr: &Pull,
-    dir: &Path,
-) -> Result<Option<git::Conflict>, Failure> {
+/// Brings the branch checked out in `dir` up to date with the default
+/// branch, by the merge method's update method, and returns the conflict it
+/// stopped on, if any.
+async fn update_branch(shell: &Shell, dir: &Path) -> Result<Option<git::Conflict>, Failure> {
     let default_branch = &shell.settings.default_branch;
-    let policy = &shell.policy;
-    let updated = if rebases_to_repair(pr, policy) {
-        git::update(dir, default_branch, UpdateMethod::Rebase).await
-    } else {
-        git::update_by_rule(dir, default_branch, policy.update_rule).await
-    };
-    Ok(match updated.map_err(infra)? {
-        Updated::Conflict(conflict) => Some(conflict),
-        Updated::UpToDate | Updated::Updated => None,
-    })
+    let method = shell.policy.merge_method.update_method();
+    Ok(
+        match git::update(dir, default_branch, method)
+            .await
+            .map_err(infra)?
+        {
+            Updated::Conflict(conflict) => Some(conflict),
+            Updated::UpToDate | Updated::Updated => None,
+        },
+    )
 }
 
 /// Works `pr`, of `ticket`, at `task`, bringing the branch up to date first
@@ -2069,7 +2066,7 @@ async fn pull_work(
             .await
             .map_err(infra)?;
         let start = git::head(&ws.dir).await.map_err(infra)?;
-        let conflict = update_branch(shell, pr, &ws.dir).await?;
+        let conflict = update_branch(shell, &ws.dir).await?;
         if conflict.is_none() {
             return push_update(shell, ctx, pr, &ws.dir, &start).await;
         }
@@ -2082,7 +2079,7 @@ async fn pull_work(
     let conflict = match task {
         Task::Rework { update: false } => None,
         Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
-            update_branch(shell, pr, &ws.dir).await.map_err(ended)?
+            update_branch(shell, &ws.dir).await.map_err(ended)?
         }
     };
     let store = &shell.store;
@@ -2104,11 +2101,7 @@ async fn pull_work(
         Task::FixCi(_) => PullJob::FixCi(&failures),
         Task::Update => PullJob::Update,
     };
-    let history = if shell.policy.squashes() {
-        prompts::History::OnTop
-    } else {
-        prompts::History::Series
-    };
+    let history = prompts::History::for_method(shell.policy.merge_method);
     let Some(pull_task) = pull_work::session_task(job, conflict.as_ref(), history) else {
         record_end(shell, &opened.record);
         return push_update(shell, ctx, pr, &ws.dir, &start).await;

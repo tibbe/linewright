@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::domain::{AutoMerge, MergeMethod, Number, Repo, Timestamp, UpdateMethod};
+use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
 use crate::layer::{self, Layer};
@@ -362,9 +362,6 @@ pub struct Settings {
     /// CI fix attempts before handing back [default: 2]
     #[arg(long, global = true)]
     pub ci_attempts: Option<String>,
-    /// `rebase` or `merge` [default: from the repository's settings]
-    #[arg(long, global = true)]
-    pub update_branch: Option<String>,
     /// Merge green pull requests instead of leaving them for review [default: off]
     #[arg(long, global = true, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     pub auto_merge: Option<String>,
@@ -407,8 +404,9 @@ pub struct Config {
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
-    pub update_branch: Option<UpdateMethod>,
-    pub auto_merge: Option<AutoMerge>,
+    pub auto_merge: bool,
+    /// `None` follows the repository's settings.
+    pub merge_method: Option<MergeMethod>,
     pub require_label: Option<String>,
     pub log_format: LogFormat,
 }
@@ -440,7 +438,6 @@ impl Settings {
             ("ci-grace", &self.ci_grace),
             ("ci-timeout", &self.ci_timeout),
             ("ci-attempts", &self.ci_attempts),
-            ("update-branch", &self.update_branch),
             ("auto-merge", &self.auto_merge),
             ("merge-method", &self.merge_method),
             ("require-label", &self.require_label),
@@ -518,7 +515,7 @@ const SETUP_TIMEOUT: &str = "setup.timeout";
 /// The operator's settings, each with its form. A setting whose name holds
 /// a dot is a key of the table named before the dot
 /// (`docs/specs/operation.md`, Configuration, A table of settings).
-const SETTINGS: [(&str, Form); 30] = [
+const SETTINGS: [(&str, Form); 29] = [
     ("repo", VALUE),
     ("poll-interval", VALUE),
     ("webhook-address", VALUE),
@@ -544,7 +541,6 @@ const SETTINGS: [(&str, Form); 30] = [
     ("ci-grace", VALUE),
     ("ci-timeout", VALUE),
     ("ci-attempts", VALUE),
-    ("update-branch", VALUE),
     ("auto-merge", VALUE),
     ("merge-method", VALUE),
     ("require-label", VALUE),
@@ -728,7 +724,6 @@ struct Feature {
 struct Features {
     webhooks: Feature,
     ui: Feature,
-    auto_merge: Feature,
 }
 
 const FEATURES: Features = Features {
@@ -749,11 +744,6 @@ const FEATURES: Features = Features {
             "`ui-address` is empty: set `ui-address` to serve the web UI, or unset `ui-hosts`"
                 .into()
         },
-    },
-    auto_merge: Feature {
-        setting: "merge-method",
-        switches: &["auto-merge"],
-        when_off: || "`auto-merge` is off: turn `auto-merge` on, or unset `merge-method`".into(),
     },
 };
 
@@ -916,17 +906,6 @@ impl Config {
         };
         let glob = value("spec-glob", "docs/**/*.md");
         let spec_glob = SpecGlob::new(&glob).map_err(|e| not_one("spec-glob", &glob, e.into()))?;
-        let update_branch = match get("update-branch").as_deref() {
-            None => None,
-            Some("rebase") => Some(UpdateMethod::Rebase),
-            Some("merge") => Some(UpdateMethod::Merge),
-            Some(other) => {
-                return Err(wrong(
-                    "update-branch",
-                    format!("the setting `update-branch` is {other:?}: it is `rebase` or `merge`"),
-                ));
-            }
-        };
         let auto_merge = match get("auto-merge").as_deref() {
             None | Some("false") => false,
             Some("true") => true,
@@ -947,13 +926,7 @@ impl Config {
                 )
             })
         };
-        let merge_method = refuse_while_off(
-            &FEATURES.auto_merge,
-            auto_merge,
-            get("merge-method").map(parse_merge_method).transpose()?,
-            blame,
-        )?;
-        let auto_merge = auto_merge.then_some(AutoMerge { merge_method });
+        let merge_method = get("merge-method").map(parse_merge_method).transpose()?;
         let log_format = match get("log-format").as_deref() {
             None if on_terminal => LogFormat::Text,
             None => LogFormat::Json,
@@ -1122,8 +1095,8 @@ impl Config {
             ci_grace,
             ci_timeout,
             ci_attempts: number("ci-attempts", "2")?,
-            update_branch,
             auto_merge,
+            merge_method,
             require_label: get("require-label"),
             log_format,
         })

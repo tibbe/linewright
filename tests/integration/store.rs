@@ -2,7 +2,7 @@ use crate::common;
 
 use common::rejected;
 use linewright::domain::MergeMethod::{self, Merge, Rebase, Squash};
-use linewright::domain::{AutoMerge, Repo, UpdateMethod, UpdateRule};
+use linewright::domain::Repo;
 use linewright::store::{Categories, RepoSettings, missing_permission};
 
 /// The settings GitHub gives a repository that allows `allowed`, requiring a
@@ -18,119 +18,53 @@ fn read(linear_history: bool, allowed: &[MergeMethod]) -> RepoSettings {
 }
 
 #[test_log::test]
-fn the_repositorys_settings_decide_how_a_branch_is_updated_and_merged() {
-    for (linear_history, allowed, update_rule, merge_method) in [
-        (
-            false,
-            &[Merge, Squash, Rebase][..],
-            UpdateRule::RebaseOnConflict,
-            Merge,
-        ),
-        (
-            false,
-            &[Merge, Squash],
-            UpdateRule::Always(UpdateMethod::Merge),
-            Merge,
-        ),
-        (
-            true,
-            &[Merge, Squash, Rebase],
-            UpdateRule::Always(UpdateMethod::Rebase),
-            Rebase,
-        ),
-        (
-            true,
-            &[Squash],
-            UpdateRule::Always(UpdateMethod::Rebase),
-            Rebase,
-        ),
-        (false, &[Rebase], UpdateRule::RebaseOnConflict, Rebase),
-        (
-            false,
-            &[Squash, Rebase],
-            UpdateRule::RebaseOnConflict,
-            Squash,
-        ),
-        (
-            false,
-            &[Squash],
-            UpdateRule::Always(UpdateMethod::Merge),
-            Squash,
-        ),
+fn the_default_merge_method_is_the_first_of_merge_rebase_and_squash_the_repository_allows() {
+    for (linear_history, allowed, merge_method) in [
+        (false, &[Merge, Squash, Rebase][..], Merge),
+        (false, &[Merge, Squash], Merge),
+        (false, &[Merge, Rebase], Merge),
+        (false, &[Merge], Merge),
+        (false, &[Squash, Rebase], Rebase),
+        (false, &[Rebase], Rebase),
+        (false, &[Squash], Squash),
+        (true, &[Merge, Squash, Rebase], Rebase),
+        (true, &[Merge, Rebase], Rebase),
+        (true, &[Merge, Squash], Squash),
+        (true, &[Squash, Rebase], Rebase),
+        (true, &[Rebase], Rebase),
+        (true, &[Squash], Squash),
     ] {
-        let settings = read(linear_history, allowed);
-
         let case = format!("linear history {linear_history}, allowing {allowed:?}");
-        assert_eq!(settings.update_rule, update_rule, "{case}");
+        let settings = read(linear_history, allowed).configured(None).expect(&case);
+
         assert_eq!(settings.merge_method, merge_method, "{case}");
+        assert_eq!(settings.linear_history, linear_history, "{case}");
     }
 }
 
 #[test_log::test]
-fn the_configs_update_branch_and_merge_method_win_over_the_repositorys() {
-    let merging_by = |merge_method| Some(AutoMerge { merge_method });
-    let without_auto_merge_unchecked_against_the_rule = (
-        &[Rebase][..],
-        Some(UpdateMethod::Merge),
-        None,
-        UpdateRule::Always(UpdateMethod::Merge),
-        Rebase,
-    );
-    for (allowed, update_method, auto_merge, update_rule, merge_method) in [
-        (
-            &[Merge, Squash, Rebase][..],
-            None,
-            None,
-            UpdateRule::RebaseOnConflict,
-            Merge,
-        ),
-        (
-            &[Merge, Squash, Rebase],
-            Some(UpdateMethod::Merge),
-            None,
-            UpdateRule::Always(UpdateMethod::Merge),
-            Merge,
-        ),
-        (
-            &[Merge, Squash],
-            Some(UpdateMethod::Rebase),
-            None,
-            UpdateRule::Always(UpdateMethod::Rebase),
-            Merge,
-        ),
-        (
-            &[Squash, Rebase],
-            None,
-            merging_by(None),
-            UpdateRule::RebaseOnConflict,
-            Squash,
-        ),
-        (
-            &[Squash, Rebase],
-            None,
-            merging_by(Some(Rebase)),
-            UpdateRule::RebaseOnConflict,
-            Rebase,
-        ),
-        without_auto_merge_unchecked_against_the_rule,
+fn the_merge_method_setting_wins_over_the_default_where_the_repository_allows_it() {
+    for (linear_history, allowed, setting) in [
+        (false, &[Merge, Squash, Rebase][..], Squash),
+        (false, &[Merge, Squash, Rebase], Rebase),
+        (false, &[Squash, Rebase], Squash),
+        (true, &[Merge, Squash, Rebase], Squash),
     ] {
-        let case = format!("allowing {allowed:?}, {update_method:?}, {auto_merge:?}");
-        let settings = read(false, allowed)
-            .configured(update_method, auto_merge)
+        let case = format!("linear history {linear_history}, allowing {allowed:?}, {setting}");
+        let settings = read(linear_history, allowed)
+            .configured(Some(setting))
             .expect(&case);
 
-        assert_eq!(settings.update_rule, update_rule, "{case}");
-        assert_eq!(settings.merge_method, merge_method, "{case}");
+        assert_eq!(settings.merge_method, setting, "{case}");
     }
 }
 
 #[test_log::test]
-fn with_auto_merge_settings_that_cannot_merge_are_an_error_saying_what_to_set() {
-    for (linear_history, allowed, update_method, merge_method, error) in [
+fn a_merge_method_the_repository_cannot_take_is_an_error_naming_what_it_allows() {
+    for (linear_history, allowed, setting, error) in [
         (
             false,
             &[Merge, Rebase][..],
-            None,
             Some(Squash),
             "the repository doesn't allow the merge method `squash`: it allows `merge` and \
              `rebase`; set `merge-method` to a method it allows",
@@ -138,23 +72,40 @@ fn with_auto_merge_settings_that_cannot_merge_are_an_error_saying_what_to_set() 
         (
             true,
             &[Merge, Squash],
+            Some(Rebase),
+            "the repository doesn't allow the merge method `rebase`: it allows only `squash`; \
+             set `merge-method` to a method it allows",
+        ),
+        (
+            true,
+            &[Merge, Squash, Rebase],
+            Some(Merge),
+            "the repository requires linear history, so it doesn't allow the merge method \
+             `merge`: it allows `rebase` and `squash`; set `merge-method` to a method it allows",
+        ),
+        (
+            true,
+            &[Merge, Rebase],
+            Some(Merge),
+            "the repository requires linear history, so it doesn't allow the merge method \
+             `merge`: it allows only `rebase`; set `merge-method` to a method it allows",
+        ),
+        (
+            true,
+            &[Merge],
             None,
-            None,
-            "the repository doesn't allow the merge method `rebase`: it allows `merge` and \
-             `squash`; set `merge-method` to a method it allows",
+            "the repository requires linear history and allows only merge commits, so it \
+             allows no merge method: allow rebase or squash merging in its settings",
         ),
         (
             false,
-            &[Rebase],
-            Some(UpdateMethod::Merge),
+            &[],
             None,
-            "`update-branch` `merge` cannot keep branches rebase-mergeable, and the merge \
-             method is `rebase`: set `update-branch` to `rebase`, or `merge-method` to another \
-             method the repository allows (it allows only `rebase`)",
+            "the repository allows no merge method: allow merge, rebase or squash merging in \
+             its settings",
         ),
     ] {
-        let configured = read(linear_history, allowed)
-            .configured(update_method, Some(AutoMerge { merge_method }));
+        let configured = read(linear_history, allowed).configured(setting);
 
         assert_eq!(configured.unwrap_err().to_string(), error);
     }

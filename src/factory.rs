@@ -18,8 +18,8 @@ use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::clones::Clones;
 use crate::domain::{
-    AutoMerge, IssueCloseReason, Item, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
-    Timestamp, UpdateMethod, Windows, label,
+    IssueCloseReason, Item, MergeMethod, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
+    Timestamp, Windows, label,
 };
 use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
@@ -58,9 +58,9 @@ pub struct FactoryConfig {
     /// What sessions are given of Linewright's environment.
     pub environments: Environments,
     /// `None` follows the repository's settings.
-    pub update_method: Option<UpdateMethod>,
-    /// `None` leaves green pull requests for review.
-    pub auto_merge: Option<AutoMerge>,
+    pub merge_method: Option<MergeMethod>,
+    /// Merge green pull requests instead of leaving them for review.
+    pub auto_merge: bool,
     pub require_label: Option<String>,
     /// The operator's layer of the prompts.
     pub prompts: OperatorPrompts,
@@ -229,7 +229,7 @@ impl Factory {
             .settings()
             .await
             .context("reading the repository's settings")?
-            .configured(config.update_method, config.auto_merge)?;
+            .configured(config.merge_method)?;
         let labels = store.labels().await.context("listing labels")?;
         for change in label::label_changes(&labels, &label::ALL) {
             match change {
@@ -246,8 +246,7 @@ impl Factory {
         info!(
             account = %identity.login,
             default_branch = %settings.default_branch,
-            update_rule = ?settings.update_rule,
-            auto_merge = config.auto_merge.is_some(),
+            auto_merge = config.auto_merge,
             merge_method = %settings.merge_method,
             "started"
         );
@@ -293,9 +292,7 @@ impl Factory {
                 ci_timeout: config.ci_timeout,
                 ci_attempts: config.ci_attempts,
                 merge_method: settings.merge_method,
-                auto_merge: config.auto_merge.is_some(),
-                update_rule: settings.update_rule,
-                allowed_merge_methods: settings.allowed_merge_methods.clone(),
+                auto_merge: config.auto_merge,
                 require_label: config.require_label,
             },
             store,
