@@ -21,6 +21,12 @@ pub struct Scenario {
     /// In place of `turn`, the steps for the stage [`STAGE_VARIABLE`] names.
     #[serde(default)]
     pub stages: BTreeMap<String, Vec<Step>>,
+    /// When given, each event streamed with no `timestamp` gets one, as
+    /// Claude Code stamps its events: the time it is streamed, this many
+    /// milliseconds on, so that it tells the time of a clock ahead of the
+    /// system's.
+    #[serde(default)]
+    pub stamped_ahead_millis: Option<i64>,
 }
 
 impl Default for Scenario {
@@ -30,6 +36,7 @@ impl Default for Scenario {
             version: vec![Step::Say("fake claude".into())],
             turn: Vec::new(),
             stages: BTreeMap::new(),
+            stamped_ahead_millis: None,
         }
     }
 }

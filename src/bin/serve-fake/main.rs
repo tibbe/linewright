@@ -26,6 +26,8 @@ use linewright::serving::{self, OnUsageLimit, Starting};
 use linewright::store::local::LocalStore;
 use linewright::winding_up::WindingUp;
 
+use crate::scenario::Scenario;
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -47,10 +49,10 @@ async fn serve() -> Result<()> {
         .parent()
         .context("serve-fake is in a directory")?
         .to_path_buf();
-    let agent = fake_agent(dir, &beside.join("fake-claude"))?;
+    let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(seed::started_at()));
+    let agent = fake_agent(dir, &beside.join("fake-claude"), clock.as_ref())?;
     let port = free_port()?;
     let config = config(dir, port)?;
-    let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(seed::started_at()));
     let store =
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
@@ -81,23 +83,30 @@ async fn serve() -> Result<()> {
     .await
 }
 
+/// How far `clock` runs ahead of the system's, in milliseconds.
+fn ahead_millis(clock: &dyn Clock) -> i64 {
+    (clock.now() - chrono::Utc::now()).num_milliseconds()
+}
+
 /// The `playwright-cli` command that has the browser tell the time `clock`
 /// does, as the pages work out how long ago and how long for in the browser.
 fn browser_clock(clock: &dyn Clock) -> String {
-    let ahead = (clock.now() - chrono::Utc::now()).num_milliseconds();
+    let ahead = ahead_millis(clock);
     format!(
         "playwright-cli run-code \"async page => {{ await page.clock.setSystemTime(Date.now() + ({ahead})); }}\""
     )
 }
 
-/// `fake-claude` as `dir/claude`, with the seed's scenario beside it.
-fn fake_agent(dir: &Path, fake_claude: &Path) -> Result<String> {
+/// `fake-claude` as `dir/claude`, with the seed's scenario beside it, its
+/// events stamped by `clock`.
+fn fake_agent(dir: &Path, fake_claude: &Path, clock: &dyn Clock) -> Result<String> {
     let program = dir.join("claude");
     std::os::unix::fs::symlink(fake_claude, &program)?;
-    std::fs::write(
-        dir.join("claude.json"),
-        serde_json::to_string(&seed::scenario())?,
-    )?;
+    let scenario = Scenario {
+        stamped_ahead_millis: Some(ahead_millis(clock)),
+        ..seed::scenario()
+    };
+    std::fs::write(dir.join("claude.json"), serde_json::to_string(&scenario)?)?;
     program
         .into_os_string()
         .into_string()
