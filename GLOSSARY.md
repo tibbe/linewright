@@ -41,6 +41,10 @@ _Avoid_: conversation, task
 The record of everything a session said and did.
 _Avoid_: trace, session log, trajectory
 
+**Turn**:
+A prompt sent to a session and the agent's work on it until it stops.
+_Avoid_: interaction, run
+
 **Brief**:
 What a session works from: the prompts it is sent, with its task and result
 contract, and its skills.
