@@ -24,7 +24,7 @@ use crate::clock::Clock;
 use crate::clones::{CloneDir, Clones};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
-    Timestamp, Windows, label,
+    Timestamp, UpdateMethod, Windows, label,
 };
 use crate::environment;
 use crate::git::{self, Updated, WorkState};
@@ -2031,9 +2031,9 @@ async fn update_branch(
     let default_branch = &shell.settings.default_branch;
     let policy = &shell.policy;
     let updated = if rebases_to_repair(pr, policy) {
-        git::rebase(dir, default_branch).await
+        git::update(dir, default_branch, UpdateMethod::Rebase).await
     } else {
-        git::update(dir, default_branch, policy.update_rule).await
+        git::update_by_rule(dir, default_branch, policy.update_rule).await
     };
     Ok(match updated.map_err(infra)? {
         Updated::Conflict(conflict) => Some(conflict),
