@@ -2284,7 +2284,8 @@ fn updated_at(minute: i64) -> Memory {
 
 fn merging_by(method: MergeMethod) -> Policy {
     Policy {
-        auto_merge: Some(method),
+        merge_method: method,
+        auto_merge: true,
         ..policy()
     }
 }
@@ -3535,7 +3536,8 @@ fn with_a_required_label_work_already_started_carries_on_unlabeled() {
     }
     world.issues.push(claimed(ticket(5)));
     let policy = Policy {
-        auto_merge: Some(MergeMethod::Merge),
+        merge_method: MergeMethod::Merge,
+        auto_merge: true,
         ..requiring_label()
     };
 

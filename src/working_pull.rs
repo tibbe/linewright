@@ -153,7 +153,7 @@ pub fn facts(pr: &Pull, memory: &Memory, policy: &Policy, now: Timestamp) -> Fac
         | Mergeability::Unknown => Branch::Mergeable,
     };
     let draft = pr.state == (PullState::Open { draft: true });
-    let auto_merge = policy.auto_merge;
+    let auto_merge = policy.auto_merge.then_some(policy.merge_method);
     let verdict = match (&pr.mergeability, auto_merge) {
         (Mergeability::Clean, Some(MergeMethod::Rebase))
             if pr.rebaseability == Rebaseability::Unknown =>

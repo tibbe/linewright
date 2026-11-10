@@ -35,7 +35,10 @@ pub struct Policy {
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
-    pub auto_merge: Option<MergeMethod>,
+    /// How the repository's pull requests merge, whoever merges them.
+    pub merge_method: MergeMethod,
+    /// Linewright merges its pull requests itself, by `merge_method`.
+    pub auto_merge: bool,
     pub update_rule: UpdateRule,
     pub allowed_merge_methods: MergeMethods,
     pub require_label: Option<String>,
@@ -68,12 +71,11 @@ impl Policy {
     /// (`docs/specs/pull_requests.md`, "Merging"): the auto-merge method is
     /// squash, or, without auto-merge, squash is the only method allowed.
     pub fn squashes(&self) -> bool {
-        match self.auto_merge {
-            Some(method) => method == MergeMethod::Squash,
-            None => {
-                !self.allowed_merge_methods.contains(MergeMethod::Merge)
-                    && !self.allowed_merge_methods.contains(MergeMethod::Rebase)
-            }
+        if self.auto_merge {
+            self.merge_method == MergeMethod::Squash
+        } else {
+            !self.allowed_merge_methods.contains(MergeMethod::Merge)
+                && !self.allowed_merge_methods.contains(MergeMethod::Rebase)
         }
     }
 
