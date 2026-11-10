@@ -2413,13 +2413,6 @@ pub enum UpdateMethod {
     Merge,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UpdateRule {
-    Always(UpdateMethod),
-    /// Merge, but rebase where the merge has a conflict to resolve.
-    RebaseOnConflict,
-}
-
 /// <https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request>
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -2430,9 +2423,21 @@ pub enum MergeMethod {
 }
 
 impl MergeMethod {
-    /// In the order Linewright prefers them.
+    /// In the order of the default (`docs/specs/pull_requests.md`,
+    /// "Merging").
     pub const ALL: [MergeMethod; 3] =
-        [MergeMethod::Merge, MergeMethod::Squash, MergeMethod::Rebase];
+        [MergeMethod::Merge, MergeMethod::Rebase, MergeMethod::Squash];
+
+    /// How an update brings a branch merged by this method up to date
+    /// (`docs/specs/pull_requests.md`, "Keeping up to date"): a rebase, so
+    /// the branch holds no merge commit, except for squash, whose reviewed
+    /// commits stay as they are.
+    pub fn update_method(self) -> UpdateMethod {
+        match self {
+            MergeMethod::Merge | MergeMethod::Rebase => UpdateMethod::Rebase,
+            MergeMethod::Squash => UpdateMethod::Merge,
+        }
+    }
 }
 
 impl fmt::Display for MergeMethod {
@@ -2455,13 +2460,6 @@ impl std::str::FromStr for MergeMethod {
             .find(|method| method.to_string() == name)
             .ok_or(())
     }
-}
-
-/// Merging green pull requests, the `auto-merge` setting turned on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AutoMerge {
-    /// `None` follows the repository's settings.
-    pub merge_method: Option<MergeMethod>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

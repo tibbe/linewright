@@ -26,8 +26,6 @@ pub fn policy() -> Policy {
         ci_attempts: 2,
         merge_method: MergeMethod::Merge,
         auto_merge: false,
-        update_rule: UpdateRule::RebaseOnConflict,
-        allowed_merge_methods: MergeMethods::all(),
         require_label: None,
     }
 }

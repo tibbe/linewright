@@ -1208,3 +1208,14 @@ fn a_tickets_branch_is_named_for_it_with_the_first_number_from_2_no_open_pull_re
         assert_eq!(snapshot.ticket_branch(&ticket), branch, "{case}");
     }
 }
+
+#[test_log::test]
+fn an_update_rebases_for_merge_and_rebase_and_merges_the_default_branch_in_for_squash() {
+    for (method, update) in [
+        (MergeMethod::Merge, UpdateMethod::Rebase),
+        (MergeMethod::Rebase, UpdateMethod::Rebase),
+        (MergeMethod::Squash, UpdateMethod::Merge),
+    ] {
+        assert_eq!(method.update_method(), update, "{method}");
+    }
+}

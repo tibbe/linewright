@@ -4,8 +4,9 @@ use common::{
     UNFINISHED, UNFINISHED_MESSAGE, assert_in_a_process_group_of_its_own, commit_in, git_in,
     git_output,
 };
-use linewright::domain::{UpdateMethod, UpdateRule};
+use linewright::domain::UpdateMethod;
 use linewright::git::{self, Addition, BranchStart, Commit, UnfinishedCommits, Updated};
+use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 /// The SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
@@ -432,34 +433,39 @@ fn behind_main(path: &str) -> Repository {
     repository
 }
 
-/// The method of the update `git::update_by_rule` stops in on a conflict in
+/// The method of the update `git::update` stops in on a conflict in
 /// `src/gadgets.txt`, if it stops, and the subjects of the commits then on
 /// the branch's first-parent line, oldest first.
-async fn updated(repository: &Repository, rule: UpdateRule) -> (Option<UpdateMethod>, Vec<String>) {
-    let stopped = match git::update_by_rule(&repository.clone, "main", rule)
-        .await
-        .unwrap()
-    {
-        Updated::Conflict(conflict) => {
-            assert_eq!(conflict.files, ["src/gadgets.txt"]);
-            assert!(repository.mid_operation());
-            Some(conflict.method)
-        }
-        Updated::Updated => None,
-        Updated::UpToDate => panic!("the branch is behind"),
-    };
-    let range = format!("{}..HEAD", repository.begin);
-    let subjects = repository.git(&["log", "--first-parent", "--reverse", "--format=%s", &range]);
-    (stopped, subjects.lines().map(str::to_string).collect())
+#[track_caller]
+fn updated(
+    repository: &Repository,
+    method: UpdateMethod,
+) -> impl Future<Output = (Option<UpdateMethod>, Vec<String>)> {
+    let caller = Location::caller();
+    async move {
+        let stopped = match git::update(&repository.clone, "main", method).await {
+            Ok(Updated::Conflict(conflict)) => {
+                assert_eq!(conflict.files, ["src/gadgets.txt"], "at {caller}");
+                assert!(repository.mid_operation(), "at {caller}");
+                Some(conflict.method)
+            }
+            Ok(Updated::Updated) => None,
+            Ok(Updated::UpToDate) => panic!("the branch is behind, at {caller}"),
+            Err(e) => panic!("updating at {caller}: {e:#}"),
+        };
+        let range = format!("{}..HEAD", repository.begin);
+        let subjects =
+            repository.git(&["log", "--first-parent", "--reverse", "--format=%s", &range]);
+        (stopped, subjects.lines().map(str::to_string).collect())
+    }
 }
 
 #[test_log::test(tokio::test)]
-async fn an_update_always_merging_merges_the_default_branch_in_and_stops_in_a_merge_on_a_conflict()
-{
-    let rule = UpdateRule::Always(UpdateMethod::Merge);
+async fn an_update_by_merge_merges_the_default_branch_in_and_stops_in_a_merge_on_a_conflict() {
+    let method = UpdateMethod::Merge;
 
     assert_eq!(
-        updated(&behind_main("src/other.txt"), rule).await,
+        updated(&behind_main("src/other.txt"), method).await,
         (
             None,
             vec![
@@ -469,22 +475,21 @@ async fn an_update_always_merging_merges_the_default_branch_in_and_stops_in_a_me
         )
     );
     assert_eq!(
-        updated(&behind_main("src/gadgets.txt"), rule).await.0,
+        updated(&behind_main("src/gadgets.txt"), method).await.0,
         Some(UpdateMethod::Merge)
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn an_update_always_rebasing_rebases_onto_the_default_branch_and_stops_in_a_rebase_on_a_conflict()
- {
-    let rule = UpdateRule::Always(UpdateMethod::Rebase);
+async fn an_update_by_rebase_rebases_onto_the_default_branch_and_stops_in_a_rebase_on_a_conflict() {
+    let method = UpdateMethod::Rebase;
 
     assert_eq!(
-        updated(&behind_main("src/other.txt"), rule).await,
+        updated(&behind_main("src/other.txt"), method).await,
         (None, vec!["Move on".to_string(), "Start".to_string()])
     );
     assert_eq!(
-        updated(&behind_main("src/gadgets.txt"), rule).await.0,
+        updated(&behind_main("src/gadgets.txt"), method).await.0,
         Some(UpdateMethod::Rebase)
     );
 }

@@ -9,7 +9,9 @@ use anyhow::{Result, bail};
 
 use crate::automation::Automation;
 use crate::domain;
-use crate::domain::{CheckFailure, Comment, Issue, MergedPull, Number, Parent, Pull, UpdateMethod};
+use crate::domain::{
+    CheckFailure, Comment, Issue, MergeMethod, MergedPull, Number, Parent, Pull, UpdateMethod,
+};
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::WorkKind;
 use crate::secrets::Held;
@@ -111,6 +113,17 @@ pub enum History {
     Series,
     /// The commits are squashed into one: new commits on top, none rewritten.
     OnTop,
+}
+
+impl History {
+    /// The history for `method`: on top where it squashes, a series where
+    /// the commits land as they are.
+    pub fn for_method(method: MergeMethod) -> History {
+        match method {
+            MergeMethod::Merge | MergeMethod::Rebase => History::Series,
+            MergeMethod::Squash => History::OnTop,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

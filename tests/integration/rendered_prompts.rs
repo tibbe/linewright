@@ -396,3 +396,14 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
 
     assert_eq!(prompt, expected("rework-of-a-ticket-with-a-parent.txt"));
 }
+
+#[test_log::test]
+fn the_history_is_a_series_for_merge_and_rebase_and_on_top_for_squash() {
+    for (method, history) in [
+        (MergeMethod::Merge, prompts::History::Series),
+        (MergeMethod::Rebase, prompts::History::Series),
+        (MergeMethod::Squash, prompts::History::OnTop),
+    ] {
+        assert_eq!(prompts::History::for_method(method), history, "{method}");
+    }
+}

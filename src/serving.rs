@@ -235,7 +235,7 @@ impl Starting {
             bash: self.bash,
             work: config.work.clone(),
             environments: self.environments,
-            update_method: config.update_branch,
+            merge_method: config.merge_method,
             auto_merge: config.auto_merge,
             require_label: config.require_label.clone(),
             prompts: self.prompts,

@@ -1,33 +1,41 @@
 use crate::common;
 
 use common::*;
-use linewright::domain::{MergeMethod, UpdateMethod, label};
+use linewright::domain::{MergeMethod, label};
 use linewright::factory::SessionToken;
 
 /// A variable that fails every connection to GitHub at once.
 const GITHUB_UNREACHABLE: (&str, &str) = ("HTTPS_PROXY", "http://127.0.0.1:1");
 
 #[test_log::test(tokio::test)]
-async fn with_auto_merge_settings_it_cannot_merge_with_stop_startup() {
-    let repository = Repository::allowing([MergeMethod::Rebase]);
-
-    let started = World::start(repository, |config| {
+async fn a_merge_method_the_repository_does_not_allow_stops_startup_naming_those_it_does() {
+    let without_auto_merge = World::start(Repository::allowing([MergeMethod::Rebase]), |config| {
+        config.merge_method = Some(MergeMethod::Merge);
+    })
+    .await;
+    let linear_history = Repository {
+        linear_history: true,
+        ..Repository::allowing([MergeMethod::Merge, MergeMethod::Squash])
+    };
+    let merge_with_linear_history = World::start(linear_history, |config| {
         config.auto_merge = AUTO_MERGE;
-        config.update_method = Some(UpdateMethod::Merge);
+        config.merge_method = Some(MergeMethod::Merge);
     })
     .await;
 
-    assert!(started.is_err(), "startup went ahead");
+    for (started, allowed) in [
+        (without_auto_merge, "only `rebase`"),
+        (merge_with_linear_history, "only `squash`"),
+    ] {
+        let error = format!("{:#}", started.err().expect("startup went ahead"));
+        assert!(error.contains(allowed), "{error}");
+    }
 }
 
 #[test_log::test(tokio::test)]
-async fn with_auto_merge_the_merge_method_in_effect_is_logged() {
+async fn the_merge_method_in_effect_is_logged() {
     let (log, _guard) = Log::capture();
-    World::start(Repository::default(), |config| {
-        config.auto_merge = AUTO_MERGE;
-    })
-    .await
-    .unwrap();
+    World::start(Repository::default(), |_| {}).await.unwrap();
 
     let started: Vec<String> = log
         .lines("INFO")
@@ -366,22 +374,6 @@ fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
 
     for error in errors {
         assert!(error.contains("`git` is not on the path"), "{error}");
-    }
-}
-
-#[test_log::test]
-fn serve_refuses_a_merge_method_without_auto_merge() {
-    let (flag, flag_error) =
-        serve_with_status(&["--auto-merge=false", "--merge-method", "squash"], &[]);
-    let (env, env_error) = serve_with_status(&[], &[("LINEWRIGHT_MERGE_METHOD", "squash")]);
-
-    assert_eq!(flag.code(), Some(2), "{flag_error}");
-    assert_eq!(env.code(), Some(1), "{env_error}");
-    for error in [flag_error, env_error] {
-        assert!(
-            error.contains("`merge-method` is set, but `auto-merge` is off"),
-            "{error}"
-        );
     }
 }
 

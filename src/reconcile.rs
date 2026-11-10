@@ -6,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::automation::{Automation, AutomationName, LastScheduledRuns};
 use crate::domain::{
     BranchIssue, ClosingPull, DesignedLabel, HandBackKind, Issue, Item, Linked, Login, Marking,
-    Merge, MergeMethod, MergeMethods, MergedPull, Number, Pull, PullState, Rebaseability,
-    Requirement, Snapshot, StatusLabel, SubIssue, TicketBranchName, Timestamp, UpdateMethod,
-    UpdateRule, Windows, label,
+    Merge, MergeMethod, MergedPull, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
+    SubIssue, TicketBranchName, Timestamp, Windows, label,
 };
 use crate::harness::UsageLimit;
 use crate::holds::InForce;
@@ -39,8 +38,6 @@ pub struct Policy {
     pub merge_method: MergeMethod,
     /// Linewright merges its pull requests itself, by `merge_method`.
     pub auto_merge: bool,
-    pub update_rule: UpdateRule,
-    pub allowed_merge_methods: MergeMethods,
     pub require_label: Option<String>,
 }
 
@@ -65,26 +62,6 @@ impl Policy {
     /// The windows open at `now`.
     pub fn windows(&self, now: Timestamp) -> Windows {
         Windows::at(now, self.spec_lookback, self.done_window)
-    }
-
-    /// Whether the repository's pull requests are squashed when they merge
-    /// (`docs/specs/pull_requests.md`, "Merging"): the auto-merge method is
-    /// squash, or, without auto-merge, squash is the only method allowed.
-    pub fn squashes(&self) -> bool {
-        if self.auto_merge {
-            self.merge_method == MergeMethod::Squash
-        } else {
-            !self.allowed_merge_methods.contains(MergeMethod::Merge)
-                && !self.allowed_merge_methods.contains(MergeMethod::Rebase)
-        }
-    }
-
-    /// Whether Linewright rebases a pull request GitHub reports not
-    /// rebaseable: when the repository allows rebase merges and updates do
-    /// not always merge.
-    pub fn rebases_unrebaseable(&self) -> bool {
-        self.allowed_merge_methods.contains(MergeMethod::Rebase)
-            && self.update_rule != UpdateRule::Always(UpdateMethod::Merge)
     }
 }
 
@@ -1610,10 +1587,6 @@ pub fn pull_stop(pr: &Pull, linewright: &Login) -> Option<PullStop> {
             PullClaim::Claimed | PullClaim::NeverAssigned => None,
         },
     }
-}
-
-pub fn rebases_to_repair(pr: &Pull, policy: &Policy) -> bool {
-    pr.rebaseability == Rebaseability::NotRebaseable && policy.rebases_unrebaseable()
 }
 
 pub fn requirements_note(requires: &[Requirement]) -> String {

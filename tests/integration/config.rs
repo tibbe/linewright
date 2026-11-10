@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser};
 use linewright::automation;
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
-use linewright::domain::{AutoMerge, MergeMethod};
+use linewright::domain::MergeMethod;
 use linewright::host::HostName;
 use linewright::layer::{Layer, Source, Sourced};
 use linewright::reconcile::WorkKind;
@@ -574,7 +574,8 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.ci_grace, chrono::TimeDelta::minutes(5));
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));
     assert_eq!(config.ci_attempts, 2);
-    assert_eq!(config.update_branch, None);
+    assert!(!config.auto_merge);
+    assert_eq!(config.merge_method, None);
     assert_eq!(session(&config).model, None);
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
@@ -590,9 +591,9 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
             .contains("max-runs")
     );
     assert!(
-        resolve(&[], &[("LINEWRIGHT_UPDATE_BRANCH", "squash")], None)
+        resolve(&[], &[("LINEWRIGHT_LOG_FORMAT", "xml")], None)
             .unwrap_err()
-            .contains("update-branch")
+            .contains("log-format")
     );
     assert!(
         resolve(&[], &[], Some("max-wokers = 2\n"))
@@ -629,7 +630,7 @@ fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&st
 
 #[test_log::test]
 fn a_wrong_value_is_blamed_on_the_command_line_only_when_a_flag_gave_it() {
-    let bad_env = [("LINEWRIGHT_UPDATE_BRANCH", "squash")];
+    let bad_env = [("LINEWRIGHT_LOG_FORMAT", "xml")];
 
     assert!(blames_the_command_line(&["--max-runs", "many"], &[], None));
     assert!(blames_the_command_line(
@@ -678,8 +679,18 @@ fn a_ci_timeout_no_longer_than_the_grace_period_is_an_error() {
 }
 
 #[test_log::test]
+fn the_earlier_update_branch_key_is_an_unknown_setting() {
+    let error = resolve(&[], &[], Some("update-branch = \"rebase\"\n")).unwrap_err();
+
+    assert!(
+        error.contains("an unknown setting `update-branch`"),
+        "{error}"
+    );
+    assert!(Cli::try_parse_from(["lw", "--update-branch", "rebase", "status"]).is_err());
+}
+
+#[test_log::test]
 fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
-    let on = Some(AutoMerge { merge_method: None });
     let off = resolve(&[], &[], None).unwrap();
     let flag = resolve(&["--auto-merge"], &[], None).unwrap();
     let env = resolve(&[], &[("LINEWRIGHT_AUTO_MERGE", "true")], None).unwrap();
@@ -687,22 +698,17 @@ fn auto_merge_is_off_by_default_and_a_bare_flag_turns_it_on() {
     let flag_over_file =
         resolve(&["--auto-merge=false"], &[], Some("auto-merge = true\n")).unwrap();
 
-    assert_eq!(off.auto_merge, None);
-    assert_eq!(flag.auto_merge, on);
-    assert_eq!(env.auto_merge, on);
-    assert_eq!(file.auto_merge, on);
-    assert_eq!(flag_over_file.auto_merge, None);
+    assert!(!off.auto_merge);
+    assert!(flag.auto_merge);
+    assert!(env.auto_merge);
+    assert!(file.auto_merge);
+    assert!(!flag_over_file.auto_merge);
 }
 
 #[test_log::test]
-fn with_auto_merge_the_merge_method_follows_the_repository_unless_set() {
-    let merge_method = |args: &[&str], env: &[(&str, &str)], file| {
-        resolve(args, env, file)
-            .unwrap()
-            .auto_merge
-            .unwrap()
-            .merge_method
-    };
+fn the_merge_method_follows_the_repository_unless_set_with_auto_merge_on_or_off() {
+    let merge_method =
+        |args: &[&str], env: &[(&str, &str)], file| resolve(args, env, file).unwrap().merge_method;
     let on = ("LINEWRIGHT_AUTO_MERGE", "true");
 
     assert_eq!(merge_method(&[], &[on], None), None);
@@ -722,45 +728,19 @@ fn with_auto_merge_the_merge_method_follows_the_repository_unless_set() {
         merge_method(&[], &[on], Some("merge-method = \"merge\"\n")),
         Some(MergeMethod::Merge)
     );
-}
-
-#[test_log::test]
-fn a_merge_method_without_auto_merge_is_an_error_naming_both() {
-    let flag = resolve(&["--merge-method", "squash"], &[], None).unwrap_err();
-    let env = resolve(&[], &[("LINEWRIGHT_MERGE_METHOD", "squash")], None).unwrap_err();
-    let file = resolve(&[], &[], Some("merge-method = \"squash\"\n")).unwrap_err();
-    let turned_off = resolve(
-        &["--auto-merge=false"],
-        &[],
-        Some("auto-merge = true\nmerge-method = \"squash\"\n"),
-    )
-    .unwrap_err();
-
-    for error in [flag, env, file, turned_off] {
-        assert_eq!(
-            error,
-            "the setting `merge-method` is set, but `auto-merge` is off: \
-             turn `auto-merge` on, or unset `merge-method`"
-        );
-    }
-}
-
-#[test_log::test]
-fn a_merge_method_without_auto_merge_is_blamed_on_the_command_line_only_when_a_flag_turned_it_off()
-{
-    let file = Some("merge-method = \"squash\"\n");
-
-    assert!(blames_the_command_line(&["--auto-merge=false"], &[], file));
-    assert!(!blames_the_command_line(
-        &["--merge-method", "squash"],
-        &[],
-        None
-    ));
-    assert!(!blames_the_command_line(
-        &[],
-        &[("LINEWRIGHT_AUTO_MERGE", "false")],
-        file
-    ));
+    assert_eq!(merge_method(&[], &[], None), None);
+    assert_eq!(
+        merge_method(&["--merge-method", "squash"], &[], None),
+        Some(MergeMethod::Squash)
+    );
+    assert_eq!(
+        merge_method(
+            &["--auto-merge=false"],
+            &[],
+            Some("auto-merge = true\nmerge-method = \"rebase\"\n"),
+        ),
+        Some(MergeMethod::Rebase)
+    );
 }
 
 #[test_log::test]
@@ -1448,7 +1428,7 @@ fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
 }
 
 #[test_log::test]
-fn a_malformed_merge_method_or_webhook_address_for_a_feature_that_is_off_is_an_error_naming_it() {
+fn a_malformed_merge_method_or_a_webhook_address_with_webhooks_off_is_an_error_naming_it() {
     let merge_method = resolve(&["--merge-method", "fast-forward"], &[], None).unwrap_err();
     let webhook_address = resolve(&["--webhook-address", "8080"], &[], None).unwrap_err();
 
