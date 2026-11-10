@@ -4,7 +4,7 @@
 
 use super::closing;
 use crate::domain::{CheckFailure, Login, Pull, Timestamp};
-use crate::git::Conflict;
+use crate::git::{CommitId, Conflict};
 use crate::prompts::{History, PullTask};
 use crate::reconcile::WorkKind;
 use crate::results::ThreadReply;
@@ -153,6 +153,49 @@ pub fn session_task<'a>(
         }),
         (PullJob::Update, Some(conflict)) => Some(PullTask::Update(conflict)),
         (PullJob::Update, None) => None,
+    }
+}
+
+/// A push that applies a pull request run's result: `commit`, leased on the
+/// branch holding `expected`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ResultPush<'a> {
+    pub commit: &'a CommitId,
+    pub expected: &'a CommitId,
+}
+
+/// The pushes, in order, that apply the result of a run on a pull request
+/// whose clone is at `head` (`docs/specs/pull_requests.md`, Keeping up to
+/// date, "Its own push"). The branch held `start` when the run began and
+/// holds `on_remote` as the run last pushed it. `update_tip` is where the
+/// run's update ended, if it updated. The update goes first on its own
+/// where it is not pushed yet and the run changed the branch further, and
+/// each push leases on what the one before it left.
+pub fn result_pushes<'a>(
+    start: &'a CommitId,
+    on_remote: &'a CommitId,
+    update_tip: Option<&'a CommitId>,
+    head: &'a CommitId,
+) -> Vec<ResultPush<'a>> {
+    if head == on_remote {
+        return vec![];
+    }
+    let update = update_tip.filter(|tip| on_remote == start && *tip != start && *tip != head);
+    match update {
+        Some(tip) => vec![
+            ResultPush {
+                commit: tip,
+                expected: start,
+            },
+            ResultPush {
+                commit: head,
+                expected: tip,
+            },
+        ],
+        None => vec![ResultPush {
+            commit: head,
+            expected: on_remote,
+        }],
     }
 }
 

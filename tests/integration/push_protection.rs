@@ -14,7 +14,7 @@ use std::path::Path;
 
 /// What `git push` reported when GitHub's push protection refused a push,
 /// recorded.
-const REFUSAL: &str = include_str!("../../src/store/fixtures/push-protection.txt");
+pub(crate) const REFUSAL: &str = include_str!("../../src/store/fixtures/push-protection.txt");
 
 /// What GitHub's push protection reported finding, in [`REFUSAL`].
 const FOUND: &str = "GitHub Personal Access Token in the commit \
@@ -22,7 +22,7 @@ const FOUND: &str = "GitHub Personal Access Token in the commit \
                      `tests/integration/push_protection.rs:22`";
 
 /// Commits a fake token to `src/config.rs`.
-fn commit_token(dir: &Path) {
+pub(crate) fn commit_token(dir: &Path) {
     // Whole, the token would trip GitHub's push protection on this file
     // (<https://docs.github.com/en/code-security/secret-scanning/introduction/about-push-protection>).
     let token = ["ghp_", "1wR8sX3kQ9vT2mZ7pL4nB6yC0dF5gH8jK2aE"].concat();
@@ -37,7 +37,7 @@ fn commit_token(dir: &Path) {
 }
 
 /// Rewrites the clone's last commit to read the token from the environment.
-fn take_token_out(dir: &Path) {
+pub(crate) fn take_token_out(dir: &Path) {
     git_in(dir, &["reset", "--quiet", "--hard", "HEAD~1"]);
     commit_in(dir, &[("src/config.rs", FIXED)], "Configure");
 }

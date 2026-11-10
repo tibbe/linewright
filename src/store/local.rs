@@ -69,7 +69,9 @@ struct State {
     unreadable: Option<String>,
     /// Fails the reads of single items, but not snapshots.
     items_unreadable: Option<String>,
-    pushes_refused: Option<String>,
+    pushes_refused: Option<PushRefusal>,
+    /// Each push's branch and the commit it pushed, in order.
+    pushed: Vec<(String, String)>,
     attachments_refused: Option<AttachRefusal>,
     /// GitHub tokens that cannot read the repository.
     unreadable_by: Vec<String>,
@@ -299,6 +301,7 @@ impl LocalStore {
                 unreadable: None,
                 items_unreadable: None,
                 pushes_refused: None,
+                pushed: vec![],
                 attachments_refused: None,
                 unreadable_by: vec![],
                 unassignable: vec![],
@@ -693,7 +696,26 @@ impl LocalStore {
 
     /// `output` is what `git push` reports.
     pub fn refuse_pushes(&self, output: &str) {
-        self.state().pushes_refused = Some(output.to_string());
+        self.refuse_pushes_after(0, output);
+    }
+
+    /// Lets the next `count` pushes through, then refuses each, `output`
+    /// being what `git push` reports.
+    pub fn refuse_pushes_after(&self, count: usize, output: &str) {
+        self.state().pushes_refused = Some(PushRefusal {
+            let_through: count,
+            output: output.to_string(),
+        });
+    }
+
+    /// The commits pushed to `branch`, oldest first.
+    pub fn pushed_to(&self, branch: &str) -> Vec<String> {
+        self.state()
+            .pushed
+            .iter()
+            .filter(|(pushed, _)| pushed == branch)
+            .map(|(_, commit)| commit.clone())
+            .collect()
     }
 
     pub fn accept_pushes(&self) {
@@ -1241,6 +1263,14 @@ impl LocalStore {
 /// The URL of the local store's repository at `repo`.
 fn url(repo: &Path) -> Result<&str> {
     repo.to_str().context("the local store's path is UTF-8")
+}
+
+/// How the local store refuses pushes: it lets the next `let_through`
+/// through, then refuses each with `output`, what `git push` reports.
+#[derive(Clone)]
+struct PushRefusal {
+    let_through: usize,
+    output: String,
 }
 
 impl State {
@@ -2110,8 +2140,21 @@ impl Store for LocalStore {
         self.paused(Write::Fetch).await
     }
 
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
-        let refused = self.state().pushes_refused.clone();
+    async fn push(
+        &self,
+        dir: &Path,
+        commit: &git::CommitId,
+        branch: &str,
+        mode: PushMode,
+    ) -> Result<(), PushError> {
+        let refused = match &mut self.state().pushes_refused {
+            Some(refusal) if refusal.let_through > 0 => {
+                refusal.let_through -= 1;
+                None
+            }
+            Some(refusal) => Some(refusal.output.clone()),
+            None => None,
+        };
         if let Some(output) = refused {
             self.paused(Write::Push {
                 branch: branch.into(),
@@ -2122,7 +2165,7 @@ impl Store for LocalStore {
                 "git push failed: {output}"
             )));
         }
-        let refspec = format!("HEAD:refs/heads/{branch}");
+        let refspec = format!("{commit}:refs/heads/{branch}");
         let lease;
         let mut args = vec!["push", "--quiet", "origin", &refspec];
         match &mode {
@@ -2133,6 +2176,8 @@ impl Store for LocalStore {
             }
         }
         git::git(dir, &args).await.map_err(PushError::from_git)?;
+        let pushed = (branch.to_string(), commit.to_string());
+        self.state().pushed.push(pushed);
         let linewright = self.state().linewright.clone();
         self.record_push(branch, &linewright);
         self.paused(Write::Push {

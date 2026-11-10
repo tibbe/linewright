@@ -4,6 +4,7 @@
 
 use chrono::TimeDelta;
 use linewright::domain::{CheckState, Login, Number, Requirement};
+use linewright::git;
 use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
 use linewright::store::{NewIssue, PushMode, Store};
@@ -690,7 +691,12 @@ impl World {
         commit_in(&clone, &[RENAMED], RENAME);
         commit_in(&clone, &LEFT_AFTER_RENAMING, UNFINISHED_MESSAGE);
         self.store
-            .push(&clone, &branch, PushMode::Replace)
+            .push(
+                &clone,
+                &git::head(&clone).await.unwrap(),
+                &branch,
+                PushMode::Replace,
+            )
             .await
             .unwrap();
         self.store

@@ -184,8 +184,55 @@ pub async fn check_out_fresh(dir: &Path, branch: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn head(dir: &Path) -> Result<String> {
-    Ok(git(dir, &["rev-parse", "HEAD"]).await?.trim().to_string())
+/// A commit, by its full object name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitId(String);
+
+impl CommitId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for CommitId {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for CommitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&str> for CommitId {
+    fn from(name: &str) -> CommitId {
+        CommitId(name.to_string())
+    }
+}
+
+impl From<CommitId> for String {
+    fn from(commit: CommitId) -> String {
+        commit.0
+    }
+}
+
+pub async fn head(dir: &Path) -> Result<CommitId> {
+    commit(dir, "HEAD").await
+}
+
+/// The commit `revision`, such as `origin/main`, names.
+pub async fn commit(dir: &Path, revision: &str) -> Result<CommitId> {
+    let args = [
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        &format!("{revision}^{{commit}}"),
+    ];
+    Ok(CommitId(git(dir, &args).await?.trim().to_string()))
 }
 
 async fn create_branch(dir: &Path, branch: &str) -> Result<()> {
@@ -230,6 +277,24 @@ pub enum Updated {
     Conflict(Conflict),
 }
 
+impl Updated {
+    /// Whether the update took in the default branch, finished or not.
+    pub fn took_in(&self) -> bool {
+        match self {
+            Updated::UpToDate => false,
+            Updated::Updated | Updated::Conflict(_) => true,
+        }
+    }
+
+    /// The conflict the update stopped on, if any.
+    pub fn conflict(self) -> Option<Conflict> {
+        match self {
+            Updated::Conflict(conflict) => Some(conflict),
+            Updated::UpToDate | Updated::Updated => None,
+        }
+    }
+}
+
 /// A rebase or merge of the default branch that stopped on conflicts in
 /// `files` and is left in progress.
 #[derive(Debug, PartialEq, Eq)]
@@ -267,6 +332,50 @@ pub async fn update(dir: &Path, default_branch: &str, method: UpdateMethod) -> R
     }
 }
 
+/// Where the run's update of `branch` ended: the oldest commit recorded in
+/// the branch's reflog after `start` that contains `upstream`, whether the
+/// update was a rebase or a merge, and whoever finished it. Entries are read
+/// by ancestry, not by their messages, which a session may change. None when
+/// the reflog holds no such entry, or no entry at `start`, as when it was
+/// expired.
+pub async fn update_tip(
+    dir: &Path,
+    branch: &str,
+    start: &CommitId,
+    upstream: &CommitId,
+) -> Result<Option<CommitId>> {
+    let reflog = git(
+        dir,
+        &[
+            "reflog",
+            "show",
+            "--format=%H",
+            &format!("refs/heads/{branch}"),
+            "--",
+        ],
+    )
+    .await?;
+    let newest_first: Vec<&str> = reflog.lines().collect();
+    let Some(at_start) = newest_first
+        .iter()
+        .position(|commit| *commit == start.as_str())
+    else {
+        return Ok(None);
+    };
+    for commit in newest_first[..at_start].iter().rev() {
+        if contains(dir, commit, upstream).await? {
+            return Ok(Some(CommitId(commit.to_string())));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `commit` contains `other`.
+async fn contains(dir: &Path, commit: &str, other: &str) -> Result<bool> {
+    let missing = git(dir, &["rev-list", "--count", &format!("{commit}..{other}")]).await?;
+    Ok(missing.trim() == "0")
+}
+
 pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
     Ok(git(dir, &["rev-list", "--count", &format!("{base}..HEAD")])
         .await?
@@ -278,7 +387,7 @@ pub async fn commits_ahead(dir: &Path, base: &str) -> Result<usize> {
 /// uncommitted, untracked files included and ignored ones not.
 #[derive(Debug, PartialEq, Eq)]
 pub struct WorkState {
-    head: String,
+    head: CommitId,
     tree: String,
 }
 
@@ -336,7 +445,7 @@ impl InProgress {
     /// the work is kept without finishing the operation.
     async fn kept(self, dir: &Path, work: &str) -> Result<(String, String)> {
         let InProgress::Rebase(backend) = self else {
-            return Ok((head(dir).await?, work.to_string()));
+            return Ok((head(dir).await?.into(), work.to_string()));
         };
         let state = git(dir, &["rev-parse", "--git-path", backend.state()]).await?;
         let state = dir.join(state.trim());
@@ -488,7 +597,7 @@ pub async fn commit_unfinished(dir: &Path) -> Result<()> {
             operation.abort(dir).await?;
             kept
         }
-        None => (head(dir).await?, work),
+        None => (head(dir).await?.into(), work),
     };
     let tip_tree = git(dir, &["rev-parse", &format!("{tip}^{{tree}}")]).await?;
     if tree == tip_tree.trim() {

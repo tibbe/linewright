@@ -521,3 +521,101 @@ async fn a_rebase_update_leaves_an_up_to_date_linear_branch_at_its_commit() {
     assert!(matches!(updated, Updated::UpToDate));
     assert_eq!(repository.git(&["rev-parse", "HEAD"]), before);
 }
+
+/// Where the update of `repository`'s `12-gadgets` ended, the run having
+/// started at `start`, as `git::update_tip` finds it.
+async fn update_tip(repository: &Repository, start: &str) -> Option<String> {
+    let upstream = git::commit(&repository.clone, "origin/main").await.unwrap();
+    git::update_tip(&repository.clone, "12-gadgets", &start.into(), &upstream)
+        .await
+        .unwrap()
+        .map(String::from)
+}
+
+/// Ends the update in progress in `repository`'s clone with `src/gadgets.txt`
+/// resolved as both sides.
+fn resolve_gadgets(repository: &Repository) {
+    repository.write("src/gadgets.txt", "ours\ntheirs\n");
+    repository.git(&["add", "src/gadgets.txt"]);
+    let rebasing = repository.git(&[
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "rebase-merge",
+    ]);
+    if Path::new(&rebasing).exists() {
+        git_in(
+            &repository.clone,
+            &["-c", "core.editor=true", "rebase", "--continue"],
+        );
+    } else {
+        repository.git(&["commit", "--quiet", "--no-edit"]);
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn the_update_tip_is_where_an_update_without_a_conflict_left_the_branch_before_later_commits()
+{
+    let repository = behind_main("src/other.txt");
+    let start = repository.git(&["rev-parse", "HEAD"]);
+    git::update(&repository.clone, "main", UpdateMethod::Rebase)
+        .await
+        .unwrap();
+    let updated = repository.git(&["rev-parse", "HEAD"]);
+    commit_in(&repository.clone, &[("src/gadgets.txt", "more\n")], "More");
+
+    assert_eq!(update_tip(&repository, &start).await, Some(updated));
+}
+
+#[test_log::test(tokio::test)]
+async fn the_update_tip_of_a_rebase_resolved_after_a_conflict_survives_the_rebased_commits_being_rewritten()
+ {
+    let repository = behind_main("src/gadgets.txt");
+    let start = repository.git(&["rev-parse", "HEAD"]);
+    git::update(&repository.clone, "main", UpdateMethod::Rebase)
+        .await
+        .unwrap();
+    resolve_gadgets(&repository);
+    let updated = repository.git(&["rev-parse", "HEAD"]);
+    repository.write("src/gadgets.txt", "ours\ntheirs\nmore\n");
+    repository.git(&["commit", "--quiet", "--all", "--amend", "--no-edit"]);
+
+    assert_ne!(repository.git(&["rev-parse", "HEAD"]), updated);
+    assert_eq!(update_tip(&repository, &start).await, Some(updated));
+}
+
+#[test_log::test(tokio::test)]
+async fn the_update_tip_of_a_merge_resolved_after_a_conflict_is_its_merge_commit() {
+    let repository = behind_main("src/gadgets.txt");
+    let start = repository.git(&["rev-parse", "HEAD"]);
+    git::update(&repository.clone, "main", UpdateMethod::Merge)
+        .await
+        .unwrap();
+    resolve_gadgets(&repository);
+    let merged = repository.git(&["rev-parse", "HEAD"]);
+    commit_in(&repository.clone, &[("src/gadgets.txt", "more\n")], "More");
+
+    assert_eq!(update_tip(&repository, &start).await, Some(merged));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_branch_whose_commits_since_the_start_hold_no_update_has_no_update_tip() {
+    let repository = behind_main("src/other.txt");
+    let start = repository.git(&["rev-parse", "HEAD"]);
+    commit_in(&repository.clone, &[("src/gadgets.txt", "more\n")], "More");
+
+    assert_eq!(update_tip(&repository, &start).await, None);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_branch_whose_reflog_was_expired_has_no_update_tip() {
+    let repository = behind_main("src/other.txt");
+    let start = repository.git(&["rev-parse", "HEAD"]);
+    git::update(&repository.clone, "main", UpdateMethod::Rebase)
+        .await
+        .unwrap();
+    commit_in(&repository.clone, &[("src/gadgets.txt", "more\n")], "More");
+    repository.git(&["reflog", "expire", "--expire=all", "--all"]);
+
+    assert_eq!(update_tip(&repository, &start).await, None);
+}

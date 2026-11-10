@@ -465,7 +465,14 @@ pub trait Store: Send + Sync {
     /// with the repository's branches, dropping those of branches it no
     /// longer has.
     async fn fetch(&self, dir: &Path) -> Result<()>;
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError>;
+    /// Pushes `commit`, such as `HEAD`, of the clone in `dir` to `branch`.
+    async fn push(
+        &self,
+        dir: &Path,
+        commit: &crate::git::CommitId,
+        branch: &str,
+        mode: PushMode,
+    ) -> Result<(), PushError>;
     /// Uploads `file` as an attachment of the repository's Markdown, named
     /// `name`, and returns the URL to put in place of its path
     /// (`docs/specs/runs.md`, "Attachments").

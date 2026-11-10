@@ -3695,8 +3695,14 @@ impl Store for GitHub {
         git::fetch(dir, &self.git_env()).await
     }
 
-    async fn push(&self, dir: &Path, branch: &str, mode: PushMode) -> Result<(), PushError> {
-        let refspec = format!("HEAD:refs/heads/{branch}");
+    async fn push(
+        &self,
+        dir: &Path,
+        commit: &git::CommitId,
+        branch: &str,
+        mode: PushMode,
+    ) -> Result<(), PushError> {
+        let refspec = format!("{commit}:refs/heads/{branch}");
         let lease = match &mode {
             PushMode::Replace => "--force".to_string(),
             PushMode::Lease { expected } => {

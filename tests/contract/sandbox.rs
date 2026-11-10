@@ -263,8 +263,14 @@ impl Sandbox {
     /// Pushes `clone` to `branch` as [`Store::push`], asked again on GitHub
     /// while it refuses.
     pub async fn push(&self, clone: &Path, branch: &str, mode: PushMode) -> Result<()> {
-        self.eventually(async || Ok(self.store().push(clone, branch, mode.clone()).await?))
-            .await
+        let head = git::head(clone).await?;
+        self.eventually(async || {
+            Ok(self
+                .store()
+                .push(clone, &head, branch, mode.clone())
+                .await?)
+        })
+        .await
     }
 
     /// Waits until no other contract merges into the default branch, and
@@ -368,7 +374,7 @@ pub async fn commit(clone: &Path, commits: &[NewCommit<'_>]) -> Result<String> {
         git::git(clone, &["add", "--all"]).await?;
         git::git(clone, &["commit", "--quiet", "--message", message]).await?;
     }
-    git::head(clone).await
+    Ok(git::head(clone).await?.into())
 }
 
 impl Made {
