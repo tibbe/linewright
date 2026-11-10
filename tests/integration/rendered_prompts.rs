@@ -1,7 +1,11 @@
 //! What Linewright fills into each first-message prompt's placeholders, byte
 //! for byte, against the text in `fixtures/prompts/`. The prompts are a layer
 //! holding only their placeholders, so the shipped prompts' wording plays no
-//! part (docs/specs/runs.md, "Contract").
+//! part (docs/specs/runs.md, "Contract"). Nor does the wording of a part with
+//! no placeholders of its own in `briefs/parts/` or `briefs/outputs/`: the
+//! fixtures name such a part, `<<briefs/parts/cut-issue.md>>`, rather than
+//! copy it, and where several such parts hold the same text, they name each
+//! of them, `<<briefs/outputs/fix-ci.md or briefs/outputs/rework.md>>`.
 
 use std::borrow::Cow;
 
@@ -80,11 +84,68 @@ fn repo(name: &linewright::domain::Repo) -> Repo<'_> {
     }
 }
 
-fn expected(name: &str) -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/integration/fixtures/prompts")
-        .join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+/// The file at `path` from the repository root.
+#[track_caller]
+fn read(path: &str) -> String {
+    let full = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+    std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// Each text of the parts in `briefs/parts/` and `briefs/outputs/` with no
+/// placeholders, as Linewright builds it in, with its end trimmed, and the
+/// marker naming the parts that hold it, the longest text first.
+#[track_caller]
+fn placeholder_free_parts() -> Vec<(String, String)> {
+    let mut by_text = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for dir in ["briefs/parts", "briefs/outputs"] {
+        let entries = std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir))
+            .unwrap_or_else(|e| panic!("{dir}: {e}"))
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap());
+        for file in entries {
+            let path = format!("{dir}/{file}");
+            let text = read(&path);
+            if !text.contains("{{") {
+                by_text
+                    .entry(text.trim_end().to_string())
+                    .or_default()
+                    .push(path);
+            }
+        }
+    }
+    let mut parts: Vec<_> = by_text
+        .into_iter()
+        .map(|(text, mut paths)| {
+            paths.sort();
+            (text, format!("<<{}>>", paths.join(" or ")))
+        })
+        .collect();
+    parts.sort_by_key(|(text, _)| std::cmp::Reverse(text.len()));
+    parts
+}
+
+/// Fails unless `prompt`, with each placeholder-free part's text replaced by
+/// its marker, is the fixture `name` byte for byte.
+#[track_caller]
+fn assert_filled_as(prompt: &str, name: &str) {
+    let mut named = prompt.to_string();
+    for (text, marker) in placeholder_free_parts() {
+        named = named.replace(&text, &marker);
+    }
+    let expected = read(&format!("tests/integration/fixtures/prompts/{name}"));
+    if named != expected {
+        let got: Vec<_> = named.split('\n').collect();
+        let want: Vec<_> = expected.split('\n').collect();
+        let line = (0..got.len().max(want.len()))
+            .find(|&i| got.get(i) != want.get(i))
+            .unwrap();
+        let (got, want) = (got.get(line), want.get(line));
+        panic!(
+            "the prompt differs from {name} first on line {}:\n  \
+             prompt:  {got:?}\n  fixture: {want:?}\n\n\
+             the prompt, its placeholder-free parts named:\n{named}",
+            line + 1,
+        );
+    }
 }
 
 fn unfinished() -> UnfinishedCommits {
@@ -105,7 +166,7 @@ fn triage_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("triage.txt"));
+    assert_filled_as(&prompt, "triage.txt");
 }
 
 #[test_log::test]
@@ -120,7 +181,7 @@ fn design_of_an_issue_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("design-issue.txt"));
+    assert_filled_as(&prompt, "design-issue.txt");
 }
 
 #[test_log::test]
@@ -165,7 +226,7 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("design-spec-change-issue.txt"));
+    assert_filled_as(&prompt, "design-spec-change-issue.txt");
 }
 
 #[test_log::test]
@@ -189,7 +250,7 @@ fn implement_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("implement.txt"));
+    assert_filled_as(&prompt, "implement.txt");
 }
 
 #[test_log::test]
@@ -225,7 +286,7 @@ fn rework_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("rework.txt"));
+    assert_filled_as(&prompt, "rework.txt");
 }
 
 #[test_log::test]
@@ -252,7 +313,7 @@ fn fix_ci_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("fix-ci.txt"));
+    assert_filled_as(&prompt, "fix-ci.txt");
 }
 
 #[test_log::test]
@@ -274,7 +335,7 @@ fn update_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("update.txt"));
+    assert_filled_as(&prompt, "update.txt");
 }
 
 #[test_log::test]
@@ -292,7 +353,7 @@ fn automation_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("automation.txt"));
+    assert_filled_as(&prompt, "automation.txt");
 }
 
 #[test_log::test]
@@ -322,7 +383,7 @@ fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("implement-spec-change-ticket.txt"));
+    assert_filled_as(&prompt, "implement-spec-change-ticket.txt");
 }
 
 #[test_log::test]
@@ -351,7 +412,7 @@ fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_it
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("implement-spec-change-issue.txt"));
+    assert_filled_as(&prompt, "implement-spec-change-issue.txt");
 }
 
 #[test_log::test]
@@ -394,7 +455,7 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
         std::path::Path::new(ATTACHMENTS),
     );
 
-    assert_eq!(prompt, expected("rework-of-a-ticket-with-a-parent.txt"));
+    assert_filled_as(&prompt, "rework-of-a-ticket-with-a-parent.txt");
 }
 
 #[test_log::test]
