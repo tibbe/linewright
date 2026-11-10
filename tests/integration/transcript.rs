@@ -61,6 +61,7 @@ fn compact_shows_messages_in_full_and_each_tool_call_on_one_line() {
         r###"run: 105/implement-1
 session 1: started 2026-10-13 10:09:08 UTC
  0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i "im…) → exit 0, 19 lines
+ 0:04  thought, 1s
  0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2
  0:15  Skill(linewright:tdd) → loaded
  0:18  Can't build images here (no Docker), and the repo has no test seam for the Dockerfile, so I'll make the Dockerfile and README changes and check them by hand.
@@ -70,9 +71,11 @@ session 1: started 2026-10-13 10:09:08 UTC
  2:02    Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0, 7 lines
  2:45  Both reviews came back clean. One optional fix: the README and the image label use the serial comma differently. Making them match.
  2:59  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+ 2:59  worked for 2m 59s
  3:22  follow-up: Your answer did not parse as the result. …
  3:25  Bash(git commit -qam "Ship gh and python3 in the base image…) → exit 0, 1 line
  3:28  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+ 3:28  worked for 6s
 "###
     );
 }
@@ -89,7 +92,8 @@ fn verbose_adds_the_brief_the_thinking_each_tools_input_and_result_and_the_follo
          \n       \
          Ship gh.\n \
          0:00  event: {",
-        " 0:04  thinking: The listing has a Dockerfile.\n       \
+        " 0:04  thought, 1s\n         \
+         The listing has a Dockerfile.\n         \
          I'll check what the image ships.\n",
         " 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2\n         \
          input: {\n           \
@@ -214,7 +218,7 @@ fn verbose_shows_content_of_kinds_it_has_no_line_of_its_own_for() {
         json!({
             "type": "assistant",
             "timestamp": "2026-10-13T10:00:01Z",
-            "message": {"content": [{"type": "redacted_thinking", "data": "x"}]},
+            "message": {"content": [{"type": "mystery", "data": "x"}]},
         }),
         json!({
             "type": "assistant",
@@ -246,7 +250,7 @@ fn verbose_shows_content_of_kinds_it_has_no_line_of_its_own_for() {
         full,
         r#"run: 105/implement-1
 session 1: started 2026-10-13 10:00:00 UTC
- 0:01  other: {"data":"x","type":"redacted_thinking"}
+ 0:01  other: {"data":"x","type":"mystery"}
  0:02  Read(a.png) → 0 lines
          input: {
            "file_path": "a.png"
@@ -260,6 +264,7 @@ session 1: started 2026-10-13 10:00:00 UTC
          result: one
          two
  0:03  other: {"tool_use_result":{"note":"shared"}}
+ 0:03  worked for, interrupted
 "#
     );
     assert_eq!(
@@ -267,7 +272,8 @@ session 1: started 2026-10-13 10:00:00 UTC
         "run: 105/implement-1\n\
          session 1: started 2026-10-13 10:00:00 UTC\n \
          0:02  Read(a.png) → 0 lines\n \
-         0:02  Read(b.txt) → 2 lines\n"
+         0:02  Read(b.txt) → 2 lines\n \
+         0:02  worked for, interrupted\n"
     );
 }
 
@@ -395,7 +401,8 @@ fn text(lines: &[transcript::FollowedLine]) -> String {
 fn json(lines: &[transcript::FollowedLine]) -> Vec<serde_json::Value> {
     lines
         .iter()
-        .map(|followed| serde_json::from_str(&transcript::json_line(&followed.line)).unwrap())
+        .filter_map(|followed| transcript::json_line(&followed.line))
+        .map(|line| serde_json::from_str(&line).unwrap())
         .collect()
 }
 
@@ -433,6 +440,7 @@ fn following_shows_each_entry_once_it_is_written_and_each_tool_call_when_made_an
 session 1: started 2026-10-13 10:09:08 UTC
  0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i "im…) → running
  0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i "im…) → exit 0, 19 lines
+ 0:04  thought, 1s
  0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running
  0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2
  0:15  Skill(linewright:tdd) → running
@@ -448,10 +456,12 @@ session 1: started 2026-10-13 10:09:08 UTC
  2:16  Agent(Standards review) → done, 2 tool uses, 16s
  2:45  Both reviews came back clean. One optional fix: the README and the image label use the serial comma differently. Making them match.
  2:59  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+ 2:59  worked for 2m 59s
  3:22  follow-up: Your answer did not parse as the result. …
  3:25  Bash(git commit -qam "Ship gh and python3 in the base image…) → running
  3:25  Bash(git commit -qam "Ship gh and python3 in the base image…) → exit 0, 1 line
  3:28  {"outcome":"done","pr_title":"Ship gh and python3 in the base image","pr_body":"## Summary\n\nThe base image's `runtime` stage now installs `gh` from GitHub's apt repository and `python3` from Debian. `gh`'s keyring is checked against a pin
+ 3:28  worked for 6s
 "###
     );
 }
@@ -481,9 +491,11 @@ fn following_shows_the_same_lines_whatever_pieces_the_output_is_written_in() {
 
     assert_eq!(read_by_line, at_once);
     assert_eq!(read_by_chars, at_once);
-    assert!(text(&at_once).contains(" 0:04  thinking: The listing has a Dockerfile.\n"));
+    assert!(
+        text(&at_once).contains(" 0:04  thought, 1s\n         The listing has a Dockerfile.\n")
+    );
     for transcript::FollowedLine { line, .. } in &at_once {
-        let json = transcript::json_line(line);
+        let json = transcript::wire_line(line);
         assert_eq!(
             &serde_json::from_str::<transcript::Line>(&json).unwrap(),
             line,
@@ -597,7 +609,8 @@ fn following_shows_a_tool_call_as_running_as_soon_as_it_is_made() {
     );
     assert_eq!(
         two,
-        " 0:02  Bash(cargo test) → interrupted\n\
+        " 0:02  Bash(cargo test) → interrupted\n \
+         0:02  worked for, interrupted\n\
          session 2: started 2026-10-13 11:00:00 UTC\n \
          0:05  Starting over.\n"
     );
@@ -654,7 +667,8 @@ fn following_shows_a_tool_call_again_once_it_ends_in_the_background() {
          session 1: started 2026-10-13 10:00:00 UTC\n \
          0:02  Bash(cargo test) → running\n \
          0:04  Bash(cargo test) → moved to the background\n \
-         0:04  Bash(cargo test) → completed in the background\n"
+         0:04  Bash(cargo test) → completed in the background\n \
+         0:04  worked for, interrupted\n"
     );
     assert_eq!(ids, [json!("t1"), json!("t1"), json!("t1")]);
 }
@@ -1323,7 +1337,8 @@ fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its
         "run: 105/implement-1\n\
          session 1: started 2026-10-13 10:00:00 UTC\n \
          0:02  Agent(Review) → done, 3 tool uses, 3h 2m\n\
-         3:02:15  The review came back clean.\n"
+         3:02:15  The review came back clean.\n\
+         3:02:15  worked for, interrupted\n"
     );
 }
 
@@ -1644,7 +1659,10 @@ fn a_tool_call_its_session_ends_first_shows_interrupted_where_it_showed_running(
     let known = calling(&[session_ended("2026-10-13T10:00:09Z")]);
     let unknown = calling(&[]);
 
-    for record in [known, unknown] {
+    for (record, turns_end) in [
+        (known, " 0:09  worked for 9s, interrupted\n"),
+        (unknown, " 0:02  worked for, interrupted\n"),
+    ] {
         let shown = transcript::render(&of(&[record]), Verbosity::Compact, false);
 
         assert_eq!(
@@ -1652,6 +1670,8 @@ fn a_tool_call_its_session_ends_first_shows_interrupted_where_it_showed_running(
             "run: 105/implement-1\n\
              session 1: started 2026-10-13 10:00:00 UTC\n \
              0:02  Bash(cargo test) → interrupted\n"
+                .to_string()
+                + turns_end
         );
     }
 }
@@ -1781,7 +1801,9 @@ fn the_clone_and_the_maintenance_command_last_until_they_end_or_their_session_do
 #[test_log::test]
 fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
     let line = |event: String| -> serde_json::Value { serde_json::from_str(&event).unwrap() };
+    let turn_ended = line(transcript::turn_ended_marker(time("2026-10-13T10:00:04Z")));
     let waited = calling(&[
+        turn_ended.clone(),
         line(transcript::usage_limit_waiting(
             time("2026-10-13T10:00:05Z"),
             time("2026-10-13T12:00:00Z"),
@@ -1820,7 +1842,10 @@ fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
     assert_eq!(
         transcript::render(&of(&[waited]), Verbosity::Full, false),
         transcript::render(
-            &of(&[calling(&[session_ended("2026-10-13T12:01:00Z")])]),
+            &of(&[calling(&[
+                turn_ended,
+                session_ended("2026-10-13T12:01:00Z")
+            ])]),
             Verbosity::Full,
             false
         ),
@@ -1950,7 +1975,7 @@ fn json_gives_an_interrupted_entry_the_account_interrupted_and_what_it_holds_as_
             let lines = transcript::json_lines(&transcript(record), verbosity);
             for line in lines.lines() {
                 let read: transcript::Line = serde_json::from_str(line).unwrap();
-                assert_eq!(transcript::json_line(&read), format!("{line}\n"));
+                assert_eq!(transcript::json_line(&read), Some(format!("{line}\n")));
             }
             json_objects(&lines).swap_remove(2)
         };
@@ -2020,4 +2045,363 @@ fn following_shows_each_entry_still_running_again_as_interrupted_once_its_sessio
          0:00  clone → running\n"
     );
     assert_eq!(run_ended, " 0:00  clone → interrupted\n");
+}
+
+#[track_caller]
+fn turn_ended(at: &str) -> serde_json::Value {
+    serde_json::from_str(&transcript::turn_ended_marker(time(at))).unwrap()
+}
+
+fn thinking_tokens() -> serde_json::Value {
+    json!({"type": "system", "subtype": "thinking_tokens", "parent_tool_use_id": null})
+}
+
+/// An assistant event at `at` thinking `text`, of the sub-agent the call
+/// `parent` started, if any.
+fn thinking(at: &str, text: &str, parent: Option<&str>) -> serde_json::Value {
+    json!({
+        "type": "assistant",
+        "timestamp": at,
+        "parent_tool_use_id": parent,
+        "message": {"content": [{"type": "thinking", "thinking": text, "signature": "s"}]},
+    })
+}
+
+/// A session whose turn starts at 10:00:00, thinks with no text shown until
+/// 10:00:04, starts a sub-agent at 10:00:05 and, while it works, runs `cargo
+/// test` from 10:00:07 to 10:00:20. The sub-agent thinks until 10:00:25 and
+/// returns at 10:00:30. The agent then thinks until 10:00:33, answers at
+/// 10:00:34, and its output ends at 10:00:35.
+fn thinking_between_calls() -> SessionRecord {
+    let assistant = |at: &str, parent: Option<&str>, content: serde_json::Value| json!({"type": "assistant", "timestamp": at, "parent_tool_use_id": parent, "message": {"content": content}});
+    let result = |at: &str, id: &str, text: &str| {
+        json!({"type": "user", "timestamp": at, "message": {"content": [
+            {"type": "tool_result", "tool_use_id": id, "content": text},
+        ]}})
+    };
+    let events = [
+        json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+        thinking_tokens(),
+        thinking("2026-10-13T10:00:04Z", "", None),
+        assistant(
+            "2026-10-13T10:00:05Z",
+            None,
+            json!([{"type": "tool_use", "id": "a1", "name": "Agent", "input": {"description": "Review"}}]),
+        ),
+        assistant(
+            "2026-10-13T10:00:07Z",
+            None,
+            json!([{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test"}}]),
+        ),
+        result("2026-10-13T10:00:20Z", "b1", "ok"),
+        thinking("2026-10-13T10:00:25Z", "The diff is small.", Some("a1")),
+        result("2026-10-13T10:00:30Z", "a1", "Clean."),
+        thinking_tokens(),
+        thinking("2026-10-13T10:00:33Z", "Both are done.", None),
+        assistant(
+            "2026-10-13T10:00:34Z",
+            None,
+            json!([{"type": "text", "text": "Done."}]),
+        ),
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."}),
+        turn_ended("2026-10-13T10:00:35Z"),
+    ];
+    SessionRecord {
+        output: output_of(&events),
+        ..SessionRecord::default()
+    }
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Thinking and A turn's length.
+#[test_log::test]
+fn a_thought_lasts_from_the_last_thing_before_it_in_its_agents_work_and_a_turn_ends_with_how_long_it_worked()
+ {
+    let shown = transcript::render(&of(&[thinking_between_calls()]), Verbosity::Compact, false);
+
+    assert_eq!(
+        shown,
+        "run: 105/implement-1\n\
+         session 1: started 2026-10-13 10:00:00 UTC\n \
+         0:04  thought, 4s\n \
+         0:05  Agent(Review) → Clean.\n \
+         0:25    thought, 20s\n \
+         0:07  Bash(cargo test) → exit 0, 1 line\n \
+         0:33  thought, 3s\n \
+         0:34  Done.\n \
+         0:35  worked for 34s\n"
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, In full, and
+/// `docs/specs/monitoring.md`, logs, The transcripts.
+#[test_log::test]
+fn in_full_a_thought_shows_its_text_and_json_gives_only_the_thinking_the_agent_gave() {
+    let transcript = of(&[thinking_between_calls()]);
+
+    let full = transcript::render(&transcript, Verbosity::Full, false);
+    let json = |verbosity| {
+        json_objects(&transcript::json_lines(&transcript, verbosity))
+            .into_iter()
+            .filter(|line| !matches!(line["type"].as_str(), Some("event" | "context")))
+            .map(|line| {
+                (
+                    line["type"].clone(),
+                    line["at"].clone(),
+                    line["text"].clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        full.contains(" 0:04  thought, 4s\n 0:05  Agent(Review)"),
+        "{full}"
+    );
+    assert!(
+        full.contains(" 0:33  thought, 3s\n         Both are done.\n"),
+        "{full}"
+    );
+    let tool = |at: &str| (json!("tool"), json!(at), json!(null));
+    let header = |kind: &str| (json!(kind), json!(null), json!(null));
+    assert_eq!(
+        json(Verbosity::Compact),
+        [
+            header("run"),
+            header("session"),
+            tool("2026-10-13T10:00:05Z"),
+            tool("2026-10-13T10:00:07Z"),
+            (
+                json!("message"),
+                json!("2026-10-13T10:00:34Z"),
+                json!("Done.")
+            ),
+        ]
+    );
+    let thought = |at: &str, text: &str| (json!("thinking"), json!(at), json!(text));
+    assert_eq!(
+        json(Verbosity::Full),
+        [
+            header("run"),
+            header("session"),
+            tool("2026-10-13T10:00:05Z"),
+            thought("2026-10-13T10:00:25Z", "The diff is small."),
+            tool("2026-10-13T10:00:07Z"),
+            thought("2026-10-13T10:00:33Z", "Both are done."),
+            (
+                json!("message"),
+                json!("2026-10-13T10:00:34Z"),
+                json!("Done.")
+            ),
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Cut short.
+#[test_log::test]
+fn a_thought_its_turn_ends_first_is_interrupted_up_to_that_end_where_it_is_known() {
+    let thinking_after_a_call = |end: &[serde_json::Value]| {
+        let mut events = vec![
+            returned("2026-10-13T10:00:03Z", &json!({})),
+            thinking_tokens(),
+            thinking_tokens(),
+        ];
+        events.extend_from_slice(end);
+        calling(&events)
+    };
+    let refused = thinking_after_a_call(&[turn_ended("2026-10-13T10:00:10Z")]);
+    let session_ended_first = thinking_after_a_call(&[session_ended("2026-10-13T10:00:20Z")]);
+    let end_not_known = thinking_after_a_call(&[]);
+    let cut = Place::Entry(EntryAt {
+        turn: 0,
+        path: vec![1],
+    });
+    let lasted = |record: &SessionRecord| transcript::parse(record, Written::Whole).lasted(&cut);
+    let shown = |record: &SessionRecord| {
+        let shown =
+            transcript::render(&of(std::slice::from_ref(record)), Verbosity::Compact, false);
+        let mut follower = Follower::new(
+            item_run("105/implement-1".parse().unwrap()),
+            Verbosity::Compact,
+            None,
+        );
+        let last_two = |text: &str| {
+            let lines: Vec<&str> = text.lines().collect();
+            lines[lines.len() - 2..].join("\n")
+        };
+        let followed = text(&follower.end(std::slice::from_ref(record)));
+        assert_eq!(last_two(&followed), last_two(&shown));
+        last_two(&shown)
+    };
+
+    assert_eq!(
+        lasted(&refused),
+        Some(Lasted::Interrupted { seconds: Some(7.0) })
+    );
+    assert_eq!(
+        lasted(&session_ended_first),
+        Some(Lasted::Interrupted {
+            seconds: Some(17.0)
+        })
+    );
+    assert_eq!(
+        lasted(&end_not_known),
+        Some(Lasted::Interrupted { seconds: None })
+    );
+    assert_eq!(
+        shown(&refused),
+        " 0:10  thought, interrupted, 7s\n 0:10  worked for 10s"
+    );
+    assert_eq!(
+        shown(&session_ended_first),
+        " 0:20  thought, interrupted, 17s\n 0:20  worked for 20s, interrupted"
+    );
+    assert_eq!(
+        shown(&end_not_known),
+        " 0:03  thought, interrupted\n 0:03  worked for, interrupted"
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, A turn's length and Cut
+/// short.
+#[test_log::test]
+fn a_turn_works_from_its_prompt_to_its_last_entry_once_it_ends() {
+    let answered = returned("2026-10-13T10:00:05Z", &json!({}));
+    let result =
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."});
+    let worked_for =
+        |record: SessionRecord, written| transcript::parse(&record, written).worked_for(0);
+
+    assert_eq!(
+        worked_for(
+            calling(&[answered.clone(), turn_ended("2026-10-13T10:00:07Z")]),
+            Written::SoFar
+        ),
+        Some(Lasted::Took { seconds: Some(5.0) }),
+    );
+    assert_eq!(
+        worked_for(calling(&[answered.clone(), result]), Written::Whole),
+        Some(Lasted::Took { seconds: Some(5.0) }),
+        "a turn recorded before turns' ends were ends at its result",
+    );
+    assert_eq!(worked_for(calling(&[answered]), Written::SoFar), None);
+    assert_eq!(
+        worked_for(
+            calling(&[session_ended("2026-10-13T10:00:09Z")]),
+            Written::Whole
+        ),
+        Some(Lasted::Interrupted { seconds: Some(9.0) }),
+    );
+    assert_eq!(
+        worked_for(calling(&[]), Written::Whole),
+        Some(Lasted::Interrupted { seconds: None }),
+    );
+}
+
+/// `docs/specs/design_system.md`, The run page, Working.
+#[test_log::test]
+fn a_turn_goes_on_from_its_prompt_until_it_ends() {
+    let so_far = |events: &[serde_json::Value]| {
+        transcript::parse(&calling(events), Written::SoFar).turn_so_far()
+    };
+
+    assert_eq!(
+        so_far(&[returned("2026-10-13T10:00:05Z", &json!({}))]),
+        Some(SessionLasted::Going {
+            since: time("2026-10-13T10:00:00Z")
+        })
+    );
+    assert_eq!(so_far(&[turn_ended("2026-10-13T10:00:07Z")]), None);
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Followed.
+#[test_log::test]
+fn following_shows_a_thought_once_it_ends_and_a_turns_length_once_it_ends() {
+    let record = thinking_between_calls();
+    let mut follower = Follower::new(
+        item_run("105/implement-1".parse().unwrap()),
+        Verbosity::Compact,
+        None,
+    );
+    let mut at_each_line = vec![];
+
+    for (end, _) in record.output.match_indices('\n') {
+        at_each_line.push(text(&follower.update(&[written(&record, end + 1)])));
+    }
+
+    assert_eq!(
+        at_each_line[..3],
+        [
+            "run: 105/implement-1\nsession 1: started 2026-10-13 10:00:00 UTC\n",
+            "",
+            " 0:04  thought, 4s\n",
+        ]
+    );
+    assert_eq!(at_each_line.last().unwrap(), " 0:35  worked for 34s\n");
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Thinking and In full, and
+/// `docs/specs/monitoring.md`, logs, The transcripts.
+#[test_log::test]
+fn a_redacted_thought_shows_as_one_and_in_full_gives_the_agents_block() {
+    let record = SessionRecord {
+        output: output_of(&[
+            json!({"type": "linewright-turn", "started_at": "2026-10-13T10:00:00Z", "started_by": "brief"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:00:03Z",
+                "message": {"content": [{"type": "redacted_thinking", "data": "x"}]},
+            }),
+            turn_ended("2026-10-13T10:00:04Z"),
+        ]),
+        ..SessionRecord::default()
+    };
+    let transcript = of(&[record]);
+
+    let shown = |verbosity| transcript::render(&transcript, verbosity, false);
+    let full_json = json_objects(&transcript::json_lines(&transcript, Verbosity::Full));
+
+    assert!(
+        shown(Verbosity::Compact).ends_with(" 0:03  thought, 3s\n 0:04  worked for 3s\n"),
+        "{}",
+        shown(Verbosity::Compact)
+    );
+    assert!(
+        shown(Verbosity::Full).contains(
+            " 0:03  thought, 3s\n         other: {\"data\":\"x\",\"type\":\"redacted_thinking\"}\n"
+        ),
+        "{}",
+        shown(Verbosity::Full)
+    );
+    assert_eq!(
+        full_json[2],
+        json!({
+            "type": "other",
+            "session": 1,
+            "at": "2026-10-13T10:00:03Z",
+            "elapsed_seconds": 3,
+            "depth": 0,
+            "other": {"type": "redacted_thinking", "data": "x"},
+        })
+    );
+}
+
+/// `docs/specs/design_system.md`, Transcripts, Thinking.
+#[test_log::test]
+fn a_thought_whose_thinking_says_no_time_has_no_duration() {
+    let record = calling(&[
+        returned("2026-10-13T10:00:05Z", &json!({})),
+        json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
+        }),
+    ]);
+    let thought = Place::Entry(EntryAt {
+        turn: 0,
+        path: vec![1],
+    });
+
+    assert_eq!(
+        transcript::parse(&record, Written::SoFar).lasted(&thought),
+        Some(Lasted::Took { seconds: None })
+    );
 }

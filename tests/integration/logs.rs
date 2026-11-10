@@ -196,7 +196,7 @@ async fn logs_shows_the_items_latest_run_compact() {
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 16, "{}", output.stdout);
+    assert_eq!(lines.len(), 19, "{}", output.stdout);
     assert_eq!(lines[0], "run: 1/implement-1");
     assert_eq!(lines[1], "session 1: started 2026-10-13 10:09:06 UTC");
     assert_eq!(lines[2], " 0:00  clone → 0s");
@@ -325,6 +325,7 @@ fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript()
             "timestamp": "2026-10-14T12:00:09Z",
             "message": {"content": [{"type": "text", "text": "Renamed it."}]},
         }),
+        json!({"type": "result", "subtype": "success", "is_error": false, "result": "Renamed it."}),
     ]);
     let (_base, work_dir) = work_dir_holding(&[
         ("runs/items/5/rework-1.json", &record),
@@ -337,7 +338,8 @@ fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript()
         transcript::render(&transcript, Verbosity::Compact, false),
         "run: 5/rework-1\n\
          session 1: started 2026-10-14 12:00:05 UTC\n \
-         0:04  Renamed it.\n"
+         0:04  Renamed it.\n \
+         0:04  worked for 4s\n"
     );
 }
 
@@ -420,7 +422,8 @@ fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_i
         shown(None),
         "run: 5/rework-1\n\
          session 1: started 2026-10-14 12:00:05 UTC\n \
-         0:00  Bash(cargo test) → interrupted\n\
+         0:00  Bash(cargo test) → interrupted\n \
+         0:00  worked for, interrupted\n\
          session 2: started 2026-10-14 12:00:30 UTC\n \
          0:00  Bash(cargo test) → running\n"
     );
@@ -428,8 +431,10 @@ fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_i
         shown(Some("done")),
         "run: 5/rework-1\n\
          session 1: started 2026-10-14 12:00:05 UTC\n \
-         0:00  Bash(cargo test) → interrupted\n\
+         0:00  Bash(cargo test) → interrupted\n \
+         0:00  worked for, interrupted\n\
          session 2: started 2026-10-14 12:00:30 UTC\n \
-         0:00  Bash(cargo test) → interrupted\n"
+         0:00  Bash(cargo test) → interrupted\n \
+         0:00  worked for, interrupted\n"
     );
 }

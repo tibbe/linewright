@@ -567,7 +567,7 @@ impl Printing {
                 "{}",
                 transcript::render_line(line, self.verbosity, colour())
             ),
-            Format::Json => print!("{}", transcript::json_line(line)),
+            Format::Json => print!("{}", transcript::json_line(line).unwrap_or_default()),
         }
         let _ = std::io::stdout().flush();
     }

@@ -29,10 +29,11 @@ use crate::domain::Timestamp;
 use crate::logs::{LogsError, RunRecords, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
+use crate::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
 use crate::transcript::{
     self, After, Call, Change, Changed, CloneEnded, Course, End, Entry, EntryAt, Feed, INTERRUPTED,
     Lasted, Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING,
-    Session, What, whole_seconds,
+    Session, Thought, What, whole_seconds,
 };
 
 /// A change to the page's transcript that a change to the run's makes.
@@ -110,6 +111,8 @@ enum Of {
     /// The brief or follow-up that started its `n`th turn.
     Prompt(usize),
     Entry(EntryAt),
+    /// How long its `n`th turn took, once it has ended.
+    WorkedFor(usize),
 }
 
 impl Of {
@@ -118,7 +121,7 @@ impl Of {
         match self {
             Of::Clone => Some(Place::Clone),
             Of::Maintenance => Some(Place::Maintenance),
-            Of::Prompt(_) => None,
+            Of::Prompt(_) | Of::WorkedFor(_) => None,
             Of::Entry(at) => Some(Place::Entry(at.clone())),
         }
     }
@@ -134,9 +137,10 @@ enum Kind<'a> {
     Brief(&'a str),
     FollowUp(Option<&'a str>),
     Message(&'a str),
-    /// Shown in the verbose view only.
-    Thinking(&'a str),
+    Thought(&'a Thought),
     Tool(&'a Call),
+    /// The end of its `n`th turn.
+    WorkedFor(usize),
 }
 
 impl RunView {
@@ -305,6 +309,7 @@ impl SessionView {
                 }
                 self.add(Of::Prompt(turn), None, model)
             }
+            Change::TurnEnded(turn) => self.add(Of::WorkedFor(turn), None, model),
             Change::Added(Place::Clone) => {
                 self.clone = Some(self.entries.len());
                 self.add(Of::Clone, None, model)
@@ -409,31 +414,37 @@ impl SessionView {
 }
 
 /// The session `n`'s working step, as `model` holds its transcript: while it
-/// goes on with no entry running, the agent's step in progress, which runs
-/// from its last entry and says "working", or while it waits for the usage
-/// limit, says so and until when (`docs/specs/design_system.md`, The run
-/// page, Working).
+/// goes on with no entry running, while it waits for the usage limit, a
+/// step that says so and until when, or else while a turn goes on, one that
+/// says "working" and how long the turn has gone on so far
+/// (`docs/specs/design_system.md`, The run page, Working).
 fn working_html(n: usize, model: &Session) -> String {
-    let step = (model.end == End::Going && !runs_an_entry(model)).then(|| {
-        let text = match model.waiting() {
-            Some(wait) => format!(
-                "waiting for the usage limit, until {}",
-                html::time(wait.until)
-            ),
-            None => "working".to_string(),
-        };
-        let lasted = model
-            .last_at()
-            .or(model.started_at)
-            .map(|from| Lasted::from(model.lasted_from(from)));
-        let row = entry_row(&Row {
-            id: Some(&format!("s{n}-step")),
-            text,
-            lasted,
-            fold: None,
-        });
-        format!(r#"<li class="entry working py-px" id="s{n}-step">{row}</li>"#)
-    });
+    let step = (model.end == End::Going && !runs_an_entry(model))
+        .then(|| {
+            let (text, lasted) = match model.waiting() {
+                Some(wait) => (
+                    format!(
+                        "waiting for the usage limit, until {}",
+                        html::time(wait.until)
+                    ),
+                    model
+                        .last_at()
+                        .or(model.started_at)
+                        .map(|from| Lasted::from(model.lasted_from(from))),
+                ),
+                None => ("working".to_string(), Some(model.turn_so_far()?.into())),
+            };
+            let row = entry_row(&Row {
+                id: Some(&format!("s{n}-step")),
+                text,
+                lasted,
+                fold: None,
+            });
+            Some(format!(
+                r#"<li class="entry working py-px" id="s{n}-step">{row}</li>"#
+            ))
+        })
+        .flatten();
     format!(
         r#"<ol class="entries font-mono text-sm" id="s{n}-working">{}</ol>"#,
         step.unwrap_or_default()
@@ -446,7 +457,7 @@ fn runs_an_entry(model: &Session) -> bool {
         entries.iter().any(|entry| match &entry.what {
             What::Tool(call) => call.end == Course::Running || running(&call.entries),
             What::Message(_)
-            | What::Thinking(_)
+            | What::Thought(_)
             | What::Context(_)
             | What::Event(_)
             | What::Other(_) => false,
@@ -692,22 +703,26 @@ impl Drawn<'_> {
             },
             Of::Entry(at) => match &self.model.entry(at).what {
                 What::Message(text) => Kind::Message(text),
-                What::Thinking(text) if self.verbose => Kind::Thinking(text),
+                What::Thought(thought) => Kind::Thought(thought),
                 What::Tool(call) => Kind::Tool(call),
-                What::Thinking(_) | What::Context(_) | What::Event(_) | What::Other(_) => {
+                What::Context(_) | What::Event(_) | What::Other(_) => {
                     return None;
                 }
             },
+            Of::WorkedFor(turn) => Kind::WorkedFor(*turn),
         };
         Some(kind)
     }
 
-    /// How long the entry `i` ran, for one that runs.
+    /// How long the entry `i` ran, for one that runs, a thought or a turn's
+    /// end.
     fn lasted(&self, i: usize) -> Option<Lasted> {
-        self.session.entries[i]
-            .of
-            .place()
-            .and_then(|place| self.model.lasted(&place))
+        match &self.session.entries[i].of {
+            Of::WorkedFor(turn) => self.model.worked_for(*turn),
+            of @ (Of::Clone | Of::Maintenance | Of::Prompt(_) | Of::Entry(_)) => {
+                of.place().and_then(|place| self.model.lasted(&place))
+            }
+        }
     }
 
     /// What a call's account changes: its line and its result, leaving its
@@ -775,10 +790,24 @@ impl Drawn<'_> {
                 "message",
                 row(html::escape(text.trim_end()).to_string(), None),
             ),
-            Kind::Thinking(text) => (
-                "thinking",
-                row(format!("thinking: {}", html::escape(text.trim_end())), None),
-            ),
+            Kind::Thought(thought) => {
+                let text = thought.text().trim();
+                let fold = (!text.is_empty()).then(|| Fold {
+                    open: self.verbose,
+                    body: format!(
+                        r#"<div class="thinking my-1 whitespace-pre-wrap wrap-anywhere text-muted">{}</div>"#,
+                        html::escape(text)
+                    ),
+                });
+                (
+                    "thought",
+                    row(cut_short(THOUGHT, thought.cut_short()), fold),
+                )
+            }
+            Kind::WorkedFor(turn) => {
+                let interrupted = self.model.turns[turn].end == Course::Interrupted;
+                ("worked-for", row(cut_short(WORKED_FOR, interrupted), None))
+            }
             Kind::Brief(text) => ("brief", self.prompt_row(&id, "brief", text)),
             Kind::FollowUp(text) => (
                 "follow-up",

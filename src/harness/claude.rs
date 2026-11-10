@@ -442,6 +442,10 @@ impl ClaudeCode {
                     _ => {}
                 }
             }
+            if let Some(file) = output.as_mut() {
+                let marker = transcript::turn_ended_marker(self.clock.now());
+                let _ = file.write_all(format!("{marker}\n").as_bytes()).await;
+            }
             (result, refusal)
         };
         let read_stderr = async {

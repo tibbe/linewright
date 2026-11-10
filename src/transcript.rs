@@ -17,7 +17,7 @@ use crate::domain::Timestamp;
 use crate::runs::{Ran, Started};
 
 pub use lines::{
-    FollowedLine, Follower, Line, Verbosity, json_line, json_lines, render, render_line,
+    FollowedLine, Follower, Line, Verbosity, json_line, json_lines, render, render_line, wire_line,
 };
 
 pub const OUTPUT: &str = "output.jsonl";
@@ -157,6 +157,10 @@ impl<T> Course<T> {
         }
     }
 
+    fn running() -> Course<T> {
+        Course::Running
+    }
+
     /// Ends it as interrupted, unless it has ended: whether it was running.
     fn interrupt(&mut self) -> bool {
         let running = matches!(self, Course::Running);
@@ -188,6 +192,21 @@ pub enum Lasted {
     Interrupted {
         seconds: Option<f64>,
     },
+}
+
+impl Lasted {
+    /// How long something that started `start` and ended `end` lasted,
+    /// where both are known, and whether it was `cut_short`.
+    fn ended(start: Option<Timestamp>, end: Option<Timestamp>, cut_short: bool) -> Lasted {
+        let seconds = start
+            .zip(end)
+            .map(|(start, end)| seconds_between(start, end));
+        if cut_short {
+            Lasted::Interrupted { seconds }
+        } else {
+            Lasted::Took { seconds }
+        }
+    }
 }
 
 /// What an entry's line says of how it went, leaving out how long it ran,
@@ -401,6 +420,18 @@ pub fn turn_marker(started_at: Timestamp, started_by: StartedBy) -> String {
     .expect("a marker serializes")
 }
 
+/// The line the harness writes to [`OUTPUT`] once a turn's output has ended.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename = "linewright-turn-ended")]
+struct TurnEndedMarker {
+    at: Timestamp,
+}
+
+/// The line that says the agent's output for its turn ended `at`.
+pub fn turn_ended_marker(at: Timestamp) -> String {
+    serde_json::to_string(&TurnEndedMarker { at }).expect("a marker serializes")
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SessionRecord {
     pub output: String,
@@ -580,8 +611,12 @@ impl Session {
             }
             Place::Entry(at) => {
                 let entry = self.entry(at);
-                let What::Tool(call) = &entry.what else {
-                    return None;
+                let call = match &entry.what {
+                    What::Tool(call) => call,
+                    What::Thought(thought) => return Some(thought.lasted(entry.at)),
+                    What::Message(_) | What::Context(_) | What::Event(_) | What::Other(_) => {
+                        return None;
+                    }
                 };
                 let took = call.end.map(|end| {
                     entry
@@ -602,6 +637,42 @@ impl Session {
             },
         })
     }
+    /// How long its `turn`th turn, from 0, took, once it has ended: from
+    /// its start to the latest time of its entries or, where its session
+    /// ended first, to that end (`docs/specs/design_system.md`,
+    /// Transcripts, A turn's length).
+    pub fn worked_for(&self, n: usize) -> Option<Lasted> {
+        let turn = &self.turns[n];
+        let to = match turn.end {
+            Course::Running => return None,
+            Course::Ended(_) => turn.entries.iter().filter_map(Entry::last_at).max(),
+            Course::Interrupted => self.turn_ended_at(n),
+        };
+        let cut_short = turn.end == Course::Interrupted;
+        Some(Lasted::ended(turn.started_at, to, cut_short))
+    }
+
+    /// When its `turn`th turn, from 0, ended, if it has and that is known:
+    /// where its session ended first, when the session did.
+    pub(crate) fn turn_ended_at(&self, turn: usize) -> Option<Timestamp> {
+        match self.turns[turn].end {
+            Course::Running => None,
+            Course::Ended(at) => at,
+            Course::Interrupted => self.end.at(),
+        }
+    }
+
+    /// How long its last turn has gone on so far, leaving out its waits for
+    /// the usage limit to reset, while it goes on and when it started is
+    /// known (`docs/specs/design_system.md`, The run page, Working).
+    pub fn turn_so_far(&self) -> Option<SessionLasted> {
+        let turn = self
+            .turns
+            .last()
+            .filter(|turn| turn.end == Course::Running)?;
+        turn.started_at.map(|start| self.lasted_from(start))
+    }
+
     /// How long it has run so far, leaving out its waits for the usage
     /// limit to reset, unless when it started is not known
     /// (`docs/specs/design_system.md`, The run page, A session's heading).
@@ -725,8 +796,12 @@ impl Entry {
     /// When the latest of it and the work of a sub-agent it started
     /// happened, as each began or ended, if that is known.
     fn last_at(&self) -> Option<Timestamp> {
-        let What::Tool(call) = &self.what else {
-            return self.at;
+        let call = match &self.what {
+            What::Tool(call) => call,
+            What::Thought(thought) => return self.at.max(thought.ended_at()),
+            What::Message(_) | What::Context(_) | What::Event(_) | What::Other(_) => {
+                return self.at;
+            }
         };
         let ended = call.end.ended().copied().flatten();
         [self.at, ended]
@@ -742,6 +817,10 @@ pub struct Turn {
     pub started_at: Option<Timestamp>,
     pub prompt: Prompt,
     pub entries: Vec<Entry>,
+    /// It ends when the agent's output for it ends, at the time its record
+    /// gives, if any, or is interrupted when its session ends first.
+    #[serde(default = "Course::running")]
+    pub end: Course<Option<Timestamp>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -753,6 +832,8 @@ pub enum Prompt {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
+    /// When it happened or, for a thought, when it started: when the last
+    /// thing before it in its agent's work happened.
     pub at: Option<Timestamp>,
     pub what: What,
 }
@@ -761,11 +842,65 @@ pub struct Entry {
 #[serde(rename_all = "kebab-case")]
 pub enum What {
     Message(String),
-    Thinking(String),
+    Thought(Thought),
     Context(String),
     Tool(Call),
     Event(Value),
     Other(Value),
+}
+
+/// Where the agent thought before what it did next
+/// (`docs/specs/design_system.md`, Transcripts, Thinking).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Thought {
+    pub held: Held,
+    pub end: ThoughtEnd,
+}
+
+/// What of a thought its record holds.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Held {
+    /// Its text, empty where its record holds none of it.
+    Text(String),
+    /// The agent's block that holds it encrypted, as the agent gave it.
+    Redacted(Value),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThoughtEnd {
+    /// Its thinking ended, at the time its record gives, if any.
+    Ended(Option<Timestamp>),
+    /// Its turn ended first, at the time given, if that is known.
+    CutShort(Option<Timestamp>),
+}
+
+impl Thought {
+    /// When it ended, if that is known.
+    pub(crate) fn ended_at(&self) -> Option<Timestamp> {
+        match self.end {
+            ThoughtEnd::Ended(at) | ThoughtEnd::CutShort(at) => at,
+        }
+    }
+
+    /// Whether its turn ended first.
+    pub(crate) fn cut_short(&self) -> bool {
+        matches!(self.end, ThoughtEnd::CutShort(_))
+    }
+
+    /// Its text, empty where its record holds none of it.
+    pub(crate) fn text(&self) -> &str {
+        match &self.held {
+            Held::Text(text) => text,
+            Held::Redacted(_) => "",
+        }
+    }
+
+    /// How long it went on, from `at`, its start.
+    fn lasted(&self, at: Option<Timestamp>) -> Lasted {
+        Lasted::ended(at, self.ended_at(), self.cut_short())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -780,7 +915,7 @@ pub struct Call {
     pub entries: Vec<Entry>,
     /// It ends when it returns or, for one that went on in the background,
     /// when it ends there, at the time its record gives, if any.
-    #[serde(default = "Call::running")]
+    #[serde(default = "Course::running")]
     pub end: Course<Option<Timestamp>>,
 }
 
@@ -913,10 +1048,6 @@ impl Call {
             None => value.to_string(),
         };
         one_line(&value, ARGUMENT_CHARS)
-    }
-
-    fn running() -> Course<Option<Timestamp>> {
-        Course::Running
     }
 
     /// The status its sub-agent returned, for a call that started one and
@@ -1106,6 +1237,23 @@ struct Parser {
     /// When the latest event that said so happened, or else its turn
     /// started.
     last_at: Option<Timestamp>,
+    /// When the last thing in each agent's work this turn happened: its turn
+    /// starting or, for a sub-agent, the call that started it, then each of
+    /// the agent's events that says when it happened.
+    threads: HashMap<Thread, Timestamp>,
+    /// Whether the main agent has been thinking since the last thing in its
+    /// work this turn.
+    thinking: bool,
+    /// Whether the agent has given its result for the latest turn.
+    resulted: bool,
+}
+
+/// Whose work an event is of.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Thread {
+    Main,
+    /// The sub-agent the call with this ID started.
+    SubAgent(String),
 }
 
 /// Where an entry is: its turn, and its path through the calls that hold
@@ -1135,6 +1283,9 @@ pub enum Change {
     Opened,
     /// Its `n`th turn, from 0, began.
     Turn(usize),
+    /// Its `n`th turn, from 0, ended, after the thought it cut short, if
+    /// any, and before its session's end.
+    TurnEnded(usize),
     Added(Place),
     /// An entry that runs ended, or was interrupted as its session ended,
     /// at the time its record gives, if any.
@@ -1176,6 +1327,10 @@ impl Parser {
         }
         if let Ok(session) = SessionEvent::deserialize(&event) {
             self.session_event(session);
+            return;
+        }
+        if let Ok(TurnEndedMarker { at }) = TurnEndedMarker::deserialize(&event) {
+            self.end_turn(Course::Ended(Some(at)));
             return;
         }
         if let Ok(marker) = serde_json::from_value::<TurnMarker>(event.clone()) {
@@ -1285,6 +1440,7 @@ impl Parser {
     fn session_event(&mut self, event: SessionEvent) {
         match event {
             SessionEvent::Waiting { at, until } => {
+                self.end_turn(Course::Ended(None));
                 self.session.waits.push(Wait {
                     at,
                     until,
@@ -1330,18 +1486,59 @@ impl Parser {
         {
             self.changed.push(Change::Ended(Place::Maintenance, at));
         }
+        let turn_end = if self.resulted {
+            Course::Ended(None)
+        } else {
+            Course::Interrupted
+        };
+        let ended_turn = self.cut_turn(turn_end);
         for (turn, Turn { entries, .. }) in self.session.turns.iter_mut().enumerate() {
             interrupt(entries, turn, &mut vec![], at, &mut self.changed);
         }
+        self.changed.extend(ended_turn.map(Change::TurnEnded));
         self.changed.push(Change::SessionEnded);
     }
 
+    /// Ends the session's latest turn as `end` says, unless it has ended.
+    fn end_turn(&mut self, end: Course<Option<Timestamp>>) {
+        if let Some(n) = self.cut_turn(end) {
+            self.changed.push(Change::TurnEnded(n));
+        }
+    }
+
+    /// Ends the session's latest turn as `end` says, unless it has ended,
+    /// first adding the main agent's thought under way, if any, as cut short
+    /// then, but not noting the turn's end: giving the turn, if it ended.
+    fn cut_turn(&mut self, end: Course<Option<Timestamp>>) -> Option<usize> {
+        let n = self.session.turns.len().checked_sub(1)?;
+        if self.session.turns[n].end != Course::Running {
+            return None;
+        }
+        self.session.turns[n].end = end;
+        if std::mem::take(&mut self.thinking) {
+            let what = What::Thought(Thought {
+                held: Held::Text(String::new()),
+                end: ThoughtEnd::CutShort(self.session.turn_ended_at(n)),
+            });
+            let at = self.threads.get(&Thread::Main).copied();
+            self.push(n, None, Entry { at, what });
+        }
+        Some(n)
+    }
+
     fn begin_turn(&mut self, started_at: Option<Timestamp>, prompt: Prompt) {
+        self.end_turn(Course::Ended(None));
         self.last_at = started_at.or(self.last_at);
+        self.threads.clear();
+        if let Some(at) = self.last_at {
+            self.threads.insert(Thread::Main, at);
+        }
+        self.resulted = false;
         self.session.turns.push(Turn {
             started_at,
             prompt,
             entries: vec![],
+            end: Course::Running,
         });
         self.changed
             .push(Change::Turn(self.session.turns.len() - 1));
@@ -1357,16 +1554,40 @@ impl Parser {
             .filter(|call| call.turn == turn)
             .map(|call| call.path.clone());
         let parent = parent.as_deref();
+        let thread = match parent {
+            Some(_) => Thread::SubAgent(text(&event["parent_tool_use_id"])),
+            None => Thread::Main,
+        };
+        let since = self.threads.get(&thread).copied();
+        if !is_progress(&event)
+            && let Some(said) = timestamp(&event["timestamp"])
+        {
+            let last = self.threads.entry(thread.clone()).or_insert(said);
+            *last = said.max(*last);
+            if thread == Thread::Main {
+                self.thinking = false;
+            }
+        }
         let blocks = event["message"]["content"]
             .as_array()
             .cloned()
             .unwrap_or_default();
         match event["type"].as_str() {
             Some("assistant") => {
+                let thought_ended = timestamp(&event["timestamp"]);
                 for block in blocks {
+                    let thought = |held| {
+                        What::Thought(Thought {
+                            held,
+                            end: ThoughtEnd::Ended(thought_ended),
+                        })
+                    };
                     let what = match block["type"].as_str() {
                         Some("text") => What::Message(text(&block["text"])),
-                        Some("thinking") => What::Thinking(text(&block["thinking"])),
+                        // A thinking block can hold only a signature:
+                        // <https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display>.
+                        Some("thinking") => thought(Held::Text(text(&block["thinking"]))),
+                        Some("redacted_thinking") => thought(Held::Redacted(block)),
                         Some("tool_use") => What::Tool(Call {
                             id: text(&block["id"]),
                             tool: Tool::from(text(&block["name"])),
@@ -1378,9 +1599,12 @@ impl Parser {
                         }),
                         _ => What::Other(block),
                     };
-                    // A thinking block can hold only a signature:
-                    // <https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display>.
-                    let blank = matches!(&what, What::Message(t) | What::Thinking(t) if t.trim().is_empty());
+                    let at = if matches!(what, What::Thought(_)) {
+                        since
+                    } else {
+                        at
+                    };
+                    let blank = matches!(&what, What::Message(t) if t.trim().is_empty());
                     if !blank {
                         self.push(turn, parent, Entry { at, what });
                     }
@@ -1429,8 +1653,16 @@ impl Parser {
                     self.push(turn, parent, Entry { at, what });
                 }
             }
-            _ if is_progress(&event) => {}
+            _ if is_progress(&event) => {
+                let of_main_agent = event["parent_tool_use_id"].is_null();
+                if of_main_agent && event["subtype"] == "thinking_tokens" {
+                    self.thinking = true;
+                }
+            }
             _ => {
+                if event["type"] == "result" {
+                    self.resulted = true;
+                }
                 match event["subtype"].as_str() {
                     Some("init") => {
                         self.session.dir = event["cwd"].as_str().map(str::to_string);
@@ -1467,6 +1699,9 @@ impl Parser {
         path.push(entries.len() - 1);
         let at = EntryAt { turn, path };
         if let Some(id) = id {
+            if let Some(started) = entries.last().and_then(|call| call.at) {
+                self.threads.insert(Thread::SubAgent(id.clone()), started);
+            }
             self.calls.insert(id, at.clone());
         }
         self.changed.push(Change::Added(Place::Entry(at)));

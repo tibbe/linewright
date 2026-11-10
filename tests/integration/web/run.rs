@@ -1,8 +1,9 @@
 use super::*;
 
 use linewright::transcript::{
-    MaintenanceStatus, clone_ended, clone_started, maintenance_ended, maintenance_started,
-    session_ended, usage_limit_waited, usage_limit_waiting,
+    MaintenanceStatus, StartedBy, clone_ended, clone_started, maintenance_ended,
+    maintenance_started, session_ended, turn_ended_marker, turn_marker, usage_limit_waited,
+    usage_limit_waiting,
 };
 use serde_json::json;
 
@@ -241,6 +242,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
             "session 1: started 2026-10-13 10:09:08 UTC | 3m 28s",
             "brief: # Your task",
             "Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit  | 0s",
+            "thought | 1s",
             "Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → exit 2 | 0s",
             "Skill(linewright:tdd) → loaded | 0s",
             "Can't build images here (no Docker), and the repo has no test seam for the Dockerfile, so I'll ",
@@ -250,11 +252,16 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
             "Bash(git diff origin/main...HEAD --stat && git diff origin/main...HEAD && git log -1…) → exit 0 | 0s",
             "Both reviews came back clean. One optional fix: the README and the image label use the serial c",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
+            "worked for | 2m 59s",
             "follow-up: Your final message could not be used: The final message holds no JSON object. End wi",
             "Bash(git commit -qam \"Ship gh and python3 in the base image…) → exit 0, 1 line | 0s",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
+            "worked for | 6s",
         ]
     );
+    let thought = select(&html, "#transcript .entry.thought > details");
+    assert_eq!(thought.len(), 1);
+    assert_eq!(thought[0].attr("open"), None, "a thought starts folded");
     let calls = select(&html, "#transcript .entry.tool > details");
     assert_eq!(calls.len(), 8);
     for call in &calls {
@@ -360,7 +367,7 @@ async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everyth
             "session 1: started 2026-10-13 10:09:08 U",
             "brief: # Your task",
             "Bash(ls; cat Dockerfile; ls deploy; cat ",
-            "thinking: The listing has a Dockerfile. ",
+            "thought | 1s",
             "Bash(which podman buildah nerdctl hadoli",
             "Skill(linewright:tdd) → loaded | 0s inpu",
             "Can't build images here (no Docker), and",
@@ -370,9 +377,11 @@ async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everyth
             "Bash(git diff origin/main...HEAD --stat ",
             "Both reviews came back clean. One option",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
+            "worked for | 2m 59s",
             "follow-up: Your final message could not ",
             "Bash(git commit -qam \"Ship gh and python",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
+            "worked for | 6s",
         ]
     );
     let shown = transcript_shown(&verbose, 200, true);
@@ -383,12 +392,19 @@ async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everyth
         "{}",
         shown[3]
     );
+    let thinking = select(
+        &verbose,
+        "#transcript .entry.thought > details[open] .thinking",
+    );
     assert_eq!(
-        shown[4],
-        "thinking: The listing has a Dockerfile. I'll check what the image ships."
+        thinking
+            .iter()
+            .map(|thought| text(*thought))
+            .collect::<Vec<_>>(),
+        ["The listing has a Dockerfile. I'll check what the image ships."]
     );
     let folds = select(&verbose, "#transcript details");
-    assert_eq!(folds.len(), 10);
+    assert_eq!(folds.len(), 11);
     assert!(folds.iter().all(|fold| fold.attr("open").is_some()));
     let count = select(&verbose, "#transcript summary.line .count");
     assert_eq!(text(count[0]), "1 entry");
@@ -514,7 +530,10 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
     let mut events = stream_with_ids(&web, &events_path, None).await;
 
     agent.writes(&turn.the_second_bash_call);
-    let added = |sent: &[(String, String)]| sent.iter().any(|(_, data)| data.contains("beforeend"));
+    let added = |sent: &[(String, String)]| {
+        sent.iter()
+            .any(|(_, data)| data.contains("beforeend") && data.contains("entry tool"))
+    };
     let made = transcript_events(&mut events, added).await;
     agent.writes(&turn.its_result);
     let returned = transcript_events(&mut events, |sent| !sent.is_empty()).await;
@@ -531,7 +550,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
         outcome.is_some_and(|outcome| {
             sent[outcome..]
                 .iter()
-                .any(|(_, data)| data.contains(r#"id="s1-working"></ol>"#))
+                .any(|(_, data)| data.contains(r##"hx-target="#s1-heading""##))
         })
     })
     .await;
@@ -1012,15 +1031,10 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
             false
         )]
     );
-    let [(target, swap, html), (step_at, _, step)] = &patches(&ended.last().unwrap().1)[..] else {
-        panic!("{ended:?}")
+    let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
+        panic!("{ended:?}: no turn goes on yet, so no step shows")
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
-    assert_eq!(
-        (step_at.as_str(), working_step(step).as_deref()),
-        ("#s1-working", Some("working | since 2026-10-14T12:00:12Z")),
-        "the agent works once no entry runs"
-    );
     assert_eq!(
         maintenances_shown(html),
         [(
@@ -1177,15 +1191,10 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
             false
         )]
     );
-    let [(target, swap, html), (step_at, _, step)] = &patches(&ended.last().unwrap().1)[..] else {
-        panic!("{ended:?}")
+    let [(target, swap, html)] = &patches(&ended.last().unwrap().1)[..] else {
+        panic!("{ended:?}: no turn goes on yet, so no step shows")
     };
     assert_eq!((target.as_str(), swap.as_str()), ("#s1-e1", "outerHTML"));
-    assert_eq!(
-        (step_at.as_str(), working_step(step).as_deref()),
-        ("#s1-working", Some("working | since 2026-10-14T12:00:12Z")),
-        "the agent works once no entry runs"
-    );
     assert_eq!(
         clones_shown(html),
         [("clone → done | 12s".to_string(), String::new(), false)]
@@ -1250,6 +1259,48 @@ async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
     assert_eq!(lines, ["Bash(cargo test) → interrupted | 10s"]);
 }
 
+/// `docs/specs/design_system.md`, Transcripts, Thinking, A turn's length and
+/// Cut short; The run page, Folding.
+#[test_log::test(tokio::test)]
+async fn the_run_page_shows_how_long_the_agent_thought_and_worked_and_what_its_session_cut_short() {
+    let thought = json!({
+        "type": "assistant",
+        "timestamp": "2026-10-14T12:00:04Z",
+        "message": {"content": [{"type": "thinking", "thinking": "", "signature": "s"}]},
+    });
+    let thinking = json!({"type": "system", "subtype": "thinking_tokens"});
+    let output = format!(
+        "{}\n{thought}\n{thinking}\n{}\n",
+        turn_marker(at("2026-10-14T12:00:00Z"), StartedBy::Brief),
+        session_ended(at("2026-10-14T12:00:10Z")),
+    );
+    let pages = triaged(
+        &output,
+        json!({"at": "2026-10-14T12:05:00Z", "ending": "handed-back"}),
+    )
+    .await;
+
+    let html = pages.page("/runs/1/triage-1?verbose=").await;
+
+    let lines: Vec<String> = entry_lines(&html)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "thought | 4s",
+            "thought, interrupted | 6s",
+            "worked for, interrupted | 10s"
+        ]
+    );
+    assert_eq!(
+        select(&html, "#transcript .entry.thought details").len(),
+        0,
+        "a thought with no text does not open"
+    );
+}
+
 /// `docs/specs/design_system.md`, Transcripts, Running; The run page,
 /// Durations.
 #[test_log::test(tokio::test)]
@@ -1280,7 +1331,10 @@ async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessi
         .into_iter()
         .map(|(_, line)| line)
         .collect();
-    assert_eq!(lines, ["Bash(cargo test) → interrupted"]);
+    assert_eq!(
+        lines,
+        ["Bash(cargo test) → interrupted", "worked for, interrupted"]
+    );
 }
 
 /// A Bash call `id` of `command` made `at`.
@@ -1325,11 +1379,13 @@ async fn triaged(output: &str, end: serde_json::Value) -> Pages {
 }
 
 /// The output of a session whose clone took 2s from 12:00:00, then whose
-/// call `t1` ran from 12:00:20 to 12:00:25.
+/// turn started at 12:00:02 and whose call `t1` ran from 12:00:20 to
+/// 12:00:25.
 fn cloned_and_called() -> String {
     format!(
-        "{}{}\n{}\n",
+        "{}{}\n{}\n{}\n",
         cloning("2026-10-14T12:00:00Z", 2.0, None),
+        turn_marker(at("2026-10-14T12:00:02Z"), StartedBy::Brief),
         bash_call("2026-10-14T12:00:20Z", "t1", "cargo test"),
         bash_returned("2026-10-14T12:00:25Z", "t1"),
     )
@@ -1405,6 +1461,7 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
             .collect();
         patched
     };
+    let refused = next(turn_ended_marker(at("2026-10-14T12:00:28Z")), "#s1-working").await;
     let waiting = next(
         usage_limit_waiting(at("2026-10-14T12:00:30Z"), at("2026-10-14T14:30:00Z")),
         "#s1-working",
@@ -1412,6 +1469,11 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     .await;
     let waited = next(
         usage_limit_waited(at("2026-10-14T12:10:30Z")),
+        "#s1-working",
+    )
+    .await;
+    let resumed = next(
+        turn_marker(at("2026-10-14T12:10:30Z"), StartedBy::FollowUp),
         "#s1-working",
     )
     .await;
@@ -1428,7 +1490,8 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     );
     assert_eq!(
         working_step(&read).as_deref(),
-        Some("working | since 2026-10-14T12:00:25Z")
+        Some("working | since 2026-10-14T12:00:02Z"),
+        "the step counts from the turn's start"
     );
     let shown = |patched: &[(String, Html)]| -> Vec<(String, Option<String>)> {
         patched
@@ -1452,6 +1515,7 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
         )
     };
     let step = |step: Option<&str>| ("#s1-working".to_string(), step.map(String::from));
+    assert_eq!(shown(&refused), [step(None)], "no turn goes on");
     assert_eq!(
         shown(&waiting),
         [
@@ -1463,11 +1527,12 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     );
     assert_eq!(
         shown(&waited),
-        [
-            heading("since 2026-10-14T12:10:00Z"),
-            step(Some("working | since 2026-10-14T12:10:25Z"))
-        ],
-        "both move on by the 10m waited"
+        [heading("since 2026-10-14T12:10:00Z"), step(None)],
+        "the heading moves on by the 10m waited"
+    );
+    assert_eq!(
+        shown(&resumed),
+        [step(Some("working | since 2026-10-14T12:10:30Z"))]
     );
     let called_step: Vec<_> = shown(&called)
         .into_iter()
@@ -1506,7 +1571,8 @@ async fn the_working_step_goes_once_the_run_ends() {
 
     assert_eq!(
         working_step(&read).as_deref(),
-        Some("working | since 2026-10-14T12:00:25Z")
+        Some("working | since 2026-10-14T12:00:02Z"),
+        "the step counts from the turn's start"
     );
     let step: Vec<Option<String>> = patches(&ended.last().unwrap().1)
         .into_iter()
