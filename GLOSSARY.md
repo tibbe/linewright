@@ -182,6 +182,10 @@ an item on its own.
 How pressing what a board card's line reports is.
 _Avoid_: state, flag, priority
 
+**Party**:
+A person with a role in an item: who opened it, who is assigned to it, or who
+reviews it.
+
 **Worked**:
 Of an item: Linewright has done work on it that GitHub shows as its own, such
 as opening, claiming or labeling it.

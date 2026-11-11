@@ -24,6 +24,24 @@
   its title where Linewright knows it, except in a card's line, which names
   it by its number alone, and links to its page and to GitHub.
 
+## Filters
+
+- **Where.** A page's filters sit together above what they narrow, each
+  labelled with what it filters on.
+- **Applying.** A filter applies as soon as it is chosen, such as from a
+  list or from a field's suggestions, and one typed in when the reader
+  presses Enter.
+- **Unset.** An unset filter narrows nothing: a list reads "All" and what it
+  lists, such as "All stages", and a field to type in is empty.
+- **Narrowing.** What the filters leave out is gone from the page and from
+  its counts, but for a count the page says holds however it is filtered.
+- **The address.** A page's address carries its filters, so a reload or a
+  link keeps them. A link to the page, such as in the navigation, carries
+  none unless it says.
+- **Kept.** An update never changes a filter.
+- **Opened and closed.** Changing a filter leaves what the reader opened or
+  closed as it was.
+
 ## Time
 
 - **Past times.** A past time is shown relative, in words and rounded down
@@ -223,8 +241,8 @@ this order, each card in the column of its item's state
   where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or
   its tracking issue became done. It opens on click. The finished
-  lanes sit together under one fold that says how many there are and opens
-  on click.
+  lanes sit together under one fold that says how many there are, opens
+  on click and shows only while there is one.
   A finished lane leaves the board once it finished before the Done window
   (`done-window`) opened.
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
@@ -236,7 +254,28 @@ this order, each card in the column of its item's state
 - **Order in a column.** Ascending by number, within each lane.
 - **No cap.** A column is never cut.
 - **Needing a person.** The browser tab's title carries the count of cards in
-  Needs a person.
+  Needs a person on the whole board, however it is filtered.
+
+#### Filtering by person
+
+The board has one filter ([Filters](#filters)), Person: it narrows the board
+to the cards a person is party to, by having opened, being assigned to or
+reviewing the card's item or a pull request on it.
+
+- **Opening.** An item Linewright opened counts as opened by whoever opened
+  the item it was opened for, followed back to an account other than
+  Linewright's, such as a ticket by its tracking issue's opener, a spec gap
+  by that of the item whose work found it, and a spec change's issue by the
+  spec change's author. An item opened for none, such as an issue an
+  automation files, stays Linewright's.
+- **Linewright.** Linewright is party to nothing.
+- **Reviewing.** A person reviews a pull request while a review is
+  requested of them by name, and once they have reviewed it.
+- **Lanes.** A lane shows while any of its cards matches.
+- **Lane heads.** A lane's head, with its tickets closed of total, is the
+  whole lane's.
+- **The people.** Person suggests every party to an item on the board, by
+  login, narrowed to those matching what the reader types.
 
 ### Cards
 
