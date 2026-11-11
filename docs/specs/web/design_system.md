@@ -59,6 +59,15 @@ two themes of its own.
   and a small shadow. A card that shows a card status has a left edge
   in its colour and its icon before its line. A card in Done is faded.
 
+## Filters
+
+- **The filters** are a row of small daisyUI `input`s and `select`s, each
+  with its label inside it as daisyUI's `label`, at the left.
+- **On the runs page**, Item and Since are `input`s and Stage is a
+  `select`.
+- **Person** is an `input` with the browser's own suggestions
+  (`datalist`).
+
 ## Facts
 
 - **The facts** are drawn as a card is, their labels in a column of their
