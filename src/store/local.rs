@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -11,16 +11,17 @@ use tokio::sync::oneshot;
 
 use super::{
     AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds,
+    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds, read_openings,
 };
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueClosing, IssueEvent, Labeling,
-    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Parent, Pull,
-    PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
-    ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread, TicketBranch,
-    TicketBranchName, Timestamp, Windows, closed_within, closing_references, label, pull_events,
+    Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Opened, Opening,
+    Parent, Pull, PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review,
+    ReviewDecision, ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
+    TicketBranch, TicketBranchName, Timestamp, Windows, closed_within, closing_references, label,
+    pull_events,
 };
 use crate::git::{self, Merged};
 
@@ -1211,6 +1212,7 @@ impl LocalStore {
             assignees: record.assignees,
             assignments: record.assignments,
             review_decision,
+            review_requests: record.requested_reviewers,
         })
     }
 
@@ -1428,6 +1430,28 @@ impl State {
             .collect()
     }
 
+    /// Who opened #`number`, and what for, as GitHub's store reads it.
+    fn opening(&self, number: Number) -> Option<Opening> {
+        let linewright = &self.linewright;
+        if let Some(record) = self.issues.get(&number) {
+            let issue = self.issue_view(record);
+            let opened = Opened::Issue {
+                parent: issue.parent,
+                filed: issue.filed,
+            };
+            return Some(Opening::new(number, issue.author, opened, linewright));
+        }
+        let record = self.pulls.get(&number)?;
+        let closes = closing_references(&record.body);
+        let opened = Opened::Pull { closes: &closes };
+        Some(Opening::new(
+            number,
+            record.author.clone(),
+            opened,
+            linewright,
+        ))
+    }
+
     fn filed(&self, issue: &Issue) -> Option<Filed> {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
@@ -1620,6 +1644,9 @@ impl PullRecord {
                 kind: ClosedKind::Pull {
                     closes: closing_references(&self.body),
                     author: Some(self.author.clone()),
+                    assignees: self.assignees.clone(),
+                    review_requests: self.requested_reviewers.clone(),
+                    reviewers: self.reviewers(),
                 },
             })
     }
@@ -1702,7 +1729,15 @@ impl PullRecord {
             files: self.files.clone(),
             assignees: self.assignees.clone(),
             events: self.events(),
+            review_requests: self.requested_reviewers.clone(),
+            reviewers: self.reviewers(),
         })
+    }
+
+    /// The authors of its reviews, each once, by login.
+    fn reviewers(&self) -> Vec<Login> {
+        let reviewers: BTreeSet<&Login> = self.reviews.iter().map(|r| &r.author).collect();
+        reviewers.into_iter().cloned().collect()
     }
 
     /// A pull request into `state`'s default branch.
@@ -1868,6 +1903,7 @@ impl Store for LocalStore {
             closed,
             ticket_branches: self.ticket_branches().await?,
             spec_change_issues,
+            openings: vec![],
         };
         for (number, held) in pulls {
             if let Some(merged) = self.merged_pull(number, windows).await? {
@@ -1883,25 +1919,33 @@ impl Store for LocalStore {
                 None => {}
             }
         }
-        let state = self.state();
-        for number in snapshot.unheld_closed_tickets(&linewright) {
-            if let Some(ticket) = state
-                .issues
-                .get(&number)
-                .and_then(|r| state.closed_issue(r))
-            {
-                snapshot.put_closed(ticket);
+        {
+            let state = self.state();
+            for number in snapshot.unheld_closed_tickets(&linewright) {
+                if let Some(ticket) = state
+                    .issues
+                    .get(&number)
+                    .and_then(|r| state.closed_issue(r))
+                {
+                    snapshot.put_closed(ticket);
+                }
+            }
+            for number in snapshot.unheld_closing_pulls(&linewright) {
+                if let Some(pull) = state
+                    .pulls
+                    .get(&number)
+                    .and_then(|p| p.closed_unmerged(&linewright))
+                {
+                    snapshot.put_closed(pull);
+                }
             }
         }
-        for number in snapshot.unheld_closing_pulls(&linewright) {
-            if let Some(pull) = state
-                .pulls
-                .get(&number)
-                .and_then(|p| p.closed_unmerged(&linewright))
-            {
-                snapshot.put_closed(pull);
-            }
-        }
+        read_openings(&mut snapshot, &linewright, |unread| {
+            let state = self.state();
+            let read = unread.iter().filter_map(|&number| state.opening(number));
+            std::future::ready(Ok(read.collect()))
+        })
+        .await?;
         Ok(snapshot)
     }
 

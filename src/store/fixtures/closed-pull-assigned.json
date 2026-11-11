@@ -1,0 +1,63 @@
+{
+  "number": 1044,
+  "title": "Wait for the run's end in the automations page's stream test",
+  "state": "CLOSED",
+  "closedAt": "2026-11-03T15:50:28Z",
+  "updatedAt": "2026-11-03T15:51:37Z",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "assignees": {
+    "nodes": [
+      {
+        "login": "tibbe-bot"
+      }
+    ]
+  },
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 1043
+      }
+    ]
+  },
+  "reviewRequests": {
+    "nodes": []
+  },
+  "reviews": {
+    "nodes": []
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-11-03T15:30:33Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-11-03T15:47:30Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-11-03T15:50:27Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

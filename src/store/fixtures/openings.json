@@ -1,0 +1,56 @@
+{
+  "data": {
+    "repository": {
+      "i1139": {
+        "__typename": "Issue",
+        "number": 1139,
+        "title": "The snapshot holds review requests, reviewers and what each item was opened for",
+        "body": "## What to build\n\nThe snapshot holds everything needed to decide who is party to an item (`GLOSSARY.md`, **Party**; `docs/specs/design_system.md` › Filtering by person):\n\n- **Review requests by name.** Every pull request the snapshot holds (open, merged, or closed without merging) carries the users a review is requested of by name. Teams are left out.\n- **Reviewers.** Merged pull requests and those closed without merging carry the authors of their submitted reviews. Pull requests closed without merging also carry their assignees.\n- **What an item was opened for.** A domain function says what each held item Linewright opened was opened for:\n  - a ticket → its parent;\n  - a spec gap → the item whose work found it;\n  - a spec change's issue or an old-format tracking issue → the spec change;\n  - Linewright's pull request → the issues it closes.\n\n  It returns nothing for an item a person opened.\n- **Openings.** For links whose target the snapshot doesn't otherwise hold, the snapshot carries an `Opening` (number, author, what it was opened for). The adapter reads these back until it reaches an opener other than Linewright, batched and cached by number.\n\nThere is no visible change on its own. See the design on the tracking issue: modules `domain` and `store::github` / `store::local`.\n\n## Acceptance criteria\n\n- [ ] The GitHub store fills the new fields from recorded payloads (adapter tests on recorded GraphQL JSON), including a team review request that is left out.\n- [ ] The local store fills them the same way, and passes the same contract tests.\n- [ ] A spec change merged before the lookback window still has its author in the snapshot while its issue is held.\n- [ ] Snapshots written before the change still load: new fields default to empty.\n- [ ] `opened_for` is tested in the functional core for each kind: ticket, spec gap, spec change's issue, old-format tracking issue, Linewright's pull request, an automation's issue (none) and an item a person opened (none).\n",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "parent": {
+          "number": 1137
+        }
+      },
+      "i1137": {
+        "__typename": "Issue",
+        "number": 1137,
+        "title": "Spec change: Let the board be filtered by person",
+        "body": "Opened for the spec change in #1136.\n",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "parent": null
+      },
+      "i1136": {
+        "__typename": "PullRequest",
+        "number": 1136,
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "closingIssuesReferences": {
+          "nodes": []
+        }
+      },
+      "i1122": {
+        "__typename": "PullRequest",
+        "number": 1122,
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "closingIssuesReferences": {
+          "nodes": [
+            {
+              "number": 1117
+            }
+          ]
+        }
+      }
+    }
+  }
+}

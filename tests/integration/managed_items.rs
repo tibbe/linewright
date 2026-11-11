@@ -138,6 +138,9 @@ fn an_item_is_managed_exactly_when_the_board_gives_it_a_column_or_a_lane_and_its
         kind: ClosedKind::Pull {
             closes: vec![],
             author: Some(Login::new("alice")),
+            assignees: vec![],
+            review_requests: vec![],
+            reviewers: vec![],
         },
     };
     std::sync::Arc::make_mut(&mut view.snapshot)

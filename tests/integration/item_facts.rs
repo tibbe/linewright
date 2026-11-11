@@ -155,6 +155,7 @@ fn pull(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         labelings: vec![],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 
@@ -257,6 +258,8 @@ fn spec_change(number: u64) -> MergedPull {
         files: vec!["docs/specs/invoices.md".into()],
         assignees: vec![Login::new("factory")],
         events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     }
 }
 

@@ -1,0 +1,118 @@
+{
+  "number": 862,
+  "title": "Give CI a test limit that catches only a stuck test",
+  "body": "## Summary\n\nCI's test step now selects a new nextest profile, `ci`, which inherits everything from `default` except the per-test limit. A local `scripts/check test`, an agent's included, keeps the 8s budget.\n\n```diff\n # .config/nextest.toml\n [profile.default]\n slow-timeout = { period = \"8s\", terminate-after = 1 }   # unchanged: local budget, only comes down\n global-timeout = \"5m\"\n ...\n+[profile.ci]                                             # selected only by CI's test step\n+slow-timeout = { period = \"30s\", terminate-after = 2 }  # named at 30s, killed at 60s\n```\n\n```diff\n # .github/workflows/ci.yml, test job\n       - run: scripts/check test\n+        env:\n+          NEXTEST_PROFILE: ci\n```\n\n`scripts/check` is unchanged. It passes no `--profile`, so the `nextest list` override check and `nextest run` both take the profile from `NEXTEST_PROFILE`. Any `[[profile.default.overrides]]` exception applies under `ci` as well. CI is chosen through the workflow and not through the `CI` variable, because an operator may set `CI=true` in an agent session's `session-env`.\n\n## Evidence\n\n- **Before:** in #855, `test (ubuntu-latest)` failed on two `deliveries::` tests the PR didn't touch. They were killed at 8s, and under CPU load the same happened on `main`.\n  **After:** nextest picks up the profile from the variable:\n  ```text\n  $ NEXTEST_PROFILE=ci cargo nextest run ...\n   Nextest run ID … with nextest profile: ci\n  $ NEXTEST_PROFILE=ci scripts/check test\n  ok: test (97s)\n  $ scripts/check test           # default profile, 8s budget\n  ok: test (21s)\n  $ scripts/check                # every CI check\n  ok: fmt markdown compose css clippy test doc\n  ```\n  These runs did not include a test that hangs past 60s, so the kill at 60s comes from the config and was not exercised.\n\n## Merge Danger\n\n**Door:** two-way\n\nThe change is one config profile and one workflow `env` entry. Removing them reverts it.\n\n**Blast Radius:** CI\n\nIn CI only, a test that takes 8–60s now passes where it used to fail. A slow test that a change introduces is still caught locally by the 8s budget. A stuck test in CI is now killed at 60s instead of 8s, which is still well inside the 5-minute `global-timeout`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCloses #861",
+  "mergedAt": "2026-10-30T20:56:03Z",
+  "updatedAt": "2026-10-30T20:56:06Z",
+  "baseRefName": "main",
+  "author": {
+    "__typename": "User",
+    "login": "tibbe-bot"
+  },
+  "closingIssuesReferences": {
+    "nodes": [
+      {
+        "number": 861
+      }
+    ]
+  },
+  "labels": {
+    "nodes": []
+  },
+  "assignees": {
+    "nodes": [
+      {
+        "login": "tibbe-bot"
+      }
+    ]
+  },
+  "files": {
+    "pageInfo": {
+      "hasNextPage": false
+    },
+    "nodes": [
+      {
+        "path": ".config/nextest.toml"
+      },
+      {
+        "path": ".github/workflows/ci.yml"
+      }
+    ]
+  },
+  "reviewRequests": {
+    "nodes": [
+      {
+        "asCodeOwner": false,
+        "requestedReviewer": {
+          "__typename": "User",
+          "login": "tibbe"
+        }
+      }
+    ]
+  },
+  "reviews": {
+    "nodes": [
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe"
+        },
+        "submittedAt": "2026-10-30T20:47:17Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "submittedAt": "2026-10-30T20:51:17Z"
+      },
+      {
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "submittedAt": "2026-10-30T20:51:18Z"
+      }
+    ]
+  },
+  "timelineItems": {
+    "nodes": [
+      {
+        "__typename": "AssignedEvent",
+        "createdAt": "2026-10-30T20:40:41Z",
+        "actor": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        },
+        "assignee": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-10-30T20:46:10Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-10-30T20:46:16Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      },
+      {
+        "__typename": "IssueComment",
+        "createdAt": "2026-10-30T20:51:22Z",
+        "author": {
+          "__typename": "User",
+          "login": "tibbe-bot"
+        }
+      }
+    ]
+  }
+}

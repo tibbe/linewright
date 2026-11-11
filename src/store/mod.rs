@@ -3,7 +3,7 @@ mod job_log;
 pub mod local;
 pub mod rate_limit;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -11,10 +11,37 @@ use async_trait::async_trait;
 
 use crate::domain::{
     CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
-    MergeMethods, MergedPull, Number, Pull, Repo, Snapshot, Windows, label,
+    MergeMethods, MergedPull, Number, Opening, Pull, Repo, Snapshot, Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::redaction::Redaction;
+
+/// Reads into `snapshot` the openings it lacks
+/// ([`Snapshot::unread_openings`]) with `read`, asking for each number once,
+/// until it lacks none `read` finds.
+async fn read_openings<Read, Fut>(
+    snapshot: &mut Snapshot,
+    linewright: &Login,
+    mut read: Read,
+) -> Result<()>
+where
+    Read: FnMut(BTreeSet<Number>) -> Fut,
+    Fut: Future<Output = Result<Vec<Opening>>>,
+{
+    let mut asked = BTreeSet::new();
+    loop {
+        let unread: BTreeSet<Number> = snapshot
+            .unread_openings(linewright)
+            .difference(&asked)
+            .copied()
+            .collect();
+        if unread.is_empty() {
+            return Ok(());
+        }
+        asked.extend(unread.iter().copied());
+        snapshot.openings.extend(read(unread).await?);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {

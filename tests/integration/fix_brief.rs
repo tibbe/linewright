@@ -49,6 +49,7 @@ fn pull() -> Pull {
         labelings: vec![],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 

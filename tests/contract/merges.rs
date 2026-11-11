@@ -2,9 +2,11 @@
 //! and their changes read back.
 
 use anyhow::{Context, Result, bail, ensure};
-use linewright::domain::{ClosedKind, MergeMethod, Mergeability, Number, PullState};
-use linewright::git;
-use linewright::store::{AnyItem, PushMode};
+use linewright::domain::{
+    ClosedKind, MergeMethod, Mergeability, Number, Opening, PullState, Windows,
+};
+use linewright::store::{AnyItem, NewIssue, PushMode};
+use linewright::{git, tracking};
 
 use crate::check::{contracts, equal};
 use crate::sandbox::{NewCommit, Opened, Sandbox, commit, recent};
@@ -20,6 +22,8 @@ contracts![
     a_draft_is_refused_merging,
     a_merged_pull_request_reads_back_merged_with_its_files,
     a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_closed_it,
+    a_merged_pull_request_is_read_with_who_a_review_is_requested_of,
+    a_spec_change_merged_before_the_windows_is_held_as_who_opened_it_while_its_issue_is,
     the_diff_of_a_pull_request_holds_its_changes_to_the_paths_asked,
     the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked,
 ];
@@ -573,6 +577,103 @@ async fn a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_clo
                 }
                 ClosedKind::Pull { .. } => bail!("{issue} is held as a pull request"),
             }
+        })
+        .await
+}
+
+async fn a_merged_pull_request_is_read_with_who_a_review_is_requested_of(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let what = "merged-review-requested";
+    let Opened { branch, pr } = ready(
+        &sandbox,
+        what,
+        &[NewCommit {
+            message: "Add a file",
+            files: &[(&file(&sandbox, what), b"reviewed\n")],
+        }],
+    )
+    .await?;
+    let reviewer = sandbox.reviewer();
+    sandbox
+        .store()
+        .request_review(pr, std::slice::from_ref(&reviewer))
+        .await?;
+    let method = sandbox.merge_method().await?;
+
+    merge(&sandbox, pr, &branch.head, method).await?;
+
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let merged = snapshot
+                .merged_pull(pr)
+                .with_context(|| format!("the snapshot does not hold {pr} merged"))?;
+            equal(
+                "the reviews requested",
+                &merged.review_requests,
+                &vec![reviewer.clone()],
+            )?;
+            equal("the reviewers", &merged.reviewers, &vec![])
+        })
+        .await
+}
+
+/// The spec change's issue is held open, and the spec change, merged
+/// before the snapshot's windows opened, is held as who opened it.
+async fn a_spec_change_merged_before_the_windows_is_held_as_who_opened_it_while_its_issue_is(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let what = "spec-change-opened";
+    let Opened { branch, pr } = ready(
+        &sandbox,
+        what,
+        &[NewCommit {
+            message: "Change the spec",
+            files: &[(&file(&sandbox, what), b"spec\n")],
+        }],
+    )
+    .await?;
+    let method = sandbox.merge_method().await?;
+    merge(&sandbox, pr, &branch.head, method).await?;
+
+    let issue = sandbox
+        .store()
+        .create_issue(NewIssue {
+            title: tracking::title(&sandbox.unique(what)),
+            body: tracking::body(pr),
+            labels: vec![],
+        })
+        .await?;
+
+    let linewright = sandbox.store().identity().await?.login;
+    let none = chrono::TimeDelta::zero();
+    let after_the_merge = Windows::at(
+        chrono::Utc::now() + chrono::TimeDelta::minutes(1),
+        none,
+        none,
+    );
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(after_the_merge).await?;
+            ensure!(
+                snapshot.issue(issue).is_some(),
+                "the snapshot does not hold {issue}"
+            );
+            ensure!(
+                snapshot.merged_pull(pr).is_none(),
+                "the snapshot holds {pr} merged"
+            );
+            let opening = snapshot.openings.iter().find(|o| o.number == pr);
+            equal(
+                "the spec change's opening",
+                &opening,
+                &Some(&Opening {
+                    number: pr,
+                    author: linewright.clone(),
+                    opened_for: vec![],
+                }),
+            )
         })
         .await
 }

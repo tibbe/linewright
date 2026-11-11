@@ -53,6 +53,7 @@ fn snapshot(issues: Vec<Issue>) -> Snapshot {
         ticket_branches: vec![],
         closed: vec![],
         spec_change_issues: vec![],
+        openings: vec![],
     }
 }
 
@@ -732,6 +733,8 @@ fn merged(number: u64, files: &[&str]) -> MergedPull {
         files: files.iter().map(ToString::to_string).collect(),
         assignees: vec![],
         events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     }
 }
 
@@ -1554,6 +1557,7 @@ fn pull(number: u64, closes: u64) -> Pull {
             at: t(1),
         }],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 

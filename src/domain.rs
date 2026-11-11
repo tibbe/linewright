@@ -1108,6 +1108,10 @@ pub struct Pull {
     /// `None` where no review decides whether it merges.
     #[serde(default)]
     pub review_decision: Option<ReviewDecision>,
+    /// The users a review is requested of by name, leaving out teams; none
+    /// known in a snapshot written before Linewright read them.
+    #[serde(default)]
+    pub review_requests: Vec<Login>,
 }
 
 /// A label applied to a pull request.
@@ -1307,6 +1311,13 @@ pub struct MergedPull {
     /// Its assignments, labelings and comments.
     #[serde(default)]
     pub events: Vec<IssueEvent>,
+    /// As [`Pull::review_requests`].
+    #[serde(default)]
+    pub review_requests: Vec<Login>,
+    /// The authors of its submitted reviews, each once, by login; none
+    /// known in a snapshot written before Linewright read them.
+    #[serde(default)]
+    pub reviewers: Vec<Login>,
 }
 
 impl MergedPull {
@@ -1671,6 +1682,69 @@ pub struct Snapshot {
     /// Spec changes).
     #[serde(default)]
     pub spec_change_issues: Vec<SpecChangeIssue>,
+    /// The items that the items it holds were opened for ([`opened_for`]),
+    /// followed back, where it does not otherwise hold them
+    /// ([`Snapshot::unread_openings`]).
+    #[serde(default)]
+    pub openings: Vec<Opening>,
+}
+
+/// Who opened an item, and what it was opened for ([`opened_for`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Opening {
+    pub number: Number,
+    pub author: Login,
+    pub opened_for: Vec<Number>,
+}
+
+impl Opening {
+    /// #`number`'s, opened by `author` as `opened` tells ([`opened_for`]).
+    pub fn new(number: Number, author: Login, opened: Opened<'_>, linewright: &Login) -> Opening {
+        Opening {
+            number,
+            opened_for: opened_for(&author, opened, linewright),
+            author,
+        }
+    }
+}
+
+/// An item, as what tells what it was opened for.
+#[derive(Clone, Copy, Debug)]
+pub enum Opened<'a> {
+    Issue {
+        parent: Option<Parent>,
+        filed: Option<Filed>,
+    },
+    Pull {
+        closes: &'a [Number],
+    },
+}
+
+/// The items an item `author` opened was opened for, when `author` is
+/// `linewright` (`docs/specs/design_system.md`, Filtering by person): a
+/// spec gap, the item whose work found it; a spec change's issue or a
+/// tracking issue filed for one, the spec change; a ticket, its parent; a
+/// pull request, the issues it closes. None for an item a person opened, or
+/// one Linewright opened for nothing, such as an automation's issue.
+pub fn opened_for(author: &Login, opened: Opened<'_>, linewright: &Login) -> Vec<Number> {
+    if author != linewright {
+        return vec![];
+    }
+    match opened {
+        Opened::Issue {
+            filed: Some(Filed::SpecGap { ticket }),
+            ..
+        } => vec![ticket],
+        Opened::Issue {
+            filed: Some(Filed::SpecChange { spec_change } | Filed::Tracking { spec_change }),
+            ..
+        } => vec![spec_change],
+        Opened::Issue {
+            filed: None,
+            parent,
+        } => parent.map(|parent| parent.number).into_iter().collect(),
+        Opened::Pull { closes } => closes.to_vec(),
+    }
 }
 
 /// An issue Linewright opened for a spec change, open or closed: titled
@@ -1876,6 +1950,16 @@ pub enum ClosedKind {
         /// read it, which held only Linewright's.
         #[serde(default)]
         author: Option<Login>,
+        /// As [`Pull::assignees`]; none known in a snapshot written before
+        /// Linewright read them, as for the next two.
+        #[serde(default)]
+        assignees: Vec<Login>,
+        /// As [`Pull::review_requests`].
+        #[serde(default)]
+        review_requests: Vec<Login>,
+        /// As [`MergedPull::reviewers`].
+        #[serde(default)]
+        reviewers: Vec<Login>,
     },
 }
 
@@ -1914,6 +1998,43 @@ impl<'a> Held<'a> {
             Held::Pull(pull) => &pull.title,
             Held::Merged(merged) => &merged.title,
             Held::Closed(closed) => &closed.title,
+        }
+    }
+
+    /// Who opened it and what tells what for, where it is known.
+    fn opened(self) -> Option<(&'a Login, Opened<'a>)> {
+        match self {
+            Held::Issue(issue) => Some((
+                &issue.author,
+                Opened::Issue {
+                    parent: issue.parent,
+                    filed: issue.filed,
+                },
+            )),
+            Held::Pull(pull) => Some((
+                &pull.author,
+                Opened::Pull {
+                    closes: &pull.closes,
+                },
+            )),
+            Held::Merged(merged) => Some((
+                &merged.author,
+                Opened::Pull {
+                    closes: &merged.closes,
+                },
+            )),
+            Held::Closed(closed) => match &closed.kind {
+                ClosedKind::Issue { parent, facts, .. } => Some((
+                    facts.work.author.as_ref()?,
+                    Opened::Issue {
+                        parent: *parent,
+                        filed: facts.filed,
+                    },
+                )),
+                ClosedKind::Pull { closes, author, .. } => {
+                    Some((author.as_ref()?, Opened::Pull { closes }))
+                }
+            },
         }
     }
 
@@ -2048,6 +2169,61 @@ impl Snapshot {
     /// merged ones and closed items the snapshot holds.
     pub fn updated_at(&self, number: Number) -> Option<Timestamp> {
         self.held(number).map(Held::updated_at).max()
+    }
+
+    /// Who opened #`number`, and what for ([`opened_for`]): of the items
+    /// the snapshot holds, then of [`Snapshot::openings`]. `None` where it
+    /// holds neither, or does not know who opened it.
+    pub fn opening(&self, number: Number, linewright: &Login) -> Option<Opening> {
+        let held = self.held(number).find_map(|held| {
+            let (author, opened) = held.opened()?;
+            Some(Opening::new(number, author.clone(), opened, linewright))
+        });
+        let spec_change_issue = || {
+            self.spec_change_issues
+                .iter()
+                .find(|issue| issue.number == number)
+                .map(|issue| Opening {
+                    number,
+                    author: linewright.clone(),
+                    opened_for: vec![issue.spec_change],
+                })
+        };
+        held.or_else(spec_change_issue).or_else(|| {
+            self.openings
+                .iter()
+                .find(|opening| opening.number == number)
+                .cloned()
+        })
+    }
+
+    /// The items that the items it holds, and its openings, were opened
+    /// for, of which it has no opening ([`Snapshot::opening`]): those whose
+    /// openings a store reads into [`Snapshot::openings`].
+    pub fn unread_openings(&self, linewright: &Login) -> BTreeSet<Number> {
+        let issues = self.issues.iter().map(|issue| issue.number);
+        let pulls = self
+            .pulls
+            .iter()
+            .chain(&self.peoples_pulls)
+            .map(|p| p.number);
+        let merged = self.merged.iter().map(|p| p.number);
+        let closed = self.closed.iter().map(|item| item.number);
+        let spec_change_issues = self.spec_change_issues.iter().map(|issue| issue.number);
+        let openings = self.openings.iter().map(|opening| opening.number);
+        let numbers: BTreeSet<Number> = issues
+            .chain(pulls)
+            .chain(merged)
+            .chain(closed)
+            .chain(spec_change_issues)
+            .chain(openings)
+            .collect();
+        numbers
+            .iter()
+            .filter_map(|&number| self.opening(number, linewright))
+            .flat_map(|opening| opening.opened_for)
+            .filter(|&number| self.opening(number, linewright).is_none())
+            .collect()
     }
 
     /// Each issue, pull request, merged one and closed item the snapshot
@@ -2747,8 +2923,58 @@ mod tests {
             ClosedKind::Pull {
                 closes: vec![Number(2)],
                 author: None,
+                assignees: vec![],
+                review_requests: vec![],
+                reviewers: vec![],
             }
         );
+    }
+
+    /// A snapshot as Linewright wrote it before it held the reviews
+    /// requested, the reviewers, a pull request's assignees closed unmerged
+    /// and the openings.
+    #[test_log::test]
+    fn a_snapshot_written_before_review_requests_reviewers_and_openings_loads_with_none_known() {
+        let snapshot: Snapshot = serde_json::from_str(
+            r#"{
+              "default_branch": "main",
+              "issues": [],
+              "pulls": [{
+                "number": 10, "title": "Pull 10", "body": "", "author": "factory",
+                "created_at": "2026-10-01T11:58:00Z", "head_ref": "10-pull",
+                "head_sha": "abc123", "state": {"state": "open", "draft": false},
+                "closes": [1], "pushes": [], "mergeability": "unknown",
+                "rebaseability": "unknown", "checks": [], "comments": [], "reviews": [],
+                "threads": [], "labels": [], "assignees": ["factory"], "assignments": []
+              }],
+              "merged": [{
+                "number": 5, "title": "Spec", "body": "", "author": "maintainer",
+                "merged_at": "2026-10-01T09:00:00Z", "base_ref": "main", "labels": [],
+                "closes": [], "files": []
+              }],
+              "closed": [{
+                "number": 11, "title": "Pull 11", "closed_at": "2026-09-28T13:00:00Z",
+                "updated_at": "2026-09-28T13:00:00Z", "kind": "pull", "closes": [2],
+                "author": "factory"
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.pulls[0].review_requests, []);
+        assert_eq!(snapshot.merged[0].review_requests, []);
+        assert_eq!(snapshot.merged[0].reviewers, []);
+        assert_eq!(
+            snapshot.closed[0].kind,
+            ClosedKind::Pull {
+                closes: vec![Number(2)],
+                author: Some(Login::new("factory")),
+                assignees: vec![],
+                review_requests: vec![],
+                reviewers: vec![],
+            }
+        );
+        assert_eq!(snapshot.openings, []);
     }
 
     fn existing(names: &[&str]) -> Vec<label::RepoLabel> {
