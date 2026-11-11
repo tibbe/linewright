@@ -12,6 +12,7 @@ use crate::holds::Hold;
 use crate::lifecycle::{self, done_at, done_by_merge};
 pub use crate::managed::Ended;
 use crate::managed::{self, Detail, Managed, Tickets};
+use crate::party;
 use crate::reconcile::{Policy, Wait, WorkKind};
 use crate::runs::{Ending, Recorded, RunOf, State};
 use crate::status::View;
@@ -76,6 +77,36 @@ impl Board {
             .find(|(_, card)| card.number == number)
     }
 
+    /// It with only the cards `person` is party to, and the lanes left with
+    /// a card, each lane's head, finished state and place, and the count of
+    /// cards in Needs a person, as they are on it
+    /// (`docs/specs/design_system.md`, Filtering by person).
+    #[must_use]
+    pub fn narrowed(&self, person: &Login) -> Board {
+        Board {
+            lanes: self
+                .lanes
+                .iter()
+                .filter_map(|lane| lane.narrowed(person))
+                .collect(),
+            needing_a_person: self.needing_a_person,
+            managed: self.managed.clone(),
+        }
+    }
+
+    /// Every party to a card on it, sorted by login and each once.
+    pub fn people(&self) -> Vec<Login> {
+        let mut people: Vec<Login> = self
+            .lanes
+            .iter()
+            .flat_map(|lane| lane.columns.iter().flatten())
+            .flat_map(|card| card.parties.iter().cloned())
+            .collect();
+        people.sort();
+        people.dedup();
+        people
+    }
+
     /// The lane the tracking issue #`number` heads.
     pub fn lane_headed_by(&self, number: Number) -> Option<&Lane> {
         self.lanes.iter().find(
@@ -84,15 +115,73 @@ impl Board {
     }
 }
 
+/// A lane (`GLOSSARY.md`, **Lane**), its head, its finished state and its
+/// place on the board those of the whole lane, however it is narrowed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lane {
     pub head: LaneHead,
     /// By column, each ascending by number.
     columns: [Vec<Card>; Column::ALL.len()],
+    finished: Option<Timestamp>,
+    place: Place,
 }
+
+/// A lane's place on the board (`docs/specs/design_system.md`, The board,
+/// Order of lanes): the unfinished first, latest changed first, then the
+/// finished, latest finished first, then by number.
+type Place = (bool, Reverse<Timestamp>, Number);
 
 impl Lane {
     pub fn cards(&self, column: Column) -> &[Card] {
+        &self.columns[column as usize]
+    }
+
+    /// When it finished, once every card is in Done and its tracking issue,
+    /// if it has one, is done: when the last of its cards entered Done or
+    /// its tracking issue became done, whichever is later
+    /// (`docs/specs/design_system.md`, The board, Finished lanes).
+    pub fn finished(&self) -> Option<Timestamp> {
+        self.finished
+    }
+
+    /// What its head shows.
+    pub fn heading(&self) -> LaneHeading {
+        LaneHeading {
+            head: self.head.clone(),
+            finished: self.finished,
+        }
+    }
+
+    /// It with only the cards `person` is party to, if any is.
+    fn narrowed(&self, person: &Login) -> Option<Lane> {
+        let columns = self.columns.clone().map(|cards| {
+            cards
+                .into_iter()
+                .filter(|card| card.parties.contains(person))
+                .collect::<Vec<_>>()
+        });
+        columns.iter().any(|cards| !cards.is_empty()).then(|| Lane {
+            columns,
+            ..self.clone()
+        })
+    }
+}
+
+/// A lane as its cards gather, before it is built.
+struct Gathering {
+    head: LaneHead,
+    columns: [Vec<Card>; Column::ALL.len()],
+}
+
+impl Gathering {
+    fn of(head: LaneHead) -> Gathering {
+        Gathering {
+            head,
+            columns: Default::default(),
+        }
+    }
+
+    fn cards(&self, column: Column) -> &[Card] {
         &self.columns[column as usize]
     }
 
@@ -101,11 +190,8 @@ impl Lane {
         self.columns.iter().all(Vec::is_empty)
     }
 
-    /// When it finished, once every card is in Done and its tracking issue,
-    /// if it has one, is done: when the last of its cards entered Done or
-    /// its tracking issue became done, whichever is later
-    /// (`docs/specs/design_system.md`, The board, Finished lanes).
-    pub fn finished(&self) -> Option<Timestamp> {
+    /// [`Lane::finished`].
+    fn finished(&self) -> Option<Timestamp> {
         let open = Column::ALL
             .into_iter()
             .filter(|&column| column != Column::Done)
@@ -128,21 +214,6 @@ impl Lane {
             .max()
     }
 
-    /// What its head shows.
-    pub fn heading(&self) -> LaneHeading {
-        LaneHeading {
-            head: self.head.clone(),
-            finished: self.finished(),
-        }
-    }
-
-    fn of(head: LaneHead) -> Lane {
-        Lane {
-            head,
-            columns: Default::default(),
-        }
-    }
-
     /// When any of its cards last changed (`docs/specs/design_system.md`,
     /// The board, A lane's last change).
     fn last_change(&self) -> Timestamp {
@@ -154,13 +225,15 @@ impl Lane {
             .unwrap_or_default()
     }
 
-    /// Its place on the board (`docs/specs/design_system.md`, The board, Order
-    /// of lanes): the unfinished first, latest changed first, then the
-    /// finished, latest finished first, then by number.
-    fn order(&self) -> (bool, Reverse<Timestamp>, Number) {
+    fn built(self) -> Lane {
         let finished = self.finished();
         let latest = finished.unwrap_or_else(|| self.last_change());
-        (finished.is_some(), Reverse(latest), self.head.number())
+        Lane {
+            place: (finished.is_some(), Reverse(latest), self.head.number()),
+            finished,
+            head: self.head,
+            columns: self.columns,
+        }
     }
 }
 
@@ -215,6 +288,8 @@ pub struct Card {
     pub entered: Option<Timestamp>,
     /// When it last changed.
     changed: Timestamp,
+    /// The people party to its item ([`party::parties`]), sorted by login.
+    pub parties: Vec<Login>,
 }
 
 impl Card {
@@ -449,6 +524,7 @@ fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column
         line,
         entered: entered(column, managed.number, view),
         changed: last_change(seen, &on),
+        parties: party::parties(snapshot, &view.policy.linewright, managed.number),
     };
     Some((column, card))
 }
@@ -502,9 +578,9 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
     trackers.dedup_by_key(|tracker| tracker.number);
 
     cards.sort_by_key(|(_, card)| card.number);
-    let mut lanes: Vec<Lane> = trackers
+    let mut lanes: Vec<Gathering> = trackers
         .iter()
-        .map(|tracker| Lane::of(tracker.head()))
+        .map(|tracker| Gathering::of(tracker.head()))
         .collect();
     for (column, card) in cards {
         let tracker = trackers
@@ -513,7 +589,7 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         match tracker {
             Some(i) => lanes[i].columns[column as usize].push(card),
             None => {
-                let mut lane = Lane::of(LaneHead::Item {
+                let mut lane = Gathering::of(LaneHead::Item {
                     number: card.number,
                     title: card.title.clone(),
                 });
@@ -523,10 +599,13 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         }
     }
     let windows = view.policy.windows(now);
-    lanes.retain(|lane| {
-        !lane.is_empty() && lane.finished().is_none_or(|at| windows.in_done_window(at))
-    });
-    lanes.sort_by_key(Lane::order);
+    let mut lanes: Vec<Lane> = lanes
+        .into_iter()
+        .filter(|lane| !lane.is_empty())
+        .map(Gathering::built)
+        .filter(|lane| lane.finished.is_none_or(|at| windows.in_done_window(at)))
+        .collect();
+    lanes.sort_by_key(|lane| lane.place);
     let needing_a_person = lanes
         .iter()
         .map(|lane| lane.cards(Column::NeedsAPerson).len())

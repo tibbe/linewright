@@ -2935,3 +2935,99 @@ fn a_card_in_done_is_closed_in_the_pull_request_whose_merge_made_it_done() {
         ]
     );
 }
+
+/// `closed`, assigned to `assignees`.
+fn closed_assigned(mut closed: ClosedItem, assignees: &[&str]) -> ClosedItem {
+    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
+        facts.work.assignees = common::logins(assignees);
+    }
+    closed
+}
+
+/// #20 cut into #21, open for bob, and #22, done for alice; #2, alice's,
+/// in Triage; #10 cut into #11, needing bob; and #30 cut into #31, done
+/// for alice and finished. Linewright filed each tracking issue for a spec
+/// change the snapshot does not hold, so that only its tickets' own people
+/// are party to them.
+fn a_board_of_people() -> View {
+    with_closed(
+        view(
+            vec![
+                tracking_issue(20, 19, &[(21, true), (22, false)]),
+                updated(
+                    Issue {
+                        assignees: common::logins(&["bob"]),
+                        ..cut_from(ticket(21, "Bob's part"), 20, 19)
+                    },
+                    "2026-10-01T11:00:00Z",
+                ),
+                updated(
+                    Issue {
+                        author: Login::new("alice"),
+                        ..labeled(2, &["needs-triage"])
+                    },
+                    "2026-10-01T10:00:00Z",
+                ),
+                tracking_issue(10, 9, &[(11, true)]),
+                updated(
+                    Issue {
+                        assignees: common::logins(&["bob"]),
+                        ..cut_from(labeled(11, &["needs-info"]), 10, 9)
+                    },
+                    "2026-10-01T09:00:00Z",
+                ),
+            ],
+            vec![],
+        ),
+        vec![
+            closed_assigned(
+                closed_ticket(22, 20, "2026-09-30T12:00:00Z"),
+                &["alice", "factory"],
+            ),
+            closed_tracking_issue(30, 29, &[(31, false)], "2026-09-29T12:00:00Z"),
+            closed_assigned(closed_ticket(31, 30, "2026-09-29T12:00:00Z"), &["alice"]),
+        ],
+    )
+}
+
+#[test_log::test]
+fn a_board_narrowed_to_a_person_keeps_their_cards_and_each_lanes_head_finished_state_and_place() {
+    let whole = board(&a_board_of_people(), &[], at(NOW));
+
+    let narrowed = whole.narrowed(&Login::new("alice"));
+
+    assert_eq!(
+        lanes(&narrowed),
+        [
+            (20, None),
+            (2, None),
+            (30, Some(at("2026-09-29T12:00:00Z")))
+        ]
+    );
+    assert_eq!(
+        placed(&narrowed),
+        [
+            (20, Column::Done, 22),
+            (2, Column::Triage, 2),
+            (30, Column::Done, 31)
+        ]
+    );
+    assert_eq!(
+        narrowed.lanes[0].head,
+        LaneHead::Tracking {
+            number: Number(20),
+            title: "Tracking 20".into(),
+            tickets_closed: 1,
+            tickets: 2,
+            done: None
+        }
+    );
+    assert_eq!(narrowed.needing_a_person, 1);
+}
+
+#[test_log::test]
+fn the_people_on_a_board_are_every_cards_parties_but_linewright() {
+    let board = board(&a_board_of_people(), &[], at(NOW));
+
+    assert_eq!(board.people(), common::logins(&["alice", "bob"]));
+}
