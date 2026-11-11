@@ -1,8 +1,8 @@
-htmx.min.js is htmx 4.0.0, dist/htmx.min.js of the npm package htmx.org@4.0.0
-(https://www.npmjs.com/package/htmx.org/v/4.0.0), sha256
-e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f, and hx-sse.js is
+htmx.min.js is htmx 4.0.1, dist/htmx.min.js of the npm package htmx.org@4.0.1
+(https://www.npmjs.com/package/htmx.org/v/4.0.1), sha256
+a0abb04f2f45a1f89d1d4844023245537e5e6014c87b144553e0607b4cc32130, and hx-sse.js is
 its extension for event streams, dist/ext/hx-sse.js of the same package, sha256
-1f4f75562d6136cddec36545c6bffbd9e332601619f67a1c8746e5edcce60561, both under this
+8bd89f42bf6b61b459dace65046154bb80254ea380b9868c494c0ff33018f3d6, both under this
 licence:
 
 Zero-Clause BSD
