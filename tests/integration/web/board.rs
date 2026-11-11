@@ -312,7 +312,7 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
         .unwrap();
 
     let first: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(first, ["holds", "title", "board"]);
+    assert_eq!(first, ["holds", "title", "board", "people"]);
     let changed = regions(&next);
     let ids: Vec<&str> = changed.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["title", "board"]);
@@ -331,6 +331,93 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
             "#4: Old idea — finished 2026-10-01 09:00:00 UTC",
         ]
     );
+}
+
+/// The Person filter (`docs/specs/design_system.md`, Filtering by person):
+/// alice, asked on #3, is party to it alone, and the maintainer, who opened
+/// #1, #2 and so #3, to all three. Linewright, who filed #4, is party to
+/// nothing.
+#[test_log::test(tokio::test)]
+async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_board_in_its_title()
+{
+    let pages = Pages::of(a_board()).await;
+
+    let html = pages.page("/?person=alice").await;
+
+    assert_eq!(
+        board_shown(&html),
+        [vec![
+            "#2: Big thing — 0/1 tickets closed",
+            "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+        ]]
+    );
+    assert_eq!(select(&html, "#finished").len(), 0);
+    assert_eq!(text(select(&html, "title")[0]), "(2) Board · owner/widgets");
+    let person: Vec<(Option<&str>, Option<&str>)> = select(&html, "form[data-filters] input")
+        .into_iter()
+        .map(|input| (input.attr("name"), input.attr("value")))
+        .collect();
+    assert_eq!(person, [(Some("person"), Some("alice"))]);
+    assert_eq!(
+        text(select(&html, "form[data-filters] label > .label")[0]),
+        "Person"
+    );
+    let list = select(&html, "form[data-filters] input")[0]
+        .attr("list")
+        .unwrap();
+    let people: Vec<&str> = select(&html, &format!("datalist#{list} option"))
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert_eq!(people, ["alice", "maintainer"]);
+    assert_eq!(events_path(&html), Some("/events/?person=alice"));
+    assert_eq!(
+        select(&html, "form[data-filters]")[0].attr("data-filters"),
+        Some("/events/")
+    );
+    assert_eq!(select(&html, "#board form, #people form").len(), 0);
+}
+
+#[test_log::test(tokio::test)]
+async fn the_board_with_no_person_or_a_blank_one_shows_every_card() {
+    let pages = Pages::of(a_board()).await;
+
+    for path in ["/", "/?person=", "/?person=%20"] {
+        let html = pages.page(path).await;
+
+        assert_eq!(board_shown(&html).len(), 3, "{path}");
+        let person: Vec<Option<&str>> = select(&html, "form[data-filters] input")
+            .into_iter()
+            .map(|input| input.attr("value"))
+            .collect();
+        assert_eq!(person, [Some("")], "{path}");
+        assert_eq!(events_path(&html), Some("/events/"), "{path}");
+    }
+}
+
+#[test_log::test(tokio::test(start_paused = true))]
+async fn the_boards_stream_narrowed_to_a_person_sends_their_cards_and_the_people() {
+    let pages = Pages::of(a_board()).await;
+    let mut events = stream(&pages, "/events/?person=alice").await;
+
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let first = regions(&first);
+    let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["holds", "title", "board", "people"]);
+    let cards: Vec<String> = select(&first[2].1, "#board .card h3")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(cards, ["#3: Part one"]);
+    let people: Vec<&str> = select(&first[3].1, "datalist#people option")
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert_eq!(people, ["alice", "maintainer"]);
 }
 
 #[test_log::test(tokio::test)]

@@ -31,6 +31,17 @@
 <span class="name-cut-1 sticky left-(--lane-inset) max-w-[calc(100cqw-2*var(--lane-inset))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
+{%- call ui::filters("/events/") %}
+{%- call ui::filter_input("Person", "person", person, list = "people") %}{% endcall %}
+{%- endcall %}
+{% block people -%}
+<datalist id="people">
+{%- for login in people %}
+<option value="{{ login }}"></option>
+{%- endfor %}
+</datalist>
+{%- endblock %}
+{% block board -%}
 <section id="board" class="scroll-box @container">
 {#- A sticky box stays within its containing block, and sticks to the
     scrollport of its nearest scroll container:
@@ -60,4 +71,5 @@
 {%- endif %}
 </div>
 </section>
+{%- endblock %}
 {%- endblock -%}

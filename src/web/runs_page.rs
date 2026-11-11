@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::names::Names;
 use super::runs_table::RunsShown;
-use super::{Frame, Page, events, frame_regions, render, unanswered, with_query};
+use super::{Frame, Page, events, frame_regions, given, render, unanswered, with_filters};
 use crate::api::{self, Sources};
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
@@ -62,19 +62,9 @@ impl Narrowing {
 
     /// The fields given, as the query of `path`.
     fn path(&self, path: &str) -> String {
-        let mut query = form_urlencoded::Serializer::new(String::new());
         let FilterQuery { item, stage, since } = &self.fields;
-        for (name, value) in [("item", item), ("stage", stage), ("since", since)] {
-            if !value.is_empty() {
-                query.append_pair(name, value);
-            }
-        }
-        with_query(path, &query.finish())
+        with_filters(path, &[("item", item), ("stage", stage), ("since", since)])
     }
-}
-
-fn given(field: &str) -> Option<&str> {
-    Some(field).filter(|field| !field.is_empty())
 }
 
 impl Narrowed {
