@@ -429,7 +429,7 @@ fn lacks_classes(element: ElementRef, classes: &[&str]) -> bool {
 
 /// The path of the event stream the page connects to.
 fn events_path(html: &Html) -> Option<&str> {
-    select(html, "body")[0].attr("hx-sse:connect")
+    select(html, "#stream")[0].attr("hx-sse:connect")
 }
 
 /// The text a reader sees, with its spacing, and its code in backticks, as

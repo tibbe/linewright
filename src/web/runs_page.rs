@@ -1,6 +1,6 @@
 //! The runs page (`docs/specs/design_system.md`, Lists of runs): every run,
-//! narrowed by the item, the stage and the time since which runs started as
-//! the fields of a form.
+//! narrowed by its filters (`docs/specs/design_system.md`, Filters): the
+//! item, the stage and the time since which runs started.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -21,10 +21,10 @@ use crate::phrase::Tone;
 use crate::reconcile::WorkKind;
 use crate::runs;
 
-/// The form's fields as the reader filled them in, an empty one leaving the
+/// The filters as the page's address carries them, an empty one leaving the
 /// list unnarrowed by it.
 #[derive(Deserialize)]
-pub(super) struct Fields {
+pub(super) struct FilterQuery {
     #[serde(default)]
     item: String,
     #[serde(default)]
@@ -33,10 +33,10 @@ pub(super) struct Fields {
     since: String,
 }
 
-/// The narrowing the form asks for, read as `runs` reads its own.
+/// The narrowing the filters ask for, read as `runs` reads its own.
 struct Narrowing {
-    /// Trimmed, to fill the form in again.
-    fields: Fields,
+    /// Trimmed, to fill the filters in again.
+    fields: FilterQuery,
     narrowed: Result<Narrowed, String>,
 }
 
@@ -48,8 +48,8 @@ struct Narrowed {
 }
 
 impl Narrowing {
-    fn of(fields: &Fields) -> Narrowing {
-        let fields = Fields {
+    fn of(fields: &FilterQuery) -> Narrowing {
+        let fields = FilterQuery {
             item: fields.item.trim().to_string(),
             stage: fields.stage.trim().to_string(),
             since: fields.since.trim().to_string(),
@@ -63,7 +63,7 @@ impl Narrowing {
     /// The fields given, as the query of `path`.
     fn path(&self, path: &str) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());
-        let Fields { item, stage, since } = &self.fields;
+        let FilterQuery { item, stage, since } = &self.fields;
         for (name, value) in [("item", item), ("stage", stage), ("since", since)] {
             if !value.is_empty() {
                 query.append_pair(name, value);
@@ -78,7 +78,7 @@ fn given(field: &str) -> Option<&str> {
 }
 
 impl Narrowed {
-    fn of(fields: &Fields) -> Result<Narrowed, String> {
+    fn of(fields: &FilterQuery) -> Result<Narrowed, String> {
         let item = given(&fields.item)
             .map(|item| {
                 item.trim_start_matches('#')
@@ -104,16 +104,16 @@ impl Narrowed {
     }
 }
 
-/// The form, filled in as the reader left it.
-struct Form {
+/// The filters, filled in as the reader left them.
+struct Filters {
     item: String,
     stages: Vec<(&'static str, bool)>,
     since: String,
 }
 
-impl Form {
-    fn of(fields: &Fields) -> Form {
-        Form {
+impl Filters {
+    fn of(fields: &FilterQuery) -> Filters {
+        Filters {
             item: fields.item.clone(),
             stages: WorkKind::ALL
                 .into_iter()
@@ -156,7 +156,7 @@ fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
 struct RunsPage {
     page: Page,
     frame: Frame,
-    form: Form,
+    filters: Filters,
     runs: RunsShown,
 }
 
@@ -168,7 +168,7 @@ struct RunsRegion<'a> {
 
 pub(super) async fn runs_page(
     State(sources): State<Sources>,
-    Query(fields): Query<Fields>,
+    Query(fields): Query<FilterQuery>,
 ) -> Response {
     let narrowing = Narrowing::of(&fields);
     let (status, runs) = listed(&sources, &narrowing);
@@ -179,7 +179,7 @@ pub(super) async fn runs_page(
         )
         .filling_the_viewport(),
         frame: Frame::of(&sources),
-        form: Form::of(&narrowing.fields),
+        filters: Filters::of(&narrowing.fields),
         runs,
     };
     (status, page).into_response()
@@ -190,7 +190,7 @@ pub(super) async fn runs_page(
 pub(super) async fn runs_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
-    Query(fields): Query<Fields>,
+    Query(fields): Query<FilterQuery>,
 ) -> Response {
     let narrowing = Narrowing::of(&fields);
     let regions = move || {

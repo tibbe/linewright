@@ -2,17 +2,11 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 <h1>Runs</h1>
-<form class="narrowing mb-4 flex flex-wrap items-center gap-2" method="get" action="/runs">
-<label class="input input-sm w-auto"><span class="label">Item</span><input class="w-16" name="item" inputmode="numeric" value="{{ form.item }}"></label>
-<label class="select select-sm w-auto"><span class="label">Stage</span><select name="stage">
-<option value="">any</option>
-{%- for (stage, chosen) in form.stages %}
-<option value="{{ stage }}"{% if chosen %} selected{% endif %}>{{ stage }}</option>
-{%- endfor %}
-</select></label>
-<label class="input input-sm w-auto"><span class="label">Since</span><input class="w-72" name="since" value="{{ form.since }}" placeholder="2h, 2026-10-14 or 2026-10-14T12:00:00Z"></label>
-<button class="btn btn-sm btn-primary">Show</button>
-</form>
+{%- call ui::filters("/events/runs") %}
+{%- call ui::filter_input("Item", "item", filters.item, width = "w-16", inputmode = "numeric") %}{% endcall %}
+{%- call ui::filter_select("Stage", "stage", "All stages", filters.stages) %}{% endcall %}
+{%- call ui::filter_input("Since", "since", filters.since, width = "w-72", placeholder = "2h, 2026-10-14 or 2026-10-14T12:00:00Z") %}{% endcall %}
+{%- endcall %}
 {% block runs -%}
 <section id="runs" class="flex min-h-0 flex-1 flex-col">
 {%- call ui::runs(runs) %}{% endcall %}

@@ -15,7 +15,8 @@
 <script src="{{ page.assets.sse }}"></script>
 <script src="{{ page.assets.script }}" defer></script>
 </head>
-<body class="bg-base-100 text-base-content" hx-sse:connect="{{ page.events }}" hx-swap="none">
+<body class="bg-base-100 text-base-content">
+<div id="stream" hidden hx-sse:connect="{{ page.events }}" hx-swap="none"></div>
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
 <div class="drawer-content isolate min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">

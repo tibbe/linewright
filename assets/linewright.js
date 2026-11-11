@@ -3,7 +3,8 @@
  * page lost `serve`, shows times and durations in the page's language and the
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
  * entry while the reader is there, keeps each fold as the reader opened or
- * closed it through updates, and shows the page's tooltip.
+ * closed it through updates, applies the page's filters as they are chosen,
+ * and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -108,10 +109,35 @@
   const latest = document.getElementById("latest");
   const atBottom = () =>
     window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 40;
-  let stuck = (document.body.getAttribute("hx-sse:connect") || "").includes("follow=");
+  /** The element whose `hx-sse:connect` is the page's event stream. */
+  const stream = () => document.getElementById("stream");
+  const streamPath = () => stream()?.getAttribute("hx-sse:connect") || "";
+  let stuck = streamPath().includes("follow=");
 
   function toBottom() {
     window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+
+  /** Whether the reader left each fold open, by its id. */
+  const folds = new Map();
+
+  // `toggle` does not bubble: https://html.spec.whatwg.org/multipage/interactive-elements.html#the-details-element
+  document.addEventListener(
+    "toggle",
+    (event) => {
+      if (event.target.tagName === "DETAILS" && event.target.id) {
+        folds.set(event.target.id, event.target.open);
+      }
+    },
+    true,
+  );
+
+  /** Opens or closes each fold the reader toggled, as they left it. */
+  function keepFolds() {
+    for (const [id, open] of folds) {
+      const fold = document.getElementById(id);
+      if (fold && fold.tagName === "DETAILS" && fold.open !== open) fold.open = open;
+    }
   }
 
   /**
@@ -119,6 +145,7 @@
    * to the transcript.
    */
   function swapped(entries) {
+    keepFolds();
     tick();
     refreshTip();
     if (!latest || !entries) return;
@@ -169,12 +196,70 @@
   // hx-sse reconnects only a stream that connected once (`sse.reconnect`):
   // https://four.htmx.org/extensions/hx-sse
   document.body.addEventListener("htmx:finally:request", (event) => {
-    if (event.target !== document.body || streaming) return;
+    if (event.target !== stream() || streaming) return;
     lose();
     setTimeout(() => {
-      htmx.ajax("GET", document.body.getAttribute("hx-sse:connect"), { source: document.body });
+      const from = stream();
+      if (from === event.target) htmx.ajax("GET", streamPath(), { source: from });
     }, 5000);
   });
+
+  /**
+   * The query of the filters among `fields` that are set, each trimmed, or
+   * `""` when none is.
+   */
+  function filterQuery(fields) {
+    return Array.from(fields)
+      .filter((field) => field.name)
+      .map((field) => [field.name, field.value.trim()])
+      .filter(([, value]) => value !== "")
+      .map(([name, value]) => `${encodeURIComponent(name)}=${encodeURIComponent(value)}`)
+      .join("&");
+  }
+
+  /**
+   * Applies `form`'s filters (docs/specs/design_system.md, Filters): the
+   * page's address and its stream, at the form's `data-filters`, take their
+   * query. The stream's element is swapped out for one at the new query, and
+   * htmx's cleanup of the old one ends its stream (`htmx_before_cleanup` in
+   * hx-sse.js).
+   */
+  function applyFilters(form) {
+    const query = filterQuery(form.elements);
+    const withQuery = (path) => (query ? `${path}?${query}` : path);
+    history.replaceState(null, "", withQuery(location.pathname));
+    const old = stream();
+    const fresh = old.cloneNode(false);
+    fresh.setAttribute("hx-sse:connect", withQuery(form.getAttribute("data-filters")));
+    streaming = false;
+    htmx.swap({ target: old, swap: "outerHTML", text: fresh.outerHTML });
+  }
+
+  /**
+   * Applies the filters of the form an event of `type` came from, for an
+   * event `chosen` says chose a filter.
+   */
+  function applyOn(type, chosen) {
+    document.addEventListener(type, (event) => {
+      const form = event.target?.closest?.("form[data-filters]");
+      if (!form || !chosen(event)) return;
+      event.preventDefault();
+      applyFilters(form);
+    });
+  }
+
+  applyOn("change", (event) => event.target.tagName === "SELECT");
+  // A pick from a field's `datalist` fires `input` alone, and no event
+  // tells it from typing in all browsers:
+  // https://html.spec.whatwg.org/multipage/form-elements.html#the-datalist-element
+  applyOn("input", (event) =>
+    Array.from(event.target.list?.options || []).some(
+      (option) => option.value === event.target.value,
+    ),
+  );
+  // A form with more than one field to type in submits on no Enter:
+  // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission
+  applyOn("keydown", (event) => event.key === "Enter" && event.target.tagName === "INPUT");
 
   /**
    * The page's one tooltip, which shows the tip of one trigger at a time: an

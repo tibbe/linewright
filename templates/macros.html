@@ -40,6 +40,35 @@
 </dl>
 {%- endmacro -%}
 
+{#- A page's filters (`docs/specs/design_system.md`, Filters;
+    `docs/specs/web/design_system.md`, Filters), the fields its caller
+    draws, outside every region a stream sends. The script applies them
+    as each is chosen, to the page's address and to its stream at
+    `stream_path`. -#}
+{%- macro filters(stream_path) -%}
+<form class="mb-4 flex flex-wrap items-center gap-2" data-filters="{{ stream_path }}">
+{{- caller() }}
+</form>
+{%- endmacro -%}
+
+{#- A filter typed in, `value` empty while it is unset, suggesting the
+    options of the `datalist` whose id is `list`, if any, `width` wide and
+    with the keyboard `inputmode` asks for. -#}
+{%- macro filter_input(label, name, value, list = "", width = "w-32", placeholder = "", inputmode = "") -%}
+<label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !list.is_empty() %} list="{{ list }}"{% endif %}{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
+{%- endmacro -%}
+
+{#- A filter chosen from `options`, each its value and whether it is
+    chosen, reading `all` while it is unset. -#}
+{%- macro filter_select(label, name, all, options) -%}
+<label class="select select-sm w-auto"><span class="label">{{ label }}</span><select name="{{ name }}">
+<option value="">{{ all }}</option>
+{%- for (option, chosen) in options %}
+<option value="{{ option }}"{% if chosen %} selected{% endif %}>{{ option }}</option>
+{%- endfor %}
+</select></label>
+{%- endmacro -%}
+
 {#- The classes of a board card's look (`docs/specs/web/design_system.md`,
     Board). -#}
 {%- macro card_look() -%}
