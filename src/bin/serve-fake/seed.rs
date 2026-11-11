@@ -67,6 +67,14 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
         "On my phone the board scrolls sideways.",
         &[label::NEEDS_TRIAGE],
     );
+    let done = store.open_issue(
+        MAINTAINER,
+        "Name the board's columns",
+        "Each column should say which stage it holds.",
+        &[],
+    );
+    store.label_as(LINEWRIGHT, done, label::READY_FOR_AGENT)?;
+    store.close_issue_as_completed(done)?;
     Ok(())
 }
 
