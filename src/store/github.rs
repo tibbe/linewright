@@ -14,16 +14,16 @@ use serde_json::{Value, json};
 
 use super::{
     AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds,
+    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds, read_openings,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Labeling, Linked,
-    Login, ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Parent, Pull, PullHeld,
-    PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review, ReviewDecision,
-    ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread, TicketBranch,
-    TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
+    Login, ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Opened, Opening, Parent,
+    Pull, PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review,
+    ReviewDecision, ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
+    TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
 
@@ -52,11 +52,35 @@ pub struct GitHub {
     repository_id: Arc<tokio::sync::OnceCell<u64>>,
     /// The issues Linewright manages.
     index: Arc<tokio::sync::Mutex<Option<ManagedIndex>>>,
+    /// The openings read, by number: who opened an item, and what for,
+    /// never changes.
+    openings: Arc<std::sync::Mutex<BTreeMap<Number, Opening>>>,
 }
 
 macro_rules! closes_field {
     () => {
         "closingIssuesReferences(first: 20) { nodes { number } }"
+    };
+}
+
+/// The reviews requested, read as [`GqlReviewRequest`]s.
+macro_rules! review_requests_field {
+    () => {
+        "reviewRequests(first: 20) {
+    nodes { asCodeOwner requestedReviewer { __typename ... on User { login } } }
+  }"
+    };
+}
+
+/// The reviews requested and who reviewed, read as [`GqlReviewRequest`]s
+/// and [`GqlReviewAuthor`]s.
+macro_rules! reviewing_fields {
+    () => {
+        concat!(
+            review_requests_field!(),
+            "
+  reviews(last: 100) { nodes { author { __typename login } submittedAt } }"
+        )
     };
 }
 
@@ -491,6 +515,7 @@ impl GitHub {
             },
             repository_id: Arc::default(),
             index: Arc::default(),
+            openings: Arc::default(),
         };
         github.viewer = github
             .rest(Method::GET, "/user", None)
@@ -895,33 +920,62 @@ impl GitHub {
         Ok(closed_unmerged(pulls, &self.linewright()))
     }
 
+    /// The openings of those of `numbers` that GitHub has, read once each.
+    async fn openings(&self, numbers: BTreeSet<Number>) -> Result<Vec<Opening>> {
+        let unread: BTreeSet<Number> = {
+            let read = self
+                .openings
+                .lock()
+                .expect("the openings read are readable");
+            numbers
+                .iter()
+                .filter(|number| !read.contains_key(number))
+                .copied()
+                .collect()
+        };
+        let items: Vec<GqlOpening> = self
+            .numbered(ItemKind::Any, &unread, OPENING_FIELDS)
+            .await?;
+        let linewright = self.linewright();
+        let mut read = self
+            .openings
+            .lock()
+            .expect("the openings read are readable");
+        for item in items {
+            let opening = item.into_opening(&linewright);
+            read.insert(opening.number, opening);
+        }
+        Ok(numbers
+            .iter()
+            .filter_map(|n| read.get(n).cloned())
+            .collect())
+    }
+
     /// The pull requests closed without merging that Linewright worked,
     /// whoever opened them, among those updated since `since`.
     async fn closed_pulls(&self, since: Timestamp) -> Result<Vec<ClosedItem>> {
         // <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>:
-        // fifty pull requests with two connections each cost 101 requests,
-        // which rounds to 1 point.
-        let query = concat!(
-            "query($owner: String!, $name: String!, $cursor: String) {
-              repository(owner: $owner, name: $name) {
-                pullRequests(first: 50, after: $cursor, states: [CLOSED],
-                             orderBy: {field: UPDATED_AT, direction: DESC}) {
-                  pageInfo { hasNextPage endCursor }
-                  nodes { number title closedAt updatedAt author { __typename login } ",
-            closes_field!(),
-            " ",
-            work_timeline!(),
-            " }
-                }
-              }
-            }"
+        // twenty pull requests with the five connections of
+        // `ClosedPullFields` each cost 101 requests, which rounds to 1 point.
+        let Fragment { name, text } = CLOSED_PULL_FIELDS;
+        let query = format!(
+            "query($owner: String!, $name: String!, $cursor: String) {{
+              repository(owner: $owner, name: $name) {{
+                pullRequests(first: 20, after: $cursor, states: [CLOSED],
+                             orderBy: {{field: UPDATED_AT, direction: DESC}}) {{
+                  pageInfo {{ hasNextPage endCursor }}
+                  nodes {{ ...{name} }}
+                }}
+              }}
+            }}
+            {text}"
         );
         let mut closed = vec![];
         let mut cursor = Value::Null;
         loop {
             let data: RepoData<PullsData<GqlClosedPull>> = self
                 .graphql(
-                    query,
+                    &query,
                     json!({"owner": self.owner, "name": self.name, "cursor": cursor}),
                 )
                 .await?;
@@ -1051,11 +1105,11 @@ impl GitHub {
     /// The pull requests merged into `base` that `windows` holds.
     async fn merged_within(&self, base: &str, windows: Windows) -> Result<Vec<MergedPull>> {
         // <https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>:
-        // twenty-five pull requests with the five connections of
-        // `MergedFields` each cost 126 requests, which rounds to 1 point.
+        // fourteen pull requests with the seven connections of
+        // `MergedFields` each cost 99 requests, which rounds to 1 point.
         let query = "query($owner: String!, $name: String!, $base: String!, $cursor: String) {
               repository(owner: $owner, name: $name) {
-                pullRequests(first: 25, after: $cursor, states: [MERGED], baseRefName: $base,
+                pullRequests(first: 14, after: $cursor, states: [MERGED], baseRefName: $base,
                              orderBy: {field: UPDATED_AT, direction: DESC}) {
                   pageInfo { hasNextPage endCursor }
                   nodes { ...MergedFields }
@@ -2112,6 +2166,8 @@ impl GqlClosedIssue {
 enum ItemKind {
     Issue,
     PullRequest,
+    /// Either.
+    Any,
 }
 
 /// A query for the issues or pull requests `numbers`, as `kind` says, each
@@ -2122,6 +2178,7 @@ fn numbered_query(kind: ItemKind, numbers: &[Number], fields: Fragment) -> Strin
     let item = match kind {
         ItemKind::Issue => "issue",
         ItemKind::PullRequest => "pullRequest",
+        ItemKind::Any => "issueOrPullRequest",
     };
     let items: String = numbers
         .iter()
@@ -2157,9 +2214,75 @@ fn managed_closed(issues: Vec<GqlClosedIssue>, linewright: &Login) -> Vec<Closed
         .collect()
 }
 
-/// A closed pull request read by number, with what tells whether Linewright
-/// worked it. Twenty with the two connections each cost 40 requests, which
-/// comes to 1 point, the least a query costs
+/// What tells who opened an issue or pull request, and what for
+/// ([`Opening`]). Fifteen with the one connection each cost 16 requests,
+/// which comes to 1 point
+/// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
+const OPENING_FIELDS: Fragment = Fragment {
+    name: "OpeningFields",
+    text: concat!(
+        "fragment OpeningFields on IssueOrPullRequest {
+  __typename
+  ... on Issue { number title body author { __typename login } parent { number } }
+  ... on PullRequest { number author { __typename login } ",
+        closes_field!(),
+        " }
+}"
+    ),
+};
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum GqlOpening {
+    Issue {
+        number: u64,
+        title: String,
+        body: String,
+        author: Option<Actor>,
+        parent: Option<NumberNode>,
+    },
+    #[serde(rename_all = "camelCase")]
+    PullRequest {
+        number: u64,
+        author: Option<Actor>,
+        closing_issues_references: Option<Nodes<NumberNode>>,
+    },
+}
+
+impl GqlOpening {
+    fn into_opening(self, linewright: &Login) -> Opening {
+        let opening = |number: u64, author: Login, opened: Opened<'_>| {
+            Opening::new(Number(number), author, opened, linewright)
+        };
+        match self {
+            GqlOpening::Issue {
+                number,
+                title,
+                body,
+                author,
+                parent,
+            } => {
+                let author = login(author);
+                let filed = Filed::read(&author, &title, &body, linewright);
+                let parent = parent.map(|parent| Parent::new(Number(parent.number), None));
+                opening(number, author, Opened::Issue { parent, filed })
+            }
+            GqlOpening::PullRequest {
+                number,
+                author,
+                closing_issues_references,
+            } => {
+                let closes = closes(closing_issues_references);
+                opening(number, login(author), Opened::Pull { closes: &closes })
+            }
+        }
+    }
+}
+
+/// A closed pull request, with what tells whether Linewright worked it and
+/// who is assigned to it, requested to review it and reviewed it. Twenty
+/// with the five connections each cost 101 requests, which rounds to 1
+/// point
 /// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#calculating-a-rate-limit-score-before-running-the-call>).
 const CLOSED_PULL_FIELDS: Fragment = Fragment {
     name: "ClosedPullFields",
@@ -2167,8 +2290,12 @@ const CLOSED_PULL_FIELDS: Fragment = Fragment {
         "fragment ClosedPullFields on PullRequest {
   number title state closedAt updatedAt
   author { __typename login }
+  assignees(first: 20) { nodes { login } }
   ",
         closes_field!(),
+        "
+  ",
+        reviewing_fields!(),
         "
   ",
         work_timeline!(),
@@ -2446,6 +2573,14 @@ struct GqlClosedPull {
     author: Option<Actor>,
     closing_issues_references: Option<Nodes<NumberNode>>,
     timeline_items: Nodes<GqlEvent>,
+    /// Empty in a payload recorded before Linewright read them, as are its
+    /// reviews requested and reviews.
+    #[serde(default = "no_nodes")]
+    assignees: Nodes<LoginNode>,
+    #[serde(default = "no_nodes")]
+    review_requests: Nodes<GqlReviewRequest>,
+    #[serde(default = "no_nodes")]
+    reviews: Nodes<GqlReviewAuthor>,
 }
 
 impl GqlClosedPull {
@@ -2469,6 +2604,9 @@ impl GqlClosedPull {
             kind: ClosedKind::Pull {
                 closes: closes(self.closing_issues_references),
                 author: Some(author),
+                assignees: logins(self.assignees),
+                review_requests: requested_users(&self.review_requests.nodes),
+                reviewers: reviewers(self.reviews.nodes),
             },
         })
     }
@@ -2673,9 +2811,9 @@ const PULL_FIELDS: &str = concat!(
   }
   comments(last: 100) { nodes { author { __typename login } body createdAt } }
   reviews(last: 100) { nodes { author { __typename login } state body submittedAt } }
-  reviewRequests(first: 20) {
-    nodes { asCodeOwner requestedReviewer { __typename ... on User { login } } }
-  }
+  ",
+    review_requests_field!(),
+    "
   reviewThreads(first: 100) {
     nodes { id path isResolved comments(first: 100) { nodes { author { __typename login } body createdAt } } }
   }
@@ -2953,6 +3091,7 @@ impl GqlPull {
             (_, false) => Rebaseability::NotRebaseable,
         };
         let review_decision = self.review_decision.and_then(GqlReviewDecision::decision);
+        let review_requests = requested_users(&self.review_requests.nodes);
         let (mut labelings, mut assignments) = (vec![], vec![]);
         for event in events(self.timeline_items.nodes) {
             match event {
@@ -3025,8 +3164,39 @@ impl GqlPull {
                 .map(|a| Login::new(a.login))
                 .collect(),
             assignments,
+            review_requests,
         }
     }
+}
+
+/// The users of `requests` a review is requested of by name: a team is
+/// left out.
+fn requested_users(requests: &[GqlReviewRequest]) -> Vec<Login> {
+    requests
+        .iter()
+        .filter_map(|request| match request.requested_reviewer.as_ref()? {
+            GqlReviewer::User { login } => Some(Login::new(login)),
+            GqlReviewer::Team | GqlReviewer::Other => None,
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GqlReviewAuthor {
+    author: Option<Actor>,
+    /// `None` for a pending review, which only its author sees.
+    submitted_at: Option<Timestamp>,
+}
+
+/// The authors of the submitted `reviews`, each once, by login.
+fn reviewers(reviews: Vec<GqlReviewAuthor>) -> Vec<Login> {
+    let reviewers: BTreeSet<Login> = reviews
+        .into_iter()
+        .filter(|review| review.submitted_at.is_some())
+        .map(|review| login(review.author))
+        .collect();
+    reviewers.into_iter().collect()
 }
 
 const MERGED_FIELDS: &str = concat!(
@@ -3039,6 +3209,9 @@ const MERGED_FIELDS: &str = concat!(
   labels(first: 50) { nodes { name } }
   assignees(first: 20) { nodes { login } }
   files(first: 100) { pageInfo { hasNextPage } nodes { path } }
+  ",
+    reviewing_fields!(),
+    "
   ",
     assignment_timeline!(comments),
     "
@@ -3060,6 +3233,16 @@ struct GqlMerged {
     assignees: Nodes<LoginNode>,
     files: Option<FilesPage>,
     timeline_items: Nodes<GqlEvent>,
+    /// Empty in a payload recorded before Linewright read them, as are its
+    /// reviews.
+    #[serde(default = "no_nodes")]
+    review_requests: Nodes<GqlReviewRequest>,
+    #[serde(default = "no_nodes")]
+    reviews: Nodes<GqlReviewAuthor>,
+}
+
+fn no_nodes<T>() -> Nodes<T> {
+    Nodes { nodes: vec![] }
 }
 
 impl GqlMerged {
@@ -3085,6 +3268,8 @@ impl GqlMerged {
             files,
             assignees: logins(self.assignees),
             events: events(self.timeline_items.nodes),
+            review_requests: requested_users(&self.review_requests.nodes),
+            reviewers: reviewers(self.reviews.nodes),
         }
     }
 }
@@ -3317,6 +3502,7 @@ impl Store for GitHub {
             merged: self.merged_within(&default_branch, windows).await?,
             spec_change_issues: index.spec_change_issues(),
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
+            openings: vec![],
             default_branch,
             issues,
             pulls,
@@ -3330,6 +3516,7 @@ impl Store for GitHub {
         for pull in self.closed_pulls_numbered(&closing).await? {
             snapshot.put_closed(pull);
         }
+        read_openings(&mut snapshot, &linewright, |unread| self.openings(unread)).await?;
         Ok(snapshot)
     }
 
@@ -4958,6 +5145,130 @@ mod tests {
         );
     }
 
+    /// `fixtures/pull-changes-requested.json`, as in
+    /// [`a_pull_request_is_held_with_githubs_review_decision_and_none_where_github_gives_none`]:
+    /// a review is requested of its maintainer `tibbe` by name. A team is
+    /// GitHub's documented `Team`
+    /// (<https://docs.github.com/en/graphql/reference/unions#requestedreviewer>).
+    #[test_log::test]
+    fn a_pull_request_is_held_with_the_users_a_review_is_requested_of_leaving_out_teams() {
+        let mut pr: Value =
+            serde_json::from_str(include_str!("fixtures/pull-changes-requested.json")).unwrap();
+        let held = |recorded: &Value| {
+            let read: GqlPull = serde_json::from_value(recorded.clone()).unwrap();
+            read.into_pull(vec![], &BranchRules::default())
+                .review_requests
+        };
+
+        assert_eq!(held(&pr), [Login::new("tibbe")]);
+        pr["reviewRequests"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"asCodeOwner": false, "requestedReviewer": {"__typename": "Team"}}));
+        assert_eq!(held(&pr), [Login::new("tibbe")]);
+    }
+
+    /// `fixtures/merged-pull-review-requested.json` is `MergedFields` as
+    /// GitHub returned it for <https://github.com/tibbe/linewright/pull/862>,
+    /// merged with a review still requested of its maintainer `tibbe`, who
+    /// reviewed it, as its account `tibbe-bot` did twice. A team is as
+    /// above.
+    #[test_log::test]
+    fn a_merged_pull_request_is_held_with_the_users_a_review_is_requested_of_and_who_reviewed_it() {
+        let mut pr: Value =
+            serde_json::from_str(include_str!("fixtures/merged-pull-review-requested.json"))
+                .unwrap();
+        pr["reviewRequests"]["nodes"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"asCodeOwner": true, "requestedReviewer": {"__typename": "Team"}}));
+        let pr: GqlMerged = serde_json::from_value(pr).unwrap();
+
+        let merged = pr.into_merged(at("2026-10-30T20:52:00Z"), vec![]);
+
+        assert_eq!(merged.review_requests, [Login::new("tibbe")]);
+        assert_eq!(
+            merged.reviewers,
+            [Login::new("tibbe"), Login::new("tibbe-bot")]
+        );
+    }
+
+    /// `fixtures/merged-pull.json`, as in
+    /// [`a_merged_pull_request_is_held_with_when_github_last_updated_it`],
+    /// recorded before Linewright read the reviews requested and the
+    /// reviews.
+    #[test_log::test]
+    fn a_merged_pull_request_recorded_before_reviews_were_read_is_held_with_none() {
+        let pr: GqlMerged =
+            serde_json::from_str(include_str!("fixtures/merged-pull.json")).unwrap();
+
+        let merged = pr.into_merged(at("2026-10-21T14:56:28Z"), vec![]);
+
+        assert_eq!(merged.review_requests, []);
+        assert_eq!(merged.reviewers, []);
+    }
+
+    /// `fixtures/closed-pull-assigned.json` is `ClosedPullFields` as GitHub
+    /// returned it for <https://github.com/tibbe/linewright/pull/1044>,
+    /// which its account `tibbe-bot` opened, assigned to itself and closed
+    /// without merging, with no review requested or given.
+    #[test_log::test]
+    fn a_pull_request_closed_unmerged_is_held_with_its_assignees_reviews_requested_and_reviewers() {
+        let mut pr: Value =
+            serde_json::from_str(include_str!("fixtures/closed-pull-assigned.json")).unwrap();
+        pr["reviewRequests"]["nodes"] = json!([
+            {"asCodeOwner": false, "requestedReviewer": {"__typename": "User", "login": "tibbe"}},
+            {"asCodeOwner": false, "requestedReviewer": {"__typename": "Team"}},
+        ]);
+        let pr: GqlClosedPull = serde_json::from_value(pr).unwrap();
+
+        let closed = pr.into_closed(&Login::new("tibbe-bot")).unwrap();
+
+        assert_eq!(
+            closed.kind,
+            ClosedKind::Pull {
+                closes: vec![Number(1043)],
+                author: Some(Login::new("tibbe-bot")),
+                assignees: vec![Login::new("tibbe-bot")],
+                review_requests: vec![Login::new("tibbe")],
+                reviewers: vec![],
+            }
+        );
+    }
+
+    /// `fixtures/openings.json` is GitHub's response to `numbered_query`
+    /// with `OpeningFields` for #1139, #1137, #1136 and #1122 of
+    /// <https://github.com/tibbe/linewright>: #1139, a ticket its account
+    /// `tibbe-bot` cut from #1137, the issue it opened for spec change
+    /// #1136, which its maintainer `tibbe` opened; and #1122, the account's
+    /// pull request closing #1117.
+    #[test_log::test]
+    fn an_opening_read_is_who_opened_the_item_and_what_for() {
+        let response = serde_json::from_str(include_str!("fixtures/openings.json")).unwrap();
+        let linewright = Login::new("tibbe-bot");
+
+        let read: Vec<Opening> = found_of_numbered::<GqlOpening>(response)
+            .unwrap()
+            .into_iter()
+            .map(|item| item.into_opening(&linewright))
+            .collect();
+
+        let opening = |number, author: &str, opened_for: &[u64]| Opening {
+            number: Number(number),
+            author: Login::new(author),
+            opened_for: opened_for.iter().copied().map(Number).collect(),
+        };
+        assert_eq!(
+            read,
+            [
+                opening(1122, "tibbe-bot", &[1117]),
+                opening(1136, "tibbe", &[]),
+                opening(1137, "tibbe-bot", &[1136]),
+                opening(1139, "tibbe-bot", &[1137]),
+            ]
+        );
+    }
+
     /// `fixtures/closed-issues-numbered.json` is GitHub's response to
     /// `numbered_query` for #388, #719 and #99999 of
     /// <https://github.com/tibbe/linewright>: #388, a ticket its account
@@ -5215,6 +5526,7 @@ mod tests {
                 id: 1,
             },
             index: Arc::new(tokio::sync::Mutex::new(Some(started))),
+            openings: Arc::default(),
             ..github("token")
         };
 
@@ -5452,6 +5764,9 @@ mod tests {
                 kind: ClosedKind::Pull {
                     closes: vec![],
                     author: Some(Login::new("tibbe")),
+                    assignees: vec![],
+                    review_requests: vec![],
+                    reviewers: vec![],
                 },
             }]
         );
@@ -5823,6 +6138,7 @@ mod tests {
             },
             repository_id: Arc::default(),
             index: Arc::default(),
+            openings: Arc::default(),
         }
     }
 
@@ -6009,6 +6325,7 @@ mod retry_tests {
             },
             repository_id: Arc::default(),
             index: Arc::default(),
+            openings: Arc::default(),
         }
     }
 

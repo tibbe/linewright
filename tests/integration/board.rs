@@ -148,6 +148,7 @@ fn pull(number: u64, closes: &[u64], checks: &[CheckState]) -> Pull {
         labelings: vec![],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 
@@ -470,6 +471,9 @@ fn a_card_in_done_says_how_its_item_ended_and_when_it_closed() {
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
         author: Some(Login::new("factory")),
+        assignees: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     };
     let view = with_merged(
         with_closed(
@@ -735,6 +739,8 @@ fn spec_change(number: u64, labels: &[&str]) -> MergedPull {
             .iter()
             .map(|label| labeling(label, "2026-10-01T09:00:00Z"))
             .collect(),
+        review_requests: vec![],
+        reviewers: vec![],
     }
 }
 
@@ -2199,6 +2205,9 @@ fn a_card_in_done_has_no_card_status() {
     closed_pull.kind = ClosedKind::Pull {
         closes: vec![Number(99)],
         author: Some(Login::new("factory")),
+        assignees: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     };
     let view = with_merged(
         with_closed(
@@ -2550,6 +2559,9 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
     closed.kind = ClosedKind::Pull {
         closes: vec![],
         author: Some(Login::new("alice")),
+        assignees: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     };
     let labeled = MergedPull {
         events: vec![IssueEvent::Labeled {

@@ -195,6 +195,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             ticket_branches: vec![],
             closed: vec![],
             spec_change_issues: vec![],
+            openings: vec![],
         }),
         read_at: HashMap::default(),
         policy: policy(),
@@ -266,6 +267,7 @@ pub fn open_pull(number: u64, author: &str, closes: &[u64], assignees: &[&str]) 
         assignees: assignees.iter().map(|a| Login::new(*a)).collect(),
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 
@@ -285,6 +287,8 @@ pub fn merged_pull(number: u64, author: &str, closes: &[u64]) -> MergedPull {
         files: vec!["src/lib.rs".into()],
         assignees: vec![],
         events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     }
 }
 

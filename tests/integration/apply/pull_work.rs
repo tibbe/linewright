@@ -73,6 +73,7 @@ fn pull(closes: &[u64], threads: Vec<Thread>) -> Pull {
         assignees: vec![linewright()],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 

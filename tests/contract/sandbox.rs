@@ -169,6 +169,12 @@ impl Sandbox {
     }
 
     /// The repository the store is of.
+    /// Who a review can be requested of: the repository's owner, a person
+    /// other than Linewright.
+    pub fn reviewer(&self) -> Login {
+        Login::new(self.repo.owner())
+    }
+
     pub fn repo(&self) -> &Repo {
         &self.repo
     }

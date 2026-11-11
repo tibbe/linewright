@@ -20,6 +20,7 @@ contracts![
     a_pull_request_lists_the_issues_it_closes,
     a_push_to_a_pull_requests_branch_is_listed_with_who_pushed_it,
     a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does,
+    a_snapshot_holds_who_a_review_is_requested_of_and_who_is_assigned_open_and_closed_unmerged,
     opening_a_pull_request_from_a_missing_branch_is_refused,
     no_pull_request_is_read_for_a_number_the_store_lacks,
 ];
@@ -221,6 +222,9 @@ async fn a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_it
                 &ClosedKind::Pull {
                     closes: vec![issue],
                     author: Some(linewright.clone()),
+                    assignees: vec![],
+                    review_requests: vec![],
+                    reviewers: vec![],
                 },
             )
         })
@@ -329,6 +333,57 @@ async fn a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does(
                 Some(pull) => equal("the pull request", &worked_out(pull), &worked_out(&read)),
                 None => bail!("the snapshot does not hold {pr}"),
             }
+        })
+        .await
+}
+
+async fn a_snapshot_holds_who_a_review_is_requested_of_and_who_is_assigned_open_and_closed_unmerged(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let Opened { pr, .. } = opened(&sandbox, "review-requested").await?;
+    let reviewer = sandbox.reviewer();
+
+    sandbox
+        .store()
+        .request_review(pr, std::slice::from_ref(&reviewer))
+        .await?;
+    sandbox.store().assign(pr).await?;
+
+    let linewright = sandbox.store().identity().await?.login;
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let pull = snapshot
+                .pull(pr)
+                .with_context(|| format!("the snapshot does not hold {pr}"))?;
+            equal(
+                "the reviews requested",
+                &pull.review_requests,
+                &vec![reviewer.clone()],
+            )?;
+            equal("the assignees", &pull.assignees, &vec![linewright.clone()])
+        })
+        .await?;
+    sandbox.store().close_pull(pr).await?;
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let closed = snapshot
+                .closed
+                .iter()
+                .find(|item| item.number == pr)
+                .with_context(|| format!("the snapshot does not hold {pr} closed"))?;
+            equal(
+                "the closed pull request",
+                &closed.kind,
+                &ClosedKind::Pull {
+                    closes: vec![],
+                    author: Some(linewright.clone()),
+                    assignees: vec![linewright.clone()],
+                    review_requests: vec![reviewer.clone()],
+                    reviewers: vec![],
+                },
+            )
         })
         .await
 }

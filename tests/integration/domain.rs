@@ -188,6 +188,9 @@ fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_
                 kind: ClosedKind::Pull {
                     closes: vec![],
                     author: Some(Login::new("alice")),
+                    assignees: vec![],
+                    review_requests: vec![],
+                    reviewers: vec![],
                 },
             },
             true,
@@ -526,6 +529,9 @@ fn closed_pull(number: u64, closes: &[u64], closed_at: &str) -> ClosedItem {
         kind: ClosedKind::Pull {
             closes: closes.iter().copied().map(Number).collect(),
             author: Some(linewright()),
+            assignees: vec![],
+            review_requests: vec![],
+            reviewers: vec![],
         },
     }
 }
@@ -1218,4 +1224,227 @@ fn an_update_rebases_for_merge_and_rebase_and_merges_the_default_branch_in_for_s
     ] {
         assert_eq!(method.update_method(), update, "{method}");
     }
+}
+
+#[test_log::test]
+fn an_item_linewright_opened_was_opened_for_what_its_kind_links_and_one_a_person_opened_for_nothing()
+ {
+    let parent = |number| {
+        Some(Parent {
+            number: Number(number),
+            spec_change: None,
+        })
+    };
+    let cases = [
+        (
+            "a ticket",
+            Opened::Issue {
+                parent: parent(4),
+                filed: None,
+            },
+            LINEWRIGHT,
+            vec![Number(4)],
+        ),
+        (
+            "a spec gap",
+            Opened::Issue {
+                parent: None,
+                filed: Some(Filed::SpecGap { ticket: Number(5) }),
+            },
+            LINEWRIGHT,
+            vec![Number(5)],
+        ),
+        (
+            "a spec change's issue",
+            Opened::Issue {
+                parent: None,
+                filed: Some(Filed::SpecChange {
+                    spec_change: Number(6),
+                }),
+            },
+            LINEWRIGHT,
+            vec![Number(6)],
+        ),
+        (
+            "an old-format tracking issue",
+            Opened::Issue {
+                parent: None,
+                filed: Some(Filed::Tracking {
+                    spec_change: Number(7),
+                }),
+            },
+            LINEWRIGHT,
+            vec![Number(7)],
+        ),
+        (
+            "Linewright's pull request",
+            Opened::Pull {
+                closes: &[Number(8), Number(9)],
+            },
+            LINEWRIGHT,
+            vec![Number(8), Number(9)],
+        ),
+        (
+            "an automation's issue",
+            Opened::Issue {
+                parent: None,
+                filed: None,
+            },
+            LINEWRIGHT,
+            vec![],
+        ),
+        (
+            "an issue a person opened under a parent",
+            Opened::Issue {
+                parent: parent(4),
+                filed: None,
+            },
+            "alice",
+            vec![],
+        ),
+        (
+            "a pull request a person opened",
+            Opened::Pull {
+                closes: &[Number(8)],
+            },
+            "alice",
+            vec![],
+        ),
+    ];
+    for (case, opened, author, expected) in cases {
+        assert_eq!(
+            opened_for(&Login::new(author), opened, &linewright()),
+            expected,
+            "{case}"
+        );
+    }
+}
+
+/// Spec change #7 by alice, merged before the lookback window, so the
+/// snapshot holds only its issue #20; and #21, a ticket cut from #20.
+fn spec_changes_issue_and_its_ticket() -> Snapshot {
+    let issue = Issue {
+        author: linewright(),
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(7),
+        }),
+        ..ticket(20, "Spec change: Store gadgets")
+    };
+    let cut = Issue {
+        author: linewright(),
+        parent: Some(Parent {
+            number: Number(20),
+            spec_change: Some(Number(7)),
+        }),
+        ..ticket(21, "Store blue gadgets")
+    };
+    snapshot(vec![issue, cut], vec![])
+}
+
+#[test_log::test]
+fn a_snapshot_reads_the_openings_of_the_items_its_items_were_opened_for_that_it_does_not_hold() {
+    let snapshot = spec_changes_issue_and_its_ticket();
+
+    assert_eq!(
+        snapshot.unread_openings(&linewright()),
+        BTreeSet::from([Number(7)])
+    );
+}
+
+#[test_log::test]
+fn a_snapshot_follows_openings_it_read_back_until_none_is_unread() {
+    let read = |author: &str, opened_for: &[u64]| Opening {
+        number: Number(7),
+        author: Login::new(author),
+        opened_for: opened_for.iter().copied().map(Number).collect(),
+    };
+    let by_alice = Snapshot {
+        openings: vec![read("alice", &[])],
+        ..spec_changes_issue_and_its_ticket()
+    };
+    let by_linewright_for_3 = Snapshot {
+        openings: vec![read(LINEWRIGHT, &[3])],
+        ..spec_changes_issue_and_its_ticket()
+    };
+
+    assert_eq!(by_alice.unread_openings(&linewright()), BTreeSet::new());
+    assert_eq!(
+        by_alice.opening(Number(7), &linewright()),
+        Some(read("alice", &[]))
+    );
+    assert_eq!(
+        by_linewright_for_3.unread_openings(&linewright()),
+        BTreeSet::from([Number(3)])
+    );
+}
+
+#[test_log::test]
+fn a_snapshot_tells_who_opened_each_item_it_holds_and_what_for() {
+    let spec_gap = Issue {
+        author: linewright(),
+        filed: Some(Filed::SpecGap { ticket: Number(21) }),
+        ..ticket(22, "Spec gap: What is blue?")
+    };
+    let closed_pull = ClosedItem {
+        number: Number(31),
+        title: "Pull 31".into(),
+        closed_at: at(IN_DONE_WINDOW),
+        updated_at: at(IN_DONE_WINDOW),
+        kind: ClosedKind::Pull {
+            closes: vec![Number(21)],
+            author: Some(linewright()),
+            assignees: vec![],
+            review_requests: vec![],
+            reviewers: vec![],
+        },
+    };
+    let mut snapshot = spec_changes_issue_and_its_ticket();
+    snapshot.issues.push(spec_gap);
+    snapshot.pulls = vec![open_pull(30, LINEWRIGHT, &[21], &[])];
+    snapshot.peoples_pulls = vec![open_pull(32, "alice", &[21], &[])];
+    snapshot.merged = vec![merged_pull(33, LINEWRIGHT, &[22])];
+    snapshot.closed = vec![closed_pull];
+    snapshot.spec_change_issues = vec![SpecChangeIssue {
+        number: Number(40),
+        spec_change: Number(41),
+    }];
+    let opening = |number: u64, author: &str, opened_for: &[u64]| {
+        Some(Opening {
+            number: Number(number),
+            author: Login::new(author),
+            opened_for: opened_for.iter().copied().map(Number).collect(),
+        })
+    };
+
+    let opened = |number| snapshot.opening(Number(number), &linewright());
+
+    assert_eq!(
+        opened(20),
+        opening(20, LINEWRIGHT, &[7]),
+        "a spec change's issue"
+    );
+    assert_eq!(opened(21), opening(21, LINEWRIGHT, &[20]), "a ticket");
+    assert_eq!(opened(22), opening(22, LINEWRIGHT, &[21]), "a spec gap");
+    assert_eq!(
+        opened(30),
+        opening(30, LINEWRIGHT, &[21]),
+        "Linewright's pull request"
+    );
+    assert_eq!(
+        opened(31),
+        opening(31, LINEWRIGHT, &[21]),
+        "one closed unmerged"
+    );
+    assert_eq!(
+        opened(32),
+        opening(32, "alice", &[]),
+        "a person's pull request"
+    );
+    assert_eq!(opened(33), opening(33, LINEWRIGHT, &[22]), "a merged one");
+    assert_eq!(
+        opened(40),
+        opening(40, LINEWRIGHT, &[41]),
+        "a spec change's issue held as one"
+    );
+    assert_eq!(opened(7), None, "an item it does not hold");
 }

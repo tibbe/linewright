@@ -3,7 +3,7 @@
 use anyhow::{Result, bail, ensure};
 use linewright::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
-    Number, SpecChangeIssue, SubIssue, SubIssueState,
+    Number, Opening, SpecChangeIssue, SubIssue, SubIssueState, Windows,
 };
 use linewright::store::{AnyItem, IssueRead, NewIssue};
 use linewright::tracking;
@@ -30,6 +30,7 @@ contracts![
     a_snapshot_holds_a_spec_changes_issue_closed,
     a_sub_issue_and_its_parent_name_each_other_with_who_added_it,
     a_removed_sub_issue_and_its_parent_no_longer_name_each_other,
+    a_snapshot_holds_who_opened_a_held_tickets_parent_it_does_not_hold,
     a_blocker_is_listed_open_until_it_closes,
     no_issue_is_read_for_a_number_the_store_lacks,
 ];
@@ -487,6 +488,53 @@ async fn a_sub_issue_and_its_parent_name_each_other_with_who_added_it(
         .await?;
     let read = held(&sandbox, child).await?.parent;
     equal("the parent", &read.map(|p| p.number), &Some(parent))
+}
+
+/// The parent of a ticket the snapshot holds, closed before its windows
+/// opened, is held as its opening: Linewright opened it for nothing.
+async fn a_snapshot_holds_who_opened_a_held_tickets_parent_it_does_not_hold(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let parent = open(&sandbox, "opened-for parent").await?;
+    let ticket = open(&sandbox, "opened-for ticket").await?;
+    sandbox.store().add_sub_issue(parent, ticket).await?;
+    sandbox
+        .store()
+        .close_issue(parent, IssueCloseReason::Completed)
+        .await?;
+
+    let linewright = linewright(&sandbox).await?;
+    let none = chrono::TimeDelta::zero();
+    let after_the_close = Windows::at(
+        chrono::Utc::now() + chrono::TimeDelta::minutes(1),
+        none,
+        none,
+    );
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(after_the_close).await?;
+            let held = snapshot.issue(ticket);
+            equal(
+                "the ticket's parent",
+                &held.and_then(|t| t.parent).map(|p| p.number),
+                &Some(parent),
+            )?;
+            ensure!(
+                snapshot.closed_item(parent).is_none(),
+                "the snapshot holds {parent} closed"
+            );
+            let opening = snapshot.openings.iter().find(|o| o.number == parent);
+            equal(
+                "the parent's opening",
+                &opening,
+                &Some(&Opening {
+                    number: parent,
+                    author: linewright.clone(),
+                    opened_for: vec![],
+                }),
+            )
+        })
+        .await
 }
 
 async fn a_removed_sub_issue_and_its_parent_no_longer_name_each_other(

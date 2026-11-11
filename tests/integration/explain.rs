@@ -44,6 +44,7 @@ fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
         labelings: vec![],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 
@@ -1387,6 +1388,8 @@ fn merged(labels: &[&str]) -> MergedPull {
         files: vec!["docs/specs/invoices.md".into()],
         assignees: vec![],
         events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     }
 }
 

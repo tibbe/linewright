@@ -66,6 +66,7 @@ fn pull() -> Pull {
         labelings: vec![],
         assignments: vec![],
         review_decision: None,
+        review_requests: vec![],
     }
 }
 
@@ -200,6 +201,8 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
         files: vec!["docs/specs/widgets.md".into()],
         assignees: vec![],
         events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
     };
     let its_issue = Issue {
         author: Login::new("factory"),
