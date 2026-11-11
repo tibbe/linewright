@@ -1984,6 +1984,7 @@ pub enum IssueCloseReason {
 }
 
 /// An item as a snapshot holds it, of whichever kind.
+#[derive(Clone, Copy)]
 enum Held<'a> {
     Issue(&'a Issue),
     Pull(&'a Pull),
@@ -1992,6 +1993,15 @@ enum Held<'a> {
 }
 
 impl<'a> Held<'a> {
+    fn number(self) -> Number {
+        match self {
+            Held::Issue(issue) => issue.number,
+            Held::Pull(pull) => pull.number,
+            Held::Merged(merged) => merged.number,
+            Held::Closed(closed) => closed.number,
+        }
+    }
+
     fn title(self) -> &'a str {
         match self {
             Held::Issue(issue) => &issue.title,
@@ -2034,6 +2044,52 @@ impl<'a> Held<'a> {
                 ClosedKind::Pull { closes, author, .. } => {
                     Some((author.as_ref()?, Opened::Pull { closes }))
                 }
+            },
+        }
+    }
+
+    /// The issues it closes, where it is a pull request.
+    fn closes(self) -> &'a [Number] {
+        match self {
+            Held::Issue(_) => &[],
+            Held::Pull(pull) => &pull.closes,
+            Held::Merged(merged) => &merged.closes,
+            Held::Closed(closed) => match &closed.kind {
+                ClosedKind::Issue { .. } => &[],
+                ClosedKind::Pull { closes, .. } => closes,
+            },
+        }
+    }
+
+    /// Who is assigned to it, has a review requested of them by name on it
+    /// or has reviewed it.
+    fn roles(self) -> Vec<&'a Login> {
+        match self {
+            Held::Issue(issue) => issue.assignees.iter().collect(),
+            Held::Pull(pull) => pull
+                .assignees
+                .iter()
+                .chain(&pull.review_requests)
+                .chain(pull.reviews.iter().map(|review| &review.author))
+                .collect(),
+            Held::Merged(merged) => merged
+                .assignees
+                .iter()
+                .chain(&merged.review_requests)
+                .chain(&merged.reviewers)
+                .collect(),
+            Held::Closed(closed) => match &closed.kind {
+                ClosedKind::Issue { facts, .. } => facts.work.assignees.iter().collect(),
+                ClosedKind::Pull {
+                    assignees,
+                    review_requests,
+                    reviewers,
+                    ..
+                } => assignees
+                    .iter()
+                    .chain(review_requests)
+                    .chain(reviewers)
+                    .collect(),
             },
         }
     }
@@ -2223,6 +2279,27 @@ impl Snapshot {
             .filter_map(|&number| self.opening(number, linewright))
             .flat_map(|opening| opening.opened_for)
             .filter(|&number| self.opening(number, linewright).is_none())
+            .collect()
+    }
+
+    /// Who is assigned to #`number`, has a review requested of them by name
+    /// on it or has reviewed it, of each item the snapshot holds as
+    /// #`number`; a person once for each role.
+    pub fn roles(&self, number: Number) -> Vec<&Login> {
+        self.held(number).flat_map(Held::roles).collect()
+    }
+
+    /// The pull requests the snapshot holds, open, merged or closed, that
+    /// close #`number`.
+    pub fn pulls_on(&self, number: Number) -> BTreeSet<Number> {
+        let pulls = self.pulls.iter().chain(&self.peoples_pulls).map(Held::Pull);
+        let merged = self.merged.iter().map(Held::Merged);
+        let closed = self.closed.iter().map(Held::Closed);
+        pulls
+            .chain(merged)
+            .chain(closed)
+            .filter(|held| held.closes().contains(&number))
+            .map(Held::number)
             .collect()
     }
 
