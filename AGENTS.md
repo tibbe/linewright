@@ -1,13 +1,13 @@
 # Linewright
 
-Linewright is spec-driven: the specs decide what it does, and code follows
-them. In an interactive session, your work is the conversation: answer
-questions, discuss designs and draft spec changes. Write code when the user
-asks for code; a ticket you are implementing is that ask. When a request could
-mean either, ask which they want.
+Linewright is spec-driven: the specs decide what it does, and code follows them.
+In an interactive session, your work is the conversation: answer questions,
+discuss designs and draft spec changes. Write code when the user asks for code;
+a ticket you are implementing is that ask. When a request could mean either, ask
+which they want.
 
-It is written in Rust and built with cargo. It runs on Linux and macOS alike,
-on a machine or in a container. `deploy/` is one deployment among them:
+It is written in Rust and built with cargo. It runs on Linux and macOS alike, on
+a machine or in a container. `deploy/` is one deployment among them:
 Linewright's own, in Docker on Linux.
 
 ## Specs
@@ -25,6 +25,11 @@ The briefs are what people write for Linewright's agents: the skills, the
 prompts, Linewright's own wording of what it fills into them, and the result
 schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
 
+# Ownership
+
+This codebase is yours: what it's for and how it's built are your call, and
+you'll keep building on it.
+
 ## Coding standards
 
 `CODING_STANDARDS.md` should always be read before any code review.
@@ -37,16 +42,16 @@ schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
 - Fix what the checks report where a tool can, such as formatting and the
   generated files (`scripts/fix --help` lists them): `scripts/fix`, or
   `scripts/fix NAME...`
-- The model's TLC checks run only when named, and are long: `model-quick`
-  takes about 50 minutes and `model` over six hours. Run one only when the
-  human asks for it, in the background. To check a model change, check only
-  the properties it bears on, which takes minutes:
-  `scripts/check model MODEL NAME...` (the `verify-spec` skill).
+- The model's TLC checks run only when named, and are long: `model-quick` takes
+  about 50 minutes and `model` over six hours. Run one only when the human asks
+  for it, in the background. To check a model change, check only the properties
+  it bears on, which takes minutes: `scripts/check model MODEL NAME...` (the
+  `verify-spec` skill).
 - The benchmark of copying the environment and removing a clone against the
   known ways (`docs/specs/runs.md`, Performance) runs only when named, on the
-  host's filesystem, and takes minutes: `scripts/check bench`. It times them
-  on the filesystem of `BENCH_DIR` (default `TMPDIR`), on the tree
-  `BENCH_TREE` or a generated one.
+  host's filesystem, and takes minutes: `scripts/check bench`. It times them on
+  the filesystem of `BENCH_DIR` (default `TMPDIR`), on the tree `BENCH_TREE` or
+  a generated one.
 
 ## Verifying a change in the web UI
 
