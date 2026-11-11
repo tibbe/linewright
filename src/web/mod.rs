@@ -507,6 +507,24 @@ fn with_query(path: &str, query: &str) -> String {
     }
 }
 
+/// A filter's field, if it is set: an empty one is unset
+/// (`docs/specs/design_system.md`, Filters, Unset).
+fn given(field: &str) -> Option<&str> {
+    Some(field).filter(|field| !field.is_empty())
+}
+
+/// `path` with the query of `filters`, each a name and its field, of those
+/// that are set.
+fn with_filters(path: &str, filters: &[(&str, &str)]) -> String {
+    let mut query = form_urlencoded::Serializer::new(String::new());
+    for (name, field) in filters {
+        if let Some(value) = given(field) {
+            query.append_pair(name, value);
+        }
+    }
+    with_query(path, &query.finish())
+}
+
 /// What a page says in place of what `serve` did not answer, and the
 /// status it answers with.
 fn unanswered(e: impl Into<Unanswered>) -> (StatusCode, String) {
