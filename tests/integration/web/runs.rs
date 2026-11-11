@@ -2,6 +2,24 @@ use super::*;
 
 use serde_json::json;
 
+/// The filters' names and values, a select's the value of its chosen
+/// option.
+fn filters(html: &Html) -> Vec<(&str, String)> {
+    select(html, "form[data-filters] :is(input, select)")
+        .into_iter()
+        .map(|field| {
+            let value = match field.value().name() {
+                "select" => field
+                    .select(&Selector::parse("option[selected]").unwrap())
+                    .filter_map(|option| option.attr("value"))
+                    .collect(),
+                _ => field.attr("value").unwrap_or_default().to_string(),
+            };
+            (field.attr("name").unwrap(), value)
+        })
+        .collect()
+}
+
 /// #1 and #2, each triaged in a run of its own, #2's the later.
 async fn two_issues_triaged() -> Pages {
     let pages = Pages::of(view(
@@ -26,7 +44,7 @@ async fn two_issues_triaged() -> Pages {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
+async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
     let pages = two_issues_triaged().await;
 
     let html = pages
@@ -71,29 +89,62 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_form() {
             "/items/1"
         ]
     );
-    let fields: Vec<(&str, String)> = select(&html, "form input, form select")
-        .into_iter()
-        .map(|field| {
-            let value = match field.value().name() {
-                "select" => field
-                    .select(&Selector::parse("option[selected]").unwrap())
-                    .filter_map(|option| option.attr("value"))
-                    .collect(),
-                _ => field.attr("value").unwrap_or_default().to_string(),
-            };
-            (field.attr("name").unwrap(), value)
-        })
-        .collect();
     assert_eq!(
-        fields,
+        filters(&html),
         [
             ("item", String::new()),
             ("stage", "triage".to_string()),
             ("since", "2026-10-01".to_string()),
         ]
     );
-    assert_eq!(select(&html, "form")[0].attr("method"), Some("get"));
+    assert_eq!(
+        select(&html, "form[data-filters]")[0].attr("data-filters"),
+        Some("/events/runs")
+    );
     assert_no_status_by_colour_alone(&html);
+}
+
+/// `docs/specs/design_system.md`, Filters; `docs/specs/web/design_system.md`,
+/// Filters.
+#[test_log::test(tokio::test)]
+async fn the_runs_pages_filters_are_labelled_unset_and_unbuttoned_with_a_stage_reading_all_stages()
+{
+    let pages = two_issues_triaged().await;
+
+    let html = pages.page("/runs").await;
+
+    assert_eq!(
+        filters(&html),
+        [
+            ("item", String::new()),
+            ("stage", String::new()),
+            ("since", String::new()),
+        ]
+    );
+    let labels: Vec<String> = select(&html, "form[data-filters] label > .label")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(labels, ["Item", "Stage", "Since"]);
+    let looks: Vec<&str> = classes(&html, "form[data-filters] > label")
+        .into_iter()
+        .filter_map(|classes| {
+            ["input", "select"]
+                .into_iter()
+                .find(|look| classes.contains(look))
+        })
+        .collect();
+    assert_eq!(looks, ["input", "select", "input"]);
+    let stages = select(&html, "form[data-filters] select option");
+    assert_eq!(text(stages[0]), "All stages");
+    assert_eq!(stages[0].attr("value"), Some(""));
+    assert_eq!(select(&html, "form[data-filters] button").len(), 0);
+    let runs_links: Vec<&str> = select(&html, ".drawer-side nav a")
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .filter(|href| href.starts_with("/runs"))
+        .collect();
+    assert_eq!(runs_links, ["/runs"]);
 }
 
 #[test_log::test(tokio::test)]

@@ -641,3 +641,194 @@ async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
         ]
     );
 }
+
+/// Stand-ins for a page with filters (`docs/specs/design_system.md`,
+/// Filters) and folds: `form` holds the fields `field(tagName, name,
+/// options)` makes, a field with `options` suggesting them, `fire(type,
+/// event)` sends an event to the listeners the script added, `event(target,
+/// more)` makes one, and `fold(id, open)` puts a fold on the page in place of
+/// any with its id. `applied()` is each address the page took and each stream
+/// it restarted since it was last asked, or `-` for none.
+const FILTERS: &str = r#"
+var listeners = {};
+function listen(type, listener) { (listeners[type] = listeners[type] || []).push(listener); }
+document.addEventListener = listen;
+document.body = { addEventListener: listen, getAttribute() { return null; } };
+function fire(type, event) { for (const listener of listeners[type] || []) listener(event); }
+function event(target, more) {
+  return Object.assign({ target, prevented: false, preventDefault() { this.prevented = true; } }, more);
+}
+var location = { pathname: "/runs" };
+var addresses = [];
+var history = { replaceState(state, unused, url) { addresses.push(url); } };
+var swaps = [];
+htmx.swap = (ctx) => { swaps.push(ctx); return Promise.resolve(); };
+function element(tagName, attributes) {
+  return {
+    tagName,
+    attributes,
+    closest() { return null; },
+    getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    cloneNode() { return element(this.tagName, Object.assign({}, this.attributes)); },
+    get outerHTML() { return `${this.tagName} ${JSON.stringify(this.attributes)}`; },
+  };
+}
+var stream = element("DIV", { id: "stream", "hx-sse:connect": "/events/runs" });
+var form = element("FORM", { "data-filters": "/events/runs" });
+form.elements = [];
+form.closest = (selector) => (selector === "form[data-filters]" ? form : null);
+function field(tagName, name, options) {
+  const field = element(tagName, {});
+  Object.assign(field, { name, value: "", form, closest: form.closest });
+  if (options) field.list = { options: options.map((value) => ({ value })) };
+  form.elements.push(field);
+  return field;
+}
+var folds = {};
+function fold(id, open) {
+  folds[id] = Object.assign(element("DETAILS", { id }), { id, open });
+  return folds[id];
+}
+document.getElementById = (id) => (id === "stream" ? stream : folds[id] || null);
+function applied() {
+  const shown = addresses
+    .concat(swaps.map((swap) => `${swap.swap} ${swap.target.attributes.id}: ${swap.text}`))
+    .join(" | ");
+  addresses = [];
+  swaps = [];
+  return shown || "-";
+}
+"#;
+
+/// What `asked` evaluates to, line by line, once the served script has run
+/// on a page that `page` builds of the stand-ins in `FILTERS`.
+async fn with_filters(page: &str, asked: &str) -> Vec<String> {
+    let script = served_script().await;
+    evaluated(&[BROWSER, FILTERS, page, &script, asked])
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// What each of `steps`, a JavaScript statement each, applied, on the runs
+/// page's filters.
+async fn applied_after_each(steps: &[&str]) -> Vec<String> {
+    let page = r#"
+var item = field("INPUT", "item");
+var stage = field("SELECT", "stage");
+var since = field("INPUT", "since");
+"#;
+    let asked = steps
+        .iter()
+        .map(|step| format!("{step}\nsteps.push(applied());\n"))
+        .collect::<String>();
+    with_filters(
+        page,
+        &format!("const steps = [];\n{asked}steps.join(\"\\n\")"),
+    )
+    .await
+}
+
+/// The stream `stream` restarted at.
+fn restarted(stream: &str) -> String {
+    format!(r#"outerHTML stream: DIV {{"id":"stream","hx-sse:connect":"{stream}"}}"#)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_chosen_select_applies_at_once_to_the_address_and_the_stream() {
+    let applied = applied_after_each(&[
+        r#"stage.value = "triage"; fire("change", event(stage));"#,
+        r#"stage.value = ""; fire("change", event(stage));"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            format!(
+                "/runs?stage=triage | {}",
+                restarted("/events/runs?stage=triage")
+            ),
+            format!("/runs | {}", restarted("/events/runs")),
+        ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
+    let applied = applied_after_each(&[
+        r#"stage.value = "triage"; fire("change", event(stage));"#,
+        r#"item.value = " 5 "; fire("input", event(item)); fire("keydown", event(item, { key: "5" }));"#,
+        r#"const enter = event(item, { key: "Enter" }); fire("keydown", enter); steps.push(enter.prevented);"#,
+        r#"since.value = "2h ago"; fire("keydown", event(since, { key: "Enter" }));"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            format!(
+                "/runs?stage=triage | {}",
+                restarted("/events/runs?stage=triage")
+            ),
+            "-".to_string(),
+            "true".to_string(),
+            format!(
+                "/runs?item=5&stage=triage | {}",
+                restarted("/events/runs?item=5&stage=triage")
+            ),
+            format!(
+                "/runs?item=5&stage=triage&since=2h%20ago | {}",
+                restarted("/events/runs?item=5&stage=triage&since=2h%20ago")
+            ),
+        ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_picked_suggestion_applies_at_once_and_a_partly_typed_one_does_not() {
+    let page = r#"var person = field("INPUT", "person", ["alice", "bob"]);"#;
+    let asked = r#"
+const steps = [];
+person.value = "ali"; fire("input", event(person)); steps.push(applied());
+person.value = "alice"; fire("input", event(person)); steps.push(applied());
+const elsewhere = element("SELECT", {}); fire("change", event(elsewhere)); steps.push(applied());
+steps.join("\n")
+"#;
+
+    let applied = with_filters(page, asked).await;
+
+    assert_eq!(
+        applied,
+        [
+            "-".to_string(),
+            format!(
+                "/runs?person=alice | {}",
+                restarted("/events/runs?person=alice")
+            ),
+            "-".to_string(),
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Filters: Opened and closed.
+#[test_log::test(tokio::test)]
+async fn a_fold_the_reader_opened_or_closed_stays_so_when_an_update_brings_it_back() {
+    let page = r#"
+var opened = fold("lane-1", false);
+var closed = fold("lane-2", true);
+var untouched = fold("lane-3", false);
+"#;
+    let asked = r#"
+opened.open = true; fire("toggle", event(opened));
+closed.open = false; fire("toggle", event(closed));
+fold("lane-1", false); fold("lane-2", true); fold("lane-3", true);
+fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
+["lane-1", "lane-2", "lane-3"].map((id) => `${id}: ${document.getElementById(id).open}`).join("\n")
+"#;
+
+    let folds = with_filters(page, asked).await;
+
+    assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
+}

@@ -169,7 +169,7 @@ fn runs(html: &Html) -> Vec<String> {
 /// Where the page follows its run from, while the run is in flight.
 #[track_caller]
 fn followed_from(html: &Html) -> Option<String> {
-    attributes(html, "body[hx-sse\\:connect]", "hx-sse:connect").pop()
+    attributes(html, "#stream[hx-sse\\:connect]", "hx-sse:connect").pop()
 }
 
 /// The link `html` has to an implement run.
