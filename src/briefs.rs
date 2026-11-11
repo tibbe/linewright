@@ -54,7 +54,7 @@ pub struct OperatorPrompts {
 }
 
 /// The skills every session is given, as a Claude Code plugin.
-const PLUGIN: [(&str, &str); 13] = [
+const PLUGIN: [(&str, &str); 15] = [
     (
         ".claude-plugin/plugin.json",
         include_str!("../briefs/plugin/.claude-plugin/plugin.json"),
@@ -71,6 +71,14 @@ const PLUGIN: [(&str, &str); 13] = [
     (
         "skills/software-design/SKILL.md",
         include_str!("../briefs/plugin/skills/software-design/SKILL.md"),
+    ),
+    (
+        "skills/software-design/references/benchmark.md",
+        include_str!("../briefs/plugin/skills/software-design/references/benchmark.md"),
+    ),
+    (
+        "skills/software-design/references/external-behavior.md",
+        include_str!("../briefs/plugin/skills/software-design/references/external-behavior.md"),
     ),
     (
         "skills/prototype/SKILL.md",

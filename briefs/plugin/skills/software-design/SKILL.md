@@ -45,18 +45,39 @@ success depends on them.
 
 ### 3. Prototype
 
-Spawn one sub-agent per option, together, in the foreground. Give each:
+Spawn one sub-agent per option, together, in the foreground. The options of
+a decision that need a benchmark share one sub-agent, so that one benchmark
+measures them together. Give each:
 
 - the framing from step 1 of Research, word for word;
-- the option, as the research reports give it;
+- the option or options, as the research reports give them;
 - its decision's criteria, as you wrote them;
-- this brief: "Call the Skill tool with `linewright:prototype`, and build
-  the smallest version of the option above that does what the framing
-  states and shows how it fares on the criteria above. End with what
-  happened, in this form and nothing else, no code,
-  under 80 words: `**{the option}**: {works | works, with … | doesn't
-  work}. Ran {what} against {what}, {how many times}, at {the size and
-  shape}: {the observation on each criterion}.`"
+- where its prototype is of a kind below, the path of that kind's guidelines,
+  to read before building:
+  - **Benchmark** (`references/benchmark.md`): it measures performance, such
+    as time, throughput or memory.
+  - **External behavior** (`references/external-behavior.md`): it shows how
+    something outside the change behaves, such as a third-party service, a
+    library, a tool or the operating system, or whether the option runs on
+    its platform at all.
+- this brief:
+
+  ```markdown
+  Call the Skill tool with `linewright:prototype`, and build the smallest
+  version of each option above that does what the framing states and shows
+  how it fares on the criteria above.
+
+  ## Output
+
+  End with what happened and nothing else, no code:
+
+  1. Where several options shared a setup, that setup, in at most 80 words.
+  2. A line per option, of at most 80 words, in this form:
+
+     **{the option}**: {works | works, with … | doesn't work}. Ran {what}
+     against {what}, {how many times}, at {the size and shape}: {the
+     observation on each criterion, or that it was not run, and why}.
+  ```
 
 ### 4. Choose
 
