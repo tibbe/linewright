@@ -1,5 +1,5 @@
 use crate::common;
-use common::{LINEWRIGHT, REQUIRED, closed_by, policy, sub_issue};
+use common::{LINEWRIGHT, REQUIRED, closed_by, policy, snapshot_of, sub_issue};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastScheduledRuns};
@@ -43,20 +43,6 @@ fn labeled(mut issue: Issue, label: &str) -> Issue {
     issue
 }
 
-fn snapshot(issues: Vec<Issue>) -> Snapshot {
-    Snapshot {
-        default_branch: "main".into(),
-        issues,
-        pulls: vec![],
-        peoples_pulls: vec![],
-        merged: vec![],
-        ticket_branches: vec![],
-        closed: vec![],
-        spec_change_issues: vec![],
-        openings: vec![],
-    }
-}
-
 fn decide(snapshot: &Snapshot) -> Vec<Action> {
     reconcile(
         snapshot,
@@ -77,7 +63,7 @@ fn triage(issue: u64) -> Action {
 
 #[test_log::test]
 fn a_needs_triage_issue_is_claimed_then_triaged() {
-    let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
+    let world = snapshot_of(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
 
     assert_eq!(decide(&world), vec![claim(1), triage(1)]);
 }
@@ -132,18 +118,18 @@ fn a_reply_sends_the_issue_back_to_triage_then_the_people_linewright_asked_are_u
     unassigned.assignees.clear();
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![Action::Relabel {
             issue: Number(1),
             to: StatusLabel::NeedsTriage,
         }]
     );
     assert_eq!(
-        decide(&snapshot(vec![relabeled])),
+        decide(&snapshot_of(vec![relabeled])),
         vec![unassign_asked(1, &["reporter", "tester"])]
     );
     assert_eq!(
-        decide(&snapshot(vec![unassigned])),
+        decide(&snapshot_of(vec![unassigned])),
         vec![claim(1), triage(1)]
     );
 }
@@ -154,7 +140,7 @@ fn a_reply_leaves_a_person_someone_else_assigned_and_triage_waits_for_them() {
     asked = assigned_by(asked, "maintainer", "maintainer", 0);
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
-    let world = snapshot(vec![back_to_triage(asked, 3)]);
+    let world = snapshot_of(vec![back_to_triage(asked, 3)]);
 
     assert_eq!(decide(&world), vec![unassign_asked(1, &["reporter"])]);
     assert_eq!(
@@ -172,7 +158,7 @@ fn a_reply_leaves_a_person_linewright_asked_whom_someone_else_had_assigned() {
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![Action::Relabel {
             issue: Number(1),
             to: StatusLabel::NeedsTriage,
@@ -188,7 +174,7 @@ fn needs_triage_applied_by_hand_after_a_question_unassigns_the_people_asked() {
     asked.comments = vec![triage_comment(1), comment("reporter", 2, "Version 3.")];
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![unassign_asked(1, &["reporter"])]
     );
 }
@@ -205,7 +191,7 @@ fn ready_for_agent_applied_by_hand_after_a_question_unassigns_the_people_asked()
     asked.comments = vec![triage_comment(1)];
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![unassign_asked(1, &["reporter"])]
     );
 }
@@ -218,13 +204,13 @@ fn ready_for_human_after_a_question_keeps_the_people_asked_until_ready_for_agent
     asked.labels = vec![label::READY_FOR_HUMAN.into()];
     asked = labeled_at(asked, label::READY_FOR_HUMAN, 3);
 
-    assert_eq!(decide(&snapshot(vec![asked.clone()])), vec![]);
+    assert_eq!(decide(&snapshot_of(vec![asked.clone()])), vec![]);
 
     asked.labels = vec![label::READY_FOR_AGENT.into()];
     asked = labeled_at(asked, label::READY_FOR_AGENT, 5);
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![unassign_asked(1, &["reporter"])]
     );
 }
@@ -237,7 +223,7 @@ fn ready_for_agent_after_a_question_leaves_a_person_someone_else_assigned() {
     asked.comments = vec![triage_comment(1)];
     asked.labels = vec![label::READY_FOR_AGENT.into()];
     asked = labeled_at(asked, label::READY_FOR_AGENT, 3);
-    let world = snapshot(vec![asked]);
+    let world = snapshot_of(vec![asked]);
 
     assert_eq!(decide(&world), vec![unassign_asked(1, &["reporter"])]);
     assert_eq!(
@@ -254,7 +240,7 @@ fn no_one_is_unassigned_before_a_reply() {
     asked = assigned_by(asked, "reporter", LINEWRIGHT, 1);
     asked.comments = vec![triage_comment(1)];
 
-    assert_eq!(decide(&snapshot(vec![asked])), vec![]);
+    assert_eq!(decide(&snapshot_of(vec![asked])), vec![]);
 }
 
 #[test_log::test]
@@ -266,7 +252,7 @@ fn needs_info_waits_while_only_linewright_has_spoken_since_triage() {
         comment(LINEWRIGHT, 2, "Anything else?"),
     ];
 
-    assert_eq!(decide(&snapshot(vec![asked])), vec![]);
+    assert_eq!(decide(&snapshot_of(vec![asked])), vec![]);
 }
 
 #[test_log::test]
@@ -278,7 +264,7 @@ fn a_comment_on_a_ready_for_human_issue_starts_nothing() {
         comment("reporter", 3, "Please do."),
     ];
 
-    assert_eq!(decide(&snapshot(vec![handed_back])), vec![]);
+    assert_eq!(decide(&snapshot_of(vec![handed_back])), vec![]);
 }
 
 #[test_log::test]
@@ -287,7 +273,7 @@ fn an_issue_linewright_filed_is_not_triaged_when_a_person_comments() {
     filed.author = Login::new(LINEWRIGHT);
     filed.comments = vec![triage_comment(1), comment("maintainer", 2, "Agreed.")];
 
-    assert_eq!(decide(&snapshot(vec![filed])), vec![]);
+    assert_eq!(decide(&snapshot_of(vec![filed])), vec![]);
 }
 
 #[test_log::test]
@@ -298,7 +284,7 @@ fn a_label_the_maintainer_applies_to_a_ready_for_human_triage_wins_over_their_co
             triage_comment(1),
             comment("maintainer", 2, "Make them resizable."),
         ];
-        snapshot(vec![answered])
+        snapshot_of(vec![answered])
     };
 
     assert_eq!(
@@ -332,7 +318,7 @@ fn of_two_status_labels_the_newer_is_kept_and_followed() {
             };
 
             assert_eq!(
-                decide(&snapshot(vec![labeled_both(older, newer)])),
+                decide(&snapshot_of(vec![labeled_both(older, newer)])),
                 follow,
                 "`{older}` applied before `{newer}`"
             );
@@ -351,7 +337,7 @@ fn of_several_status_labels_all_but_the_newest_are_removed() {
     );
 
     assert_eq!(
-        decide(&snapshot(vec![issue])),
+        decide(&snapshot_of(vec![issue])),
         [StatusLabel::NeedsTriage, StatusLabel::NeedsInfo].map(|label| Action::RemoveStatusLabel {
             issue: Number(1),
             label,
@@ -361,7 +347,7 @@ fn of_several_status_labels_all_but_the_newest_are_removed() {
 
 #[test_log::test]
 fn a_run_is_cancelled_when_a_newer_status_label_stops_asking_for_it() {
-    let world = snapshot(vec![labeled_both(
+    let world = snapshot_of(vec![labeled_both(
         StatusLabel::NeedsTriage,
         StatusLabel::ReadyForHuman,
     )]);
@@ -398,7 +384,7 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
         (StatusLabel::NeedsTriage, WorkKind::Triage),
     ] {
         for newer in [StatusLabel::ReadyForHuman, StatusLabel::NeedsInfo] {
-            let world = snapshot(vec![claimed(labeled_both(older, newer))]);
+            let world = snapshot_of(vec![claimed(labeled_both(older, newer))]);
 
             assert_eq!(
                 reconcile(
@@ -427,7 +413,7 @@ fn relabeling_a_claimed_issue_to_a_label_that_does_not_ask_cancels_its_run_and_l
 
 #[test_log::test]
 fn relabeling_a_claimed_issue_needing_triage_ready_for_agent_cancels_its_triage_run() {
-    let world = snapshot(vec![claimed(labeled_both(
+    let world = snapshot_of(vec![claimed(labeled_both(
         StatusLabel::NeedsTriage,
         StatusLabel::ReadyForAgent,
     ))]);
@@ -451,7 +437,7 @@ fn relabeling_a_claimed_issue_needing_triage_ready_for_agent_cancels_its_triage_
 
 #[test_log::test]
 fn removing_a_claimed_issues_status_label_lets_go_of_it() {
-    let world = snapshot(vec![claimed(issue(1))]);
+    let world = snapshot_of(vec![claimed(issue(1))]);
 
     assert_eq!(decide(&world), vec![let_go(1)]);
 }
@@ -459,7 +445,7 @@ fn removing_a_claimed_issues_status_label_lets_go_of_it() {
 #[test_log::test]
 fn an_issue_with_no_status_label_whose_triage_run_is_live_is_held_until_the_run_ends() {
     let mid_triage_with_a_person_asked = assigned_by(claimed(issue(1)), "reporter", LINEWRIGHT, 1);
-    let world = snapshot(vec![mid_triage_with_a_person_asked]);
+    let world = snapshot_of(vec![mid_triage_with_a_person_asked]);
 
     let decided = decisions(
         &world,
@@ -495,7 +481,7 @@ fn an_issue_whose_label_asks_nothing_assigned_to_linewright_by_hand_is_let_go_sa
         1,
     );
     let needs_info = labeled_at(labeled(issue(2), label::NEEDS_INFO), label::NEEDS_INFO, 1);
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         assigned_by(ready_for_human, LINEWRIGHT, "maintainer", 2),
         assigned_by(needs_info, LINEWRIGHT, "maintainer", 2),
         assigned_by(issue(3), LINEWRIGHT, "maintainer", 2),
@@ -549,7 +535,7 @@ fn an_issue_relabeled_from_one_label_that_asks_nothing_to_another_since_its_hand
     );
 
     assert_eq!(
-        decide(&snapshot(vec![relabeled])),
+        decide(&snapshot_of(vec![relabeled])),
         vec![Action::LetGo {
             issue: Number(1),
             comment: Some(
@@ -572,7 +558,7 @@ fn an_issue_linewright_commented_on_since_its_hand_assignment_is_let_go_silently
     );
     commented.comments = vec![comment(LINEWRIGHT, 2, "This issue waits for an answer.")];
 
-    assert_eq!(decide(&snapshot(vec![commented])), vec![let_go(1)]);
+    assert_eq!(decide(&snapshot_of(vec![commented])), vec![let_go(1)]);
 }
 
 #[test_log::test]
@@ -619,7 +605,7 @@ fn an_issue_whose_label_asked_for_work_at_its_hand_assignment_or_claimed_by_line
     );
     let mut relabeled = relabeled;
     relabeled.labels = vec![label::READY_FOR_HUMAN.into()];
-    let world = snapshot(vec![triaged, claimed_itself, unlabeled, relabeled]);
+    let world = snapshot_of(vec![triaged, claimed_itself, unlabeled, relabeled]);
 
     assert_eq!(
         decide(&world),
@@ -645,7 +631,7 @@ fn an_issue_assigned_to_linewright_by_hand_beside_someone_else_is_worked_as_its_
     for issue in [&mut ticket, &mut to_triage] {
         issue.assignees.push(Login::new("alice"));
     }
-    let world = snapshot(vec![ticket, to_triage]);
+    let world = snapshot_of(vec![ticket, to_triage]);
 
     assert_eq!(
         deciding(&world, &Memory::default(), &requiring_label()),
@@ -659,7 +645,7 @@ fn reassigning_linewright_after_an_unassignment_starts_the_work_again_unrelabele
         let unassigned = unassigned_by(issue, "maintainer", 2);
         assigned_by(unassigned, LINEWRIGHT, "maintainer", 3)
     };
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         reassigned(labeled_at(ticket(1), label::READY_FOR_AGENT, 0)),
         reassigned(labeled_at(
             labeled(issue(2), label::NEEDS_TRIAGE),
@@ -689,7 +675,7 @@ fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigne
         43,
         "alice",
     );
-    let world = snapshot(vec![blocked_ticket, blocked_triage, in_review]);
+    let world = snapshot_of(vec![blocked_ticket, blocked_triage, in_review]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(waits_on(&world, 1), [Wait::Blocker { issue: Number(5) }]);
@@ -706,7 +692,7 @@ fn an_issue_assigned_to_linewright_by_hand_that_cannot_start_yet_is_held_assigne
 fn a_claimed_issue_whose_label_asks_for_linewrights_work_is_not_let_go() {
     let mut in_review = claimed(closed_by(ticket(4), 43, "alice"));
     in_review.labels.push("bug".into());
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(labeled(issue(1), label::NEEDS_TRIAGE)),
         claimed(ticket(2)),
         in_review,
@@ -781,7 +767,7 @@ fn taken_up(actions: &[Action]) -> Vec<Number> {
 
 #[test_log::test]
 fn a_merged_pull_request_that_touches_the_spec_is_taken_up_by_opening_its_issue() {
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![merged(5, &["src/main.rs", "docs/billing/invoices.md"])];
 
     assert_eq!(decide(&world), vec![take_up(5)]);
@@ -793,7 +779,7 @@ fn a_merged_pull_request_that_touches_the_spec_is_taken_up_by_opening_its_issue(
 /// snapshot was taken.
 #[test_log::test]
 fn a_spec_change_whose_issue_linewright_opened_open_or_closed_is_not_taken_up_again() {
-    let mut world = snapshot(vec![spec_change_issue(9, 5), spec_change_issue(12, 7)]);
+    let mut world = snapshot_of(vec![spec_change_issue(9, 5), spec_change_issue(12, 7)]);
     world.merged = vec![
         merged(5, &["docs/spec.md"]),
         merged(6, &["docs/spec.md"]),
@@ -810,7 +796,7 @@ fn a_spec_change_carrying_the_design_label_is_not_taken_up() {
     designed.labels.push(label::DESIGNED.into());
     let mut processed = merged(6, &["docs/spec.md"]);
     processed.labels.push(label::SPEC_PROCESSED.into());
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![designed, processed];
 
     assert_eq!(decide(&world), vec![]);
@@ -825,7 +811,7 @@ fn only_spec_changes_by_people_into_the_default_branch_within_the_lookback_are_t
     too_old.merged_at = t(10) - TimeDelta::days(8);
     let mut other_base = merged(6, &["docs/spec.md"]);
     other_base.base_ref = "release".into();
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![code_only, by_linewright, too_old, other_base];
 
     assert_eq!(decide(&world), vec![]);
@@ -840,7 +826,7 @@ fn a_spec_change_merged_within_the_lookback_is_taken_up_though_it_merged_before_
     };
     let mut spec_change = merged(5, &["docs/spec.md"]);
     spec_change.merged_at = t(10) - TimeDelta::days(3);
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![spec_change];
 
     assert_eq!(
@@ -868,7 +854,7 @@ fn unreadied_ticket(number: u64) -> Issue {
 fn an_issue_cut_stopped_before_its_tickets_are_readied_is_discarded_with_them() {
     let mut stopped = claimed(readied(9));
     stopped.sub_issues = linewrights(&[(10, true), (11, true)]);
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         stopped,
         unreadied_ticket(10),
         blocked_by(unreadied_ticket(11), 10, true),
@@ -926,28 +912,28 @@ fn implement(issue: u64) -> Action {
 
 #[test_log::test]
 fn an_unblocked_ready_for_agent_issue_is_claimed_and_implemented() {
-    let world = snapshot(vec![blocked_by(ticket(2), 1, false)]);
+    let world = snapshot_of(vec![blocked_by(ticket(2), 1, false)]);
 
     assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
 #[test_log::test]
 fn a_ticket_waits_until_every_issue_blocking_it_is_closed() {
-    let world = snapshot(vec![blocked_by(blocked_by(ticket(3), 1, false), 2, true)]);
+    let world = snapshot_of(vec![blocked_by(blocked_by(ticket(3), 1, false), 2, true)]);
 
     assert_eq!(decide(&world), vec![]);
 }
 
 #[test_log::test]
 fn a_claimed_ticket_with_no_pull_request_and_no_live_run_starts_a_fresh_run() {
-    let world = snapshot(vec![claimed(ticket(2))]);
+    let world = snapshot_of(vec![claimed(ticket(2))]);
 
     assert_eq!(decide(&world), vec![implement(2)]);
 }
 
 #[test_log::test]
 fn a_ticket_with_a_live_run_is_left_to_it() {
-    let world = snapshot(vec![claimed(ticket(2))]);
+    let world = snapshot_of(vec![claimed(ticket(2))]);
     let live = [LiveRun {
         subject: Subject::Issue(Number(2)),
         kind: WorkKind::Implement,
@@ -975,14 +961,14 @@ fn design(issue: u64) -> Action {
 
 #[test_log::test]
 fn a_ready_for_agent_issue_not_designed_is_claimed_and_designed() {
-    let world = snapshot(vec![readied(2)]);
+    let world = snapshot_of(vec![readied(2)]);
 
     assert_eq!(decide(&world), vec![claim(2), design(2)]);
 }
 
 #[test_log::test]
 fn a_claimed_issue_not_designed_is_designed_and_a_designed_one_implemented() {
-    let world = snapshot(vec![claimed(readied(2)), claimed(ticket(3))]);
+    let world = snapshot_of(vec![claimed(readied(2)), claimed(ticket(3))]);
 
     assert_eq!(decide(&world), vec![design(2), implement(3)]);
 }
@@ -991,14 +977,14 @@ fn a_claimed_issue_not_designed_is_designed_and_a_designed_one_implemented() {
 fn an_issue_whose_design_label_was_removed_is_designed_again() {
     let mut undesigned = claimed(ticket(2));
     undesigned.labels.retain(|l| l != label::DESIGNED);
-    let world = snapshot(vec![undesigned]);
+    let world = snapshot_of(vec![undesigned]);
 
     assert_eq!(decide(&world), vec![design(2)]);
 }
 
 #[test_log::test]
 fn an_issue_waits_for_its_blockers_before_its_design() {
-    let world = snapshot(vec![blocked_by(readied(3), 1, true)]);
+    let world = snapshot_of(vec![blocked_by(readied(3), 1, true)]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(waits_on(&world, 3), [Wait::Blocker { issue: Number(1) }]);
@@ -1006,7 +992,7 @@ fn an_issue_waits_for_its_blockers_before_its_design() {
 
 #[test_log::test]
 fn an_issue_being_designed_is_left_to_its_design() {
-    let world = snapshot(vec![claimed(readied(2))]);
+    let world = snapshot_of(vec![claimed(readied(2))]);
     let live = [live(2, WorkKind::Design)];
 
     assert_eq!(
@@ -1029,7 +1015,7 @@ fn an_issues_design_starts_before_an_implementation() {
         max_runs: 1,
         ..policy()
     };
-    let world = snapshot(vec![claimed(ticket(1)), claimed(readied(2))]);
+    let world = snapshot_of(vec![claimed(ticket(1)), claimed(readied(2))]);
 
     assert_eq!(
         reconcile(
@@ -1053,7 +1039,7 @@ fn an_issues_design_is_cancelled_as_its_implementation_would_be() {
     let mut closed = claimed(readied(3));
     closed.open = false;
     let still_wanted = claimed(readied(4));
-    let world = snapshot(vec![unlabeled, unassigned, closed, still_wanted]);
+    let world = snapshot_of(vec![unlabeled, unassigned, closed, still_wanted]);
     let runs = [1, 2, 3, 4].map(|n| live(n, WorkKind::Design));
 
     let cancelled: Vec<Subject> = reconcile(
@@ -1132,7 +1118,7 @@ fn unassigning_linewright_stops_the_work_until_the_label_is_applied_again() {
     );
 
     assert_eq!(
-        decide(&snapshot(vec![stopped, restarted, let_go_by_linewright])),
+        decide(&snapshot_of(vec![stopped, restarted, let_go_by_linewright])),
         vec![claim(3), implement(3)]
     );
 }
@@ -1150,7 +1136,7 @@ fn a_ticket_sent_back_to_triage_is_triaged_not_implemented() {
     );
 
     assert_eq!(
-        decide(&snapshot(vec![sent_back])),
+        decide(&snapshot_of(vec![sent_back])),
         vec![claim(2), triage(2)]
     );
 }
@@ -1164,7 +1150,7 @@ fn live(issue: u64, kind: WorkKind) -> LiveRun {
 
 #[test_log::test]
 fn runs_start_up_to_the_ceiling_triage_before_tickets_before_fresh_implementations() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(ticket(1)),
         ticket(2),
         labeled(issue(3), label::NEEDS_TRIAGE),
@@ -1203,7 +1189,7 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
     closed.open = false;
     let triaged = labeled(issue(5), label::READY_FOR_AGENT);
     let still_wanted = claimed(ticket(6));
-    let world = snapshot(vec![unlabeled, unassigned, closed, triaged, still_wanted]);
+    let world = snapshot_of(vec![unlabeled, unassigned, closed, triaged, still_wanted]);
     let runs = [
         live(1, WorkKind::Implement),
         live(2, WorkKind::Implement),
@@ -1245,7 +1231,7 @@ fn a_pull_requests_run_is_cancelled_when_it_is_merged_closed_or_linewright_is_un
     closed.state = PullState::Closed { at: t(5) };
     let unassigned = unassigned_at(pull(22, 4), "maintainer", 5, None);
     let still_wanted = labeled_pull(pull(23, 6), label::READY_FOR_HUMAN);
-    let mut world = snapshot(vec![ticket(2), ticket(3), ticket(4), ticket(6)]);
+    let mut world = snapshot_of(vec![ticket(2), ticket(3), ticket(4), ticket(6)]);
     world.pulls = vec![merged, closed, unassigned, still_wanted];
     let runs = [20, 21, 22, 23, 24].map(|pr| live_on_pull(pr, WorkKind::Rework));
 
@@ -1466,7 +1452,7 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
     }];
     let mut closed_by_open_pull = closed(ticket(6));
     closed_by_open_pull.closed_by = closed_by_pull.closed_by.clone();
-    let mut world = snapshot(vec![
+    let mut world = snapshot_of(vec![
         closed(ticket(1)),
         closed_by_pull,
         closed(ticket(3)),
@@ -1494,7 +1480,7 @@ fn the_branch_of_a_closed_ticket_is_deleted_unless_a_pull_request_is_open_for_it
 
 #[test_log::test]
 fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
-    let mut world = snapshot(vec![closed(claimed(ticket(1)))]);
+    let mut world = snapshot_of(vec![closed(claimed(ticket(1)))]);
     world.ticket_branches = vec![ticket_branch(1, BranchIssue::Held)];
 
     let actions = reconcile(
@@ -1512,7 +1498,7 @@ fn the_branch_of_a_closed_ticket_waits_for_its_run_to_stop() {
 
 #[test_log::test]
 fn the_branch_of_a_ticket_read_again_is_kept_or_deleted_as_the_ticket_now_is() {
-    let mut world = snapshot(vec![ticket(1), closed(ticket(2))]);
+    let mut world = snapshot_of(vec![ticket(1), closed(ticket(2))]);
     let read_closed_then_reopened = ticket_branch(1, closed_unpulled(1));
     let read_open_then_closed = ticket_branch(2, BranchIssue::Held);
     let held_then_left_out = ticket_branch(3, BranchIssue::Held);
@@ -1572,7 +1558,7 @@ fn in_review(pr: Pull) -> Snapshot {
     let issue = pr.closes[0].0;
     let mut ticket = claimed(ticket(issue));
     ticket.assignees.push(Login::new("maintainer"));
-    let mut world = snapshot(vec![ticket]);
+    let mut world = snapshot_of(vec![ticket]);
     world.pulls = vec![pr];
     world
 }
@@ -1792,14 +1778,14 @@ fn clear_stall(item: Item) -> Action {
 
 #[test_log::test]
 fn a_stalled_ticket_relabeled_ready_for_agent_is_claimed_alone() {
-    let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
+    let world = snapshot_of(vec![labeled(ticket(2), label::STALLED)]);
 
     assert_eq!(decide(&world), vec![claim(2)]);
 }
 
 #[test_log::test]
 fn a_stalled_ticket_once_claimed_has_its_stall_cleared_before_it_is_implemented() {
-    let world = snapshot(vec![claimed(labeled(ticket(2), label::STALLED))]);
+    let world = snapshot_of(vec![claimed(labeled(ticket(2), label::STALLED))]);
 
     assert_eq!(decide(&world), vec![clear_stall(Item::Issue(Number(2)))]);
 }
@@ -1819,7 +1805,7 @@ fn a_stalled_issue_in_review_linewright_is_assigned_to_has_its_stall_cleared() {
 
 #[test_log::test]
 fn a_stalled_issue_linewright_neither_holds_nor_claims_keeps_its_stall() {
-    let world = snapshot(vec![labeled(
+    let world = snapshot_of(vec![labeled(
         labeled(issue(2), label::READY_FOR_HUMAN),
         label::STALLED,
     )]);
@@ -1835,7 +1821,7 @@ fn a_stalled_issue_left_assigned_with_two_status_labels_is_let_go_of_with_its_st
         LINEWRIGHT,
         0,
     );
-    let world = snapshot(vec![labeled(
+    let world = snapshot_of(vec![labeled(
         hand_back_stopped_after_ready_for_human,
         label::STALLED,
     )]);
@@ -1857,7 +1843,7 @@ fn a_stalled_pull_request_linewright_is_still_assigned_to_has_its_stall_cleared(
 
 #[test_log::test]
 fn a_stalled_ticket_claimed_but_held_back_by_the_drain_keeps_its_stall() {
-    let world = snapshot(vec![labeled(ticket(2), label::STALLED)]);
+    let world = snapshot_of(vec![labeled(ticket(2), label::STALLED)]);
     let memory = Memory {
         drain: Some(Drain { since: t(5) }),
         ..Memory::default()
@@ -2971,7 +2957,7 @@ fn cut_issue(number: u64, tickets: &[(u64, bool)]) -> Issue {
 
 #[test_log::test]
 fn an_issue_cut_into_tickets_is_closed_once_they_all_are_and_waits_for_them_until_then() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         cut_issue(9, &[(10, false), (11, false)]),
         cut_issue(12, &[(13, false), (14, true)]),
     ]);
@@ -2992,7 +2978,7 @@ fn an_issue_cut_into_tickets_is_closed_once_they_all_are_and_waits_for_them_unti
 fn an_issue_cut_into_tickets_waits_also_for_the_sub_issues_a_person_added() {
     let mut cut = cut_issue(9, &[(10, false)]);
     cut.sub_issues.push(sub_issue(11, true, "maintainer"));
-    let world = snapshot(vec![cut]);
+    let world = snapshot_of(vec![cut]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -3005,7 +2991,7 @@ fn an_issue_cut_into_tickets_waits_also_for_the_sub_issues_a_person_added() {
 
 #[test_log::test]
 fn an_issue_cut_into_tickets_left_with_a_status_label_or_linewright_loses_both_and_is_not_worked() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(labeled(cut_issue(9, &[(10, true)]), label::READY_FOR_AGENT)),
         labeled(
             labeled(cut_issue(12, &[(13, true)]), label::NEEDS_TRIAGE),
@@ -3041,7 +3027,7 @@ fn a_designed_issue_with_only_sub_issues_a_person_added_is_implemented() {
     let mut designed = claimed(labeled(issue(9), label::READY_FOR_AGENT));
     designed.labels.push(label::DESIGNED.into());
     designed.sub_issues.push(sub_issue(10, false, "maintainer"));
-    let world = snapshot(vec![designed]);
+    let world = snapshot_of(vec![designed]);
 
     assert_eq!(decide(&world), vec![implement(9)]);
 }
@@ -3056,7 +3042,7 @@ fn an_issue_being_cut_waits_for_its_design_and_neither_closes_nor_discards() {
     stopped_short
         .sub_issues
         .push(sub_issue(13, true, LINEWRIGHT));
-    let world = snapshot(vec![cutting, stopped_short]);
+    let world = snapshot_of(vec![cutting, stopped_short]);
     let live = [live(9, WorkKind::Design), live(12, WorkKind::Design)];
 
     let decided = decisions(
@@ -3093,7 +3079,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_i
     discarded.sub_issues = vec![sub_issue(12, true, "maintainer")];
 
     let decided = decisions(
-        &snapshot(vec![stopped]),
+        &snapshot_of(vec![stopped]),
         &[],
         &Memory::default(),
         &Automations::default(),
@@ -3111,7 +3097,7 @@ fn a_cut_of_an_issue_stopped_part_way_discards_linewrights_tickets_and_designs_i
         })]
     );
     assert_eq!(decided.waits.get(&Number(9)), None);
-    assert_eq!(decide(&snapshot(vec![discarded])), vec![design(9)]);
+    assert_eq!(decide(&snapshot_of(vec![discarded])), vec![design(9)]);
 }
 
 #[test_log::test]
@@ -3124,7 +3110,7 @@ fn a_discarded_cut_leaves_open_an_issue_linewright_filed_that_a_person_added_as_
     });
 
     assert_eq!(
-        decide(&snapshot(vec![undesigned])),
+        decide(&snapshot_of(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
             issue: Number(9),
             pulls: vec![],
@@ -3141,7 +3127,7 @@ fn an_issue_with_only_linewrights_issues_a_person_added_as_sub_issues_is_no_trac
         ..sub_issue(11, false, LINEWRIGHT)
     }];
 
-    assert_eq!(decide(&snapshot(vec![designed])), vec![implement(9)]);
+    assert_eq!(decide(&snapshot_of(vec![designed])), vec![implement(9)]);
 }
 
 #[test_log::test]
@@ -3150,7 +3136,7 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_discarded() {
     undesigned.labels.clear();
 
     assert_eq!(
-        decide(&snapshot(vec![undesigned])),
+        decide(&snapshot_of(vec![undesigned])),
         vec![Action::DiscardCut(Discard {
             issue: Number(9),
             pulls: vec![],
@@ -3168,7 +3154,7 @@ fn a_cut_issue_whose_design_label_was_removed_has_its_tickets_and_linewrights_pu
         .sub_issues
         .push(sub_issue(12, true, "maintainer"));
     let theirs = closed_by(claimed(ticket(11)), 22, "contributor");
-    let mut world = snapshot(vec![undesigned, claimed(ticket(10)), theirs]);
+    let mut world = snapshot_of(vec![undesigned, claimed(ticket(10)), theirs]);
     let mut green = pull(21, 11);
     green.checks = vec![check("test", CheckState::Passed)];
     world.pulls = vec![green];
@@ -3188,7 +3174,7 @@ fn a_discard_stopped_after_closing_its_pull_requests_closes_its_tickets_and_neit
  {
     let mut stopped = claimed(readied(9));
     stopped.sub_issues = linewrights(&[(10, true)]);
-    let mut world = snapshot(vec![stopped, claimed(ticket(10))]);
+    let mut world = snapshot_of(vec![stopped, claimed(ticket(10))]);
     let mut closed = ready(pull(20, 10));
     closed.state = PullState::Closed { at: t(10) };
     world.pulls = vec![closed];
@@ -3209,7 +3195,7 @@ fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_
     stopped.sub_issues = linewrights(&[(10, false), (11, false)]);
 
     assert_eq!(
-        decide(&snapshot(vec![stopped.clone()])),
+        decide(&snapshot_of(vec![stopped.clone()])),
         vec![Action::DiscardCut(Discard {
             issue: Number(9),
             pulls: vec![],
@@ -3218,12 +3204,12 @@ fn a_discard_stopped_after_closing_its_tickets_removes_them_before_the_issue_is_
     );
 
     stopped.sub_issues.clear();
-    assert_eq!(decide(&snapshot(vec![stopped])), vec![design(9)]);
+    assert_eq!(decide(&snapshot_of(vec![stopped])), vec![design(9)]);
 }
 
 #[test_log::test]
 fn a_tracking_issue_is_closed_when_all_its_tickets_are() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         tracking(9, 5, &[(10, false), (11, false)]),
         tracking(12, 6, &[(13, false), (14, true)]),
     ]);
@@ -3259,7 +3245,7 @@ fn automations(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Au
 /// The decisions at `minute` past 12:00, when ticks fall on the hour.
 fn scheduled(automations: &Automations, minute: i64) -> Vec<Action> {
     reconcile(
-        &snapshot(vec![]),
+        &snapshot_of(vec![]),
         &[],
         &Memory::default(),
         automations,
@@ -3337,7 +3323,7 @@ fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
 
 #[test_log::test]
 fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leaves() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(ticket(1)),
         claimed(ticket(8)),
         claimed(ticket(9)),
@@ -3345,7 +3331,7 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
     let two_pipeline_runs = [live(8, WorkKind::Implement), live(9, WorkKind::Implement)];
     let one_running_and_two_due =
         automations(&["a", "b", "c"], &[("a", 30), ("b", 30), ("c", 30)], &["a"]);
-    let quieter = snapshot(vec![claimed(ticket(8)), claimed(ticket(9))]);
+    let quieter = snapshot_of(vec![claimed(ticket(8)), claimed(ticket(9))]);
 
     assert_eq!(
         reconcile(
@@ -3382,7 +3368,7 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
 
 #[test_log::test]
 fn an_automation_seen_for_the_first_time_is_recorded_even_with_no_room() {
-    let tickets = snapshot([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
+    let tickets = snapshot_of([1, 2, 3, 4].map(|n| claimed(ticket(n))).to_vec());
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
     let world = automations(&["hourly"], &[], &[]);
 
@@ -3419,7 +3405,7 @@ fn with_a_required_label_only_a_labeled_needs_triage_issue_is_triaged() {
     let with_label = labeled(labeled(issue(2), label::NEEDS_TRIAGE), REQUIRED);
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        deciding_with_label(&snapshot_of(vec![unlabeled, with_label])),
         vec![claim(2), triage(2)]
     );
 }
@@ -3432,7 +3418,7 @@ fn with_a_required_label_a_reply_sends_an_issue_back_to_triage_marked_or_not() {
     with_label.number = Number(2);
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        deciding_with_label(&snapshot_of(vec![unlabeled, with_label])),
         [1, 2].map(|issue| Action::Relabel {
             issue: Number(issue),
             to: StatusLabel::NeedsTriage,
@@ -3455,7 +3441,7 @@ fn with_a_required_label_an_issue_relabeled_after_a_question_has_the_people_aske
     with_label.number = Number(3);
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![unlabeled, retriaged, with_label])),
+        deciding_with_label(&snapshot_of(vec![unlabeled, retriaged, with_label])),
         vec![
             unassign_asked(1, &["reporter"]),
             unassign_asked(2, &["reporter"]),
@@ -3470,14 +3456,14 @@ fn with_a_required_label_only_a_labeled_unclaimed_ticket_is_claimed() {
     let with_label = labeled(ticket(2), REQUIRED);
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![unlabeled, with_label])),
+        deciding_with_label(&snapshot_of(vec![unlabeled, with_label])),
         vec![claim(2), implement(2)]
     );
 }
 
 #[test_log::test]
 fn with_a_required_label_a_ticket_assigned_to_linewright_by_hand_is_implemented_unlabeled() {
-    let world = snapshot(vec![assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1)]);
+    let world = snapshot_of(vec![assigned_by(ticket(1), LINEWRIGHT, "maintainer", 1)]);
 
     assert_eq!(deciding_with_label(&world), vec![implement(1)]);
 }
@@ -3501,7 +3487,7 @@ fn with_a_required_label_a_ticket_is_claimed_again_after_an_unassignment_only_if
     };
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![restart(1, false), restart(2, true)])),
+        deciding_with_label(&snapshot_of(vec![restart(1, false), restart(2, true)])),
         vec![claim(2), implement(2)]
     );
 }
@@ -3575,7 +3561,7 @@ fn with_a_required_label_work_already_started_carries_on_unlabeled() {
 
 #[test_log::test]
 fn removing_the_required_label_cancels_no_run_in_flight() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
     let runs = [live(1, WorkKind::Implement)];
 
     let actions = reconcile(
@@ -3596,7 +3582,7 @@ fn with_a_required_label_only_a_labeled_spec_change_is_taken_up() {
     let unlabeled = merged(1, &["docs/spec.md"]);
     let mut with_label = merged(2, &["docs/spec.md"]);
     with_label.labels.push(REQUIRED.into());
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![unlabeled, with_label];
 
     assert_eq!(deciding_with_label(&world), vec![take_up(2)]);
@@ -3605,7 +3591,7 @@ fn with_a_required_label_only_a_labeled_spec_change_is_taken_up() {
 #[test_log::test]
 fn with_a_required_label_a_spec_change_labeled_after_it_merged_is_taken_up_on_a_later_poll() {
     let mut pr = merged(1, &["docs/spec.md"]);
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![pr.clone()];
     assert_eq!(deciding_with_label(&world), vec![]);
 
@@ -3621,7 +3607,7 @@ fn with_a_required_label_designed_and_linewrights_spec_changes_are_skipped_even_
     let mut by_linewright = merged(2, &["docs/spec.md"]);
     by_linewright.labels = vec![REQUIRED.into()];
     by_linewright.author = Login::new(LINEWRIGHT);
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![designed, by_linewright];
 
     assert_eq!(deciding_with_label(&world), vec![]);
@@ -3636,7 +3622,7 @@ fn work_of_every_kind() -> (Snapshot, Vec<LiveRun>, Automations) {
     green.checks = vec![check("test", CheckState::Passed)];
     let mut failing = pull(22, 11);
     failing.checks = vec![check("test", CheckState::Failed)];
-    let mut world = snapshot(vec![
+    let mut world = snapshot_of(vec![
         answered,
         claimed(ticket(2)),
         ticket(3),
@@ -3905,7 +3891,7 @@ fn while_draining_a_green_pull_request_is_merged_still() {
 
 #[test_log::test]
 fn while_draining_under_the_usage_limit_too_work_waits_for_the_drain_then_the_usage_limit() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut memory = draining();
     memory.hold_until(t(150));
 
@@ -3964,7 +3950,7 @@ fn waits_on(world: &Snapshot, number: u64) -> Vec<Wait> {
 
 #[test_log::test]
 fn a_blocked_ticket_waits_for_each_open_blocker() {
-    let world = snapshot(vec![blocked_by(
+    let world = snapshot_of(vec![blocked_by(
         blocked_by(blocked_by(ticket(4), 1, true), 2, false),
         3,
         true,
@@ -3981,7 +3967,7 @@ fn a_blocked_ticket_waits_for_each_open_blocker() {
 
 #[test_log::test]
 fn a_ticket_someone_elses_open_pull_request_closes_is_not_claimed_and_waits_for_it() {
-    let world = snapshot(vec![closed_by(ticket(2), 43, "alice")]);
+    let world = snapshot_of(vec![closed_by(ticket(2), 43, "alice")]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -4004,14 +3990,14 @@ fn a_ticket_only_pull_requests_closed_before_its_claim_close_is_claimed() {
             updated_at: t(5),
         });
     }
-    let world = snapshot(vec![ticket]);
+    let world = snapshot_of(vec![ticket]);
 
     assert_eq!(decide(&world), vec![claim(2), implement(2)]);
 }
 
 #[test_log::test]
 fn a_claimed_ticket_someone_elses_open_pull_request_closes_starts_no_run() {
-    let world = snapshot(vec![closed_by(claimed(ticket(2)), 43, "renovate[bot]")]);
+    let world = snapshot_of(vec![closed_by(claimed(ticket(2)), 43, "renovate[bot]")]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -4024,7 +4010,7 @@ fn a_claimed_ticket_someone_elses_open_pull_request_closes_starts_no_run() {
 
 #[test_log::test]
 fn a_ticket_waits_for_blockers_and_closing_pull_requests_alike() {
-    let world = snapshot(vec![closed_by(blocked_by(ticket(4), 1, true), 43, "alice")]);
+    let world = snapshot_of(vec![closed_by(blocked_by(ticket(4), 1, true), 43, "alice")]);
 
     assert_eq!(
         waits_on(&world, 4),
@@ -4044,7 +4030,7 @@ fn pull_closing_42_and_12(label: &str) -> Snapshot {
     let mut first = closed_by(assigned_at(issue(42), 0), 43, LINEWRIGHT);
     first.labels = vec![label.into()];
     let second = closed_by(assigned_at(ticket(12), 0), 43, LINEWRIGHT);
-    let mut world = snapshot(vec![first, second]);
+    let mut world = snapshot_of(vec![first, second]);
     world.pulls = vec![pr];
     world
 }
@@ -4178,7 +4164,7 @@ fn a_ticket_in_review_with_linewrights_pull_request_waits_for_it_alone_whatever_
 
 #[test_log::test]
 fn a_ticket_claimed_after_linewrights_pull_request_closing_it_was_closed_is_handed_back() {
-    let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, LINEWRIGHT), 7)]);
+    let world = snapshot_of(vec![assigned_at(closed_by(ticket(2), 20, LINEWRIGHT), 7)]);
     let world = closed_unmerged(world, 20, 5);
 
     assert_eq!(handed_back_issues(&decide(&world)), [2]);
@@ -4186,7 +4172,7 @@ fn a_ticket_claimed_after_linewrights_pull_request_closing_it_was_closed_is_hand
 
 #[test_log::test]
 fn someone_elses_pull_request_closed_unmerged_hands_nothing_back() {
-    let world = snapshot(vec![assigned_at(closed_by(ticket(2), 20, "alice"), 0)]);
+    let world = snapshot_of(vec![assigned_at(closed_by(ticket(2), 20, "alice"), 0)]);
     let world = closed_unmerged(world, 20, 5);
 
     assert_eq!(decide(&world), vec![implement(2)]);
@@ -4210,7 +4196,7 @@ fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again()
         state: PullState::Merged { at: t(5) },
         updated_at: t(5),
     });
-    let world = snapshot(vec![ticket]);
+    let world = snapshot_of(vec![ticket]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -4226,7 +4212,7 @@ fn a_ticket_someone_elses_merged_pull_request_closes_waits_to_be_labeled_again()
 
 #[test_log::test]
 fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(ticket(1)),
         claimed(ticket(2)),
         claimed(ticket(3)),
@@ -4251,7 +4237,7 @@ fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted(
 
 #[test_log::test]
 fn under_the_usage_limit_work_waits_for_its_reset() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut memory = Memory::default();
     memory.hold_until(t(150));
 
@@ -4265,7 +4251,7 @@ fn under_the_usage_limit_work_waits_for_its_reset() {
 /// ceiling, the usage limit nor a drain holds it back.
 #[test_log::test]
 fn a_spec_change_is_taken_up_whatever_holds_the_runs_back() {
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![merged(5, &["docs/spec.md"])];
     let busy = [1, 2, 3, 4].map(|n| live(n, WorkKind::Implement));
     let usage_limit = Memory {
@@ -4291,7 +4277,7 @@ fn a_spec_change_is_taken_up_whatever_holds_the_runs_back() {
 
 #[test_log::test]
 fn an_item_with_a_run_in_flight_waits_for_it() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         claimed(ticket(2)),
         labeled(issue(3), label::NEEDS_TRIAGE),
         claimed(readied(5)),
@@ -4334,7 +4320,7 @@ fn a_pull_request_waits_for_ci_while_its_checks_run_or_before_any_report() {
 
 #[test_log::test]
 fn an_issue_labeled_for_the_maintainer_or_the_people_asked_waits_for_them() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         labeled(issue(1), label::READY_FOR_HUMAN),
         labeled(issue(2), label::NEEDS_INFO),
     ]);
@@ -4424,7 +4410,7 @@ fn a_tracking_issue_waits_for_its_open_tickets() {
     let tracking = tracking(10, 5, &[(11, false), (12, true), (13, true)]);
 
     assert_eq!(
-        waits_on(&snapshot(vec![tracking]), 10),
+        waits_on(&snapshot_of(vec![tracking]), 10),
         [Wait::Tickets {
             open: vec![Number(12), Number(13)]
         }]
@@ -4437,7 +4423,7 @@ fn an_issue_without_the_required_label_waits_for_the_maintainer_to_apply_it() {
         require_label: Some("linewright".into()),
         ..policy()
     };
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         labeled(issue(1), label::NEEDS_TRIAGE),
         labeled(issue(2), label::READY_FOR_AGENT),
         labeled(issue(3), label::NEEDS_INFO),
@@ -4467,7 +4453,7 @@ fn an_issue_linewright_filed_labeled_needs_triage_is_triaged() {
     let mut filed = labeled(issue(1), label::NEEDS_TRIAGE);
     filed.author = Login::new(LINEWRIGHT);
 
-    assert_eq!(decide(&snapshot(vec![filed])), vec![claim(1), triage(1)]);
+    assert_eq!(decide(&snapshot_of(vec![filed])), vec![claim(1), triage(1)]);
 }
 
 #[test_log::test]
@@ -4479,7 +4465,7 @@ fn a_ticket_linewright_was_unassigned_from_waits_for_ready_for_agent_again() {
     );
 
     assert_eq!(
-        waits_on(&snapshot(vec![stopped]), 2),
+        waits_on(&snapshot_of(vec![stopped]), 2),
         [Wait::Relabel {
             label: StatusLabel::ReadyForAgent,
             since: Relabel::Unassigned {
@@ -4500,7 +4486,7 @@ fn a_ticket_linewright_let_go_of_waits_for_ready_for_agent_or_the_required_label
 
     assert_eq!(
         waits(
-            &snapshot(vec![let_go]),
+            &snapshot_of(vec![let_go]),
             &[],
             &Memory::default(),
             10,
@@ -4516,7 +4502,7 @@ fn a_ticket_linewright_let_go_of_waits_for_ready_for_agent_or_the_required_label
         }]
     );
     assert_eq!(
-        deciding_with_label(&snapshot(vec![required_label_again])),
+        deciding_with_label(&snapshot_of(vec![required_label_again])),
         vec![claim(2), implement(2)]
     );
 }
@@ -4584,7 +4570,7 @@ fn a_ticket_losing_its_label_or_linewright_neither_cancels_nor_stops_its_pull_re
 fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     let mut assigned = labeled(issue(1), label::NEEDS_TRIAGE);
     assigned.assignees.push(Login::new("alice"));
-    let world = snapshot(vec![assigned]);
+    let world = snapshot_of(vec![assigned]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -4599,7 +4585,7 @@ fn a_needs_triage_issue_someone_else_is_assigned_to_is_not_claimed_and_waits_for
 fn a_ticket_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
     let mut assigned = ticket(1);
     assigned.assignees.push(Login::new("alice"));
-    let world = snapshot(vec![assigned]);
+    let world = snapshot_of(vec![assigned]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(
@@ -4614,7 +4600,7 @@ fn a_ticket_someone_else_is_assigned_to_is_not_claimed_and_waits_for_them() {
 fn a_needs_triage_issue_that_cannot_start_is_not_claimed_and_waits() {
     let blocked = blocked_by(labeled(issue(1), label::NEEDS_TRIAGE), 3, true);
     let closed = closed_by(labeled(issue(2), label::NEEDS_TRIAGE), 43, "alice");
-    let world = snapshot(vec![blocked, closed]);
+    let world = snapshot_of(vec![blocked, closed]);
 
     assert_eq!(decide(&world), vec![]);
     assert_eq!(waits_on(&world, 1), [Wait::Blocker { issue: Number(3) }]);
@@ -4628,7 +4614,7 @@ fn a_needs_triage_issue_that_cannot_start_is_not_claimed_and_waits() {
 
 #[test_log::test]
 fn a_needs_triage_issue_linewright_is_assigned_to_is_triaged_without_claiming_it_again() {
-    let world = snapshot(vec![claimed(labeled(issue(1), label::NEEDS_TRIAGE))]);
+    let world = snapshot_of(vec![claimed(labeled(issue(1), label::NEEDS_TRIAGE))]);
 
     assert_eq!(decide(&world), vec![triage(1)]);
 }
@@ -4654,7 +4640,7 @@ fn a_needs_triage_issue_linewright_was_unassigned_from_waits_for_needs_triage_ag
         },
     };
     for actor in ["maintainer", LINEWRIGHT] {
-        let world = snapshot(vec![needs_triage_unassigned_by(1, actor)]);
+        let world = snapshot_of(vec![needs_triage_unassigned_by(1, actor)]);
 
         assert_eq!(decide(&world), vec![], "unassigned by {actor}");
         assert_eq!(
@@ -4674,7 +4660,7 @@ fn a_needs_triage_issue_labeled_again_after_an_unassignment_is_claimed() {
     );
 
     assert_eq!(
-        decide(&snapshot(vec![relabeled])),
+        decide(&snapshot_of(vec![relabeled])),
         vec![claim(1), triage(1)]
     );
 }
@@ -4697,7 +4683,7 @@ fn of_a_labeling_and_an_unassignment_at_the_same_time_the_later_event_decides() 
     );
 
     assert_eq!(
-        decide(&snapshot(vec![
+        decide(&snapshot_of(vec![
             labeled_then_unassigned,
             unassigned_then_labeled
         ])),
@@ -4715,7 +4701,7 @@ fn with_a_required_label_applying_it_after_an_unassignment_lets_triage_claim_the
     );
 
     assert_eq!(
-        deciding_with_label(&snapshot(vec![stopped.clone(), relabeled])),
+        deciding_with_label(&snapshot_of(vec![stopped.clone(), relabeled])),
         vec![claim(2), triage(2)]
     );
     let required = Policy {
@@ -4724,7 +4710,7 @@ fn with_a_required_label_applying_it_after_an_unassignment_lets_triage_claim_the
     };
     assert_eq!(
         waits(
-            &snapshot(vec![stopped]),
+            &snapshot_of(vec![stopped]),
             &[],
             &Memory::default(),
             10,
@@ -4752,14 +4738,14 @@ fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_a
     let relabeled = back_to_triage(asked.clone(), 3);
 
     assert_eq!(
-        decide(&snapshot(vec![asked])),
+        decide(&snapshot_of(vec![asked])),
         vec![Action::Relabel {
             issue: Number(1),
             to: StatusLabel::NeedsTriage,
         }]
     );
     assert_eq!(
-        decide(&snapshot(vec![relabeled])),
+        decide(&snapshot_of(vec![relabeled])),
         vec![claim(1), triage(1)]
     );
 }
@@ -4768,7 +4754,7 @@ fn a_reply_to_needs_info_after_linewright_let_go_claims_the_issue_to_triage_it_a
 fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
     let unassigned = labeled(issue(1), label::NEEDS_TRIAGE);
     let still_claimed = claimed(labeled(issue(2), label::NEEDS_TRIAGE));
-    let world = snapshot(vec![unassigned, still_claimed]);
+    let world = snapshot_of(vec![unassigned, still_claimed]);
     let runs = [live(1, WorkKind::Triage), live(2, WorkKind::Triage)];
 
     assert_eq!(
@@ -4790,7 +4776,7 @@ fn a_triage_run_is_cancelled_when_linewright_is_unassigned_and_not_otherwise() {
 
 #[test_log::test]
 fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_it() {
-    let world = snapshot(vec![
+    let world = snapshot_of(vec![
         labeled(issue(1), label::NEEDS_TRIAGE),
         common::ticket(2, "Gadgets"),
     ]);
@@ -4824,7 +4810,7 @@ fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_i
 
 #[test_log::test]
 fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_automations_due() {
-    let world = snapshot(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
+    let world = snapshot_of(vec![labeled(issue(1), label::NEEDS_TRIAGE)]);
     let mut last_scheduled_runs = LastScheduledRuns::default();
     last_scheduled_runs.record(&"hourly".parse().unwrap(), t(-60));
     let automations = Automations {
@@ -4874,7 +4860,7 @@ fn taking_up_a_spec_change_touches_the_spec_change() {
     };
 
     assert_eq!(
-        action.items(&snapshot(vec![])),
+        action.items(&snapshot_of(vec![])),
         vec![Item::Pull(Number(20))]
     );
 }
@@ -4898,7 +4884,7 @@ fn discarding_a_cut_touches_its_tickets_its_tracking_issue_and_its_pull_requests
     });
 
     assert_eq!(
-        action.items(&snapshot(vec![])),
+        action.items(&snapshot_of(vec![])),
         vec![
             Item::Issue(Number(12)),
             Item::Issue(Number(13)),
@@ -4918,7 +4904,7 @@ fn handing_an_item_back_touches_it() {
     };
 
     assert_eq!(
-        action.items(&snapshot(vec![])),
+        action.items(&snapshot_of(vec![])),
         vec![Item::Issue(Number(2))]
     );
 }
@@ -4930,7 +4916,7 @@ fn deleting_a_ticket_branch_touches_its_ticket() {
     };
 
     assert_eq!(
-        action.items(&snapshot(vec![])),
+        action.items(&snapshot_of(vec![])),
         vec![Item::Issue(Number(42))]
     );
 }
@@ -5047,7 +5033,7 @@ fn linewright_assigned_to_an_open_pull_request_it_did_not_open_lets_go_of_it_wit
     let mut unassigned = pull(33, 3);
     unassigned.author = Login::new("alice");
     unassigned.assignees = vec![];
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.peoples_pulls = vec![theirs, unassigned];
 
     let let_go: Vec<Number> = decide(&world)
@@ -5072,7 +5058,7 @@ fn linewright_assigned_to_an_open_pull_request_it_did_not_open_lets_go_of_it_wit
 fn linewright_assigned_to_a_merged_pull_request_it_does_not_take_up_leaves_it_as_it_is() {
     let mut code = merged(31, &["src/main.rs"]);
     code.assignees = vec![Login::new(LINEWRIGHT)];
-    let mut world = snapshot(vec![]);
+    let mut world = snapshot_of(vec![]);
     world.merged = vec![code];
 
     assert_eq!(decide(&world), []);
@@ -5112,7 +5098,7 @@ fn while_awaiting_the_environment_no_run_starts_and_no_automation_runs_but_other
 
 #[test_log::test]
 fn while_awaiting_the_environment_work_waits_for_it() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
 
     assert_eq!(
         waits(&world, &[], &awaiting_the_environment(), 10, &policy()).remove(&Number(1)),
@@ -5122,7 +5108,7 @@ fn while_awaiting_the_environment_work_waits_for_it() {
 
 #[test_log::test]
 fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the_ceiling() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut limited = awaiting_the_environment();
     limited.hold_until(t(150));
     let mut drained = limited.clone();
@@ -5158,7 +5144,7 @@ fn the_drain_and_the_usage_limit_outrank_the_environment_and_the_environment_the
 /// over every run notes each, the file last.
 #[test_log::test]
 fn a_start_held_by_a_file_notes_the_holds_over_every_run_before_it() {
-    let world = snapshot(vec![claimed(ticket(1))]);
+    let world = snapshot_of(vec![claimed(ticket(1))]);
     let file = FileError {
         path: ".linewright/config.toml".into(),
         error: "invalid".into(),

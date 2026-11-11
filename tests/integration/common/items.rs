@@ -184,6 +184,15 @@ pub fn draining_since(since: &str) -> Memory {
     }
 }
 
+/// A snapshot of `main` holding `issues` and nothing else.
+pub fn snapshot_of(issues: Vec<Issue>) -> Snapshot {
+    Snapshot {
+        default_branch: "main".into(),
+        issues,
+        ..Snapshot::default()
+    }
+}
+
 pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
     View {
         snapshot: Arc::new(Snapshot {

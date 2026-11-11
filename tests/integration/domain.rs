@@ -6,10 +6,6 @@ use chrono::TimeDelta;
 use common::*;
 use linewright::domain::*;
 
-fn linewright() -> Login {
-    Login::new(LINEWRIGHT)
-}
-
 /// A comment `by` wrote at 10:00 on 2026-10-01.
 fn comment(by: &str) -> Comment {
     Comment {
