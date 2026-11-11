@@ -145,6 +145,8 @@
 //! # `items`: item and view builders for the functional core
 //!
 //! - `policy`: the policy the functional core decides with.
+//! - `linewright`: the login Linewright works as, as a `Login`.
+//! - `logins`: the `Login`s of some names.
 //! - `sub_issue`: a sub-issue, open or closed, by an author.
 //! - `ticket`: an open ticket, ready for an agent and designed.
 //! - `relabeled`: an issue labeled twice, only the label events telling which last.
@@ -153,6 +155,7 @@
 //! - `in_flight`: a run in flight, started at a given time.
 //! - `limited_until`: memory of a usage limit that resets at a given time.
 //! - `draining_since`: memory of a drain since a given time.
+//! - `snapshot_of`: a snapshot holding some issues and nothing else.
 //! - `view`: the status view of some issues and pull requests.
 //!
 //! # `webhooks`: deliveries
