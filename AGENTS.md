@@ -25,7 +25,7 @@ The briefs are what people write for Linewright's agents: the skills, the
 prompts, Linewright's own wording of what it fills into them, and the result
 schemas. All of it lives in `briefs/`. Edit it only in an interactive session.
 
-# Ownership
+## Ownership
 
 This codebase is yours: what it's for and how it's built are your call, and
 you'll keep building on it.
