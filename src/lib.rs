@@ -39,6 +39,7 @@ pub mod lifecycle;
 pub mod listening;
 pub mod logs;
 pub mod managed;
+pub mod party;
 pub mod phrase;
 pub mod prompts;
 pub mod pull_records;

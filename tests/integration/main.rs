@@ -37,6 +37,7 @@ mod local_store;
 mod logs;
 mod maintenance;
 mod managed_items;
+mod party;
 mod phrase;
 mod pipeline;
 mod posted_attachments;
