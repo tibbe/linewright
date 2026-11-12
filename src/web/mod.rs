@@ -3,6 +3,7 @@
 
 mod automations_page;
 mod board_page;
+mod capture;
 mod cards;
 mod facts;
 mod html;
@@ -111,7 +112,10 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
-        .route("/runs/{*id}", get(run_page::run_page))
+        .route(
+            "/runs/{*id}",
+            get(run_page::run_page).post(capture::capture),
+        )
         .route("/events/runs/{*id}", get(run_page::run_events))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))

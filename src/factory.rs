@@ -540,7 +540,11 @@ impl Factory {
     }
 
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
-        Some(Served::new(self.view(next_poll)?, self.shell.store.clone()))
+        Some(Served::new(
+            self.view(next_poll)?,
+            self.shell.store.clone(),
+            self.shell.secrets.redaction().clone(),
+        ))
     }
 
     fn view(&self, next_poll: Timestamp) -> Option<View> {

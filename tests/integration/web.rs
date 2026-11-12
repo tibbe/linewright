@@ -2,6 +2,7 @@ use crate::common;
 
 mod automations;
 mod board;
+mod capture;
 mod environment;
 mod frame;
 mod item;
@@ -221,7 +222,11 @@ impl Pages {
             next: view.polls.next,
             failed: None,
         };
-        let served = Some(linewright::api::Served::new(view, store.clone()));
+        let served = Some(linewright::api::Served::new(
+            view,
+            store.clone(),
+            linewright::redaction::Redaction::default(),
+        ));
         let (served, served_receiver) = tokio::sync::watch::channel(served);
         let (_, polling) = tokio::sync::watch::channel(Some(polling));
         let since = clock.now();
@@ -249,7 +254,11 @@ impl Pages {
 
     /// Publishes `view` as the next one `serve` shows, as a poll would.
     fn publish(&self, view: linewright::status::View) {
-        let served = linewright::api::Served::new(view, self.store.clone());
+        let served = linewright::api::Served::new(
+            view,
+            self.store.clone(),
+            linewright::redaction::Redaction::default(),
+        );
         self.served.send_replace(Some(served));
     }
 
