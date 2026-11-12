@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::case::{self, CaptureError, CaseName};
+use linewright::case::{self, CaptureError, CaseName, Refusal};
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -903,12 +903,9 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
 /// Captures run `id` as the case `name`, with the criteria in the file
 /// `criteria`, refusing before connecting to GitHub what it can.
 async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<&Path>) -> u8 {
-    let refusal = |e: CaptureError| match e {
-        CaptureError::NoSuchRun(_) => refused(&RequestError::NotFound(e.to_string())),
-        CaptureError::Failed(e) => failed(&e),
-        CaptureError::NotCapturable(_) | CaptureError::NoInput(_) | CaptureError::Taken(_) => {
-            (FAILURE, e.to_string())
-        }
+    let refusal = |e: CaptureError| match e.refusal() {
+        Refusal::NoSuchRun => refused(&RequestError::NotFound(e.why())),
+        Refusal::Refused | Refusal::Failed => (FAILURE, e.why()),
     };
     let work_dir = match config.repo_work_dir() {
         Ok(work_dir) => work_dir.resolve(),

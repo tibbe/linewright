@@ -77,6 +77,40 @@ pub enum CaptureError {
     Failed(#[from] anyhow::Error),
 }
 
+/// How a capture that did not happen is answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// There is no such run.
+    NoSuchRun,
+    /// The run cannot be captured, or not under the name asked.
+    Refused,
+    /// The capture failed.
+    Failed,
+}
+
+impl CaptureError {
+    pub fn refusal(&self) -> Refusal {
+        match self {
+            CaptureError::NoSuchRun(_) => Refusal::NoSuchRun,
+            CaptureError::NotCapturable(_) | CaptureError::NoInput(_) | CaptureError::Taken(_) => {
+                Refusal::Refused
+            }
+            CaptureError::Failed(_) => Refusal::Failed,
+        }
+    }
+
+    /// Why the capture did not happen, a failure with all its causes.
+    pub fn why(&self) -> String {
+        match self {
+            CaptureError::Failed(e) => format!("{e:#}"),
+            CaptureError::NoSuchRun(_)
+            | CaptureError::NotCapturable(_)
+            | CaptureError::NoInput(_)
+            | CaptureError::Taken(_) => self.to_string(),
+        }
+    }
+}
+
 /// What a run that cannot be captured is of, as in "a rework run".
 struct Uncapturable<'a>(&'a RunOf);
 
@@ -111,13 +145,44 @@ pub fn capturable_stage(of: &RunOf) -> Option<(WorkKind, Number)> {
     }
 }
 
-/// A run that can be captured, with what it is to be captured as.
+/// A run that can be captured: a triage, design or implement run that
+/// recorded its input.
 #[derive(Debug)]
-pub struct Capturable {
+pub struct CapturableRun {
     run: RunId,
     stage: WorkKind,
     item: Number,
     input: Input,
+}
+
+impl CapturableRun {
+    pub fn id(&self) -> &RunId {
+        &self.run
+    }
+}
+
+/// `run`, of those `runs` keeps, if it can be captured, or why not.
+pub fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, CaptureError> {
+    if runs.try_read_run(run)?.is_none() {
+        return Err(CaptureError::NoSuchRun(run.clone()));
+    }
+    let (stage, item) =
+        capturable_stage(&run.of).ok_or_else(|| CaptureError::NotCapturable(run.clone()))?;
+    let input = runs
+        .read_input(run)?
+        .ok_or_else(|| CaptureError::NoInput(run.clone()))?;
+    Ok(CapturableRun {
+        run: run.clone(),
+        stage,
+        item,
+        input,
+    })
+}
+
+/// A run that can be captured, with what it is to be captured as.
+#[derive(Debug)]
+pub struct Capturable {
+    run: CapturableRun,
     name: CaseName,
     cases: PathBuf,
 }
@@ -131,22 +196,12 @@ pub fn capturable(
     run: &RunId,
     name: &CaseName,
 ) -> Result<Capturable, CaptureError> {
-    if runs.try_read_run(run)?.is_none() {
-        return Err(CaptureError::NoSuchRun(run.clone()));
-    }
-    let (stage, item) =
-        capturable_stage(&run.of).ok_or_else(|| CaptureError::NotCapturable(run.clone()))?;
-    let input = runs
-        .read_input(run)?
-        .ok_or_else(|| CaptureError::NoInput(run.clone()))?;
+    let run = capturable_run(runs, run)?;
     if cases.join(name.as_str()).symlink_metadata().is_ok() {
         return Err(CaptureError::Taken(name.clone()));
     }
     Ok(Capturable {
-        run: run.clone(),
-        stage,
-        item,
-        input,
+        run,
         name: name.clone(),
         cases: cases.to_path_buf(),
     })
@@ -164,10 +219,13 @@ pub async fn capture(
     redaction: &Redaction,
 ) -> Result<PathBuf, CaptureError> {
     let Capturable {
-        run,
-        stage,
-        item,
-        input,
+        run:
+            CapturableRun {
+                run,
+                stage,
+                item,
+                input,
+            },
         name,
         cases,
     } = capturable;
