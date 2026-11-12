@@ -58,9 +58,9 @@ request that is reviewed, green and ready for a person.
 - **Automations beside the pipeline.** Automations in the repository run agents
   on a trigger with instructions the maintainer writes, and may hand work to
   the pipeline.
-- **Runs again on request.** A spec change the factory handled can be
-  captured as a case and run through the whole pipeline again, so the briefs
-  are tuned against real cases.
+- **Tuned against real work.** A run of a stage can be captured as a case
+  holding what it was given, so that the stage is run on it again with its
+  briefs or settings changed.
 
 A maintainer merges a pull request that adds invoices to the spec. Linewright
 implements the change, has agents review the work and delivers it as pull
@@ -107,7 +107,7 @@ flowchart LR
 | [Sessions](sessions.md) | What an agent session is given, and what it is kept from. |
 | [Operation](operation.md) | Running Linewright. |
 | [Monitoring](monitoring.md) | Seeing what Linewright is doing and why, from a shell or a browser. |
-| [Replay](replay.md) | Running a captured case through the pipeline again to tune the briefs. |
+| [Benchmarks](benchmarks.md) | Capturing a stage's runs as cases, to run the stage on them again. |
 
 ## Out of scope
 
