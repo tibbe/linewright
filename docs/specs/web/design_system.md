@@ -65,8 +65,7 @@ two themes of its own.
   with its label inside it as daisyUI's `label`, at the left.
 - **On the runs page**, Item and Since are `input`s and Stage is a
   `select`.
-- **Person** is an `input` with the browser's own suggestions
-  (`datalist`).
+- **On the board**, Person is a `select`.
 
 ## Facts
 
