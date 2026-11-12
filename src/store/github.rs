@@ -781,6 +781,10 @@ impl GitHub {
         .await
     }
 
+    fn clone_url(&self) -> String {
+        format!("https://github.com/{}/{}.git", self.owner, self.name)
+    }
+
     /// The environment that has git authenticate to GitHub with the token,
     /// which no clone's configuration holds.
     fn git_env(&self) -> Vec<(String, String)> {
@@ -3931,12 +3935,19 @@ impl Store for GitHub {
     }
 
     async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()> {
-        let url = format!("https://github.com/{}/{}.git", self.owner, self.name);
-        git::clone(&url, dir, branch, config, &self.git_env()).await
+        git::clone(&self.clone_url(), dir, branch, config, &self.git_env()).await
     }
 
     async fn fetch(&self, dir: &Path) -> Result<()> {
         git::fetch(dir, &self.git_env()).await
+    }
+
+    async fn fetch_commits(
+        &self,
+        bare: &Path,
+        heads: &BTreeMap<String, git::CommitId>,
+    ) -> Result<()> {
+        git::fetch_commits(&self.clone_url(), bare, heads, &self.git_env()).await
     }
 
     async fn push(

@@ -609,6 +609,11 @@ pub trait Store: Send + Sync {
     /// Each issue or pull request of `numbers` as GitHub's REST API gives it,
     /// read with [`API_VERSION`]; fails when the store lacks one.
     async fn record_items(&self, numbers: &BTreeSet<Number>) -> Result<Vec<RecordedItem>>;
+    /// Creates at `bare` a bare repository whose branches are `heads`, each
+    /// set to its commit with that commit's history and nothing else. Fails,
+    /// naming the commit, when the repository lacks one, having set no
+    /// branch.
+    async fn fetch_commits(&self, bare: &Path, heads: &BTreeMap<String, CommitId>) -> Result<()>;
 }
 
 #[cfg(test)]

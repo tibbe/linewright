@@ -2,6 +2,7 @@
 //! run records its input.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use linewright::domain::Number;
@@ -17,6 +18,8 @@ contracts![
     an_issue_without_a_parent_is_recorded_without_one,
     a_pull_request_is_recorded_with_its_own_resource,
     the_heads_are_of_the_branches_the_repository_has,
+    the_commits_are_fetched_as_branches_with_their_history_alone,
+    a_commit_the_repository_lacks_fails_the_fetch_naming_it_and_fetches_nothing,
 ];
 
 /// Opens an issue, as Linewright, titled for `what`.
@@ -234,5 +237,130 @@ async fn the_heads_are_of_the_branches_the_repository_has(sandbox: Sandbox) -> R
             (default_branch, default_head),
             (pushed.name, git::CommitId::from(pushed.head.as_str())),
         ]),
+    )
+}
+
+/// The branches of the repository at `bare`, with their heads.
+async fn branches_of(bare: &Path) -> Result<BTreeMap<String, git::CommitId>> {
+    let refs = git::git(
+        bare,
+        &["for-each-ref", "--format=%(refname)%09%(objectname)"],
+    )
+    .await?;
+    Ok(refs
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(name, head)| (name.to_string(), git::CommitId::from(head)))
+        .collect())
+}
+
+/// The names of the objects `args` of `git` list in `bare`, one per line,
+/// each first on its line.
+async fn objects(bare: &Path, args: &[&str]) -> Result<BTreeSet<String>> {
+    Ok(git::git(bare, args)
+        .await?
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect())
+}
+
+async fn the_commits_are_fetched_as_branches_with_their_history_alone(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let default_branch = sandbox.default_branch().await?;
+    let default_head = git::head(&sandbox.clone_default_branch().await?).await?;
+    let fetched = sandbox
+        .push_branch(
+            "fetched",
+            &[NewCommit {
+                message: "Add a fetched file",
+                files: &[("fetched.txt", b"fetched\n")],
+            }],
+        )
+        .await?;
+    let left = sandbox
+        .push_branch(
+            "left",
+            &[NewCommit {
+                message: "Add a file left out",
+                files: &[("left.txt", b"left\n")],
+            }],
+        )
+        .await?;
+    let bare = sandbox.scratch().join("fetched.git");
+    let heads = BTreeMap::from([
+        (default_branch.clone(), default_head.clone()),
+        (
+            fetched.name.clone(),
+            git::CommitId::from(fetched.head.as_str()),
+        ),
+    ]);
+
+    sandbox.store().fetch_commits(&bare, &heads).await?;
+
+    equal(
+        "whether the repository is bare",
+        &git::git(&bare, &["rev-parse", "--is-bare-repository"]).await?,
+        &"true\n".to_string(),
+    )?;
+    equal(
+        "the branches",
+        &branches_of(&bare).await?,
+        &BTreeMap::from([
+            (format!("refs/heads/{default_branch}"), default_head),
+            (
+                format!("refs/heads/{}", fetched.name),
+                git::CommitId::from(fetched.head.as_str()),
+            ),
+        ]),
+    )?;
+    let history = objects(&bare, &["rev-list", "--objects", "--all"]).await?;
+    equal(
+        "the history holds the fetched commit's file",
+        &git::git(&bare, &["show", &format!("{}:fetched.txt", fetched.head)])
+            .await
+            .ok(),
+        &Some("fetched\n".to_string()),
+    )?;
+    equal(
+        "the commit left out is",
+        &history.contains(&left.head),
+        &false,
+    )?;
+    equal(
+        "the objects",
+        &objects(&bare, &["cat-file", "--batch-all-objects", "--batch-check"]).await?,
+        &history,
+    )
+}
+
+async fn a_commit_the_repository_lacks_fails_the_fetch_naming_it_and_fetches_nothing(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let default_branch = sandbox.default_branch().await?;
+    let default_head = git::head(&sandbox.clone_default_branch().await?).await?;
+    let lacked = "0123456789abcdef0123456789abcdef01234567";
+    let bare = sandbox.scratch().join("lacking.git");
+    let heads = BTreeMap::from([
+        (default_branch, default_head),
+        (sandbox.unique("lacked"), git::CommitId::from(lacked)),
+    ]);
+
+    let fetched = sandbox.store().fetch_commits(&bare, &heads).await;
+
+    let error = match fetched {
+        Ok(()) => anyhow::bail!("fetched a commit the repository lacks"),
+        Err(error) => format!("{error:#}"),
+    };
+    equal(
+        "whether the error names the commit",
+        &error.contains(lacked),
+        &true,
+    )?;
+    equal(
+        "the branches",
+        &branches_of(&bare).await.unwrap_or_default(),
+        &BTreeMap::new(),
     )
 }

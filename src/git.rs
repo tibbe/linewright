@@ -151,6 +151,41 @@ pub async fn fetch(dir: &Path, env: &GitEnv) -> Result<()> {
     Ok(())
 }
 
+/// Creates at `bare` a bare repository whose branches are `heads`, each set
+/// to its commit, fetched from `url` with its history and nothing else.
+/// Fails, naming the commits, when `url` lacks one, having fetched none.
+pub async fn fetch_commits(
+    url: &str,
+    bare: &Path,
+    heads: &std::collections::BTreeMap<String, CommitId>,
+    env: &GitEnv,
+) -> Result<()> {
+    tokio::fs::create_dir_all(bare)
+        .await
+        .with_context(|| format!("creating {}", bare.display()))?;
+    git(bare, &["init", "--quiet", "--bare"]).await?;
+    if heads.is_empty() {
+        return Ok(());
+    }
+    let refspecs: Vec<String> = heads
+        .iter()
+        .map(|(branch, commit)| format!("{commit}:refs/heads/{branch}"))
+        .collect();
+    let mut args = vec![
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        url,
+    ];
+    args.extend(refspecs.iter().map(String::as_str));
+    git_with(bare, &args, env).await.with_context(|| {
+        let commits: Vec<&str> = heads.values().map(CommitId::as_str).collect();
+        format!("fetching the commits {}", commits.join(", "))
+    })?;
+    Ok(())
+}
+
 /// Writes each `config` setting, such as `user.name`, to the config of the
 /// clone in `dir`.
 pub async fn configure(dir: &Path, config: &[(&str, &str)]) -> Result<()> {
