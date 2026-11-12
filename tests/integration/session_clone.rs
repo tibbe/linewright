@@ -338,6 +338,7 @@ async fn a_clone_still_being_made_at_its_sessions_deadline_or_when_its_run_is_ca
 #[test_log::test(tokio::test)]
 async fn a_factory_starting_removes_a_clone_left_behind() {
     let mut world = World::new().await;
+    world.factory.winding_up().wait().await;
     let left = world
         .dir
         .path()
