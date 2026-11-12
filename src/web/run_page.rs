@@ -18,6 +18,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
+use super::capture::Offer;
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::ItemCell;
@@ -1022,6 +1023,8 @@ struct RunPage {
     verbose: bool,
     /// The page with the switch the other way.
     switched: String,
+    /// The offer to capture the run, empty for one that cannot be.
+    capture: Html,
     transcript: String,
 }
 
@@ -1219,6 +1222,9 @@ pub(super) async fn run_page(
             frame,
             verbose,
             switched: page_path(&run, "", !verbose, None),
+            capture: Offer::of(&sources, &run)
+                .map(|offer| offer.html(&sources))
+                .unwrap_or_default(),
             transcript,
         }
         .into_response(),
@@ -1278,10 +1284,15 @@ pub(super) async fn run_events(
         }
         _ => None,
     };
+    let offered = run_id(&id)
+        .ok()
+        .and_then(|run| Offer::of(&sources, &run))
+        .is_some();
     let stream = RunStream {
         sent: Sent::default(),
         samples: samples(),
         transcript,
+        offered,
         sources,
         stopping,
     };
@@ -1297,6 +1308,8 @@ struct RunStream {
     samples: tokio::time::Interval,
     /// `None` once the run has ended, or with the page not following it.
     transcript: Option<FollowedRun>,
+    /// Whether the page offers to capture the run.
+    offered: bool,
     sources: Sources,
     stopping: CancellationToken,
 }
@@ -1329,7 +1342,11 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    let changed = self.sent.changed(frame_regions(&Frame::of(&self.sources)));
+                    let mut regions = frame_regions(&Frame::of(&self.sources));
+                    if self.offered {
+                        regions.push(Offer::region(&self.sources));
+                    }
+                    let changed = self.sent.changed(regions);
                     changed
                         .map(|message| Event::default().data(message))
                         .into_iter()

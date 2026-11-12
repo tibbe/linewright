@@ -33,6 +33,7 @@ use crate::host::HostName;
 use crate::item_facts::{self, ItemFacts};
 use crate::listening::Listening;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
+use crate::redaction::Redaction;
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Polling, Serving, Status, StatusSources, View};
 use crate::store::Store;
@@ -180,11 +181,26 @@ fn private_dir(dir: &Path) -> Result<()> {
 pub struct Served {
     view: View,
     store: Arc<dyn Store>,
+    redaction: Redaction,
 }
 
 impl Served {
-    pub fn new(view: View, store: Arc<dyn Store>) -> Served {
-        Served { view, store }
+    /// `view`, with the store it was read from and the redaction of
+    /// Linewright's secrets.
+    pub fn new(view: View, store: Arc<dyn Store>, redaction: Redaction) -> Served {
+        Served {
+            view,
+            store,
+            redaction,
+        }
+    }
+
+    pub fn store(&self) -> &dyn Store {
+        &*self.store
+    }
+
+    pub fn redaction(&self) -> &Redaction {
+        &self.redaction
     }
 
     pub fn run_ids(&self) -> Vec<runs::RunId> {
