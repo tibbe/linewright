@@ -3,6 +3,7 @@
 //! the time alone.
 
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
 
 use crate::domain::{
     CheckState, ClosedKind, Issue, Login, Marking, Mergeability, Number, Pull, PullState,
@@ -94,13 +95,13 @@ impl Board {
         }
     }
 
-    /// Every party to a card on it, sorted by login and each once.
+    /// Each person some card on it matches, sorted by login and each once.
     pub fn people(&self) -> Vec<Login> {
         let mut people: Vec<Login> = self
             .lanes
             .iter()
             .flat_map(|lane| lane.columns.iter().flatten())
-            .flat_map(|card| card.parties.iter().cloned())
+            .flat_map(|card| card.people.iter().cloned())
             .collect();
         people.sort();
         people.dedup();
@@ -152,12 +153,12 @@ impl Lane {
         }
     }
 
-    /// It with only the cards `person` is party to, if any is.
+    /// It with only the cards that match `person`, if any does.
     fn narrowed(&self, person: &Login) -> Option<Lane> {
         let columns = self.columns.clone().map(|cards| {
             cards
                 .into_iter()
-                .filter(|card| card.parties.contains(person))
+                .filter(|card| card.people.contains(person))
                 .collect::<Vec<_>>()
         });
         columns.iter().any(|cards| !cards.is_empty()).then(|| Lane {
@@ -288,8 +289,11 @@ pub struct Card {
     pub entered: Option<Timestamp>,
     /// When it last changed.
     changed: Timestamp,
-    /// The people party to its item ([`party::parties`]), sorted by login.
-    pub parties: Vec<Login>,
+    /// The people it matches (`docs/specs/design_system.md`, Filtering by
+    /// person): those party to its item
+    /// ([`party::parties`]) and, for a ticket on the board, to its tracking
+    /// issue ([`party::party_to`]).
+    pub people: BTreeSet<Login>,
 }
 
 impl Card {
@@ -524,7 +528,7 @@ fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column
         line,
         entered: entered(column, managed.number, view),
         changed: last_change(seen, &on),
-        parties: party::parties(snapshot, &view.policy.linewright, managed.number),
+        people: party::parties(snapshot, &view.policy.linewright, managed.number),
     };
     Some((column, card))
 }
@@ -582,12 +586,15 @@ pub fn board(view: &View, recorded: &[Recorded], now: Timestamp) -> Board {
         .iter()
         .map(|tracker| Gathering::of(tracker.head()))
         .collect();
-    for (column, card) in cards {
+    for (column, mut card) in cards {
         let tracker = trackers
             .iter()
             .position(|tracker| tracker.tickets.contains(&card.number));
         match tracker {
-            Some(i) => lanes[i].columns[column as usize].push(card),
+            Some(i) => {
+                card.people.extend(trackers[i].parties.iter().cloned());
+                lanes[i].columns[column as usize].push(card);
+            }
             None => {
                 let mut lane = Gathering::of(LaneHead::Item {
                     number: card.number,
@@ -848,6 +855,9 @@ struct Tracker {
     counted: Tickets,
     /// When it became done, if it is done.
     done: Option<Timestamp>,
+    /// The people party to it ([`party::party_to`]), whom its tickets'
+    /// cards match.
+    parties: BTreeSet<Login>,
 }
 
 impl Tracker {
@@ -872,6 +882,7 @@ impl Tracker {
                 &issue.title,
                 &issue.sub_issues,
                 done_at(merge, None),
+                party::party_to(snapshot, linewright, number),
                 linewright,
             ));
         }
@@ -888,6 +899,7 @@ impl Tracker {
             &item.title,
             &facts.sub_issues,
             done_at(merge, Some(item.closed_at)),
+            party::party_to(snapshot, linewright, number),
             linewright,
         ))
     }
@@ -897,6 +909,7 @@ impl Tracker {
         title: &str,
         sub_issues: &[SubIssue],
         done: Option<Timestamp>,
+        parties: BTreeSet<Login>,
         linewright: &Login,
     ) -> Tracker {
         Tracker {
@@ -907,6 +920,7 @@ impl Tracker {
                 .collect(),
             counted: Tickets::of(sub_issues, linewright),
             done,
+            parties,
         }
     }
 

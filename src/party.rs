@@ -5,24 +5,22 @@ use std::collections::BTreeSet;
 
 use crate::domain::{Login, Number, Snapshot};
 
-/// The people party to #`number`, sorted by login and each once: those who
-/// opened it, are assigned to it or review it, or a pull request the
-/// snapshot holds that closes it ([`Snapshot::pulls_on`]). An item
-/// Linewright opened counts as opened by whoever opened what it was opened
-/// for, followed back ([`Snapshot::opening`]). `linewright` is party to
-/// nothing.
-pub fn parties(snapshot: &Snapshot, linewright: &Login, number: Number) -> Vec<Login> {
-    let mut parties: Vec<Login> = std::iter::once(number)
+/// The people party to #`number` or a pull request the snapshot holds that
+/// closes it ([`Snapshot::pulls_on`]): those [`party_to`] each.
+pub fn parties(snapshot: &Snapshot, linewright: &Login, number: Number) -> BTreeSet<Login> {
+    std::iter::once(number)
         .chain(snapshot.pulls_on(number))
-        .flat_map(|item| {
-            let mut parties = openers(snapshot, linewright, item);
-            parties.extend(snapshot.roles(item).into_iter().cloned());
-            parties
-        })
-        .filter(|login| login != linewright)
-        .collect();
-    parties.sort();
-    parties.dedup();
+        .flat_map(|item| party_to(snapshot, linewright, item))
+        .collect()
+}
+
+/// The people party to #`number` alone: those who opened it, are assigned to it or review it. An item Linewright
+/// opened counts as opened by whoever opened what it was opened for,
+/// followed back ([`Snapshot::opening`]). `linewright` is party to nothing.
+pub fn party_to(snapshot: &Snapshot, linewright: &Login, number: Number) -> BTreeSet<Login> {
+    let mut parties: BTreeSet<Login> = openers(snapshot, linewright, number).into_iter().collect();
+    parties.extend(snapshot.roles(number).into_iter().cloned());
+    parties.remove(linewright);
     parties
 }
 

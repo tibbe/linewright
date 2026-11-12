@@ -8,7 +8,7 @@ use linewright::party::parties;
 fn assert_parties(snapshot: &Snapshot, number: u64, expected: &[&str]) {
     assert_eq!(
         parties(snapshot, &linewright(), Number(number)),
-        logins(expected)
+        logins(expected).into_iter().collect()
     );
 }
 
