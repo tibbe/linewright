@@ -17,7 +17,8 @@ material, the files they name by path such as the briefs in `briefs/`, is part
 of what they decide, each in its own form rather than spec prose.
 
 Keep the specs in step with user-visible behavior changes. Changes to specs
-require human approval.
+require human approval. In an interactive session, a spec change ends at its
+PR: Linewright implements it once it is merged.
 
 ## Briefs
 
