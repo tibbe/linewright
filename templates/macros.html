@@ -51,17 +51,18 @@
 </form>
 {%- endmacro -%}
 
-{#- A filter typed in, `value` empty while it is unset, suggesting the
-    options of the `datalist` whose id is `list`, if any, `width` wide and
+{#- A filter typed in, `value` empty while it is unset, `width` wide and
     with the keyboard `inputmode` asks for. -#}
-{%- macro filter_input(label, name, value, list = "", width = "w-32", placeholder = "", inputmode = "") -%}
-<label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !list.is_empty() %} list="{{ list }}"{% endif %}{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
+{%- macro filter_input(label, name, value, width = "w-32", placeholder = "", inputmode = "") -%}
+<label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
 {%- endmacro -%}
 
 {#- A filter chosen from `options`, each its value and whether it is
-    chosen, reading `all` while it is unset. -#}
-{%- macro filter_select(label, name, all, options) -%}
-<label class="select select-sm w-auto"><span class="label">{{ label }}</span><select name="{{ name }}">
+    chosen, reading `all` while it is unset. Given `options_from`, the id of
+    an element on the page, the script keeps its options those of that
+    element as updates bring it. -#}
+{%- macro filter_select(label, name, all, options, options_from = "") -%}
+<label class="select select-sm w-auto"><span class="label">{{ label }}</span><select name="{{ name }}"{% if !options_from.is_empty() %} data-options="{{ options_from }}"{% endif %}>
 <option value="">{{ all }}</option>
 {%- for (option, chosen) in options %}
 <option value="{{ option }}"{% if chosen %} selected{% endif %}>{{ option }}</option>

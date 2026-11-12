@@ -3,8 +3,8 @@
  * page lost `serve`, shows times and durations in the page's language and the
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
  * entry while the reader is there, keeps each fold as the reader opened or
- * closed it through updates, applies the page's filters as they are chosen,
- * and shows the page's tooltip.
+ * closed it through updates, keeps the options of the page's filters up and
+ * applies the filters as they are chosen, and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -141,10 +141,38 @@
   }
 
   /**
+   * Fills each select with `data-options` from the element whose id it names
+   * (docs/specs/design_system.md, The people): its first, unset option, then
+   * the element's options in their order, with whichever is chosen still
+   * chosen, its own option kept in its place where the element lacks it.
+   * Setting a select's options or value fires no `change`:
+   * https://html.spec.whatwg.org/multipage/form-elements.html#send-select-update-notifications
+   */
+  function fillOptions() {
+    for (const select of document.querySelectorAll("select[data-options]")) {
+      const source = document.getElementById(select.getAttribute("data-options"));
+      if (!source) continue;
+      const chosen = select.value;
+      const [unset, ...old] = Array.from(select.options);
+      const options = Array.from(
+        source.querySelectorAll("option"),
+        ({ value }) => old.find((option) => option.value === value) || new Option(value, value),
+      );
+      const at = old.findIndex((option) => option.value === chosen);
+      if (at !== -1 && !options.some((option) => option.value === chosen)) {
+        options.splice(at, 0, old[at]);
+      }
+      select.replaceChildren(unset, ...options);
+      select.value = chosen;
+    }
+  }
+
+  /**
    * Brings the page up to date after a message, `entries` whether it added
    * to the transcript.
    */
   function swapped(entries) {
+    fillOptions();
     keepFolds();
     tick();
     refreshTip();
@@ -249,14 +277,6 @@
   }
 
   applyOn("change", (event) => event.target.tagName === "SELECT");
-  // A pick from a field's `datalist` fires `input` alone, and no event
-  // tells it from typing in all browsers:
-  // https://html.spec.whatwg.org/multipage/form-elements.html#the-datalist-element
-  applyOn("input", (event) =>
-    Array.from(event.target.list?.options || []).some(
-      (option) => option.value === event.target.value,
-    ),
-  );
   // A form with more than one field to type in submits on no Enter:
   // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission
   applyOn("keydown", (event) => event.key === "Enter" && event.target.tagName === "INPUT");

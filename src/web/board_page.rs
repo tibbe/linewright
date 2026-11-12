@@ -34,8 +34,10 @@ impl FilterQuery {
     }
 }
 
-/// The board as the page shows it: the whole board's tab title and people,
-/// and its lanes narrowed to `person`, if set.
+/// The board as the page shows it: the whole board's tab title, its lanes
+/// narrowed to `person`, if set, and the people to choose from, the whole
+/// board's and `person`, each once, by login (`docs/specs/design_system.md`,
+/// The people).
 struct BoardPageShown {
     title: String,
     board: BoardShown,
@@ -45,10 +47,17 @@ struct BoardPageShown {
 impl BoardPageShown {
     fn of(board: &Board, person: Option<&Login>, repo: &str) -> BoardPageShown {
         let narrowed = person.map(|person| board.narrowed(person));
+        let mut people = board.people();
+        if let Some(person) = person
+            && !people.contains(person)
+        {
+            people.push(person.clone());
+            people.sort();
+        }
         BoardPageShown {
             title: board_title(board, repo),
             board: BoardShown::of(narrowed.as_ref().unwrap_or(board), repo),
-            people: board.people(),
+            people,
         }
     }
 }
@@ -159,10 +168,11 @@ impl CardShown {
 struct BoardPage {
     page: Page,
     frame: Frame,
-    /// The person the board is narrowed to, empty while unset.
-    person: String,
     board: BoardShown,
     people: Vec<Login>,
+    /// The Person filter's options: each person's login and whether they
+    /// are chosen.
+    person_options: Vec<(String, bool)>,
 }
 
 #[derive(Template)]
@@ -171,6 +181,7 @@ struct BoardRegion<'a> {
     board: &'a BoardShown,
 }
 
+/// The people Person is chosen from: the stream's `people` region.
 #[derive(Template)]
 #[template(path = "board.html", block = "people")]
 struct PeopleRegion<'a> {
@@ -181,6 +192,15 @@ struct PeopleRegion<'a> {
 /// board.
 fn board_title(board: &Board, repo: &str) -> String {
     format!("({}) Board · {repo}", board.needing_a_person)
+}
+
+/// The Person filter's options: each of `people`'s logins and whether it is
+/// `person`.
+fn person_options(people: &[Login], person: Option<&Login>) -> Vec<(String, bool)> {
+    people
+        .iter()
+        .map(|login| (login.0.clone(), person == Some(login)))
+        .collect()
 }
 
 /// The board's stream, narrowed to `person`, if set.
@@ -196,18 +216,19 @@ pub(super) async fn board_page(
     let repo = &sources.work_dir.repo;
     let person = filters.person();
     let shown = BoardPageShown::of(&api::board_answer(&sources), person.as_ref(), repo);
+    let person_options = person_options(&shown.people, person.as_ref());
     BoardPage {
         page: Page::new(shown.title, events_path(person.as_ref())).filling_the_viewport(),
         frame: Frame::of(&sources),
-        person: person.map_or_else(String::new, |person| person.0),
         board: shown.board,
         people: shown.people,
+        person_options,
     }
     .into_response()
 }
 
 /// The board's regions: the frame's, the tab's title, the board narrowed
-/// to its person, if set, and the people to suggest.
+/// to its person, if set, and the people Person is chosen from.
 pub(super) async fn board_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
