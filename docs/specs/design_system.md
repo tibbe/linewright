@@ -259,23 +259,24 @@ this order, each card in the column of its item's state
 #### Filtering by person
 
 The board has one filter ([Filters](#filters)), Person: it narrows the board
-to the cards a person is party to, by having opened, being assigned to or
-reviewing the card's item or a pull request on it.
+to the cards that match a person. A card matches whoever is party to its
+item, to a pull request on it or, for a ticket, to its tracking issue: by
+having opened it, being assigned to it or reviewing it.
 
 - **Opening.** An item Linewright opened counts as opened by whoever opened
   the item it was opened for, followed back to an account other than
-  Linewright's, such as a ticket by its tracking issue's opener, a spec gap
-  by that of the item whose work found it, and a spec change's issue by the
-  spec change's author. An item opened for none, such as an issue an
-  automation files, stays Linewright's.
+  Linewright's, such as a spec gap by that of the item whose work found it
+  and a spec change's issue by the spec change's author. An item opened for
+  none, such as an issue an automation files, stays Linewright's.
 - **Linewright.** Linewright is party to nothing.
 - **Reviewing.** A person reviews a pull request while a review is
   requested of them by name, and once they have reviewed it.
 - **Lanes.** A lane shows while any of its cards matches.
 - **Lane heads.** A lane's head, with its tickets closed of total, is the
   whole lane's.
-- **The people.** Person suggests every party to an item on the board, by
-  login, narrowed to those matching what the reader types.
+- **The people.** Person suggests, by login, each person some card on the
+  board matches, whoever is chosen, narrowed to those whose login matches
+  what the reader types.
 
 ### Cards
 
