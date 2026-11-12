@@ -31,6 +31,7 @@ use crate::git::{self, CommitId, WorkState};
 use crate::harness::{
     Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
+use crate::input;
 use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
 use crate::redaction::Redaction;
@@ -367,6 +368,23 @@ async fn push_result(
     }
 }
 
+/// Records what a triage, design or implement run is given, as it starts
+/// (`docs/specs/benchmarks.md`, "Recording a run's input"). A failure is
+/// logged, and the run goes on without input.
+async fn record_input(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
+    let Some(wanted) = input::wanted(snapshot, work, &shell.settings.default_branch) else {
+        return;
+    };
+    let start = ctx.run.in_flight().started_at;
+    let recorded = input::record(&*shell.store, &wanted, start)
+        .await
+        .and_then(|input| ctx.run.record_input(&input));
+    if let Err(e) = recorded {
+        let error = shell.secrets.redaction().apply(&format!("{e:#}"));
+        warn!(run = %ctx.run.id(), error, "recording the run's input failed; it goes on without");
+    }
+}
+
 pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, ctx: Ctx) {
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
     ctx.run.end(shell.clock.now(), ending);
@@ -374,6 +392,7 @@ pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, 
 
 async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Ending {
     let subject = work.subject();
+    record_input(shell, work, snapshot, ctx).await;
     let mut retries = 0;
     let hand_back = loop {
         match attempt(shell, work, snapshot, ctx).await {

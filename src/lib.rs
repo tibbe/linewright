@@ -32,6 +32,7 @@ pub mod git;
 pub mod harness;
 pub mod holds;
 pub mod host;
+pub mod input;
 pub mod item_facts;
 pub mod layer;
 pub mod lifecycle;
