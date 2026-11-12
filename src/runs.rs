@@ -14,6 +14,7 @@ use crate::automation::AutomationName;
 use crate::briefs::Briefs;
 use crate::domain::{Number, Repo, Timestamp};
 use crate::harness::Reported;
+use crate::input::Input;
 use crate::layer::{Layer, Source};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{EndedRun, OLD_DESIGN, WorkKind};
@@ -438,6 +439,12 @@ impl Runs {
         }
     }
 
+    /// The input run `id` recorded at its start, `None` when it recorded
+    /// none.
+    pub fn read_input(&self, id: &RunId) -> Result<Option<Input>> {
+        records::read(&input_path(&self.path_of(id)))
+    }
+
     /// A record that does not read is logged and taken as missing.
     pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
         self.load(&self.path_of(id))
@@ -476,6 +483,7 @@ impl Runs {
             for dir in entries(&self.dir().join(kind))? {
                 for path in entries(&dir)? {
                     if path.extension().is_some_and(|e| e == "json")
+                        && !is_input(&path)
                         && let Some(record) = self.load(&path)
                     {
                         recorded.push(record);
@@ -505,6 +513,20 @@ impl OldPlace {
         self.dir.join(format!("{}{n}.json", self.prefix))
     }
 }
+
+/// Where the input of the run whose record is at `record` is kept: beside
+/// it, as `<stage>-<n>.input.json`.
+fn input_path(record: &Path) -> PathBuf {
+    record.with_extension(INPUT_EXTENSION)
+}
+
+fn is_input(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(&format!(".{INPUT_EXTENSION}")))
+}
+
+const INPUT_EXTENSION: &str = "input.json";
 
 fn file_prefix(of: &RunOf) -> String {
     match of {
@@ -661,6 +683,12 @@ impl Running {
             kept: self.kept.clone(),
             index,
         }
+    }
+
+    /// Keeps `input` as what the run was given, beside its record, as it
+    /// is: unredacted.
+    pub fn record_input(&self, input: &Input) -> Result<()> {
+        records::save(&input_path(&self.kept.path), input, "a run's input")
     }
 
     pub fn answered(&self, at: Timestamp) {
