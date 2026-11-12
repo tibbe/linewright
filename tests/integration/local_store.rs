@@ -251,7 +251,7 @@ async fn closing_a_pull_request_moves_when_it_was_last_updated() {
 }
 
 #[test_log::test(tokio::test)]
-async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach() {
+async fn uploads_of_the_same_bytes_keep_one_file() {
     let world = World::new().await;
     let session = tempfile::tempdir().unwrap();
     let shot = session.path().join("shot.png");
@@ -271,7 +271,7 @@ async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach()
         .unwrap();
 
     let named_by_the_sha256_of_the_bytes =
-        "../attachments/ed589341c9fd5da96aaff4c5efa008226282a716186608d5a032ac75895a9c2f.png";
+        "attachments/ed589341c9fd5da96aaff4c5efa008226282a716186608d5a032ac75895a9c2f.png";
     assert_eq!(first, named_by_the_sha256_of_the_bytes);
     assert_eq!(second, named_by_the_sha256_of_the_bytes);
     let root = world.dir.path().join("store");
@@ -279,9 +279,8 @@ async fn uploads_of_the_same_bytes_keep_one_file_that_the_exported_items_reach()
         .unwrap()
         .collect();
     assert_eq!(kept.len(), 1);
-    world.store.export().await.unwrap();
     assert_eq!(
-        std::fs::read_to_string(root.join("issues").join(&first)).unwrap(),
+        std::fs::read_to_string(root.join(&first)).unwrap(),
         "the bytes"
     );
 }

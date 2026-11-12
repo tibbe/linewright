@@ -14,7 +14,7 @@ const SHOT: &str = "PNG bytes";
 
 /// Where the local store keeps [`SHOT`], named by its SHA-256.
 const KEPT_SHOT: &str =
-    "../attachments/9698103cd397cda6f9807a2e2bf51935727f47a62d9b6d4f82e54ef60c6ba831.png";
+    "attachments/9698103cd397cda6f9807a2e2bf51935727f47a62d9b6d4f82e54ef60c6ba831.png";
 
 /// Saves [`SHOT`] in the session's attachments directory, returning its
 /// path there.

@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -29,8 +28,7 @@ mod history;
 
 use history::{MergeOf, NewCommit, Replayed};
 
-/// The directory, beside the exported `issues/` and `pulls/`, that keeps
-/// the attachments.
+/// The directory, under the store's root, that keeps the attachments.
 const ATTACHMENTS: &str = "attachments";
 
 pub struct Seed {
@@ -184,7 +182,6 @@ struct IssueRecord {
     /// Its `open` is [`IssueRecord::is_open`]'s.
     #[serde(flatten)]
     issue: Issue,
-    issue_type: Option<String>,
     blocked_by: Vec<Number>,
     sub_issues: Vec<Added>,
     /// Set while the issue is closed.
@@ -420,7 +417,6 @@ impl LocalStore {
                         })
                         .collect(),
                 },
-                issue_type: None,
                 blocked_by: vec![],
                 sub_issues: vec![],
                 closing: None,
@@ -496,46 +492,6 @@ impl LocalStore {
         record.closing = None;
         record.issue.events.push(IssueEvent::Reopened { at: now });
         Ok(())
-    }
-
-    pub async fn import_bundle(&self, bundle: &Path, base: &str) -> Result<()> {
-        let bundle = bundle.canonicalize()?;
-        let default_branch = self.state().default_branch.clone();
-        history::import_bundle(&self.repository(), &bundle, &default_branch, base).await
-    }
-
-    /// `merged` is a commit already in the repository.
-    pub async fn merge_commit(
-        &self,
-        author: &str,
-        title: &str,
-        body: &str,
-        merged: &str,
-    ) -> Result<Number> {
-        let default_branch = self.state().default_branch.clone();
-        let before = self.rev(&default_branch).await?;
-        let files = self.changed_files(&before, merged).await?;
-        history::move_ref(&self.repository(), &default_branch, merged, &before).await?;
-        let now = self.now();
-        let mut state = self.state();
-        let number = state.take_number();
-        let branch = format!("change-{}", number.0);
-        let record = PullRecord {
-            state: PullState::Merged { at: now },
-            merge: Some((before, merged.to_string())),
-            files,
-            ..PullRecord::new(
-                &state,
-                number,
-                title,
-                body,
-                Login::new(author),
-                &branch,
-                now,
-            )
-        };
-        state.pulls.insert(number, record);
-        Ok(number)
     }
 
     pub async fn merge_change(
@@ -911,13 +867,6 @@ impl LocalStore {
         state.issues.get(&number).map(|r| state.issue_view(r))
     }
 
-    pub fn issue_type(&self, number: Number) -> Option<String> {
-        self.state()
-            .issues
-            .get(&number)
-            .and_then(|r| r.issue_type.clone())
-    }
-
     pub fn issues(&self) -> Vec<Issue> {
         let state = self.state();
         state.issues.values().map(|r| state.issue_view(r)).collect()
@@ -1001,42 +950,6 @@ impl LocalStore {
             .with_context(|| format!("{branch} has no {path}"))
     }
 
-    pub async fn export(&self) -> Result<()> {
-        let issues = self.issues();
-        let pulls: Vec<Number> = self.pulls();
-        let issues_dir = self.root.join("issues");
-        let pulls_dir = self.root.join("pulls");
-        tokio::fs::create_dir_all(&issues_dir).await?;
-        tokio::fs::create_dir_all(&pulls_dir).await?;
-        for issue in issues {
-            let n = issue.number.0;
-            let issue_type = self.issue_type(issue.number);
-            tokio::fs::write(
-                issues_dir.join(format!("{n}.json")),
-                serde_json::to_string_pretty(&issue)?,
-            )
-            .await?;
-            tokio::fs::write(
-                issues_dir.join(format!("{n}.md")),
-                render_issue(&issue, issue_type.as_deref()),
-            )
-            .await?;
-        }
-        for number in pulls {
-            let pull = self.pull_view(number).await?;
-            let diff = self.pull_diff(number).await.unwrap_or_default();
-            let n = number.0;
-            tokio::fs::write(
-                pulls_dir.join(format!("{n}.json")),
-                serde_json::to_string_pretty(&pull)?,
-            )
-            .await?;
-            tokio::fs::write(pulls_dir.join(format!("{n}.md")), render_pull(&pull)).await?;
-            tokio::fs::write(pulls_dir.join(format!("{n}.diff")), diff).await?;
-        }
-        Ok(())
-    }
-
     async fn rev(&self, rev: &str) -> Result<String> {
         Ok(git::git(&self.repository(), &["rev-parse", rev])
             .await?
@@ -1104,24 +1017,6 @@ impl LocalStore {
                 })
             })
             .collect())
-    }
-
-    async fn pull_diff(&self, pr: Number) -> Result<String> {
-        let (merge, head_ref, default_branch) = {
-            let state = self.state();
-            let default_branch = state.default_branch.clone();
-            let record = state.pull(pr)?;
-            (
-                record.merge.clone(),
-                record.head_ref.clone(),
-                default_branch,
-            )
-        };
-        let range = match merge {
-            Some((before, after)) => format!("{before}..{after}"),
-            None => format!("{default_branch}...{head_ref}"),
-        };
-        git::git(&self.repository(), &["diff", &range]).await
     }
 
     async fn pull_view(&self, number: Number) -> Result<Pull> {
@@ -2232,8 +2127,7 @@ impl Store for LocalStore {
     }
 
     /// Keeps each attachment once, named by its content's hash, and gives
-    /// its path from the exported items (`docs/specs/replay.md`,
-    /// "Attachments").
+    /// its path under the store's root.
     async fn attach(
         &self,
         file: &Path,
@@ -2269,7 +2163,7 @@ impl Store for LocalStore {
                 .context("keeping an attachment")?;
         }
         self.paused(Write::Attach { name: name.into() }).await?;
-        Ok(format!("../{ATTACHMENTS}/{kept}"))
+        Ok(format!("{ATTACHMENTS}/{kept}"))
     }
 
     async fn delete_branch(&self, branch: &str) -> Result<()> {
@@ -2395,9 +2289,9 @@ impl Store for LocalStore {
         self.close_issue_as(issue, reason)
     }
 
-    async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()> {
+    async fn set_issue_type(&self, issue: Number, _issue_type: &str) -> Result<()> {
         let now = self.now();
-        self.state().issue_written(issue, now)?.issue_type = Some(issue_type.into());
+        self.state().issue_written(issue, now)?;
         Ok(())
     }
 
@@ -2533,107 +2427,4 @@ impl Store for LocalStore {
         thread.resolved = true;
         Ok(())
     }
-}
-
-fn render_comments(out: &mut String, comments: &[Comment]) {
-    for comment in comments {
-        let _ = writeln!(
-            out,
-            "---\n\n**@{}** at {}:\n\n{}\n",
-            comment.author,
-            comment.created_at.to_rfc3339(),
-            comment.body.trim()
-        );
-    }
-}
-
-fn render_issue(issue: &Issue, issue_type: Option<&str>) -> String {
-    let mut out = String::new();
-    let numbers = |linked: Vec<Linked>| {
-        linked
-            .into_iter()
-            .map(|l| format!("{}{}", l.number, if l.open { "" } else { " (closed)" }))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let _ = writeln!(
-        out,
-        "# {} {}\n\n- State: {}\n- Author: @{}\n- Type: {}\n- Labels: {}\n- Assignees: {}\n- Blocked by: {}\n- Sub-issues: {}\n- Parent: {}\n\n{}\n",
-        issue.number,
-        issue.title,
-        if issue.open { "open" } else { "closed" },
-        issue.author,
-        issue_type.unwrap_or("none"),
-        issue.labels.join(", "),
-        issue
-            .assignees
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-        numbers(issue.blocked_by.clone()),
-        numbers(issue.sub_issues.iter().map(SubIssue::linked).collect()),
-        issue
-            .parent
-            .map_or("none".to_string(), |p| p.number.to_string()),
-        issue.body.trim()
-    );
-    render_comments(&mut out, &issue.comments);
-    out
-}
-
-fn render_pull(pull: &Pull) -> String {
-    let mut out = String::new();
-    let state = match pull.state {
-        PullState::Open { draft: true } => "draft".to_string(),
-        PullState::Open { draft: false } => "ready for review".to_string(),
-        PullState::Merged { at } => format!("merged at {}", at.to_rfc3339()),
-        PullState::Closed { at } => format!("closed at {}", at.to_rfc3339()),
-    };
-    let _ = writeln!(
-        out,
-        "# {} {}\n\n- State: {state}\n- Author: @{}\n- Assignees: {}\n- Branch: `{}`\n- Closes: {}\n- Checks: {}\n\n{}\n",
-        pull.number,
-        pull.title,
-        pull.author,
-        pull.assignees
-            .iter()
-            .map(Login::as_str)
-            .collect::<Vec<_>>()
-            .join(", "),
-        pull.head_ref,
-        pull.closes
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", "),
-        pull.checks
-            .iter()
-            .map(|c| format!("{} {:?}", c.name, c.state))
-            .collect::<Vec<_>>()
-            .join(", "),
-        pull.body.trim()
-    );
-    render_comments(&mut out, &pull.comments);
-    for review in &pull.reviews {
-        let _ = writeln!(
-            out,
-            "---\n\n**Review by @{}** ({:?}) at {}:\n\n{}\n",
-            review.author,
-            review.state,
-            review.submitted_at.to_rfc3339(),
-            review.body.trim()
-        );
-    }
-    for thread in &pull.threads {
-        let _ = writeln!(
-            out,
-            "---\n\n### Thread `{}` on `{}`{}\n",
-            thread.id,
-            thread.path,
-            if thread.resolved { " (resolved)" } else { "" }
-        );
-        render_comments(&mut out, &thread.comments);
-    }
-    out
 }

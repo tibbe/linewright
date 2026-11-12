@@ -182,7 +182,6 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         require_label: None,
         prompts: OperatorPrompts::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
-        schedule_automations: true,
         waits_out_usage_limit: false,
         session_token: SessionToken::Withheld,
         secrets: Secrets::default(),

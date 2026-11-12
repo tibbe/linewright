@@ -1059,7 +1059,7 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     assert_eq!(
         world.factory.cycle().await.unwrap(),
         [],
-        "a replay ends once its pull request is handed back"
+        "nothing is left to do once its pull request is handed back"
     );
     assert!(world.factory.is_idle());
 }
