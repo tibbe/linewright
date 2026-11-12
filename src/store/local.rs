@@ -2362,6 +2362,15 @@ impl Store for LocalStore {
         self.paused(Write::Fetch).await
     }
 
+    async fn fetch_commits(
+        &self,
+        bare: &Path,
+        heads: &BTreeMap<String, git::CommitId>,
+    ) -> Result<()> {
+        self.readable()?;
+        git::fetch_commits(url(&self.repository())?, bare, heads, &[]).await
+    }
+
     async fn push(
         &self,
         dir: &Path,
