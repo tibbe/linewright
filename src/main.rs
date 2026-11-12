@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
+use linewright::case::{self, CaptureError, CaseName};
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -19,7 +20,8 @@ use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTak
 use linewright::factory::{Factory, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::repo_files::RepoLayer;
-use linewright::runs::{self, Query, RepoWorkDir};
+use linewright::runs::{self, Query, RepoWorkDir, RunId};
+use linewright::secrets::Secrets;
 use linewright::serving::{self, OnUsageLimit, Starting, prompts};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
@@ -882,6 +884,9 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             factory.settle().await;
             prepared
         }
+        Command::Capture { id, name, criteria } => {
+            return Ok(capture(&config, &id, &name, criteria.as_deref()).await);
+        }
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
@@ -893,6 +898,58 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         }
     };
     done.map(|()| SUCCESS)
+}
+
+/// Captures run `id` as the case `name`, with the criteria in the file
+/// `criteria`, refusing before connecting to GitHub what it can.
+async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<&Path>) -> u8 {
+    let refusal = |e: CaptureError| match e {
+        CaptureError::NoSuchRun(_) => refused(&RequestError::NotFound(e.to_string())),
+        CaptureError::Failed(e) => failed(&e),
+        CaptureError::NotCapturable(_) | CaptureError::NoInput(_) | CaptureError::Taken(_) => {
+            (FAILURE, e.to_string())
+        }
+    };
+    let work_dir = match config.repo_work_dir() {
+        Ok(work_dir) => work_dir.resolve(),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let runs = runs::Runs::new(&work_dir);
+    let cases = work_dir.join(case::CASES);
+    let capturable = match case::capturable(&runs, &cases, id, name) {
+        Ok(capturable) => capturable,
+        Err(e) => return print_answer(Err(refusal(e))),
+    };
+    let secrets = match Secrets::of(&config.secrets, std::env::vars_os()) {
+        Ok(secrets) => secrets,
+        Err(e) => return print_answer(Err((FAILURE, e))),
+    };
+    let criteria = match criteria.map(std::fs::read_to_string).transpose() {
+        Ok(criteria) => criteria,
+        Err(e) => {
+            let e = anyhow::Error::from(e).context("reading the criteria");
+            return print_answer(Err(failed(&e)));
+        }
+    };
+    let github = match token() {
+        Ok(token) => connect(config, token).await,
+        Err(e) => Err(e),
+    };
+    let github = match github {
+        Ok(github) => github,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        case::capture(
+            &github,
+            capturable,
+            criteria.as_deref(),
+            secrets.redaction(),
+        )
+        .await
+        .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
+        .map_err(refusal),
+    )
 }
 
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.

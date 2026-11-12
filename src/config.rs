@@ -7,6 +7,7 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
+use crate::case::CaseName;
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
@@ -150,6 +151,16 @@ pub enum Command {
     Automation {
         #[command(subcommand)]
         command: AutomationCommand,
+    },
+    /// Capture run ID, such as 43/implement-2, as the case NAME in `cases/`
+    /// under the work directory.
+    Capture {
+        id: RunId,
+        /// Lowercase letters, digits and hyphens.
+        name: CaseName,
+        /// What a good result is, as `criteria.md` in the case.
+        #[arg(long, value_name = "FILE")]
+        criteria: Option<PathBuf>,
     },
 }
 
