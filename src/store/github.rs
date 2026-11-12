@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds, read_openings,
+    API_VERSION, AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
+    PeoplesPullRead, PushError, PushMode, RecordedItem, RepoSettings, Resource, Store, holds,
+    read_openings,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -561,7 +562,7 @@ impl GitHub {
             .request(method.clone(), &url)
             .bearer_auth(&self.token)
             .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28");
+            .header("X-GitHub-Api-Version", API_VERSION);
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -670,6 +671,62 @@ impl GitHub {
                 .collect();
         }
         Ok(assignees)
+    }
+
+    /// GitHub's answer to a `GET` of `path` under the repository, such as
+    /// `issues/7`, `None` when GitHub finds nothing there.
+    async fn found(&self, path: &str) -> Result<Option<Value>> {
+        let path = self.repo_path(&format!("/{path}"));
+        let request = format!("GET {path}");
+        let answer = self.answer_retried(Method::GET, &path, None).await?;
+        if answer.status == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !answer.status.is_success() {
+            return Err(answer.refusal(request).into());
+        }
+        let found =
+            serde_json::from_str(&answer.body).with_context(|| format!("decoding {request}"))?;
+        Ok(Some(found))
+    }
+
+    /// Every page of the REST listing at `path` under the repository, such
+    /// as `issues/7/comments`, joined.
+    async fn listed(&self, path: &str) -> Result<Value> {
+        const PER_PAGE: usize = 100;
+        let listed: Vec<Value> = every_page(PER_PAGE, |page| async move {
+            let path = self.repo_path(&format!("/{path}?per_page={PER_PAGE}&page={page}"));
+            self.rest(Method::GET, &path, None).await
+        })
+        .await?;
+        Ok(Value::Array(listed))
+    }
+
+    /// Issue or pull request #`number` as GitHub's REST API gives it.
+    async fn record_item(&self, number: Number) -> Result<RecordedItem> {
+        let path = |resource: Resource| resource.path(number);
+        let issue = self
+            .found(&path(Resource::Issue))
+            .await?
+            .with_context(|| format!("GitHub has no issue or pull request {number}"))?;
+        // The issues API gives a pull request a `pull_request` field
+        // (<https://docs.github.com/en/rest/issues/issues#get-an-issue>).
+        let is_pull = issue.get("pull_request").is_some();
+        let mut resources = BTreeMap::from([(path(Resource::Issue), issue)]);
+        for listing in [Resource::Comments, Resource::BlockedBy] {
+            resources.insert(path(listing), self.listed(&path(listing)).await?);
+        }
+        if let Some(parent) = self.found(&path(Resource::Parent)).await? {
+            resources.insert(path(Resource::Parent), parent);
+        }
+        if is_pull {
+            let pull = self
+                .found(&path(Resource::Pull))
+                .await?
+                .with_context(|| format!("GitHub has no pull request {number}"))?;
+            resources.insert(path(Resource::Pull), pull);
+        }
+        Ok(RecordedItem { number, resources })
     }
 
     async fn rest_ok(&self, method: Method, path: &str, body: Option<Value>) -> Result<()> {
@@ -3925,6 +3982,31 @@ impl Store for GitHub {
         attached(&request, answer)
     }
 
+    async fn heads(&self, branches: &[String]) -> Result<BTreeMap<String, git::CommitId>> {
+        #[derive(Deserialize)]
+        struct Ref {
+            object: RefObject,
+        }
+        #[derive(Deserialize)]
+        struct RefObject {
+            sha: String,
+        }
+        let mut heads = BTreeMap::new();
+        for branch in branches {
+            // <https://docs.github.com/en/rest/git/refs#get-a-reference>
+            let path = format!("git/ref/heads/{}", percent_encode(branch));
+            if let Some(found) = self.found(&path).await? {
+                let found: Ref = serde_json::from_value(found)
+                    .with_context(|| format!("decoding GET {path}"))?;
+                heads.insert(
+                    branch.clone(),
+                    git::CommitId::from(found.object.sha.as_str()),
+                );
+            }
+        }
+        Ok(heads)
+    }
+
     async fn delete_branch(&self, branch: &str) -> Result<()> {
         let path = format!("/git/refs/heads/{}", percent_encode(branch));
         let answer = self
@@ -4249,6 +4331,14 @@ impl Store for GitHub {
             )
             .await?;
         Ok(())
+    }
+
+    async fn record_items(&self, numbers: &BTreeSet<Number>) -> Result<Vec<RecordedItem>> {
+        let mut items = vec![];
+        for &number in numbers {
+            items.push(self.record_item(number).await?);
+        }
+        Ok(items)
     }
 }
 
@@ -6649,5 +6739,205 @@ mod retry_tests {
         assert!(linked_already(&sub_issues(), issue_903_id));
         assert!(!linked_already(&sub_issues(), issue_743_id));
         assert!(linked_already(&blocked_by, issue_743_id));
+    }
+}
+
+#[cfg(test)]
+mod recording_tests {
+    use axum::extract::{Path as UrlPath, Query};
+    use axum::http::{HeaderMap, StatusCode as Status};
+
+    use super::*;
+
+    /// What GitHub answered on 2026-11-12, read with [`API_VERSION`], for
+    /// each REST path under tibbe/linewright that recording #1130, #1155 and
+    /// #1158 and the heads of `main` and `1158-no-such-branch` reads: each
+    /// listing's first page, and its second as none.
+    fn recorded(path: &str, page: Option<&str>) -> Option<(Status, &'static str)> {
+        let found = |body| Some((Status::OK, body));
+        let parentless = Some((
+            Status::NOT_FOUND,
+            include_str!("fixtures/rest-parent-not-found.json"),
+        ));
+        match (path, page) {
+            (_, Some("2")) => found("[]"),
+            ("issues/1158", None) => found(include_str!("fixtures/rest-issue-1158.json")),
+            ("issues/1158/comments", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1158-comments.json"))
+            }
+            ("issues/1158/parent", None) => {
+                found(include_str!("fixtures/rest-issue-1158-parent.json"))
+            }
+            ("issues/1158/dependencies/blocked_by", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1158-blocked-by.json"))
+            }
+            ("issues/1130", None) => found(include_str!("fixtures/rest-issue-1130.json")),
+            ("issues/1130/comments", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1130-comments.json"))
+            }
+            ("issues/1130/dependencies/blocked_by", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1130-blocked-by.json"))
+            }
+            ("issues/1155", None) => found(include_str!("fixtures/rest-issue-1155.json")),
+            ("issues/1155/comments", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1155-comments.json"))
+            }
+            ("issues/1155/dependencies/blocked_by", Some("1")) => {
+                found(include_str!("fixtures/rest-issue-1155-blocked-by.json"))
+            }
+            ("pulls/1155", None) => found(include_str!("fixtures/rest-pull-1155.json")),
+            ("issues/1130/parent" | "issues/1155/parent", None) => parentless,
+            ("git/ref/heads/main", None) => found(include_str!("fixtures/rest-ref-main.json")),
+            ("git/ref/heads/1158-no-such-branch", None) => Some((
+                Status::NOT_FOUND,
+                include_str!("fixtures/rest-ref-not-found.json"),
+            )),
+            _ => None,
+        }
+    }
+
+    /// A GitHub store on tibbe/linewright, served [`recorded`]'s answers to
+    /// requests made with [`API_VERSION`], and refused any other.
+    #[track_caller]
+    fn serving_recorded() -> impl Future<Output = GitHub> {
+        let caller = std::panic::Location::caller();
+        async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .unwrap_or_else(|e| panic!("serving the recorded answers at {caller}: {e}"));
+            serving_on(listener)
+        }
+    }
+
+    /// [`serving_recorded`]'s store, served on `listener`.
+    fn serving_on(listener: tokio::net::TcpListener) -> GitHub {
+        async fn answer(
+            UrlPath(path): UrlPath<String>,
+            Query(query): Query<BTreeMap<String, String>>,
+            headers: HeaderMap,
+        ) -> (Status, &'static str) {
+            if headers
+                .get("X-GitHub-Api-Version")
+                .map(axum::http::HeaderValue::as_bytes)
+                != Some(API_VERSION.as_bytes())
+            {
+                return (Status::BAD_REQUEST, "unpinned API version");
+            }
+            recorded(&path, query.get("page").map(String::as_str))
+                .unwrap_or((Status::IM_A_TEAPOT, "not recorded"))
+        }
+        let address = listener
+            .local_addr()
+            .expect("a bound listener has an address");
+        let app = axum::Router::new().route(
+            "/repos/tibbe/linewright/{*path}",
+            axum::routing::get(answer),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        GitHub {
+            http: reqwest::Client::new(),
+            api: format!("http://{address}"),
+            token: "token".into(),
+            owner: "tibbe".into(),
+            name: "linewright".into(),
+            viewer: Viewer {
+                login: "tibbe-bot".into(),
+                id: 339_618_913,
+            },
+            repository_id: Arc::default(),
+            index: Arc::default(),
+            openings: Arc::default(),
+        }
+    }
+
+    #[track_caller]
+    fn resource(recorded: &str) -> Value {
+        serde_json::from_str(recorded).unwrap()
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn items_are_recorded_as_githubs_rest_api_gives_them() {
+        let github = serving_recorded().await;
+        let numbers = [1130, 1155, 1158].into_iter().map(Number).collect();
+
+        let items = github.record_items(&numbers).await.unwrap();
+
+        let item = |number: u64, resources: &[(&str, &str)]| RecordedItem {
+            number: Number(number),
+            resources: resources
+                .iter()
+                .map(|(path, recorded)| (path.to_string(), resource(recorded)))
+                .collect(),
+        };
+        assert_eq!(
+            items,
+            [
+                item(
+                    1130,
+                    &[
+                        ("issues/1130", include_str!("fixtures/rest-issue-1130.json")),
+                        (
+                            "issues/1130/comments",
+                            include_str!("fixtures/rest-issue-1130-comments.json")
+                        ),
+                        (
+                            "issues/1130/dependencies/blocked_by",
+                            include_str!("fixtures/rest-issue-1130-blocked-by.json")
+                        ),
+                    ]
+                ),
+                item(
+                    1155,
+                    &[
+                        ("issues/1155", include_str!("fixtures/rest-issue-1155.json")),
+                        (
+                            "issues/1155/comments",
+                            include_str!("fixtures/rest-issue-1155-comments.json")
+                        ),
+                        (
+                            "issues/1155/dependencies/blocked_by",
+                            include_str!("fixtures/rest-issue-1155-blocked-by.json")
+                        ),
+                        ("pulls/1155", include_str!("fixtures/rest-pull-1155.json")),
+                    ]
+                ),
+                item(
+                    1158,
+                    &[
+                        ("issues/1158", include_str!("fixtures/rest-issue-1158.json")),
+                        (
+                            "issues/1158/comments",
+                            include_str!("fixtures/rest-issue-1158-comments.json")
+                        ),
+                        (
+                            "issues/1158/parent",
+                            include_str!("fixtures/rest-issue-1158-parent.json")
+                        ),
+                        (
+                            "issues/1158/dependencies/blocked_by",
+                            include_str!("fixtures/rest-issue-1158-blocked-by.json")
+                        ),
+                    ]
+                ),
+            ]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_heads_are_of_the_branches_github_has() {
+        let github = serving_recorded().await;
+
+        let heads = github
+            .heads(&["main".into(), "1158-no-such-branch".into()])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            heads,
+            BTreeMap::from([(
+                "main".to_string(),
+                git::CommitId::from("907d6f89ea31d416ede8b5230526b6d9b02c3901")
+            )])
+        );
     }
 }

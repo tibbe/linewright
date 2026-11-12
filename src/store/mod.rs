@@ -8,12 +8,14 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
     MergeMethods, MergedPull, Number, Opening, Pull, Repo, Snapshot, Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
+use crate::git::CommitId;
 use crate::redaction::Redaction;
 
 /// Reads into `snapshot` the openings it lacks
@@ -406,6 +408,60 @@ impl Blob {
     }
 }
 
+/// The `X-GitHub-Api-Version` GitHub's REST resources are read with
+/// (<https://docs.github.com/en/rest/about-the-rest-api/api-versions>).
+pub const API_VERSION: &str = "2022-11-28";
+
+/// An issue or pull request as GitHub's REST API gives it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordedItem {
+    pub number: Number,
+    /// GitHub's answer for each [`Resource`] the item has, by its path,
+    /// unchanged.
+    pub resources: BTreeMap<String, serde_json::Value>,
+}
+
+/// One of an item's REST resources a [`RecordedItem`] holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resource {
+    /// <https://docs.github.com/en/rest/issues/issues#get-an-issue>
+    Issue,
+    /// Every page joined into one array
+    /// (<https://docs.github.com/en/rest/issues/comments#list-issue-comments>).
+    Comments,
+    /// Only where it has a parent
+    /// (<https://docs.github.com/en/rest/issues/sub-issues#get-parent-issue>).
+    Parent,
+    /// Every page joined into one array
+    /// (<https://docs.github.com/en/rest/issues/issue-dependencies#list-dependencies-an-issue-is-blocked-by>).
+    BlockedBy,
+    /// Only for a pull request
+    /// (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
+    Pull,
+}
+
+impl Resource {
+    /// Its REST path under the repository for item #`number`, such as
+    /// `issues/7/comments`.
+    pub fn path(self, number: Number) -> String {
+        let n = number.0;
+        match self {
+            Resource::Issue => format!("issues/{n}"),
+            Resource::Comments => format!("issues/{n}/comments"),
+            Resource::Parent => format!("issues/{n}/parent"),
+            Resource::BlockedBy => format!("issues/{n}/dependencies/blocked_by"),
+            Resource::Pull => format!("pulls/{n}"),
+        }
+    }
+}
+
+impl RecordedItem {
+    /// The item's `resource`, if it has it.
+    pub fn resource(&self, resource: Resource) -> Option<&serde_json::Value> {
+        self.resources.get(&resource.path(self.number))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NewIssue {
     pub title: String,
@@ -509,6 +565,8 @@ pub trait Store: Send + Sync {
         name: &str,
         content_type: &str,
     ) -> Result<String, AttachError>;
+    /// The branches of `branches` the repository has, with their heads.
+    async fn heads(&self, branches: &[String]) -> Result<BTreeMap<String, CommitId>>;
     /// Deletes `branch`, if the repository has it.
     async fn delete_branch(&self, branch: &str) -> Result<()>;
 
@@ -547,6 +605,10 @@ pub trait Store: Send + Sync {
     async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
     async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
     async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;
+
+    /// Each issue or pull request of `numbers` as GitHub's REST API gives it,
+    /// read with [`API_VERSION`]; fails when the store lacks one.
+    async fn record_items(&self, numbers: &BTreeSet<Number>) -> Result<Vec<RecordedItem>>;
 }
 
 #[cfg(test)]
