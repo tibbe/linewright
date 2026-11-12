@@ -378,6 +378,32 @@ async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_b
     assert_eq!(select(&html, "#board form, #people form").len(), 0);
 }
 
+/// A ticket's card matches whoever is party to its tracking issue
+/// (`docs/specs/design_system.md`, Filtering by person).
+#[test_log::test(tokio::test)]
+async fn the_board_narrowed_to_a_tracking_issues_assignee_shows_its_lane() {
+    let mut view = a_board();
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    let tracking = &mut snapshot.issues[1];
+    *tracking = assigned(tracking.clone(), &["carol"]);
+    let pages = Pages::of(view).await;
+
+    let html = pages.page("/?person=carol").await;
+
+    assert_eq!(
+        board_shown(&html),
+        [vec![
+            "#2: Big thing — 0/1 tickets closed",
+            "Needs a person: #3: Part one | asked alice · 2026-09-30 09:00:00 UTC",
+        ]]
+    );
+    let people: Vec<&str> = select(&html, "datalist#people option")
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert_eq!(people, ["alice", "carol", "maintainer"]);
+}
+
 #[test_log::test(tokio::test)]
 async fn the_board_with_no_person_or_a_blank_one_shows_every_card() {
     let pages = Pages::of(a_board()).await;

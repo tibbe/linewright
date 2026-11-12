@@ -3026,8 +3026,89 @@ fn a_board_narrowed_to_a_person_keeps_their_cards_and_each_lanes_head_finished_s
 }
 
 #[test_log::test]
-fn the_people_on_a_board_are_every_cards_parties_but_linewright() {
+fn the_people_on_a_board_are_each_person_a_card_matches_but_linewright() {
     let board = board(&a_board_of_people(), &[], at(NOW));
 
     assert_eq!(board.people(), common::logins(&["alice", "bob"]));
+}
+
+/// `view` with `issue`, held open, in place of the issue of its number.
+#[track_caller]
+fn with_issue(mut view: View, issue: Issue) -> View {
+    let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
+    let held = snapshot
+        .issues
+        .iter_mut()
+        .find(|held| held.number == issue.number)
+        .unwrap();
+    *held = issue;
+    view
+}
+
+/// A ticket's card matches whoever is party to its tracking issue
+/// (`docs/specs/design_system.md`, Filtering by person).
+#[test_log::test]
+fn a_person_assigned_only_to_a_tracking_issue_is_matched_by_each_card_of_its_lane() {
+    let view = with_issue(
+        a_board_of_people(),
+        Issue {
+            assignees: common::logins(&["carol"]),
+            ..tracking_issue(20, 19, &[(21, true), (22, false)])
+        },
+    );
+    let whole = board(&view, &[], at(NOW));
+
+    let narrowed = whole.narrowed(&Login::new("carol"));
+
+    assert_eq!(whole.people(), common::logins(&["alice", "bob", "carol"]));
+    assert_eq!(
+        placed(&narrowed),
+        [(20, Column::Ready, 21), (20, Column::Done, 22)]
+    );
+}
+
+/// A ticket's card matches whoever is party to its tracking issue, not to a
+/// pull request closing that tracking issue (`docs/specs/design_system.md`,
+/// Filtering by person).
+#[test_log::test]
+fn a_person_reviewing_only_a_pull_request_closing_a_tracking_issue_is_not_matched_by_its_tickets() {
+    let view = with_peoples_pulls(
+        a_board_of_people(),
+        vec![Pull {
+            assignees: vec![],
+            review_requests: common::logins(&["dave"]),
+            ..persons_pull(40, &[20])
+        }],
+    );
+    let whole = board(&view, &[], at(NOW));
+
+    let narrowed = whole.narrowed(&Login::new("dave"));
+
+    assert_eq!(card(&whole, 21).people, [Login::new("bob")].into(),);
+    assert!(
+        !placed(&narrowed)
+            .iter()
+            .any(|&(_, _, card)| card == 21 || card == 22),
+        "{:?}",
+        placed(&narrowed)
+    );
+}
+
+/// A ticket Linewright cut counts as opened by whoever opened its tracking
+/// issue (`docs/specs/design_system.md`, Filtering by person, Opening).
+#[test_log::test]
+fn a_tickets_card_matches_its_tracking_issues_opener() {
+    let view = with_issue(
+        a_board_of_people(),
+        Issue {
+            author: Login::new("erin"),
+            filed: None,
+            ..tracking_issue(10, 9, &[(11, true)])
+        },
+    );
+    let whole = board(&view, &[], at(NOW));
+
+    let narrowed = whole.narrowed(&Login::new("erin"));
+
+    assert_eq!(placed(&narrowed), [(10, Column::NeedsAPerson, 11)]);
 }
