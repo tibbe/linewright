@@ -41,8 +41,7 @@ The command is `lw`.
 | `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
 | `logs N`              | show a run's transcript (see [Monitoring](monitoring.md))                |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
-| `capture`             | write a case from GitHub (see [Replay](replay.md))                       |
-| `replay`              | run a case against a local store (see [Replay](replay.md))               |
+| `capture ID NAME`     | capture run ID as a case (see [Benchmarks](benchmarks.md))               |
 
 - **The version.** `--version` names the version and the commit it was
   built from.
@@ -223,8 +222,10 @@ and the follow-ups ([Contract](runs.md#contract)).
 Linewright keeps secrets out of what it keeps, logs, posts or pushes.
 
 - **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
-  replaced by `[redacted]`, except the commits it pushes and the attachments
-  it uploads: a commit or an attachment holding a secret is refused
+  replaced by `[redacted]`, except the commits it pushes, the attachments
+  it uploads and a case's items and commits, which it keeps as GitHub holds
+  them ([Benchmarks](benchmarks.md#cases)): a commit or an attachment holding
+  a secret is refused
   ([Runs](runs.md)). Redaction is best effort. A secret of 1
   to 5 characters is neither redacted nor refused, which Linewright warns of at
   startup, naming its variable; an empty one is ignored.

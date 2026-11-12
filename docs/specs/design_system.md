@@ -423,6 +423,11 @@ under its session's heading.
   everything, a session's settings too.
 - **Following.** A run in flight is followed. The page stays at the bottom
   until the reader scrolls up, and then offers to jump to the latest entry.
+- **Capturing.** A run that can be captured
+  ([Capturing](benchmarks.md#capturing)) offers, by its heading, to capture
+  it as a case. It asks for the case's name, filled in with the run ID's
+  letters and digits joined by hyphens, such as `43-implement-2`, and for its
+  criteria, then says where the case was written, or why it was not.
 
 ### The automations page
 
@@ -462,5 +467,5 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 - A login of Linewright's own for the web UI.
 - A layout of the board for narrow screens.
 - A status of a lane's own: its cards carry theirs.
-- Acting from the UI on `serve` or on the work.
+- Acting from the UI on `serve` or on the work, but for capturing a run.
 - A link of its own to each transcript entry.

@@ -95,6 +95,11 @@ _Avoid_: job, task, build, execution
 A part of the pipeline that a run does, such as triage.
 _Avoid_: phase, step
 
+**Case**:
+A run of a stage, captured so that the stage can be run again on what the run
+was given.
+_Avoid_: task, fixture, sample, example, scenario
+
 **Outcome**:
 How a run ended, such as done or handed back, or that it has not ended yet.
 _Avoid_: result, status, state, exit

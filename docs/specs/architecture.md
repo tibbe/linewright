@@ -21,8 +21,7 @@ observes.
 State that people read or change (labels, assignees, pull requests, comments)
 lives in the store and nowhere else.
 
-- **The store is an interface; GitHub is the production store.** A local store
-  of plain files serves replay and tests.
+- **The store is an interface; GitHub is the production store.**
 - **Reconciling.** Each poll takes a snapshot of the store and reconciles it
   with the runs in flight. Between polls the snapshot is kept, and a webhook
   delivery reads the items it names into it again and reconciles.
