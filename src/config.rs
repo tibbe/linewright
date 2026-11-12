@@ -151,14 +151,6 @@ pub enum Command {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Write a case from a spec change or issue on GitHub: `owner/name#N`.
-    Capture { target: String, dir: PathBuf },
-    /// Run a case through the whole pipeline against a local store.
-    Replay {
-        case: PathBuf,
-        #[arg(long)]
-        out: PathBuf,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

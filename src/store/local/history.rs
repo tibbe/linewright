@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 use crate::domain::{MergeMethod, Number};
 use crate::git::{self, Merged};
@@ -373,20 +373,6 @@ pub async fn move_ref(repo: &Path, branch: &str, new: &str, old: &str) -> Result
 /// Deletes `branch`, which succeeds when there is no such branch.
 pub async fn delete_branch(repo: &Path, branch: &str) -> Result<()> {
     git::git(repo, &["update-ref", "-d", &branch_ref(branch)]).await?;
-    Ok(())
-}
-
-/// Fetches all of `bundle`'s refs under `refs/case/` and moves
-/// `default_branch` to `base`, wherever it was.
-pub async fn import_bundle(
-    repo: &Path,
-    bundle: &Path,
-    default_branch: &str,
-    base: &str,
-) -> Result<()> {
-    let bundle = bundle.to_str().context("bundle paths are UTF-8")?;
-    git::git(repo, &["fetch", "--quiet", bundle, "refs/*:refs/case/*"]).await?;
-    git::git(repo, &["update-ref", &branch_ref(default_branch), base]).await?;
     Ok(())
 }
 

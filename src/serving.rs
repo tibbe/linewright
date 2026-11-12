@@ -240,7 +240,6 @@ impl Starting {
             require_label: config.require_label.clone(),
             prompts: self.prompts,
             work_dir,
-            schedule_automations: true,
             waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
             session_token: self.sessions.token,
             secrets: self.sessions.secrets,

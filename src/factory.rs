@@ -65,7 +65,6 @@ pub struct FactoryConfig {
     /// The operator's layer of the prompts.
     pub prompts: OperatorPrompts,
     pub work_dir: PathBuf,
-    pub schedule_automations: bool,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
     /// Linewright's secrets, refused in the commits a session's result
@@ -87,7 +86,7 @@ pub enum SessionToken {
     Linewright(String),
     /// The operator's token for sessions, from [`SESSION_TOKEN_VARIABLE`].
     Separate(String),
-    /// None, as in a replay, whose sessions do not read GitHub.
+    /// None, as in `serve-fake`, whose sessions do not read GitHub.
     Withheld,
 }
 
@@ -158,7 +157,6 @@ pub struct Factory {
     live: HashMap<Id, LiveEntry>,
     ends: Ends,
     winding_up: WindingUp,
-    schedule_automations: bool,
     last_scheduled_runs: LastScheduledRuns,
     automation_files: AutomationFiles,
     memory: Memory,
@@ -250,11 +248,7 @@ impl Factory {
             merge_method = %settings.merge_method,
             "started"
         );
-        let last_scheduled_runs = if config.schedule_automations {
-            LastScheduledRuns::load(&config.work_dir)
-        } else {
-            LastScheduledRuns::default()
-        };
+        let last_scheduled_runs = LastScheduledRuns::load(&config.work_dir);
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let runs = Runs::new(&config.work_dir);
         let pulls = PullRecords::load(&config.work_dir);
@@ -320,7 +314,6 @@ impl Factory {
             live: HashMap::new(),
             ends: config.ends,
             winding_up: config.winding_up,
-            schedule_automations: config.schedule_automations,
             last_scheduled_runs,
             automation_files: AutomationFiles::default(),
             memory: Memory {
@@ -759,9 +752,6 @@ impl Factory {
     }
 
     async fn automations(&mut self) -> Vec<Automation> {
-        if !self.schedule_automations {
-            return vec![];
-        }
         let branch = &self.shell.settings.default_branch;
         self.automation_files = match automation::read(self.shell.store.as_ref(), branch).await {
             Ok(files) => files,

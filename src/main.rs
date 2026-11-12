@@ -6,7 +6,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::case;
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -891,46 +890,6 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
                 .await?
                 .run_automation(&name)
                 .await
-        }
-        Command::Capture { target, dir } => {
-            log.begin();
-            let (repo, number) = target
-                .split_once('#')
-                .with_context(|| format!("{target:?} is not owner/name#N"))?;
-            let number: u64 = number
-                .parse()
-                .with_context(|| format!("{target:?} is not owner/name#N"))?;
-            let github = GitHub::connect(&repo.parse()?, token()?).await?;
-            let sessions = config.work_dir.join(repo).join("sessions");
-            case::capture(&github, Number(number), &dir, &sessions).await?;
-            println!("Captured {target} in {}", dir.display());
-            Ok(())
-        }
-        Command::Replay {
-            case: case_dir,
-            out,
-        } => {
-            log.begin();
-            let starting =
-                Starting::new(&config, HARNESS_PROGRAM, || Ok(SessionToken::Withheld)).await?;
-            let harness = starting.harness(own_program()?, Arc::new(SystemClock));
-            let factory_config = starting.factory_config(
-                &config,
-                out.clone(),
-                OnUsageLimit::End,
-                Ends::new(),
-                winding_up.clone(),
-            );
-            case::replay(
-                &case_dir,
-                &out,
-                Arc::new(harness),
-                Arc::new(SystemClock),
-                factory_config,
-            )
-            .await?;
-            println!("Replayed {} into {}", case_dir.display(), out.display());
-            Ok(())
         }
     };
     done.map(|()| SUCCESS)

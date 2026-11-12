@@ -16,7 +16,6 @@ pub mod automation;
 mod bash_command;
 pub mod board;
 pub mod briefs;
-pub mod case;
 pub mod child;
 pub mod clock;
 mod clones;
