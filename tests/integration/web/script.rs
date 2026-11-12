@@ -644,11 +644,14 @@ async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
 
 /// Stand-ins for a page with filters (`docs/specs/design_system.md`,
 /// Filters) and folds: `form` holds the fields `field(tagName, name,
-/// options)` makes, a field with `options` suggesting them, `fire(type,
-/// event)` sends an event to the listeners the script added, `event(target,
-/// more)` makes one, and `fold(id, open)` puts a fold on the page in place of
-/// any with its id. `applied()` is each address the page took and each stream
-/// it restarted since it was last asked, or `-` for none.
+/// options)` makes, a select with `options` the values of its options,
+/// `fire(type, event)` sends an event to the listeners the script added,
+/// `event(target, more)` makes one, `fold(id, open)` puts a fold on the page
+/// in place of any with its id, and `source(id, values)` puts an element
+/// holding options of `values` there. `applied()` is each address the page
+/// took and each stream it restarted since it was last asked, or `-` for
+/// none, and `listed(select)` is its options' values, its chosen one marked
+/// `*`.
 const FILTERS: &str = r#"
 var listeners = {};
 function listen(type, listener) { (listeners[type] = listeners[type] || []).push(listener); }
@@ -681,16 +684,36 @@ form.closest = (selector) => (selector === "form[data-filters]" ? form : null);
 function field(tagName, name, options) {
   const field = element(tagName, {});
   Object.assign(field, { name, value: "", form, closest: form.closest });
-  if (options) field.list = { options: options.map((value) => ({ value })) };
+  if (options) {
+    field.options = options.map((value) => new Option(value, value));
+    field.replaceChildren = (...options) => { field.options = options; };
+  }
   form.elements.push(field);
   return field;
+}
+function Option(text, value) {
+  return { text, value };
+}
+var sources = {};
+function source(id, values) {
+  sources[id] = { id, options: values.map((value) => new Option("", value)) };
+  sources[id].querySelectorAll = (selector) => (selector === "option" ? sources[id].options : []);
+}
+document.querySelectorAll = (selector) =>
+  selector === "select[data-options]"
+    ? form.elements.filter((field) => field.tagName === "SELECT" && "data-options" in field.attributes)
+    : [];
+function listed(select) {
+  return select.options
+    .map((option) => (option.value === select.value ? `*${option.value}` : option.value))
+    .join(",");
 }
 var folds = {};
 function fold(id, open) {
   folds[id] = Object.assign(element("DETAILS", { id }), { id, open });
   return folds[id];
 }
-document.getElementById = (id) => (id === "stream" ? stream : folds[id] || null);
+document.getElementById = (id) => (id === "stream" ? stream : folds[id] || sources[id] || null);
 function applied() {
   const shown = addresses
     .concat(swaps.map((swap) => `${swap.swap} ${swap.target.attributes.id}: ${swap.text}`))
@@ -786,28 +809,36 @@ async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
     );
 }
 
+/// `docs/specs/design_system.md`, The people, and Filters: Kept.
 #[test_log::test(tokio::test)]
-async fn a_picked_suggestion_applies_at_once_and_a_partly_typed_one_does_not() {
-    let page = r#"var person = field("INPUT", "person", ["alice", "bob"]);"#;
+async fn a_select_takes_its_sources_options_after_a_message_and_keeps_its_choice() {
+    let page = r#"
+var person = field("SELECT", "person", ["", "bob", "carol"]);
+person.setAttribute("data-options", "people");
+person.value = "bob";
+var stage = field("SELECT", "stage", ["", "triage"]);
+source("people", ["bob", "carol"]);
+"#;
     let asked = r#"
 const steps = [];
-person.value = "ali"; fire("input", event(person)); steps.push(applied());
-person.value = "alice"; fire("input", event(person)); steps.push(applied());
-const elsewhere = element("SELECT", {}); fire("change", event(elsewhere)); steps.push(applied());
+const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
+source("people", ["alice", "bob", "dave"]); message();
+steps.push(`${listed(person)} ${listed(stage)} ${applied()}`);
+source("people", ["alice", "dave"]); message();
+steps.push(`${listed(person)} ${applied()}`);
+person.value = ""; source("people", ["dave"]); message();
+steps.push(`${listed(person)} ${applied()}`);
 steps.join("\n")
 "#;
 
-    let applied = with_filters(page, asked).await;
+    let steps = with_filters(page, asked).await;
 
     assert_eq!(
-        applied,
+        steps,
         [
-            "-".to_string(),
-            format!(
-                "/runs?person=alice | {}",
-                restarted("/events/runs?person=alice")
-            ),
-            "-".to_string(),
+            ",alice,*bob,dave *,triage -",
+            ",alice,*bob,dave -",
+            "*,dave -",
         ]
     );
 }

@@ -32,7 +32,7 @@
 {%- endmacro -%}
 {%- block main -%}
 {%- call ui::filters("/events/") %}
-{%- call ui::filter_input("Person", "person", person, list = "people") %}{% endcall %}
+{%- call ui::filter_select("Person", "person", "All people", person_options, options_from = "people") %}{% endcall %}
 {%- endcall %}
 {% block people -%}
 <datalist id="people">

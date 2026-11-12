@@ -333,6 +333,29 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
     );
 }
 
+/// The Person `select`'s options, each its value and its text, and
+/// ` (chosen)` where it is chosen.
+#[track_caller]
+fn person_select(html: &Html) -> Vec<String> {
+    let selects = select(html, "form[data-filters] select[name=person]");
+    assert_eq!(selects.len(), 1, "one Person select");
+    select(html, "form[data-filters] select[name=person] option")
+        .into_iter()
+        .map(|option| {
+            let chosen = if option.attr("selected").is_some() {
+                " (chosen)"
+            } else {
+                ""
+            };
+            format!(
+                "{}: {}{chosen}",
+                option.attr("value").unwrap_or_default(),
+                text(option)
+            )
+        })
+        .collect()
+}
+
 /// The Person filter (`docs/specs/design_system.md`, Filtering by person):
 /// alice, asked on #3, is party to it alone, and the maintainer, who opened
 /// #1, #2 and so #3, to all three. Linewright, who filed #4, is party to
@@ -353,19 +376,23 @@ async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_b
     );
     assert_eq!(select(&html, "#finished").len(), 0);
     assert_eq!(text(select(&html, "title")[0]), "(2) Board · owner/widgets");
-    let person: Vec<(Option<&str>, Option<&str>)> = select(&html, "form[data-filters] input")
-        .into_iter()
-        .map(|input| (input.attr("name"), input.attr("value")))
-        .collect();
-    assert_eq!(person, [(Some("person"), Some("alice"))]);
+    assert_eq!(
+        person_select(&html),
+        [
+            ": All people",
+            "alice: alice (chosen)",
+            "maintainer: maintainer",
+        ]
+    );
+    assert_eq!(select(&html, "form[data-filters] input").len(), 0);
     assert_eq!(
         text(select(&html, "form[data-filters] label > .label")[0]),
         "Person"
     );
-    let list = select(&html, "form[data-filters] input")[0]
-        .attr("list")
+    let source = select(&html, "form[data-filters] select")[0]
+        .attr("data-options")
         .unwrap();
-    let people: Vec<&str> = select(&html, &format!("datalist#{list} option"))
+    let people: Vec<&str> = select(&html, &format!("datalist#{source} option"))
         .into_iter()
         .filter_map(|option| option.attr("value"))
         .collect();
@@ -404,6 +431,57 @@ async fn the_board_narrowed_to_a_tracking_issues_assignee_shows_its_lane() {
     assert_eq!(people, ["alice", "carol", "maintainer"]);
 }
 
+/// `docs/specs/design_system.md`, The people: whoever is chosen is listed,
+/// though no card matches them.
+#[test_log::test(tokio::test)]
+async fn a_chosen_person_no_card_matches_is_listed_and_chosen() {
+    let pages = Pages::of(a_board()).await;
+
+    let html = pages.page("/?person=Carol").await;
+
+    assert_eq!(board_shown(&html).len(), 0);
+    assert_eq!(
+        person_select(&html),
+        [
+            ": All people",
+            "alice: alice",
+            "Carol: Carol (chosen)",
+            "maintainer: maintainer",
+        ]
+    );
+
+    let empty = Pages::of(view(vec![], vec![])).await;
+    let on_empty = empty.page("/?person=carol").await;
+
+    assert_eq!(
+        person_select(&on_empty),
+        [": All people", "carol: carol (chosen)",]
+    );
+    let people: Vec<&str> = select(&on_empty, "datalist#people option")
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert_eq!(people, ["carol"]);
+}
+
+/// A chosen person some card matches is listed once, however their login
+/// is cased.
+#[test_log::test(tokio::test)]
+async fn a_chosen_person_some_card_matches_is_listed_once() {
+    let pages = Pages::of(a_board()).await;
+
+    let html = pages.page("/?person=ALICE").await;
+
+    assert_eq!(
+        person_select(&html),
+        [
+            ": All people",
+            "alice: alice (chosen)",
+            "maintainer: maintainer"
+        ]
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn the_board_with_no_person_or_a_blank_one_shows_every_card() {
     let pages = Pages::of(a_board()).await;
@@ -412,11 +490,11 @@ async fn the_board_with_no_person_or_a_blank_one_shows_every_card() {
         let html = pages.page(path).await;
 
         assert_eq!(board_shown(&html).len(), 3, "{path}");
-        let person: Vec<Option<&str>> = select(&html, "form[data-filters] input")
-            .into_iter()
-            .map(|input| input.attr("value"))
-            .collect();
-        assert_eq!(person, [Some("")], "{path}");
+        assert_eq!(
+            person_select(&html),
+            [": All people", "alice: alice", "maintainer: maintainer"],
+            "{path}"
+        );
         assert_eq!(events_path(&html), Some("/events/"), "{path}");
     }
 }
