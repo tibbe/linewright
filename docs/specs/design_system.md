@@ -28,9 +28,8 @@
 
 - **Where.** A page's filters sit together above what they narrow, each
   labelled with what it filters on.
-- **Applying.** A filter applies as soon as it is chosen, such as from a
-  list or from a field's suggestions, and one typed in when the reader
-  presses Enter.
+- **Applying.** A filter applies as soon as it is chosen from a list, and
+  one typed in when the reader presses Enter.
 - **Unset.** An unset filter narrows nothing: a list reads "All" and what it
   lists, such as "All stages", and a field to type in is empty.
 - **Narrowing.** What the filters leave out is gone from the page and from
@@ -274,9 +273,9 @@ having opened it, being assigned to it or reviewing it.
 - **Lanes.** A lane shows while any of its cards matches.
 - **Lane heads.** A lane's head, with its tickets closed of total, is the
   whole lane's.
-- **The people.** Person suggests, by login, each person some card on the
-  board matches, whoever is chosen, narrowed to those whose login matches
-  what the reader types.
+- **The people.** Person is a list of logins: each person some card on the
+  whole board matches, however it is filtered, and whoever is chosen. It
+  has nothing to type in.
 
 ### Cards
 
