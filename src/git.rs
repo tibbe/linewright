@@ -185,7 +185,8 @@ pub async fn check_out_fresh(dir: &Path, branch: &str) -> Result<()> {
 }
 
 /// A commit, by its full object name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct CommitId(String);
 
 impl CommitId {

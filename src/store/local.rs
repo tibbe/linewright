@@ -5,12 +5,14 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use serde::Serialize;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use super::{
     AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RepoSettings, Store, holds, read_openings,
+    PeoplesPullRead, PushError, PushMode, RecordedItem, RepoSettings, Resource, Store, holds,
+    read_openings,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -68,6 +70,9 @@ struct State {
     unreadable: Option<String>,
     /// Fails the reads of single items, but not snapshots.
     items_unreadable: Option<String>,
+    /// Fails [`Store::record_items`].
+    unrecordable: Option<String>,
+    before_recording: Option<Box<dyn FnOnce() + Send>>,
     pushes_refused: Option<PushRefusal>,
     /// Each push's branch and the commit it pushed, in order.
     pushed: Vec<(String, String)>,
@@ -298,6 +303,8 @@ impl LocalStore {
                 items_read: 0,
                 unreadable: None,
                 items_unreadable: None,
+                unrecordable: None,
+                before_recording: None,
                 pushes_refused: None,
                 pushed: vec![],
                 attachments_refused: None,
@@ -699,6 +706,12 @@ impl LocalStore {
         self.state().unassignable.push(Login::new(login));
     }
 
+    /// Runs `then` as the next [`Store::record_items`] begins, before it
+    /// reads anything.
+    pub fn before_recording(&self, then: impl FnOnce() + Send + 'static) {
+        self.state().before_recording = Some(Box::new(then));
+    }
+
     pub fn after_linewrights_next_comment(&self, then: impl FnOnce() + Send + 'static) {
         self.state().after_comment = Some(Box::new(then));
     }
@@ -919,6 +932,11 @@ impl LocalStore {
     /// Fails the reads of single items, while snapshots go on.
     pub fn fail_item_reads(&self, reason: &str) {
         self.state().items_unreadable = Some(reason.into());
+    }
+
+    /// Fails each read of items as GitHub's REST API gives them.
+    pub fn fail_recording(&self, reason: &str) {
+        self.state().unrecordable = Some(reason.into());
     }
 
     pub fn restore_reads(&self) {
@@ -1347,6 +1365,176 @@ impl State {
         ))
     }
 
+    /// #`number` as GitHub's REST API gives it, as far as the store
+    /// records it.
+    fn recorded_item(&self, number: Number) -> Result<RecordedItem> {
+        let path = |resource: Resource| resource.path(number);
+        let mut resources = BTreeMap::new();
+        let comments = match self.issues.get(&number) {
+            Some(record) => {
+                resources.insert(path(Resource::Issue), self.issue_resource(record));
+                if let Some(parent) = self.parent_of(number) {
+                    resources.insert(path(Resource::Parent), self.issue_resource(parent));
+                }
+                let blockers = record
+                    .blocked_by
+                    .iter()
+                    .filter_map(|blocker| self.issues.get(blocker))
+                    .map(|blocker| self.issue_resource(blocker))
+                    .collect();
+                resources.insert(path(Resource::BlockedBy), Value::Array(blockers));
+                &record.issue.comments
+            }
+            None => {
+                let record = self.pull(number)?;
+                resources.insert(path(Resource::Issue), self.pull_issue_resource(record));
+                resources.insert(path(Resource::BlockedBy), Value::Array(vec![]));
+                resources.insert(path(Resource::Pull), self.pull_resource(record));
+                &record.comments
+            }
+        };
+        let comments = comments.iter().map(comment_resource).collect();
+        resources.insert(path(Resource::Comments), Value::Array(comments));
+        Ok(RecordedItem { number, resources })
+    }
+
+    fn parent_of(&self, number: Number) -> Option<&IssueRecord> {
+        self.issues
+            .values()
+            .find(|r| r.sub_issues.iter().any(|a| a.number == number))
+    }
+
+    fn api_url(&self, path: &str) -> String {
+        format!("https://api.github.com/repos/{}/{path}", self.repo)
+    }
+
+    /// <https://docs.github.com/en/rest/issues/issues#get-an-issue>
+    fn issue_resource(&self, record: &IssueRecord) -> Value {
+        let issue = &record.issue;
+        let completed = record
+            .sub_issues
+            .iter()
+            .filter(|added| !self.issues[&added.number].is_open())
+            .count();
+        let total = record.sub_issues.len();
+        let blocking: Vec<&IssueRecord> = self
+            .issues
+            .values()
+            .filter(|other| other.blocked_by.contains(&issue.number))
+            .collect();
+        let open_blockers = record
+            .blocked_by
+            .iter()
+            .filter(|b| self.issues.get(b).is_some_and(IssueRecord::is_open))
+            .count();
+        let mut resource = self.item_fields(&record.shared());
+        resource.extend([
+            (
+                "state_reason".into(),
+                json!(record.closing.map(|closing| state_reason(closing.reason))),
+            ),
+            ("type".into(), Value::Null),
+            (
+                "parent_issue_url".into(),
+                json!(
+                    self.parent_of(issue.number)
+                        .map(|parent| { self.api_url(&Resource::Issue.path(parent.issue.number)) })
+                ),
+            ),
+            (
+                "sub_issues_summary".into(),
+                json!({
+                    "total": total,
+                    "completed": completed,
+                    "percent_completed": (completed * 100).checked_div(total).unwrap_or(0),
+                }),
+            ),
+            (
+                "issue_dependencies_summary".into(),
+                json!({
+                    "blocked_by": open_blockers,
+                    "total_blocked_by": record.blocked_by.len(),
+                    "blocking": blocking.iter().filter(|other| other.is_open()).count(),
+                    "total_blocking": blocking.len(),
+                }),
+            ),
+        ]);
+        Value::Object(resource)
+    }
+
+    /// A pull request as the issues API gives it
+    /// (<https://docs.github.com/en/rest/issues/issues#get-an-issue>).
+    fn pull_issue_resource(&self, record: &PullRecord) -> Value {
+        let mut resource = self.item_fields(&record.shared(Resource::Issue));
+        resource.insert(
+            "pull_request".into(),
+            json!({
+                "url": self.api_url(&Resource::Pull.path(record.number)),
+                "merged_at": pull_merged_at(record.state).map(github_time),
+            }),
+        );
+        Value::Object(resource)
+    }
+
+    /// <https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>
+    fn pull_resource(&self, record: &PullRecord) -> Value {
+        let mut resource = self.item_fields(&record.shared(Resource::Pull));
+        resource.extend([
+            (
+                "draft".into(),
+                json!(matches!(record.state, PullState::Open { draft: true })),
+            ),
+            (
+                "merged".into(),
+                json!(pull_merged_at(record.state).is_some()),
+            ),
+            (
+                "merged_at".into(),
+                json!(pull_merged_at(record.state).map(github_time)),
+            ),
+            (
+                "requested_reviewers".into(),
+                json!(
+                    record
+                        .requested_reviewers
+                        .iter()
+                        .map(user)
+                        .collect::<Vec<_>>()
+                ),
+            ),
+            ("head".into(), json!({"ref": record.head_ref})),
+            ("base".into(), json!({"ref": record.base_ref})),
+        ]);
+        Value::Object(resource)
+    }
+
+    /// The fields an issue's and a pull request's resources share.
+    fn item_fields(&self, item: &Shared<'_>) -> serde_json::Map<String, Value> {
+        let labels: Vec<Value> = item
+            .labels
+            .iter()
+            .map(|name| json!({"name": name}))
+            .collect();
+        let assignees: Vec<Value> = item.assignees.iter().map(user).collect();
+        [
+            ("url", json!(self.api_url(&item.path))),
+            ("number", json!(item.number.0)),
+            ("title", json!(item.title)),
+            ("body", json!(item.body)),
+            ("user", user(item.author)),
+            ("labels", json!(labels)),
+            ("state", json!(if item.open { "open" } else { "closed" })),
+            ("assignees", json!(assignees)),
+            ("comments", json!(item.comments)),
+            ("created_at", json!(github_time(item.created_at))),
+            ("updated_at", json!(github_time(item.updated_at))),
+            ("closed_at", json!(item.closed_at.map(github_time))),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect()
+    }
+
     fn filed(&self, issue: &Issue) -> Option<Filed> {
         Filed::read(&issue.author, &issue.title, &issue.body, &self.linewright)
     }
@@ -1507,7 +1695,84 @@ fn changed(assignees: &mut Vec<Login>, change: &Assignment) -> bool {
     true
 }
 
+/// What an issue's and a pull request's resources share, for
+/// [`State::item_fields`].
+struct Shared<'a> {
+    path: String,
+    number: Number,
+    title: &'a str,
+    body: &'a str,
+    author: &'a Login,
+    labels: &'a [String],
+    assignees: &'a [Login],
+    comments: usize,
+    open: bool,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    closed_at: Option<Timestamp>,
+}
+
+/// A time as GitHub's REST API writes it, to the second.
+fn github_time(at: Timestamp) -> String {
+    at.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+fn user(login: &Login) -> Value {
+    json!({"login": login.as_str()})
+}
+
+fn state_reason(reason: IssueCloseReason) -> &'static str {
+    match reason {
+        IssueCloseReason::Completed => "completed",
+        IssueCloseReason::NotPlanned => "not_planned",
+        IssueCloseReason::Duplicate => "duplicate",
+    }
+}
+
+/// <https://docs.github.com/en/rest/issues/comments#get-an-issue-comment>
+fn comment_resource(comment: &Comment) -> Value {
+    json!({
+        "body": comment.body,
+        "user": user(&comment.author),
+        "created_at": github_time(comment.created_at),
+        "updated_at": github_time(comment.created_at),
+    })
+}
+
+fn pull_merged_at(state: PullState) -> Option<Timestamp> {
+    match state {
+        PullState::Merged { at } => Some(at),
+        PullState::Open { .. } | PullState::Closed { .. } => None,
+    }
+}
+
+fn pull_closed_at(state: PullState) -> Option<Timestamp> {
+    match state {
+        PullState::Merged { at } | PullState::Closed { at } => Some(at),
+        PullState::Open { .. } => None,
+    }
+}
+
 impl IssueRecord {
+    /// What its resource shares with a pull request's.
+    fn shared(&self) -> Shared<'_> {
+        let issue = &self.issue;
+        Shared {
+            path: Resource::Issue.path(issue.number),
+            number: issue.number,
+            title: &issue.title,
+            body: &issue.body,
+            author: &issue.author,
+            labels: &issue.labels,
+            assignees: &issue.assignees,
+            comments: issue.comments.len(),
+            open: self.is_open(),
+            created_at: issue.created_at,
+            updated_at: issue.updated_at,
+            closed_at: self.closing.map(|closing| closing.at),
+        }
+    }
+
     fn is_open(&self) -> bool {
         self.closing.is_none()
     }
@@ -1522,6 +1787,24 @@ impl IssueRecord {
 }
 
 impl PullRecord {
+    /// What its resource at `resource` shares with an issue's.
+    fn shared(&self, resource: Resource) -> Shared<'_> {
+        Shared {
+            path: resource.path(self.number),
+            number: self.number,
+            title: &self.title,
+            body: &self.body,
+            author: &self.author,
+            labels: &self.labels,
+            assignees: &self.assignees,
+            comments: self.comments.len(),
+            open: self.is_open(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            closed_at: pull_closed_at(self.state),
+        }
+    }
+
     /// The pull request as the snapshot holds it among its closed items:
     /// `None` unless `linewright` worked it and it closed without merging.
     fn closed_unmerged(&self, linewright: &Login) -> Option<ClosedItem> {
@@ -2166,6 +2449,25 @@ impl Store for LocalStore {
         Ok(format!("{ATTACHMENTS}/{kept}"))
     }
 
+    async fn heads(&self, branches: &[String]) -> Result<BTreeMap<String, git::CommitId>> {
+        self.readable()?;
+        let refs = git::git(
+            &self.repository(),
+            &[
+                "for-each-ref",
+                "--format=%(refname:lstrip=2)%09%(objectname)",
+                "refs/heads",
+            ],
+        )
+        .await?;
+        Ok(refs
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .filter(|(name, _)| branches.iter().any(|branch| branch == name))
+            .map(|(name, head)| (name.to_string(), git::CommitId::from(head)))
+            .collect())
+    }
+
     async fn delete_branch(&self, branch: &str) -> Result<()> {
         history::delete_branch(&self.repository(), branch).await
     }
@@ -2426,5 +2728,21 @@ impl Store for LocalStore {
             .with_context(|| format!("no thread {thread} on {pr}"))?;
         thread.resolved = true;
         Ok(())
+    }
+
+    async fn record_items(&self, numbers: &BTreeSet<Number>) -> Result<Vec<RecordedItem>> {
+        let before = self.state().before_recording.take();
+        if let Some(before) = before {
+            before();
+        }
+        self.readable()?;
+        let state = self.state();
+        if let Some(reason) = &state.unrecordable {
+            bail!("{reason}");
+        }
+        numbers
+            .iter()
+            .map(|&number| state.recorded_item(number))
+            .collect()
     }
 }

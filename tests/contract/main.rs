@@ -25,6 +25,7 @@ mod issues;
 mod labels;
 mod merges;
 mod pulls;
+mod recording;
 mod repository;
 mod sandbox;
 
@@ -44,6 +45,7 @@ fn areas() -> Vec<(&'static str, Vec<(&'static str, Contract)>)> {
         ("pulls", pulls::contracts()),
         ("merges", merges::contracts()),
         ("attachments", attachments::contracts()),
+        ("recording", recording::contracts()),
     ]
 }
 
