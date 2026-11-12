@@ -15,6 +15,7 @@ const DEFAULT_BRANCH: &str = "main";
 const LINEWRIGHT: &str = "linewright-bot";
 const MAINTAINER: &str = "maintainer";
 const REPORTER: &str = "reporter";
+const DESIGNER: &str = "designer";
 
 /// How long the fake agent takes over each step of a triage or a design.
 const BRISK_MILLIS: u64 = 1000;
@@ -75,6 +76,18 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
     );
     store.label_as(LINEWRIGHT, done, label::READY_FOR_AGENT)?;
     store.close_issue_as_completed(done)?;
+    let tracking = store.open_issue(
+        MAINTAINER,
+        "Let the board be read on a phone",
+        "The board should fit a phone's screen.",
+        &[],
+    );
+    store.label_as(LINEWRIGHT, tracking, label::DESIGNED)?;
+    store.assign_as(MAINTAINER, tracking, DESIGNER)?;
+    for title in ["Stack the board's lanes", "Shorten the cards' lines"] {
+        let ticket = store.open_issue(LINEWRIGHT, title, "", &[label::NEEDS_INFO]);
+        store.add_sub_issue_as(LINEWRIGHT, tracking, ticket)?;
+    }
     Ok(())
 }
 
