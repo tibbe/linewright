@@ -71,6 +71,7 @@ with no UI effect says so in one line — `No UI change` — instead.
 Before working in one of these areas, read its guide:
 
 - [Commits](./docs/commits.md)
+- [Pull requests](./docs/pull-requests.md)
 - [Tuning the briefs](./docs/tuning-briefs.md)
 - [Releasing](./docs/releasing.md)
 - [Deploying Linewright on this repository](./deploy/README.md): its image is
