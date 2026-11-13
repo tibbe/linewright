@@ -797,12 +797,12 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_declined_finding_without_evidence_is_sent_back() {
+    fn a_declined_finding_without_a_reason_is_sent_back() {
         let error = rejected::<ImplementResult>(&done(
             &json!({"declined_findings": [{"finding": "Rename it."}]}),
         ));
         assert!(
-            error.contains("`/declined_findings/0/evidence` is missing"),
+            error.contains("`/declined_findings/0/reason` is missing"),
             "{error}"
         );
     }
@@ -817,7 +817,7 @@ mod tests {
     #[test_log::test]
     fn a_done_result_with_declined_findings_is_accepted() {
         let result = parse::<ImplementResult>(
-            &done(&json!({"declined_findings": [{"finding": "Rename it.", "evidence": "\"keep the name\""}]}))
+            &done(&json!({"declined_findings": [{"finding": "Rename it.", "reason": "\"keep the name\""}]}))
                 .to_string(),
         );
         assert!(

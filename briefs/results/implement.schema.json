@@ -10,14 +10,14 @@
           "description": "The review finding, as the review put it.",
           "type": "string"
         },
-        "evidence": {
+        "reason": {
           "description": "Why the session did not apply it.",
           "type": "string"
         }
       },
       "required": [
         "finding",
-        "evidence"
+        "reason"
       ]
     }
   },
