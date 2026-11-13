@@ -1,15 +1,16 @@
 ---
 name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
+description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along three axes: Standards (does the code follow this repo's documented coding standards?), Spec (does the code match what the originating issue/spec asked for?) and Bugs (does the diff introduce bugs?). Runs the reviews in parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
 ---
 
-Two-axis review of the diff between `HEAD` and a fixed point:
+Three-axis review of the diff between `HEAD` and a fixed point:
 
 - **Standards**: does the code conform to this repo's documented coding
   standards?
 - **Spec**: does the code faithfully implement the originating issue / spec?
+- **Bugs**: does the diff introduce bugs?
 
-Both axes run as **parallel sub-agents** so they don't pollute each other's
+The axes run as **parallel sub-agents** so they don't pollute each other's
 context.
 
 ## Process
@@ -26,7 +27,7 @@ the comparison is against the merge-base). Also note the list of commits via
 
 Before going further, confirm the fixed point resolves
 (`git rev-parse <fixed-point>`) and the diff is non-empty. A bad ref or empty
-diff should fail here, not inside two parallel sub-agents.
+diff should fail here, not inside the parallel sub-agents.
 
 ### 2. Identify the spec source
 
@@ -81,21 +82,17 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 - **Refused Bequest**: a subclass or implementer that ignores or overrides most
   of what it inherits. → drop the inheritance, use composition.
 
-### 4. Spawn both sub-agents in parallel
+### 4. Spawn the sub-agents in parallel
 
-Issue both sub-agent calls together, in the foreground, and collect the
+Issue the sub-agent calls together, in the foreground, and collect the
 reports they return. Tell each sub-agent it may read the issue tracker but must
 not write to it.
 
-The **reporting rule**, for both sub-agents:
+The **reporting rule**, for every sub-agent:
 
 > Report every issue you find, including ones you are uncertain about or
 > consider low-severity. Your job is coverage. The agent that applies the
 > findings checks each one.
->
-> When the diff introduces a bug, a race, a security hole or other wrong
-> behaviour, name the scenarios, environments, or inputs necessary for it to
-> arise. Also name the code it affects.
 
 **Standards sub-agent prompt** should include:
 
@@ -125,17 +122,30 @@ The **reporting rule**, for both sub-agents:
   requirements that look implemented but where the implementation looks wrong.
   Quote the spec line for each finding. Follow the reporting rule."
 
+**Bugs sub-agent prompt** should include:
+
+- The diff command and commit list.
+- The ticket, if you were given one.
+- The reporting rule above, pasted in full.
+- The brief: "Find the bugs in the changed code. Trace execution and check the
+  surrounding context. A bug that was already there counts when the diff makes
+  it reachable or more likely to trigger. For each bug, name the scenarios,
+  environments, or inputs necessary for it to arise. Identify the other parts
+  of the code that are provably affected. Follow the reporting rule."
+
 If the spec is missing, skip the Spec sub-agent.
 
-The two reports are the review's findings.
+The reports are the review's findings.
 
-## Why two axes
+## Why three axes
 
-A change can pass one axis and fail the other:
+A change can pass one axis and fail another:
 
 - Code that follows every standard but implements the wrong thing →
   **Standards pass, Spec fail.**
 - Code that does exactly what the issue asked but breaks the project's
   conventions → **Spec pass, Standards fail.**
+- Code that follows every standard and does what the issue asked, but fails in
+  a case the spec doesn't describe → **Standards pass, Spec pass, Bugs fail.**
 
-Reporting them separately stops one axis from masking the other.
+Reporting them separately stops one axis from masking another.
