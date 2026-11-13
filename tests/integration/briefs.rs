@@ -232,7 +232,7 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
     );
     assert!(
         prompt.contains(
-            "`declined_findings` lists the review findings you did not apply (often none).\n\n\
+            "`declined_findings` lists the review findings you did not apply.\n\n\
              To show a screenshot or a video in the Markdown your result posts, save the file \
              in your attachments directory, `/attachments`, "
         ) && prompt.ends_with("in a fenced code block or a `<details>` block when it is long.\n"),
