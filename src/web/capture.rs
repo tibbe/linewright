@@ -130,9 +130,7 @@ pub(super) async fn capture(
         &run,
         &name,
     ) {
-        Ok(capturable) => {
-            case::capture(served.store(), capturable, criteria, served.redaction()).await
-        }
+        Ok(capturable) => case::capture(served.store(), capturable, criteria).await,
         Err(e) => Err(e),
     };
     match captured {
