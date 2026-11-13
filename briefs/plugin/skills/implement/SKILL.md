@@ -43,16 +43,29 @@ so its spec reviewer can too. You need not read them on every run.
 
 ## Review findings
 
-Apply every finding, unless it is **wrong on the facts**: it misreads the code,
-cites a rule or a ticket or spec line that doesn't say what it claims, or asks
-for a change that would break something the ticket or spec requires. Preferring
-your design, or judging the change not worth making, does not make a finding
-wrong. For each finding you don't apply, put it and the quote that shows it is
-wrong in your result's `declined_findings`; a finding you can't quote such
-evidence against, you apply. A finding the spec doesn't settle is not a spec gap unless it is a
-product decision: a reasonable maintainer could want either answer, and the
-answer changes what a user sees. Otherwise apply it like any other finding. A
-finding that is a spec gap is not a fix.
+Apply every finding whose **evidence holds**:
+
+- **The finding cites a rule or a spec line.** Read the rule or line yourself,
+  and check that it says what the finding claims and covers this code. Then
+  read the code, and check that it is as the finding describes.
+- **The finding says the code behaves wrongly.** Check that the scenario it
+  names can really happen, and that the diff causes it.
+
+A baseline smell is a judgement call: apply it where its fix is worth making in
+this diff.
+
+Decline a finding whose fix would break something the ticket or spec requires.
+Apart from smells, apply a finding whose evidence holds even when you prefer
+your own design or doubt that the fix is worth making.
+
+Put each finding you don't apply in your result's `declined_findings`, with the
+reason. Quote the rule, spec line or code that shows its evidence fails. If
+there is nothing to quote, say what the evidence lacks. For a smell, say why
+its fix isn't worth making.
+
+A finding the spec doesn't settle is a spec gap only when it is a product
+decision. Otherwise, decide it as _The spec is the maintainer's_ says. A finding
+that is a spec gap is not a fix.
 
 ## The spec is the maintainer's
 
