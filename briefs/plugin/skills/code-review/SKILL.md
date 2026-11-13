@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
+description: "Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes: Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/spec asked for?). Runs both reviews in parallel sub-agents. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to \"review since X\"."
 ---
 
 Two-axis review of the diff between `HEAD` and a fixed point:
@@ -10,7 +10,7 @@ Two-axis review of the diff between `HEAD` and a fixed point:
 - **Spec**: does the code faithfully implement the originating issue / spec?
 
 Both axes run as **parallel sub-agents** so they don't pollute each other's
-context, then this skill aggregates their findings.
+context.
 
 ## Process
 
@@ -37,8 +37,6 @@ Look for the originating spec, in this order:
    etc.). You may read the issue tracker but must not write to it.
 3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name
    or feature.
-4. If nothing is found, the **Spec** sub-agent will skip and report "no spec
-   available".
 
 Note too the ticket's parent issue and the spec change it was cut from, when
 you were given them. The parent's other sub-issues are the tickets cut
@@ -51,13 +49,9 @@ Search the repo for every file that documents how code should be written. When
 
 On top of whatever the repo documents, the Standards axis always carries the
 **smell baseline** below: a fixed set of Fowler code smells (_Refactoring_,
-ch.3) that applies even when a repo documents nothing. Two rules bind it:
-
-- **The repo overrides.** A documented repo standard always wins; where it
-  endorses something the baseline would flag, suppress the smell.
-- **The reviewer's judgement call.** Report a smell only where its fix is worth
-  making in this diff. Like any standard here, skip anything tooling already
-  enforces.
+ch.3) that applies even when a repo documents nothing. A documented repo
+standard always wins: where it endorses something the baseline would flag,
+suppress the smell.
 
 Each smell reads *what it is* → *how to fix*; match it against the diff:
 
@@ -89,9 +83,19 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Issue both sub-agent calls together, in the foreground, and aggregate the
+Issue both sub-agent calls together, in the foreground, and collect the
 reports they return. Tell each sub-agent it may read the issue tracker but must
 not write to it.
+
+The **reporting rule**, for both sub-agents:
+
+> Report every issue you find, including ones you are uncertain about or
+> consider low-severity. Your job is coverage. The agent that applies the
+> findings checks each one.
+>
+> When the diff introduces a bug, a race, a security hole or other wrong
+> behaviour, name the scenarios, environments, or inputs necessary for it to
+> arise. Also name the code it affects.
 
 **Standards sub-agent prompt** should include:
 
@@ -99,11 +103,12 @@ not write to it.
 - The list of standards-source files you found in step 3,
   **plus the smell baseline from step 3** pasted in full (the sub-agent has no
   other access to it).
+- The reporting rule above, pasted in full.
 - The brief: "Report, per file/hunk where relevant, (a) every place the diff
   violates a documented standard: cite the standard (file + the rule); and (b)
-  any baseline smell you spot: name it and quote the hunk. Report only what
-  should change: the author applies every finding. A documented repo standard
-  overrides the baseline. Skip anything tooling enforces. Under 400 words."
+  any baseline smell you spot: name it and quote the hunk. A documented repo
+  standard overrides the baseline. Skip anything tooling enforces. Follow the
+  reporting rule."
 
 **Spec sub-agent prompt** should include:
 
@@ -114,24 +119,15 @@ not write to it.
   ticket leaves to the other tickets. Read them before reporting something as
   missing or as scope creep when the ticket's scope is in question; not on
   every review.
+- The reporting rule above, pasted in full.
 - The brief: "Report: (a) requirements the spec asked for that are missing or
   partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c)
   requirements that look implemented but where the implementation looks wrong.
-  Quote the spec line for each finding. Report only what should change: the
-  author applies every finding. Under 400 words."
+  Quote the spec line for each finding. Follow the reporting rule."
 
-If the spec is missing, skip the Spec sub-agent and note this in the final
-report.
+If the spec is missing, skip the Spec sub-agent.
 
-### 5. Aggregate
-
-Present the two reports under `## Standards` and `## Spec` headings, verbatim or
-lightly cleaned. Do **not** merge or rerank findings, because the two axes are
-deliberately separate (see _Why two axes_).
-
-End with a one-line summary: total findings per axis, and the worst issue
-_within each axis_ (if any). Don't pick a single winner across axes: that's the
-reranking the separation exists to prevent.
+The two reports are the review's findings.
 
 ## Why two axes
 

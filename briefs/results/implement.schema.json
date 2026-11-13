@@ -11,7 +11,7 @@
           "type": "string"
         },
         "evidence": {
-          "description": "The quote that shows it is wrong on the facts.",
+          "description": "Why the session did not apply it.",
           "type": "string"
         }
       },
