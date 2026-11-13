@@ -15,6 +15,8 @@ use anyhow::{Context, Result, bail};
 use rayon::prelude::*;
 use rustix::fs::{AtFlags, CWD, Timespec, Timestamps};
 
+mod removal;
+
 /// Copies the directory `from` to `to`, which does not exist, sharing disk
 /// space where the filesystem allows, within the margin of the fastest
 /// known way (`docs/specs/runs.md`, Performance).
@@ -219,50 +221,24 @@ async fn clone_whole(from: &Path, to: &Path) -> Result<bool> {
     .await?
 }
 
-/// Removes the directory `path` and all it holds, as far as it is there,
-/// within the margin of the fastest known way (`docs/specs/runs.md`,
-/// Performance): `Ok` where `path` is already gone. Where `path`, or an
-/// entry in it, is a symlink, removes the link and leaves what it points
-/// to. Blocks until it is done.
-pub fn remove(path: &Path) -> Result<()> {
-    #[cfg(target_os = "linux")]
-    let removed = remove_in_parallel(path);
-    // Off Linux, std's serial unlink: on macOS, `removefile(3)`
-    // (https://keith.github.io/xcode-man-pages/removefile.3.html) unlinks
-    // entry by entry, and on APFS measured slower than `remove_dir_all`, as
-    // did a parallel unlink
-    // (https://docs.rs/crate/decmpfs/0.1.2/source/src/remove.rs).
-    #[cfg(not(target_os = "linux"))]
-    let removed = std::fs::remove_dir_all(path);
-    unless_missing(removed).with_context(|| format!("removing {}", path.display()))?;
-    Ok(())
-}
-
-/// Removes `path` as [`remove`] promises, with the `remove_dir_all` crate's
-/// parallel unlink (<https://docs.rs/remove_dir_all/1.0.0/remove_dir_all/>).
+/// Removes the tree at `path` and all it holds, within the margin of the
+/// fastest known way (`docs/specs/runs.md`, Performance), whatever its
+/// entries are (directories, regular files, symlinks, sockets, FIFOs and
+/// device nodes) and whatever their owner permissions, where the user
+/// removing them owns them. Never blocks on an entry, such as a FIFO with no
+/// writer, and blocks until it is done. Runs in parallel on Linux and
+/// serially elsewhere.
 ///
-/// The crate's `remove_dir_all` resolves symlinks in `path`
-/// (<https://docs.rs/crate/remove_dir_all/1.0.0/source/src/lib.rs>), so
-/// given a symlink it would empty what the link points to. This opens `path`
-/// without following a symlink instead and leaves anything but a directory
-/// to `std::fs::remove_dir_all`, which removes only a link.
-#[cfg(target_os = "linux")]
-fn remove_in_parallel(path: &Path) -> std::io::Result<()> {
-    use remove_dir_all::RemoveDir;
-    use rustix::fs::{Mode, OFlags};
-    use rustix::io::Errno;
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-    match rustix::fs::open(path, flags, Mode::empty()) {
-        Ok(dir) => {
-            std::fs::File::from(dir).remove_dir_contents(Some(path))?;
-            std::fs::remove_dir(path)
-        }
-        // On a symlink, `O_NOFOLLOW` fails with `ELOOP`, or `O_DIRECTORY`
-        // first with `ENOTDIR`, as on any other entry that is not a
-        // directory (https://man7.org/linux/man-pages/man2/open.2.html).
-        Err(Errno::LOOP | Errno::NOTDIR) => std::fs::remove_dir_all(path),
-        Err(e) => Err(e.into()),
-    }
+/// It may give the owner of a directory in the tree read, write and search
+/// permission, but never changes a file's mode, never follows a symlink and
+/// changes nothing outside `path`: where `path`, or an entry in it, is a
+/// symlink, it removes the link and leaves what it points to.
+///
+/// `Ok` where `path` is already gone, or where an entry goes while it runs.
+/// The error, `removing {path}`, has as its cause the entry it could not
+/// remove.
+pub fn remove(path: &Path) -> Result<()> {
+    removal::remove(path).with_context(|| format!("removing {}", path.display()))
 }
 
 /// `None` where `result` failed for want of the file.
@@ -412,5 +388,185 @@ mod tests {
 
         assert!(link.symlink_metadata().is_err());
         assert!(target.join("kept").exists());
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_symlink_named_with_a_trailing_slash_and_leaves_what_it_points_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("kept"), "x").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let mut with_slash = link.clone().into_os_string();
+        with_slash.push("/");
+
+        remove(Path::new(&with_slash)).unwrap();
+
+        assert!(link.symlink_metadata().is_err());
+        assert!(target.join("kept").exists());
+    }
+
+    /// Whether the tests run as root, for whom no permission bits forbid
+    /// anything, so a case about them shows nothing.
+    fn running_as_root() -> bool {
+        rustix::process::geteuid().is_root()
+    }
+
+    #[track_caller]
+    fn set_mode(path: &Path, mode: u32) {
+        fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        let _top = std::os::unix::net::UnixListener::bind(tree.join("top.sock")).unwrap();
+        let _sub = std::os::unix::net::UnixListener::bind(tree.join("sub/sub.sock")).unwrap();
+
+        remove(&tree).unwrap();
+
+        assert!(tree.symlink_metadata().is_err());
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_fifo_without_waiting_for_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        for fifo in ["fifo", "sub/fifo"] {
+            let status = Command::new("mkfifo")
+                .arg(tree.join(fifo))
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        let (done, removed) = std::sync::mpsc::channel();
+        let removing = tree.clone();
+        std::thread::spawn(move || done.send(remove(&removing).map_err(|e| format!("{e:#}"))));
+
+        let removed = removed.recv_timeout(std::time::Duration::from_secs(10));
+
+        removed.expect("remove returns").unwrap();
+        assert!(tree.symlink_metadata().is_err());
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_file_its_owner_cant_read_or_write() {
+        if running_as_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        for file in ["file", "sub/file"] {
+            fs::write(tree.join(file), "x").unwrap();
+            set_mode(&tree.join(file), 0o000);
+        }
+
+        remove(&tree).unwrap();
+
+        assert!(tree.symlink_metadata().is_err());
+    }
+
+    /// Owner permissions that each lack what listing a directory or
+    /// removing what it holds takes: read, write or search.
+    const MODES_LACKING_OWNER_PERMISSION: [u32; 4] = [0o000, 0o500, 0o600, 0o300];
+
+    #[test_log::test]
+    fn remove_removes_directories_their_owner_lacks_permissions_on() {
+        if running_as_root() {
+            return;
+        }
+        for lacking in MODES_LACKING_OWNER_PERMISSION {
+            let dir = tempfile::tempdir().unwrap();
+            let tree = dir.path().join("tree");
+            fs::create_dir_all(tree.join("empty")).unwrap();
+            fs::create_dir_all(tree.join("full/deeper/deepest")).unwrap();
+            fs::write(tree.join("full/file"), "x").unwrap();
+            fs::write(tree.join("full/deeper/file"), "x").unwrap();
+            fs::write(tree.join("full/deeper/deepest/file"), "x").unwrap();
+            for sub in ["full/deeper/deepest", "full/deeper", "full", "empty"] {
+                set_mode(&tree.join(sub), lacking);
+            }
+
+            let removed = remove(&tree);
+
+            removed.unwrap_or_else(|e| panic!("mode {lacking:o}: {e:#}"));
+            assert!(tree.symlink_metadata().is_err(), "mode {lacking:o}");
+        }
+    }
+
+    #[test_log::test]
+    fn remove_removes_a_root_its_owner_lacks_permissions_on() {
+        if running_as_root() {
+            return;
+        }
+        for lacking in MODES_LACKING_OWNER_PERMISSION {
+            for holding in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let tree = dir.path().join("tree");
+                fs::create_dir(&tree).unwrap();
+                if holding {
+                    fs::create_dir(tree.join("sub")).unwrap();
+                    fs::write(tree.join("file"), "x").unwrap();
+                }
+                set_mode(&tree, lacking);
+
+                let removed = remove(&tree);
+
+                let case = format!("mode {lacking:o}, holding entries: {holding}");
+                removed.unwrap_or_else(|e| panic!("{case}: {e:#}"));
+                assert!(tree.symlink_metadata().is_err(), "{case}");
+            }
+        }
+    }
+
+    #[test_log::test]
+    fn remove_leaves_the_mode_of_a_read_only_directory_a_symlink_in_the_tree_points_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("kept"), "x").unwrap();
+        set_mode(&outside, 0o500);
+        let tree = dir.path().join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        std::os::unix::fs::symlink(&outside, tree.join("sub/link")).unwrap();
+        set_mode(&tree.join("sub"), 0o500);
+
+        let removed = remove(&tree);
+
+        let outside_mode = mode(&outside);
+        set_mode(&outside, 0o700);
+        removed.unwrap();
+        assert!(tree.symlink_metadata().is_err());
+        assert_eq!(outside_mode, 0o040_500);
+        assert!(outside.join("kept").exists());
+    }
+
+    #[test_log::test]
+    fn remove_fails_naming_the_tree_where_the_directory_holding_it_forbids_removing_it() {
+        if running_as_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("parent");
+        let tree = parent.join("tree");
+        fs::create_dir_all(tree.join("sub")).unwrap();
+        fs::write(tree.join("sub/file"), "x").unwrap();
+        set_mode(&tree.join("sub"), 0o000);
+        set_mode(&parent, 0o500);
+
+        let removed = remove(&tree);
+
+        set_mode(&parent, 0o700);
+        let error = format!("{:#}", removed.unwrap_err());
+        assert!(
+            error.starts_with(&format!("removing {}: ", tree.display())),
+            "{error}"
+        );
+        assert!(error.contains("Permission denied"), "{error}");
     }
 }
