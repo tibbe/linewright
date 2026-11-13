@@ -1,5 +1,5 @@
-//! Keeping Linewright's secrets out of what it keeps, logs or posts
-//! (`docs/specs/operation.md`, Secrets).
+//! Keeping Linewright's secrets out of what it and its sessions produce,
+//! before it keeps, logs or posts it (`docs/specs/operation.md`, Secrets).
 
 use aho_corasick::{AhoCorasick, MatchKind};
 

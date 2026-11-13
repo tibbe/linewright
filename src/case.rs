@@ -11,7 +11,6 @@ use serde::Serialize;
 use crate::domain::{Number, Timestamp};
 use crate::input::Input;
 use crate::reconcile::WorkKind;
-use crate::redaction::Redaction;
 use crate::runs::{RunId, RunOf, Runs};
 use crate::store::Store;
 
@@ -207,16 +206,14 @@ pub fn capturable(
     })
 }
 
-/// Captures `capturable` as its case, with `criteria`, redacted by
-/// `redaction`, as what a good result is, and its commits fetched from
-/// `store`, and returns the case's directory. All or nothing: the case is
-/// whole or absent, and of two captures under one name, one is refused as
-/// [`CaptureError::Taken`].
+/// Captures `capturable` as its case, with `criteria` as what a good result
+/// is, and its commits fetched from `store`, and returns the case's
+/// directory. All or nothing: the case is whole or absent, and of two
+/// captures under one name, one is refused as [`CaptureError::Taken`].
 pub async fn capture(
     store: &dyn Store,
     capturable: Capturable,
     criteria: Option<&str>,
-    redaction: &Redaction,
 ) -> Result<PathBuf, CaptureError> {
     let Capturable {
         run:
@@ -248,7 +245,7 @@ pub async fn capture(
     write("case.json", &json(&case)?)?;
     write("items.json", &json(&input.items)?)?;
     if let Some(criteria) = criteria {
-        write("criteria.md", redaction.apply(criteria).as_bytes())?;
+        write("criteria.md", criteria.as_bytes())?;
     }
     store
         .fetch_commits(&building.path().join("repository.git"), &input.heads)

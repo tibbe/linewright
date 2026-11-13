@@ -27,8 +27,8 @@ fn id(id: &str) -> RunId {
     id.parse().unwrap()
 }
 
-/// Captures run `run` of `world` as the case `named`, with `criteria`,
-/// redacting [`SECRET`]: refused, if at all, as the call is made.
+/// Captures run `run` of `world` as the case `named`, with `criteria`:
+/// refused, if at all, as the call is made.
 #[track_caller]
 fn capture<'a>(
     world: &'a World,
@@ -38,10 +38,7 @@ fn capture<'a>(
 ) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
     let named: CaseName = named.parse().unwrap();
     let capturable = case::capturable(&runs(world), &cases(world), &id(run), &named);
-    async move {
-        let redaction = redaction_of(&[("MAINTAINERS_SECRET", SECRET)]);
-        case::capture(&*world.store, capturable?, criteria, &redaction).await
-    }
+    async move { case::capture(&*world.store, capturable?, criteria).await }
 }
 
 /// The lines `git` writes with `args` in the repository at `dir`, failing
@@ -216,7 +213,7 @@ async fn a_case_captured_without_criteria_has_no_criteria_file() {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_criteria_are_kept_with_secrets_redacted() {
+async fn the_criteria_are_kept_as_given_even_with_a_secret() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let criteria = format!("It never shows {SECRET}.\n");
@@ -225,10 +222,7 @@ async fn the_criteria_are_kept_with_secrets_redacted() {
         .await
         .unwrap();
 
-    assert_eq!(
-        read(&dir.join("criteria.md")),
-        "It never shows [redacted].\n"
-    );
+    assert_eq!(read(&dir.join("criteria.md")), criteria);
 }
 
 #[test_log::test(tokio::test)]

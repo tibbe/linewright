@@ -21,7 +21,6 @@ use linewright::factory::{Factory, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId};
-use linewright::secrets::Secrets;
 use linewright::serving::{self, OnUsageLimit, Starting, prompts};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
@@ -917,10 +916,6 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
         Ok(capturable) => capturable,
         Err(e) => return print_answer(Err(refusal(e))),
     };
-    let secrets = match Secrets::of(&config.secrets, std::env::vars_os()) {
-        Ok(secrets) => secrets,
-        Err(e) => return print_answer(Err((FAILURE, e))),
-    };
     let criteria = match criteria.map(std::fs::read_to_string).transpose() {
         Ok(criteria) => criteria,
         Err(e) => {
@@ -937,15 +932,10 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
-        case::capture(
-            &github,
-            capturable,
-            criteria.as_deref(),
-            secrets.redaction(),
-        )
-        .await
-        .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
-        .map_err(refusal),
+        case::capture(&github, capturable, criteria.as_deref())
+            .await
+            .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
+            .map_err(refusal),
     )
 }
 
