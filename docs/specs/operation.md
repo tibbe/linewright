@@ -22,8 +22,8 @@ from Linewright's base image with the project's toolchain added.
    that I can debug it without GitHub.
 7. As an operator, I want to replace the binary without wasting the work in
    flight, so that an upgrade costs no agent sessions.
-8. As an operator, I want secrets kept out of what Linewright keeps, logs and
-   posts, so that running it doesn't leak them.
+8. As an operator, I want secrets kept out of what Linewright and its sessions
+   produce, so that Linewright does not leak them.
 
 ## Commands
 
@@ -219,16 +219,15 @@ and the follow-ups ([Contract](runs.md#contract)).
 
 ## Secrets
 
-Linewright keeps secrets out of what it keeps, logs, posts or pushes.
+Linewright keeps secrets out of what it and its sessions produce.
 
-- **Secrets are redacted.** What Linewright keeps, logs or posts has secrets
-  replaced by `[redacted]`, except the commits it pushes, the attachments
-  it uploads and a case's items and commits, which it keeps as GitHub holds
-  them ([Benchmarks](benchmarks.md#cases)): a commit or an attachment holding
-  a secret is refused
-  ([Runs](runs.md)). Redaction is best effort. A secret of 1
-  to 5 characters is neither redacted nor refused, which Linewright warns of at
-  startup, naming its variable; an empty one is ignored.
+- **Secrets are redacted.** Linewright replaces each secret with `[redacted]`
+  in what it and its sessions produce, before it keeps, logs or posts this
+  output. It never changes a session's commits or attachments: it refuses to
+  push or upload one that holds a secret ([Runs](runs.md)). Redaction is best
+  effort. A secret of 1 to 5 characters is neither redacted nor refused,
+  which Linewright warns of at startup, naming its variable; an empty one is
+  ignored.
 - **A secret** is a credential Linewright reads
   ([Configuration](#configuration)) or passes to a session
   ([Environment variables](sessions.md#environment-variables)), or the value of
