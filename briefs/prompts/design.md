@@ -12,9 +12,11 @@ Design the code for the {{kind}} below. You may read GitHub but must not write t
 
 ### 1. Research prior art and choose an option
 
-Read the {{kind}}, `GLOSSARY.md` if present, the spec and the code the {{kind}} touches. Then call the Skill tool with `linewright:software-design`, and find how the problem has been solved before and choose an option from it, as it says.
+Read the {{kind}}, `GLOSSARY.md` if present, and the spec. Then call the Skill tool with `linewright:software-design`, and find how the problem has been solved before and choose an option from it, as it says. Read none of the code until the option is chosen, so that the code as it is doesn't shape the choice.
 
 ### 2. Design the code
+
+Read the code the {{kind}} touches.
 
 A design names the modules the change touches. For each, it says what the module is responsible for and its interface to the other modules. A module is anything with an interface and an implementation: a method or function, a class, a package, a service or a library the code uses. Its interface is everything the other modules must know of it. Everything else the module hides, and the implementer decides it.
 
