@@ -7,4 +7,4 @@ End your session with a final message that is a single JSON object and nothing e
 where
 
 - `SPEC_GAP` is `{ "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }`, and `spec_gaps` lists the gaps that did not block the ticket (often none).
-- `DECLINED` is `{ "finding": "<the review finding, as the review put it>", "evidence": "<why you did not apply it, per the linewright:implement skill>" }`, and `declined_findings` lists the review findings you did not apply (often none).
+- `DECLINED` is `{ "finding": "<the review finding, as the review put it>", "evidence": "<why you did not apply it, per the linewright:implement skill>" }`, and `declined_findings` lists the review findings you did not apply.
