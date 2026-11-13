@@ -14,14 +14,13 @@ description:
 Assume the problem has been solved before, and research how in parallel
 sub-agents, so each search stays out of the others' context and yours.
 
-1. Frame the problem: the behavior the change must deliver, the quality
-   attributes the spec states, and the platform it must run on and its
-   language. The current design is open to change, down to the libraries and
-   components it builds on.
+1. Frame the problem from its requirements, as you were given them, and
+   nothing else: the behavior the change must deliver, its quality
+   attributes, and the platform it must run on and its language.
 2. Spawn one sub-agent per kind of prior art the problem has, together, in
    the foreground:
-   - **Platform**: the platform's, framework's or library's own recommended
-     approach, from its documentation or design guidelines.
+   - **Platform**: the recommended approach of the platform the framing
+     names, from its documentation or design guidelines.
    - **Products**: how other products of the same kind as ours, and others
      facing the same problem, handle this behavior.
 
@@ -39,7 +38,7 @@ Once every research sub-agent has returned its report, list every option the
 reports give. Then, for each decision, write its criteria: the quality
 attributes the framing states, and performance, wherever the reports'
 trade-offs show the options can differ on them. Word each so that more of it is
-better, one concern to each. Mark as a must-have any the spec requires
+better, one concern to each. Mark as a must-have any the requirements state
 outright, and rank the rest High, Medium or Low by how much the change's
 success depends on them.
 
