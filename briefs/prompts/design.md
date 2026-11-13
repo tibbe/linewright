@@ -20,6 +20,11 @@ Read the code the {{kind}} touches.
 
 A design names the modules the change touches. For each, it says what the module is responsible for and its interface to the other modules. A module is anything with an interface and an implementation: a method or function, a class, a package, a service or a library the code uses. Its interface is everything the other modules must know of it. Everything else the module hides, and the implementer decides it.
 
+Make each interface correct by construction:
+
+- **Make illegal states unrepresentable**: shape its types so that only valid
+  combinations of data can be constructed.
+
 Some decisions affect more than one module, and must be made before work on the modules can begin. Those are the design's. The first is the seam, where the option attaches to the code. Choose each by the software-design skill's Criteria and Choose steps, with the ways it could go as its options. A decision of the design has no consensus, so compare its options with each other rather than with a reference, and take the one that wins.
 
 Keep the code's structure where it holds up. Change it where the change would add a special case to it, or where the structure makes the problem likely, so that the same kind of problem would come back.
