@@ -6,12 +6,13 @@ use crate::common;
 
 use std::panic::Location;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use common::*;
 use linewright::case::{self, Case, CaseName};
 use linewright::domain::Number;
 use linewright::factory::{FactoryConfig, SessionToken};
+use linewright::harness::{GhReach, SessionSpec};
 use linewright::reconcile::WorkKind;
 use linewright::replay::{self, OutputRefusal};
 use linewright::runs::{Ending, Runs};
@@ -290,6 +291,99 @@ async fn an_implement_case_is_replayed_pushing_its_branch_into_the_output() {
     );
 }
 
+/// What the socket that the configuration of `gh` in the environment of
+/// `spec`'s session names answers a `GET` of `target`, as `gh` sends it:
+/// the whole answer, or why there is none.
+#[track_caller]
+fn gh_answer(spec: &SessionSpec, target: &str) -> String {
+    use std::io::{Read as _, Write as _};
+
+    let environment = fake_environment(&spec.environment, &spec.scratch, &spec.gh);
+    let Some((_, config)) = environment
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "GH_CONFIG_DIR")
+    else {
+        return "no GH_CONFIG_DIR".into();
+    };
+    let yaml = std::fs::read_to_string(Path::new(config).join("config.yml")).unwrap();
+    let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+    let socket = yaml["http_unix_socket"].as_str().unwrap();
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    write!(
+        stream,
+        "GET {target} HTTP/1.1\r\nHost: api.github.com\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut answer = String::new();
+    stream.read_to_string(&mut answer).unwrap();
+    answer
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn a_replays_sessions_gh_is_refused_the_cases_repository() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    let answers = Arc::new(Mutex::new(vec![]));
+    let kept = answers.clone();
+    harness.on(WorkKind::Triage, move |call| {
+        kept.lock()
+            .unwrap()
+            .push(gh_answer(call.spec, &format!("/repos/{REPO}/issues")));
+        Ok(triaged())
+    });
+    let under = tempfile::tempdir().unwrap();
+
+    let replayed = replayed(&case, under.path(), harness, |_| {}).await;
+
+    assert_eq!(replayed.ended.as_ref().unwrap(), &Ending::Done);
+    let answers = answers.lock().unwrap();
+    assert_eq!(answers.len(), 1, "{answers:?}");
+    assert!(answers[0].starts_with("HTTP/1.1 403 "), "{}", answers[0]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_served_runs_sessions_gh_reaches_github_as_configured() {
+    let mut world = World::new().await;
+    let reached = Arc::new(Mutex::new(vec![]));
+    let kept = reached.clone();
+    world.harness.on(WorkKind::Triage, move |call| {
+        kept.lock().unwrap().push(call.spec.gh.clone());
+        Ok(triaged())
+    });
+    world
+        .store
+        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
+
+    world.poll().await;
+
+    assert_eq!(*reached.lock().unwrap(), vec![GhReach::Direct]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_later_replay_from_the_same_head_uses_the_environment_an_earlier_one_built() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Triage, |_| Ok(triaged()));
+    let under = tempfile::tempdir().unwrap();
+    let setup = |config: &mut FactoryConfig| {
+        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+            SetupCommand::new("echo built the environment".into()).unwrap(),
+        ));
+    };
+    let first = replayed(&case, under.path(), harness.clone(), setup).await;
+    assert_eq!(first.ended.as_ref().unwrap(), &Ending::Done);
+    assert!(first.out.join("build.log").is_file());
+    std::fs::remove_dir_all(&first.out).unwrap();
+
+    let second = replayed(&case, under.path(), harness, setup).await;
+
+    assert_eq!(second.ended.as_ref().unwrap(), &Ending::Done);
+    assert!(!second.out.join("build.log").exists());
+}
+
 #[test_log::test(tokio::test)]
 async fn a_session_refused_for_the_usage_limit_ends_the_replays_run_for_it() {
     let mut world = World::new().await;
@@ -524,6 +618,42 @@ async fn lw_replay_reads_no_github_token_and_gives_sessions_none_with_repo_set_o
     );
     assert!(work.path().join(REPO).join("replays").is_dir());
     assert!(!work.path().join("someone").exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_replay_does_not_count_gh_config_dir_among_the_variables_sessions_are_not_given() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+
+    let ran = lw_isolated(
+        bin.path(),
+        work.path(),
+        &[
+            "--log-format",
+            "json",
+            "replay",
+            case.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &[("GH_CONFIG_DIR", "/etc/gh")],
+    )
+    .await;
+
+    assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+    let withheld = ran
+        .stderr
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find_map(|line| line["fields"]["variables"].as_str().map(String::from))
+        .unwrap_or_else(|| panic!("no variables logged: {}", ran.stderr));
+    assert!(
+        !withheld.split(' ').any(|name| name == "GH_CONFIG_DIR"),
+        "{withheld}"
+    );
 }
 
 #[test_log::test(tokio::test)]

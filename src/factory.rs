@@ -23,7 +23,7 @@ use crate::domain::{
 };
 use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
-use crate::harness::{Harness, UsageLimit};
+use crate::harness::{GhReach, Harness, UsageLimit};
 use crate::pull_records::PullRecords;
 use crate::reconcile::{
     Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Subject, Work,
@@ -313,6 +313,7 @@ impl Factory {
             report_refusal,
             environment: environment.source(),
             clones,
+            gh: GhReach::Direct,
         });
         Ok(Factory {
             shell: Arc::new(shell),

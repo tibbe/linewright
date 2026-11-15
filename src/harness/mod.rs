@@ -11,6 +11,7 @@ use crate::automation::AutomationName;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
+use crate::replay::GhConfigDir;
 use crate::session_env::Given;
 use crate::work_settings::Effort;
 
@@ -18,6 +19,26 @@ use crate::work_settings::Effort;
 pub enum Purpose {
     Work { subject: Subject, kind: WorkKind },
     Automation(AutomationName),
+}
+
+/// How a session's `gh` reaches GitHub.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GhReach {
+    /// As it is configured on the host.
+    Direct,
+    /// Through the configuration a replay's gate serves
+    /// (`docs/specs/benchmarks.md`, The repository on GitHub).
+    Through(GhConfigDir),
+}
+
+impl GhReach {
+    /// The configuration of `gh` it goes through, if any.
+    pub fn config_dir(&self) -> Option<&Path> {
+        match self {
+            GhReach::Direct => None,
+            GhReach::Through(config) => Some(config.path()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -39,6 +60,7 @@ pub struct SessionSpec {
     pub effort: Option<Effort>,
     /// A session starts from these alone, and what the harness sets itself.
     pub environment: Arc<Given>,
+    pub gh: GhReach,
     /// When the session times out, across all its turns.
     pub deadline: tokio::time::Instant,
     /// Told what the harness reports of the session as each turn runs, so
@@ -172,13 +194,15 @@ impl SessionError {
 #[async_trait]
 pub trait Harness: Send + Sync {
     /// The whole environment a session starts from, given `given`, its
-    /// scratch directory and its effort: `given`, then what Linewright sets
-    /// over it. A variable set twice takes its later value.
+    /// scratch directory, its effort and how its `gh` reaches GitHub:
+    /// `given`, then what Linewright sets over it. A variable set twice
+    /// takes its later value.
     fn environment(
         &self,
         given: &Given,
         scratch: &Path,
         effort: Option<Effort>,
+        gh: &GhReach,
     ) -> Vec<(OsString, OsString)>;
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError>;
     async fn resume(

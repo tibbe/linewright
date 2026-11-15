@@ -964,7 +964,7 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             };
             log.begin();
             let ran = async {
-                let starting = Starting::new(config, HARNESS_PROGRAM, || {
+                let starting = Starting::replaying(config, HARNESS_PROGRAM, || {
                     Ok(SessionToken::replaying(
                         std::env::var(SESSION_TOKEN_VARIABLE).ok(),
                     ))

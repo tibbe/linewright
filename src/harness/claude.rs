@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-use super::{Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
+use super::{GhReach, Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
 use crate::clock::Clock;
 use crate::domain::Timestamp;
@@ -34,6 +34,8 @@ pub struct ClaudeCode {
 }
 
 const TEMPORARY_DIRECTORY: &str = "TMPDIR";
+/// Where `gh` reads its configuration from: <https://cli.github.com/manual/gh_help_environment>.
+const GH_CONFIG_DIR: &str = "GH_CONFIG_DIR";
 /// Without it Claude Code picks the operator's `$SHELL`. It still sources
 /// the host's `~/.bashrc`, if there is one, and has no switch to stop that,
 /// so a session is not insulated from it. Docs:
@@ -72,10 +74,12 @@ enum Own {
     Effort,
     GhToken,
     GithubToken,
+    GhConfigDir,
 }
 
 impl Own {
-    const ALL: [Own; 6] = [
+    /// Those `session-env` may not set.
+    const NOT_SET_BY_OPERATOR: [Own; 6] = [
         Own::TemporaryDirectory,
         Own::Shell,
         Own::NoUpdates,
@@ -83,6 +87,16 @@ impl Own {
         Own::GhToken,
         Own::GithubToken,
     ];
+
+    const ALL: [Own; Own::NOT_SET_BY_OPERATOR.len() + 1] = {
+        let mut all = [Own::GhConfigDir; Own::NOT_SET_BY_OPERATOR.len() + 1];
+        let mut i = 0;
+        while i < Own::NOT_SET_BY_OPERATOR.len() {
+            all[i] = Own::NOT_SET_BY_OPERATOR[i];
+            i += 1;
+        }
+        all
+    };
 
     const fn name(self) -> &'static str {
         match self {
@@ -92,30 +106,34 @@ impl Own {
             Own::Effort => EFFORT,
             Own::GhToken => TOKEN_VARIABLES[0],
             Own::GithubToken => TOKEN_VARIABLES[1],
+            Own::GhConfigDir => GH_CONFIG_DIR,
         }
     }
 }
 
 /// Every variable `set_for_session` may set, whether or not it sets it for
-/// a given session.
-pub const SET_FOR_SESSIONS: [&str; Own::ALL.len()] = {
-    let mut names = [""; Own::ALL.len()];
+/// a given session, that `session-env` may not set: all but
+/// `GH_CONFIG_DIR`, whose value in a replay replaces `session-env`'s.
+pub const SET_FOR_SESSIONS: [&str; Own::NOT_SET_BY_OPERATOR.len()] = {
+    let mut names = [""; Own::NOT_SET_BY_OPERATOR.len()];
     let mut i = 0;
     while i < names.len() {
-        names[i] = Own::ALL[i].name();
+        names[i] = Own::NOT_SET_BY_OPERATOR[i].name();
         i += 1;
     }
     names
 };
 
 /// What Linewright sets for a session, over any variable of the same name
-/// the session's `environment` gives it: of `SET_FOR_SESSIONS`, those it
-/// has a value for.
+/// the session's `environment` gives it: of `Own::ALL`, those it has a
+/// value for. `gh_config` is the configuration of `gh` a gate serves, if
+/// any.
 fn set_for_session<'a>(
     scratch: &'a Path,
     bash: &'a Path,
     github_token: Option<&'a str>,
     effort: Option<Effort>,
+    gh_config: Option<&'a Path>,
 ) -> Vec<(&'static str, &'a OsStr)> {
     Own::ALL
         .into_iter()
@@ -126,6 +144,7 @@ fn set_for_session<'a>(
                 Own::NoUpdates => Some(OsStr::new("1")),
                 Own::Effort => effort.map(|effort| OsStr::new(effort.name())),
                 Own::GhToken | Own::GithubToken => github_token.map(OsStr::new),
+                Own::GhConfigDir => gh_config.map(Path::as_os_str),
             };
             Some((own.name(), value?))
         })
@@ -323,9 +342,14 @@ impl Log {
 }
 
 impl ClaudeCode {
-    /// The variables Linewright sets for a session given `github_token`.
-    pub fn variables_set_for_sessions(github_token: Option<&str>) -> Vec<&'static str> {
-        set_for_session(Path::new(""), Path::new(""), github_token, None)
+    /// The variables Linewright sets for a session given `github_token`,
+    /// and whether its `gh` reaches GitHub through a gate, as in a replay.
+    pub fn variables_set_for_sessions(
+        github_token: Option<&str>,
+        gh_through_gate: bool,
+    ) -> Vec<&'static str> {
+        let gh_config = gh_through_gate.then_some(Path::new(""));
+        set_for_session(Path::new(""), Path::new(""), github_token, None, gh_config)
             .into_iter()
             .map(|(name, _)| name)
             .collect()
@@ -370,7 +394,7 @@ impl ClaudeCode {
             .args(session.args())
             .current_dir(&spec.dir)
             .env_clear()
-            .envs(self.environment(&spec.environment, &spec.scratch, spec.effort))
+            .envs(self.environment(&spec.environment, &spec.scratch, spec.effort, &spec.gh))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -557,8 +581,15 @@ impl Harness for ClaudeCode {
         given: &Given,
         scratch: &Path,
         effort: Option<Effort>,
+        gh: &GhReach,
     ) -> Vec<(OsString, OsString)> {
-        let set = set_for_session(scratch, &self.bash, self.github_token.as_deref(), effort);
+        let set = set_for_session(
+            scratch,
+            &self.bash,
+            self.github_token.as_deref(),
+            effort,
+            gh.config_dir(),
+        );
         given
             .iter()
             .map(|(name, value)| (name.clone(), value.clone()))

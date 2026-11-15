@@ -186,12 +186,35 @@ impl Starting {
         program: &str,
         token: impl FnOnce() -> Result<SessionToken>,
     ) -> Result<Starting> {
+        Starting::with_gh(config, program, token, false).await
+    }
+
+    /// [`Starting::new`], for a replay's sessions, whose `gh` reaches GitHub
+    /// through a gate.
+    ///
+    /// # Errors
+    ///
+    /// As [`Starting::new`].
+    pub async fn replaying(
+        config: &Config,
+        program: &str,
+        token: impl FnOnce() -> Result<SessionToken>,
+    ) -> Result<Starting> {
+        Starting::with_gh(config, program, token, true).await
+    }
+
+    async fn with_gh(
+        config: &Config,
+        program: &str,
+        token: impl FnOnce() -> Result<SessionToken>,
+        gh_through_gate: bool,
+    ) -> Result<Starting> {
         let prompts = prompts(config)?;
         require_tool("git").await?;
         let bash = require_bash()?;
         require_tool(program).await?;
         let sessions = SessionCredentials::new(token()?, &config.secrets)?;
-        let environments = environments(config, &sessions);
+        let environments = environments(config, &sessions, gh_through_gate);
         Ok(Starting {
             program: program.into(),
             bash,
@@ -276,11 +299,15 @@ impl SessionCredentials {
 /// the variables they are not given and, of those, the ones each stage's
 /// table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
-fn environments(config: &Config, sessions: &SessionCredentials) -> Environments {
+fn environments(
+    config: &Config,
+    sessions: &SessionCredentials,
+    gh_through_gate: bool,
+) -> Environments {
     let split = config.work.environments(
         &config.session_env,
         std::env::vars_os(),
-        &ClaudeCode::variables_set_for_sessions(sessions.token.given()),
+        &ClaudeCode::variables_set_for_sessions(sessions.token.given(), gh_through_gate),
     );
     info!(
         variables = split.withheld.join(" "),
