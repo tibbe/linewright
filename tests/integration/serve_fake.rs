@@ -93,10 +93,14 @@ impl Served {
         }
     }
 
-    /// The first event with an ID the stream at `path` sends, failing after
-    /// a minute.
+    /// The first event with an ID the stream at `path` sends that `holds`
+    /// holds of, failing after a minute.
     #[track_caller]
-    fn first_event(&self, path: &str) -> impl Future<Output = String> + '_ {
+    fn first_event<'a>(
+        &'a self,
+        path: &str,
+        holds: impl Fn(&str) -> bool + 'a,
+    ) -> impl Future<Output = String> + 'a {
         let caller = Location::caller();
         let url = self.url(path);
         async move {
@@ -110,7 +114,7 @@ impl Served {
                     unread.push_str(&String::from_utf8_lossy(&chunk));
                     while let Some(end) = unread.find("\n\n") {
                         let block: String = unread.drain(..end + 2).collect();
-                        if block.lines().any(|line| line.starts_with("id: ")) {
+                        if block.lines().any(|line| line.starts_with("id: ")) && holds(&block) {
                             return Some(block);
                         }
                     }
@@ -217,10 +221,11 @@ async fn serve_fake_serves_the_seeds_board_and_its_runs_in_flight_go_on_live() {
     let page = served
         .eventually_page(&run, |html| followed_from(html).is_some())
         .await;
-    let event = served
-        .first_event(&followed_from(&page).expect("followed"))
+    served
+        .first_event(&followed_from(&page).expect("followed"), |event| {
+            event.contains("entry")
+        })
         .await;
-    assert!(event.contains("entry"), "{event}");
 
     served.stop().await;
 }
