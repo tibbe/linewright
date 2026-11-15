@@ -32,6 +32,7 @@ mod harness;
 mod host;
 mod input;
 mod item_facts;
+mod journal;
 mod lifecycle;
 mod live_runs;
 mod local_api;

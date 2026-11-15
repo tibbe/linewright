@@ -47,6 +47,7 @@ pub mod pull_records;
 pub mod reconcile;
 mod records;
 pub mod redaction;
+pub mod replay;
 pub mod repo_files;
 pub mod results;
 pub mod run;
