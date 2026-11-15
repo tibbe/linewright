@@ -158,9 +158,10 @@ pub enum Command {
         id: RunId,
         /// Lowercase letters, digits and hyphens.
         name: CaseName,
-        /// What a good result is, as `criteria.md` in the case.
+        /// What a good result is, as `criteria.md` in the case: refused
+        /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
-        criteria: Option<PathBuf>,
+        criteria: PathBuf,
     },
     /// Run the stage of the case in the directory CASE on it again, with the
     /// case in place of GitHub, writing what the run did to DIR.

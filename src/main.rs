@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::case::{self, CaptureError, Case, CaseName, Refusal};
+use linewright::case::{self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal};
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -885,7 +885,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             prepared
         }
         Command::Capture { id, name, criteria } => {
-            return Ok(capture(&config, &id, &name, criteria.as_deref()).await);
+            return Ok(capture(&config, &id, &name, &criteria).await);
         }
         Command::Replay { case, out } => {
             return Ok(replay(&config, &case, &out, winding_up, log).await);
@@ -905,7 +905,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
 
 /// Captures run `id` as the case `name`, with the criteria in the file
 /// `criteria`, refusing before connecting to GitHub what it can.
-async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<&Path>) -> u8 {
+async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: &Path) -> u8 {
     let refusal = |e: CaptureError| match e.refusal() {
         Refusal::NoSuchRun => refused(&RequestError::NotFound(e.why())),
         Refusal::Refused | Refusal::Failed => (FAILURE, e.why()),
@@ -920,12 +920,15 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
         Ok(capturable) => capturable,
         Err(e) => return print_answer(Err(refusal(e))),
     };
-    let criteria = match criteria.map(std::fs::read_to_string).transpose() {
+    let criteria = match std::fs::read_to_string(criteria) {
         Ok(criteria) => criteria,
         Err(e) => {
             let e = anyhow::Error::from(e).context("reading the criteria");
             return print_answer(Err(failed(&e)));
         }
+    };
+    let Some(criteria) = Criteria::parse(&criteria) else {
+        return print_answer(Err((FAILURE, CRITERIA_REQUIRED.to_string())));
     };
     let github = match token() {
         Ok(token) => connect(config, token).await,
@@ -936,7 +939,7 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
-        case::capture(&github, capturable, criteria.as_deref())
+        case::capture(&github, capturable, &criteria)
             .await
             .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
             .map_err(refusal),

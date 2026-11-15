@@ -9,7 +9,7 @@ use chrono::TimeDelta;
 
 use common::*;
 use linewright::case::{
-    self, Case, CaseItemKind, CaseName, CasePart, CasePull, CasePullState, Merge,
+    self, Case, CaseItemKind, CaseName, CasePart, CasePull, CasePullState, Criteria, Merge,
 };
 use linewright::clock::RunningFrom;
 use linewright::domain::{MergeMethod, Number, Windows, label};
@@ -71,7 +71,12 @@ fn design_case() -> impl Future<Output = DesignCase> {
         );
         let capturable = case::capturable(&Runs::new(&work), &work.join(case::CASES), &run, &name);
         let capturable = ok(capturable, caller, "the run");
-        let dir = case::capture(&*world.store, capturable, None).await;
+        let criteria = ok(
+            Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),
+            caller,
+            "the criteria",
+        );
+        let dir = case::capture(&*world.store, capturable, &criteria).await;
         let dir = ok(dir, caller, "capturing");
         DesignCase {
             world,
@@ -123,7 +128,9 @@ async fn the_store_seeded_from_a_case_gives_back_what_the_case_holds() {
 
     let again = world.dir.path().join("again");
     std::fs::create_dir(&again).unwrap();
-    std::fs::copy(dir.join("case.json"), again.join("case.json")).unwrap();
+    for file in ["case.json", "criteria.md"] {
+        std::fs::copy(dir.join(file), again.join(file)).unwrap();
+    }
     let items = store.record_items(&numbers(&case)).await.unwrap();
     std::fs::write(
         again.join("items.json"),
@@ -398,6 +405,12 @@ async fn a_case_lacking_a_part_or_holding_one_that_does_not_read_is_refused_nami
             empty_repository,
             CasePart::Repository,
         ),
+        ("no criteria.md", remove("criteria.md"), CasePart::Criteria),
+        (
+            "criteria.md only white space",
+            write("criteria.md", b" \n\t\n"),
+            CasePart::Criteria,
+        ),
         (
             "criteria.md not text",
             write("criteria.md", b"\xff\xfe"),
@@ -416,15 +429,17 @@ async fn a_case_lacking_a_part_or_holding_one_that_does_not_read_is_refused_nami
 }
 
 #[test_log::test(tokio::test)]
-async fn a_case_without_criteria_opens() {
+async fn a_case_opens_with_its_criteria() {
     let DesignCase {
         world: _world, dir, ..
     } = design_case().await;
-    assert!(!dir.join("criteria.md").exists());
 
     let case = open(&dir).await;
 
-    assert_eq!(case.criteria(), None);
+    assert_eq!(
+        case.criteria().as_str(),
+        "The design cuts the work in two.\n"
+    );
 }
 
 /// `result`'s value, failing the test at `caller` for `what` otherwise.
@@ -480,6 +495,7 @@ fn case_with_a_rebased_pull() -> impl Future<Output = (DesignCase, PathBuf, Numb
         let items = ok(store.record_items(&numbers).await, caller, "recording");
         let written = std::fs::create_dir(&dir)
             .and_then(|()| std::fs::copy(design.dir.join("case.json"), dir.join("case.json")))
+            .and_then(|_| std::fs::copy(design.dir.join("criteria.md"), dir.join("criteria.md")))
             .and_then(|_| {
                 std::fs::copy(
                     design.dir.join("properties.json"),

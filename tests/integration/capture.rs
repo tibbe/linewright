@@ -5,7 +5,7 @@ use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use linewright::case::{self, CaptureError, CaseName};
+use linewright::case::{self, CaptureError, CaseName, Criteria};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
 use linewright::runs::{RunId, Runs};
@@ -34,11 +34,12 @@ fn capture<'a>(
     world: &'a World,
     run: &str,
     named: &str,
-    criteria: Option<&'a str>,
+    criteria: &str,
 ) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
     let named: CaseName = named.parse().unwrap();
+    let criteria = Criteria::parse(criteria).unwrap();
     let capturable = case::capturable(&runs(world), &cases(world), &id(run), &named);
-    async move { case::capture(&*world.store, capturable?, criteria).await }
+    async move { case::capture(&*world.store, capturable?, &criteria).await }
 }
 
 /// The lines `git` writes with `args` in the repository at `dir`, failing
@@ -168,14 +169,9 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
     let (ticket, run, heads) = implemented_on_a_branch(&mut world).await;
     let started_at = runs(&world).read_run(&id(&run)).unwrap().started_at;
 
-    let dir = capture(
-        &world,
-        &run,
-        "gadgets-1",
-        Some("A good result adds gadgets.\n"),
-    )
-    .await
-    .unwrap();
+    let dir = capture(&world, &run, "gadgets-1", "A good result adds gadgets.\n")
+        .await
+        .unwrap();
 
     assert_eq!(dir, cases(&world).join("gadgets-1"));
     assert_eq!(
@@ -239,35 +235,12 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
 }
 
 #[test_log::test(tokio::test)]
-async fn a_case_captured_without_criteria_has_no_criteria_file() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
-
-    let dir = capture(&world, &run, "gadgets", None).await.unwrap();
-
-    assert_eq!(
-        entries(&dir),
-        BTreeSet::from(
-            [
-                "case.json",
-                "items.json",
-                "properties.json",
-                "repository.git"
-            ]
-            .map(String::from)
-        )
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn the_criteria_are_kept_as_given_even_with_a_secret() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let criteria = format!("It never shows {SECRET}.\n");
 
-    let dir = capture(&world, &run, "gadgets", Some(&criteria))
-        .await
-        .unwrap();
+    let dir = capture(&world, &run, "gadgets", &criteria).await.unwrap();
 
     assert_eq!(read(&dir.join("criteria.md")), criteria);
 }
@@ -276,7 +249,7 @@ async fn the_criteria_are_kept_as_given_even_with_a_secret() {
 async fn a_run_id_that_names_no_run_is_refused() {
     let world = World::new().await;
 
-    let refused = capture(&world, "7/implement-1", "seven", None).await;
+    let refused = capture(&world, "7/implement-1", "seven", "Gadgets.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::NoSuchRun(_))),
@@ -293,7 +266,7 @@ async fn an_automations_run_is_refused() {
     let mut world = World::new().await;
     world.hourly_by_schedule_then_by_hand().await;
 
-    let refused = capture(&world, "hourly/1", "hourly", None).await;
+    let refused = capture(&world, "hourly/1", "hourly", "Gadgets.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::NotCapturable(_))),
@@ -313,7 +286,7 @@ async fn a_run_that_recorded_no_input_is_refused() {
     world.store.fail_recording("GitHub is down");
     let run = implemented(&mut world).await;
 
-    let refused = capture(&world, &run, "gadgets", None).await;
+    let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::NoInput(_))),
@@ -332,7 +305,7 @@ async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
     let run = implemented(&mut world).await;
     record_as_before_the_properties(&world.dir.path().join("work"));
 
-    let refused = capture(&world, &run, "gadgets", None).await;
+    let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::Lacks { .. })),
@@ -349,11 +322,9 @@ async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
 async fn a_name_a_case_already_has_is_refused_and_the_case_kept() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    let dir = capture(&world, &run, "gadgets", Some("First.\n"))
-        .await
-        .unwrap();
+    let dir = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
 
-    let refused = capture(&world, &run, "gadgets", Some("Second.\n")).await;
+    let refused = capture(&world, &run, "gadgets", "Second.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::Taken(_))),
@@ -374,8 +345,8 @@ async fn a_name_a_case_already_has_is_refused_and_the_case_kept() {
 async fn of_two_captures_under_one_name_one_wins_and_the_other_is_refused() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    let first = capture(&world, &run, "gadgets", Some("First.\n"));
-    let second = capture(&world, &run, "gadgets", Some("Second.\n"));
+    let first = capture(&world, &run, "gadgets", "First.\n");
+    let second = capture(&world, &run, "gadgets", "Second.\n");
 
     let (first, second) = tokio::join!(first, second);
 
@@ -401,17 +372,36 @@ async fn a_capture_whose_commit_the_store_lacks_fails_and_leaves_nothing() {
     let (_, run, _) = implemented_on_a_branch(&mut world).await;
     forget_every_commit(&world).await;
 
-    let failed = capture(&world, &run, "gadgets", Some("Lost.\n")).await;
+    let failed = capture(&world, &run, "gadgets", "Lost.\n").await;
 
     assert!(matches!(failed, Err(CaptureError::Failed(_))), "{failed:?}");
     assert_eq!(entries(&cases(&world)), BTreeSet::new());
+}
+
+/// Runs `lw capture run name --criteria FILE` in `work_dir`, the file
+/// holding `criteria`.
+#[track_caller]
+fn lw_capture<'a>(
+    work_dir: &'a Path,
+    run: &'a str,
+    name: &'a str,
+    criteria: &str,
+) -> impl Future<Output = Output> + 'a {
+    let caller = Location::caller();
+    let file = tempfile::NamedTempFile::new()
+        .and_then(|file| std::fs::write(file.path(), criteria).map(|()| file))
+        .unwrap_or_else(|e| panic!("writing the criteria at {caller}: {e}"));
+    async move {
+        let path = file.path().to_string_lossy();
+        lw_in(work_dir, &["capture", run, name, "--criteria", &path]).await
+    }
 }
 
 #[test_log::test(tokio::test)]
 async fn lw_capture_refuses_a_name_of_other_than_lowercase_letters_digits_and_hyphens() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let output = lw_in(work_dir.path(), &["capture", "7/implement-1", "Gadgets_1"]).await;
+    let output = lw_capture(work_dir.path(), "7/implement-1", "Gadgets_1", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(
@@ -427,7 +417,7 @@ async fn lw_capture_refuses_a_name_of_other_than_lowercase_letters_digits_and_hy
 async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
     let (_world, work_dir) = world_in_work_dir().await;
 
-    let output = lw_in(work_dir.path(), &["capture", "7/implement-1", "seven"]).await;
+    let output = lw_capture(work_dir.path(), "7/implement-1", "seven", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert!(output.stderr.contains("7/implement-1"), "{}", output.stderr);
@@ -439,7 +429,7 @@ async fn lw_capture_of_a_run_recorded_without_its_properties_exits_1_naming_them
     let run = implemented(&mut world).await;
     record_as_before_the_properties(&work_dir.path().join(REPO));
 
-    let output = lw_in(work_dir.path(), &["capture", &run, "gadgets"]).await;
+    let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert!(
@@ -454,8 +444,36 @@ async fn lw_capture_of_an_automations_run_exits_1_saying_why() {
     let (mut world, work_dir) = world_in_work_dir().await;
     world.hourly_by_schedule_then_by_hand().await;
 
-    let output = lw_in(work_dir.path(), &["capture", "hourly/1", "hourly"]).await;
+    let output = lw_capture(work_dir.path(), "hourly/1", "hourly", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert!(output.stderr.contains("hourly/1"), "{}", output.stderr);
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_capture_without_criteria_is_a_command_line_error() {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&mut world).await;
+
+    let output = lw_in(work_dir.path(), &["capture", &run, "gadgets"]).await;
+
+    assert_eq!(output.code, Some(2), "{}", output.stderr);
+    assert!(output.stderr.contains("--criteria"), "{}", output.stderr);
+    assert!(!work_dir.path().join(REPO).join("cases").exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_github() {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&mut world).await;
+
+    let output = lw_capture(work_dir.path(), &run, "gadgets", " \n\t\n").await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output.stderr.contains("the criteria are required"),
+        "{}",
+        output.stderr
+    );
+    assert!(!work_dir.path().join(REPO).join("cases").exists());
 }

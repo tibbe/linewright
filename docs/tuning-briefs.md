@@ -35,7 +35,7 @@ case.json        the stage, the item, the start, the run and the API version
 items.json       the items the run was given, as GitHub's REST API gave them
 properties.json  the repository's properties, as GitHub's API gave them
 repository.git/  a bare repository of the branch heads it was given
-criteria.md      the criteria, when given
+criteria.md      the criteria, which a case needs
 ```
 
 A case is a plain directory: copy it to where you tune the briefs, and edit its
