@@ -1,6 +1,8 @@
 # Linewright
 
-Linewright is spec-driven: the specs decide what it does, and code follows them.
+Linewright is a software factory for spec-driven development: its agents turn
+spec changes and issues into pull requests. It is developed the same way: its
+specs decide what it does, and code follows them.
 In an interactive session, your work is the conversation: answer questions,
 discuss designs and draft spec changes. Write code when the user asks for code;
 a ticket you are implementing is that ask. When a request could mean either, ask
