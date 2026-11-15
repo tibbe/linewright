@@ -89,7 +89,9 @@ pub enum SessionToken {
 }
 
 impl SessionToken {
-    /// `separate` is [`SESSION_TOKEN_VARIABLE`]'s value; empty, it is unset.
+    /// The separate one (`separate` being [`SESSION_TOKEN_VARIABLE`]'s
+    /// value) if set, Linewright's (`linewright`) if not; empty, a token is
+    /// unset.
     pub fn new(linewright: String, separate: Option<String>) -> SessionToken {
         match separate {
             Some(token) if !token.is_empty() => SessionToken::Separate(token),

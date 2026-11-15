@@ -831,16 +831,7 @@ fn warnings_at_startup(env: &[(&str, &str)]) -> Vec<String> {
         &env,
     );
     assert!(!succeeded, "{log}");
-    log.lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|line| line["level"] == "WARN")
-        .map(|line| {
-            line["fields"]["message"]
-                .as_str()
-                .unwrap_or_default()
-                .into()
-        })
-        .collect()
+    json_messages(&log, "WARN")
 }
 
 #[test_log::test]

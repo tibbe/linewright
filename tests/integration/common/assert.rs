@@ -40,6 +40,16 @@ impl Log {
     }
 }
 
+/// The messages logged at `level`, such as `WARN`, in `log`, a log written
+/// with `--log-format json`.
+pub fn json_messages(log: &str, level: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["level"] == level)
+        .filter_map(|line| line["fields"]["message"].as_str().map(String::from))
+        .collect()
+}
+
 impl std::io::Write for Log {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(bytes);

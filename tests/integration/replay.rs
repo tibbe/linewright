@@ -659,12 +659,8 @@ async fn lw_replay_warns_that_sessions_given_linewrights_token_can_write_to_gith
     .await;
 
     assert_eq!(ran.code, Some(0), "{}", ran.stderr);
-    let warned = ran
-        .stderr
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|line| line["level"] == "WARN")
-        .filter_map(|line| line["fields"]["message"].as_str().map(String::from))
+    let warned = json_messages(&ran.stderr, "WARN")
+        .into_iter()
         .any(|message| {
             message.contains("sessions can write to GitHub")
                 && message.contains("LINEWRIGHT_SESSION_GITHUB_TOKEN")
