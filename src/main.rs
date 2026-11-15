@@ -995,7 +995,12 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
         .unwrap_or_else(|e| print_answer(Err(failed(&e))))
 }
 
-/// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
+/// Linewright's token, as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an
+/// empty one being unset.
+///
+/// # Errors
+///
+/// When neither `GH_TOKEN` nor `GITHUB_TOKEN` is set.
 fn token() -> Result<String> {
     TOKEN_VARIABLES
         .into_iter()
@@ -1005,6 +1010,10 @@ fn token() -> Result<String> {
 
 /// The token sessions are given: the separate one if set, else Linewright's,
 /// which a command that runs sessions needs.
+///
+/// # Errors
+///
+/// When Linewright's [`token`] is unset.
 fn session_token() -> Result<SessionToken> {
     Ok(SessionToken::new(
         token()?,
