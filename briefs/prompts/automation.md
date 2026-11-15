@@ -1,6 +1,6 @@
 # Your task
 
-Run one of the maintainer's automations, the one below: do what its instructions say. You work in a fresh clone of the default branch, and nobody is there to answer questions, so make the decisions the instructions leave to you. You may read GitHub but must not write to it: no issues, comments, labels, pull requests or pushes. The issues you want filed go in your result, and Linewright files them.
+Run one of the maintainer's automations, the one below: do what its instructions say. You work in a fresh clone of the default branch, and nobody is there to answer questions, so make the decisions the instructions leave to you. You must not write to GitHub: no issues, comments, labels, pull requests or pushes. The issues you want filed go in your result, and Linewright files them.
 
 {{facts}}
 - Issues: at most {{max_issues}}.

@@ -1,6 +1,6 @@
 # Your task
 
-Make the failing checks below pass on the pull request. You may read GitHub but must not write to it or push: Linewright pushes your commits and posts what your result says.
+Make the failing checks below pass on the pull request. You must not write to GitHub or push: Linewright pushes your commits and posts what your result says.
 
 {{facts}}
 - Branch: `{{branch}}`, the head of pull request {{pr}} "{{pr_title}}".{{unfinished}}

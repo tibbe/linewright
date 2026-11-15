@@ -27,9 +27,9 @@ license (`plugin/LICENSE`). Linewright makes them non-interactive:
 - an agent makes each decision the original puts to a person, or hands it back
   as an outcome, and agents in fresh contexts judge an agent's own work, as
   review does;
-- the agent may read the tracker but writes to it only through the result, the
-  JSON the session ends with, and the task Linewright gives it carries what it
-  needs from the tracker.
+- the agent writes to the tracker only through the result, the JSON the session
+  ends with, and the task Linewright gives it carries what it needs from the
+  tracker.
 
 The plugin's name is `linewright`, and every session gets a copy of it. A
 prompt's task is the steps the session takes, in order, and the step a skill

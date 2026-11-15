@@ -7,7 +7,7 @@ description: Break a plan, spec, or the current conversation into a set of trace
 
 Break the spec change in your task into a set of **tickets**: tracer-bullet vertical slices, each declaring the tickets that **block** it.
 
-Your task holds the merged pull request that changed the spec and its spec diff; the repository is checked out at the default branch, with the change merged. You may read GitHub but must not write to it, and change no files: Linewright publishes the tickets in your result.
+Your task holds the merged pull request that changed the spec and its spec diff; the repository is checked out at the default branch, with the change merged. You must not write to GitHub, and change no files: Linewright publishes the tickets in your result.
 
 ## Process
 

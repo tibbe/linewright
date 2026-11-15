@@ -1,6 +1,6 @@
 # Your task
 
-Bring the pull request's branch below up to date with the default branch. You may read GitHub but must not write to it or push: Linewright pushes your commits and posts what your result says.
+Bring the pull request's branch below up to date with the default branch. You must not write to GitHub or push: Linewright pushes your commits and posts what your result says.
 
 {{facts}}
 - Branch: `{{branch}}`, the head of pull request {{pr}} "{{pr_title}}".{{unfinished}}

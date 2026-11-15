@@ -35,7 +35,7 @@ Look for the originating spec, in this order:
 
 1. The ticket or spec you were given.
 2. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`,
-   etc.). You may read the issue tracker but must not write to it.
+   etc.). You must not write to the issue tracker.
 3. A spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name
    or feature.
 
@@ -85,8 +85,8 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 ### 4. Spawn the sub-agents in parallel
 
 Issue the sub-agent calls together, in the foreground, and collect the
-reports they return. Tell each sub-agent it may read the issue tracker but must
-not write to it.
+reports they return. Tell each sub-agent it must not write to the issue
+tracker.
 
 The **reporting rule**, for every sub-agent:
 

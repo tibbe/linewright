@@ -5,10 +5,9 @@ description: "Implement a piece of work based on a spec or set of tickets."
 
 # Implement
 
-Implement the work your task describes, on the branch that is checked out.
-The ticket and its comments (a triage brief, the design, earlier handbacks)
-are in your task. You may
-read GitHub but must not write to it or push: Linewright pushes your commits,
+Implement the work your task describes, on the branch that is checked out. The
+ticket and its comments (a triage brief, the design, earlier handbacks) are in
+your task. You must not write to GitHub or push: Linewright pushes your commits,
 opens or updates the pull request and posts what your result says.
 
 1. Read the ticket and its comments. Read `GLOSSARY.md` if present, and the
