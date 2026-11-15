@@ -17,16 +17,16 @@ use tracing::{error, info};
 use crate::case::Case;
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
-use crate::environment::{self, replays};
+use crate::environment::{self, Source, replays};
 use crate::factory::FactoryConfig;
-use crate::harness::Harness;
+use crate::harness::{GhReach, Harness};
 use crate::repo_files::{RepoLayer, holding};
 use crate::run::{self, Shell, ShellParts};
 use crate::runs::{Begin, Ending, OutcomeName, Runs, Unended};
 use crate::serving::Signals;
 use crate::session::{Cancellation, Sessions};
-use crate::store::Store;
 use crate::store::local::LocalStore;
+use crate::store::{RepoSettings, Store};
 use crate::winding_up::WindingUp;
 use crate::work_settings::RunKind;
 use crate::{COMMAND, VERSION_AND_COMMIT};
@@ -189,74 +189,21 @@ async fn run_in(
     replay_dir: &Path,
     clones_winding_up: &WindingUp,
 ) -> Result<Ending> {
-    let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(case.start()));
-    let seeded = LocalStore::from_case(
+    let kind = case.stage().kind();
+    let setting = Setting::prepare(
+        case,
+        &RunKind::Stage(kind),
+        &config,
+        harness.clone(),
         &replay_dir.join("store"),
         &out.path().join(COMMITS),
-        case,
-        clock.clone(),
+        |output| out.write(BUILD_LOG, output),
     )
-    .await
-    .context("seeding the model of GitHub from the case")?;
-    let store: Arc<dyn Store> = Arc::new(Journal::new(Arc::new(seeded), out.path()));
+    .await?;
+    let store: Arc<dyn Store> = Arc::new(Journal::new(setting.store.clone(), out.path()));
+    let clock = setting.clock.clone();
+    let settings = setting.settings.clone();
     let properties = case.properties();
-    let mut settings = properties.settings.clone();
-    if let Some(method) = config.merge_method {
-        settings.merge_method = method;
-    }
-    let kind = case.stage().kind();
-    let repo = RepoLayer::read(store.as_ref(), &settings.default_branch, &config.prompts)
-        .await
-        .context("reading Linewright's files in the case")?;
-    if let Some(file) = holding(&repo.unusable, &RunKind::Stage(kind)).first() {
-        bail!(
-            "the case cannot be replayed: {} on its default branch would hold the run: {}",
-            file.path,
-            file.error
-        );
-    }
-    let head = case
-        .heads()
-        .get(&settings.default_branch)
-        .context("the case lacks the head of its default branch")?;
-    let builder = environment::Builder {
-        store: store.clone(),
-        harness: harness.clone(),
-        bash: config.bash.clone(),
-        clock: Arc::new(SystemClock),
-        redaction: config.secrets.redaction().clone(),
-        given: config.environments.pipeline.clone(),
-        default_branch: settings.default_branch.clone(),
-        winding_up: config.winding_up.clone(),
-    };
-    let max_age = TimeDelta::from_std(config.work.setup_max_age(&repo.settings))
-        .context("`setup.max-age` is too long")?;
-    let prepared = replays::prepare(
-        &replays::dir(&config.work_dir),
-        head,
-        builder,
-        config.work.setup(&repo.settings),
-        SystemClock.now(),
-        max_age,
-    )
-    .await;
-    let environment = match prepared {
-        Ok(in_use) => {
-            if let Some(output) = in_use.built_output() {
-                out.write(BUILD_LOG, output)?;
-            }
-            in_use
-        }
-        Err(replays::Unprepared::Failed(failed)) => {
-            if let Some(output) = &failed.output {
-                out.write(BUILD_LOG, output)?;
-            }
-            return Err(failed.into());
-        }
-        Err(e @ replays::Unprepared::Unavailable(_)) => return Err(e.into()),
-    };
-    let gate = Gate::start(&properties.settings.repo, Upstream::GitHub)
-        .context("starting the gate of the sessions' gh")?;
     let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
     let runs = Runs::new(out.path());
     let shell = Shell::new(ShellParts {
@@ -269,8 +216,8 @@ async fn run_in(
             default_branch: settings.default_branch.clone(),
             secrets: config.secrets,
             clones: Clones::new(replay_dir, clones_winding_up.clone()),
-            environment: environment.source(),
-            gh: gate.gh(),
+            environment: setting.environment.clone(),
+            gh: setting.gh(),
             result_retries: config.result_retries,
             waits_out_usage_limit: false,
             report_refusal,
@@ -311,15 +258,135 @@ async fn run_in(
     out.in_flight()?;
     info!(run = %running.id(), case = %case.run(), "replaying");
     let ctx = run::Ctx {
-        with: shell.run_with(&repo, RunKind::Stage(kind)),
+        with: shell.run_with(&setting.repo, RunKind::Stage(kind)),
         as_of: now,
         reworked: None,
         cancel: Cancellation::default(),
         run: running,
     };
     let ended = run::run(Arc::new(shell), work, Arc::new(snapshot), ctx).await;
-    drop(gate);
+    drop(setting);
     Ok(ended)
+}
+
+/// What a case gives the sessions run on it in place of GitHub
+/// (`docs/specs/benchmarks.md`, Replaying): a model of GitHub seeded from
+/// the case, Linewright's files on its default branch, its environment and
+/// a `gh` kept from the case's repository. That `gh` reaches GitHub only
+/// while the setting lives.
+pub struct Setting {
+    /// The model of GitHub, as the case's run found it.
+    pub store: Arc<dyn Store>,
+    /// The clock of the model, running from the case's start.
+    pub clock: Arc<dyn Clock>,
+    /// Linewright's files on the case's default branch.
+    pub repo: RepoLayer,
+    /// The repository's settings, as the case's properties and the config
+    /// give them.
+    pub settings: RepoSettings,
+    /// What sessions copy the environment from.
+    pub environment: Source,
+    gate: Gate,
+}
+
+impl Setting {
+    /// Prepares the setting of a `kind` of run on `case` with `config` and
+    /// `harness`: seeds the model of GitHub at `root`, its repository at
+    /// `repository`, refuses a file on the case's default branch that would
+    /// hold `kind`, prepares the environment, handing the output of its
+    /// build to `build_log` when this built it, and starts the gate of the
+    /// sessions' `gh`.
+    ///
+    /// # Errors
+    ///
+    /// When the model of GitHub cannot be seeded, a file on the case's
+    /// default branch would hold `kind`, the environment cannot be had or
+    /// its build fails, `build_log` fails, or the gate cannot be started.
+    pub async fn prepare(
+        case: &Case,
+        kind: &RunKind<'_>,
+        config: &FactoryConfig,
+        harness: Arc<dyn Harness>,
+        root: &Path,
+        repository: &Path,
+        build_log: impl Fn(&str) -> Result<()>,
+    ) -> Result<Setting> {
+        let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(case.start()));
+        let seeded = LocalStore::from_case(root, repository, case, clock.clone())
+            .await
+            .context("seeding the model of GitHub from the case")?;
+        let store: Arc<dyn Store> = Arc::new(seeded);
+        let properties = case.properties();
+        let mut settings = properties.settings.clone();
+        if let Some(method) = config.merge_method {
+            settings.merge_method = method;
+        }
+        let repo = RepoLayer::read(store.as_ref(), &settings.default_branch, &config.prompts)
+            .await
+            .context("reading Linewright's files in the case")?;
+        if let Some(file) = holding(&repo.unusable, kind).first() {
+            bail!(
+                "the case cannot be replayed: {} on its default branch would hold the run: {}",
+                file.path,
+                file.error
+            );
+        }
+        let head = case
+            .heads()
+            .get(&settings.default_branch)
+            .context("the case lacks the head of its default branch")?;
+        let builder = environment::Builder {
+            store: store.clone(),
+            harness,
+            bash: config.bash.clone(),
+            clock: Arc::new(SystemClock),
+            redaction: config.secrets.redaction().clone(),
+            given: config.environments.pipeline.clone(),
+            default_branch: settings.default_branch.clone(),
+            winding_up: config.winding_up.clone(),
+        };
+        let max_age = TimeDelta::from_std(config.work.setup_max_age(&repo.settings))
+            .context("`setup.max-age` is too long")?;
+        let prepared = replays::prepare(
+            &replays::dir(&config.work_dir),
+            head,
+            builder,
+            config.work.setup(&repo.settings),
+            SystemClock.now(),
+            max_age,
+        )
+        .await;
+        let environment = match prepared {
+            Ok(in_use) => {
+                if let Some(output) = in_use.built_output() {
+                    build_log(output)?;
+                }
+                in_use.source()
+            }
+            Err(replays::Unprepared::Failed(failed)) => {
+                if let Some(output) = &failed.output {
+                    build_log(output)?;
+                }
+                return Err(failed.into());
+            }
+            Err(e @ replays::Unprepared::Unavailable(_)) => return Err(e.into()),
+        };
+        let gate = Gate::start(&properties.settings.repo, Upstream::GitHub)
+            .context("starting the gate of the sessions' gh")?;
+        Ok(Setting {
+            store,
+            clock,
+            repo,
+            settings,
+            environment,
+            gate,
+        })
+    }
+
+    /// How far the sessions' `gh` reaches: not to the case's repository.
+    pub fn gh(&self) -> GhReach {
+        self.gate.gh()
+    }
 }
 
 /// Runs `work` unless a signal arrives first. Then it drops `work`, which

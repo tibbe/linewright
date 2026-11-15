@@ -17,7 +17,7 @@ use linewright::reconcile::WorkKind;
 use linewright::replay::{self, OutputRefusal};
 use linewright::runs::{Ending, Runs};
 use linewright::store::github::SESSION_TOKEN_VARIABLE;
-use linewright::work_settings::{Setup, SetupCommand};
+use linewright::work_settings::{RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
 /// What each triage answers: a bug, ready for an agent.
@@ -434,10 +434,9 @@ async fn a_replays_run_does_not_count_toward_max_runs() {
     assert_eq!(replaying.await.unwrap(), Ok(Ending::HandedBack));
 }
 
-#[test_log::test(tokio::test)]
-async fn a_case_whose_default_branch_holds_a_file_that_would_hold_the_run_is_refused_naming_it() {
-    let mut world = World::new().await;
-    let (_, case) = triage_case(&mut world).await;
+/// Commits `files` to the default branch of the case in `case`.
+#[track_caller]
+fn commit_to_case(case: &Path, files: &[(&str, &str)]) {
     let checkout = tempfile::tempdir().unwrap();
     let repository = case.join("repository.git");
     git_in(
@@ -456,12 +455,15 @@ async fn a_case_whose_default_branch_holds_a_file_that_would_hold_the_run_is_ref
         checkout.path(),
         &["config", "user.email", "maintainer@example.com"],
     );
-    commit_in(
-        checkout.path(),
-        &[(".linewright/config.toml", "model = [\n")],
-        "Break the config",
-    );
+    commit_in(checkout.path(), files, "Change Linewright's files");
     git_in(checkout.path(), &["push", "--quiet", "origin", "HEAD:main"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_case_whose_default_branch_holds_a_file_that_would_hold_the_run_is_refused_naming_it() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    commit_to_case(&case, &[(".linewright/config.toml", "model = [\n")]);
     let harness = Arc::new(ScriptedHarness::default());
     harness.on(WorkKind::Triage, |_| Ok(triaged()));
     let under = tempfile::tempdir().unwrap();
@@ -475,6 +477,48 @@ async fn a_case_whose_default_branch_holds_a_file_that_would_hold_the_run_is_ref
     );
     assert_eq!(harness.prompts(WorkKind::Triage).len(), 0);
     assert!(!replayed.out.join("outcome").exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_replays_setting_refuses_a_file_that_would_hold_the_kind_of_run_it_is_prepared_for() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    commit_to_case(
+        &case,
+        &[(".linewright/prompts/implement.md", "Do {{nope}}\n")],
+    );
+    let case = Case::open(&case).await.unwrap();
+    let under = tempfile::tempdir().unwrap();
+    let config = config(&under.path().join("work").join(REPO));
+    let prepare = |name: &'static str, kind: WorkKind| {
+        let case = &case;
+        let config = &config;
+        let dir = under.path().join(name);
+        async move {
+            replay::Setting::prepare(
+                case,
+                &RunKind::Stage(kind),
+                config,
+                Arc::new(ScriptedHarness::default()),
+                &dir.join("store"),
+                &dir.join("commits.git"),
+                |_| Ok(()),
+            )
+            .await
+        }
+    };
+
+    let triage = prepare("triage", WorkKind::Triage).await;
+    let implement = prepare("implement", WorkKind::Implement).await;
+
+    assert!(triage.is_ok(), "{:#}", triage.err().unwrap());
+    let error = format!("{:#}", implement.err().unwrap());
+    assert!(
+        error.contains(".linewright/prompts/implement.md") && error.contains("would hold the run"),
+        "{error}"
+    );
+    drop(triage);
+    config.winding_up.wait().await;
 }
 
 #[test_log::test]
