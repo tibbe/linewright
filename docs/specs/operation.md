@@ -171,6 +171,9 @@ repository's file, the operator's file, default.
   the GitHub token agent sessions are given in place of Linewright's
   ([What a session has](sessions.md#what-a-session-has)) is
   `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
+- **Linewright's GitHub token.** A command that runs sessions needs
+  Linewright's GitHub token. Without that token, the command exits with an
+  error at startup.
 - **Times and durations.** Every time and duration given to Linewright, as a
   setting or as a command's argument, takes the same forms: a time in RFC
   3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
