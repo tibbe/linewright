@@ -1,0 +1,29 @@
+## stage
+
+implement
+
+## facts
+
+- Repository: `owner/widgets`
+- Default branch: `main`
+- Spec: the tracked files matching `docs/specs/**/*.md`
+- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
+
+## replay
+
+### The replay's output
+
+- How its run ended: `/work/out/outcome`
+- Each session's record, with its brief and its transcript: `/work/out/sessions`
+- What Linewright would have written to GitHub, in order: `/work/out/writes`
+
+The repository is checked out at what the replay left: the branch it would have pushed, where it pushed one, and the default branch otherwise.
+
+## criteria
+
+It counts the widgets.
+
+## output
+
+<<briefs/outputs/judge.md>>
+
