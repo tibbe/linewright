@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::domain::{Number, Timestamp};
 use crate::git::{self, CommitId};
 use crate::input::Input;
-use crate::reconcile::WorkKind;
+use crate::reconcile::{Work, WorkKind};
 use crate::runs::{RunId, RunOf, Runs};
 use crate::store::{Properties, RecordedItem, RecordedProperties, Store, properties};
 
@@ -361,6 +361,15 @@ impl TryFrom<WorkKind> for ReplayStage {
 }
 
 impl ReplayStage {
+    /// The work of the stage on `issue`.
+    pub fn work(self, issue: Number) -> Work {
+        match self {
+            ReplayStage::Triage => Work::Triage { issue },
+            ReplayStage::Design => Work::DesignIssue { issue },
+            ReplayStage::Implement => Work::Implement { issue },
+        }
+    }
+
     pub fn kind(self) -> WorkKind {
         match self {
             ReplayStage::Triage => WorkKind::Triage,

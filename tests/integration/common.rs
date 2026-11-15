@@ -193,6 +193,7 @@
 //! - `Output`: the exit code, stdout and stderr of an `lw`.
 //! - `lw_in`: runs `lw` on `REPO` with a work dir.
 //! - `json_objects`: the objects of JSON lines, as `logs --json` prints them.
+//! - `link_from_path`: puts a tool on the tests' path in a directory.
 //!
 //! # `assert`: assertions and waiting
 //!

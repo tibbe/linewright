@@ -40,11 +40,14 @@ impl std::str::FromStr for Repo {
     type Err = anyhow::Error;
 
     fn from_str(full: &str) -> anyhow::Result<Repo> {
+        let is_name = |part: &str| !part.is_empty() && part != "." && part != "..";
         match full.split_once('/') {
-            Some((owner, name)) if !owner.is_empty() && !name.is_empty() => Ok(Repo {
-                full: full.to_string(),
-                slash: owner.len(),
-            }),
+            Some((owner, name)) if is_name(owner) && is_name(name) && !name.contains('/') => {
+                Ok(Repo {
+                    full: full.to_string(),
+                    slash: owner.len(),
+                })
+            }
             _ => anyhow::bail!("the repository {full:?} is not owner/name"),
         }
     }

@@ -636,25 +636,31 @@ impl WorkSettings {
     /// flags and environment, the repository's file, the operator's file,
     /// and the default. `None` without a setup command.
     pub fn setup(&self, repo: &RepoSettings) -> Option<SetupSettings> {
-        let layers = [
-            &self.pipeline_flags_and_env.setup,
-            &repo.pipeline.setup,
-            &self.pipeline_file.setup,
-        ];
-        let first = |get: fn(&SetupPartial) -> Option<Duration>, default| {
-            layers
-                .iter()
-                .find_map(|layer| get(layer))
-                .unwrap_or(default)
-        };
+        let layers = self.setup_layers(repo);
         let Setup::Command(command) = layers.iter().find_map(|layer| layer.command.clone())? else {
             return None;
         };
         Some(SetupSettings {
             command,
-            max_age: first(|layer| layer.max_age, SETUP_MAX_AGE),
-            timeout: first(|layer| layer.timeout, SETUP_TIMEOUT),
+            max_age: self.setup_max_age(repo),
+            timeout: first_set(&layers, |layer| layer.timeout).unwrap_or(SETUP_TIMEOUT),
         })
+    }
+
+    /// `setup.max-age`, from the first layer that sets it, as
+    /// [`WorkSettings::setup`] takes it, whether or not there is a setup
+    /// command.
+    pub fn setup_max_age(&self, repo: &RepoSettings) -> Duration {
+        first_set(&self.setup_layers(repo), |layer| layer.max_age).unwrap_or(SETUP_MAX_AGE)
+    }
+
+    /// The layers of the `setup` table, highest first.
+    fn setup_layers<'a>(&'a self, repo: &'a RepoSettings) -> [&'a SetupPartial; 3] {
+        [
+            &self.pipeline_flags_and_env.setup,
+            &repo.pipeline.setup,
+            &self.pipeline_file.setup,
+        ]
     }
 
     /// Splits `environment` by what each stage's sessions are given: the
@@ -716,4 +722,11 @@ impl WorkSettings {
             stages_set,
         }
     }
+}
+
+fn first_set(
+    layers: &[&SetupPartial],
+    get: fn(&SetupPartial) -> Option<Duration>,
+) -> Option<Duration> {
+    layers.iter().find_map(|layer| get(layer))
 }
