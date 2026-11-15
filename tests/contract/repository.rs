@@ -1,7 +1,9 @@
 //! Who Linewright is, and the repository's settings.
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use linewright::domain::MergeMethod;
+use linewright::store::Property;
+use serde_json::json;
 
 use crate::check::{contracts, equal};
 use crate::sandbox::{Sandbox, recent};
@@ -9,6 +11,7 @@ use crate::sandbox::{Sandbox, recent};
 contracts![
     linewright_acts_as_a_login_with_its_noreply_email,
     the_settings_name_the_repository_and_the_default_branch_a_snapshot_has,
+    the_properties_are_recorded_as_githubs_answers_naming_the_repository_and_the_account,
 ];
 
 async fn linewright_acts_as_a_login_with_its_noreply_email(sandbox: Sandbox) -> Result<()> {
@@ -44,5 +47,39 @@ async fn the_settings_name_the_repository_and_the_default_branch_a_snapshot_has(
             .any(|method| settings.allowed_merge_methods.contains(method)),
         "the repository allows no merge method"
     );
+    Ok(())
+}
+
+async fn the_properties_are_recorded_as_githubs_answers_naming_the_repository_and_the_account(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let recorded = sandbox.store().record_properties().await?;
+    let identity = sandbox.store().identity().await?;
+
+    let answer = |property: Property| {
+        recorded
+            .resource(property)
+            .with_context(|| format!("{property} is not recorded"))
+    };
+    equal(
+        "the repository's full name",
+        &answer(Property::Repository)?["full_name"],
+        &json!(sandbox.repo().to_string()),
+    )?;
+    equal(
+        "the account's login",
+        &answer(Property::Account)?["login"],
+        &json!(identity.login.as_str()),
+    )?;
+    ensure!(
+        answer(Property::IssueTypesAndMergeMethods)?["repository"]["mergeCommitAllowed"]
+            .is_boolean(),
+        "the merge methods are not GitHub's answer"
+    );
+    ensure!(
+        answer(Property::Rules)?.is_array(),
+        "the rules are not GitHub's list"
+    );
+    answer(Property::Protection)?;
     Ok(())
 }

@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    API_VERSION, AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RecordedItem, RepoSettings, Resource, Store, holds,
-    read_openings,
+    API_VERSION, AnyItem, AttachError, Blob, IssueRead, NewIssue, NewPull, PeoplesPullRead,
+    Property, PushError, PushMode, RecordedItem, RecordedProperties, Resource, Store, holds,
+    properties, read_openings,
 };
 use super::{job_log, rate_limit};
 use crate::domain::{
@@ -492,7 +492,6 @@ fn gql_data<T>(response: GqlResponse<T>) -> Result<T> {
 #[derive(Clone, Deserialize)]
 struct Viewer {
     login: String,
-    id: u64,
 }
 
 /// An HTTP client that trusts the certificate authorities of the host's
@@ -512,7 +511,6 @@ impl GitHub {
             name: repo.name().into(),
             viewer: Viewer {
                 login: String::new(),
-                id: 0,
             },
             repository_id: Arc::default(),
             index: Arc::default(),
@@ -1409,22 +1407,6 @@ impl GitHub {
         Ok(node.node_id)
     }
 
-    async fn linear_history_required(&self, branch: &str) -> bool {
-        if self.branch_rules(branch).await.linear_history {
-            return true;
-        }
-        // Classic branch protection is readable by admins only:
-        // <https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection>
-        let protection: Result<Value> = self
-            .rest(
-                Method::GET,
-                &self.repo_path(&format!("/branches/{branch}/protection")),
-                None,
-            )
-            .await;
-        protection.is_ok_and(|p| p["required_linear_history"]["enabled"] == json!(true))
-    }
-
     async fn failed_step_output(&self, job: u64) -> Option<String> {
         let response = self
             .send(
@@ -1448,7 +1430,6 @@ struct BranchRules {
     /// Reported or not.
     checks: Vec<String>,
     code_owner_review: bool,
-    linear_history: bool,
 }
 
 impl BranchRules {
@@ -1467,7 +1448,6 @@ impl BranchRules {
                 .collect(),
             code_owner_review: of_kind("pull_request")
                 .any(|p| p["require_code_owner_review"] == json!(true)),
-            linear_history: of_kind("required_linear_history").next().is_some(),
         }
     }
 }
@@ -3355,34 +3335,6 @@ struct Path_ {
 
 #[async_trait]
 impl Store for GitHub {
-    async fn identity(&self) -> Result<Identity> {
-        #[derive(Deserialize)]
-        struct Repo {
-            permissions: Option<BTreeMap<String, bool>>,
-        }
-        let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        let can_push = repo
-            .permissions
-            .and_then(|p| p.get("push").copied())
-            .unwrap_or(false);
-        if !can_push {
-            bail!(
-                "{} cannot push to {}/{}: Linewright's account needs write access",
-                self.viewer.login,
-                self.owner,
-                self.name
-            );
-        }
-        Ok(Identity {
-            login: self.linewright(),
-            name: self.viewer.login.clone(),
-            email: format!(
-                "{}+{}@users.noreply.github.com",
-                self.viewer.id, self.viewer.login
-            ),
-        })
-    }
-
     /// GitHub answers a token that cannot see a private repository as if
     /// it did not exist (<https://docs.github.com/en/rest/repos/repos#get-a-repository>).
     async fn check_reads(&self, token: &str) -> Result<()> {
@@ -3414,72 +3366,52 @@ impl Store for GitHub {
         }
     }
 
-    async fn settings(&self) -> Result<RepoSettings> {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Settings {
-            issue_types: Option<Nodes<IssueType>>,
-            merge_commit_allowed: bool,
-            squash_merge_allowed: bool,
-            rebase_merge_allowed: bool,
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct IssueType {
-            name: String,
-            is_enabled: bool,
-        }
-        #[derive(Deserialize)]
-        struct Repo {
-            full_name: String,
-            default_branch: String,
-        }
-        let repo: Repo = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        let settings: RepoData<Settings> = self
+    async fn record_properties(&self) -> Result<RecordedProperties> {
+        let repository: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
+        let account: Value = self.rest(Method::GET, "/user", None).await?;
+        let settings: Value = self
             .graphql(
-                "query($owner: String!, $name: String!) {
-                  repository(owner: $owner, name: $name) {
-                    issueTypes(first: 25) { nodes { name isEnabled } }
-                    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
-                  }
-                }",
+                properties::ISSUE_TYPES_AND_MERGE_METHODS_QUERY,
                 json!({"owner": self.owner, "name": self.name}),
             )
             .await?;
-        let settings = settings.repository;
-        let allowed_merge_methods = [
-            (MergeMethod::Merge, settings.merge_commit_allowed),
-            (MergeMethod::Squash, settings.squash_merge_allowed),
-            (MergeMethod::Rebase, settings.rebase_merge_allowed),
+        let branch = repository["default_branch"]
+            .as_str()
+            .context("GitHub gave the repository no default branch")?;
+        let rules = self
+            .rest::<Value>(
+                Method::GET,
+                &self.repo_path(&format!("/rules/branches/{branch}")),
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    branch,
+                    error = format!("{e:#}"),
+                    "reading the branch's rules"
+                );
+                Value::Null
+            });
+        // Classic branch protection is readable by admins only:
+        // <https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection>
+        let protection = self
+            .rest::<Value>(
+                Method::GET,
+                &self.repo_path(&format!("/branches/{branch}/protection")),
+                None,
+            )
+            .await
+            .unwrap_or(Value::Null);
+        Ok([
+            (Property::Repository, repository),
+            (Property::Account, account),
+            (Property::IssueTypesAndMergeMethods, settings),
+            (Property::Rules, rules),
+            (Property::Protection, protection),
         ]
         .into_iter()
-        .filter_map(|(method, allowed)| allowed.then_some(method))
-        .collect();
-        let types: Vec<String> = settings
-            .issue_types
-            .map(|t| t.nodes)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|t| t.is_enabled)
-            .map(|t| t.name)
-            .collect();
-        let linear_history = self.linear_history_required(&repo.default_branch).await;
-        let categories = if types.is_empty() {
-            Categories::Labels
-        } else {
-            Categories::IssueTypes(types)
-        };
-        let full_name = repo
-            .full_name
-            .parse()
-            .context("GitHub's full name of the repository")?;
-        Ok(RepoSettings::new(
-            full_name,
-            repo.default_branch,
-            linear_history,
-            allowed_merge_methods,
-            categories,
-        ))
+        .collect())
     }
 
     async fn label_exists(&self, name: &str) -> Result<bool> {
@@ -5624,7 +5556,6 @@ mod tests {
             api: serving_issue_731().await,
             viewer: Viewer {
                 login: "tibbe-bot".into(),
-                id: 1,
             },
             index: Arc::new(tokio::sync::Mutex::new(Some(started))),
             openings: Arc::default(),
@@ -6235,7 +6166,6 @@ mod tests {
             name: "repo".into(),
             viewer: Viewer {
                 login: "linewright".into(),
-                id: 1,
             },
             repository_id: Arc::default(),
             index: Arc::default(),
@@ -6422,7 +6352,6 @@ mod retry_tests {
             name: "linewright".into(),
             viewer: Viewer {
                 login: "tibbe-bot".into(),
-                id: 1,
             },
             repository_id: Arc::default(),
             index: Arc::default(),
@@ -6760,10 +6689,11 @@ mod recording_tests {
 
     use super::*;
 
-    /// What GitHub answered on 2026-11-12, read with [`API_VERSION`], for
-    /// each REST path under tibbe/linewright that recording #1130, #1155 and
-    /// #1158 and the heads of `main` and `1158-no-such-branch` reads: each
-    /// listing's first page, and its second as none.
+    /// What GitHub answered, read with [`API_VERSION`], for each REST path
+    /// under tibbe/linewright that recording #1130, #1155 and #1158 and the
+    /// heads of `main` and `1158-no-such-branch` reads, on 2026-11-12, and
+    /// that recording the properties reads, on 2026-11-15: each listing's
+    /// first page, and its second as none.
     fn recorded(path: &str, page: Option<&str>) -> Option<(Status, &'static str)> {
         let found = |body| Some((Status::OK, body));
         let parentless = Some((
@@ -6799,6 +6729,11 @@ mod recording_tests {
             ("pulls/1155", None) => found(include_str!("fixtures/rest-pull-1155.json")),
             ("issues/1130/parent" | "issues/1155/parent", None) => parentless,
             ("git/ref/heads/main", None) => found(include_str!("fixtures/rest-ref-main.json")),
+            ("rules/branches/main", None) => found(include_str!("fixtures/rest-rules-main.json")),
+            ("branches/main/protection", None) => Some((
+                Status::NOT_FOUND,
+                include_str!("fixtures/rest-protection-not-found.json"),
+            )),
             ("git/ref/heads/1158-no-such-branch", None) => Some((
                 Status::NOT_FOUND,
                 include_str!("fixtures/rest-ref-not-found.json"),
@@ -6820,12 +6755,13 @@ mod recording_tests {
         }
     }
 
-    /// [`serving_recorded`]'s store, served on `listener`.
+    /// [`serving_recorded`]'s store, served on `listener`, with the
+    /// repository, tibbe-bot's account and the answer to
+    /// [`properties::ISSUE_TYPES_AND_MERGE_METHODS_QUERY`] as GitHub gave them on 2026-11-15.
     fn serving_on(listener: tokio::net::TcpListener) -> GitHub {
-        async fn answer(
-            UrlPath(path): UrlPath<String>,
-            Query(query): Query<BTreeMap<String, String>>,
-            headers: HeaderMap,
+        fn pinned(
+            headers: &HeaderMap,
+            answer: Option<(Status, &'static str)>,
         ) -> (Status, &'static str) {
             if headers
                 .get("X-GitHub-Api-Version")
@@ -6834,16 +6770,43 @@ mod recording_tests {
             {
                 return (Status::BAD_REQUEST, "unpinned API version");
             }
-            recorded(&path, query.get("page").map(String::as_str))
-                .unwrap_or((Status::IM_A_TEAPOT, "not recorded"))
+            answer.unwrap_or((Status::IM_A_TEAPOT, "not recorded"))
         }
+        async fn answer(
+            UrlPath(path): UrlPath<String>,
+            Query(query): Query<BTreeMap<String, String>>,
+            headers: HeaderMap,
+        ) -> (Status, &'static str) {
+            pinned(
+                &headers,
+                recorded(&path, query.get("page").map(String::as_str)),
+            )
+        }
+        let fixed = |body: &'static str| {
+            move |headers: HeaderMap| async move { pinned(&headers, Some((Status::OK, body))) }
+        };
         let address = listener
             .local_addr()
             .expect("a bound listener has an address");
-        let app = axum::Router::new().route(
-            "/repos/tibbe/linewright/{*path}",
-            axum::routing::get(answer),
-        );
+        let app = axum::Router::new()
+            .route(
+                "/repos/tibbe/linewright/{*path}",
+                axum::routing::get(answer),
+            )
+            .route(
+                "/repos/tibbe/linewright",
+                axum::routing::get(fixed(include_str!("fixtures/rest-repository.json"))),
+            )
+            .route(
+                "/user",
+                axum::routing::get(fixed(include_str!("fixtures/rest-user.json"))),
+            )
+            .route(
+                "/graphql",
+                axum::routing::post(fixed(include_str!(
+                    "fixtures/graphql-issue-types-and-merge-methods.json"
+                ))),
+            );
         tokio::spawn(async move { axum::serve(listener, app).await });
         GitHub {
             http: reqwest::Client::new(),
@@ -6853,7 +6816,6 @@ mod recording_tests {
             name: "linewright".into(),
             viewer: Viewer {
                 login: "tibbe-bot".into(),
-                id: 339_618_913,
             },
             repository_id: Arc::default(),
             index: Arc::default(),
@@ -6932,6 +6894,52 @@ mod recording_tests {
                 ),
             ]
         );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_properties_are_recorded_as_github_gives_them() {
+        let github = serving_recorded().await;
+
+        let recorded = github.record_properties().await.unwrap();
+
+        let settings = resource(include_str!(
+            "fixtures/graphql-issue-types-and-merge-methods.json"
+        ));
+        assert_eq!(
+            recorded,
+            [
+                (
+                    Property::Repository,
+                    resource(include_str!("fixtures/rest-repository.json"))
+                ),
+                (
+                    Property::Account,
+                    resource(include_str!("fixtures/rest-user.json"))
+                ),
+                (
+                    Property::IssueTypesAndMergeMethods,
+                    settings["data"].clone()
+                ),
+                (
+                    Property::Rules,
+                    resource(include_str!("fixtures/rest-rules-main.json"))
+                ),
+                (Property::Protection, Value::Null),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_settings_and_identity_are_read_from_the_recorded_properties() {
+        let github = serving_recorded().await;
+
+        let settings = github.settings().await.unwrap();
+        let identity = github.identity().await.unwrap();
+
+        assert_eq!(settings.repo, "tibbe/linewright".parse::<Repo>().unwrap());
+        assert_eq!(identity.login, Login::new("tibbe-bot"));
     }
 
     #[test_log::test(tokio::test)]
