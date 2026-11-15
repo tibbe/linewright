@@ -9,7 +9,7 @@ use linewright::git::{self, CommitId};
 use linewright::input::Input;
 use linewright::runs::Runs;
 use linewright::spec_gap;
-use linewright::store::{API_VERSION, NewIssue, RecordedItem, Resource, Store};
+use linewright::store::{API_VERSION, NewIssue, Property, RecordedItem, Resource, Store};
 
 fn runs(world: &World) -> Runs {
     Runs::new(&world.dir.path().join("work"))
@@ -160,4 +160,18 @@ async fn a_run_whose_recording_fails_does_its_work_without_input() {
 
     assert_eq!(world.store.pulls().len(), 1);
     assert_eq!(input_of(&world, &format!("{}/implement-1", ticket.0)), None);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_runs_input_holds_the_repositorys_properties() {
+    let mut world = World::new().await;
+    implement_gadgets(&world);
+    let ticket = open_designed_gadgets(&world);
+
+    world.poll().await;
+
+    let input = input_of(&world, &format!("{}/implement-1", ticket.0)).unwrap();
+    let recorded = input.properties.expect("the properties are recorded");
+    let account = recorded.resource(Property::Account).unwrap();
+    assert_eq!(account["login"], LINEWRIGHT);
 }

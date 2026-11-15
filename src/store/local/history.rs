@@ -5,9 +5,11 @@ use std::borrow::Cow;
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use sha2::{Digest, Sha256};
 
 use crate::domain::{MergeMethod, Number};
 use crate::git::{self, Merged};
+use crate::store::properties::noreply_email;
 
 /// A commit to write on `branch`, which starts from the default branch when
 /// it doesn't exist yet.
@@ -78,11 +80,17 @@ fn fast_import_stream(commit: &NewCommit<'_>, parent: Option<&str>) -> Vec<u8> {
     stream
 }
 
-/// The email the login `login` commits with, as GitHub's no-reply address
-/// for it
-/// (<https://docs.github.com/en/account-and-profile/setting-up-and-managing-your-personal-account-on-github/managing-email-preferences/setting-your-commit-email-address#about-no-reply-email-addresses>).
+/// The email the login `login` commits with.
 pub fn email(login: &str) -> String {
-    format!("{login}@users.noreply.github.com")
+    noreply_email(user_id(login), login)
+}
+
+/// The ID the local store gives the account `login`, the same each time.
+pub fn user_id(login: &str) -> u64 {
+    let digest = Sha256::digest(login.as_bytes());
+    u64::from(u32::from_be_bytes([
+        digest[0], digest[1], digest[2], digest[3],
+    ]))
 }
 
 /// Adds a fast-import `data` command carrying `data` to `stream`.

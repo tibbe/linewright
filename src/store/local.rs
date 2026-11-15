@@ -10,9 +10,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use super::{
-    AnyItem, AttachError, Blob, Categories, Identity, IssueRead, NewIssue, NewPull,
-    PeoplesPullRead, PushError, PushMode, RecordedItem, RepoSettings, Resource, Store, holds,
-    read_openings,
+    AnyItem, AttachError, Blob, IssueRead, NewIssue, NewPull, PeoplesPullRead, Property, PushError,
+    PushMode, RecordedItem, RecordedProperties, Resource, Store, holds, read_openings,
 };
 use crate::clock::Clock;
 use crate::domain::{
@@ -1960,15 +1959,6 @@ impl PullRecord {
 
 #[async_trait]
 impl Store for LocalStore {
-    async fn identity(&self) -> Result<Identity> {
-        let login = self.state().linewright.clone();
-        Ok(Identity {
-            name: login.0.clone(),
-            email: history::email(login.as_str()),
-            login,
-        })
-    }
-
     async fn check_reads(&self, token: &str) -> Result<()> {
         if self.state().unreadable_by.iter().any(|t| t == token) {
             bail!("the token cannot read the repository: it needs read access to it");
@@ -1976,19 +1966,56 @@ impl Store for LocalStore {
         Ok(())
     }
 
-    async fn settings(&self) -> Result<RepoSettings> {
+    /// GitHub's answers to an account that can push but is not an admin,
+    /// cut to the fields Linewright reads.
+    async fn record_properties(&self) -> Result<RecordedProperties> {
         let state = self.state();
-        let categories = match &state.issue_types {
-            Some(types) => Categories::IssueTypes(types.clone()),
-            None => Categories::Labels,
+        let login = state.linewright.as_str();
+        let issue_types = state.issue_types.as_ref().map(|types| {
+            let nodes: Vec<Value> = types
+                .iter()
+                .map(|name| json!({"name": name, "isEnabled": true}))
+                .collect();
+            json!({"nodes": nodes})
+        });
+        let methods = &state.allowed_merge_methods;
+        let rules = if state.linear_history {
+            json!([{"type": "required_linear_history"}])
+        } else {
+            json!([])
         };
-        Ok(RepoSettings::new(
-            state.repo.clone(),
-            state.default_branch.clone(),
-            state.linear_history,
-            state.allowed_merge_methods.clone(),
-            categories,
-        ))
+        Ok([
+            (
+                Property::Repository,
+                json!({
+                    "name": state.repo.name(),
+                    "full_name": state.repo.to_string(),
+                    "owner": {"login": state.repo.owner()},
+                    "default_branch": state.default_branch,
+                    "permissions": {
+                        "admin": false, "maintain": false, "push": true, "triage": true,
+                        "pull": true,
+                    },
+                }),
+            ),
+            (
+                Property::Account,
+                json!({"login": login, "id": history::user_id(login), "type": "User"}),
+            ),
+            (
+                Property::IssueTypesAndMergeMethods,
+                json!({"repository": {
+                    "issueTypes": issue_types,
+                    "mergeCommitAllowed": methods.contains(MergeMethod::Merge),
+                    "squashMergeAllowed": methods.contains(MergeMethod::Squash),
+                    "rebaseMergeAllowed": methods.contains(MergeMethod::Rebase),
+                }}),
+            ),
+            (Property::Rules, rules),
+            (Property::Protection, Value::Null),
+        ]
+        .into_iter()
+        .collect())
     }
 
     async fn labels(&self) -> Result<Vec<label::RepoLabel>> {

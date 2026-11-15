@@ -1,6 +1,7 @@
 pub mod github;
 mod job_log;
 pub mod local;
+pub mod properties;
 pub mod rate_limit;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,6 +18,7 @@ use crate::domain::{
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::git::CommitId;
 use crate::redaction::Redaction;
+pub use properties::{Properties, Property, RecordedProperties};
 
 /// Reads into `snapshot` the openings it lacks
 /// ([`Snapshot::unread_openings`]) with `read`, asking for each number once,
@@ -487,11 +489,20 @@ pub struct NewPull {
 /// for the retry.
 #[async_trait]
 pub trait Store: Send + Sync {
-    /// Who Linewright acts as; fails when it cannot push to the repository.
-    async fn identity(&self) -> Result<Identity>;
+    /// Who Linewright acts as, as [`Properties::pushing_identity`] reads
+    /// the recorded properties.
+    async fn identity(&self) -> Result<Identity> {
+        properties::read(&self.record_properties().await?)?.pushing_identity()
+    }
     /// Fails, saying what it lacks, when `token` cannot read the repository.
     async fn check_reads(&self, token: &str) -> Result<()>;
-    async fn settings(&self) -> Result<RepoSettings>;
+    /// The settings the recorded properties read into.
+    async fn settings(&self) -> Result<RepoSettings> {
+        Ok(properties::read(&self.record_properties().await?)?.settings)
+    }
+    /// GitHub's answers about the repository and Linewright's account, as
+    /// its API gives them, which [`properties::read`] reads.
+    async fn record_properties(&self) -> Result<RecordedProperties>;
     /// Every label in the repository.
     async fn labels(&self) -> Result<Vec<label::RepoLabel>>;
     async fn create_label(&self, label: &label::Label) -> Result<()>;

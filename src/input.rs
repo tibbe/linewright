@@ -11,12 +11,12 @@ use crate::domain::{Filed, Number, Snapshot, Timestamp};
 use crate::git::CommitId;
 use crate::reconcile::Work;
 use crate::spec_gap;
-use crate::store::{API_VERSION, RecordedItem, Resource, Store};
+use crate::store::{API_VERSION, RecordedItem, RecordedProperties, Resource, Store};
 
 /// A run's input, as recorded at its start.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Input {
-    /// The `X-GitHub-Api-Version` the items were read with.
+    /// The `X-GitHub-Api-Version` the items and properties were read with.
     pub api_version: String,
     pub start: Timestamp,
     /// Each with only the comments written at or before `start`.
@@ -24,6 +24,9 @@ pub struct Input {
     /// Each branch the run was given that existed at the start, with its
     /// head.
     pub heads: BTreeMap<String, CommitId>,
+    /// `None` in a record that lacks them.
+    #[serde(default)]
+    pub properties: Option<RecordedProperties>,
 }
 
 /// The items and branches a run is given.
@@ -91,10 +94,12 @@ pub fn cut_comments_at(items: Vec<RecordedItem>, start: Timestamp) -> Vec<Record
 pub async fn record(store: &dyn Store, wanted: &Wanted, start: Timestamp) -> Result<Input> {
     let items = store.record_items(&wanted.items).await?;
     let heads = store.heads(&wanted.branches).await?;
+    let properties = store.record_properties().await?;
     Ok(Input {
         api_version: API_VERSION.to_string(),
         start,
         items: cut_comments_at(items, start),
         heads,
+        properties: Some(properties),
     })
 }
