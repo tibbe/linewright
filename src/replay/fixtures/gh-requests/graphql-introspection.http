@@ -1,0 +1,15 @@
+POST /graphql HTTP/1.1
+Host: api.github.com
+User-Agent: GitHub CLI 2.103.3 Agent/claude-code_2-1-311_agent
+Content-Length: 83
+Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview
+Authorization: token dummy
+Content-Type: application/json
+Graphql-Features: merge_queue
+Time-Zone: Etc/UTC
+X-Gh-Cache-Ttl: 24h0m0s
+X-Github-Api-Version: 2022-11-28
+Accept-Encoding: gzip
+Connection: close
+
+{"query":"query Release_fields{Release: __type(name: \"Release\"){fields{name}}}"}

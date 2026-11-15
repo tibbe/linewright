@@ -1,0 +1,14 @@
+POST /graphql HTTP/1.1
+Host: api.github.com
+User-Agent: GitHub CLI 2.103.3 Agent/claude-code_2-1-311_agent
+Content-Length: 464
+Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview
+Authorization: token dummy
+Content-Type: application/json
+Graphql-Features: merge_queue
+Time-Zone: Etc/UTC
+X-Github-Api-Version: 2022-11-28
+Accept-Encoding: gzip
+Connection: close
+
+{"query":"query RepositoryReleaseList($direction:OrderDirection!$endCursor:String$name:String!$owner:String!$perPage:Int!){repository(owner: $owner, name: $name){releases(first: $perPage, orderBy: {field: CREATED_AT, direction: $direction}, after: $endCursor){nodes{name,tagName,isDraft,isLatest,isPrerelease,createdAt,publishedAt},pageInfo{hasNextPage,endCursor}}}}","variables":{"direction":"DESC","endCursor":null,"name":"Widgets","owner":"Acme","perPage":30}}

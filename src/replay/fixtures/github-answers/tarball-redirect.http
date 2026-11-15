@@ -1,0 +1,26 @@
+HTTP/2 302 
+date: Sun, 15 Nov 2026 09:20:01 GMT
+content-type: text/html;charset=utf-8
+content-length: 0
+cache-control: public, must-revalidate, max-age=0
+expires: Sun, 15 Nov 2026 09:20:01 GMT
+location: https://codeload.github.com/cli/cli/legacy.tar.gz/refs/tags/v2.0.0
+x-github-api-version-selected: 2022-11-28
+x-ratelimit-limit: 60
+x-ratelimit-remaining: 60
+x-ratelimit-reset: 1794738001
+x-ratelimit-used: 0
+x-ratelimit-resource: core
+access-control-expose-headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+access-control-allow-origin: *
+strict-transport-security: max-age=31536000; includeSubdomains; preload
+x-frame-options: deny
+x-content-type-options: nosniff
+x-xss-protection: 0
+referrer-policy: origin-when-cross-origin, strict-origin-when-cross-origin
+content-security-policy: default-src 'none'
+vary: Accept-Encoding, Accept, X-Requested-With
+server: github.com
+x-github-request-id: D20E:9E869:7BEB87:E571ED:6AF97941
+x-github-edge-region: switzerlandnorth
+

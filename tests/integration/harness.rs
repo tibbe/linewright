@@ -8,10 +8,11 @@ use common::*;
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
 use linewright::harness::{
-    Harness, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
+    GhReach, Harness, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
 };
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
+use linewright::replay::{Gate, Upstream};
 use linewright::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright::transcript::{Course, Prompt, What};
 use linewright::work_settings::Effort;
@@ -127,6 +128,7 @@ fn triage_session(dir: &Path) -> SessionSpec {
         model: None,
         effort: None,
         environment: Arc::new(Given::default()),
+        gh: GhReach::Direct,
         deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
         report: Reporter::new(|_| {}),
     }
@@ -344,6 +346,46 @@ async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_bel
     );
 }
 
+/// The variables `session-env` setting `GH_CONFIG_DIR` to `/etc/gh` gives.
+fn given_etc_gh() -> Arc<Given> {
+    let session_env = SessionEnv::new(
+        PassEnv::default(),
+        SetEnv::new([("GH_CONFIG_DIR".to_string(), "/etc/gh".to_string())]).unwrap(),
+    );
+    Arc::new(session_env.split([], &[]).given)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_replays_session_is_given_its_gates_gh_configuration_over_session_envs() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = Gate::start(&"acme/widgets".parse().unwrap(), Upstream::GitHub).unwrap();
+    let harness = harness_without_token(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = given_etc_gh();
+    session.gh = gate.gh();
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "GH_CONFIG_DIR"),
+        Some(gate.config().path().to_str().unwrap())
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_outside_a_replay_is_given_the_gh_configuration_session_env_sets() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_without_token(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = given_etc_gh();
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(session_variable(&env, "GH_CONFIG_DIR"), Some("/etc/gh"));
+}
+
 #[test_log::test(tokio::test)]
 async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes() {
     let dir = tempfile::tempdir().unwrap();
@@ -369,7 +411,12 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
             .given,
     );
 
-    let environment = harness.environment(&session.environment, &session.scratch, session.effort);
+    let environment = harness.environment(
+        &session.environment,
+        &session.scratch,
+        session.effort,
+        &session.gh,
+    );
     harness.start(&session).await.unwrap();
 
     let scratch = session.scratch.to_str().unwrap();

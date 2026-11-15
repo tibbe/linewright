@@ -22,7 +22,7 @@ use crate::bash_command::{self, Status};
 use crate::clock::Clock;
 use crate::domain::Timestamp;
 use crate::git::{self, CommitId};
-use crate::harness::Harness;
+use crate::harness::{GhReach, Harness};
 use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::store::Store;
@@ -70,7 +70,8 @@ impl Builder {
     /// The whole environment a build runs in, its temporary directory being
     /// `tmp`.
     fn variables(&self, tmp: &Path) -> Vec<(OsString, OsString)> {
-        self.harness.environment(&self.given, tmp, None)
+        self.harness
+            .environment(&self.given, tmp, None, &GhReach::Direct)
     }
 
     /// The fingerprint of `settings`' command and the variables it runs

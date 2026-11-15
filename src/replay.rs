@@ -1,8 +1,10 @@
 //! Running a case's stage on the case, in place of GitHub
 //! (`docs/specs/benchmarks.md`, Replaying).
 
+mod gh_gate;
 mod journal;
 
+pub use gh_gate::{Gate, GhConfigDir, Upstream};
 pub use journal::Journal;
 
 use std::path::{Path, PathBuf};
@@ -133,18 +135,20 @@ impl Output {
 /// Runs the stage of `case` on its item with `config` and `harness`, with
 /// the case in place of GitHub, and keeps what it did in `out`: the version
 /// first, `in-flight` as the outcome once the run begins, and its ending once
-/// it ends. `config`'s work directory is that of the case's repository. The
-/// run's clones are kept in a directory of this replay's own under it,
-/// removed through `config`'s winding up once the run ends, or by a later
-/// replay when a signal ends this one first.
+/// it ends. Its sessions' `gh` cannot read the case's repository on GitHub
+/// (`docs/specs/benchmarks.md`, The repository on GitHub). `config`'s work
+/// directory is that of the case's repository. The run's clones are kept in
+/// a directory of this replay's own under it, removed through `config`'s
+/// winding up once the run ends, or by a later replay when a signal ends
+/// this one first.
 ///
 /// # Errors
 ///
 /// When the output cannot be written, the case's model of GitHub cannot be
 /// seeded, a file on the case's default branch would hold the run, the
-/// environment cannot be had or its build fails, or the run cannot be begun:
-/// then the run does not run. Once the run ended, only when its ending
-/// cannot be written.
+/// environment cannot be had or its build fails, the gate of the sessions'
+/// `gh` cannot be started, or the run cannot be begun: then the run does not
+/// run. Once the run ended, only when its ending cannot be written.
 pub async fn run(
     case: &Case,
     out: &Output,
@@ -250,6 +254,8 @@ async fn run_in(
         }
         Err(e @ replays::Unprepared::Unavailable(_)) => return Err(e.into()),
     };
+    let gate = Gate::start(&properties.settings.repo, Upstream::GitHub)
+        .context("starting the gate of the sessions' gh")?;
     let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
     let runs = Runs::new(out.path());
     let shell = Shell::new(ShellParts {
@@ -280,6 +286,7 @@ async fn run_in(
         report_refusal,
         environment: environment.source(),
         clones: Clones::new(replay_dir, clones_winding_up.clone()),
+        gh: gate.gh(),
     });
     let now = clock.now();
     let snapshot = shell
@@ -305,7 +312,9 @@ async fn run_in(
         cancel: Cancellation::default(),
         run: running,
     };
-    Ok(run::run(Arc::new(shell), work, Arc::new(snapshot), ctx).await)
+    let ended = run::run(Arc::new(shell), work, Arc::new(snapshot), ctx).await;
+    drop(gate);
+    Ok(ended)
 }
 
 /// Runs `work` unless a signal arrives first. Then it drops `work`, which

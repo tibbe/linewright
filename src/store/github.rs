@@ -494,15 +494,18 @@ struct Viewer {
     login: String,
 }
 
-/// An HTTP client that trusts the certificate authorities of the host's
-/// store alone (`docs/specs/operation.md`, "Certificate authorities").
-fn client_trusting_the_host_store_alone() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder().user_agent("linewright").build()
+/// A builder of HTTP clients that trust the certificate authorities of the
+/// host's store alone (`docs/specs/operation.md`, "Certificate
+/// authorities").
+pub(crate) fn client_builder_trusting_the_host_store_alone() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
 }
 
 impl GitHub {
     pub async fn connect(repo: &Repo, token: String) -> Result<GitHub> {
-        let http = client_trusting_the_host_store_alone()?;
+        let http = client_builder_trusting_the_host_store_alone()
+            .user_agent("linewright")
+            .build()?;
         let mut github = GitHub {
             http,
             api: API.into(),

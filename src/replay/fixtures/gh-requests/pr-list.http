@@ -1,0 +1,14 @@
+POST /graphql HTTP/1.1
+Host: api.github.com
+User-Agent: GitHub CLI 2.103.3 Agent/claude-code_2-1-311_agent
+Content-Length: 942
+Accept: application/vnd.github.merge-info-preview+json, application/vnd.github.nebula-preview
+Authorization: token dummy
+Content-Type: application/json; charset=utf-8
+Graphql-Features: merge_queue
+Time-Zone: Etc/UTC
+X-Github-Api-Version: 2022-11-28
+Accept-Encoding: gzip
+Connection: close
+
+{"query":"fragment pr on PullRequest{number,title,state,url,headRefName,headRepositoryOwner{id,login,...on User{name}},isCrossRepository,isDraft,createdAt}\n\t\tquery PullRequestList(\n\t\t\t$owner: String!,\n\t\t\t$repo: String!,\n\t\t\t$limit: Int!,\n\t\t\t$endCursor: String,\n\t\t\t$baseBranch: String,\n\t\t\t$headBranch: String,\n\t\t\t$state: [PullRequestState!] = OPEN\n\t\t) {\n\t\t\trepository(owner: $owner, name: $repo) {\n\t\t\t\tpullRequests(\n\t\t\t\t\tstates: $state,\n\t\t\t\t\tbaseRefName: $baseBranch,\n\t\t\t\t\theadRefName: $headBranch,\n\t\t\t\t\tfirst: $limit,\n\t\t\t\t\tafter: $endCursor,\n\t\t\t\t\torderBy: {field: CREATED_AT, direction: DESC}\n\t\t\t\t) {\n\t\t\t\t\ttotalCount\n\t\t\t\t\tnodes {\n\t\t\t\t\t\t...pr\n\t\t\t\t\t}\n\t\t\t\t\tpageInfo {\n\t\t\t\t\t\thasNextPage\n\t\t\t\t\t\tendCursor\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t}","variables":{"limit":30,"owner":"Acme","repo":"Widgets","state":["OPEN"]}}

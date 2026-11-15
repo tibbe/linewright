@@ -30,7 +30,7 @@ use crate::domain::{
 use crate::environment;
 use crate::git::{self, CommitId, WorkState};
 use crate::harness::{
-    Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
+    GhReach, Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
 use crate::input;
 use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
@@ -80,6 +80,8 @@ pub(crate) struct Shell {
     /// What each session's clone starts from.
     pub environment: environment::Source,
     pub clones: Clones,
+    /// How the `gh` of each session and maintenance command reaches GitHub.
+    pub gh: GhReach,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
     _by_new: (),
 }
@@ -119,6 +121,8 @@ pub(crate) struct ShellParts {
     /// What each session's clone starts from.
     pub environment: environment::Source,
     pub clones: Clones,
+    /// How the `gh` of each session and maintenance command reaches GitHub.
+    pub gh: GhReach,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -180,6 +184,7 @@ impl Shell {
             report_refusal: parts.report_refusal,
             environment: parts.environment,
             clones: parts.clones,
+            gh: parts.gh,
             _by_new: (),
         }
     }
@@ -1245,6 +1250,7 @@ struct Opened<'a> {
     dir: PathBuf,
     scratch: PathBuf,
     plugin: PathBuf,
+    gh: GhReach,
     /// When the session times out, the making of its clone and its
     /// maintenance command included.
     deadline: tokio::time::Instant,
@@ -1348,6 +1354,7 @@ async fn open_in<'a, T>(
         dir: ws.dir.clone(),
         scratch: ws.scratch.clone(),
         plugin: ws.plugin.clone(),
+        gh: shell.gh.clone(),
         deadline,
     };
     Ok((opened, ws, checked_out))
@@ -1394,6 +1401,7 @@ async fn run_maintenance(
             &settings.environment,
             &ws.scratch,
             settings.effort_set(),
+            &shell.gh,
         ),
         deadline,
         log: &record.join(transcript::MAINTENANCE_OUTPUT),
@@ -1477,6 +1485,7 @@ impl Opened<'_> {
             dir,
             scratch,
             plugin,
+            gh,
             deadline,
         } = self;
         let spec = SessionSpec {
@@ -1490,6 +1499,7 @@ impl Opened<'_> {
             model: settings.model_set(),
             effort: settings.effort_set(),
             environment: settings.environment.clone(),
+            gh,
             deadline,
             report: Reporter::new(move |reported| recorder.reported(reported)),
         };

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use linewright::domain::Timestamp;
 use linewright::harness::{
-    Harness, Purpose, Reported, SessionError, SessionSpec, Turn, UsageLimit,
+    GhReach, Harness, Purpose, Reported, SessionError, SessionSpec, Turn, UsageLimit,
 };
 use linewright::reconcile::WorkKind;
 use linewright::session_env::Given;
@@ -208,12 +208,17 @@ impl ScriptedHarness {
 }
 
 /// The environment a fake harness's session starts from: `given`, then
-/// `scratch` as its temporary directory.
-pub fn fake_environment(given: &Given, scratch: &Path) -> Vec<(OsString, OsString)> {
+/// `scratch` as its temporary directory and, when `gh` goes through a gate,
+/// the gate's configuration as `GH_CONFIG_DIR`.
+pub fn fake_environment(given: &Given, scratch: &Path, gh: &GhReach) -> Vec<(OsString, OsString)> {
+    let gh_config = gh
+        .config_dir()
+        .map(|config| ("GH_CONFIG_DIR".into(), config.into()));
     given
         .iter()
         .map(|(name, value)| (name.clone(), value.clone()))
         .chain([("TMPDIR".into(), scratch.into())])
+        .chain(gh_config)
         .collect()
 }
 
@@ -224,8 +229,9 @@ impl Harness for ScriptedHarness {
         given: &Given,
         scratch: &Path,
         _: Option<Effort>,
+        gh: &GhReach,
     ) -> Vec<(OsString, OsString)> {
-        fake_environment(given, scratch)
+        fake_environment(given, scratch, gh)
     }
 
     async fn start(&self, spec: &SessionSpec) -> Result<Turn, SessionError> {
