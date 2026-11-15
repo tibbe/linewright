@@ -55,10 +55,15 @@ through and those Linewright sets.
 
 - **Passed.** The variables this table or `session-pass-env` names.
 - **Set by the operator.** The values `session-env` sets.
-- **Set by Linewright.** The session's GitHub token, when it has one, as
-  `GH_TOKEN` and `GITHUB_TOKEN`, its own temporary directory as `TMPDIR`, and
-  the harness's settings that the rules under
-  [What a session has](#what-a-session-has) need, such as the shell.
+- **Set by Linewright.** Linewright sets these:
+  - `GH_TOKEN` and `GITHUB_TOKEN`: the session's GitHub token, when it has
+    one;
+  - `TMPDIR`: the session's own temporary directory;
+  - `GH_CONFIG_DIR`, in a session of a replay: a configuration of `gh` that
+    Linewright makes
+    ([The repository on GitHub](benchmarks.md#the-repository-on-github));
+  - the harness's settings that the rules under
+    [What a session has](#what-a-session-has) need, such as the shell.
 
 | variables                                                                | what for                                           |
 | ------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -78,7 +83,8 @@ through and those Linewright sets.
   same name the table or `session-pass-env` passes, and a value `session-env`
   sets replaces a passed one.
 - **Linewright's own.** `session-env` setting a variable Linewright may set
-  itself is an error at startup.
+  itself is an error at startup, but for `GH_CONFIG_DIR`: in a session of a
+  replay, Linewright's value replaces it.
 - **Set values.** `session-env`'s values are strings, taken as written, such
   as a `$`, which refers to no variable, or an empty string, which sets the
   variable empty.

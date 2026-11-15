@@ -43,6 +43,10 @@ during the session.
   one harness interface.
 - **Sessions are processes beside Linewright**
   ([Isolation](sessions.md#isolation)).
+- **In a replay, `gh` sends its requests to Linewright.** The configuration
+  that Linewright gives a session's `gh` sets `http_unix_socket` to a Unix
+  socket of Linewright
+  ([The repository on GitHub](benchmarks.md#the-repository-on-github)).
 
 ## The protocol between Linewright and an agent
 
