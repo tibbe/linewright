@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 
-use crate::domain::{MergeMethod, Number};
+use crate::domain::{MergeMethod, Number, Timestamp};
 use crate::git::{self, Merged};
 use crate::store::properties::noreply_email;
 
@@ -120,7 +120,7 @@ fn quote_path(path: &str) -> String {
 }
 
 /// A merge of pull request `pr`, from branch `head` of the repository owned
-/// by `owner` into branch `into` at `before`, by `by`.
+/// by `owner` into branch `into` at `before`, by `by`, at `at`.
 pub struct MergeOf<'a> {
     pub into: &'a str,
     pub before: &'a str,
@@ -130,12 +130,13 @@ pub struct MergeOf<'a> {
     pub by: &'a str,
     pub title: &'a str,
     pub pr: Number,
+    pub at: Timestamp,
 }
 
 /// Merges as GitHub merges
 /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/about-merge-methods-on-github>),
-/// in the object store as GitHub does, and returns the new tip of the branch
-/// merged into.
+/// in the object store as GitHub does, committing every commit it writes at
+/// the merge's time, and returns the new tip of the branch merged into.
 pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
     let MergeOf {
         into,
@@ -146,12 +147,14 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
         by,
         title,
         pr,
+        at,
     } = merge;
+    let date = format!("@{} +0000", at.timestamp());
     let by = Signature::of(by);
     let github = Signature {
         name: "GitHub",
         email: Cow::Borrowed("noreply@github.com"),
-        date: None,
+        date: Some(&date),
     };
     let after = match method {
         MergeMethod::Merge => {
@@ -165,7 +168,11 @@ pub async fn merge(repo: &Path, merge: MergeOf<'_>) -> Result<String> {
             commit_tree(repo, &tree, &[before], &message, &by, &github).await?
         }
         MergeMethod::Rebase => {
-            let Replayed::Onto(after) = replay(repo, before, head, by.name).await? else {
+            let committer = Signature {
+                date: Some(&date),
+                ..Signature::of(by.name)
+            };
+            let Replayed::Onto(after) = replay(repo, before, head, committer).await? else {
                 bail!("the commits of {head} don't rebase onto {into} without conflicts");
             };
             after
@@ -202,7 +209,7 @@ async fn merged_tree(repo: &Path, tip: &str, head: &str) -> Result<String> {
 
 /// Who authored or committed a commit, and when, if not now
 /// (<https://git-scm.com/docs/git-commit-tree#_commit_information>).
-struct Signature<'a> {
+pub struct Signature<'a> {
     name: &'a str,
     email: Cow<'a, str>,
     date: Option<&'a str>,
@@ -210,7 +217,7 @@ struct Signature<'a> {
 
 impl<'a> Signature<'a> {
     /// The local store's signature for the login `name`, now.
-    fn of(name: &'a str) -> Self {
+    pub fn of(name: &'a str) -> Self {
         Signature {
             name,
             email: Cow::Owned(email(name)),
@@ -327,7 +334,12 @@ fn becomes_empty(pick: &Pick, parent_tree: &str, tip_tree: &str, tree: &str) -> 
 /// with `committer` as their committer: merge commits are dropped, and so are
 /// commits already upstream and commits that become empty. The commits it
 /// writes are in `repo`, and it moves no ref there.
-pub async fn replay(repo: &Path, onto: &str, head: &str, committer: &str) -> Result<Replayed> {
+pub async fn replay(
+    repo: &Path,
+    onto: &str,
+    head: &str,
+    committer: Signature<'_>,
+) -> Result<Replayed> {
     let log = git::git(
         repo,
         &[
@@ -357,7 +369,6 @@ pub async fn replay(repo: &Path, onto: &str, head: &str, committer: &str) -> Res
         bail!("git rev-parse didn't resolve {onto}");
     };
     let (mut tip, mut tip_tree) = (tip.to_string(), tip_tree.to_string());
-    let committer = Signature::of(committer);
     for (pick, parent_tree) in picks.iter().zip(resolved) {
         let tree = match git::merge_tree(repo, Some(pick.parent), &tip, pick.commit).await? {
             Merged::Clean(tree) => tree,

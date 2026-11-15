@@ -10,9 +10,11 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
 use super::{
-    AnyItem, AttachError, Blob, IssueRead, NewIssue, NewPull, PeoplesPullRead, Property, PushError,
-    PushMode, RecordedItem, RecordedProperties, Resource, Store, holds, read_openings,
+    AnyItem, AttachError, Blob, Categories, IssueRead, NewIssue, NewPull, PeoplesPullRead,
+    Property, PushError, PushMode, RecordedItem, RecordedProperties, Resource, Store, holds,
+    read_openings,
 };
+use crate::case::{Case, CaseItem, CaseItemKind, CasePull, CasePullState, IssueState};
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
@@ -27,7 +29,7 @@ use crate::git::{self, Merged};
 
 mod history;
 
-use history::{MergeOf, NewCommit, Replayed};
+use history::{MergeOf, NewCommit, Replayed, Signature};
 
 /// The directory, under the store's root, that keeps the attachments.
 const ATTACHMENTS: &str = "attachments";
@@ -46,6 +48,7 @@ pub struct Seed {
 
 pub struct LocalStore {
     root: PathBuf,
+    repository: PathBuf,
     clock: Arc<dyn Clock>,
     state: Mutex<State>,
 }
@@ -186,17 +189,19 @@ struct IssueRecord {
     /// Its `open` is [`IssueRecord::is_open`]'s.
     #[serde(flatten)]
     issue: Issue,
+    /// Its issue type, by name.
+    issue_type: Option<String>,
     blocked_by: Vec<Number>,
     sub_issues: Vec<Added>,
     /// Set while the issue is closed.
     closing: Option<Closing>,
 }
 
-/// A sub-issue, with who added it.
+/// A sub-issue, with who added it, where known.
 #[derive(Clone, Serialize)]
 struct Added {
     number: Number,
-    by: Login,
+    by: Option<Login>,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -223,6 +228,15 @@ pub struct CheckRecord {
     pub name: String,
     pub state: CheckState,
     pub log: String,
+}
+
+/// What a pull request's merge did to the branch it merged into.
+#[derive(Clone, Serialize)]
+struct MergeRecord {
+    before: String,
+    after: String,
+    /// How many commits the pull request held, as GitHub counts them.
+    commits: u64,
 }
 
 #[derive(Clone, Serialize)]
@@ -257,15 +271,77 @@ struct PullRecord {
     refused: Option<String>,
     /// By head commit: a push starts the head's checks afresh.
     checks: BTreeMap<String, Vec<CheckRecord>>,
-    /// For a merged pull request: the default branch before and after.
-    merge: Option<(String, String)>,
+    merge: Option<MergeRecord>,
     files: Vec<String>,
 }
 
 impl LocalStore {
     pub async fn create(root: &Path, seed: Seed, clock: Arc<dyn Clock>) -> Result<LocalStore> {
         tokio::fs::create_dir_all(root).await?;
+        let repository = root.canonicalize()?.join("repo.git");
+        LocalStore::init(root, &repository, seed, clock).await
+    }
+
+    /// The model of GitHub that the case `case` was captured from: its
+    /// repository copied to `repository` as a bare repository; its items
+    /// as the records, without the events GitHub keeps of them; its
+    /// properties as the repository's; each of Linewright's labels present;
+    /// and the next issue or pull request numbered above its items.
+    pub async fn from_case(
+        root: &Path,
+        repository: &Path,
+        case: &Case,
+        clock: Arc<dyn Clock>,
+    ) -> Result<LocalStore> {
+        let properties = case.properties();
+        let settings = &properties.settings;
+        let seed = Seed {
+            repo: settings.repo.clone(),
+            default_branch: settings.default_branch.clone(),
+            linewright: properties.identity.login.clone(),
+            issue_types: match &settings.categories {
+                Categories::IssueTypes(types) => Some(types.clone()),
+                Categories::Labels => None,
+            },
+            linear_history: settings.linear_history,
+            requires_up_to_date: false,
+            allowed_merge_methods: settings.allowed_merge_methods.clone(),
+        };
+        let store = LocalStore::init(root, repository, seed, clock).await?;
+        let case_repository = url(case.repository())?;
+        git::git(
+            &store.repository,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--no-write-fetch-head",
+                case_repository,
+                "refs/heads/*:refs/heads/*",
+            ],
+        )
+        .await
+        .context("copying the case's repository")?;
+        store.state().seed(case.items());
+        Ok(store)
+    }
+
+    /// A store with no items, whose repository is the bare repository it
+    /// makes at `repository`.
+    async fn init(
+        root: &Path,
+        repository: &Path,
+        seed: Seed,
+        clock: Arc<dyn Clock>,
+    ) -> Result<LocalStore> {
+        tokio::fs::create_dir_all(root).await?;
         let root = root.canonicalize()?;
+        let (Some(parent), Some(file_name)) = (repository.parent(), repository.file_name()) else {
+            bail!("{} is not a repository's path", repository.display());
+        };
+        tokio::fs::create_dir_all(parent).await?;
+        let bare = parent.canonicalize()?.join(file_name);
+        let path = url(&bare)?;
         // Loose refs are files, and macOS's file systems are case-insensitive
         // by default: <https://git-scm.com/docs/git-init#Documentation/git-init.txt---ref-formatformat>,
         // <https://support.apple.com/guide/disk-utility/file-system-formats-dsku19ed921c/mac>
@@ -278,13 +354,14 @@ impl LocalStore {
                 "--ref-format=reftable",
                 "-b",
                 &seed.default_branch,
-                "repo.git",
+                path,
             ],
         )
         .await
         .context("the local store needs git 2.45 or later")?;
         Ok(LocalStore {
             root,
+            repository: bare,
             clock,
             state: Mutex::new(State {
                 repo: seed.repo,
@@ -317,7 +394,7 @@ impl LocalStore {
     }
 
     pub fn repository(&self) -> PathBuf {
-        self.root.join("repo.git")
+        self.repository.clone()
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -423,6 +500,7 @@ impl LocalStore {
                         })
                         .collect(),
                 },
+                issue_type: None,
                 blocked_by: vec![],
                 sub_issues: vec![],
                 closing: None,
@@ -517,7 +595,11 @@ impl LocalStore {
         let number = state.take_number();
         let record = PullRecord {
             state: PullState::Merged { at: now },
-            merge: Some((before, after)),
+            merge: Some(MergeRecord {
+                before,
+                after,
+                commits: 1,
+            }),
             files: files.iter().map(|(path, _)| path.to_string()).collect(),
             ..PullRecord::new(
                 &state,
@@ -570,6 +652,9 @@ impl LocalStore {
         };
         let before = self.rev(&base_ref).await?;
         let repo = self.repository();
+        let pull_commits = format!("{before}..{head_ref}");
+        let commits = git::git(&repo, &["rev-list", "--count", &pull_commits]).await?;
+        let now = self.now();
         let after = history::merge(
             &repo,
             MergeOf {
@@ -581,15 +666,19 @@ impl LocalStore {
                 by,
                 title: &title,
                 pr,
+                at: now,
             },
         )
         .await?;
         let files = self.changed_files(&before, &after).await?;
-        let now = self.now();
         let mut state = self.state();
         let record = state.pull_written(pr, now)?;
         record.state = PullState::Merged { at: now };
-        record.merge = Some((before, after));
+        record.merge = Some(MergeRecord {
+            before,
+            after,
+            commits: commits.trim().parse()?,
+        });
         record.files = files;
         Ok(now)
     }
@@ -1166,7 +1255,7 @@ impl LocalStore {
             return Ok(Rebaseability::Rebaseable);
         }
         Ok(
-            match history::replay(&repo, default_branch, head, "rebaser").await? {
+            match history::replay(&repo, default_branch, head, Signature::of("rebaser")).await? {
                 Replayed::Onto(_) => Rebaseability::Rebaseable,
                 Replayed::Conflict => Rebaseability::NotRebaseable,
             },
@@ -1205,6 +1294,101 @@ impl State {
         if self.label(name).is_none() {
             self.labels.insert(name.into(), None);
         }
+    }
+
+    /// Holds `items` as GitHub holds them, every one of Linewright's
+    /// labels, and the next number above the items'.
+    fn seed(&mut self, items: &[CaseItem]) {
+        for label in label::ALL {
+            self.labels
+                .insert(label.name.to_string(), Some(label.description.to_string()));
+        }
+        for item in items {
+            for label in &item.labels {
+                self.ensure_label(label);
+            }
+        }
+        for item in items {
+            match &item.kind {
+                CaseItemKind::Issue(state) => {
+                    let record = IssueRecord {
+                        issue: Issue {
+                            number: item.number,
+                            title: item.title.clone(),
+                            body: item.body.clone(),
+                            author: item.author.clone(),
+                            open: *state == IssueState::Open,
+                            created_at: item.created_at,
+                            updated_at: item.updated_at,
+                            labels: item.labels.clone(),
+                            assignees: item.assignees.clone(),
+                            comments: item.comments.clone(),
+                            blocked_by: vec![],
+                            sub_issues: vec![],
+                            parent: None,
+                            events: vec![],
+                            filed: None,
+                            closed_by: vec![],
+                        },
+                        issue_type: item.issue_type.clone(),
+                        blocked_by: item.blocked_by.clone(),
+                        sub_issues: items
+                            .iter()
+                            .filter(|child| matches!(child.kind, CaseItemKind::Issue(_)))
+                            .filter(|child| child.parent == Some(item.number))
+                            .map(|child| Added {
+                                number: child.number,
+                                by: None,
+                            })
+                            .collect(),
+                        closing: match *state {
+                            IssueState::Open => None,
+                            IssueState::Closed { at, reason } => Some(Closing {
+                                at,
+                                merged_by: None,
+                                reason,
+                            }),
+                        },
+                    };
+                    self.issues.insert(item.number, record);
+                }
+                CaseItemKind::Pull(CasePull { base, head, state }) => {
+                    let (state, merge) = match state {
+                        CasePullState::Open { draft } => (PullState::Open { draft: *draft }, None),
+                        CasePullState::Closed { at } => (PullState::Closed { at: *at }, None),
+                        CasePullState::Merged { at, merge } => {
+                            (PullState::Merged { at: *at }, Some(merge))
+                        }
+                    };
+                    let record = PullRecord {
+                        base_ref: base.clone(),
+                        updated_at: item.updated_at,
+                        state,
+                        labels: item.labels.clone(),
+                        assignees: item.assignees.clone(),
+                        comments: item.comments.clone(),
+                        merge: merge.map(|merge| MergeRecord {
+                            before: merge.before.to_string(),
+                            after: merge.after.to_string(),
+                            commits: merge.commits,
+                        }),
+                        files: merge.map(|merge| merge.files.clone()).unwrap_or_default(),
+                        ..PullRecord::new(
+                            self,
+                            item.number,
+                            &item.title,
+                            &item.body,
+                            item.author.clone(),
+                            head,
+                            item.created_at,
+                        )
+                    };
+                    self.pulls.insert(item.number, record);
+                }
+            }
+        }
+        let highest = items.iter().map(|item| item.number.0).max().unwrap_or(0);
+        self.next_number = highest + 1;
     }
 
     fn take_number(&mut self) -> Number {
@@ -1278,7 +1462,7 @@ impl State {
                     SubIssue {
                         number: *number,
                         author: sub_issue.issue.author.clone(),
-                        added_by: Some(by.clone()),
+                        added_by: by.clone(),
                         state: match sub_issue.closing {
                             None => SubIssueState::Open,
                             Some(closing) => SubIssueState::Closed {
@@ -1432,7 +1616,10 @@ impl State {
                 "state_reason".into(),
                 json!(record.closing.map(|closing| state_reason(closing.reason))),
             ),
-            ("type".into(), Value::Null),
+            (
+                "type".into(),
+                json!(record.issue_type.as_ref().map(|name| json!({"name": name}))),
+            ),
             (
                 "parent_issue_url".into(),
                 json!(
@@ -1501,9 +1688,16 @@ impl State {
                         .collect::<Vec<_>>()
                 ),
             ),
+            (
+                "merge_commit_sha".into(),
+                json!(record.merge.as_ref().map(|merge| &merge.after)),
+            ),
             ("head".into(), json!({"ref": record.head_ref})),
             ("base".into(), json!({"ref": record.base_ref})),
         ]);
+        if let Some(merge) = &record.merge {
+            resource.insert("commits".into(), json!(merge.commits));
+        }
         Value::Object(resource)
     }
 
@@ -1546,7 +1740,10 @@ impl State {
         now: Timestamp,
     ) -> Result<()> {
         self.issue_written(child, now)?;
-        let added = Added { number: child, by };
+        let added = Added {
+            number: child,
+            by: Some(by),
+        };
         self.issue_written(parent, now)?.sub_issues.push(added);
         Ok(())
     }
@@ -2276,7 +2473,7 @@ impl Store for LocalStore {
             )
         };
         let range = match merge {
-            Some((before, after)) => format!("{before}..{after}"),
+            Some(MergeRecord { before, after, .. }) => format!("{before}..{after}"),
             None => format!("{default_branch}...{head_ref}"),
         };
         let mut args = vec!["diff".to_string(), range, "--".into()];
@@ -2627,9 +2824,9 @@ impl Store for LocalStore {
         self.close_issue_as(issue, reason)
     }
 
-    async fn set_issue_type(&self, issue: Number, _issue_type: &str) -> Result<()> {
+    async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()> {
         let now = self.now();
-        self.state().issue_written(issue, now)?;
+        self.state().issue_written(issue, now)?.issue_type = Some(issue_type.into());
         Ok(())
     }
 

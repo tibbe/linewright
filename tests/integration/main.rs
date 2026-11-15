@@ -12,6 +12,7 @@ mod automation_schedule;
 mod board;
 mod briefs;
 mod capture;
+mod case_seeding;
 mod closed_items;
 mod comment_check;
 mod committed_secrets;

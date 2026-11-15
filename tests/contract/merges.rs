@@ -15,7 +15,7 @@ contracts![
     a_pull_request_merged_with_a_merge_commit_has_both_tips_as_parents,
     a_pull_request_of_one_commit_squashed_is_one_commit_titled_after_that_commit,
     a_pull_request_of_several_commits_squashed_is_one_commit_titled_after_it,
-    a_pull_request_merged_by_rebase_keeps_its_authors_with_the_merger_as_committer,
+    a_pull_request_merged_by_rebase_keeps_its_authors_with_the_merger_as_committer_at_one_time,
     a_pull_request_merged_by_rebase_adds_no_commit_for_changes_already_on_the_default_branch,
     a_pull_request_that_conflicts_is_refused_merging_even_by_a_rebase_that_skips_its_change,
     a_merge_is_refused_once_the_head_has_moved,
@@ -39,13 +39,15 @@ struct Commit {
     author: String,
     author_email: String,
     committer: String,
+    /// When it was committed, in seconds since the epoch.
+    committed_at: String,
     subject: String,
     body: String,
 }
 
 /// The fields of a [`Commit`], in `git log`'s format
 /// (<https://git-scm.com/docs/git-log#_pretty_formats>).
-const COMMIT_FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%s%x1f%b";
+const COMMIT_FORMAT: &str = "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ct%x1f%s%x1f%b";
 
 /// The latest commits on the default branch, newest first: other contracts
 /// may merge into it too.
@@ -55,7 +57,17 @@ async fn history(sandbox: &Sandbox) -> Result<Vec<Commit>> {
     log.split_terminator('\0')
         .map(|commit| {
             let fields: Vec<&str> = commit.split('\x1f').collect();
-            let &[id, parents, author, author_email, committer, subject, body] = &fields[..] else {
+            let &[
+                id,
+                parents,
+                author,
+                author_email,
+                committer,
+                committed_at,
+                subject,
+                body,
+            ] = &fields[..]
+            else {
                 bail!("git log gave an incomplete commit: {commit:?}");
             };
             Ok(Commit {
@@ -64,6 +76,7 @@ async fn history(sandbox: &Sandbox) -> Result<Vec<Commit>> {
                 author: author.into(),
                 author_email: author_email.into(),
                 committer: committer.into(),
+                committed_at: committed_at.into(),
                 subject: subject.into(),
                 body: body.trim_end().into(),
             })
@@ -283,7 +296,7 @@ async fn a_pull_request_of_several_commits_squashed_is_one_commit_titled_after_i
     .await
 }
 
-async fn a_pull_request_merged_by_rebase_keeps_its_authors_with_the_merger_as_committer(
+async fn a_pull_request_merged_by_rebase_keeps_its_authors_with_the_merger_as_committer_at_one_time(
     sandbox: Sandbox,
 ) -> Result<()> {
     if refused_unless_allowed(&sandbox, MergeMethod::Rebase).await? {
@@ -322,6 +335,11 @@ async fn a_pull_request_merged_by_rebase_keeps_its_authors_with_the_merger_as_co
         &vec![first.id.clone()],
     )?;
     ensure!(second.id != branch.head, "the commits were not replayed");
+    equal(
+        "the second's commit time",
+        &second.committed_at,
+        &first.committed_at,
+    )?;
     for commit in [first, second] {
         equal("the author", &commit.author, &identity.name)?;
         equal("the author's email", &commit.author_email, &identity.email)?;
