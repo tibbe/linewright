@@ -43,6 +43,7 @@ The command is `lw`.
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
 | `capture ID NAME`     | capture run ID as a case (see [Benchmarks](benchmarks.md))               |
 | `replay CASE`         | run a case's stage on it again (see [Benchmarks](benchmarks.md))         |
+| `judge CASE DIR`      | judge the output of a replay (see [Benchmarks](benchmarks.md))           |
 
 - **The version.** `--version` names the version and the commit it was
   built from.
@@ -103,7 +104,7 @@ repository's file, the operator's file, default.
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
-| `repo` (`owner/name`)                        | required, but not for `replay`              |
+| `repo` (`owner/name`)                        | required, but not for a command that reads a case |
 | `poll-interval`                              | 60s                                         |
 | `webhook-address`                            | `0.0.0.0:8080` with the webhook secret set; none without it |
 | `ui-address`                                 | `127.0.0.1:8081`                            |
@@ -133,10 +134,10 @@ repository's file, the operator's file, default.
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
-- **`repo` under `replay`.** `replay` reads the same settings as every other
-  command, but it works on the repository of its case
-  ([Replaying](benchmarks.md#replaying)). It needs no `repo`, and it ignores a
-  `repo` that is set.
+- **`repo` and a case.** A command that reads a case, such as `replay`, reads
+  the same settings as every other command. It works on the repository of the
+  case ([Replaying](benchmarks.md#replaying)). It needs no `repo`, and it
+  ignores a `repo` that is set.
 - **Combining layers.** A setting's value combines what every layer sets, by
   what the setting holds: a value is the highest layer's, a list holds the
   entries of every layer, and a table holds the names of every layer, each
@@ -190,6 +191,9 @@ whole-pipeline layer ([Configuration](#configuration)).
 - **The tables.** A stage's settings are a table in a config file,
   `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
   `[stage.implement]`, with the session settings as its keys.
+- **The judge.** The session of the judge takes its settings as the sessions
+  of a stage do, from the table `[stage.judge]`
+  ([Judging](benchmarks.md#judging)).
 
 ## The repository's file
 

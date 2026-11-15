@@ -7,8 +7,10 @@ What Linewright gives its agents, built into the binary:
   follow-ups;
 - `parts/` and `outputs/`: Linewright's own wording of what it fills into the
   prompts' placeholders, which no layer overrides;
-- `results/`: each stage's result schema, which Linewright checks a session's
-  result against.
+- `results/`: each stage's result schema, and the judge's, which Linewright
+  checks a session's result against;
+- `judge.md`: what Linewright sends the judge of a replay, which no layer
+  overrides.
 
 The skills are always these. The `prompts` setting names a directory laid out
 as `prompts/` is, the operator's layer over it. Linewright takes each file in

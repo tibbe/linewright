@@ -2,7 +2,9 @@
 
 A benchmark measures a stage against work it has already done. A run of the
 stage is captured as a case, which holds what the run was given as it stood
-when the run started, so that the stage can be run on it again.
+when the run started, so that the stage can be run on it again. A judge then
+says whether what the stage made meets what the capturer said a good result
+is.
 
 For example, a maintainer finds that the design of #812 cut the work badly.
 They capture its design run as a case from the run's page and write what a
@@ -33,6 +35,13 @@ make to the brief of the design stage.
 10. As an operator, I want the `gh` of a replay's session kept from the case's
     repository on GitHub, so that the session cannot read how the work turned
     out.
+11. As an operator, I want a judge to say whether the output of a replay
+    meets the criteria of the case, so that I know whether a change helped
+    and do not read every output.
+12. As an operator, I want the judge to tell me when a session learned how
+    the work turned out, so that I do not trust that replay.
+13. As an operator, I want to run the judge on a replay again, so that I can
+    change the judge and not replay the case.
 
 ## Cases
 
@@ -48,7 +57,7 @@ what a good result is.
 | items        | the items from which Linewright fills the prompt of the stage ([Contract](runs.md#contract)), each with the comments written before the start |
 | repository   | the default branch's head at the start and, for a run on a branch that held earlier work, the branch's head, with their history, which holds the spec change's commits |
 | properties   | the repository's properties ([The repository's properties](repository.md#the-repositorys-properties)) |
-| criteria     | what a good result is, in the capturer's words, or nothing                                                                                                   |
+| criteria     | what a good result is, in the capturer's words |
 | run          | the ID of the run it was captured from                                                                                                                        |
 
 - **The stage.** A case is a case of its stage: the stage is run on it again
@@ -57,6 +66,7 @@ what a good result is.
   properties as GitHub's API gives them, and the commits as git gives them. A
   change to how Linewright reads them then leaves the case usable.
 - **The repository.** A bare git repository in the case.
+- **The criteria.** Criteria that hold only white space are no criteria.
 - **A directory.** A case is a directory holding all of it, so that it is
   copied, moved or removed as a directory, and its criteria are edited as a
   file in it.
@@ -77,9 +87,10 @@ case of it, whatever its outcome.
   case.
 - **From the web UI.** The run page
   ([The run page](design_system.md#the-run-page)).
-- **From the command line.** `lw capture ID NAME`, with `--criteria FILE` for
-  the criteria. It works whether or not `serve` is running, and exits as the
-  monitoring commands do ([Output](monitoring.md#output)).
+- **From the command line.** `lw capture ID NAME --criteria FILE`. It works
+  whether or not `serve` is running, and exits as the monitoring commands do
+  ([Output](monitoring.md#output)).
+- **Without criteria.** Linewright refuses a capture that has no criteria.
 - **The name.** Given by the capturer: lowercase letters, digits and hyphens.
   A name a case already has is refused.
 - **The commits.** Fetched from GitHub.
@@ -116,7 +127,7 @@ GitHub.
 - **`max-runs`.** `serve` does not count the run of a replay toward
   `max-runs`.
 - **A case that Linewright cannot replay.** Linewright refuses a case that
-  lacks a part other than its criteria, or that holds a part it cannot read.
+  lacks a part, or that holds a part that it cannot read.
   The refusal names the part.
 - **A file with an error.** Linewright refuses a case when a file on its
   default branch would hold the run under `serve`
@@ -149,7 +160,8 @@ GitHub.
 
 ## The output of a replay
 
-The output of a replay holds what the replay did, as plain files.
+The output of a replay holds what the replay did and how a judge judged it,
+as plain files.
 
 | Part       | Holds                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
@@ -159,6 +171,8 @@ The output of a replay holds what the replay did, as plain files.
 | commits    | the branch that Linewright would have pushed, if the run pushes one, in a git repository                                 |
 | build      | the output of the build of the environment, if the replay built it                                                       |
 | Linewright | the version of Linewright that ran the replay                                                                            |
+| case       | the ID of the run from which the case of the replay was captured |
+| judgement  | the judgement of the replay, if a judge made one ([Judging](#judging)) |
 
 - **Where.** Linewright makes the directory of the output if there is none,
   and refuses a directory that holds anything.
@@ -166,6 +180,63 @@ The output of a replay holds what the replay did, as plain files.
   output. The Markdown of the write refers to the file by a relative path.
 - **Numbers.** An issue or pull request that the run opens takes the next
   number above the numbers of the case's items.
+
+## Judging
+
+A judge judges the output of a replay against the criteria of its case. It
+also says whether a session of the replay learned how the work turned out.
+The judge is an agent in a session of its own.
+
+- **From the command line.** The command is `lw judge CASE DIR`. CASE is the
+  directory of the case, and DIR is the output of a replay of that case.
+- **Which replays.** Linewright runs the judge on a replay whose run ended
+  done or handed back, and refuses every other replay.
+- **The output and the case.** Linewright refuses an output that has no
+  `case` part, or whose `case` part names a run other than the run of the
+  case.
+- **As a replay.** The rules of [Replaying](#replaying) hold for `lw judge`
+  as for `lw replay`, with the session of the judge in place of the run. The
+  exceptions are the rules on the command line, on writes, on where
+  Linewright keeps the run, on a signal and on the exit status.
+- **The `gh` of the judge.** The session of the judge has the `gh` of a
+  session of a replay
+  ([The repository on GitHub](#the-repository-on-github)).
+- **The clone of the judge.** Linewright checks out, from the commits of the
+  output, the branch that it would have pushed, if the run pushes one. If the
+  run pushes none, the clone is at the head of the case's default branch.
+- **The prompt.** Linewright sends the judge the prompt `briefs/judge.md`, which
+  no layer overrides, with these placeholders filled:
+
+  | placeholder    | value                                                                                    |
+  | -------------- | ---------------------------------------------------------------------------------------- |
+  | `{{facts}}`    | as in every prompt ([Contract](runs.md#contract))                                        |
+  | `{{stage}}`    | the stage of the case                                                                    |
+  | `{{criteria}}` | the criteria of the case                                                                 |
+  | `{{replay}}`   | where the outcome, the sessions' records and the writes of the replay are (`replay-output.md`) |
+  | `{{output}}`   | the result contract of the judge, `briefs/outputs/judge.md`, with nothing on attachments |
+
+- **The result.** The session of the judge ends with a result that matches
+  `briefs/results/judge.schema.json`. Linewright handles that result, and a
+  failure of the session, as it does for a session of a stage
+  ([Contract](runs.md#contract), [Ending](runs.md#ending)), but it hands no
+  item back.
+- **The judgement.** Linewright keeps the judgement in the output of the replay,
+  apart from the sessions of the replay. The judgement holds these parts:
+
+  | Part        | Holds                                                                                                                      |
+  | ----------- | -------------------------------------------------------------------------------------------------------------------------- |
+  | correctness | `pass` if the output meets every criterion, and `fail` if it does not, with the reasoning of the judge                    |
+  | leak        | whether a session of the replay learned how the work turned out, with the reasoning of the judge and the tool calls that show it |
+  | session     | the record of the session of the judge                                                                                     |
+  | Linewright  | the version of Linewright that ran the judge                                                                               |
+
+- **Judging again.** A new judgement replaces the earlier judgement.
+- **A judge that makes no judgement.** The judge makes no judgement if it
+  gives up, if a signal ends the command, or if its session ends without a
+  result that Linewright accepts. The command then says why, keeps nothing of
+  that judge, and leaves the earlier judgement in place.
+- **The exit status of the command.** The command succeeds when the judge
+  made a judgement, whatever the judgement.
 
 ## Out of scope
 
@@ -180,6 +251,6 @@ The output of a replay holds what the replay did, as plain files.
   repository.
 - Replaying a case from the web UI.
 - Replaying a case several times, or several cases, with one command.
-- Judging the output of a replay against the criteria of the case.
-- Finding, in the output of a replay, where a session read the case's
-  repository by a means other than `gh`.
+- Judging a replay against anything other than the criteria of the case.
+- Combining the judgements of several judges on one replay.
+- Checking a judgement against the judgement of a person.

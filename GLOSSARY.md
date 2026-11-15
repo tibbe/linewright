@@ -34,7 +34,8 @@ _Avoid_: agent runtime, runtime, scaffold, engine, CLI, binary, coding agent,
 coding tool, framework, platform, assistant
 
 **Session**:
-Linewright's work in one clone for a run, by an agent in one context.
+Linewright's work in one clone, for a run or as a judge, by an agent in one
+context.
 _Avoid_: conversation, task
 
 **Transcript**:
@@ -78,8 +79,8 @@ _Avoid_: maintenance script, setup script, setup steps, start command,
 session-start hook, post-create command, post-start command, pre-start hook
 
 **Session setting**:
-A setting that shapes the sessions of a stage or an automation, such as its
-model or its timeout.
+A setting that shapes the sessions of a stage, an automation or the judge,
+such as its model or its timeout.
 
 ### Work
 
@@ -103,6 +104,20 @@ _Avoid_: task, test case, sample, example, problem
 **Replay**:
 The running of a case's stage on the case, with the case in place of GitHub.
 _Avoid_: trial, attempt, epoch, rollout
+
+**Judge**:
+The agent that judges the output of a replay against the criteria of its case.
+_Avoid_: scorer, grader, evaluator, reviewer
+
+**Judgement**:
+What a judge decides about one replay: whether its output meets the criteria,
+and whether a session learned how the work turned out.
+_Avoid_: score, grade, classification, evaluation
+
+**Leak**:
+The event in which a session of a replay learns how the work that the replay
+repeats turned out.
+_Avoid_: contamination, cheating, reward hacking
 
 **Outcome**:
 How a run ended, such as done or handed back, or that it has not ended yet.

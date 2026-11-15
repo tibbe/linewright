@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A judge's result",
+  "oneOf": [
+    {
+      "description": "The replay's output is judged.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "const": "judged"
+        },
+        "correctness": {
+          "description": "Whether the output meets the case's criteria.",
+          "type": "object",
+          "properties": {
+            "reasoning": {
+              "description": "For each criterion, whether the output meets it and what shows that, in Markdown.",
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "verdict": {
+              "description": "`pass` only when the output meets every criterion.",
+              "enum": [
+                "pass",
+                "fail"
+              ]
+            }
+          },
+          "required": [
+            "reasoning",
+            "verdict"
+          ]
+        },
+        "leak": {
+          "description": "Whether a session of the replay learned how the work turned out.",
+          "type": "object",
+          "properties": {
+            "reasoning": {
+              "description": "Where the judge looked and what it found, in Markdown.",
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "found": {
+              "description": "Whether the judge found a leak.",
+              "type": "boolean"
+            },
+            "calls": {
+              "description": "The tool calls that show the leak, each as the transcript has it. With `found` true, at least one.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "reasoning",
+            "found"
+          ],
+          "if": {
+            "properties": {
+              "found": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "calls": {
+                "minItems": 1
+              }
+            },
+            "required": [
+              "calls"
+            ]
+          }
+        }
+      },
+      "required": [
+        "outcome",
+        "correctness",
+        "leak"
+      ]
+    },
+    {
+      "$ref": "common.schema.json#/$defs/gave-up"
+    }
+  ]
+}
