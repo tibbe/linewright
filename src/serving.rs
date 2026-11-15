@@ -215,7 +215,7 @@ impl Starting {
         let bash = require_bash()?;
         require_tool(program).await?;
         let sessions = SessionCredentials::new(token()?, &config.secrets)?;
-        let environments = environments(config, &sessions, gh_through_gate);
+        let environments = environments(config, gh_through_gate);
         Ok(Starting {
             program: program.into(),
             bash,
@@ -231,7 +231,7 @@ impl Starting {
         ClaudeCode {
             program: self.program.clone(),
             bash: self.bash.clone(),
-            github_token: self.sessions.token.given().map(str::to_string),
+            github_token: self.sessions.token.given().to_string(),
             redaction: self.sessions.secrets.redaction().clone(),
             container,
             clock,
@@ -307,15 +307,11 @@ impl SessionCredentials {
 /// the variables they are not given and, of those, the ones each stage's
 /// table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
-fn environments(
-    config: &Config,
-    sessions: &SessionCredentials,
-    gh_through_gate: bool,
-) -> Environments {
+fn environments(config: &Config, gh_through_gate: bool) -> Environments {
     let split = config.work.environments(
         &config.session_env,
         std::env::vars_os(),
-        &ClaudeCode::variables_set_for_sessions(sessions.token.given(), gh_through_gate),
+        &ClaudeCode::variables_set_for_sessions(gh_through_gate),
     );
     info!(
         variables = split.withheld.join(" "),

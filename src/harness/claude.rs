@@ -21,9 +21,7 @@ use crate::work_settings::Effort;
 pub struct ClaudeCode {
     pub program: String,
     pub bash: PathBuf,
-    /// `None` gives sessions none, whatever Linewright's own environment
-    /// holds.
-    pub github_token: Option<String>,
+    pub github_token: String,
     /// Applied to all a session says before Linewright keeps or answers it.
     pub redaction: Redaction,
     /// The `lw` that runs each turn's `claude` inside the wrapper that ends
@@ -131,7 +129,7 @@ pub const SET_FOR_SESSIONS: [&str; Own::NOT_SET_BY_OPERATOR.len()] = {
 fn set_for_session<'a>(
     scratch: &'a Path,
     bash: &'a Path,
-    github_token: Option<&'a str>,
+    github_token: &'a str,
     effort: Option<Effort>,
     gh_config: Option<&'a Path>,
 ) -> Vec<(&'static str, &'a OsStr)> {
@@ -143,7 +141,7 @@ fn set_for_session<'a>(
                 Own::Shell => Some(bash.as_os_str()),
                 Own::NoUpdates => Some(OsStr::new("1")),
                 Own::Effort => effort.map(|effort| OsStr::new(effort.name())),
-                Own::GhToken | Own::GithubToken => github_token.map(OsStr::new),
+                Own::GhToken | Own::GithubToken => Some(OsStr::new(github_token)),
                 Own::GhConfigDir => gh_config.map(Path::as_os_str),
             };
             Some((own.name(), value?))
@@ -342,14 +340,11 @@ impl Log {
 }
 
 impl ClaudeCode {
-    /// The variables Linewright sets for a session given `github_token`,
-    /// and whether its `gh` reaches GitHub through a gate, as in a replay.
-    pub fn variables_set_for_sessions(
-        github_token: Option<&str>,
-        gh_through_gate: bool,
-    ) -> Vec<&'static str> {
+    /// The variables Linewright sets for a session, given whether its `gh`
+    /// reaches GitHub through a gate, as in a replay.
+    pub fn variables_set_for_sessions(gh_through_gate: bool) -> Vec<&'static str> {
         let gh_config = gh_through_gate.then_some(Path::new(""));
-        set_for_session(Path::new(""), Path::new(""), github_token, None, gh_config)
+        set_for_session(Path::new(""), Path::new(""), "", None, gh_config)
             .into_iter()
             .map(|(name, _)| name)
             .collect()
@@ -586,7 +581,7 @@ impl Harness for ClaudeCode {
         let set = set_for_session(
             scratch,
             &self.bash,
-            self.github_token.as_deref(),
+            &self.github_token,
             effort,
             gh.config_dir(),
         );

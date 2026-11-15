@@ -946,6 +946,10 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
 /// Replays the case in the directory `case` into the output `out`: 0 once
 /// its run ended, whatever its outcome, and 1 when it did not run or end.
 async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
+    let token = match session_token() {
+        Ok(token) => token,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
     let out = match Output::make(out) {
         Ok(out) => out,
         Err(e) => return print_answer(Err(failed(&e.into()))),
@@ -964,13 +968,7 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             };
             log.begin();
             let ran = async {
-                let starting = Starting::replaying(config, HARNESS_PROGRAM, || {
-                    Ok(SessionToken::new(
-                        linewright_token(),
-                        std::env::var(SESSION_TOKEN_VARIABLE).ok(),
-                    ))
-                })
-                .await?;
+                let starting = Starting::replaying(config, HARNESS_PROGRAM, || Ok(token)).await?;
                 let harness = starting.harness(own_program()?, Arc::new(SystemClock));
                 let work_dir = config.work_dir_for(&case.properties().settings.repo);
                 let factory_config = starting.factory_config(
@@ -997,21 +995,21 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
         .unwrap_or_else(|e| print_answer(Err(failed(&e))))
 }
 
-/// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an empty
-/// one being unset.
-fn linewright_token() -> Option<String> {
+/// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
+fn token() -> Result<String> {
     TOKEN_VARIABLES
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()))
+        .context("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account")
 }
 
-/// [`linewright_token`], which Linewright needs.
-///
-/// # Errors
-///
-/// When neither `GH_TOKEN` nor `GITHUB_TOKEN` is set.
-fn token() -> Result<String> {
-    linewright_token().context("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account")
+/// The token sessions are given: the separate one if set, else Linewright's,
+/// which a command that runs sessions needs.
+fn session_token() -> Result<SessionToken> {
+    Ok(SessionToken::new(
+        token()?,
+        std::env::var(SESSION_TOKEN_VARIABLE).ok(),
+    ))
 }
 
 async fn connect(config: &Config, token: String) -> Result<GitHub> {
@@ -1033,13 +1031,7 @@ async fn start(
     ends: Ends,
     winding_up: &WindingUp,
 ) -> Result<Factory> {
-    let starting = Starting::new(config, HARNESS_PROGRAM, || {
-        Ok(SessionToken::new(
-            Some(token()?),
-            std::env::var(SESSION_TOKEN_VARIABLE).ok(),
-        ))
-    })
-    .await?;
+    let starting = Starting::new(config, HARNESS_PROGRAM, session_token).await?;
     let harness = starting.harness(own_program()?, Arc::new(SystemClock));
     let github = connect(config, token()?).await?;
     let factory_config = starting.factory_config(

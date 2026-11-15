@@ -86,26 +86,20 @@ pub enum SessionToken {
     Linewright(String),
     /// The operator's token for sessions, from [`SESSION_TOKEN_VARIABLE`].
     Separate(String),
-    /// None, Linewright having none to give.
-    Withheld,
 }
 
 impl SessionToken {
-    /// The separate one (`separate` being [`SESSION_TOKEN_VARIABLE`]'s
-    /// value) if set, Linewright's (`linewright`) if not, and none without
-    /// either; empty, a token is unset.
-    pub fn new(linewright: Option<String>, separate: Option<String>) -> SessionToken {
-        match (separate, linewright) {
-            (Some(token), _) if !token.is_empty() => SessionToken::Separate(token),
-            (_, Some(token)) if !token.is_empty() => SessionToken::Linewright(token),
-            _ => SessionToken::Withheld,
+    /// `separate` is [`SESSION_TOKEN_VARIABLE`]'s value; empty, it is unset.
+    pub fn new(linewright: String, separate: Option<String>) -> SessionToken {
+        match separate {
+            Some(token) if !token.is_empty() => SessionToken::Separate(token),
+            _ => SessionToken::Linewright(linewright),
         }
     }
 
-    pub fn given(&self) -> Option<&str> {
+    pub fn given(&self) -> &str {
         match self {
-            SessionToken::Linewright(token) | SessionToken::Separate(token) => Some(token),
-            SessionToken::Withheld => None,
+            SessionToken::Linewright(token) | SessionToken::Separate(token) => token,
         }
     }
 }
@@ -116,7 +110,6 @@ impl std::fmt::Debug for SessionToken {
         f.write_str(match self {
             SessionToken::Linewright(_) => "Linewright",
             SessionToken::Separate(_) => "Separate",
-            SessionToken::Withheld => "Withheld",
         })
     }
 }
@@ -215,12 +208,11 @@ impl Factory {
         config: FactoryConfig,
     ) -> Result<Factory> {
         let identity = store.identity().await.context("checking the token")?;
-        match &config.session_token {
-            SessionToken::Separate(token) => store
+        if let SessionToken::Separate(token) = &config.session_token {
+            store
                 .check_reads(token)
                 .await
-                .with_context(|| format!("checking {SESSION_TOKEN_VARIABLE}"))?,
-            SessionToken::Linewright(_) | SessionToken::Withheld => {}
+                .with_context(|| format!("checking {SESSION_TOKEN_VARIABLE}"))?;
         }
         let settings = store
             .settings()

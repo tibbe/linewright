@@ -183,7 +183,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         prompts: OperatorPrompts::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         waits_out_usage_limit: false,
-        session_token: SessionToken::Withheld,
+        session_token: SessionToken::Separate("session-token".into()),
         secrets: Secrets::default(),
         ends: linewright::ending::Ends::new(),
         winding_up: linewright::winding_up::WindingUp::default(),
