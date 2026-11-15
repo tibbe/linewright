@@ -81,9 +81,10 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&read(path)).unwrap()
 }
 
-/// Takes the properties out of every input recorded under the work
-/// directory `work`, as Linewright recorded inputs before it recorded the
-/// properties.
+/// Takes the properties out of every input recorded in the work directory
+/// `work`, as Linewright recorded inputs before it recorded the properties.
+/// It walks the runs' records alone: a run's clone may still be being
+/// removed.
 #[track_caller]
 fn record_as_before_the_properties(work: &Path) {
     #[track_caller]
@@ -99,7 +100,7 @@ fn record_as_before_the_properties(work: &Path) {
             }
         }
     }
-    strip(work);
+    strip(&work.join("runs"));
 }
 
 /// Leaves the store's repository holding one commit, made afresh on
@@ -435,7 +436,7 @@ async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
 async fn lw_capture_of_a_run_recorded_without_its_properties_exits_1_naming_them() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
-    record_as_before_the_properties(work_dir.path());
+    record_as_before_the_properties(&work_dir.path().join(REPO));
 
     let output = lw_in(work_dir.path(), &["capture", &run, "gadgets"]).await;
 
