@@ -30,7 +30,9 @@ sub-agents, so each search stays out of the others' context and yours.
    trade-offs, the evidence of its adoption, why its adopters chose it, and the
    sources it comes from. Evidence of adoption: the platform providing or
    documenting it; products like ours using it; and, for a library to adopt, its
-   GitHub stars, package downloads and recent releases. Under 400 words."
+   GitHub stars, package downloads and recent releases. Report them condensed
+   and complete: one entry per design, leaving out no design, evidence or
+   source, and nothing else. Where sources conflict, give both."
 
 ### 2. Choose
 
