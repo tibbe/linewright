@@ -77,15 +77,6 @@ fn lw_with_status(
     )
 }
 
-/// Puts the `tool` on the tests' path in `bin`.
-fn link_from_path(bin: &std::path::Path, tool: &str) {
-    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .map(|path| path.join(tool))
-        .find(|path| path.is_file())
-        .unwrap();
-    std::os::unix::fs::symlink(found, bin.join(tool)).unwrap();
-}
-
 #[test_log::test]
 fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
     let bin = tempfile::tempdir().unwrap();

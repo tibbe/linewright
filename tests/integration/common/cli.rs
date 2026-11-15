@@ -52,3 +52,13 @@ pub async fn lw_in(work_dir: &Path, args: &[&str]) -> Output {
         stderr: String::from_utf8(output.stderr).unwrap(),
     }
 }
+
+/// Puts the `tool` on the tests' path in `bin`.
+#[track_caller]
+pub fn link_from_path(bin: &Path, tool: &str) {
+    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|path| path.join(tool))
+        .find(|path| path.is_file())
+        .unwrap();
+    std::os::unix::fs::symlink(found, bin.join(tool)).unwrap();
+}

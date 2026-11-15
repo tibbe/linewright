@@ -99,6 +99,16 @@ impl SessionToken {
         }
     }
 
+    /// The token a replay's sessions are given: the separate one
+    /// (`separate` being [`SESSION_TOKEN_VARIABLE`]'s value) if set, and
+    /// never Linewright's.
+    pub fn replaying(separate: Option<String>) -> SessionToken {
+        match separate {
+            Some(token) if !token.is_empty() => SessionToken::Separate(token),
+            _ => SessionToken::Withheld,
+        }
+    }
+
     pub fn given(&self) -> Option<&str> {
         match self {
             SessionToken::Linewright(token) | SessionToken::Separate(token) => Some(token),
@@ -298,6 +308,7 @@ impl Factory {
             work_dir: config.work_dir,
             runs: runs.clone(),
             waits_out_usage_limit: config.waits_out_usage_limit,
+            records_input: true,
             secrets: config.secrets,
             report_refusal,
             environment: environment.source(),
@@ -952,9 +963,10 @@ impl Factory {
                     cancel: cancel.clone(),
                     run: running,
                 };
-                let handle =
-                    self.runs
-                        .spawn(run::run(shell.clone(), work.clone(), snapshot.clone(), ctx));
+                let run = run::run(shell.clone(), work.clone(), snapshot.clone(), ctx);
+                let handle = self.runs.spawn(async move {
+                    run.await;
+                });
                 info!(run = id, subject = ?work.subject(), kind = ?work.kind(), "run started");
                 self.live.insert(
                     handle.id(),

@@ -162,6 +162,15 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         criteria: Option<PathBuf>,
     },
+    /// Run the stage of the case in the directory CASE on it again, with the
+    /// case in place of GitHub, writing what the run did to DIR.
+    Replay {
+        case: PathBuf,
+        /// The directory of the output: made if missing, and refused unless
+        /// empty.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -780,6 +789,11 @@ impl Config {
             .as_deref()
             .context("set `repo` (owner/name)")?
             .parse()
+    }
+
+    /// The work directory of `repo`, whatever `repo` is set to.
+    pub fn work_dir_for(&self, repo: &Repo) -> PathBuf {
+        self.work_dir.join(&**repo)
     }
 
     pub fn repo_work_dir(&self) -> Result<RepoWorkDir> {

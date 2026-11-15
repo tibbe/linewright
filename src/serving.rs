@@ -134,14 +134,14 @@ fn end_on(mut signals: Signals, ends: Ends) {
     });
 }
 
-struct Signals {
+pub(crate) struct Signals {
     quit: tokio::signal::unix::Signal,
     interrupt: tokio::signal::unix::Signal,
     terminate: tokio::signal::unix::Signal,
 }
 
 impl Signals {
-    fn new() -> std::io::Result<Signals> {
+    pub(crate) fn new() -> std::io::Result<Signals> {
         Ok(Signals {
             quit: signal(Signal::Quit.kind())?,
             interrupt: signal(Signal::Interrupt.kind())?,
@@ -151,7 +151,7 @@ impl Signals {
 
     /// Signals that arrive before the last one was read count as one, so two
     /// sent back to back take a single way.
-    async fn next(&mut self) -> Signal {
+    pub(crate) async fn next(&mut self) -> Signal {
         tokio::select! {
             _ = self.quit.recv() => Signal::Quit,
             _ = self.interrupt.recv() => Signal::Interrupt,

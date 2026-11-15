@@ -73,6 +73,8 @@ pub(crate) struct Shell {
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
+    /// Whether a triage, design or implement run records its input.
+    pub records_input: bool,
     pub secrets: Secrets,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
     /// What each session's clone starts from.
@@ -110,6 +112,8 @@ pub(crate) struct ShellParts {
     pub work_dir: PathBuf,
     pub runs: Runs,
     pub waits_out_usage_limit: bool,
+    /// Whether a triage, design or implement run records its input.
+    pub records_input: bool,
     pub secrets: Secrets,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
     /// What each session's clone starts from.
@@ -171,6 +175,7 @@ impl Shell {
             work_dir: parts.work_dir,
             runs: parts.runs,
             waits_out_usage_limit: parts.waits_out_usage_limit,
+            records_input: parts.records_input,
             secrets: parts.secrets,
             report_refusal: parts.report_refusal,
             environment: parts.environment,
@@ -449,6 +454,9 @@ async fn push_result(
 /// (`docs/specs/benchmarks.md`, "Recording a run's input"). A failure is
 /// logged, and the run goes on without input.
 async fn record_input(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
+    if !shell.records_input {
+        return;
+    }
     let Some(wanted) = input::wanted(snapshot, work, &shell.settings.default_branch) else {
         return;
     };
@@ -462,9 +470,16 @@ async fn record_input(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx
     }
 }
 
-pub(crate) async fn run(shell: Arc<Shell>, work: Work, snapshot: Arc<Snapshot>, ctx: Ctx) {
+/// Runs `work` to its end, records how it ended and returns that.
+pub(crate) async fn run(
+    shell: Arc<Shell>,
+    work: Work,
+    snapshot: Arc<Snapshot>,
+    ctx: Ctx,
+) -> Ending {
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
     ctx.run.end(shell.clock.now(), ending);
+    ending
 }
 
 async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> Ending {
@@ -866,7 +881,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
 }
 
 fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
-    let parent = shell.work_dir.join("sessions").join(purpose_name(purpose));
+    let parent = shell.runs.sessions_dir().join(purpose_name(purpose));
     std::fs::create_dir_all(&parent)
         .context("creating the sessions directory")
         .map_err(infra)?;

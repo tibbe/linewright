@@ -351,6 +351,11 @@ impl Runs {
         self.work_dir.join("runs")
     }
 
+    /// Where the records of the runs' sessions are kept.
+    pub(crate) fn sessions_dir(&self) -> PathBuf {
+        self.work_dir.join("sessions")
+    }
+
     fn dir_of(&self, of: &RunOf) -> PathBuf {
         match of {
             RunOf::Work { item, .. } => self.dir().join("items").join(item.0.to_string()),
@@ -906,14 +911,14 @@ struct RunAnswer {
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(untagged)]
-enum OutcomeName {
+pub(crate) enum OutcomeName {
     Ended(Ending),
     Unended(Unended),
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-enum Unended {
+pub(crate) enum Unended {
     InFlight,
     Interrupted,
 }

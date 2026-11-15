@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::case::{self, CaptureError, CaseName, Refusal};
+use linewright::case::{self, CaptureError, Case, CaseName, Refusal};
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
@@ -19,6 +19,7 @@ use linewright::environment::shown::{self, Followed, FollowingBuild};
 use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
 use linewright::factory::{Factory, SessionToken};
 use linewright::logs::{self, FollowQuery, Following, Which};
+use linewright::replay::{self, Output};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId};
 use linewright::serving::{self, OnUsageLimit, Starting, prompts};
@@ -886,6 +887,9 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         Command::Capture { id, name, criteria } => {
             return Ok(capture(&config, &id, &name, criteria.as_deref()).await);
         }
+        Command::Replay { case, out } => {
+            return Ok(replay(&config, &case, &out, winding_up, log).await);
+        }
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
@@ -937,6 +941,59 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: Option<
             .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
             .map_err(refusal),
     )
+}
+
+/// Replays the case in the directory `case` into the output `out`: 0 once
+/// its run ended, whatever its outcome, and 1 when it did not run or end.
+async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
+    let out = match Output::make(out) {
+        Ok(out) => out,
+        Err(e) => return print_answer(Err(failed(&e.into()))),
+    };
+    let replaying = replay::unless_signalled(
+        &out,
+        Box::pin(async {
+            let case = match Case::open(case).await {
+                Ok(case) => case,
+                Err(e) => {
+                    return print_answer(Err((
+                        FAILURE,
+                        format!("the case cannot be replayed: {e}"),
+                    )));
+                }
+            };
+            log.begin();
+            let ran = async {
+                let starting = Starting::new(config, HARNESS_PROGRAM, || {
+                    Ok(SessionToken::replaying(
+                        std::env::var(SESSION_TOKEN_VARIABLE).ok(),
+                    ))
+                })
+                .await?;
+                let harness = starting.harness(own_program()?, Arc::new(SystemClock));
+                let work_dir = config.work_dir_for(&case.properties().settings.repo);
+                let factory_config = starting.factory_config(
+                    config,
+                    work_dir,
+                    OnUsageLimit::End,
+                    Ends::new(),
+                    winding_up.clone(),
+                );
+                replay::run(&case, &out, Arc::new(harness), factory_config).await
+            }
+            .await;
+            match ran {
+                Ok(_) => SUCCESS,
+                Err(e) => {
+                    log.fail(&e);
+                    FAILURE
+                }
+            }
+        }),
+    );
+    replaying
+        .await
+        .unwrap_or_else(|e| print_answer(Err(failed(&e))))
 }
 
 /// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.

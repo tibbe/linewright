@@ -1444,3 +1444,21 @@ fn a_snapshot_tells_who_opened_each_item_it_holds_and_what_for() {
     );
     assert_eq!(opened(7), None, "an item it does not hold");
 }
+
+#[test_log::test]
+fn a_repository_is_an_owner_and_a_name_that_name_no_other_directory() {
+    for full in ["owner/widgets", "a.b/c-d_e.f"] {
+        assert!(full.parse::<Repo>().is_ok(), "{full}");
+    }
+    for full in [
+        "../widgets",
+        "owner/..",
+        "./widgets",
+        "owner/.",
+        "owner/a/b",
+        "owner/",
+        "/widgets",
+    ] {
+        assert!(full.parse::<Repo>().is_err(), "{full}");
+    }
+}
