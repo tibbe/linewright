@@ -17,6 +17,7 @@ contracts![
     an_issue_is_recorded_with_its_comments_parent_and_blockers,
     an_issue_without_a_parent_is_recorded_without_one,
     a_pull_request_is_recorded_with_its_own_resource,
+    a_merged_pull_request_is_recorded_with_its_merge_commit_and_its_commits,
     the_heads_are_of_the_branches_the_repository_has,
     the_commits_are_fetched_as_branches_with_their_history_alone,
     a_commit_the_repository_lacks_fails_the_fetch_naming_it_and_fetches_nothing,
@@ -208,6 +209,57 @@ async fn a_pull_request_is_recorded_with_its_own_resource(sandbox: Sandbox) -> R
             format!("pulls/{n}"),
         ],
     )
+}
+
+async fn a_merged_pull_request_is_recorded_with_its_merge_commit_and_its_commits(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let path = format!("{}.txt", sandbox.unique("recorded-merge"));
+    let branch = sandbox
+        .push_branch(
+            "recorded-merge",
+            &[
+                NewCommit {
+                    message: "Add a file",
+                    files: &[(&path, b"recorded\n")],
+                },
+                NewCommit {
+                    message: "Change the file",
+                    files: &[(&path, b"recorded again\n")],
+                },
+            ],
+        )
+        .await?;
+    let head = branch.head.clone();
+    let opened = sandbox.open_pull(branch, "recorded-merge").await?;
+    sandbox.store().mark_ready(opened.pr).await?;
+    let method = sandbox.merge_method().await?;
+    let default_branch = sandbox.default_branch().await?;
+    let merged = {
+        let _merging = sandbox.merging().await;
+        sandbox
+            .eventually(async || sandbox.store().merge(opened.pr, &head, method).await)
+            .await?;
+        sandbox
+            .store()
+            .heads(std::slice::from_ref(&default_branch))
+            .await?
+    };
+
+    sandbox
+        .eventually(async || {
+            let item = recorded(&sandbox, opened.pr).await?;
+            let pull = at(&item, Resource::Pull)?;
+            equal(
+                "the merge commit",
+                &pull["merge_commit_sha"].as_str(),
+                &merged
+                    .get(&default_branch)
+                    .map(linewright::git::CommitId::as_str),
+            )?;
+            equal("the commits", &pull["commits"].as_u64(), &Some(2))
+        })
+        .await
 }
 
 async fn the_heads_are_of_the_branches_the_repository_has(sandbox: Sandbox) -> Result<()> {
