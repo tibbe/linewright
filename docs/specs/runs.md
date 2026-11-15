@@ -177,7 +177,7 @@ A run ends in one of these outcomes, each with its name in JSON.
 | done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. |
 | handed back               | `handed-back` | it could not finish and handed its item back.                                      |
 | cancelled                 | `cancelled`   | its item stopped asking for the work, or `serve` was stopped.                      |
-| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under `once` or `automation run`.      |
+| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under a command other than `serve`. |
 | failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as an automation's run.   |
 | in flight                 | `in-flight`   | it has not ended.                                                                  |
 | interrupted               | `interrupted` | the process running it stopped before it ended, such as by a crash or a kill.      |
@@ -257,8 +257,8 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **A reset time already passed.** It is waited out for a short time.
 - **No reset time.** A refusal that does not say when the limit resets is an
   infrastructure failure.
-- **Only `serve` waits.** Under `once` and `automation run`, the refused run
-  ends for the usage limit.
+- **Only `serve` waits.** Under any other command, the refused run ends for
+  the usage limit.
 - **Restarts.** A restart forgets the limit.
 
 ## Out of scope

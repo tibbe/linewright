@@ -98,7 +98,11 @@ _Avoid_: phase, step
 **Case**:
 A run of a stage, captured so that the stage can be run again on what the run
 was given.
-_Avoid_: task, fixture, sample, example, scenario
+_Avoid_: task, test case, sample, example, problem
+
+**Replay**:
+The running of a case's stage on the case, with the case in place of GitHub.
+_Avoid_: trial, attempt, epoch, rollout
 
 **Outcome**:
 How a run ended, such as done or handed back, or that it has not ended yet.

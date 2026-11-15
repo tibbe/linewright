@@ -107,7 +107,7 @@ flowchart LR
 | [Sessions](sessions.md) | What an agent session is given, and what it is kept from. |
 | [Operation](operation.md) | Running Linewright. |
 | [Monitoring](monitoring.md) | Seeing what Linewright is doing and why, from a shell or a browser. |
-| [Benchmarks](benchmarks.md) | Capturing a stage's runs as cases, to run the stage on them again. |
+| [Benchmarks](benchmarks.md) | Measuring Linewright against work it has already done. |
 
 ## Out of scope
 

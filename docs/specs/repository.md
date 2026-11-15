@@ -50,6 +50,18 @@ it.
   memory of their own: what later sessions should know belongs in the
   repository.
 
+## The repository's properties
+
+The repository's properties are what Linewright reads from GitHub about the
+repository and about Linewright's account in the repository.
+
+| Property                                                                            | Decides                                                                |
+| ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| the repository's name and its default branch                                        | where the work is, as every prompt says ([Contract](runs.md#contract)) |
+| its issue types                                                                     | the categories of triage ([Outcomes](triage.md#outcomes))              |
+| the merge methods it allows, and whether its default branch requires linear history | the merge method ([Merging](pull_requests.md#merging))                 |
+| Linewright's account                                                                | which work on GitHub is Linewright's ([Requirements](#requirements))   |
+
 ## Linewright's files
 
 The repository holds, under `.linewright/` on its default branch, what it
