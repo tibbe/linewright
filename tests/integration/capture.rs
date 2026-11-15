@@ -81,8 +81,9 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&read(path)).unwrap()
 }
 
-/// Takes the properties out of every input recorded in the work directory
-/// `work`, as Linewright recorded inputs before it recorded the properties.
+/// Takes the properties out of every input recorded in the repository's work
+/// directory `work`, as Linewright recorded inputs before it recorded the
+/// properties.
 /// It walks the runs' records alone: a run's clone may still be being
 /// removed.
 #[track_caller]
