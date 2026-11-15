@@ -26,11 +26,11 @@ use crate::environment::{self, BuildEnded, Environment, SetupRead};
 use crate::harness::{Harness, UsageLimit};
 use crate::pull_records::PullRecords;
 use crate::reconcile::{
-    Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Policy, Subject,
-    Work, held_back_by_drain, reconcile, requirements_note,
+    Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Subject, Work,
+    held_back_by_drain, reconcile, requirements_note,
 };
 use crate::repo_files::{self, RepoLayer, Unusable, holding};
-use crate::run::{self, AutomationEnd, Cancellation, Shell};
+use crate::run::{self, AutomationEnd, Cancellation, Shell, ShellParts};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
 use crate::spec_glob::SpecGlob;
@@ -275,38 +275,34 @@ impl Factory {
         .await?;
         let clones = Clones::new(&config.work_dir, config.winding_up.clone());
         clones.sweep();
-        let shell = Shell {
-            policy: Policy {
-                linewright: identity.login.clone(),
-                spec_glob: config.spec_glob,
-                spec_lookback: config.spec_lookback,
-                done_window: config.done_window,
-                max_runs: config.max_runs,
-                ci_grace: config.ci_grace,
-                ci_timeout: config.ci_timeout,
-                ci_attempts: config.ci_attempts,
-                merge_method: settings.merge_method,
-                auto_merge: config.auto_merge,
-                require_label: config.require_label,
-            },
+        let shell = Shell::new(ShellParts {
             store,
             harness,
             bash: config.bash,
             clock,
+            spec_glob: config.spec_glob,
+            spec_lookback: config.spec_lookback,
+            done_window: config.done_window,
+            max_runs: config.max_runs,
+            ci_grace: config.ci_grace,
+            ci_timeout: config.ci_timeout,
+            ci_attempts: config.ci_attempts,
+            auto_merge: config.auto_merge,
+            require_label: config.require_label,
             work: config.work,
             environments: config.environments,
             operator_prompts: config.prompts,
             identity,
             settings,
             result_retries: config.result_retries,
-            runs: runs.clone(),
             work_dir: config.work_dir,
+            runs: runs.clone(),
             waits_out_usage_limit: config.waits_out_usage_limit,
             secrets: config.secrets,
             report_refusal,
             environment: environment.source(),
             clones,
-        };
+        });
         Ok(Factory {
             shell: Arc::new(shell),
             runs: JoinSet::new(),
