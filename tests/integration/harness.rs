@@ -19,19 +19,20 @@ use linewright::work_settings::Effort;
 use rstest::rstest;
 use serde_json::{Value, json};
 
-/// Claude Code as `program`, with no GitHub token and nothing to redact.
+/// Claude Code as `program`, with Linewright's token `linewright-token`
+/// and nothing to redact.
 fn claude_code(program: &Path) -> ClaudeCode {
     ClaudeCode {
         program: program.to_str().unwrap().into(),
         bash: "/bin/bash".into(),
-        github_token: None,
+        github_token: "linewright-token".into(),
         redaction: Redaction::default(),
         container: env!("CARGO_BIN_EXE_lw").into(),
         clock: Arc::new(FakeClock::new()),
     }
 }
 
-fn harness_without_token(dir: &Path) -> ClaudeCode {
+fn harness_done(dir: &Path) -> ClaudeCode {
     harness_streaming(dir, &[done()])
 }
 
@@ -210,7 +211,7 @@ async fn a_production_session_gets_linewrights_github_token() {
     let dir = tempfile::tempdir().unwrap();
     let program = fake_claude(dir.path(), "Done.");
     let harness = ClaudeCode {
-        github_token: Some("linewright-token".into()),
+        github_token: "linewright-token".into(),
         ..claude_code(&program)
     };
 
@@ -260,7 +261,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
         PassEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap(),
         SetEnv::default(),
     );
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
     session.environment = Arc::new(
         session_env
@@ -283,6 +284,8 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
             "CLAUDE_CODE_SHELL",
             "CLAUDE_CONFIG_DIR",
             "DISABLE_UPDATES",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
             "HOME",
             "LC_ALL",
             "LC_TIME",
@@ -322,7 +325,7 @@ async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_bel
         )
         .unwrap(),
     );
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
     session.environment = Arc::new(
         session_env
@@ -359,7 +362,7 @@ fn given_etc_gh() -> Arc<Given> {
 async fn a_replays_session_is_given_its_gates_gh_configuration_over_session_envs() {
     let dir = tempfile::tempdir().unwrap();
     let gate = Gate::start(&"acme/widgets".parse().unwrap(), Upstream::GitHub).unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
     session.environment = given_etc_gh();
     session.gh = gate.gh();
@@ -376,7 +379,7 @@ async fn a_replays_session_is_given_its_gates_gh_configuration_over_session_envs
 #[test_log::test(tokio::test)]
 async fn a_session_outside_a_replay_is_given_the_gh_configuration_session_env_sets() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
     session.environment = given_etc_gh();
 
@@ -394,7 +397,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
         PassEnv::new(["CARGO_HOME", "TMPDIR"].map(String::from)).unwrap(),
         SetEnv::default(),
     );
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
     session.effort = Some(Effort::High);
     session.environment = Arc::new(
@@ -434,6 +437,8 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
             ("CLAUDE_CODE_SHELL", "/bin/bash"),
             ("DISABLE_UPDATES", "1"),
             ("CLAUDE_CODE_EFFORT_LEVEL", "high"),
+            ("GH_TOKEN", "linewright-token"),
+            ("GITHUB_TOKEN", "linewright-token"),
         ]
     );
     let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
@@ -453,6 +458,8 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
         "CLAUDE_CODE_SHELL=/bin/bash".to_string(),
         "DISABLE_UPDATES=1".to_string(),
         "CLAUDE_CODE_EFFORT_LEVEL=high".to_string(),
+        "GH_TOKEN=linewright-token".to_string(),
+        "GITHUB_TOKEN=linewright-token".to_string(),
     ];
     expected.sort_unstable();
     assert_eq!(spawned, expected);
@@ -461,7 +468,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
 #[test_log::test(tokio::test)]
 async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_directory() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let spec = triage_session(dir.path());
 
     let turn = harness.start(&spec).await.unwrap();
@@ -480,7 +487,7 @@ async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_dire
 #[test_log::test(tokio::test)]
 async fn every_turn_of_a_session_is_given_its_plugin() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let spec = triage_session(dir.path());
 
     let turn = harness.start(&spec).await.unwrap();
@@ -502,7 +509,7 @@ async fn every_turn_of_a_session_is_given_its_plugin() {
 #[test_log::test(tokio::test)]
 async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
     let spec = triage_session(dir.path());
 
     let turn = harness.start(&spec).await.unwrap();
@@ -555,7 +562,7 @@ async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_s
     let mut session = session_choosing_in_its_environment(dir.path());
     session.model = Some("opus".into());
     session.effort = Some(Effort::High);
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
 
     let turn = harness.start(&session).await.unwrap();
     harness
@@ -585,10 +592,7 @@ async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() 
     let mut session = triage_session(dir.path());
     session.effort = Some(Effort::Max);
 
-    harness_without_token(dir.path())
-        .start(&session)
-        .await
-        .unwrap();
+    harness_done(dir.path()).start(&session).await.unwrap();
 
     let args = &turn_args(dir.path())[0];
     assert_eq!(flag_value(args, "--effort"), Some("max"));
@@ -604,7 +608,7 @@ async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() 
 async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
     let dir = tempfile::tempdir().unwrap();
 
-    harness_without_token(dir.path())
+    harness_done(dir.path())
         .start(&session_choosing_in_its_environment(dir.path()))
         .await
         .unwrap();
@@ -628,7 +632,7 @@ async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
 #[test_log::test(tokio::test)]
 async fn every_turn_leaves_out_what_no_brief_uses() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
@@ -674,7 +678,7 @@ async fn every_turn_leaves_out_what_no_brief_uses() {
 #[test_log::test(tokio::test)]
 async fn every_turn_leaves_out_the_skills_the_harness_ships() {
     let dir = tempfile::tempdir().unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
@@ -705,7 +709,7 @@ async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
         .prefix("work [a]{b}*?")
         .tempdir()
         .unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
 
     harness.start(&triage_session(dir.path())).await.unwrap();
 
@@ -737,7 +741,7 @@ async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
     let dir = tempfile::tempdir().unwrap();
     let work = dir.path().join(".claude/work");
     std::fs::create_dir_all(&work).unwrap();
-    let harness = harness_without_token(dir.path());
+    let harness = harness_done(dir.path());
 
     harness.start(&triage_session(&work)).await.unwrap();
 

@@ -249,6 +249,35 @@ fn path_to_start_on() -> tempfile::TempDir {
     bin
 }
 
+#[rstest::rstest]
+#[case::serve(&["serve"])]
+#[case::once(&["once"])]
+#[case::automation_run(&["automation", "run", "weekly"])]
+#[case::environment_rebuild(&["environment", "rebuild"])]
+#[test_log::test]
+fn a_command_that_runs_sessions_without_linewrights_token_is_an_error_at_startup_naming_its_variables(
+    #[case] command: &[&str],
+) {
+    let bin = path_to_start_on();
+    let args: Vec<&str> = ["--repo", "owner/name"]
+        .iter()
+        .chain(command)
+        .copied()
+        .collect();
+
+    let (succeeded, error) = lw(
+        bin.path(),
+        &args,
+        &[("GH_TOKEN", ""), ("GITHUB_TOKEN", ""), GITHUB_UNREACHABLE],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(
+        error.contains("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account"),
+        "{error}"
+    );
+}
+
 #[test_log::test]
 fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_naming_it() {
     let bin = path_to_start_on();
@@ -786,70 +815,76 @@ async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
     assert_eq!(log.lines("WARN"), Vec::<String>::new());
 }
 
+/// The messages `lw once` logs as warnings, with Linewright's token and
+/// `env`, until it fails to reach GitHub.
+#[track_caller]
+fn warnings_at_startup(env: &[(&str, &str)]) -> Vec<String> {
+    let bin = path_to_start_on();
+    let env: Vec<(&str, &str)> = [("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE]
+        .iter()
+        .chain(env)
+        .copied()
+        .collect();
+    let (succeeded, log) = lw(
+        bin.path(),
+        &["--repo", "owner/name", "--log-format", "json", "once"],
+        &env,
+    );
+    assert!(!succeeded, "{log}");
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["level"] == "WARN")
+        .map(|line| {
+            line["fields"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .into()
+        })
+        .collect()
+}
+
 #[test_log::test]
 fn sessions_given_linewrights_token_are_warned_of_at_startup() {
-    let bin = tempfile::tempdir().unwrap();
-    fake_claude(bin.path(), "Done.");
-    link_from_path(bin.path(), "git");
-    link_from_path(bin.path(), "bash");
+    let warnings = warnings_at_startup(&[("LINEWRIGHT_SESSION_GITHUB_TOKEN", "")]);
 
-    let (_, linewrights) = lw(
-        bin.path(),
-        &["--repo", "owner/name", "once"],
-        &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
-    );
-    let (_, separate) = lw(
-        bin.path(),
-        &["--repo", "owner/name", "once"],
-        &[
-            ("GH_TOKEN", "linewright-token"),
-            ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token"),
-            GITHUB_UNREACHABLE,
-        ],
-    );
-
-    let warnings: Vec<&str> = linewrights
-        .lines()
-        .filter(|line| line.contains("sessions can write to GitHub"))
+    let warned: Vec<&String> = warnings
+        .iter()
+        .filter(|warning| warning.contains("sessions can write to GitHub"))
         .collect();
-    assert_eq!(warnings.len(), 1, "{linewrights}");
+    assert_eq!(warned.len(), 1, "{warnings:?}");
     assert!(
-        warnings[0].contains("LINEWRIGHT_SESSION_GITHUB_TOKEN"),
+        warned[0].contains("LINEWRIGHT_SESSION_GITHUB_TOKEN"),
         "{}",
-        warnings[0]
+        warned[0]
     );
+}
+
+#[test_log::test]
+fn sessions_given_the_separate_token_are_not_warned_of_at_startup() {
+    let warnings = warnings_at_startup(&[("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token")]);
+
     assert!(
-        !separate.contains("sessions can write to GitHub"),
-        "{separate}"
+        !warnings
+            .iter()
+            .any(|warning| warning.contains("sessions can write to GitHub")),
+        "{warnings:?}"
     );
 }
 
 #[test_log::test]
 fn sessions_are_given_the_separate_token_never_linewrights() {
-    let session_token = SessionToken::new(
-        Some("linewright-token".into()),
-        Some("session-token".into()),
-    );
+    let session_token = SessionToken::new("linewright-token".into(), Some("session-token".into()));
 
-    assert_eq!(session_token.given(), Some("session-token"));
+    assert_eq!(session_token.given(), "session-token");
 }
 
 #[test_log::test]
 fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights() {
-    let unset = SessionToken::new(Some("linewright-token".into()), None);
-    let empty = SessionToken::new(Some("linewright-token".into()), Some(String::new()));
+    let unset = SessionToken::new("linewright-token".into(), None);
+    let empty = SessionToken::new("linewright-token".into(), Some(String::new()));
 
-    assert_eq!(unset.given(), Some("linewright-token"));
-    assert_eq!(empty.given(), Some("linewright-token"));
-}
-
-#[test_log::test]
-fn without_either_token_sessions_are_given_none() {
-    let unset = SessionToken::new(None, None);
-    let empty = SessionToken::new(Some(String::new()), Some(String::new()));
-
-    assert_eq!(unset.given(), None);
-    assert_eq!(empty.given(), None);
+    assert_eq!(unset.given(), "linewright-token");
+    assert_eq!(empty.given(), "linewright-token");
 }
 
 #[test_log::test]

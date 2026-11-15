@@ -64,7 +64,10 @@ async fn serve() -> Result<()> {
         &dir.join("run"),
         &winding_up,
         |ends| async {
-            let starting = Starting::new(&config, &agent, || Ok(SessionToken::Withheld)).await?;
+            let starting = Starting::new(&config, &agent, || {
+                Ok(SessionToken::Separate("serve-fake".into()))
+            })
+            .await?;
             let harness = starting.harness(beside.join("lw"), clock.clone());
             let factory_config = starting.factory_config(
                 &config,
