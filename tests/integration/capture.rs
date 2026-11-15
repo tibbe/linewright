@@ -81,6 +81,27 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&read(path)).unwrap()
 }
 
+/// Takes the properties out of every input recorded under the work
+/// directory `work`, as Linewright recorded inputs before it recorded the
+/// properties.
+#[track_caller]
+fn record_as_before_the_properties(work: &Path) {
+    #[track_caller]
+    fn strip(dir: &Path) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                strip(&path);
+            } else if path.to_string_lossy().ends_with(".input.json") {
+                let mut input = read_json(&path);
+                input.as_object_mut().unwrap().remove("properties");
+                std::fs::write(&path, input.to_string()).unwrap();
+            }
+        }
+    }
+    strip(work);
+}
+
 /// Leaves the store's repository holding one commit, made afresh on
 /// `main`, and no other.
 #[track_caller]
@@ -158,7 +179,14 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
     assert_eq!(
         entries(&dir),
         BTreeSet::from(
-            ["case.json", "items.json", "repository.git", "criteria.md"].map(String::from)
+            [
+                "case.json",
+                "items.json",
+                "properties.json",
+                "repository.git",
+                "criteria.md"
+            ]
+            .map(String::from)
         )
     );
     assert_eq!(
@@ -179,6 +207,15 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
     assert_eq!(
         item["resources"][format!("issues/{}", ticket.0)]["title"],
         world.issue(ticket).title
+    );
+    let input = runs(&world).read_input(&id(&run)).unwrap().unwrap();
+    assert_eq!(
+        read_json(&dir.join("properties.json")),
+        serde_json::to_value(input.properties.unwrap()).unwrap()
+    );
+    assert_eq!(
+        read_json(&dir.join("properties.json"))["resources"]["account"]["login"],
+        LINEWRIGHT
     );
     assert_eq!(
         read(&dir.join("criteria.md")),
@@ -208,7 +245,15 @@ async fn a_case_captured_without_criteria_has_no_criteria_file() {
 
     assert_eq!(
         entries(&dir),
-        BTreeSet::from(["case.json", "items.json", "repository.git"].map(String::from))
+        BTreeSet::from(
+            [
+                "case.json",
+                "items.json",
+                "properties.json",
+                "repository.git"
+            ]
+            .map(String::from)
+        )
     );
 }
 
@@ -275,6 +320,25 @@ async fn a_run_that_recorded_no_input_is_refused() {
     assert_eq!(
         refused.unwrap_err().to_string(),
         format!("the run {run} recorded no input, so it cannot be captured")
+    );
+    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
+    let mut world = World::new().await;
+    let run = implemented(&mut world).await;
+    record_as_before_the_properties(&world.dir.path().join("work"));
+
+    let refused = capture(&world, &run, "gadgets", None).await;
+
+    assert!(
+        matches!(refused, Err(CaptureError::Lacks { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        format!("the run {run}'s record lacks the properties, so it cannot be captured")
     );
     assert_eq!(entries(&cases(&world)), BTreeSet::new());
 }
@@ -365,6 +429,22 @@ async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert!(output.stderr.contains("7/implement-1"), "{}", output.stderr);
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_capture_of_a_run_recorded_without_its_properties_exits_1_naming_them() {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    let run = implemented(&mut world).await;
+    record_as_before_the_properties(work_dir.path());
+
+    let output = lw_in(work_dir.path(), &["capture", &run, "gadgets"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output.stderr.contains("lacks the properties"),
+        "{}",
+        output.stderr
+    );
 }
 
 #[test_log::test(tokio::test)]

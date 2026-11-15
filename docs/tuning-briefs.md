@@ -33,11 +33,13 @@ under the work directory:
 ```text
 case.json        the stage, the item, the start, the run and the API version
 items.json       the items the run was given, as GitHub's REST API gave them
+properties.json  the repository's properties, as GitHub's API gave them
 repository.git/  a bare repository of the branch heads it was given
 criteria.md      the criteria, when given
 ```
 
 A case is a plain directory: copy it to where you tune the briefs, and edit its
-`criteria.md` as you like. Only a run that recorded its input at its start can
-be captured, and a name a case already has is refused. A capture that fails,
-such as for a commit GitHub no longer has, writes nothing.
+`criteria.md` as you like. Only a run that recorded its whole input at its start
+can be captured: a run recorded before Linewright recorded the repository's
+properties is refused. A name a case already has is refused too. A capture that
+fails, such as for a commit GitHub no longer has, writes nothing.
