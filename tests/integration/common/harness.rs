@@ -34,6 +34,7 @@ type Script = Arc<dyn Fn(&Call) -> Result<String, SessionError> + Send + Sync>;
 enum ScriptKey {
     Work(WorkKind),
     Automation,
+    Judge,
 }
 
 impl ScriptKey {
@@ -41,6 +42,7 @@ impl ScriptKey {
         match spec.purpose {
             Purpose::Work { kind, .. } => ScriptKey::Work(kind),
             Purpose::Automation(_) => ScriptKey::Automation,
+            Purpose::Judge => ScriptKey::Judge,
         }
     }
 }
@@ -85,6 +87,13 @@ impl ScriptedHarness {
         self.script(ScriptKey::Automation, script);
     }
 
+    pub fn on_judge(
+        &self,
+        script: impl Fn(&Call) -> Result<String, SessionError> + Send + Sync + 'static,
+    ) {
+        self.script(ScriptKey::Judge, script);
+    }
+
     fn script(
         &self,
         key: ScriptKey,
@@ -116,6 +125,10 @@ impl ScriptedHarness {
 
     pub fn automation_prompts(&self) -> Vec<String> {
         self.prompts_for(ScriptKey::Automation)
+    }
+
+    pub fn judge_prompts(&self) -> Vec<String> {
+        self.prompts_for(ScriptKey::Judge)
     }
 
     fn prompts_for(&self, key: ScriptKey) -> Vec<String> {

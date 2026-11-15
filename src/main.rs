@@ -20,6 +20,7 @@ use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTak
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
+use linewright::replay::judge::{self, JudgeRecord};
 use linewright::replay::{self, Output};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId};
@@ -891,6 +892,9 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         Command::Replay { case, out } => {
             return Ok(replay(&config, &case, &out, winding_up, log).await);
         }
+        Command::Judge { case, dir } => {
+            return Ok(judge(&config, &case, &dir, winding_up, log).await);
+        }
         Command::Automation {
             command: AutomationCommand::Run { name },
         } => {
@@ -1015,6 +1019,56 @@ async fn on_case(
         winding_up.clone(),
     );
     Ok((harness, factory_config))
+}
+
+/// Judges `dir`, the output of a replay of the case in the directory
+/// `case`, and keeps the judgement in it: 0 once the judge made one,
+/// whatever it is, and 1 when it made none or the case or the output is
+/// refused. A signal ends it at once with the signal's status, keeping
+/// nothing of the judge.
+async fn judge(config: &Config, case: &Path, dir: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
+    let token = match session_token() {
+        Ok(token) => token,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let case = match Case::open(case).await {
+        Ok(case) => case,
+        Err(e) => return print_answer(Err((FAILURE, format!("the case cannot be judged: {e}")))),
+    };
+    let replayed = match judge::Replayed::open(dir, &case).await {
+        Ok(replayed) => replayed,
+        Err(e) => return print_answer(Err((FAILURE, format!("the output cannot be judged: {e}")))),
+    };
+    let record = match JudgeRecord::make(&replayed) {
+        Ok(record) => record,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let record_dir = record.dir().to_path_buf();
+    log.begin();
+    let judging = replay::unless_signalled(
+        Box::pin(async {
+            let (harness, factory_config) = on_case(config, token, &case, winding_up)
+                .await
+                .map_err(judge::Unjudged::Failed)?;
+            judge::run(&case, &replayed, record, Arc::new(harness), factory_config).await
+        }),
+        |signal| {
+            judge::discard(&record_dir);
+            complain("the judge made no judgement: a signal ended the command");
+            signal.exit_status()
+        },
+    );
+    let judgement = match judging.await {
+        Ok(Ok(judgement)) => judgement,
+        Ok(Err(unjudged)) => return print_answer(Err((FAILURE, unjudged.to_string()))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let summary = judgement.summary();
+    print_answer(
+        judge::keep(&replayed, judgement)
+            .map(|()| summary)
+            .map_err(|e| failed(&e)),
+    )
 }
 
 /// Linewright's token, as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an

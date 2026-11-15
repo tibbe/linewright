@@ -34,6 +34,7 @@ mod host;
 mod input;
 mod item_facts;
 mod journal;
+mod judge;
 mod lifecycle;
 mod live_runs;
 mod local_api;

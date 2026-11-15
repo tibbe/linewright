@@ -40,7 +40,7 @@ fn captured<'a>(world: &'a World, run: &'a str) -> impl Future<Output = PathBuf>
 /// A triage run of `world` on an issue, captured as a case: the issue and
 /// the case's directory.
 #[track_caller]
-fn triage_case(world: &mut World) -> impl Future<Output = (Number, PathBuf)> + '_ {
+pub(crate) fn triage_case(world: &mut World) -> impl Future<Output = (Number, PathBuf)> + '_ {
     let caller = Location::caller();
     async move {
         world.harness.on(WorkKind::Triage, |_| Ok(triaged()));
@@ -156,7 +156,7 @@ impl Replayed {
 
 /// The names of the entries in `dir`.
 #[track_caller]
-fn entries(dir: &Path) -> Vec<String> {
+pub(crate) fn entries(dir: &Path) -> Vec<String> {
     let mut names = vec![];
     for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("listing {}: {e}", dir.display()))
     {
@@ -298,7 +298,7 @@ async fn an_implement_case_is_replayed_pushing_its_branch_into_the_output() {
 /// `spec`'s session names answers a `GET` of `target`, as `gh` sends it:
 /// the whole answer, or why there is none.
 #[track_caller]
-fn gh_answer(spec: &SessionSpec, target: &str) -> String {
+pub(crate) fn gh_answer(spec: &SessionSpec, target: &str) -> String {
     use std::io::{Read as _, Write as _};
 
     let environment = fake_environment(&spec.environment, &spec.scratch, &spec.gh);
@@ -549,7 +549,7 @@ fn an_output_that_holds_anything_is_refused_and_a_missing_one_is_made() {
 /// `linewright-token` in `GH_TOKEN`, and neither `GITHUB_TOKEN`, the
 /// separate token nor `repo` set, but as `env` sets them.
 #[track_caller]
-fn lw_isolated<'a>(
+pub(crate) fn lw_isolated<'a>(
     bin: &'a Path,
     work: &'a Path,
     args: &'a [&str],
@@ -575,7 +575,7 @@ fn lw_isolated<'a>(
 /// `lw` with `bin` as its path and `work` as its work directory, run in
 /// `cwd`, with Linewright's token `linewright-token` in `GH_TOKEN`, and
 /// neither `GITHUB_TOKEN`, the separate token nor `repo` set.
-fn lw_command(bin: &Path, work: &Path, cwd: &Path) -> tokio::process::Command {
+pub(crate) fn lw_command(bin: &Path, work: &Path, cwd: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"));
     command
         .arg("--work-dir")

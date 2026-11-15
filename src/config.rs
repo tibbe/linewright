@@ -173,6 +173,9 @@ pub enum Command {
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
     },
+    /// Judge DIR, the output of a replay of the case in the directory CASE,
+    /// against the case's criteria, keeping the judgement in DIR.
+    Judge { case: PathBuf, dir: PathBuf },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
