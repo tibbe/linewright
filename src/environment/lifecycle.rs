@@ -131,6 +131,11 @@ pub struct Fingerprint(String);
 const TMPDIR: &str = "TMPDIR";
 
 impl Fingerprint {
+    /// The hash, in hexadecimal.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
     /// The fingerprint of `command` run with `variables`, in any order, but
     /// for `TMPDIR`.
     pub fn of<N: AsRef<OsStr>, V: AsRef<OsStr>>(

@@ -79,8 +79,9 @@ impl Marks {
         )
     }
 
-    /// How many builds [`Marks::installing`]'s commands have run.
-    fn builds(&self) -> usize {
+    /// How many builds have run [`Marks::installing`]'s commands, or
+    /// written a line to `builds` as they do.
+    pub(crate) fn builds(&self) -> usize {
         std::fs::read_to_string(self.path("builds"))
             .unwrap_or_default()
             .lines()
