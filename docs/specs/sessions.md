@@ -57,8 +57,7 @@ through and those Linewright sets.
 - **Passed.** The variables this table or `session-pass-env` names.
 - **Set by the operator.** The values `session-env` sets.
 - **Set by Linewright.** Linewright sets these:
-  - `GH_TOKEN` and `GITHUB_TOKEN`: the session's GitHub token, when it has
-    one;
+  - `GH_TOKEN` and `GITHUB_TOKEN`: the session's GitHub token;
   - `TMPDIR`: the session's own temporary directory;
   - `GH_CONFIG_DIR`, in a session of a replay: a configuration of `gh` that
     Linewright makes
