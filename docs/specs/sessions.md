@@ -35,11 +35,12 @@ costs its work nothing.
   work needs.
 - **Not prevented.** An agent writing to GitHub outside its result is not
   prevented.
-- **The sessions' token.** Optionally, a GitHub token for agent sessions
-  (`LINEWRIGHT_SESSION_GITHUB_TOKEN`), which they are given in place of
-  Linewright's, so that what a session may do on GitHub, such as only read,
-  is the operator's to choose. Without one, sessions are given Linewright's
-  token, and Linewright warns at startup that sessions can write to GitHub.
+- **The session's GitHub token.** Linewright gives its GitHub token to every
+  session. If the operator sets a token for sessions
+  (`LINEWRIGHT_SESSION_GITHUB_TOKEN`), Linewright gives a session that token
+  in place of its own token. With that token, the operator chooses what a
+  session can do on GitHub, such as to read only. Without that token,
+  Linewright warns at startup that sessions can write to GitHub.
 - **The shell.** Agents' commands run in `bash`, whatever shell the operator
   uses.
 - **As installed.** A session never updates the harness, in the background
