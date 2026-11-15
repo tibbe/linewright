@@ -30,6 +30,9 @@ make to the brief of the design stage.
    try a change without touching the repository.
 9. As an agent, I want a replay's output as plain files, so that I can read
    it, judge it and change the briefs.
+10. As an operator, I want the `gh` of a replay's session kept from the case's
+    repository on GitHub, so that the session cannot read how the work turned
+    out.
 
 ## Cases
 
@@ -126,6 +129,24 @@ GitHub.
   commands do ([Output](monitoring.md#output)). It succeeds when the run
   ended, whatever the outcome of the run.
 
+## The repository on GitHub
+
+In a replay, the `gh` of a session cannot read the case's repository on
+GitHub.
+
+- **A request that names the repository.** A request names the case's
+  repository in one of two ways:
+  - it holds the whole owner and the whole name together, as `OWNER/NAME`;
+  - its body holds the owner and the name, each as a whole quoted value.
+
+  Letter case and percent-encoding make no difference. A request for a
+  repository with a longer name, such as `OWNER/NAME-docs`, does not name it.
+- **Requests of `gh`.** Linewright refuses each request of a session's `gh`
+  that names the case's repository. Linewright passes every other request to
+  GitHub unchanged, and passes the answer back unchanged.
+- **The refusal.** The refusal tells the agent that the repository on GitHub
+  is not available in a replay.
+
 ## The output of a replay
 
 The output of a replay holds what the replay did, as plain files.
@@ -151,8 +172,14 @@ The output of a replay holds what the replay did, as plain files.
 - Capturing a rework, fix-ci or update run, or an automation's run.
 - Capturing a run whose record lacks a part, by reading that part from GitHub
   as it is now.
-- Stopping the sessions of a replay from reading GitHub and the web, which
-  show how the work turned out.
+- Stopping a session of a replay from reading the case's repository on GitHub
+  by a means other than `gh`.
+- Stopping a session of a replay from reading a copy, elsewhere, of the case's
+  repository on GitHub, such as a fork or a search result.
+- Refusing a request that holds only the ID that GitHub gives the case's
+  repository.
 - Replaying a case from the web UI.
 - Replaying a case several times, or several cases, with one command.
 - Judging the output of a replay against the criteria of the case.
+- Finding, in the output of a replay, where a session read the case's
+  repository by a means other than `gh`.
