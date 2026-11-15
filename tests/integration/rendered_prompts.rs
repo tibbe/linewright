@@ -471,3 +471,54 @@ fn the_history_is_a_series_for_merge_and_rebase_and_on_top_for_squash() {
         assert_eq!(prompts::History::for_method(method), history, "{method}");
     }
 }
+
+/// Each placeholder of the template `template` with the value `prompt`
+/// fills it with, in order, as `## name` and the value, as the fixtures
+/// hold a prompt; it fails unless `prompt` holds every word of `template`
+/// around them.
+#[track_caller]
+fn values_in(prompt: &str, template: &str) -> String {
+    let mut literals = vec![];
+    let mut names = vec![];
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let end = start + rest[start..].find("}}").unwrap();
+        literals.push(&rest[..start]);
+        names.push(&rest[start + 2..end]);
+        rest = &rest[end + 2..];
+    }
+    literals.push(rest);
+    let mut left = prompt
+        .strip_prefix(literals[0])
+        .unwrap_or_else(|| panic!("the prompt does not start as its template:\n{prompt}"));
+    let mut values = String::new();
+    for (name, after) in names.iter().zip(&literals[1..]) {
+        let at = if after.is_empty() {
+            left.len()
+        } else {
+            left.find(after).unwrap_or_else(|| {
+                panic!("the prompt lacks the template's {after:?} after {{{{{name}}}}}:\n{prompt}")
+            })
+        };
+        values.push_str(&format!("## {name}\n\n{}\n\n", &left[..at]));
+        left = &left[at + after.len()..];
+    }
+    assert_eq!(left, "", "the prompt goes on past its template");
+    values
+}
+
+#[test_log::test]
+fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
+    let name = repo_name();
+    let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
+    let prompt = prompts::judge(
+        &repo(&name),
+        linewright::reconcile::WorkKind::Implement,
+        &criteria,
+        std::path::Path::new("/work/out"),
+    );
+
+    let values = values_in(&prompt, read("briefs/judge.md").trim_end());
+
+    assert_filled_as(&values, "judge.txt");
+}

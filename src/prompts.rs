@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 use anyhow::{Result, bail};
 
 use crate::automation::Automation;
+use crate::case::Criteria;
 use crate::domain;
 use crate::domain::{
     CheckFailure, Comment, Issue, MergeMethod, MergedPull, Number, Parent, Pull, UpdateMethod,
@@ -252,6 +253,24 @@ values!(AutomationRun: Shared {
     instructions,
     output
 });
+values!(
+    /// What the judge of a replay is sent, from `judge.md`.
+    Judge: Shared {
+        stage,
+        criteria,
+        replay,
+        output
+    }
+);
+values!(
+    /// Where the parts of a replay's output are, from
+    /// `parts/replay-output.md`.
+    ReplayOutput {
+        outcome,
+        sessions,
+        writes
+    }
+);
 values!(DefaultBranch { default_branch });
 values!(ExistingBranch {
     default_branch,
@@ -480,6 +499,9 @@ struct OwnTemplates {
     fix_ci_output: Template<NoValues>,
     update_output: Template<NoValues>,
     automation_output: Template<NoValues>,
+    judge: Template<Judge>,
+    replay_output: Template<ReplayOutput>,
+    judge_output: Template<NoValues>,
 }
 
 static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
@@ -511,6 +533,9 @@ static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
     fix_ci_output: own_template!("outputs/fix-ci.md"),
     update_output: own_template!("outputs/update.md"),
     automation_output: own_template!("outputs/automation.md"),
+    judge: own_template!("judge.md"),
+    replay_output: own_template!("parts/replay-output.md"),
+    judge_output: own_template!("outputs/judge.md"),
 });
 
 impl Prompts {
@@ -953,6 +978,25 @@ pub fn automation(
             &OWN_TEMPLATES.automation_output.fill(&NoValues {}),
             attachments,
         ),
+    })
+}
+
+/// What the judge of a replay of a case of `stage` in `repo` is sent: the
+/// case's `criteria`, and where the parts of the replay's output in the
+/// absolute directory `output` are (`docs/specs/benchmarks.md`, Judging).
+/// Its result contract has nothing on attachments.
+pub fn judge(repo: &Repo, stage: WorkKind, criteria: &Criteria, output: &Path) -> String {
+    let part = |name: &str| output.join(name).display().to_string();
+    OWN_TEMPLATES.judge.fill(&Judge {
+        base: shared(repo),
+        stage: stage.name().into(),
+        criteria: criteria.as_str().trim_end().into(),
+        replay: OWN_TEMPLATES.replay_output.fill(&ReplayOutput {
+            outcome: part("outcome"),
+            sessions: part("sessions"),
+            writes: part("writes"),
+        }),
+        output: OWN_TEMPLATES.judge_output.fill(&NoValues {}),
     })
 }
 
