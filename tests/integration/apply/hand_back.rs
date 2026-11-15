@@ -6,7 +6,7 @@ use linewright::prompts::DesignOf;
 use linewright::reconcile::WorkKind;
 use linewright::secrets::Held;
 use linewright::store::{FoundSecret, FoundSecrets};
-use linewright::work_settings::TimeoutSetting;
+use linewright::work_settings::{StageKey, TimeoutSetting};
 use rstest::rstest;
 
 use crate::common::linewright;
@@ -543,7 +543,7 @@ fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
 
 #[rstest]
 #[case::a_stages_setting(
-    TimeoutSetting::Stage(WorkKind::Implement),
+    TimeoutSetting::Stage(StageKey::Work(WorkKind::Implement)),
     Some(log(Logged::Session, "Still reading the spec.")),
     hand_back_of(
         HandBackKind::Stall,

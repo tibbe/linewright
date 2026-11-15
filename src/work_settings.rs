@@ -77,6 +77,51 @@ impl fmt::Display for Effort {
     }
 }
 
+/// What a `[stage.NAME]` table is for: a stage of the pipeline, or the
+/// judge, whose session takes its settings as a stage's do
+/// (`docs/specs/operation.md`, Stages' settings).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum StageKey {
+    Work(WorkKind),
+    Judge,
+}
+
+impl StageKey {
+    /// The judge's `NAME`.
+    const JUDGE: &'static str = "judge";
+
+    /// Its `NAME` in `[stage.NAME]`.
+    pub fn name(self) -> &'static str {
+        match self {
+            StageKey::Work(kind) => kind.name(),
+            StageKey::Judge => StageKey::JUDGE,
+        }
+    }
+}
+
+/// The error lists the names a table takes: the stages', then the judge's.
+impl std::str::FromStr for StageKey {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<StageKey, String> {
+        if name == StageKey::JUDGE {
+            return Ok(StageKey::Judge);
+        }
+        WorkKind::ALL
+            .into_iter()
+            .find(|kind| kind.name() == name)
+            .map(StageKey::Work)
+            .ok_or_else(|| {
+                let stages = WorkKind::ALL.map(WorkKind::name);
+                format!(
+                    "{name:?} is not a stage or the judge: one of {}, {}",
+                    stages.join(", "),
+                    StageKey::JUDGE
+                )
+            })
+    }
+}
+
 /// The settings a stage can set: the keys of its table
 /// (`docs/specs/operation.md`, Stage settings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -352,7 +397,7 @@ pub struct WorkSettings {
     /// those `pipeline_flags_and_env` sets.
     pub pipeline_file: PipelineSettings,
     /// The operator's file's `[stage.NAME]` tables.
-    pub stages: BTreeMap<WorkKind, StageTable>,
+    pub stages: BTreeMap<StageKey, StageTable>,
     /// The layers the whole pipeline's `session-env` and
     /// `session-pass-env` came from.
     pub env_layers: EnvLayers,
@@ -393,14 +438,14 @@ impl EnvLayers {
 pub struct RepoSettings {
     top: Partial,
     pipeline: PipelineSettings,
-    stages: BTreeMap<WorkKind, Partial>,
+    stages: BTreeMap<StageKey, Partial>,
 }
 
 impl RepoSettings {
     pub(crate) fn new(
         top: Partial,
         pipeline: PipelineSettings,
-        stages: BTreeMap<WorkKind, Partial>,
+        stages: BTreeMap<StageKey, Partial>,
     ) -> RepoSettings {
         RepoSettings {
             top,
@@ -415,6 +460,8 @@ impl RepoSettings {
 pub enum RunKind<'a> {
     Stage(WorkKind),
     Automation(&'a Automation),
+    /// The judge's session, which takes `[stage.judge]`'s settings.
+    Judge,
 }
 
 /// The environment each session is given.
@@ -422,23 +469,26 @@ pub enum RunKind<'a> {
 pub struct Environments {
     /// The whole pipeline's, which a build of the environment is given too.
     pub pipeline: Arc<Given>,
-    /// The stages whose tables add to `session-env` or `session-pass-env`.
-    stages: BTreeMap<WorkKind, Arc<Given>>,
+    /// The stages, and the judge, whose tables add to `session-env` or
+    /// `session-pass-env`.
+    stages: BTreeMap<StageKey, Arc<Given>>,
 }
 
-/// Linewright's environment, split by what each stage's sessions are given.
+/// Linewright's environment, split by what the sessions of each stage, and
+/// of the judge, are given.
 #[derive(Debug, Default)]
 pub struct Split {
     pub environments: Environments,
     /// The names of the variables the whole pipeline's sessions are not
     /// given, sorted, but for those Linewright sets for sessions itself.
     pub withheld: Vec<String>,
-    /// Of `withheld`, the names each stage's table gives its sessions.
-    pub added: BTreeMap<WorkKind, Vec<String>>,
+    /// Of `withheld`, the names each `[stage.NAME]` table gives its
+    /// sessions.
+    pub added: BTreeMap<StageKey, Vec<String>>,
     /// The names the whole pipeline's `session-env` sets, sorted.
     pub set: Vec<String>,
-    /// The names set for each stage whose table sets `session-env`.
-    pub stages_set: BTreeMap<WorkKind, StageSet>,
+    /// The names set for each `[stage.NAME]` table that sets `session-env`.
+    pub stages_set: BTreeMap<StageKey, StageSet>,
 }
 
 /// The names `session-env` sets for a stage whose table sets it.
@@ -456,8 +506,8 @@ pub struct StageSet {
 pub enum TimeoutSetting {
     /// `session-timeout` in the automation's front matter.
     Automation,
-    /// `session-timeout` in the stage's table.
-    Stage(WorkKind),
+    /// `session-timeout` in the stage's table, or the judge's.
+    Stage(StageKey),
     /// The whole pipeline's `session-timeout`.
     Pipeline,
 }
@@ -574,7 +624,8 @@ impl WorkSettings {
         let none = Partial::default();
         let (front_matter, stage) = match of {
             RunKind::Automation(automation) => (&automation.session, None),
-            RunKind::Stage(stage) => (&none, Some(stage)),
+            RunKind::Stage(stage) => (&none, Some(StageKey::Work(stage))),
+            RunKind::Judge => (&none, Some(StageKey::Judge)),
         };
         let table = stage.and_then(|stage| self.stages.get(&stage));
         let stage_setting = stage.map_or(TimeoutSetting::Pipeline, TimeoutSetting::Stage);

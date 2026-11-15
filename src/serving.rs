@@ -304,8 +304,8 @@ impl SessionCredentials {
 }
 
 /// What sessions are given of Linewright's environment. Logs the names of
-/// the variables they are not given and, of those, the ones each stage's
-/// table gives its sessions; and the names, never the values, that
+/// the variables they are not given and, of those, the ones each
+/// `[stage.NAME]` table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
 fn environments(config: &Config, gh_through_gate: bool) -> Environments {
     let split = config.work.environments(
@@ -322,8 +322,8 @@ fn environments(config: &Config, gh_through_gate: bool) -> Environments {
         info!(
             stage = stage.name(),
             variables = added.join(" "),
-            "of those, the stage's sessions are given these, which `session-pass-env` in its \
-             table names"
+            "of those, the sessions of `[stage.NAME]` are given these, which `session-pass-env` \
+             in that table names"
         );
     }
     if !split.set.is_empty() {
@@ -337,7 +337,7 @@ fn environments(config: &Config, gh_through_gate: bool) -> Environments {
             stage = stage.name(),
             set = set.own.join(" "),
             taken = set.taken.join(" "),
-            "`session-env` in the stage's table sets these variables in its sessions, \
+            "`session-env` in `[stage.NAME]` sets these variables in that table's sessions, \
              besides those it takes from the whole pipeline's"
         );
     }

@@ -12,7 +12,7 @@ use linewright::runs::{
     Started, StartedBy, State,
 };
 use linewright::session_env::SetEnv;
-use linewright::work_settings::{Effort, Partial, Setting, StageTable};
+use linewright::work_settings::{Effort, Partial, Setting, StageKey, StageTable};
 use serde_json::json;
 
 fn triage_ready(world: &World) {
@@ -62,7 +62,7 @@ async fn triage_on_opus() -> (World, tempfile::TempDir) {
     let mut world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
         config.work.stages.insert(
-            WorkKind::Triage,
+            StageKey::Work(WorkKind::Triage),
             StageTable {
                 settings: Partial {
                     model: Some("opus".into()),

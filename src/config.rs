@@ -23,7 +23,8 @@ use crate::web;
 use crate::webhook::{self, Webhooks};
 use crate::work_settings::{
     Effort, EnvLayers, MAINTENANCE, Maintenance, Partial, PipelineSettings, RepoSettings,
-    RepositorySetting, SETUP, Setup, SetupPartial, StageSetting, StageTable, WorkSettings,
+    RepositorySetting, SETUP, Setup, SetupPartial, StageKey, StageSetting, StageTable,
+    WorkSettings,
 };
 
 #[derive(Parser, Debug)]
@@ -1139,7 +1140,7 @@ struct FileSettings {
     /// The tables' values, by setting.
     tables: BTreeMap<String, SetEnv>,
     /// The `[stage.NAME]` tables.
-    stages: BTreeMap<WorkKind, StageTable>,
+    stages: BTreeMap<StageKey, StageTable>,
 }
 
 fn read_file(explicit: Option<&Path>, cwd: &Path) -> Result<FileSettings, ResolveError> {
@@ -1352,7 +1353,7 @@ impl RepoSettings {
 }
 
 /// `[stage.NAME]` tables in `owner`'s file. An error names the table.
-fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<WorkKind, StageTable>> {
+fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<StageKey, StageTable>> {
     let toml::Value::Table(stages) = stages else {
         bail!("`{STAGE}` is {stages}, not a table of stages such as `[{STAGE}.implement]`");
     };
@@ -1360,7 +1361,7 @@ fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<WorkKind, 
         .into_iter()
         .map(|(name, table)| {
             let at = format!("`[{STAGE}.{name}]`");
-            let stage: WorkKind = name.parse().map_err(|e| anyhow!("{at}: {e}"))?;
+            let stage: StageKey = name.parse().map_err(|e| anyhow!("{at}: {e}"))?;
             let toml::Value::Table(table) = table else {
                 bail!("{at} is {table}, not a table");
             };
