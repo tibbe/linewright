@@ -40,7 +40,7 @@ it.
   see its claims as assignments. With `--auto-merge`, the account must not be
   able to bypass the default branch's rules (no admin rights, not on a
   ruleset's bypass list), or the reviews they require are skipped.
-- **The sessions' token.** Optional
+- **The token for sessions.** Optional
   ([What a session has](sessions.md#what-a-session-has)).
 - **Spec files.** Tracked Markdown matching the spec glob (default
   `docs/**/*.md`).
@@ -277,7 +277,7 @@ Linewright exits with an error at startup when it cannot work.
 
 - **Checks.** Linewright checks that:
   - the token can push to the repository;
-  - the sessions' token, when set, can read it;
+  - the token for sessions, when set, can read it;
   - the repository allows the merge method, a merge commit only where it does
     not require linear history ([Merging](pull_requests.md#merging));
   - with webhooks on, `serve` can listen on `webhook-address`;

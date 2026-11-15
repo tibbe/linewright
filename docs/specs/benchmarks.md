@@ -26,8 +26,8 @@ make to the brief of the design stage.
    build cases without a browser.
 7. As an operator, I want to run a case's stage again with a setting or its
    brief changed, so that I see what the change does to real work.
-8. As an operator, I want a replay to write nothing to GitHub, so that I can
-   try a change without touching the repository.
+8. As an operator, I want Linewright to write nothing to GitHub in a replay,
+   so that I can try a change without touching the repository.
 9. As an agent, I want a replay's output as plain files, so that I can read
    it, judge it and change the briefs.
 10. As an operator, I want the `gh` of a replay's session kept from the case's
