@@ -51,6 +51,7 @@ mod recording;
 mod redaction;
 mod refresh;
 mod rendered_prompts;
+mod replay_environments;
 mod repo_layer;
 mod repository_files;
 mod required_label;

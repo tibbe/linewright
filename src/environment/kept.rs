@@ -227,7 +227,7 @@ impl Builds {
     }
 
     /// The number of the next build, taken under the lock.
-    pub fn next_id(&self) -> Result<BuildId> {
+    pub fn next_id(&self, _: &Lock) -> Result<BuildId> {
         let last = self.listed()?.last().map_or(0, |id| id.0);
         Ok(BuildId(last + 1))
     }
@@ -291,6 +291,12 @@ impl Builds {
             }
         }
         Ok(())
+    }
+
+    /// The output of the build `id`, redacted: `None` when its setup
+    /// command never ran.
+    pub fn output(&self, id: BuildId) -> Option<String> {
+        std::fs::read_to_string(self.build_dir(id).join(OUTPUT)).ok()
     }
 
     /// Names `built` in the state file, replacing it whole.

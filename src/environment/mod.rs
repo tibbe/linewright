@@ -4,6 +4,7 @@
 
 mod kept;
 pub mod lifecycle;
+pub mod replays;
 pub mod shown;
 
 use std::collections::BTreeMap;
@@ -20,7 +21,7 @@ use tracing::{info, warn};
 use crate::bash_command::{self, Status};
 use crate::clock::Clock;
 use crate::domain::Timestamp;
-use crate::git;
+use crate::git::{self, CommitId};
 use crate::harness::Harness;
 use crate::redaction::Redaction;
 use crate::session_env::Given;
@@ -603,8 +604,7 @@ impl Environment {
         );
         let (builder, builds) = (self.builder.clone(), self.builds.clone());
         self.building = Some(tokio::spawn(async move {
-            let abandoned = Abandoned::default();
-            build(&builder, &builds, &settings, fingerprint, &abandoned).await
+            build(&builder, &builds, &settings, fingerprint).await
         }));
     }
 
@@ -686,15 +686,39 @@ async fn build(
     builds: &Builds,
     settings: &SetupSettings,
     fingerprint: Fingerprint,
-    abandoned: &Abandoned,
 ) -> Result<Built, String> {
-    let _lock = builds.lock().await.map_err(|e| format!("{e:#}"))?;
-    let id = builds.next_id().map_err(|e| format!("{e:#}"))?;
+    let lock = builds.lock().await.map_err(|e| format!("{e:#}"))?;
+    let id = builds.next_id(&lock).map_err(|e| format!("{e:#}"))?;
+    let start = Start::DefaultBranch;
+    build_locked(builder, builds, &lock, id, start, settings, fingerprint).await
+}
+
+/// Where a build's clone starts.
+#[derive(Clone, Copy)]
+enum Start<'a> {
+    /// The default branch as it is now.
+    DefaultBranch,
+    /// `commit`, which the default branch's history holds.
+    Commit(&'a CommitId),
+}
+
+/// Builds `id` from `start` with `settings`, as [`build`] does, under
+/// `builds`' lock.
+async fn build_locked(
+    builder: &Builder,
+    builds: &Builds,
+    _: &kept::Lock,
+    id: BuildId,
+    start: Start<'_>,
+    settings: &SetupSettings,
+    fingerprint: Fingerprint,
+) -> Result<Built, String> {
     let dir = builds.build_dir(id);
+    let abandoned = Abandoned::default();
     abandoned.building(Build::new(builds, id, &builder.winding_up));
     let at = builder.clock.now();
     let mut record = BuildRecord::started(builder.redaction.apply(settings.command.as_str()), at);
-    let why = match run(builder, &dir, settings, &mut record).await {
+    let why = match run(builder, &dir, start, settings, &mut record).await {
         Ok((commit, ran)) if ran.status == Status::Exited(0) => {
             let built = Built {
                 id,
@@ -759,12 +783,13 @@ fn describe(status: Status, settings: &SetupSettings) -> String {
     }
 }
 
-/// Runs the setup command in a clone of the default branch in `dir`, which
-/// keeps `record`, and returns the commit it cloned and how the command
-/// ran. Once the command ends, what it left running is ended.
+/// Runs the setup command in a clone of the default branch in `dir`, at
+/// `start`, which keeps `record`, and returns the commit it cloned and how
+/// the command ran. Once the command ends, what it left running is ended.
 async fn run(
     builder: &Builder,
     dir: &Path,
+    start: Start<'_>,
     settings: &SetupSettings,
     record: &mut BuildRecord,
 ) -> Result<(String, bash_command::Ran)> {
@@ -780,6 +805,11 @@ async fn run(
         )
         .await
         .context("cloning the default branch")?;
+    if let Start::Commit(commit) = start {
+        git::git(&repo, &["reset", "--quiet", "--hard", commit.as_str()])
+            .await
+            .with_context(|| format!("checking out `{commit}`"))?;
+    }
     let commit: String = git::head(&repo).await?.into();
     record.commit = Some(commit.clone());
     record.save(dir)?;
@@ -820,6 +850,9 @@ async fn run(
 struct BuildDir {
     build: Build,
     retired: AtomicBool,
+    /// The hold on the environment of a replay the build is of, which no
+    /// replay removes while it is held.
+    _held: Option<replays::Held>,
 }
 
 impl BuildDir {
@@ -827,6 +860,17 @@ impl BuildDir {
         BuildDir {
             build,
             retired: AtomicBool::new(false),
+            _held: None,
+        }
+    }
+
+    /// The build `build` of the environment of a replay, held by `held`
+    /// and never retired.
+    fn held(build: Build, held: replays::Held) -> BuildDir {
+        BuildDir {
+            build,
+            retired: AtomicBool::new(false),
+            _held: Some(held),
         }
     }
 
@@ -852,6 +896,11 @@ impl Drop for BuildDir {
 pub struct Source(Arc<Mutex<Option<Arc<BuildDir>>>>);
 
 impl Source {
+    /// The build `build`, for good.
+    fn of(build: BuildDir) -> Source {
+        Source(Arc::new(Mutex::new(Some(Arc::new(build)))))
+    }
+
     /// The environment as it is now, held until the lease is dropped:
     /// `None` without one.
     pub fn lease(&self) -> Option<Lease> {
