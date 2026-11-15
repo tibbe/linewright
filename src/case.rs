@@ -1,6 +1,7 @@
 //! Capturing a run of a stage as a case (`docs/specs/benchmarks.md`, "Cases"
 //! and "Capturing").
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -9,10 +10,11 @@ use anyhow::Context;
 use serde::Serialize;
 
 use crate::domain::{Number, Timestamp};
+use crate::git::CommitId;
 use crate::input::Input;
 use crate::reconcile::WorkKind;
 use crate::runs::{RunId, RunOf, Runs};
-use crate::store::Store;
+use crate::store::{RecordedItem, RecordedProperties, Store};
 
 /// The directory, under the work directory, that holds the cases.
 pub const CASES: &str = "cases";
@@ -58,6 +60,21 @@ impl fmt::Display for CaseName {
     }
 }
 
+/// A part of a case (`docs/specs/benchmarks.md`, "Cases") that a run's
+/// record can lack.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CasePart {
+    Properties,
+}
+
+impl fmt::Display for CasePart {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            CasePart::Properties => "properties",
+        })
+    }
+}
+
 /// Why a run was not captured.
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
@@ -70,6 +87,8 @@ pub enum CaptureError {
     NotCapturable(RunId),
     #[error("the run {0} recorded no input, so it cannot be captured")]
     NoInput(RunId),
+    #[error("the run {run}'s record lacks the {part}, so it cannot be captured")]
+    Lacks { run: RunId, part: CasePart },
     #[error("a case is already named {0}")]
     Taken(CaseName),
     #[error(transparent)]
@@ -91,9 +110,10 @@ impl CaptureError {
     pub fn refusal(&self) -> Refusal {
         match self {
             CaptureError::NoSuchRun(_) => Refusal::NoSuchRun,
-            CaptureError::NotCapturable(_) | CaptureError::NoInput(_) | CaptureError::Taken(_) => {
-                Refusal::Refused
-            }
+            CaptureError::NotCapturable(_)
+            | CaptureError::NoInput(_)
+            | CaptureError::Lacks { .. }
+            | CaptureError::Taken(_) => Refusal::Refused,
             CaptureError::Failed(_) => Refusal::Failed,
         }
     }
@@ -105,6 +125,7 @@ impl CaptureError {
             CaptureError::NoSuchRun(_)
             | CaptureError::NotCapturable(_)
             | CaptureError::NoInput(_)
+            | CaptureError::Lacks { .. }
             | CaptureError::Taken(_) => self.to_string(),
         }
     }
@@ -145,13 +166,23 @@ pub fn capturable_stage(of: &RunOf) -> Option<(WorkKind, Number)> {
 }
 
 /// A run that can be captured: a triage, design or implement run that
-/// recorded its input.
+/// recorded its input, with every part of it.
 #[derive(Debug)]
 pub struct CapturableRun {
     run: RunId,
     stage: WorkKind,
     item: Number,
-    input: Input,
+    input: WholeInput,
+}
+
+/// A run's [`Input`] that lacks no part.
+#[derive(Debug)]
+struct WholeInput {
+    api_version: String,
+    start: Timestamp,
+    items: Vec<RecordedItem>,
+    heads: BTreeMap<String, CommitId>,
+    properties: RecordedProperties,
 }
 
 impl CapturableRun {
@@ -167,14 +198,30 @@ pub fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, Capture
     }
     let (stage, item) =
         capturable_stage(&run.of).ok_or_else(|| CaptureError::NotCapturable(run.clone()))?;
-    let input = runs
+    let Input {
+        api_version,
+        start,
+        items,
+        heads,
+        properties,
+    } = runs
         .read_input(run)?
         .ok_or_else(|| CaptureError::NoInput(run.clone()))?;
+    let properties = properties.ok_or_else(|| CaptureError::Lacks {
+        run: run.clone(),
+        part: CasePart::Properties,
+    })?;
     Ok(CapturableRun {
         run: run.clone(),
         stage,
         item,
-        input,
+        input: WholeInput {
+            api_version,
+            start,
+            items,
+            heads,
+            properties,
+        },
     })
 }
 
@@ -244,6 +291,7 @@ pub async fn capture(
     };
     write("case.json", &json(&case)?)?;
     write("items.json", &json(&input.items)?)?;
+    write("properties.json", &json(&input.properties)?)?;
     if let Some(criteria) = criteria {
         write("criteria.md", criteria.as_bytes())?;
     }

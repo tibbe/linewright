@@ -7,11 +7,18 @@ use serde_json::json;
 /// The run page of #1's implement run.
 const RUN_PAGE: &str = "/runs/1/implement-1";
 
+/// What run 1 recorded of its input.
+enum Recorded {
+    Nothing,
+    WithoutProperties,
+    Whole,
+}
+
 /// #1, `Ship gh`, with its implement run ended, recorded as run 1, which
-/// recorded its input when `recorded_input`, the default branch's head in
+/// recorded of its input what `recorded` says, the default branch's head in
 /// the store among it.
 #[track_caller]
-fn implemented(recorded_input: bool) -> impl Future<Output = Pages> {
+fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
@@ -23,27 +30,39 @@ fn implemented(recorded_input: bool) -> impl Future<Output = Pages> {
             "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
             "sessions": [],
         }));
-        if recorded_input {
-            let head = pages
-                .store
-                .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
-                .await
-                .unwrap_or_else(|e| panic!("committing on main at {caller}: {e:#}"));
-            record_input(&pages, &head);
-        }
+        let properties = match recorded {
+            Recorded::Nothing => return pages,
+            Recorded::WithoutProperties => None,
+            Recorded::Whole => Some(properties()),
+        };
+        let head = pages
+            .store
+            .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
+            .await
+            .unwrap_or_else(|e| panic!("committing on main at {caller}: {e:#}"));
+        record_input(&pages, &head, properties);
         pages
     }
 }
 
-/// Writes the input #1's implement run 1 recorded: `main` at `head`.
+/// Properties as a run records them.
+fn properties() -> serde_json::Value {
+    json!({"resources": {"account": {"login": "factory", "id": 7}}})
+}
+
+/// Writes the input #1's implement run 1 recorded: `main` at `head`, with
+/// `properties`, if any.
 #[track_caller]
-fn record_input(pages: &Pages, head: &str) {
-    let input = json!({
+fn record_input(pages: &Pages, head: &str, properties: Option<serde_json::Value>) {
+    let mut input = json!({
         "api_version": linewright::store::API_VERSION,
         "start": "2026-10-13T10:09:00Z",
         "items": [{"number": 1, "resources": {"issues/1": {"number": 1, "title": "Ship gh"}}}],
         "heads": {"main": head},
     });
+    if let Some(properties) = properties {
+        input["properties"] = properties;
+    }
     pages.write(&[("runs/items/1/implement-1.input.json", &input.to_string())]);
 }
 
@@ -57,7 +76,7 @@ fn capture_form(html: &Html) -> Option<ElementRef<'_>> {
 
 #[test_log::test(tokio::test)]
 async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
 
     let html = pages.page(RUN_PAGE).await;
 
@@ -70,11 +89,28 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
 
 #[test_log::test(tokio::test)]
 async fn a_run_with_no_input_offers_no_capture() {
-    let pages = implemented(false).await;
+    let pages = implemented(Recorded::Nothing).await;
 
     let html = pages.page(RUN_PAGE).await;
 
     assert!(capture_form(&html).is_none());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_one_naming_them() {
+    let pages = implemented(Recorded::WithoutProperties).await;
+
+    let html = pages.page(RUN_PAGE).await;
+    let (status, answer) = submit(&pages, "gadgets", "").await;
+
+    assert!(capture_form(&html).is_none());
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: the run 1/implement-1's record lacks the properties, so it cannot be \
+         captured"
+    );
+    assert_eq!(cases(&pages), Vec::<String>::new());
 }
 
 /// Submits the capture form of #1's implement run, naming the case `name`
@@ -148,7 +184,7 @@ fn said(html: &Html) -> String {
 
 #[test_log::test(tokio::test)]
 async fn submitting_the_form_writes_the_case_and_says_where() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "gadgets", "A good result ships gh.\n").await;
 
@@ -167,7 +203,7 @@ async fn submitting_the_form_writes_the_case_and_says_where() {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_without_criteria_writes_none() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "gadgets", "").await;
 
@@ -177,7 +213,7 @@ async fn a_capture_without_criteria_writes_none() {
 
 #[test_log::test(tokio::test)]
 async fn a_taken_name_is_refused_and_says_so() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
     submit(&pages, "gadgets", "").await;
 
     let (status, answer) = submit(&pages, "gadgets", "").await;
@@ -191,7 +227,7 @@ async fn a_taken_name_is_refused_and_says_so() {
 
 #[test_log::test(tokio::test)]
 async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "../Gadgets", "").await;
 
@@ -205,9 +241,9 @@ async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
 
 #[test_log::test(tokio::test)]
 async fn a_failed_capture_writes_nothing_and_says_why() {
-    let pages = implemented(false).await;
+    let pages = implemented(Recorded::Nothing).await;
     let missing = "0123456789abcdef0123456789abcdef01234567";
-    record_input(&pages, missing);
+    record_input(&pages, missing, Some(properties()));
 
     let (status, answer) = submit(&pages, "gadgets", "").await;
 
@@ -220,7 +256,7 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
 
 #[test_log::test(tokio::test)]
 async fn a_cross_site_capture_is_refused_and_writes_nothing() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
 
     let (status, _) = post(&pages, &[("sec-fetch-site", "cross-site")], "gadgets", "").await;
 
@@ -230,7 +266,7 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
 
 #[test_log::test(tokio::test)]
 async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
-    let pages = implemented(true).await;
+    let pages = implemented(Recorded::Whole).await;
     let view = pages.served.send_replace(None).unwrap().view();
 
     let html = pages.page(RUN_PAGE).await;
