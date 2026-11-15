@@ -31,7 +31,9 @@ sub-agents, so each search stays out of the others' context and yours.
    sources it comes from. Evidence of adoption: the platform providing or
    documenting it; products like ours using it, with each product's users,
    downloads or GitHub stars; and, for a library to adopt, its GitHub stars,
-   package downloads and recent releases. Under 400 words."
+   package downloads and recent releases. Report them condensed and complete:
+   one entry per option, leaving out no option, evidence or source, and nothing
+   else. Where sources conflict, give both."
 
 ### 2. Criteria
 
