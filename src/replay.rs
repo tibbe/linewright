@@ -33,6 +33,7 @@ use crate::{COMMAND, VERSION_AND_COMMIT};
 
 const OUTCOME: &str = "outcome";
 const VERSION: &str = "version";
+const CASE: &str = "case";
 const BUILD_LOG: &str = "build.log";
 const COMMITS: &str = "commits.git";
 
@@ -135,8 +136,8 @@ impl Output {
 
 /// Runs the stage of `case` on its item with `config` and `harness`, with
 /// the case in place of GitHub, and keeps what it did in `out`: the version
-/// first, `in-flight` as the outcome once the run begins, and its ending once
-/// it ends. Its sessions' `gh` cannot read the case's repository on GitHub
+/// and the ID of the case's run first, `in-flight` as the outcome once the
+/// run begins, and its ending once it ends. Its sessions' `gh` cannot read the case's repository on GitHub
 /// (`docs/specs/benchmarks.md`, The repository on GitHub). `config`'s work
 /// directory is that of the case's repository. The run's clones are kept in
 /// a directory of this replay's own under it, removed through `config`'s
@@ -157,6 +158,7 @@ pub async fn run(
     config: FactoryConfig,
 ) -> Result<Ending> {
     out.write(VERSION, &format!("{COMMAND} {VERSION_AND_COMMIT}\n"))?;
+    out.write(CASE, &format!("{}\n", case.run()))?;
     let replays = Clones::new(&config.work_dir.join("replays"), config.winding_up.clone());
     replays.sweep();
     let replay_dir = replays
