@@ -46,7 +46,9 @@ in `linewright.toml`, except `session-env`, which has no variable;
 add their variables to the whole pipeline's for that stage's sessions only,
 and a value the stage's `session-env` sets wins over the whole pipeline's.
 The stages are `triage`, `design`, `implement`, `rework`, `fix-ci` and
-`update`; their tables have no flags or variables.
+`update`. The judge of a replay is no stage, but its session takes its settings
+from the table `[stage.judge]` as a stage's sessions do. These tables have no
+flags or variables.
 
 ```toml
 model = "sonnet"

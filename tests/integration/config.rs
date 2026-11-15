@@ -12,7 +12,7 @@ use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
     Effort, Environments, Maintenance, RepoSettings, RunKind, SessionSettings, Setting,
-    SetupCommand, SetupSettings, Split, StageSet, TimeoutSetting,
+    SetupCommand, SetupSettings, Split, StageKey, StageSet, TimeoutSetting,
 };
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -80,7 +80,7 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
     assert_eq!(implement.session_timeout.value, Duration::from_hours(2));
     assert_eq!(
         implement.timeout_setting,
-        TimeoutSetting::Stage(WorkKind::Implement)
+        TimeoutSetting::Stage(StageKey::Work(WorkKind::Implement))
     );
     let design = stage_session(&config, WorkKind::Design);
     assert_eq!(
@@ -186,6 +186,157 @@ fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
     }
 }
 
+#[test_log::test]
+fn the_judges_table_sets_the_judges_sessions_and_no_stages() {
+    let file = "model = \"sonnet\"\neffort = \"low\"\nsession-timeout = \"10m\"\n\n\
+                [stage.judge]\nmodel = \"opus\"\neffort = \"max\"\nsession-timeout = \"2h\"\n";
+
+    let config = resolve(&["--model", "haiku"], &[], Some(file)).unwrap();
+
+    let judge = config.work.for_run(
+        RunKind::Judge,
+        &RepoSettings::default(),
+        &Environments::default(),
+    );
+    assert_eq!(
+        judge.model,
+        Some(Sourced::new("opus".into(), Layer::Operator))
+    );
+    assert_eq!(
+        judge.effort,
+        Some(Sourced::new(Effort::Max, Layer::Operator))
+    );
+    assert_eq!(judge.session_timeout.value, Duration::from_hours(2));
+    assert_eq!(
+        judge.timeout_setting,
+        TimeoutSetting::Stage(StageKey::Judge)
+    );
+    assert_eq!(
+        judge.timeout_setting.to_string(),
+        "`session-timeout` in `[stage.judge]`"
+    );
+    for stage in WorkKind::ALL {
+        let session = stage_session(&config, stage);
+        assert_eq!(
+            session.model.map(|model| model.value).as_deref(),
+            Some("haiku")
+        );
+        assert_eq!(session.effort.map(|effort| effort.value), Some(Effort::Low));
+        assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
+    }
+}
+
+#[test_log::test]
+fn the_repositorys_judge_table_ranks_above_the_operators() {
+    let config = resolve(
+        &[],
+        &[],
+        Some("[stage.judge]\nmodel = \"haiku\"\neffort = \"max\"\n"),
+    )
+    .unwrap();
+    let repo = RepoSettings::parse(
+        "model = \"sonnet\"\n\n[stage.judge]\neffort = \"low\"\nsession-timeout = \"5m\"\n",
+    )
+    .unwrap();
+
+    let judge = config
+        .work
+        .for_run(RunKind::Judge, &repo, &Environments::default());
+
+    assert_eq!(
+        judge.effort,
+        Some(Sourced::new(Effort::Low, Layer::Repository))
+    );
+    assert_eq!(
+        judge.model,
+        Some(Sourced::new("haiku".into(), Layer::Operator))
+    );
+    assert_eq!(
+        judge.session_timeout,
+        Sourced::new(Duration::from_mins(5), Layer::Repository)
+    );
+    assert_eq!(
+        judge.timeout_setting,
+        TimeoutSetting::Stage(StageKey::Judge)
+    );
+    assert_eq!(
+        repo_session(
+            &config,
+            "[stage.judge]\neffort = \"low\"\n",
+            WorkKind::Design
+        )
+        .effort,
+        None
+    );
+}
+
+#[test_log::test]
+fn the_judges_table_adds_to_the_judges_environment() {
+    let config = resolve(
+        &[],
+        &[],
+        Some(
+            "session-pass-env = [\"CARGO_HOME\"]\n\n\
+             [stage.judge]\nsession-pass-env = [\"JUDGE_KEY\"]\nsession-env = { CI = \"judge\" }\n",
+        ),
+    )
+    .unwrap();
+    let environment = [("CARGO_HOME", "/cargo"), ("JUDGE_KEY", "k")]
+        .map(|(name, value)| (name.into(), value.into()));
+
+    let split = config
+        .work
+        .environments(&config.session_env, environment, &[]);
+
+    let mut judge: Vec<(String, String)> = config
+        .work
+        .for_run(
+            RunKind::Judge,
+            &RepoSettings::default(),
+            &split.environments,
+        )
+        .environment
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    judge.sort();
+    assert_eq!(
+        judge,
+        pairs(&[
+            ("CARGO_HOME", "/cargo"),
+            ("CI", "judge"),
+            ("JUDGE_KEY", "k")
+        ])
+    );
+    assert_eq!(
+        given(&config, &split, WorkKind::Implement),
+        pairs(&[("CARGO_HOME", "/cargo")])
+    );
+    assert_eq!(
+        split.added,
+        [(StageKey::Judge, vec!["JUDGE_KEY".to_string()])].into()
+    );
+}
+
+#[test_log::test]
+fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_judge_among_the_names() {
+    let operator_error = resolve(&[], &[], Some("[stage.deploy]\nmodel = \"opus\"\n")).unwrap_err();
+    let repo_error = format!(
+        "{:#}",
+        RepoSettings::parse("[stage.deploy]\nmodel = \"opus\"\n").unwrap_err()
+    );
+
+    for error in [operator_error, repo_error] {
+        assert!(error.contains("`[stage.deploy]`"), "{error}");
+        assert!(error.contains("update, judge"), "{error}");
+    }
+}
+
 /// What a `stage` run's sessions run with under `config` and the
 /// repository's file `repo`.
 fn repo_session(config: &Config, repo: &str, stage: WorkKind) -> SessionSettings {
@@ -245,7 +396,7 @@ fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
     );
     assert_eq!(
         implement.timeout_setting,
-        TimeoutSetting::Stage(WorkKind::Implement)
+        TimeoutSetting::Stage(StageKey::Work(WorkKind::Implement))
     );
     assert_eq!(
         implement.model,
@@ -364,7 +515,11 @@ fn a_stages_session_pass_env_adds_its_names_to_the_whole_pipelines_for_that_stag
     assert_eq!(split.withheld, ["DEPLOY_KEY", "OTHER"]);
     assert_eq!(
         split.added,
-        [(WorkKind::Implement, vec!["DEPLOY_KEY".to_string()])].into()
+        [(
+            StageKey::Work(WorkKind::Implement),
+            vec!["DEPLOY_KEY".to_string()]
+        )]
+        .into()
     );
 }
 
@@ -407,7 +562,7 @@ fn a_stages_session_env_adds_its_values_to_the_whole_pipelines_for_that_stage_on
     assert_eq!(
         split.stages_set,
         [(
-            WorkKind::Implement,
+            StageKey::Work(WorkKind::Implement),
             StageSet {
                 own: vec!["CARGO_HOME".into(), "RUST_LOG".into()],
                 taken: vec!["CI".into()],

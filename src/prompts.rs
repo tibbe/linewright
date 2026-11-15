@@ -597,6 +597,7 @@ impl Readers {
             Readers::Only(reads) => reads.iter().any(|reads| match (reads, run) {
                 (Reads::Stage(kind), RunKind::Stage(run)) => kind == run,
                 (Reads::Automations, RunKind::Automation(_)) => true,
+                (_, RunKind::Judge) => false,
                 _ => false,
             }),
         }

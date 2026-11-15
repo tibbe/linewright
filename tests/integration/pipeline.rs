@@ -8,7 +8,7 @@ use linewright::domain::{
 use linewright::reconcile::{Discard, ParentNote, WorkKind};
 use linewright::store::local::{LocalStore, Paused, Write};
 use linewright::store::{IssueRead, Store};
-use linewright::work_settings::{Effort, Partial, StageTable};
+use linewright::work_settings::{Effort, Partial, StageKey, StageTable};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
@@ -1070,7 +1070,7 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
     let mut world = World::with(|config| {
         config.work.flags_and_env.model = Some("sonnet".into());
         config.work.stages.insert(
-            WorkKind::Implement,
+            StageKey::Work(WorkKind::Implement),
             StageTable {
                 settings: Partial {
                     model: Some("opus".into()),

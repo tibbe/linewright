@@ -383,3 +383,19 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     assert!(!fix_ci_prompt.read_by(&RunKind::Automation(&automation)));
     assert!(result_error.read_by(&RunKind::Automation(&automation)));
 }
+
+#[test_log::test]
+fn a_file_with_an_error_holds_the_judge_only_where_it_holds_every_run() {
+    let holds_the_judge = |path| prompts::readers(path).unwrap().read_by(&RunKind::Judge);
+
+    assert!(holds_the_judge("follow-ups/result-error.md"));
+    assert!(holds_the_judge("follow-ups/usage-limit-reset.md"));
+    for path in [
+        "triage.md",
+        "implement.md",
+        "fix-ci.md",
+        "follow-ups/late-feedback.md",
+    ] {
+        assert!(!holds_the_judge(path), "{path}");
+    }
+}
