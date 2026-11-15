@@ -187,6 +187,7 @@ async fn a_triage_case_is_replayed_into_its_output() {
         replayed.read("version"),
         String::from_utf8(version.stdout).unwrap()
     );
+    assert_eq!(replayed.read("case"), format!("{}/triage-1\n", issue.0));
     assert_eq!(harness.prompts(WorkKind::Triage).len(), 1);
     let replays = under.path().join("work").join(REPO).join("replays");
     assert_eq!(entries(&replays.join("clones")), Vec::<String>::new());
