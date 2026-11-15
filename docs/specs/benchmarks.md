@@ -42,7 +42,7 @@ what a good result is.
 | stage        | the run's stage                                                                                                                                               |
 | item         | the item the run worked on                                                                                                                                    |
 | start        | when Linewright decided to start the run                                                                                                                      |
-| items        | the item, its parent issue, the spec change it was opened for or cut from, and the spec gaps filed for it and still open, each that it has: its title, body, author, labels, type, state, the comments written before the start, and its links to the others as GitHub records them |
+| items        | the items from which Linewright fills the prompt of the stage ([Contract](runs.md#contract)), each with the comments written before the start |
 | repository   | the default branch's head at the start and, for a run on a branch that held earlier work, the branch's head, with their history, which holds the spec change's commits |
 | properties   | the repository's properties ([The repository's properties](repository.md#the-repositorys-properties)) |
 | criteria     | what a good result is, in the capturer's words, or nothing                                                                                                   |
