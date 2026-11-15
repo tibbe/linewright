@@ -261,6 +261,43 @@ run it as a user, or in a container, that holds no credentials you don't mean
 sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `~/.git-credentials`.
 
+## Judging a replay
+
+`lw replay CASE --out DIR` runs a case's stage again
+([Capturing a case](tuning-briefs.md#capturing-a-case)), and `lw judge CASE DIR`
+then judges what it made against the case's criteria. A capture needs its
+criteria, as `lw capture ID NAME --criteria FILE`, since they are what the
+judge judges by. The judge is an agent in a session of its own: it reads the
+replay's sessions and writes, and its clone has the branch the replay pushed
+checked out, or the default branch when it pushed none. It also looks for a
+leak: a session that learned how the work turned out, such as from the merged
+pull request, whose replay says nothing about the stage.
+
+```sh
+lw replay cases/43-implement-2 --out out/43-1
+lw judge cases/43-implement-2 out/43-1
+```
+
+`lw judge` runs as `lw replay` does: it needs no `repo`, the case's repository
+on GitHub is kept from its `gh`, and its session takes its settings from
+`[stage.judge]` ([Stage settings](#stage-settings)). It judges only a replay
+whose run ended done or handed back, and refuses an output replayed from
+another case. It prints the verdict and whether it found a leak, and keeps the
+judgement in the output:
+
+```text
+judgement.json  the verdict (pass or fail), whether a leak was found and the
+                tool calls that show it, each with the judge's reasoning, the
+                judge's model and effort, and the version of Linewright
+judge/          the record of the judge's session, which judgement.json names
+```
+
+Judging again replaces the judgement and removes the earlier judge's record,
+so a judge can be tuned without replaying. A judge that gives up, fails, ends
+without a result Linewright accepts or is stopped keeps nothing, and the
+earlier judgement stays. The command exits 0 when the judge made a judgement,
+whatever it is, and 1 when it made none or refused the output.
+
 ## Monitoring
 
 `lw status` shows what the running `serve` is doing and what holds it back.

@@ -3,6 +3,7 @@
 
 mod gh_gate;
 mod journal;
+pub mod judge;
 
 pub use gh_gate::{Gate, GhConfigDir, Upstream};
 pub use journal::Journal;
@@ -362,8 +363,12 @@ impl Setting {
             .await
             .context("reading Linewright's files in the case")?;
         if let Some(file) = holding(&repo.unusable, kind).first() {
+            let (refused, held) = match kind {
+                RunKind::Judge => ("judged", "the judge"),
+                RunKind::Stage(_) | RunKind::Automation(_) => ("replayed", "the run"),
+            };
             bail!(
-                "the case cannot be replayed: {} on its default branch would hold the run: {}",
+                "the case cannot be {refused}: {} on its default branch would hold {held}: {}",
                 file.path,
                 file.error
             );

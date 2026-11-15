@@ -17,8 +17,13 @@ use crate::work_settings::Effort;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    Work { subject: Subject, kind: WorkKind },
+    Work {
+        subject: Subject,
+        kind: WorkKind,
+    },
     Automation(AutomationName),
+    /// The judge of a replay (`docs/specs/benchmarks.md`, Judging).
+    Judge,
 }
 
 /// How a session's `gh` reaches GitHub.

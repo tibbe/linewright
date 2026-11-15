@@ -19,7 +19,7 @@ use crate::store::{
 };
 
 /// The directory of the output that keeps the writes.
-const WRITES: &str = "writes";
+pub(super) const WRITES: &str = "writes";
 /// The directory of the output that keeps the attachments.
 const ATTACHMENTS: &str = "attachments";
 
