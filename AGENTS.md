@@ -14,6 +14,9 @@ Linewright's own, in Docker on Linux.
 
 ## Specs
 
+The specs are in `docs/specs/`. `product.md` is the entry point: it says what
+Linewright is and links the rest.
+
 Write and change the specs with the `spec-writing` skill. Their supporting
 material, the files they name by path such as the briefs in `briefs/`, is part
 of what they decide, each in its own form rather than spec prose.
