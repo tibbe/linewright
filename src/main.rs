@@ -965,7 +965,8 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             log.begin();
             let ran = async {
                 let starting = Starting::replaying(config, HARNESS_PROGRAM, || {
-                    Ok(SessionToken::replaying(
+                    Ok(SessionToken::new(
+                        linewright_token(),
                         std::env::var(SESSION_TOKEN_VARIABLE).ok(),
                     ))
                 })
@@ -996,12 +997,21 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
         .unwrap_or_else(|e| print_answer(Err(failed(&e))))
 }
 
-/// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`.
-fn token() -> Result<String> {
+/// The token as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an empty
+/// one being unset.
+fn linewright_token() -> Option<String> {
     TOKEN_VARIABLES
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()))
-        .context("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account")
+}
+
+/// [`linewright_token`], which Linewright needs.
+///
+/// # Errors
+///
+/// When neither `GH_TOKEN` nor `GITHUB_TOKEN` is set.
+fn token() -> Result<String> {
+    linewright_token().context("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account")
 }
 
 async fn connect(config: &Config, token: String) -> Result<GitHub> {
@@ -1025,7 +1035,7 @@ async fn start(
 ) -> Result<Factory> {
     let starting = Starting::new(config, HARNESS_PROGRAM, || {
         Ok(SessionToken::new(
-            token()?,
+            Some(token()?),
             std::env::var(SESSION_TOKEN_VARIABLE).ok(),
         ))
     })

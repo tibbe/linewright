@@ -20,6 +20,7 @@ use crate::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use crate::harness::claude::ClaudeCode;
 use crate::secrets::Secrets;
 use crate::status;
+use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::variable_names::VariableNames;
 use crate::web;
 use crate::webhook::{Listener, Pending};
@@ -281,7 +282,8 @@ struct SessionCredentials {
 
 impl SessionCredentials {
     /// Reads the secrets to redact from Linewright's environment, `names`
-    /// being the `secrets` setting, warning of those too short to redact.
+    /// being the `secrets` setting, warning of those too short to redact,
+    /// and of sessions given Linewright's token, which can write to GitHub.
     fn new(token: SessionToken, names: &VariableNames) -> Result<SessionCredentials> {
         let secrets = Secrets::of(names, std::env::vars_os()).map_err(|e| anyhow!(e))?;
         for variable in secrets.short() {
@@ -289,6 +291,12 @@ impl SessionCredentials {
                 variable,
                 "this secret is 1 to 5 characters, so Linewright neither redacts it \
                  nor refuses commits that hold it"
+            );
+        }
+        if let SessionToken::Linewright(_) = token {
+            warn!(
+                "sessions can write to GitHub: they are given Linewright's token; set \
+                 {SESSION_TOKEN_VARIABLE} to a token that only reads to keep them from it"
             );
         }
         Ok(SessionCredentials { token, secrets })
