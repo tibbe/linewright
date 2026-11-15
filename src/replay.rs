@@ -17,6 +17,7 @@ use tracing::{error, info};
 use crate::case::Case;
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
+use crate::ending::Signal;
 use crate::environment::{self, Source, replays};
 use crate::factory::FactoryConfig;
 use crate::harness::{GhReach, Harness};
@@ -86,6 +87,20 @@ impl Output {
     }
 
     /// Writes `interrupted` as the outcome unless the run's ending is
+    /// written, and gives the status the replay exits with for `signal`:
+    /// its own, or 0 once the run ended.
+    pub fn signalled(&self, signal: Signal) -> i32 {
+        match self.interrupted() {
+            Ok(false) => 0,
+            Ok(true) => signal.exit_status(),
+            Err(e) => {
+                error!(error = format!("{e:#}"), "writing the outcome failed");
+                signal.exit_status()
+            }
+        }
+    }
+
+    /// Writes `interrupted` as the outcome unless the run's ending is
     /// written, and gives whether it wrote it.
     ///
     /// # Errors
@@ -127,11 +142,23 @@ impl Output {
     /// Replaces the file `name` with one holding `text`, so that a reader
     /// sees the one or the other whole.
     fn write(&self, name: &str, text: &str) -> Result<()> {
-        let path = self.dir.join(name);
-        let partial = self.dir.join(format!(".{name}"));
-        std::fs::write(&partial, text).with_context(|| format!("writing {}", path.display()))?;
-        std::fs::rename(&partial, &path).with_context(|| format!("writing {}", path.display()))
+        write_whole(
+            &self.dir.join(name),
+            &self.dir.join(format!(".{name}")),
+            text,
+        )
     }
+}
+
+/// Replaces the file at `path` with one holding `text`, written first at
+/// `partial` in the same directory, so that a reader sees the one or the
+/// other whole. A failed write leaves no file at `partial`.
+fn write_whole(path: &Path, partial: &Path, text: &str) -> Result<()> {
+    let written = std::fs::write(partial, text).and_then(|()| std::fs::rename(partial, path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(partial);
+    }
+    written.with_context(|| format!("writing {}", path.display()))
 }
 
 /// Runs the stage of `case` on its item with `config` and `harness`, with
@@ -159,28 +186,46 @@ pub async fn run(
 ) -> Result<Ending> {
     out.write(VERSION, &format!("{COMMAND} {VERSION_AND_COMMIT}\n"))?;
     out.write(CASE, &format!("{}\n", case.run()))?;
-    let replays = Clones::new(&config.work_dir.join("replays"), config.winding_up.clone());
-    replays.sweep();
-    let replay_dir = replays
-        .make("replay")
-        .await
-        .context("creating the replay's own directory")?;
-    let clones_winding_up = WindingUp::default();
-    let ran = run_in(
-        case,
-        out,
-        harness,
-        config,
-        replay_dir.path(),
-        &clones_winding_up,
+    let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
+    in_own_dir(
+        &work_dir,
+        winding_up,
+        "replay",
+        async |replay_dir, clones_winding_up| {
+            let ending = run_in(case, out, harness, config, replay_dir, clones_winding_up).await?;
+            out.ended(ending)?;
+            Ok(ending)
+        },
     )
-    .await;
-    if let Ok(ending) = ran {
-        out.ended(ending)?;
-    }
+    .await?
+}
+
+/// Runs `work` in a new directory of its own, named `prefix`, among the
+/// replays' under `work_dir`, with what winds up the clones it makes there,
+/// and removes the directory through `winding_up` once those are wound up.
+/// The directories of earlier ones that a signal ended are removed
+/// meanwhile.
+///
+/// # Errors
+///
+/// When the directory cannot be made: `work` does not run then.
+async fn in_own_dir<T>(
+    work_dir: &Path,
+    winding_up: WindingUp,
+    prefix: &str,
+    work: impl AsyncFnOnce(&Path, &WindingUp) -> T,
+) -> Result<T> {
+    let replays = Clones::new(&work_dir.join("replays"), winding_up);
+    replays.sweep();
+    let own = replays
+        .make(prefix)
+        .await
+        .with_context(|| format!("creating the {prefix}'s own directory"))?;
+    let clones_winding_up = WindingUp::default();
+    let done = work(own.path(), &clones_winding_up).await;
     clones_winding_up.wait().await;
-    drop(replay_dir);
-    ran
+    drop(own);
+    Ok(done)
 }
 
 async fn run_in(
@@ -205,25 +250,15 @@ async fn run_in(
     let store: Arc<dyn Store> = Arc::new(Journal::new(setting.store.clone(), out.path()));
     let clock = setting.clock.clone();
     let settings = setting.settings.clone();
-    let properties = case.properties();
-    let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
     let runs = Runs::new(out.path());
     let shell = Shell::new(ShellParts {
-        sessions: Sessions {
+        sessions: setting.sessions(
+            case,
             store,
             harness,
-            bash: config.bash,
-            clock: clock.clone(),
-            identity: properties.identity.clone(),
-            default_branch: settings.default_branch.clone(),
-            secrets: config.secrets,
-            clones: Clones::new(replay_dir, clones_winding_up.clone()),
-            environment: setting.environment.clone(),
-            gh: setting.gh(),
-            result_retries: config.result_retries,
-            waits_out_usage_limit: false,
-            report_refusal,
-        },
+            &config,
+            Clones::new(replay_dir, clones_winding_up.clone()),
+        ),
         spec_glob: config.spec_glob,
         spec_lookback: config.spec_lookback,
         done_window: config.done_window,
@@ -389,34 +424,58 @@ impl Setting {
     pub fn gh(&self) -> GhReach {
         self.gate.gh()
     }
+
+    /// The parts the sessions run on `case` in this setting share, with
+    /// `config` and `harness`: they fetch from and clone `store`, make their
+    /// clones in `clones`, and end at the usage limit rather than wait it
+    /// out.
+    pub(crate) fn sessions(
+        &self,
+        case: &Case,
+        store: Arc<dyn Store>,
+        harness: Arc<dyn Harness>,
+        config: &FactoryConfig,
+        clones: Clones,
+    ) -> Sessions {
+        let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
+        Sessions {
+            store,
+            harness,
+            bash: config.bash.clone(),
+            clock: self.clock.clone(),
+            identity: case.properties().identity.clone(),
+            default_branch: self.settings.default_branch.clone(),
+            secrets: config.secrets.clone(),
+            clones,
+            environment: self.environment.clone(),
+            gh: self.gh(),
+            result_retries: config.result_retries,
+            waits_out_usage_limit: false,
+            report_refusal,
+        }
+    }
 }
 
 /// Runs `work` unless a signal arrives first. Then it drops `work`, which
-/// ends the commands it runs, writes `interrupted` as `out`'s outcome unless
-/// the run's ending is written, and exits the process at once: with the
-/// signal's status, or 0 once the run ended (`docs/specs/operation.md`,
-/// Stopping).
+/// ends the commands it runs, and exits the process at once with the status
+/// `on_signal` gives for the signal (`docs/specs/operation.md`, Stopping).
 ///
 /// # Errors
 ///
 /// When it cannot listen for signals; `work` does not run then.
-pub async fn unless_signalled<T>(out: &Output, work: impl Future<Output = T>) -> Result<T> {
+pub async fn unless_signalled<T>(
+    work: impl Future<Output = T>,
+    on_signal: impl FnOnce(Signal) -> i32,
+) -> Result<T> {
     let mut signals = Signals::new().context("listening for signals")?;
     let signal = tokio::select! {
         done = work => return Ok(done),
         signal = signals.next() => signal,
     };
-    let status = match out.interrupted() {
-        Ok(false) => 0,
-        Ok(true) => signal.exit_status(),
-        Err(e) => {
-            error!(error = format!("{e:#}"), "writing the outcome failed");
-            signal.exit_status()
-        }
-    };
+    let status = on_signal(signal);
     #[expect(
         clippy::exit,
-        reason = "a signal ends a replay at once, leaving in its output what its run did"
+        reason = "a signal ends a replay or its judge at once, leaving in the output what it did"
     )]
     std::process::exit(status);
 }

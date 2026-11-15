@@ -17,7 +17,8 @@ use linewright::drain::{self, Asked, Exiting, Said, Stop, Taken, Timeout, Waitin
 use linewright::ending::{Ends, StopBy};
 use linewright::environment::shown::{self, Followed, FollowingBuild};
 use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
-use linewright::factory::{Factory, SessionToken};
+use linewright::factory::{Factory, FactoryConfig, SessionToken};
+use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::replay::{self, Output};
 use linewright::repo_files::RepoLayer;
@@ -958,7 +959,6 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
         Err(e) => return print_answer(Err(failed(&e.into()))),
     };
     let replaying = replay::unless_signalled(
-        &out,
         Box::pin(async {
             let case = match Case::open(case).await {
                 Ok(case) => case,
@@ -971,16 +971,7 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             };
             log.begin();
             let ran = async {
-                let starting = Starting::replaying(config, HARNESS_PROGRAM, || Ok(token)).await?;
-                let harness = starting.harness(own_program()?, Arc::new(SystemClock));
-                let work_dir = config.work_dir_for(&case.properties().settings.repo);
-                let factory_config = starting.factory_config(
-                    config,
-                    work_dir,
-                    OnUsageLimit::End,
-                    Ends::new(),
-                    winding_up.clone(),
-                );
+                let (harness, factory_config) = on_case(config, token, &case, winding_up).await?;
                 replay::run(&case, &out, Arc::new(harness), factory_config).await
             }
             .await;
@@ -992,10 +983,38 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
                 }
             }
         }),
+        |signal| out.signalled(signal),
     );
     replaying
         .await
         .unwrap_or_else(|e| print_answer(Err(failed(&e))))
+}
+
+/// The harness and the factory config of a command that runs sessions on
+/// `case`, with `token` as their token, in the work directory of the case's
+/// repository.
+///
+/// # Errors
+///
+/// As [`Starting::replaying`], and when Linewright's own program is not
+/// found.
+async fn on_case(
+    config: &Config,
+    token: SessionToken,
+    case: &Case,
+    winding_up: &WindingUp,
+) -> Result<(ClaudeCode, FactoryConfig)> {
+    let starting = Starting::replaying(config, HARNESS_PROGRAM, || Ok(token)).await?;
+    let harness = starting.harness(own_program()?, Arc::new(SystemClock));
+    let work_dir = config.work_dir_for(&case.properties().settings.repo);
+    let factory_config = starting.factory_config(
+        config,
+        work_dir,
+        OnUsageLimit::End,
+        Ends::new(),
+        winding_up.clone(),
+    );
+    Ok((harness, factory_config))
 }
 
 /// Linewright's token, as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an
