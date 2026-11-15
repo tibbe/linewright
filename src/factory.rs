@@ -86,25 +86,18 @@ pub enum SessionToken {
     Linewright(String),
     /// The operator's token for sessions, from [`SESSION_TOKEN_VARIABLE`].
     Separate(String),
-    /// None, as in `serve-fake`, whose sessions do not read GitHub.
+    /// None, Linewright having none to give.
     Withheld,
 }
 
 impl SessionToken {
-    /// `separate` is [`SESSION_TOKEN_VARIABLE`]'s value; empty, it is unset.
-    pub fn new(linewright: String, separate: Option<String>) -> SessionToken {
-        match separate {
-            Some(token) if !token.is_empty() => SessionToken::Separate(token),
-            _ => SessionToken::Linewright(linewright),
-        }
-    }
-
-    /// The token a replay's sessions are given: the separate one
-    /// (`separate` being [`SESSION_TOKEN_VARIABLE`]'s value) if set, and
-    /// never Linewright's.
-    pub fn replaying(separate: Option<String>) -> SessionToken {
-        match separate {
-            Some(token) if !token.is_empty() => SessionToken::Separate(token),
+    /// The separate one (`separate` being [`SESSION_TOKEN_VARIABLE`]'s
+    /// value) if set, Linewright's (`linewright`) if not, and none without
+    /// either; empty, a token is unset.
+    pub fn new(linewright: Option<String>, separate: Option<String>) -> SessionToken {
+        match (separate, linewright) {
+            (Some(token), _) if !token.is_empty() => SessionToken::Separate(token),
+            (_, Some(token)) if !token.is_empty() => SessionToken::Linewright(token),
             _ => SessionToken::Withheld,
         }
     }
@@ -227,11 +220,7 @@ impl Factory {
                 .check_reads(token)
                 .await
                 .with_context(|| format!("checking {SESSION_TOKEN_VARIABLE}"))?,
-            SessionToken::Linewright(_) => warn!(
-                "sessions can write to GitHub: they are given Linewright's token; set \
-                 {SESSION_TOKEN_VARIABLE} to a token that only reads to keep them from it"
-            ),
-            SessionToken::Withheld => {}
+            SessionToken::Linewright(_) | SessionToken::Withheld => {}
         }
         let settings = store
             .settings()

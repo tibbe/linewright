@@ -47,7 +47,8 @@ async fn the_merge_method_in_effect_is_logged() {
 }
 
 /// Runs `lw` with `args` and `env`, `path` as its path, a runtime directory
-/// of its own and the web UI on a port the system chooses. Returns whether
+/// of its own, the web UI on a port the system chooses and none of GitHub's
+/// tokens but `env`'s. Returns whether
 /// it succeeded and what it wrote to stderr.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let (status, stderr) = lw_with_status(path, args, env);
@@ -68,6 +69,9 @@ fn lw_with_status(
         .env("XDG_RUNTIME_DIR", dir.path())
         .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
+        .env_remove("GH_TOKEN")
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("LINEWRIGHT_SESSION_GITHUB_TOKEN")
         .envs(env.iter().copied())
         .output()
         .unwrap();
@@ -782,44 +786,70 @@ async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
     assert_eq!(log.lines("WARN"), Vec::<String>::new());
 }
 
-#[test_log::test(tokio::test)]
-async fn sessions_given_linewrights_token_are_warned_of_at_startup() {
-    let (log, _guard) = Log::capture();
+#[test_log::test]
+fn sessions_given_linewrights_token_are_warned_of_at_startup() {
+    let bin = tempfile::tempdir().unwrap();
+    fake_claude(bin.path(), "Done.");
+    link_from_path(bin.path(), "git");
+    link_from_path(bin.path(), "bash");
 
-    World::start(Repository::default(), |config| {
-        config.session_token = SessionToken::Linewright("linewright-token".into());
-    })
-    .await
-    .unwrap();
-
-    let warnings = log.lines("WARN");
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(
-        warnings[0].contains("sessions can write to GitHub"),
-        "{}",
-        warnings[0]
+    let (_, linewrights) = lw(
+        bin.path(),
+        &["--repo", "owner/name", "once"],
+        &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
     );
+    let (_, separate) = lw(
+        bin.path(),
+        &["--repo", "owner/name", "once"],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token"),
+            GITHUB_UNREACHABLE,
+        ],
+    );
+
+    let warnings: Vec<&str> = linewrights
+        .lines()
+        .filter(|line| line.contains("sessions can write to GitHub"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{linewrights}");
     assert!(
         warnings[0].contains("LINEWRIGHT_SESSION_GITHUB_TOKEN"),
         "{}",
         warnings[0]
     );
+    assert!(
+        !separate.contains("sessions can write to GitHub"),
+        "{separate}"
+    );
 }
 
 #[test_log::test]
 fn sessions_are_given_the_separate_token_never_linewrights() {
-    let session_token = SessionToken::new("linewright-token".into(), Some("session-token".into()));
+    let session_token = SessionToken::new(
+        Some("linewright-token".into()),
+        Some("session-token".into()),
+    );
 
     assert_eq!(session_token.given(), Some("session-token"));
 }
 
 #[test_log::test]
 fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights() {
-    let unset = SessionToken::new("linewright-token".into(), None);
-    let empty = SessionToken::new("linewright-token".into(), Some(String::new()));
+    let unset = SessionToken::new(Some("linewright-token".into()), None);
+    let empty = SessionToken::new(Some("linewright-token".into()), Some(String::new()));
 
     assert_eq!(unset.given(), Some("linewright-token"));
     assert_eq!(empty.given(), Some("linewright-token"));
+}
+
+#[test_log::test]
+fn without_either_token_sessions_are_given_none() {
+    let unset = SessionToken::new(None, None);
+    let empty = SessionToken::new(Some(String::new()), Some(String::new()));
+
+    assert_eq!(unset.given(), None);
+    assert_eq!(empty.given(), None);
 }
 
 #[test_log::test]

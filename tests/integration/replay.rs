@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use common::*;
 use linewright::case::{self, Case, CaseName};
 use linewright::domain::Number;
-use linewright::factory::{FactoryConfig, SessionToken};
+use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
 use linewright::reconcile::WorkKind;
 use linewright::replay::{self, OutputRefusal};
@@ -497,17 +497,6 @@ fn an_output_that_holds_anything_is_refused_and_a_missing_one_is_made() {
     assert_eq!(entries(&missing), Vec::<String>::new());
 }
 
-#[test_log::test]
-fn a_replays_sessions_get_the_separate_token_or_none() {
-    let separate = SessionToken::replaying(Some("sessions-token".into()));
-    let empty = SessionToken::replaying(Some(String::new()));
-    let unset = SessionToken::replaying(None);
-
-    assert_eq!(separate.given(), Some("sessions-token"));
-    assert_eq!(empty.given(), None);
-    assert_eq!(unset.given(), None);
-}
-
 /// Runs `lw` with `args`, `bin` as its path and `work` as its work
 /// directory, from a directory of its own, with neither GitHub's tokens nor
 /// `repo` set but as `env` sets them.
@@ -565,7 +554,7 @@ fn bin_triaging() -> tempfile::TempDir {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_replay_reads_no_github_token_and_gives_sessions_none_with_repo_set_or_unset() {
+async fn lw_replay_gives_sessions_linewrights_token_and_warns_with_repo_set_or_unset() {
     let mut world = World::new().await;
     let (issue, case) = triage_case(&mut world).await;
     let bin = bin_triaging();
@@ -578,7 +567,7 @@ async fn lw_replay_reads_no_github_token_and_gives_sessions_none_with_repo_set_o
         bin.path(),
         work.path(),
         &["replay", case_arg, "--out", unset.to_str().unwrap()],
-        &[],
+        &[("GH_TOKEN", "linewright-token")],
     )
     .await;
     let other_ran = lw_isolated(
@@ -592,15 +581,17 @@ async fn lw_replay_reads_no_github_token_and_gives_sessions_none_with_repo_set_o
             "--out",
             other.to_str().unwrap(),
         ],
-        &[
-            ("GH_TOKEN", "linewright-token"),
-            ("GITHUB_TOKEN", "linewright-token"),
-        ],
+        &[("GITHUB_TOKEN", "linewright-token")],
     )
     .await;
 
     for (ran, out) in [(unset_ran, &unset), (other_ran, &other)] {
         assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+        assert!(
+            ran.stderr.contains("sessions can write to GitHub"),
+            "{}",
+            ran.stderr
+        );
         assert_eq!(
             std::fs::read_to_string(out.join("outcome")).unwrap(),
             "done\n"
@@ -609,15 +600,87 @@ async fn lw_replay_reads_no_github_token_and_gives_sessions_none_with_repo_set_o
         assert!(record.is_file(), "{}", ran.stderr);
     }
     let tokens = std::fs::read_to_string(bin.path().join("tokens.log")).unwrap();
-    assert_eq!(tokens, "GH_TOKEN= GITHUB_TOKEN=\n".repeat(2));
+    assert_eq!(
+        tokens,
+        "GH_TOKEN=linewright-token GITHUB_TOKEN=linewright-token\n".repeat(2)
+    );
+    assert!(work.path().join(REPO).join("replays").is_dir());
+    assert!(!work.path().join("someone").exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_replay_gives_sessions_the_token_for_sessions_in_place_of_linewrights_without_a_warning()
+{
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+
+    let ran = lw_isolated(
+        bin.path(),
+        work.path(),
+        &[
+            "replay",
+            case.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &[
+            ("GH_TOKEN", "linewright-token"),
+            (SESSION_TOKEN_VARIABLE, "sessions-token"),
+        ],
+    )
+    .await;
+
+    assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+    assert!(
+        !ran.stderr.contains("sessions can write to GitHub"),
+        "{}",
+        ran.stderr
+    );
+    let tokens = std::fs::read_to_string(bin.path().join("tokens.log")).unwrap();
+    assert_eq!(
+        tokens,
+        "GH_TOKEN=sessions-token GITHUB_TOKEN=sessions-token\n"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_replay_without_a_github_token_gives_sessions_none_without_a_warning() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+
+    let ran = lw_isolated(
+        bin.path(),
+        work.path(),
+        &[
+            "replay",
+            case.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    )
+    .await;
+
+    assert_eq!(ran.code, Some(0), "{}", ran.stderr);
+    assert!(
+        !ran.stderr.contains("sessions can write to GitHub"),
+        "{}",
+        ran.stderr
+    );
+    let tokens = std::fs::read_to_string(bin.path().join("tokens.log")).unwrap();
+    assert_eq!(tokens, "GH_TOKEN= GITHUB_TOKEN=\n");
     let env = std::fs::read_to_string(bin.path().join("env.log")).unwrap();
     assert!(
         !env.lines()
             .any(|line| line.starts_with("GH_TOKEN=") || line.starts_with("GITHUB_TOKEN=")),
         "{env}"
     );
-    assert!(work.path().join(REPO).join("replays").is_dir());
-    assert!(!work.path().join("someone").exists());
 }
 
 #[test_log::test(tokio::test)]
