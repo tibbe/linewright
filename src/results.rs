@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use jsonschema::error::ValidationErrorKind;
 use jsonschema::{Registry, Resource, ValidationError, Validator};
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::domain::Login;
@@ -456,6 +456,129 @@ impl SpecGaps for PullWorkResult {
     }
 }
 
+/// What a judge answers (`docs/specs/benchmarks.md`, Judging).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum JudgeResult {
+    Judged {
+        correctness: Correctness,
+        leak: Leak,
+    },
+    GaveUp {
+        #[serde(deserialize_with = "trimmed")]
+        reason: String,
+    },
+}
+
+/// Whether a replay's output meets its case's criteria, and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Correctness {
+    #[serde(deserialize_with = "trimmed")]
+    pub reasoning: String,
+    pub verdict: Verdict,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Verdict {
+    /// The output meets every criterion.
+    Pass,
+    Fail,
+}
+
+impl Verdict {
+    pub fn name(self) -> &'static str {
+        match self {
+            Verdict::Pass => "pass",
+            Verdict::Fail => "fail",
+        }
+    }
+}
+
+/// Whether a session of a replay learned how the work turned out, and why:
+/// a leak found always quotes a tool call that shows it. Kept as
+/// `reasoning`, `found` and `calls`, with no calls for a leak not found.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "LeakFields", into = "LeakFields")]
+pub enum Leak {
+    None { reasoning: String },
+    Found { reasoning: String, calls: Calls },
+}
+
+impl Leak {
+    pub fn found(&self) -> bool {
+        matches!(self, Leak::Found { .. })
+    }
+}
+
+/// The tool calls that show a leak, as the transcript has them: at least
+/// one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Calls {
+    first: String,
+    rest: Vec<String>,
+}
+
+impl Calls {
+    pub fn new(first: String, rest: Vec<String>) -> Calls {
+        Calls { first, rest }
+    }
+
+    /// The calls, in the order the judge gave them.
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.first.as_str()).chain(self.rest.iter().map(String::as_str))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct LeakFields {
+    #[serde(deserialize_with = "trimmed")]
+    reasoning: String,
+    found: bool,
+    #[serde(default)]
+    calls: Vec<String>,
+}
+
+impl TryFrom<LeakFields> for Leak {
+    type Error = &'static str;
+
+    fn try_from(fields: LeakFields) -> Result<Leak, &'static str> {
+        let LeakFields {
+            reasoning,
+            found,
+            calls,
+        } = fields;
+        if !found {
+            return Ok(Leak::None { reasoning });
+        }
+        let mut calls = calls.into_iter();
+        let first = calls
+            .next()
+            .ok_or("a leak found quotes at least one call")?;
+        Ok(Leak::Found {
+            reasoning,
+            calls: Calls::new(first, calls.collect()),
+        })
+    }
+}
+
+impl From<Leak> for LeakFields {
+    fn from(leak: Leak) -> LeakFields {
+        match leak {
+            Leak::None { reasoning } => LeakFields {
+                reasoning,
+                found: false,
+                calls: vec![],
+            },
+            Leak::Found { reasoning, calls } => LeakFields {
+                reasoning,
+                found: true,
+                calls: calls.iter().map(str::to_string).collect(),
+            },
+        }
+    }
+}
+
 /// A result type and the JSON Schema its session's result matches
 /// (docs/specs/runs.md, "Contract").
 pub trait Contract: DeserializeOwned {
@@ -482,7 +605,11 @@ impl Contract for AutomationResult {
     const SCHEMA: ResultSchema = ResultSchema::Automation;
 }
 
-/// A stage's result schema in `briefs/results/`.
+impl Contract for JudgeResult {
+    const SCHEMA: ResultSchema = ResultSchema::Judge;
+}
+
+/// A stage's result schema in `briefs/results/`, or the judge's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSchema {
     Triage,
@@ -490,15 +617,17 @@ pub enum ResultSchema {
     Implement,
     PullRequest,
     Automation,
+    Judge,
 }
 
 impl ResultSchema {
-    const ALL: [ResultSchema; 5] = [
+    const ALL: [ResultSchema; 6] = [
         ResultSchema::Triage,
         ResultSchema::DesignIssue,
         ResultSchema::Implement,
         ResultSchema::PullRequest,
         ResultSchema::Automation,
+        ResultSchema::Judge,
     ];
 
     /// Its file name and text, as the spec's file holds them.
@@ -523,6 +652,10 @@ impl ResultSchema {
             ResultSchema::Automation => (
                 "automation.schema.json",
                 include_str!("../briefs/results/automation.schema.json"),
+            ),
+            ResultSchema::Judge => (
+                "judge.schema.json",
+                include_str!("../briefs/results/judge.schema.json"),
             ),
         }
     }
@@ -823,6 +956,85 @@ mod tests {
         assert!(
             matches!(result, Ok(ImplementResult::Done { .. })),
             "{result:?}"
+        );
+    }
+
+    fn judged(leak: &Value) -> Value {
+        json!({
+            "outcome": "judged",
+            "correctness": {"reasoning": "It triages the issue.", "verdict": "pass"},
+            "leak": leak,
+        })
+    }
+
+    #[test_log::test]
+    fn a_judgement_with_a_found_leak_keeps_the_calls_that_show_it() {
+        let result = parse::<JudgeResult>(
+            &judged(&json!({
+                "reasoning": "It read the pull request.",
+                "found": true,
+                "calls": ["curl https://github.com/owner/widgets/pull/8"]
+            }))
+            .to_string(),
+        );
+
+        assert_eq!(
+            result,
+            Ok(JudgeResult::Judged {
+                correctness: Correctness {
+                    reasoning: "It triages the issue.".into(),
+                    verdict: Verdict::Pass,
+                },
+                leak: Leak::Found {
+                    reasoning: "It read the pull request.".into(),
+                    calls: Calls::new(
+                        "curl https://github.com/owner/widgets/pull/8".into(),
+                        vec![]
+                    ),
+                },
+            })
+        );
+    }
+
+    #[test_log::test]
+    fn a_found_leak_without_a_call_is_sent_back() {
+        for leak in [
+            json!({"reasoning": "It read the pull request.", "found": true}),
+            json!({"reasoning": "It read the pull request.", "found": true, "calls": []}),
+        ] {
+            let error = rejected::<JudgeResult>(&judged(&leak));
+
+            assert!(error.contains("/leak"), "{error}");
+        }
+    }
+
+    #[test_log::test]
+    fn a_judgement_with_no_leak_needs_no_calls() {
+        let result = parse::<JudgeResult>(
+            &judged(&json!({"reasoning": "It read only the issue.", "found": false})).to_string(),
+        );
+
+        assert!(
+            matches!(
+                &result,
+                Ok(JudgeResult::Judged { leak: Leak::None { reasoning }, .. })
+                    if reasoning == "It read only the issue."
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test_log::test]
+    fn a_judge_that_gives_up_says_why() {
+        let result = parse::<JudgeResult>(
+            &json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string(),
+        );
+
+        assert_eq!(
+            result,
+            Ok(JudgeResult::GaveUp {
+                reason: "The output is empty.".into()
+            })
         );
     }
 
