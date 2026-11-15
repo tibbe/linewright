@@ -7,6 +7,9 @@ use serde_json::json;
 /// The run page of #1's implement run.
 const RUN_PAGE: &str = "/runs/1/implement-1";
 
+/// Criteria a capture is given.
+const CRITERIA: &str = "A good result ships gh.\n";
+
 /// What run 1 recorded of its input.
 enum Recorded {
     Nothing,
@@ -84,7 +87,9 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
     assert_eq!(form.attr("hx-post"), Some(RUN_PAGE));
     let name = select_in(form, "input[name=name]");
     assert_eq!(name[0].attr("value"), Some("1-implement-1"));
-    assert_eq!(select_in(form, "textarea[name=criteria]").len(), 1);
+    let criteria = select_in(form, "textarea[name=criteria]");
+    assert_eq!(criteria.len(), 1);
+    assert!(criteria[0].attr("required").is_some());
 }
 
 #[test_log::test(tokio::test)]
@@ -101,7 +106,7 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
     let pages = implemented(Recorded::WithoutProperties).await;
 
     let html = pages.page(RUN_PAGE).await;
-    let (status, answer) = submit(&pages, "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert!(capture_form(&html).is_none());
     assert_eq!(status, 422);
@@ -202,21 +207,25 @@ async fn submitting_the_form_writes_the_case_and_says_where() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_without_criteria_writes_none() {
+async fn a_capture_with_blank_criteria_is_refused_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit(&pages, "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", " \n\t\n").await;
 
-    assert_eq!(status, 200, "{}", said(&answer));
-    assert!(!pages.path("cases/gadgets/criteria.md").exists());
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: the criteria are required: what a good result is, not only white space"
+    );
+    assert_eq!(cases(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
 async fn a_taken_name_is_refused_and_says_so() {
     let pages = implemented(Recorded::Whole).await;
-    submit(&pages, "gadgets", "").await;
+    submit(&pages, "gadgets", CRITERIA).await;
 
-    let (status, answer) = submit(&pages, "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(
@@ -229,7 +238,7 @@ async fn a_taken_name_is_refused_and_says_so() {
 async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit(&pages, "../Gadgets", "").await;
+    let (status, answer) = submit(&pages, "../Gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(
@@ -245,7 +254,7 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
     let missing = "0123456789abcdef0123456789abcdef01234567";
     record_input(&pages, missing, Some(properties()));
 
-    let (status, answer) = submit(&pages, "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert_eq!(status, 500);
     let said = said(&answer);
@@ -258,7 +267,13 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
 async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, _) = post(&pages, &[("sec-fetch-site", "cross-site")], "gadgets", "").await;
+    let (status, _) = post(
+        &pages,
+        &[("sec-fetch-site", "cross-site")],
+        "gadgets",
+        CRITERIA,
+    )
+    .await;
 
     assert_eq!(status, 403);
     assert_eq!(cases(&pages), Vec::<String>::new());
@@ -280,7 +295,7 @@ async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
             .attr("disabled")
             .is_some()
     );
-    let (status, answer) = submit(&pages, "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
     assert_eq!(status, 503);
     assert_eq!(
         said(&answer),

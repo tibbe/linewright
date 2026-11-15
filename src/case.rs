@@ -66,6 +66,27 @@ impl fmt::Display for CaseName {
     }
 }
 
+/// What a good result is, in the capturer's words: text holding something
+/// other than white space, for criteria that hold only white space are no
+/// criteria (`docs/specs/benchmarks.md`, "Cases").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Criteria(String);
+
+impl Criteria {
+    /// `text` as criteria, or none when it holds only white space.
+    pub fn parse(text: &str) -> Option<Criteria> {
+        (!text.trim().is_empty()).then(|| Criteria(text.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Why a capture given blank criteria is refused.
+pub const CRITERIA_REQUIRED: &str =
+    "the criteria are required: what a good result is, not only white space";
+
 /// A part of a case (`docs/specs/benchmarks.md`, "Cases").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CasePart {
@@ -279,7 +300,7 @@ pub fn capturable(
 pub async fn capture(
     store: &dyn Store,
     capturable: Capturable,
-    criteria: Option<&str>,
+    criteria: &Criteria,
 ) -> Result<PathBuf, CaptureError> {
     let Capturable {
         run:
@@ -311,9 +332,7 @@ pub async fn capture(
     write("case.json", &json(&case)?)?;
     write("items.json", &json(&input.items)?)?;
     write("properties.json", &json(&input.properties)?)?;
-    if let Some(criteria) = criteria {
-        write("criteria.md", criteria.as_bytes())?;
-    }
+    write("criteria.md", criteria.as_str().as_bytes())?;
     store
         .fetch_commits(&building.path().join("repository.git"), &input.heads)
         .await?;
@@ -399,14 +418,14 @@ pub struct Case {
     properties: Properties,
     heads: BTreeMap<String, CommitId>,
     repository: PathBuf,
-    criteria: Option<String>,
+    criteria: Criteria,
 }
 
 impl Case {
     /// Opens the case in the directory `dir`, refusing it when it lacks a
-    /// part other than its criteria or holds a part that does not read,
-    /// such as a merge commit its repository lacks, or an item or default
-    /// branch it lacks.
+    /// part or holds a part that does not read, such as blank criteria, a
+    /// merge commit its repository lacks, or an item or default branch it
+    /// lacks.
     pub async fn open(dir: &Path) -> Result<Case, CaseRefusal> {
         let dir = &std::path::absolute(dir)
             .map_err(|e| refusal(CasePart::Stage, format!("{}: {e}", dir.display())))?;
@@ -431,13 +450,16 @@ impl Case {
                 format!("they lack the case's item {}", file.item),
             ));
         }
-        let criteria = match std::fs::read(dir.join("criteria.md")) {
-            Ok(bytes) => Some(String::from_utf8(bytes).map_err(|_| {
-                refusal(CasePart::Criteria, "criteria.md is not UTF-8".to_string())
-            })?),
-            Err(e) if e.kind() == ErrorKind::NotFound => None,
-            Err(e) => return Err(refusal(CasePart::Criteria, format!("criteria.md: {e}"))),
-        };
+        let criteria = std::fs::read(dir.join("criteria.md"))
+            .map_err(|e| refusal(CasePart::Criteria, format!("criteria.md: {e}")))?;
+        let criteria = String::from_utf8(criteria)
+            .map_err(|_| refusal(CasePart::Criteria, "criteria.md is not UTF-8".to_string()))?;
+        let criteria = Criteria::parse(&criteria).ok_or_else(|| {
+            refusal(
+                CasePart::Criteria,
+                "criteria.md holds only white space".to_string(),
+            )
+        })?;
         Ok(Case {
             stage: file.stage,
             item: file.item,
@@ -489,8 +511,9 @@ impl Case {
         &self.repository
     }
 
-    pub fn criteria(&self) -> Option<&str> {
-        self.criteria.as_deref()
+    /// What a good result is, in the capturer's words.
+    pub fn criteria(&self) -> &Criteria {
+        &self.criteria
     }
 }
 
@@ -743,6 +766,19 @@ mod tests {
             "gädgets",
         ] {
             assert!(name.parse::<CaseName>().is_err(), "{name:?}");
+        }
+    }
+
+    #[test_log::test]
+    fn criteria_hold_something_other_than_white_space() {
+        for text in ["A good result adds gadgets.\n", "  x  ", "\n\t-\n"] {
+            assert_eq!(
+                Criteria::parse(text).map(|c| c.as_str().to_string()),
+                Some(text.into())
+            );
+        }
+        for text in ["", " ", "\n\t \r\n", "\u{a0}\u{2003}"] {
+            assert!(Criteria::parse(text).is_none(), "{text:?}");
         }
     }
 

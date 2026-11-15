@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use common::*;
-use linewright::case::{self, Case, CaseName};
+use linewright::case::{self, Case, CaseName, Criteria};
 use linewright::domain::Number;
 use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
@@ -68,7 +68,9 @@ async fn case_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
         &CaseName::suggested(&id),
     )
     .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
-    case::capture(&*world.store, capturable, None)
+    let criteria = Criteria::parse("It triages the issue.\n")
+        .unwrap_or_else(|| panic!("blank criteria at {caller}"));
+    case::capture(&*world.store, capturable, &criteria)
         .await
         .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"))
 }
@@ -583,6 +585,38 @@ async fn without_linewrights_token_lw_replay_exits_1_naming_its_variables_and_ru
     assert!(ran.stderr.contains("GITHUB_TOKEN"), "{}", ran.stderr);
     assert!(!bin.path().join("tokens.log").exists());
     assert!(!out.exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_replay_refuses_a_case_without_criteria_naming_them() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    std::fs::remove_file(case.join("criteria.md")).unwrap();
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+
+    let ran = lw_isolated(
+        bin.path(),
+        work.path(),
+        &[
+            "replay",
+            case.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        &[],
+    )
+    .await;
+
+    assert_eq!(ran.code, Some(1), "{}", ran.stderr);
+    assert!(
+        ran.stderr
+            .contains("the case cannot be replayed: the case's criteria: "),
+        "{}",
+        ran.stderr
+    );
+    assert!(!bin.path().join("tokens.log").exists());
 }
 
 #[test_log::test(tokio::test)]

@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::html::{self, Html};
 use super::run_path;
 use crate::api::Sources;
-use crate::case::{self, CaptureError, CaseName, Refusal};
+use crate::case::{self, CRITERIA_REQUIRED, CaptureError, CaseName, Criteria, Refusal};
 use crate::runs::{RunId, Runs};
 
 /// The run page's offer to capture its run as a case.
@@ -44,7 +44,7 @@ impl Offer {
         let path = html::escape(&run_path(&self.run));
         let name = html::escape(CaseName::suggested(&self.run).as_str());
         html::built(format!(
-            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Capture as a case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="[a-z0-9\-]+" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
+            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Capture as a case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="[a-z0-9\-]+" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
             ready = Offer::ready_html(sources),
         ))
     }
@@ -119,7 +119,9 @@ pub(super) async fn capture(
         Ok(name) => name,
         Err(error) => return said_not(StatusCode::UNPROCESSABLE_ENTITY, &error),
     };
-    let criteria = criteria_given(&form.criteria);
+    let Some(criteria) = Criteria::parse(&form.criteria) else {
+        return said_not(StatusCode::UNPROCESSABLE_ENTITY, CRITERIA_REQUIRED);
+    };
     let Some(served) = sources.served.borrow().clone() else {
         return said_not(StatusCode::SERVICE_UNAVAILABLE, NOT_POLLED);
     };
@@ -130,7 +132,7 @@ pub(super) async fn capture(
         &run,
         &name,
     ) {
-        Ok(capturable) => case::capture(served.store(), capturable, criteria).await,
+        Ok(capturable) => case::capture(served.store(), capturable, &criteria).await,
         Err(e) => Err(e),
     };
     match captured {
@@ -149,11 +151,6 @@ pub(super) async fn capture(
             said_not(status_of(&e), &why)
         }
     }
-}
-
-/// The criteria the form's `criteria` field gives: none when it is blank.
-fn criteria_given(field: &str) -> Option<&str> {
-    Some(field).filter(|field| !field.trim().is_empty())
 }
 
 /// The status a capture that did not happen for `e` is answered with.
