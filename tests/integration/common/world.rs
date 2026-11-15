@@ -10,9 +10,9 @@ use linewright::domain::{
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::run::subject_name;
 use linewright::runs::{Ending, Runs, State};
 use linewright::secrets::Secrets;
+use linewright::session::subject_name;
 use linewright::spec_glob::SpecGlob;
 use linewright::status::{FailedPolls, Polling, View};
 use linewright::store::Store;

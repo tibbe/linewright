@@ -1,98 +1,70 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use chrono::TimeDelta;
-use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::apply::filing::{self, AlreadyFiled, NewTicket, spec_gap_issues};
 use crate::apply::hand_back::{
-    self, FollowUps, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail,
-    NothingToBuild, SendBack, Stopped, TryAgain,
+    self, HandBack, HandBackWrites, HandedBack, Implementing, Kept, LogTail, NothingToBuild,
+    Stopped, TryAgain,
 };
 use crate::apply::pull_work::{self, PullJob, PullWorkWrites, feedback_people, late};
 use crate::apply::triage::{self, CategoryChange};
 use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
-use crate::bash_command;
 use crate::briefs::{Briefs, OperatorPrompts};
-use crate::clock::Clock;
-use crate::clones::{CloneDir, Clones};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
     Timestamp, Windows, label,
 };
-use crate::environment;
 use crate::git::{self, CommitId, WorkState};
-use crate::harness::{
-    GhReach, Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
-};
+use crate::harness::{NextTurn, Purpose, Turn, UsageLimit};
 use crate::input;
 use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
-use crate::redaction::Redaction;
 use crate::repo_files::RepoLayer;
 use crate::results::{
     self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
     SpecGap, SpecGaps, TriageResult,
 };
-use crate::runs::{Ending, Running, Runs, SessionRecorder};
-use crate::secrets::{Held, Secrets};
+use crate::runs::{Ending, Running, Runs};
+use crate::secrets::Held;
+use crate::session::{
+    Cancellation, Failure, Refused, Rejection, SessionCtx, Sessions, Workspace, converse, infra,
+    lock_set_whole, open_on_default_branch, open_session, parse_retry, record_end,
+};
 use crate::spec_gap::{self, FiledGaps};
 use crate::spec_glob::SpecGlob;
-use crate::store::{
-    AnyItem, AttachError, FoundSecrets, Identity, PushError, PushMode, RepoSettings, Store,
-};
+use crate::store::{AnyItem, AttachError, FoundSecrets, PushError, PushMode, RepoSettings, Store};
 use crate::tracking::FiledTicket;
-use crate::transcript::{self, MaintenanceStatus};
-use crate::work_settings::{
-    Environments, Maintenance, MaintenanceCommand, RunKind, SessionSettings, WorkSettings,
-};
+use crate::work_settings::{Environments, RunKind, SessionSettings, WorkSettings};
 use crate::working_pull::feedback;
 
 pub(crate) struct Shell {
-    pub store: Arc<dyn Store>,
-    pub harness: Arc<dyn Harness>,
-    /// The `bash` that runs the maintenance command.
-    pub bash: PathBuf,
-    pub clock: Arc<dyn Clock>,
+    pub sessions: Sessions,
     pub policy: Policy,
     /// The operator's settings for sessions.
     pub work: WorkSettings,
     pub environments: Environments,
     /// The operator's layer of the prompts.
     pub operator_prompts: OperatorPrompts,
-    pub identity: Identity,
     pub settings: RepoSettings,
-    pub result_retries: u32,
     pub work_dir: PathBuf,
     pub runs: Runs,
-    pub waits_out_usage_limit: bool,
     /// Whether a triage, design or implement run records its input.
     pub records_input: bool,
-    pub secrets: Secrets,
-    pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
-    /// What each session's clone starts from.
-    pub environment: environment::Source,
-    pub clones: Clones,
-    /// How the `gh` of each session and maintenance command reaches GitHub.
-    pub gh: GhReach,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
     _by_new: (),
 }
 
 /// What a [`Shell`] is put together from.
 pub(crate) struct ShellParts {
-    pub store: Arc<dyn Store>,
-    pub harness: Arc<dyn Harness>,
-    /// The `bash` that runs the maintenance command.
-    pub bash: PathBuf,
-    pub clock: Arc<dyn Clock>,
+    pub sessions: Sessions,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
     pub done_window: TimeDelta,
@@ -108,21 +80,11 @@ pub(crate) struct ShellParts {
     pub environments: Environments,
     /// The operator's layer of the prompts.
     pub operator_prompts: OperatorPrompts,
-    pub identity: Identity,
     pub settings: RepoSettings,
-    pub result_retries: u32,
     pub work_dir: PathBuf,
     pub runs: Runs,
-    pub waits_out_usage_limit: bool,
     /// Whether a triage, design or implement run records its input.
     pub records_input: bool,
-    pub secrets: Secrets,
-    pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
-    /// What each session's clone starts from.
-    pub environment: environment::Source,
-    pub clones: Clones,
-    /// How the `gh` of each session and maintenance command reaches GitHub.
-    pub gh: GhReach,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -154,7 +116,7 @@ impl Shell {
     pub(crate) fn new(parts: ShellParts) -> Shell {
         Shell {
             policy: Policy {
-                linewright: parts.identity.login.clone(),
+                linewright: parts.sessions.identity.login.clone(),
                 spec_glob: parts.spec_glob,
                 spec_lookback: parts.spec_lookback,
                 done_window: parts.done_window,
@@ -166,25 +128,14 @@ impl Shell {
                 auto_merge: parts.auto_merge,
                 require_label: parts.require_label,
             },
-            store: parts.store,
-            harness: parts.harness,
-            bash: parts.bash,
-            clock: parts.clock,
+            sessions: parts.sessions,
             work: parts.work,
             environments: parts.environments,
             operator_prompts: parts.operator_prompts,
-            identity: parts.identity,
             settings: parts.settings,
-            result_retries: parts.result_retries,
             work_dir: parts.work_dir,
             runs: parts.runs,
-            waits_out_usage_limit: parts.waits_out_usage_limit,
             records_input: parts.records_input,
-            secrets: parts.secrets,
-            report_refusal: parts.report_refusal,
-            environment: parts.environment,
-            clones: parts.clones,
-            gh: parts.gh,
             _by_new: (),
         }
     }
@@ -212,7 +163,7 @@ impl Shell {
         let Some(name) = &self.policy.require_label else {
             return Ok(None);
         };
-        if self.store.label_exists(name).await? {
+        if self.sessions.store.label_exists(name).await? {
             return Ok(Some(name.clone()));
         }
         warn!(
@@ -235,22 +186,6 @@ impl Shell {
     }
 }
 
-enum Failure {
-    Infrastructure {
-        error: anyhow::Error,
-        /// What the hand-back adds after the reason.
-        note: String,
-    },
-    HandBack(HandBack),
-    Apply {
-        error: anyhow::Error,
-        /// What the hand-back adds after the reason.
-        note: String,
-    },
-    Cancelled,
-    UsageLimit(UsageLimit),
-}
-
 /// What a run works with, from its start to its end.
 pub(crate) struct Ctx {
     pub(crate) with: RunWith,
@@ -261,127 +196,19 @@ pub(crate) struct Ctx {
     pub(crate) run: Running,
 }
 
-/// A run's cancellation, which only a run in session takes: a cancelled run
-/// posts nothing more (docs/specs/runs.md, "Cancelling"), and one that has
-/// begun applying its result applies all of it, unless none of it was applied
-/// and it goes back to its session.
-#[derive(Clone, Default)]
-pub(crate) struct Cancellation(Arc<Cancel>);
-
-#[derive(Default)]
-struct Cancel {
-    /// Fired once the phase is cancelled.
-    token: CancellationToken,
-    phase: Mutex<Phase>,
-}
-
-#[derive(Clone, Copy, Default)]
-enum Phase {
-    #[default]
-    InSession,
-    /// Applying its result; `stop` holds a cancel that came meanwhile.
-    Applying {
-        stop: bool,
-    },
-    Cancelled,
-}
-
-impl Cancellation {
-    /// Cancels the run unless it is applying its result, and returns whether
-    /// the run is cancelled. A cancel while applying is kept for
-    /// [`Self::back_to_session`].
-    pub(crate) fn cancel(&self) -> bool {
-        let mut phase = self.phase();
-        match *phase {
-            Phase::InSession => {
-                *phase = Phase::Cancelled;
-                self.0.token.cancel();
-                true
-            }
-            Phase::Applying { .. } => {
-                *phase = Phase::Applying { stop: true };
-                false
-            }
-            Phase::Cancelled => true,
-        }
-    }
-
-    /// Begins applying the result, unless the run was cancelled first.
-    fn begin_applying(&self) -> Result<(), Failure> {
-        let mut phase = self.phase();
-        match *phase {
-            Phase::InSession => {
-                *phase = Phase::Applying { stop: false };
-                Ok(())
-            }
-            Phase::Applying { .. } => Ok(()),
-            Phase::Cancelled => Err(Failure::Cancelled),
-        }
-    }
-
-    /// Returns to the session, nothing of the result applied: the run is
-    /// cancelled then if a cancel came while it was applying.
-    fn back_to_session(&self) -> Result<(), Failure> {
-        let mut phase = self.phase();
-        match *phase {
-            Phase::InSession | Phase::Applying { stop: false } => {
-                *phase = Phase::InSession;
-                Ok(())
-            }
-            Phase::Applying { stop: true } | Phase::Cancelled => {
-                *phase = Phase::Cancelled;
-                self.0.token.cancel();
-                Err(Failure::Cancelled)
-            }
-        }
-    }
-
-    async fn cancelled(&self) {
-        self.0.token.cancelled().await;
-    }
-
-    fn phase(&self) -> std::sync::MutexGuard<'_, Phase> {
-        lock_set_whole(&self.0.phase)
-    }
-}
-
-impl Failure {
-    /// Adds `note` to what the failure's hand-back says. A cancelled run and
-    /// one that ends for the usage limit post nothing, so they take none.
-    fn noted(self, note: &str) -> Failure {
-        match self {
-            Failure::Infrastructure {
-                error,
-                note: before,
-            } => Failure::Infrastructure {
-                error,
-                note: before + note,
-            },
-            Failure::Apply {
-                error,
-                note: before,
-            } => Failure::Apply {
-                error,
-                note: before + note,
-            },
-            Failure::HandBack(hand_back) => Failure::HandBack(HandBack {
-                reason: hand_back.reason + note,
-                ..hand_back
-            }),
-            failure @ (Failure::Cancelled | Failure::UsageLimit(_)) => failure,
+impl Ctx {
+    /// What the run's sessions work with.
+    pub(crate) fn session(&self) -> SessionCtx<'_> {
+        SessionCtx {
+            with: &self.with,
+            cancel: &self.cancel,
+            records: &self.run,
         }
     }
 }
 
 fn apply(error: anyhow::Error) -> Failure {
     Failure::Apply {
-        error,
-        note: String::new(),
-    }
-}
-
-fn infra(error: anyhow::Error) -> Failure {
-    Failure::Infrastructure {
         error,
         note: String::new(),
     }
@@ -406,10 +233,10 @@ async fn push(
     branch: &str,
     mode: PushMode,
 ) -> Pushed {
-    match shell.store.push(dir, commit, branch, mode).await {
+    match shell.sessions.store.push(dir, commit, branch, mode).await {
         Ok(()) => Pushed::Done,
         Err(PushError::PushProtection { secrets }) => {
-            Pushed::Protected(secrets.redacted(shell.secrets.redaction()))
+            Pushed::Protected(secrets.redacted(shell.sessions.secrets.redaction()))
         }
         Err(PushError::MissingPermission { reason }) => Pushed::Refused(reason),
         Err(PushError::Failed(e)) => Pushed::Failed(e),
@@ -466,11 +293,11 @@ async fn record_input(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx
         return;
     };
     let start = ctx.run.in_flight().started_at;
-    let recorded = input::record(&*shell.store, &wanted, start)
+    let recorded = input::record(&*shell.sessions.store, &wanted, start)
         .await
         .and_then(|input| ctx.run.record_input(&input));
     if let Err(e) = recorded {
-        let error = shell.secrets.redaction().apply(&format!("{e:#}"));
+        let error = shell.sessions.secrets.redaction().apply(&format!("{e:#}"));
         warn!(run = %ctx.run.id(), error, "recording the run's input failed; it goes on without");
     }
 }
@@ -483,7 +310,7 @@ pub(crate) async fn run(
     ctx: Ctx,
 ) -> Ending {
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
-    ctx.run.end(shell.clock.now(), ending);
+    ctx.run.end(shell.sessions.clock.now(), ending);
     ending
 }
 
@@ -501,7 +328,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 if hand_back::retries_infrastructure_failure(retries) =>
             {
                 retries += 1;
-                let error = shell.secrets.redaction().apply(&format!("{e:#}"));
+                let error = shell.sessions.secrets.redaction().apply(&format!("{e:#}"));
                 if ctx.cancel.back_to_session().is_err() {
                     info!(subject = ?subject, error, "run cancelled; not retried");
                     return Ending::Cancelled;
@@ -545,6 +372,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
     let work_dir = shell.work_dir.to_string_lossy().into_owned();
     let posted = |text: &str| {
         shell
+            .sessions
             .secrets
             .redaction()
             .apply(text)
@@ -626,7 +454,7 @@ async fn snapshot_or_store_issue<'a>(
     if let Some(issue) = snapshot.issue(number) {
         return Ok(Cow::Borrowed(issue));
     }
-    match shell.store.any_item(number).await.map_err(infra)? {
+    match shell.sessions.store.any_item(number).await.map_err(infra)? {
         Some(
             AnyItem::HeldIssue(issue)
             | AnyItem::LeftOutIssue(issue)
@@ -661,6 +489,7 @@ async fn spec_change_and_diff(
     spec_change: Number,
 ) -> Result<SpecChangeAndDiff, Failure> {
     let pr = shell
+        .sessions
         .store
         .merged_pull(spec_change, Windows::EVER)
         .await
@@ -676,12 +505,12 @@ async fn spec_change_and_diff(
 
 /// Whether the pull request is open and Linewright still works it.
 async fn still_worked(shell: &Shell, pr: Number) -> Result<bool> {
-    let pull = shell.store.pull(pr).await?;
+    let pull = shell.sessions.store.pull(pr).await?;
     Ok(stopped(&pull, &shell.policy.linewright).is_none())
 }
 
 async fn still_open(shell: &Shell, pr: Number) -> Result<bool> {
-    Ok(shell.store.pull(pr).await?.is_open())
+    Ok(shell.sessions.store.pull(pr).await?.is_open())
 }
 
 /// Why work on the pull request stopped while the run worked, if it did.
@@ -760,751 +589,8 @@ async fn write_hand_back(
 ) -> Result<()> {
     let HandBackWrites { comment, asks } =
         hand_back::hand_back(item, hand_back, &shell.policy.linewright);
-    shell.store.comment(n, &comment).await?;
-    ask(&*shell.store, n, &asks).await
-}
-
-/// A run's clone, removed when dropped.
-struct Workspace {
-    /// What the maintenance command left running, ended before the clone is
-    /// removed.
-    leftovers: Option<bash_command::Leftovers>,
-    clone_dir: CloneDir,
-    dir: PathBuf,
-    scratch: PathBuf,
-    plugin: PathBuf,
-}
-
-impl Workspace {
-    /// A session's clone in `clone_dir`: a copy of the environment with
-    /// `branch` checked out in it, or a plain clone of `branch` without an
-    /// environment (docs/specs/sessions.md, Environment, "A session's clone").
-    async fn make(shell: &Shell, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
-        let Some(lease) = shell.environment.lease() else {
-            return Workspace::clone_in(shell, clone_dir, branch).await;
-        };
-        Workspace::create(shell, clone_dir, async |dir| {
-            lease.copy_to(dir).await?;
-            drop(lease);
-            git::configure(dir, &[KEEPS_REFLOGS]).await?;
-            shell
-                .store
-                .fetch(dir)
-                .await
-                .context("fetching into the copy of the environment")?;
-            git::check_out_fresh(dir, branch).await
-        })
-        .await
-    }
-
-    /// A run's own clone of `branch`, for work that needs no session.
-    async fn clone(shell: &Shell, purpose: &Purpose, branch: &str) -> Result<Workspace> {
-        Workspace::clone_in(shell, Workspace::clone_dir(shell, purpose).await?, branch).await
-    }
-
-    /// A plain clone of `branch` in `clone_dir`.
-    async fn clone_in(shell: &Shell, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
-        Workspace::create(shell, clone_dir, async |dir| {
-            shell.store.clone_repo(dir, branch, &[KEEPS_REFLOGS]).await
-        })
-        .await
-    }
-
-    /// The directory a clone for `purpose` is made in, its repository in
-    /// [`Workspace::repo_in`].
-    async fn clone_dir(shell: &Shell, purpose: &Purpose) -> Result<CloneDir> {
-        shell.clones.make(&purpose_name(purpose)).await
-    }
-
-    /// Where the repository of a clone made in `clone_dir` is.
-    fn repo_in(clone_dir: &Path) -> PathBuf {
-        clone_dir.join("repo")
-    }
-
-    /// A new workspace in `clone_dir`, whose repository `fill` makes at the
-    /// path it is given, which does not exist yet. The repository is then
-    /// given [`clone_config`], and the workspace a scratch directory and
-    /// Linewright's plugin.
-    async fn create(
-        shell: &Shell,
-        clone_dir: CloneDir,
-        fill: impl AsyncFnOnce(&Path) -> Result<()>,
-    ) -> Result<Workspace> {
-        let dir = Workspace::repo_in(clone_dir.path());
-        fill(&dir).await?;
-        git::configure(&dir, &clone_config(shell)).await?;
-        let scratch = clone_dir.path().join("tmp");
-        tokio::fs::create_dir(&scratch)
-            .await
-            .context("creating a scratch directory")?;
-        let plugin = clone_dir.path().join("plugin");
-        Briefs::write_plugin(&plugin).context("writing Linewright's plugin")?;
-        Ok(Workspace {
-            leftovers: None,
-            clone_dir,
-            dir,
-            scratch,
-            plugin,
-        })
-    }
-}
-
-/// The git setting that has a run's clone log its branch's updates from
-/// its checkout on, whatever the environment or the host's git config say.
-const KEEPS_REFLOGS: (&str, &str) = ("core.logAllRefUpdates", "true");
-
-/// The git settings of every clone a run makes: Linewright's identity, and
-/// no maintenance git starts by itself.
-fn clone_config(shell: &Shell) -> [(&str, &str); 3] {
-    [
-        ("user.name", shell.identity.name.as_str()),
-        ("user.email", shell.identity.email.as_str()),
-        ("maintenance.auto", "false"),
-    ]
-}
-
-impl Drop for Workspace {
-    fn drop(&mut self) {
-        if let Some(leftovers) = self.leftovers.take() {
-            self.clone_dir.then_remove(move || leftovers.end());
-        }
-    }
-}
-
-pub fn subject_name(subject: Subject) -> String {
-    match subject {
-        Subject::Issue(n) => format!("issue-{}", n.0),
-        Subject::Pull(n) => format!("pull-{}", n.0),
-    }
-}
-
-pub fn purpose_name(purpose: &Purpose) -> String {
-    match purpose {
-        Purpose::Work { subject, .. } => subject_name(*subject),
-        Purpose::Automation(name) => format!("automation-{name}"),
-    }
-}
-
-fn record_dir(shell: &Shell, purpose: &Purpose, now: Timestamp) -> Result<PathBuf, Failure> {
-    let parent = shell.runs.sessions_dir().join(purpose_name(purpose));
-    std::fs::create_dir_all(&parent)
-        .context("creating the sessions directory")
-        .map_err(infra)?;
-    let kind = match purpose {
-        Purpose::Work { kind, .. } => kind.name(),
-        Purpose::Automation(_) => "automation",
-    };
-    let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
-    for n in 1.. {
-        let dir = if n == 1 {
-            parent.join(&base)
-        } else {
-            parent.join(format!("{base}-{n}"))
-        };
-        match std::fs::create_dir(&dir) {
-            Ok(()) => return Ok(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(infra(e.into())),
-        }
-    }
-    unreachable!()
-}
-
-/// Why a result goes back to its session.
-enum Rejection {
-    /// Sent back with `followup`, counted against `result-retries`; `note`
-    /// is what the hand-back adds once they run out.
-    Retry {
-        followup: String,
-        note: Option<String>,
-    },
-    /// Sent back with `followup` as a new question, the count reset: the
-    /// answer to new feedback is a new result.
-    Resume(String),
-    Fail(Failure),
-}
-
-impl Rejection {
-    /// Sent back with `followup`, the hand-back adding nothing.
-    fn retry(followup: String) -> Rejection {
-        Rejection::Retry {
-            followup,
-            note: None,
-        }
-    }
-}
-
-/// Why a result's first writes refused it.
-enum Refused {
-    /// Before they wrote to the session's work, which is as it left it.
-    Untouched(Rejection),
-    /// As they wrote the work, whose failure says what became of it.
-    Writing(Rejection),
-}
-
-impl From<anyhow::Error> for Refused {
-    fn from(error: anyhow::Error) -> Refused {
-        Refused::Untouched(error.into())
-    }
-}
-
-/// How a conversation ended before its result's first writes were done.
-enum Unbegun {
-    /// In session, or sent back to it: the stage's work is as the session
-    /// left it.
-    InSession(Failure),
-    /// In the result's first writes, whose failure says what became of the
-    /// work.
-    Begun(Failure),
-}
-
-impl Unbegun {
-    /// The failure, noted with what `keep` keeps of the work the session
-    /// left.
-    async fn keeping<'a>(self, keep: impl AsyncFnOnce() -> Stopped<'a>) -> Failure {
-        match self {
-            Unbegun::InSession(failure) => failure.noted(&keep().await.note()),
-            Unbegun::Begun(failure) => failure,
-        }
-    }
-}
-
-impl From<Unbegun> for Failure {
-    fn from(unbegun: Unbegun) -> Failure {
-        match unbegun {
-            Unbegun::InSession(failure) | Unbegun::Begun(failure) => failure,
-        }
-    }
-}
-
-impl From<anyhow::Error> for Rejection {
-    fn from(error: anyhow::Error) -> Rejection {
-        Rejection::Fail(infra(error))
-    }
-}
-
-/// Sends a result that does not parse back to the session with its `error`.
-fn parse_retry(ctx: &Ctx) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::retry(prompts::result_error(&ctx.with.briefs.prompts, &error))
-}
-
-/// Runs a session until `accept` takes its result, in session, and `begin`
-/// has made the result's first writes, once applying it has begun. A result
-/// either rejects goes back to the session. The session's end is in its
-/// transcript once it returns, however it ends.
-async fn converse<T, U, F, Fut, B, BFut>(
-    shell: &Shell,
-    ctx: &Ctx,
-    spec: &mut SessionSpec,
-    first: NextTurn,
-    accept: F,
-    begin: B,
-) -> Result<(U, Turn), Unbegun>
-where
-    F: Fn(String) -> Fut,
-    Fut: Future<Output = Result<T, Rejection>>,
-    B: Fn(T) -> BFut,
-    BFut: Future<Output = Result<U, Refused>>,
-{
-    let conversed = conversation(shell, ctx, spec, first, accept, begin).await;
-    record_end(shell, &spec.record);
-    conversed
-}
-
-/// Writes that the session whose record is `record` ended now, or else logs
-/// that its end is not recorded: the session has ended either way.
-fn record_end(shell: &Shell, record: &Path) {
-    if let Err(unrecorded) = append_event(record, &transcript::session_ended(shell.clock.now())) {
-        warn!(
-            error = format!("{unrecorded:#}"),
-            "the session's end is not recorded"
-        );
-    }
-}
-
-/// [`converse`], up to the session's end.
-async fn conversation<T, U, F, Fut, B, BFut>(
-    shell: &Shell,
-    ctx: &Ctx,
-    spec: &mut SessionSpec,
-    first: NextTurn,
-    accept: F,
-    begin: B,
-) -> Result<(U, Turn), Unbegun>
-where
-    F: Fn(String) -> Fut,
-    Fut: Future<Output = Result<T, Rejection>>,
-    B: Fn(T) -> BFut,
-    BFut: Future<Output = Result<U, Refused>>,
-{
-    let mut follow_ups = FollowUps::default();
-    let in_session = Unbegun::InSession;
-    let mut turn = take_turn(shell, ctx, spec, first)
-        .await
-        .map_err(in_session)?;
-    loop {
-        let refused = match accept(turn.message.clone()).await {
-            Ok(result) => {
-                let json = results::json_value(&turn.message)
-                    .map(|v| serde_json::to_string_pretty(&v).unwrap_or_default())
-                    .unwrap_or_else(|| turn.message.clone());
-                record(spec, "result.json", &json);
-                ctx.cancel.begin_applying().map_err(in_session)?;
-                match begin(result).await {
-                    Ok(written) => return Ok((written, turn)),
-                    Err(Refused::Writing(Rejection::Fail(failure))) => {
-                        return Err(Unbegun::Begun(failure));
-                    }
-                    Err(refused) => {
-                        ctx.cancel.back_to_session().map_err(in_session)?;
-                        refused
-                    }
-                }
-            }
-            Err(rejection) => Refused::Untouched(rejection),
-        };
-        let (rejection, unbegun): (_, fn(Failure) -> Unbegun) = match refused {
-            Refused::Untouched(rejection) => (rejection, Unbegun::InSession),
-            Refused::Writing(rejection) => (rejection, Unbegun::Begun),
-        };
-        let step = match rejection {
-            Rejection::Fail(failure) => return Err(unbegun(failure)),
-            Rejection::Retry { followup, note } => {
-                let session_log = scrub(&turn.message, &spec.dir);
-                match follow_ups.send_back(shell.result_retries, &followup, &session_log) {
-                    SendBack::Retry => NextTurn::Resume {
-                        session: turn.session.clone(),
-                        prompt: followup,
-                    },
-                    SendBack::HandBack(hand_back) => {
-                        let failure = Failure::HandBack(hand_back);
-                        return Err(unbegun(failure.noted(note.as_deref().unwrap_or_default())));
-                    }
-                }
-            }
-            Rejection::Resume(followup) => {
-                follow_ups.resumed();
-                NextTurn::Resume {
-                    session: turn.session.clone(),
-                    prompt: followup,
-                }
-            }
-        };
-        turn = take_turn(shell, ctx, spec, step)
-            .await
-            .map_err(in_session)?;
-    }
-}
-
-fn record(spec: &SessionSpec, name: &str, text: &str) {
-    let _ = std::fs::write(spec.record.join(name), text);
-}
-
-async fn take_turn(
-    shell: &Shell,
-    ctx: &Ctx,
-    spec: &mut SessionSpec,
-    mut next: NextTurn,
-) -> Result<Turn, Failure> {
-    let subject = purpose_name(&spec.purpose);
-    loop {
-        let turn = match &next {
-            NextTurn::Start => {
-                record(spec, transcript::BRIEF, &spec.prompt);
-                cancellable(ctx, shell.harness.start(spec)).await?
-            }
-            NextTurn::Resume { session, prompt } => {
-                record(spec, &followup_name(&spec.record), prompt);
-                cancellable(ctx, shell.harness.resume(spec, session, prompt)).await?
-            }
-        };
-        let (limit, session) = match turn {
-            Ok(turn) => return Ok(turn),
-            Err(SessionError::UsageLimit { limit, session }) => (limit, session),
-            Err(SessionError::Infrastructure(reason)) => {
-                return Err(infra(anyhow::anyhow!(reason)));
-            }
-            Err(SessionError::TimedOut { log_tail }) => {
-                return Err(Failure::HandBack(hand_back::timed_out(
-                    &ctx.with.settings.timeout_setting,
-                    LogTail::session(&scrub(&log_tail, &spec.dir)),
-                )));
-            }
-            Err(SessionError::Failed { reason, log_tail }) => {
-                return Err(Failure::HandBack(hand_back::session_failed(
-                    &reason,
-                    &scrub(&log_tail, &spec.dir),
-                )));
-            }
-        };
-        let _ = shell.report_refusal.send(limit);
-        if !shell.waits_out_usage_limit {
-            return Err(Failure::UsageLimit(limit));
-        }
-        let resets_at = limit.resets_at;
-        let refused_at = tokio::time::Instant::now();
-        let now = shell.clock.now();
-        let until = limit.wait_until(now);
-        warn!(subject, %resets_at, "session refused for the usage limit");
-        info!(subject, %resets_at, %until, "waiting out the usage limit");
-        append_event(&spec.record, &transcript::usage_limit_waiting(now, until))
-            .context("writing the wait for the usage limit")
-            .map_err(infra)?;
-        cancellable(ctx, shell.clock.sleep_until(until)).await?;
-        append_event(
-            &spec.record,
-            &transcript::usage_limit_waited(shell.clock.now()),
-        )
-        .context("writing the end of the wait for the usage limit")
-        .map_err(infra)?;
-        spec.deadline =
-            UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
-        info!(subject, %resets_at, "usage limit reset; resuming the session");
-        next = NextTurn::Resume {
-            session,
-            prompt: prompts::usage_limit_reset(&ctx.with.briefs.prompts),
-        };
-    }
-}
-
-/// The output of `turn`, unless the run is cancelled first.
-async fn cancellable<T>(ctx: &Ctx, turn: impl Future<Output = T>) -> Result<T, Failure> {
-    tokio::select! {
-        biased;
-        () = ctx.cancel.cancelled() => Err(Failure::Cancelled),
-        output = turn => Ok(output),
-    }
-}
-
-fn followup_name(record: &Path) -> String {
-    let n = (1..=usize::MAX)
-        .find(|n| !record.join(transcript::followup_file(*n)).exists())
-        .expect("a session has fewer follow-ups than numbers");
-    transcript::followup_file(n)
-}
-
-/// Why a session's clone was not made.
-enum Unmade {
-    Cancelled,
-    /// The session's deadline came first.
-    TimedOut,
-    Failed(anyhow::Error),
-}
-
-impl Unmade {
-    /// The error the clone's entry shows: a failure's chain, redacted and
-    /// with the clone's repository `repo`, once known, shown as `.`.
-    fn shown(&self, redaction: &Redaction, repo: Option<&Path>) -> String {
-        match self {
-            Unmade::Cancelled => "cancelled".into(),
-            Unmade::TimedOut => "timed out".into(),
-            Unmade::Failed(error) => {
-                let shown = redaction.apply(&format!("{error:#}"));
-                match repo {
-                    Some(repo) => scrub(&shown, repo),
-                    None => shown,
-                }
-            }
-        }
-    }
-
-    /// How the session ends (docs/specs/runs.md, "Stages", 1a).
-    fn failure(self, settings: &SessionSettings) -> Failure {
-        match self {
-            Unmade::Cancelled => Failure::Cancelled,
-            Unmade::TimedOut => {
-                Failure::HandBack(hand_back::timed_out(&settings.timeout_setting, None))
-            }
-            Unmade::Failed(error) => infra(error.context("making the session's clone")),
-        }
-    }
-}
-
-/// When something that started `at` and took `duration` ended.
-fn ended_after(at: Timestamp, duration: std::time::Duration) -> Timestamp {
-    at + chrono::TimeDelta::from_std(duration).unwrap_or(chrono::TimeDelta::MAX)
-}
-
-/// Appends the `line` Linewright writes to the transcript of the session
-/// whose record is `record`.
-fn append_event(record: &Path, line: &str) -> Result<()> {
-    let mut transcript = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(record.join(transcript::OUTPUT))
-        .context("opening the session's transcript")?;
-    writeln!(transcript, "{line}").context("writing to the session's transcript")
-}
-
-fn scrub(text: &str, dir: &Path) -> String {
-    text.replace(&dir.to_string_lossy().into_owned(), ".")
-}
-
-/// A session opened in its clone, whose prompt is still to be filled.
-struct Opened<'a> {
-    settings: &'a SessionSettings,
-    purpose: Purpose,
-    record: PathBuf,
-    attachments: Dir,
-    recorder: SessionRecorder,
-    dir: PathBuf,
-    scratch: PathBuf,
-    plugin: PathBuf,
-    gh: GhReach,
-    /// When the session times out, the making of its clone and its
-    /// maintenance command included.
-    deadline: tokio::time::Instant,
-}
-
-/// Opens the session of `purpose`, with its record and its attachments
-/// directory, registered with the run, then makes its clone of `branch`
-/// and runs `check_out` on it, then runs its maintenance command
-/// (docs/specs/runs.md, "Stages"). Making the clone, `check_out` included,
-/// and the maintenance command count against the session's timeout. Each is
-/// an entry in the session's transcript, its start and end written there
-/// whether or not the agent starts, and the session's end too when it fails
-/// once its record is made.
-async fn open_session<'a, T>(
-    shell: &Shell,
-    ctx: &'a Ctx,
-    purpose: Purpose,
-    branch: &str,
-    check_out: impl AsyncFnOnce(&Path) -> Result<T>,
-) -> Result<(Opened<'a>, Workspace, T), Failure> {
-    let record = record_dir(shell, &purpose, shell.clock.now())?;
-    let opened = open_in(shell, ctx, purpose, branch, check_out, record.clone()).await;
-    if opened.is_err() {
-        record_end(shell, &record);
-    }
-    opened
-}
-
-/// [`open_session`], in its `record`.
-async fn open_in<'a, T>(
-    shell: &Shell,
-    ctx: &'a Ctx,
-    purpose: Purpose,
-    branch: &str,
-    check_out: impl AsyncFnOnce(&Path) -> Result<T>,
-    record: PathBuf,
-) -> Result<(Opened<'a>, Workspace, T), Failure> {
-    let settings = &ctx.with.settings;
-    let attachments = Dir::create(&record)
-        .context("creating the attachments directory")
-        .map_err(infra)?;
-    let recorder = ctx.run.session(&record, settings, &ctx.with.briefs);
-    let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
-    let started_at = shell.clock.now();
-    let started = tokio::time::Instant::now();
-    append_event(&record, &transcript::clone_started(started_at))
-        .context("writing the clone's start")
-        .map_err(infra)?;
-    let mut repo = None;
-    let making = async {
-        let clone_dir = Workspace::clone_dir(shell, &purpose).await?;
-        repo = Some(Workspace::repo_in(clone_dir.path()));
-        let ws = Workspace::make(shell, clone_dir, branch).await?;
-        let checked_out = check_out(&ws.dir).await?;
-        Ok::<_, anyhow::Error>((ws, checked_out))
-    };
-    let made = tokio::select! {
-        biased;
-        () = ctx.cancel.cancelled() => Err(Unmade::Cancelled),
-        () = tokio::time::sleep_until(deadline) => Err(Unmade::TimedOut),
-        made = making => made.map_err(Unmade::Failed),
-    };
-    let duration = started.elapsed();
-    let error = made
-        .as_ref()
-        .err()
-        .map(|unmade| unmade.shown(shell.secrets.redaction(), repo.as_deref()));
-    let ended = append_event(
-        &record,
-        &transcript::clone_ended(
-            ended_after(started_at, duration),
-            duration.as_secs_f64(),
-            error.as_deref(),
-        ),
-    )
-    .context("writing the clone's end");
-    let (mut ws, checked_out) = match made {
-        Ok(made) => {
-            ended.map_err(infra)?;
-            made
-        }
-        Err(unmade) => {
-            if let Err(unrecorded) = ended {
-                warn!(
-                    error = format!("{unrecorded:#}"),
-                    "the clone's end is not recorded"
-                );
-            }
-            return Err(unmade.failure(settings));
-        }
-    };
-    if let Maintenance::Command(command) = &settings.maintenance.value {
-        run_maintenance(shell, ctx, &purpose, command, &record, deadline, &mut ws).await?;
-    }
-    let opened = Opened {
-        settings,
-        purpose,
-        record,
-        attachments,
-        recorder,
-        dir: ws.dir.clone(),
-        scratch: ws.scratch.clone(),
-        plugin: ws.plugin.clone(),
-        gh: shell.gh.clone(),
-        deadline,
-    };
-    Ok((opened, ws, checked_out))
-}
-
-/// Opens the session of `purpose` on the default branch, as the clone
-/// checked it out.
-async fn open_on_default_branch<'a>(
-    shell: &Shell,
-    ctx: &'a Ctx,
-    purpose: Purpose,
-) -> Result<(Opened<'a>, Workspace), Failure> {
-    let branch = &shell.settings.default_branch;
-    let (opened, ws, ()) = open_session(shell, ctx, purpose, branch, async |_| Ok(())).await?;
-    Ok((opened, ws))
-}
-
-/// Runs the maintenance `command` of the session of `purpose` in `ws`, which
-/// keeps what it leaves running, until the session's `deadline`, with its
-/// start and end in the session's transcript in `record` and its output beside
-/// it. It fails as the session would end.
-async fn run_maintenance(
-    shell: &Shell,
-    ctx: &Ctx,
-    purpose: &Purpose,
-    command: &MaintenanceCommand,
-    record: &Path,
-    deadline: tokio::time::Instant,
-    ws: &mut Workspace,
-) -> Result<(), Failure> {
-    let settings = &ctx.with.settings;
-    let redaction = shell.secrets.redaction();
-    let started_at = shell.clock.now();
-    append_event(
-        record,
-        &transcript::maintenance_started(started_at, &redaction.apply(command.as_str())),
-    )
-    .context("writing the maintenance command's start")
-    .map_err(infra)?;
-    let request = bash_command::Request {
-        command: command.as_str(),
-        dir: &ws.dir,
-        environment: shell.harness.environment(
-            &settings.environment,
-            &ws.scratch,
-            settings.effort_set(),
-            &shell.gh,
-        ),
-        deadline,
-        log: &record.join(transcript::MAINTENANCE_OUTPUT),
-    };
-    let (ran, leftovers) =
-        bash_command::run(&shell.bash, request, redaction, ctx.cancel.cancelled())
-            .await
-            .context("running the maintenance command")
-            .map_err(infra)?;
-    ws.leftovers = Some(leftovers);
-    append_event(
-        record,
-        &transcript::maintenance_ended(
-            ended_after(started_at, ran.duration),
-            ran.status,
-            ran.duration.as_secs_f64(),
-        ),
-    )
-    .context("writing the maintenance command's end")
-    .map_err(infra)?;
-    match after_maintenance(ran.status) {
-        AfterMaintenance::GoesOn => Ok(()),
-        AfterMaintenance::GoesOnPastAFailure => {
-            warn!(
-                subject = purpose_name(purpose),
-                status = ran.status.account(),
-                "the maintenance command failed; going on to the agent"
-            );
-            Ok(())
-        }
-        AfterMaintenance::TimesOut => Err(Failure::HandBack(hand_back::timed_out(
-            &settings.timeout_setting,
-            LogTail::maintenance(&scrub(&ran.output, &ws.dir)),
-        ))),
-        AfterMaintenance::Cancelled => Err(Failure::Cancelled),
-    }
-}
-
-/// How a session goes on after its maintenance command.
-#[derive(Debug, PartialEq, Eq)]
-pub enum AfterMaintenance {
-    /// To the agent's first prompt.
-    GoesOn,
-    /// To the agent's first prompt all the same (docs/specs/runs.md, Stages,
-    /// 2a).
-    GoesOnPastAFailure,
-    /// It times out: the command was still running at its deadline.
-    TimesOut,
-    Cancelled,
-}
-
-/// How a session goes on after its maintenance command ended as `status`.
-pub fn after_maintenance(status: MaintenanceStatus) -> AfterMaintenance {
-    match status {
-        MaintenanceStatus::Exited(0) => AfterMaintenance::GoesOn,
-        MaintenanceStatus::Exited(_) | MaintenanceStatus::Signalled(_) => {
-            AfterMaintenance::GoesOnPastAFailure
-        }
-        MaintenanceStatus::TimedOut => AfterMaintenance::TimesOut,
-        MaintenanceStatus::Cancelled => AfterMaintenance::Cancelled,
-    }
-}
-
-impl Opened<'_> {
-    /// `failure`, with the session's end written to its transcript: the
-    /// session ends before its agent starts.
-    fn ended(&self, shell: &Shell, failure: Failure) -> Failure {
-        record_end(shell, &self.record);
-        failure
-    }
-
-    /// The session, sent the `prompt` made for its attachments directory,
-    /// and that directory.
-    fn spec(self, prompt: impl FnOnce(&Path) -> String) -> (SessionSpec, Dir) {
-        let Opened {
-            settings,
-            purpose,
-            record,
-            attachments,
-            recorder,
-            dir,
-            scratch,
-            plugin,
-            gh,
-            deadline,
-        } = self;
-        let spec = SessionSpec {
-            record,
-            attachments: attachments.path().to_path_buf(),
-            prompt: prompt(attachments.path()),
-            purpose,
-            dir,
-            scratch,
-            plugin,
-            model: settings.model_set(),
-            effort: settings.effort_set(),
-            environment: settings.environment.clone(),
-            gh,
-            deadline,
-            report: Reporter::new(move |reported| recorder.reported(reported)),
-        };
-        (spec, attachments)
-    }
+    shell.sessions.store.comment(n, &comment).await?;
+    ask(&*shell.sessions.store, n, &asks).await
 }
 
 /// Uploads each attachment `result`'s posted Markdown refers to in `dir`
@@ -1522,7 +608,7 @@ async fn post_attachments(
     let resolved = {
         let markdown = result.markdown();
         let texts: Vec<&str> = markdown.iter().map(|text| text.as_str()).collect();
-        attachments::resolve(dir, &texts, &shell.secrets)
+        attachments::resolve(dir, &texts, &shell.sessions.secrets)
     };
     let resolved = match resolved {
         Ok(resolved) => resolved,
@@ -1538,6 +624,7 @@ async fn post_attachments(
     let mut urls = BTreeMap::new();
     for file in resolved.files() {
         let attached = shell
+            .sessions
             .store
             .attach(file.path(), file.name(), file.content_type())
             .await;
@@ -1578,7 +665,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         kind: WorkKind::Triage,
     };
     let categories = shell.settings.categories.names();
-    let (opened, _ws) = open_on_default_branch(shell, ctx, purpose).await?;
+    let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
     let (mut spec, dir) = opened.spec(|attachments| {
         prompts::triage(
             &ctx.with.briefs.prompts,
@@ -1589,21 +676,20 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
         )
     });
     let (categories, dir) = (&categories, &dir);
-    let (result, _) =
-        converse(
-            shell,
-            ctx,
-            &mut spec,
-            NextTurn::Start,
-            |message| async move {
-                results::parse_triage(&message, categories).map_err(parse_retry(ctx))
-            },
-            |mut result: TriageResult| async move {
-                post_attachments(shell, ctx, dir, &mut result).await?;
-                Ok(result)
-            },
-        )
-        .await?;
+    let (result, _) = converse(
+        &shell.sessions,
+        ctx.session(),
+        &mut spec,
+        NextTurn::Start,
+        |message| async move {
+            results::parse_triage(&message, categories).map_err(parse_retry(&ctx.with.briefs))
+        },
+        |mut result: TriageResult| async move {
+            post_attachments(shell, ctx, dir, &mut result).await?;
+            Ok(result)
+        },
+    )
+    .await?;
     record_triage(shell, issue, result).await.map_err(apply)
 }
 
@@ -1611,7 +697,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
 /// between the two, it leaves no status label without the comment it stands
 /// on.
 async fn record_triage(shell: &Shell, issue: &Issue, result: TriageResult) -> Result<()> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let writes = triage::triage(
         issue,
         &result,
@@ -1655,7 +741,7 @@ async fn design_session(
         subject,
         kind: WorkKind::Design,
     };
-    let (opened, _ws) = open_on_default_branch(shell, ctx, purpose).await?;
+    let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
     let (mut spec, dir) = opened.spec(prompt);
     let dir = &dir;
     let begin = |mut result: DesignResult<IssueWork>| async move {
@@ -1664,12 +750,13 @@ async fn design_session(
         Ok(result)
     };
     converse(
-        shell,
-        ctx,
+        &shell.sessions,
+        ctx.session(),
         &mut spec,
         NextTurn::Start,
         |message| async move {
-            results::parse::<DesignResult<IssueWork>>(&message).map_err(parse_retry(ctx))
+            results::parse::<DesignResult<IssueWork>>(&message)
+                .map_err(parse_retry(&ctx.with.briefs))
         },
         begin,
     )
@@ -1744,7 +831,7 @@ async fn design_issue(
             cut,
             spec_gaps,
         } => {
-            let store = &shell.store;
+            let store = &shell.sessions.store;
             let n = issue.number;
             async {
                 let required = shell.required_label();
@@ -1764,7 +851,7 @@ async fn design_issue(
         DesignResult::NothingToBuild { reason } => {
             match hand_back::nothing_to_build(&issue.author, &shell.policy.linewright, &reason) {
                 NothingToBuild::Close { comment } => {
-                    let store = &shell.store;
+                    let store = &shell.sessions.store;
                     async {
                         store.comment(issue.number, &comment).await?;
                         store
@@ -1797,6 +884,7 @@ async fn spec_diff(shell: &Shell, pr: &MergedPull) -> Result<String, Failure> {
         .cloned()
         .collect();
     shell
+        .sessions
         .store
         .diff(pr.number, &spec_files)
         .await
@@ -1816,7 +904,7 @@ async fn file_cut(
     design: &str,
     comment: &str,
 ) -> Result<()> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let filed = file_tickets_under(shell, tracking_issue, cut.tickets).await?;
     let published = filing::published(design, comment, &filed);
     store
@@ -1835,7 +923,7 @@ async fn file_tickets_under(
     tracking_issue: Number,
     tickets: Vec<NewTicket>,
 ) -> Result<Vec<FiledTicket>> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let mut list: Vec<FiledTicket> = vec![];
     for NewTicket { issue, blocked_by } in tickets {
         let title = issue.title.clone();
@@ -1921,13 +1009,13 @@ async fn push_unfinished(
 /// `past` add: docs/specs/runs.md, "A result Linewright can't accept".
 async fn held_secret(shell: &Shell, dir: &Path, past: &[&str]) -> Result<Option<Held>> {
     let additions = git::additions(dir, "HEAD", past).await?;
-    Ok(shell.secrets.held(&additions))
+    Ok(shell.sessions.secrets.held(&additions))
 }
 
 /// What became of a stopped run's work on `branch`, redacted, logged when
 /// it was not kept.
 fn reported(shell: &Shell, branch: &str, kept: Result<Kept>) -> Kept {
-    let kept = Kept::redacted(kept, shell.secrets.redaction());
+    let kept = Kept::redacted(kept, shell.sessions.secrets.redaction());
     match &kept {
         Kept::Refused(reason) => warn!(
             branch,
@@ -1965,8 +1053,8 @@ async fn implement(
     };
     let upstream = shell.upstream();
     let (opened, ws, start) = open_session(
-        shell,
-        ctx,
+        &shell.sessions,
+        ctx.session(),
         purpose,
         &shell.settings.default_branch,
         async |dir| git::check_out_branch(dir, &branch, &upstream).await,
@@ -1984,7 +1072,8 @@ async fn implement(
     });
     let (dir, base) = (&ws.dir, &upstream);
     let accept = |message: String| async move {
-        let result: ImplementResult = results::parse(&message).map_err(parse_retry(ctx))?;
+        let result: ImplementResult =
+            results::parse(&message).map_err(parse_retry(&ctx.with.briefs))?;
         if !matches!(result, ImplementResult::Done { .. }) {
             return Ok(result);
         }
@@ -2040,14 +1129,22 @@ async fn implement(
         pushing.await.map_err(Refused::Writing)?;
         Ok(result)
     };
-    let (result, turn) = match converse(shell, ctx, &mut spec, NextTurn::Start, accept, begin).await
+    let (result, turn) = match converse(
+        &shell.sessions,
+        ctx.session(),
+        &mut spec,
+        NextTurn::Start,
+        accept,
+        begin,
+    )
+    .await
     {
         Ok(conversation) => conversation,
         Err(unbegun) => {
             return Err(unbegun.keeping(keep).await);
         }
     };
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     match result {
         ImplementResult::Done {
             pr_title,
@@ -2111,7 +1208,7 @@ async fn file_spec_gaps(
         return Ok(());
     }
     for gap in spec_gap_issues(gaps, item, required.get().await?) {
-        let number = shell.store.create_issue(gap).await?;
+        let number = shell.sessions.store.create_issue(gap).await?;
         info!(issue = number.0, item = item.0, "filed a spec gap");
     }
     Ok(())
@@ -2135,7 +1232,7 @@ async fn push_update(
     dir: &Path,
     start: &str,
 ) -> Result<(), Failure> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let linewright = &shell.policy.linewright;
     let head = git::head(dir).await.map_err(infra)?;
     if head.as_str() == start {
@@ -2195,7 +1292,7 @@ async fn pull_work(
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
     if let Task::Update = task {
-        let ws = Workspace::clone(shell, &purpose, &pr.head_ref)
+        let ws = Workspace::clone(&shell.sessions, &purpose, &pr.head_ref)
             .await
             .map_err(infra)?;
         let start = git::head(&ws.dir).await.map_err(infra)?;
@@ -2204,11 +1301,15 @@ async fn pull_work(
             return push_update(shell, ctx, pr, &ws.dir, &start).await;
         }
     }
-    let (opened, ws, start) = open_session(shell, ctx, purpose, &pr.head_ref, async |dir| {
-        git::head(dir).await
-    })
+    let (opened, ws, start) = open_session(
+        &shell.sessions,
+        ctx.session(),
+        purpose,
+        &pr.head_ref,
+        async |dir| git::head(dir).await,
+    )
     .await?;
-    let ended = |failure| opened.ended(shell, failure);
+    let ended = |failure| opened.ended(&shell.sessions, failure);
     let updated = match task {
         Task::Rework { update: false } => git::Updated::UpToDate,
         Task::Rework { update: true } | Task::FixCi(_) | Task::Update => {
@@ -2223,7 +1324,7 @@ async fn pull_work(
         None
     };
     let conflict = updated.conflict();
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let failures = match task {
         Task::FixCi(names) => store
             .check_failures(pr.number, names)
@@ -2241,7 +1342,7 @@ async fn pull_work(
     };
     let history = prompts::History::for_method(shell.policy.merge_method);
     let Some(pull_task) = pull_work::session_task(job, conflict.as_ref(), history) else {
-        record_end(shell, &opened.record);
+        record_end(&shell.sessions, &opened.record);
         return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };
     let dir = &ws.dir;
@@ -2264,7 +1365,8 @@ async fn pull_work(
     });
     let (upstream, base) = (&upstream, start.as_str());
     let check_result = |message: String, pr_threads: Vec<String>| async move {
-        let result: PullWorkResult = results::parse(&message).map_err(parse_retry(ctx))?;
+        let result: PullWorkResult =
+            results::parse(&message).map_err(parse_retry(&ctx.with.briefs))?;
         let PullWorkResult::Done { replies, .. } = &result else {
             return Ok(result);
         };
@@ -2287,7 +1389,7 @@ async fn pull_work(
             )));
         }
         if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {
-            return Err(parse_retry(ctx)(format!(
+            return Err(parse_retry(&ctx.with.briefs)(format!(
                 "`{}` is not a thread on the pull request",
                 unknown.thread
             )));
@@ -2312,7 +1414,7 @@ async fn pull_work(
     let accept = |message: String| async move {
         let threads = lock(shown).threads.clone();
         let result = check_result(message, threads).await?;
-        let read_at = shell.clock.now();
+        let read_at = shell.sessions.clock.now();
         let pr_now = store.pull(pr.number).await?;
         if stopped(&pr_now, linewright).is_some() {
             return Err(Rejection::Fail(Failure::Cancelled));
@@ -2367,13 +1469,21 @@ async fn pull_work(
         }
         Ok((result, pr_now, read_at))
     };
-    let ((result, pr_now, read_at), turn) =
-        match converse(shell, ctx, &mut spec, NextTurn::Start, accept, begin).await {
-            Ok(conversation) => conversation,
-            Err(unbegun) => {
-                return Err(unbegun.keeping(keep).await);
-            }
-        };
+    let ((result, pr_now, read_at), turn) = match converse(
+        &shell.sessions,
+        ctx.session(),
+        &mut spec,
+        NextTurn::Start,
+        accept,
+        begin,
+    )
+    .await
+    {
+        Ok(conversation) => conversation,
+        Err(unbegun) => {
+            return Err(unbegun.keeping(keep).await);
+        }
+    };
     let feedback_authors = lock(shown).feedback_authors.clone();
     match result {
         PullWorkResult::Done {
@@ -2430,16 +1540,8 @@ fn lock(shown: &Mutex<Shown>) -> std::sync::MutexGuard<'_, Shown> {
     lock_set_whole(shown)
 }
 
-/// Locks `mutex`, even if a panic poisoned it: what it holds is set whole,
-/// so what a panic left is still sound.
-fn lock_set_whole<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
 async fn record_pull_work(shell: &Shell, pr: Number, writes: &PullWorkWrites) -> Result<()> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     if let Some(body) = &writes.body {
         store.edit_body(pr, body).await?;
     }
@@ -2471,7 +1573,7 @@ pub(crate) async fn automation(
 ) -> Result<AutomationEnd> {
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
-        let (opened, _ws) = open_on_default_branch(shell, &ctx, purpose).await?;
+        let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
         let (mut spec, dir) = opened.spec(|attachments| {
             prompts::automation(
                 &ctx.with.briefs.prompts,
@@ -2486,12 +1588,15 @@ pub(crate) async fn automation(
             post_attachments(shell, ctx, dir, &mut result).await?;
             Ok(result)
         };
+        let accept = |message: String| async move {
+            results::parse(&message).map_err(parse_retry(&ctx.with.briefs))
+        };
         let (result, _) = converse(
-            shell,
-            ctx,
+            &shell.sessions,
+            ctx.session(),
             &mut spec,
             NextTurn::Start,
-            |message| async move { results::parse(&message).map_err(parse_retry(ctx)) },
+            accept,
             begin,
         )
         .await?;
@@ -2509,7 +1614,7 @@ pub(crate) async fn automation(
             Ending::Failed
         }
     };
-    ctx.run.end(shell.clock.now(), ending);
+    ctx.run.end(shell.sessions.clock.now(), ending);
     match ended {
         Ok(result) => Ok(AutomationEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
@@ -2552,7 +1657,7 @@ async fn record_automation(
     let required = shell.creation_label().await?;
     for issue in filing::automation_issues(automation, result, required.as_deref()) {
         let title = issue.title.clone();
-        let number = shell.store.create_issue(issue).await?;
+        let number = shell.sessions.store.create_issue(issue).await?;
         info!(
             automation = %automation.name,
             issue = %number,
@@ -2561,72 +1666,4 @@ async fn record_automation(
         );
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_log::test]
-    fn a_cancel_before_applying_cancels_and_applying_then_fails() {
-        let cancellation = Cancellation::default();
-
-        assert!(cancellation.cancel());
-
-        assert!(matches!(
-            cancellation.begin_applying(),
-            Err(Failure::Cancelled)
-        ));
-        assert!(cancellation.0.token.is_cancelled());
-    }
-
-    #[test_log::test]
-    fn a_cancel_while_applying_does_not_stop_the_run() {
-        let cancellation = Cancellation::default();
-
-        assert!(cancellation.begin_applying().is_ok());
-
-        assert!(!cancellation.cancel());
-        assert!(!cancellation.0.token.is_cancelled());
-        assert!(cancellation.begin_applying().is_ok());
-    }
-
-    #[test_log::test]
-    fn back_in_session_with_no_cancel_meanwhile_the_run_can_be_cancelled_again() {
-        let cancellation = Cancellation::default();
-        cancellation.begin_applying().ok();
-
-        assert!(cancellation.back_to_session().is_ok());
-
-        assert!(cancellation.cancel());
-        assert!(cancellation.0.token.is_cancelled());
-    }
-
-    #[test_log::test]
-    fn back_in_session_after_a_cancel_while_applying_the_run_is_cancelled() {
-        let cancellation = Cancellation::default();
-        cancellation.begin_applying().ok();
-        cancellation.cancel();
-
-        assert!(matches!(
-            cancellation.back_to_session(),
-            Err(Failure::Cancelled)
-        ));
-
-        assert!(cancellation.0.token.is_cancelled());
-        assert!(cancellation.cancel());
-    }
-
-    #[test_log::test]
-    fn applying_again_after_being_cancelled_fails() {
-        let cancellation = Cancellation::default();
-        cancellation.begin_applying().ok();
-        cancellation.cancel();
-        cancellation.back_to_session().ok();
-
-        assert!(matches!(
-            cancellation.begin_applying(),
-            Err(Failure::Cancelled)
-        ));
-    }
 }
