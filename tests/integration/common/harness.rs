@@ -306,7 +306,7 @@ pub fn refused_until(resets_at: Timestamp, call: &Call) -> Result<String, Sessio
 }
 
 pub fn subject_file(call: &Call) -> String {
-    linewright::run::purpose_name(&call.spec.purpose)
+    linewright::session::purpose_name(&call.spec.purpose)
 }
 
 /// A stand-in for the `claude` program, written to `dir`: every turn answers

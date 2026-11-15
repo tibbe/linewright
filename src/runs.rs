@@ -13,12 +13,13 @@ use tracing::warn;
 use crate::automation::AutomationName;
 use crate::briefs::Briefs;
 use crate::domain::{Number, Repo, Timestamp};
-use crate::harness::Reported;
+use crate::harness::{Purpose, Reported, Reporter};
 use crate::input::Input;
 use crate::layer::{Layer, Source};
 use crate::phrase::{Phrase, Tone};
 use crate::reconcile::{EndedRun, OLD_DESIGN, WorkKind};
 use crate::records;
+use crate::session::{self, RecordsSessions};
 use crate::status::Paint;
 use crate::work_settings::{Effort, SessionSettings, Setting};
 
@@ -349,11 +350,6 @@ impl Runs {
 
     fn dir(&self) -> PathBuf {
         self.work_dir.join("runs")
-    }
-
-    /// Where the records of the runs' sessions are kept.
-    pub(crate) fn sessions_dir(&self) -> PathBuf {
-        self.work_dir.join("sessions")
     }
 
     fn dir_of(&self, of: &RunOf) -> PathBuf {
@@ -708,6 +704,24 @@ impl Running {
             warn!(path = %self.lock_path.display(), error = %e, "removing a run's lock failed");
         }
     }
+}
+
+/// Its sessions' records are kept in the sessions directory of its
+/// [`Runs`], and each is a session of its record.
+impl RecordsSessions for Running {
+    fn record_dir(&self, purpose: &Purpose, now: Timestamp) -> Result<PathBuf> {
+        session::new_record_dir(&sessions_dir(&self.work_dir), purpose, now)
+    }
+
+    fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
+        let recorder = Running::session(self, dir, settings, briefs);
+        Reporter::new(move |reported| recorder.reported(reported))
+    }
+}
+
+/// Where the records of the sessions of the runs in `work_dir` are kept.
+fn sessions_dir(work_dir: &Path) -> PathBuf {
+    work_dir.join("sessions")
 }
 
 /// A run's record, as it is while the run is in flight, and where it is

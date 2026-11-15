@@ -30,9 +30,10 @@ use crate::reconcile::{
     held_back_by_drain, reconcile, requirements_note,
 };
 use crate::repo_files::{self, RepoLayer, Unusable, holding};
-use crate::run::{self, AutomationEnd, Cancellation, Shell, ShellParts};
+use crate::run::{self, AutomationEnd, Shell, ShellParts};
 use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
+use crate::session::{Cancellation, Sessions};
 use crate::spec_glob::SpecGlob;
 use crate::status::{FailedPolls, Poll, Polling, Polls, View};
 use crate::store::Store;
@@ -269,10 +270,21 @@ impl Factory {
         let clones = Clones::new(&config.work_dir, config.winding_up.clone());
         clones.sweep();
         let shell = Shell::new(ShellParts {
-            store,
-            harness,
-            bash: config.bash,
-            clock,
+            sessions: Sessions {
+                store,
+                harness,
+                bash: config.bash,
+                clock,
+                identity,
+                default_branch: settings.default_branch.clone(),
+                secrets: config.secrets,
+                clones,
+                environment: environment.source(),
+                gh: GhReach::Direct,
+                result_retries: config.result_retries,
+                waits_out_usage_limit: config.waits_out_usage_limit,
+                report_refusal,
+            },
             spec_glob: config.spec_glob,
             spec_lookback: config.spec_lookback,
             done_window: config.done_window,
@@ -285,18 +297,10 @@ impl Factory {
             work: config.work,
             environments: config.environments,
             operator_prompts: config.prompts,
-            identity,
             settings,
-            result_retries: config.result_retries,
             work_dir: config.work_dir,
             runs: runs.clone(),
-            waits_out_usage_limit: config.waits_out_usage_limit,
             records_input: true,
-            secrets: config.secrets,
-            report_refusal,
-            environment: environment.source(),
-            clones,
-            gh: GhReach::Direct,
         });
         Ok(Factory {
             shell: Arc::new(shell),
@@ -344,9 +348,10 @@ impl Factory {
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
         self.reap_before_reading();
         let shell = &self.shell;
-        let now = shell.clock.now();
+        let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
         let mut snapshot = shell
+            .sessions
             .store
             .snapshot(windows)
             .await
@@ -391,7 +396,7 @@ impl Factory {
         };
         self.reap_before_reading();
         let shell = &self.shell;
-        let now = shell.clock.now();
+        let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
         let snapshot = Arc::make_mut(&mut kept.snapshot);
         let mut read = read_all(snapshot, shell, self.written.clone(), windows).await?;
@@ -436,7 +441,7 @@ impl Factory {
         publish: &Publish,
     ) -> ServeEnd {
         let ends = self.ends.clone();
-        let clock = self.shell.clock.clone();
+        let clock = self.shell.sessions.clock.clone();
         let stopping = ends.stopping();
         let draining = ends.draining();
         let mut failed = None;
@@ -446,17 +451,22 @@ impl Factory {
             let poll = match self.cycle().await {
                 Ok(_) => Poll::Succeeded,
                 Err(e) => {
-                    let error = self.shell.secrets.redaction().apply(&format!("{e:#}"));
+                    let error = self
+                        .shell
+                        .sessions
+                        .secrets
+                        .redaction()
+                        .apply(&format!("{e:#}"));
                     error!(error, "poll failed");
                     Poll::Failed {
-                        at: self.shell.clock.now(),
+                        at: self.shell.sessions.clock.now(),
                         error,
                     }
                 }
             };
             failed = FailedPolls::after(failed, poll);
             let next_poll = Instant::now() + poll_interval;
-            let next_poll_at = self.shell.clock.now() + poll_interval;
+            let next_poll_at = self.shell.sessions.clock.now() + poll_interval;
             publish.polling.send_replace(Some(Polling {
                 next: next_poll_at,
                 failed: failed.clone(),
@@ -516,7 +526,7 @@ impl Factory {
             return;
         }
         self.memory.drain = Some(Drain {
-            since: self.shell.clock.now(),
+            since: self.shell.sessions.clock.now(),
         });
         self.environment.drain();
         let runs: Vec<String> = self
@@ -533,8 +543,8 @@ impl Factory {
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
         Some(Served::new(
             self.view(next_poll)?,
-            self.shell.store.clone(),
-            self.shell.secrets.redaction().clone(),
+            self.shell.sessions.store.clone(),
+            self.shell.sessions.secrets.redaction().clone(),
         ))
     }
 
@@ -653,7 +663,7 @@ impl Factory {
     /// Gives the environment the `setup` table `repo` holds.
     fn poll_environment(&mut self, repo: &RepoLayer) {
         let read = self.setup_read(repo);
-        self.environment.poll(read, self.shell.clock.now());
+        self.environment.poll(read, self.shell.sessions.clock.now());
     }
 
     /// Makes the environment ready for a run without `serve`
@@ -664,7 +674,9 @@ impl Factory {
     pub async fn prepare_environment(&mut self) -> Result<()> {
         let repo = self.read_repo_files().await?;
         let read = self.setup_read(&repo);
-        self.environment.prepare(read, self.shell.clock.now()).await
+        self.environment
+            .prepare(read, self.shell.sessions.clock.now())
+            .await
     }
 
     /// Builds the environment now and waits for the build, as
@@ -681,7 +693,7 @@ impl Factory {
     async fn read_repo_files(&self) -> Result<Arc<RepoLayer>> {
         let shell = &self.shell;
         let repo = RepoLayer::read(
-            shell.store.as_ref(),
+            shell.sessions.store.as_ref(),
             &shell.settings.default_branch,
             &shell.operator_prompts,
         )
@@ -707,6 +719,7 @@ impl Factory {
         let branch = &shell.settings.default_branch;
         let path = name.path();
         let text = shell
+            .sessions
             .store
             .read_file(branch, &path)
             .await
@@ -748,13 +761,14 @@ impl Factory {
 
     async fn automations(&mut self) -> Vec<Automation> {
         let branch = &self.shell.settings.default_branch;
-        self.automation_files = match automation::read(self.shell.store.as_ref(), branch).await {
-            Ok(files) => files,
-            Err(e) => {
-                error!(error = format!("{e:#}"), "listing the automations failed");
-                AutomationFiles::default()
-            }
-        };
+        self.automation_files =
+            match automation::read(self.shell.sessions.store.as_ref(), branch).await {
+                Ok(files) => files,
+                Err(e) => {
+                    error!(error = format!("{e:#}"), "listing the automations failed");
+                    AutomationFiles::default()
+                }
+            };
         for file in &self.automation_files.unparsed {
             warn!(
                 path = file.path,
@@ -895,7 +909,7 @@ impl Factory {
         pr: Number,
         let_go: bool,
     ) -> Result<()> {
-        let store = self.shell.store.clone();
+        let store = self.shell.sessions.store.clone();
         let spec_change = snapshot
             .merged_pull(pr)
             .with_context(|| format!("the snapshot holds no merged pull request {pr}"))?;
@@ -921,7 +935,7 @@ impl Factory {
     }
 
     async fn execute(&mut self, action: &Action, kept: &Kept) -> Result<()> {
-        let store = &self.shell.store;
+        let store = &self.shell.sessions.store;
         let snapshot = &kept.snapshot;
         match action {
             Action::Start(work) => {
@@ -931,7 +945,7 @@ impl Factory {
                         item: work.item(),
                         stage: work.kind(),
                     },
-                    shell.clock.now(),
+                    shell.sessions.clock.now(),
                 )?;
                 let id = running.id().to_string();
                 let in_flight = running.in_flight();
@@ -1035,7 +1049,7 @@ impl Factory {
                 if let Err(e) = store.merge(*pr, head, *method).await {
                     let reason = format!("{e:#}");
                     warn!(pr = pr.0, reason, "merge failed");
-                    let at = self.shell.clock.now();
+                    let at = self.shell.sessions.clock.now();
                     self.memory.pulls.merge_failed(*pr, reason, at);
                     self.record_pulls();
                 }
@@ -1047,7 +1061,7 @@ impl Factory {
                     "commenting on what GitHub requires to merge"
                 );
                 store.comment(*pr, &requirements_note(requires)).await?;
-                let at = self.shell.clock.now();
+                let at = self.shell.sessions.clock.now();
                 self.memory.pulls.commented(*pr, at);
                 self.record_pulls();
             }
@@ -1124,7 +1138,7 @@ fn begin_automation(
                 automation: name.clone(),
                 started_by,
             },
-            shell.clock.now(),
+            shell.sessions.clock.now(),
         )
         .with_context(|| format!("recording the run of the automation `{name}`"))
 }
@@ -1140,7 +1154,7 @@ async fn run_and_log(
     info!(automation = %name, run = %running.id(), "automation run started");
     let ctx = run::Ctx {
         with: shell.run_with(repo, RunKind::Automation(automation)),
-        as_of: shell.clock.now(),
+        as_of: shell.sessions.clock.now(),
         reworked: None,
         cancel,
         run: running,
@@ -1230,6 +1244,7 @@ async fn label_old_tracking_issues(
     let old = snapshot.unlabeled_tracking_issues(&shell.policy.linewright);
     for &issue in &old {
         shell
+            .sessions
             .store
             .add_label(issue, label::DESIGNED)
             .await
@@ -1263,7 +1278,7 @@ async fn read_into(
     item: Item,
     windows: Windows,
 ) -> Result<Vec<Item>> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     match item {
         Item::Issue(number) => read_issue_into(snapshot, shell, number, windows).await,
         Item::Pull(number) => {
@@ -1288,7 +1303,7 @@ async fn read_issue_into(
     number: Number,
     windows: Windows,
 ) -> Result<Vec<Item>> {
-    let store = &shell.store;
+    let store = &shell.sessions.store;
     let issue = store.issue(number).await?;
     let taken = snapshot.took_issue(number, issue, windows, &shell.policy.linewright);
     let mut read = vec![Item::Issue(number)];

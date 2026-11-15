@@ -21,9 +21,10 @@ use crate::environment::{self, replays};
 use crate::factory::FactoryConfig;
 use crate::harness::Harness;
 use crate::repo_files::{RepoLayer, holding};
-use crate::run::{self, Cancellation, Shell, ShellParts};
+use crate::run::{self, Shell, ShellParts};
 use crate::runs::{Begin, Ending, OutcomeName, Runs, Unended};
 use crate::serving::Signals;
+use crate::session::{Cancellation, Sessions};
 use crate::store::Store;
 use crate::store::local::LocalStore;
 use crate::winding_up::WindingUp;
@@ -259,10 +260,21 @@ async fn run_in(
     let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
     let runs = Runs::new(out.path());
     let shell = Shell::new(ShellParts {
-        store,
-        harness,
-        bash: config.bash,
-        clock: clock.clone(),
+        sessions: Sessions {
+            store,
+            harness,
+            bash: config.bash,
+            clock: clock.clone(),
+            identity: properties.identity.clone(),
+            default_branch: settings.default_branch.clone(),
+            secrets: config.secrets,
+            clones: Clones::new(replay_dir, clones_winding_up.clone()),
+            environment: environment.source(),
+            gh: gate.gh(),
+            result_retries: config.result_retries,
+            waits_out_usage_limit: false,
+            report_refusal,
+        },
         spec_glob: config.spec_glob,
         spec_lookback: config.spec_lookback,
         done_window: config.done_window,
@@ -275,21 +287,14 @@ async fn run_in(
         work: config.work,
         environments: config.environments,
         operator_prompts: config.prompts,
-        identity: properties.identity.clone(),
         settings,
-        result_retries: config.result_retries,
         work_dir: config.work_dir,
         runs: runs.clone(),
-        waits_out_usage_limit: false,
         records_input: false,
-        secrets: config.secrets,
-        report_refusal,
-        environment: environment.source(),
-        clones: Clones::new(replay_dir, clones_winding_up.clone()),
-        gh: gate.gh(),
     });
     let now = clock.now();
     let snapshot = shell
+        .sessions
         .store
         .snapshot(shell.policy.windows(now))
         .await
