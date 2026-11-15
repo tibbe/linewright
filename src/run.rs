@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
+use chrono::TimeDelta;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
@@ -43,6 +44,7 @@ use crate::results::{
 use crate::runs::{Ending, Running, Runs, SessionRecorder};
 use crate::secrets::{Held, Secrets};
 use crate::spec_gap::{self, FiledGaps};
+use crate::spec_glob::SpecGlob;
 use crate::store::{
     AnyItem, AttachError, FoundSecrets, Identity, PushError, PushMode, RepoSettings, Store,
 };
@@ -60,6 +62,43 @@ pub(crate) struct Shell {
     pub bash: PathBuf,
     pub clock: Arc<dyn Clock>,
     pub policy: Policy,
+    /// The operator's settings for sessions.
+    pub work: WorkSettings,
+    pub environments: Environments,
+    /// The operator's layer of the prompts.
+    pub operator_prompts: OperatorPrompts,
+    pub identity: Identity,
+    pub settings: RepoSettings,
+    pub result_retries: u32,
+    pub work_dir: PathBuf,
+    pub runs: Runs,
+    pub waits_out_usage_limit: bool,
+    pub secrets: Secrets,
+    pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
+    /// What each session's clone starts from.
+    pub environment: environment::Source,
+    pub clones: Clones,
+    /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
+    _by_new: (),
+}
+
+/// What a [`Shell`] is put together from.
+pub(crate) struct ShellParts {
+    pub store: Arc<dyn Store>,
+    pub harness: Arc<dyn Harness>,
+    /// The `bash` that runs the maintenance command.
+    pub bash: PathBuf,
+    pub clock: Arc<dyn Clock>,
+    pub spec_glob: SpecGlob,
+    pub spec_lookback: TimeDelta,
+    pub done_window: TimeDelta,
+    pub max_runs: usize,
+    pub ci_grace: TimeDelta,
+    pub ci_timeout: TimeDelta,
+    pub ci_attempts: u32,
+    /// Merge green pull requests instead of leaving them for review.
+    pub auto_merge: bool,
+    pub require_label: Option<String>,
     /// The operator's settings for sessions.
     pub work: WorkSettings,
     pub environments: Environments,
@@ -102,6 +141,44 @@ pub(crate) struct RunWith {
 }
 
 impl Shell {
+    /// The policy takes Linewright's login from `identity` and the merge
+    /// method from `settings`.
+    pub(crate) fn new(parts: ShellParts) -> Shell {
+        Shell {
+            policy: Policy {
+                linewright: parts.identity.login.clone(),
+                spec_glob: parts.spec_glob,
+                spec_lookback: parts.spec_lookback,
+                done_window: parts.done_window,
+                max_runs: parts.max_runs,
+                ci_grace: parts.ci_grace,
+                ci_timeout: parts.ci_timeout,
+                ci_attempts: parts.ci_attempts,
+                merge_method: parts.settings.merge_method,
+                auto_merge: parts.auto_merge,
+                require_label: parts.require_label,
+            },
+            store: parts.store,
+            harness: parts.harness,
+            bash: parts.bash,
+            clock: parts.clock,
+            work: parts.work,
+            environments: parts.environments,
+            operator_prompts: parts.operator_prompts,
+            identity: parts.identity,
+            settings: parts.settings,
+            result_retries: parts.result_retries,
+            work_dir: parts.work_dir,
+            runs: parts.runs,
+            waits_out_usage_limit: parts.waits_out_usage_limit,
+            secrets: parts.secrets,
+            report_refusal: parts.report_refusal,
+            environment: parts.environment,
+            clones: parts.clones,
+            _by_new: (),
+        }
+    }
+
     /// What a run of `of` works from if it starts now, with the
     /// repository's files as `repo` holds them.
     pub(crate) fn run_with(&self, repo: &RepoLayer, of: RunKind) -> RunWith {
