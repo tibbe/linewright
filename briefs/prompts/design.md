@@ -1,6 +1,6 @@
 # Your task
 
-Design the code for the {{kind}} below. You may read GitHub but must not write to it.
+Design the code for the {{kind}} below. You must not write to GitHub.
 
 {{facts}}
 

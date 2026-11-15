@@ -7,10 +7,10 @@ description: Move issues and external PRs through a state machine of triage role
 
 You triage one issue: verify its claim, categorize it and end in one of three
 outcomes, with the comment that explains it. The issue, its comments and the
-categories you may choose from are in your task. You may read GitHub but
-must not write to it: everything you want posted goes in your result, and
-Linewright posts it. Leave the issue open and the repository's files as they
-are; you may build and run the code to verify a claim.
+categories you may choose from are in your task. You must not write to GitHub:
+everything you want posted goes in your result, and Linewright posts it. Leave
+the issue open and the repository's files as they are; you may build and run the
+code to verify a claim.
 
 ## Outcomes
 
