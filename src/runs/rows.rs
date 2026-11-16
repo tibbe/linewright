@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row as _, SqliteConnection, SqlitePool};
+use sqlx::{Row as _, SqliteConnection, SqliteExecutor, SqlitePool};
 
 use super::files::{End, Record, RecordedSession};
 use super::{Ran, Recorded, RunId, RunOf, SessionEntry, Started, State};
@@ -271,14 +271,19 @@ pub(super) async fn read_all(
         .collect()
 }
 
-/// Run `id`, as [`read_all`] gives it, `None` if it is not kept.
+/// Run `id`, as [`read_all`] gives it, `None` if it is not kept: its row
+/// and its sessions read in one transaction, so that the two agree.
 pub(super) async fn read_one(
     pool: &SqlitePool,
     work_dir: &Path,
     id: &RunId,
     in_flight: impl Fn(&RunId) -> bool,
 ) -> Result<Option<Recorded>> {
-    let Some(row) = run_row(pool, id)
+    let mut tx = pool
+        .begin()
+        .await
+        .with_context(|| format!("reading the run {id}"))?;
+    let Some(row) = run_row(&mut *tx, id)
         .await
         .with_context(|| format!("reading the run {id}"))?
     else {
@@ -286,7 +291,7 @@ pub(super) async fn read_one(
     };
     let sessions = sqlx::query("SELECT dir, ran FROM sessions WHERE run = ? ORDER BY seq")
         .bind(row.try_get::<i64, _>("id")?)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await
         .with_context(|| format!("reading the sessions of {id}"))?
         .iter()
@@ -312,7 +317,7 @@ pub(super) async fn read_input(pool: &SqlitePool, id: &RunId) -> Result<Option<I
         .with_context(|| format!("reading the input of {id}"))
 }
 
-async fn run_row(pool: &SqlitePool, id: &RunId) -> Result<Option<SqliteRow>> {
+async fn run_row(conn: impl SqliteExecutor<'_>, id: &RunId) -> Result<Option<SqliteRow>> {
     let of = OfColumns::of(&id.of)?;
     Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
         "{SELECT_RUNS} WHERE {WHERE_OF} AND n = ?"
@@ -322,7 +327,7 @@ async fn run_row(pool: &SqlitePool, id: &RunId) -> Result<Option<SqliteRow>> {
     .bind(of.stage)
     .bind(of.automation)
     .bind(i64::from(id.n))
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await?)
 }
 
