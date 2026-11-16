@@ -269,3 +269,4 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - A teardown command, run as a clone is removed to release what lives outside
   it, such as a container its maintenance command started.
 - A bound on how long a plain clone of a branch takes, which the network sets.
+- Removing old runs, with their transcripts and attachments.

@@ -43,9 +43,10 @@ same host.
 | `runs [N]`  | the runs, all or #N's                             |
 | `logs N`    | the transcript of #N's run                        |
 | `environment` | the environment and its builds' output          |
+| `export ID DIR` | run ID, written into DIR as plain files         |
 
 - **Without `serve`.** `status` and `explain` need it running; `runs`,
-  `logs` and `environment` work either way.
+  `logs`, `environment` and `export` work either way.
 - **Access.** File permissions: only `serve`'s user can open the socket.
 - **The socket's path.** Derived from the repository, in a short per-user
   directory such as `$XDG_RUNTIME_DIR`.
@@ -165,6 +166,17 @@ latest build and, when that one succeeded, of the latest that failed
 - **`--json`.** Each build is an object as the maintenance command's is in
   `logs --json`, with the commit it built from.
 - **No setup command.** `environment` says there is none.
+
+## export
+
+`export ID DIR` writes run ID into DIR in the form that the output of a
+replay gives its run. That is the outcome of the run and the record of each
+session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
+
+- **DIR.** Linewright makes and refuses DIR as it makes and refuses the
+  directory of the output of a replay.
+- **A run in flight.** Linewright writes the run as it is when the command
+  starts.
 
 ## Output
 

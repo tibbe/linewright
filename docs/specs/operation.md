@@ -40,6 +40,7 @@ The command is `lw`.
 | `explain N`           | show where an item stands and why (see [Monitoring](monitoring.md))      |
 | `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
 | `logs N`              | show a run's transcript (see [Monitoring](monitoring.md))                |
+| `export ID DIR`       | write run ID as plain files (see [Monitoring](monitoring.md))            |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
 | `capture ID NAME`     | capture run ID as a case (see [Benchmarks](benchmarks.md))               |
 | `replay CASE`         | run a case's stage on it again (see [Benchmarks](benchmarks.md))         |
@@ -265,6 +266,9 @@ image the operator builds with those in it.
   event on as it is sent, unchanged, and to keep no copy, and send something
   at least every 15 seconds, so that the proxy never closes one as idle.
 - **Systems.** Unix-like systems: Linux and macOS.
+- **The work directory.** It is on a local filesystem
+  ([Storage](architecture.md#storage)). As it starts, Linewright warns when the
+  work directory is on a network filesystem.
 - **git.** Linewright finds, once, the git binary that the `git` on its path
   runs, and runs that binary directly from then on.
 
@@ -301,3 +305,4 @@ that answers a question, or asks `serve` to act, logs nothing.
 - How Linewright is released (`docs/releasing.md`).
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.
+- A command that backs up the work directory.
