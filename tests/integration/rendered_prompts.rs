@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use crate::common;
 use linewright::case::Case;
 use linewright::domain::*;
-use linewright::git::{BranchStart, Conflict};
+use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
 use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
 use linewright::replay::judge::{ReplayCopy, Replayed};
 use linewright::working_pull::Feedback;
@@ -215,7 +215,10 @@ fn update_is_filled_as_before() {
         &ticket,
         &pull(),
         &PullTask::Update(&conflict),
-        None,
+        Some(&UnfinishedCommits {
+            first: "abc1234".into(),
+            rest: vec!["def5678".into()],
+        }),
         std::path::Path::new(ATTACHMENTS),
     );
 

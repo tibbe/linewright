@@ -1,4 +1,4 @@
-[prompts/update.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» branch=«7-count-the-widgets» pr=«#8» pr_title=«Count the widgets» unfinished=«» conflict=«[parts/update-merge.md default_branch=«main» files=«`src/count.rs`, `Cargo.lock`»]» description=«Closes #7» ticket=«### The ticket: #7 Count the widgets
+[prompts/update.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» branch=«7-count-the-widgets» pr=«#8» pr_title=«Count the widgets» unfinished=« [parts/unfinished.md commits=«`abc1234`, `def5678`»]» conflict=«[parts/update-merge.md default_branch=«main» files=«`src/count.rs`, `Cargo.lock`»]» description=«Closes #7» ticket=«### The ticket: #7 Count the widgets
 
 Opened by @reporter. Labels: bug.
 

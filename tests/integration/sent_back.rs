@@ -299,6 +299,22 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
 }
 
 #[test_log::test]
+fn the_follow_up_for_unfinished_commits_names_each_of_them_once() {
+    for (rest, named) in [
+        (vec![], "`abc1234`"),
+        (vec!["def5678".to_string()], "`abc1234`, `def5678`"),
+    ] {
+        assert_eq!(
+            loose_ends(&LooseEnd::Unfinished(&git::UnfinishedCommits {
+                first: "abc1234".into(),
+                rest,
+            })),
+            not_finished(&marker("parts/fold-unfinished.md", &[("commits", named)]))
+        );
+    }
+}
+
+#[test_log::test]
 fn the_follow_up_for_secrets_push_protection_found_names_each_of_them() {
     let found = |kind: &str, commit: &str, path: &str| FoundSecret {
         kind: kind.into(),
