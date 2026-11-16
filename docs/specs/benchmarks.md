@@ -166,7 +166,7 @@ as plain files.
 | Part       | Holds                                                                                                                    |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
 | outcome    | the outcome of the run ([Ending](runs.md#ending))                                                                        |
-| sessions   | the record of each session, as Linewright keeps the record of a run ([Ending](runs.md#ending))                           |
+| sessions   | the record of each session that Linewright keeps of a run ([Ending](runs.md#ending)), as files                           |
 | writes     | each write that Linewright would have made to GitHub, in order, such as a comment, a label, a ticket or the pull request |
 | commits    | the branch that Linewright would have pushed, if the run pushes one, in a git repository                                 |
 | build      | the output of the build of the environment, if the replay built it                                                       |

@@ -170,6 +170,24 @@ on the host another owner, build it with the `LINEWRIGHT_UID` and
 `LINEWRIGHT_GID` build arguments. [`deploy/`](../deploy/README.md) runs
 Linewright on itself in a locked-down container.
 
+## The work directory
+
+`work-dir` holds Linewright's database of its runs and bookkeeping, and beside
+it the runs' transcripts and attachments, the clones, the environment and the
+cases. Keep it on a local filesystem: the database does not work over NFS or
+SMB, and Linewright warns at startup when it finds one. Under Docker Desktop
+on macOS, put it in a named volume rather than a bind mount.
+
+To back it up, copy the work directory while no `lw` command runs on it. While
+`serve` runs, copy the database with SQLite's online backup, such as
+`sqlite3 DATABASE ".backup COPY"`, then the rest of the directory.
+
+Back up the work directory before you upgrade. Each release updates the
+database to its own schema when it first opens it, but not while another `lw`
+has it open, so upgrade once the earlier `serve` has exited. An earlier
+release refuses the updated database: to go back, restore the backup. Runs
+since the upgrade are lost.
+
 ## Agent sessions
 
 Agent sessions ignore your user-level Claude Code setup: its settings,
@@ -312,6 +330,9 @@ under `$XDG_RUNTIME_DIR/linewright/`, or `linewright-<uid>/` in the temporary
 directory without it. `runs` and `logs` read the records `serve` keeps in the
 work directory when no `serve` runs. They exit 3 when they need a `serve` and
 none runs for the repository, and 4 when #N or the run ID names nothing.
+
+`lw export ID DIR` writes a run's outcome, briefs, transcripts and attachments
+into DIR as plain files, whether or not `serve` runs.
 
 ## The web UI
 

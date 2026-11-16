@@ -28,10 +28,37 @@ lives in the store and nowhere else.
 - **Machine state is in the store**: an item's state is derived from it,
   and from Linewright's run while one is in flight on the item
   ([State](repository.md#state)).
-  Linewright may keep bookkeeping no person sets under the work directory.
 - **Identity is a user account**: a token for a GitHub user dedicated to
   Linewright
   ([Requirements](repository.md#requirements)).
+
+## Storage
+
+Linewright keeps its own records in one SQLite database in the work
+directory, through SQLx. A stream, or what a session or a person uses by its
+path, is a file.
+
+| Data                                                                                             | Kept as                                                                       |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| each run outside a replay, with the input it recorded ([Recording a run's input](benchmarks.md#recording-a-runs-input)) | rows in the database                                                   |
+| bookkeeping that no person sets, such as Linewright's pull requests and each automation's last scheduled run | rows in the database                                                  |
+| the environment's commit, and the time of its build                                          | rows in the database                                                          |
+| a session's brief, follow-ups and transcript, and its maintenance command's output               | files of the session, with the transcript as one JSON Lines file that only grows |
+| a session's attachments                                                                          | its attachments directory, each file by its own name ([Attachments](runs.md#attachments)) |
+| the output of the environment's builds                                                           | files                                                                         |
+| the clones and the environment                                                                   | directories                                                                   |
+| cases and the outputs of replays                                                                 | directories of plain files ([Benchmarks](benchmarks.md))                      |
+
+- **Many processes.** Each Linewright process on the host opens the database
+  in WAL mode, so that it reads while another process writes.
+- **The schema.** When a release first opens the database, it changes the
+  database to the schema of the release, in one transaction.
+- **While another process has it open.** A release changes the schema only
+  while no other Linewright process has the database open. Otherwise it exits
+  with an error that says so.
+- **A newer schema.** A release refuses a database whose schema a newer
+  release made. The error names that release, and says to restore a backup
+  from before it.
 
 ## Agent sessions
 

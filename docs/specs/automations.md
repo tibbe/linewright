@@ -64,7 +64,7 @@ scheduled run.
 - **A new automation.** An automation seen for the first time counts as having
   had a scheduled run then, so adding one does not start it at once.
 - **The last scheduled run.** Linewright records each automation's last
-  scheduled run under the work directory.
+  scheduled run in its database ([Storage](architecture.md#storage)).
 - **By hand.** `lw automation run NAME` runs one automation now and exits, and
   leaves its schedule as it was. A run by hand is marked as one wherever the
   run is shown.
