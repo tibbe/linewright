@@ -59,7 +59,9 @@ fn created() -> Timestamp {
         .with_timezone(&Utc)
 }
 
-fn section(failures: &[CheckFailure], name: &str) -> String {
+/// What a fix-CI brief for `failures` fills `failures` with.
+#[track_caller]
+fn filled_failures(failures: &[CheckFailure]) -> String {
     let issue = issue();
     let ticket = common::ready(Ticket::read(&issue, None, vec![]));
     let repo_name = "owner/widgets".parse().unwrap();
@@ -69,7 +71,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         spec_glob: "docs/specs/**/*.md",
     };
     let brief = prompts::pull_work(
-        &crate::common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo,
         &ticket,
         &pull(),
@@ -81,11 +83,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         None,
         std::path::Path::new("/attachments"),
     );
-    let heading = format!("#### `{name}`\n");
-    let start = brief.find(&heading).expect(&brief);
-    let rest = &brief[start + heading.len()..];
-    let end = rest.find("\n#").expect(rest);
-    format!("{heading}{}", &rest[..=end])
+    common::filled_in(&brief, "failures").to_string()
 }
 
 #[test_log::test]
@@ -103,7 +101,7 @@ fn a_failing_actions_check_gives_its_report_its_output_and_the_command_for_its_f
     }];
 
     assert_eq!(
-        section(&failures, "test"),
+        filled_failures(&failures),
         "#### `test`\n\
          \n\
          Process completed with exit code 101.\n\
@@ -112,8 +110,7 @@ fn a_failing_actions_check_gives_its_report_its_output_and_the_command_for_its_f
          assertion failed: widgets == 2\n\
          ```\n\
          \n\
-         The full log: `gh run view --job 52896412311 --repo tibbe/linewright --log`\n\
-         \n"
+         [parts/full-log.md job=«52896412311» repo=«tibbe/linewright»]"
     );
 }
 
@@ -126,11 +123,10 @@ fn a_failing_commit_status_gives_its_description_and_link_without_a_log() {
     }];
 
     assert_eq!(
-        section(&failures, "ci/circleci"),
+        filled_failures(&failures),
         "#### `ci/circleci`\n\
          \n\
-         Your tests failed (https://circleci.com/gh/tibbe/linewright/12)\n\
-         \n"
+         Your tests failed (https://circleci.com/gh/tibbe/linewright/12)"
     );
 }
 
@@ -146,14 +142,13 @@ fn a_check_whose_full_log_cannot_be_read_gives_its_output_without_a_pointer() {
     }];
 
     assert_eq!(
-        section(&failures, "test"),
+        filled_failures(&failures),
         "#### `test`\n\
          \n\
          _(empty)_\n\
          \n\
          ```\n\
          assertion failed: widgets == 2\n\
-         ```\n\
-         \n"
+         ```"
     );
 }

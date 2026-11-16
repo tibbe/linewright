@@ -1,29 +1,4 @@
-## facts
-
-- Repository: `owner/widgets`
-- Default branch: `main`
-- Spec: the tracked files matching `docs/specs/**/*.md`
-- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-
-## branch
-
-7-count-the-widgets
-
-## pr
-
-#8
-
-## pr_title
-
-Count the widgets
-
-## description
-
-Closes #7
-
-## ticket
-
-### The ticket: #7 Count the widgets
+[prompts/update.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» branch=«7-count-the-widgets» pr=«#8» pr_title=«Count the widgets» unfinished=«» conflict=«[parts/update-merge.md default_branch=«main» files=«`src/count.rs` and `Cargo.lock`»]» description=«Closes #7» ticket=«### The ticket: #7 Count the widgets
 
 Opened by @reporter. Labels: bug.
 
@@ -33,19 +8,6 @@ Count them.
 
 **@maintainer** (2026-10-01 12:00 UTC):
 
-Seen it too.
+Seen it too.» output=«[outputs/update.md]
 
-## unfinished
-
-## conflict
-
-A merge of `origin/main` stopped on conflicts in `src/count.rs` and `Cargo.lock`. Finish it with `git commit`.
-
-## output
-
-<<briefs/outputs/fix-ci.md or briefs/outputs/rework.md or briefs/outputs/update.md>>
-
-To show a screenshot or a video in the Markdown your result posts, save the file in your attachments directory, `/work/sessions/issue-7/20261001T120000Z-implement/attachments`, and refer to it by its absolute path there: as the destination of a Markdown image (`![what it shows](</path/to/file.png>)`) or link (`[what it is](</path/to/file.mp4>)`), or as an HTML `img`'s `src`. Keep the angle brackets around the path, since it may contain spaces. Linewright uploads each file you refer to and puts its URL in place of the path. A video (`.mp4`, `.mov` or `.webm`) embedded alone in its paragraph plays inline; anywhere else it becomes a link to it.
-
-Only images and videos can be attached: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`. Refer to no other file this way. Put anything else, such as text output or a log, in the Markdown itself, in a fenced code block or a `<details>` block when it is long.
-
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]»]

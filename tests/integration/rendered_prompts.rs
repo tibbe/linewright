@@ -1,11 +1,8 @@
 //! What Linewright fills into each first-message prompt's placeholders, byte
-//! for byte, against the text in `fixtures/prompts/`. The prompts are a layer
-//! holding only their placeholders, so the shipped prompts' wording plays no
-//! part (docs/specs/runs.md, "Contract"). Nor does the wording of a part with
-//! no placeholders of its own in `briefs/parts/` or `briefs/outputs/`: the
-//! fixtures name such a part, `<<briefs/parts/cut-issue.md>>`, rather than
-//! copy it, and where several such parts hold the same text, they name each
-//! of them, `<<briefs/outputs/fix-ci.md or briefs/outputs/rework.md>>`.
+//! for byte, against the text in `fixtures/prompts/`. The briefs are the
+//! markers, so the fixtures hold which file Linewright picks for the prompt
+//! and each of its parts, and the data it fills in, and no brief's wording
+//! (docs/specs/runs.md, "Contract").
 
 use std::borrow::Cow;
 
@@ -94,49 +91,12 @@ fn read(path: &str) -> String {
     std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-/// Each text of the parts in `briefs/parts/` and `briefs/outputs/` with no
-/// placeholders, as Linewright builds it in, with its end trimmed, and the
-/// marker naming the parts that hold it, the longest text first.
-#[track_caller]
-fn placeholder_free_parts() -> Vec<(String, String)> {
-    let mut by_text = std::collections::BTreeMap::<String, Vec<String>>::new();
-    for dir in ["briefs/parts", "briefs/outputs"] {
-        let entries = std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(dir))
-            .unwrap_or_else(|e| panic!("{dir}: {e}"))
-            .map(|entry| entry.unwrap().file_name().into_string().unwrap());
-        for file in entries {
-            let path = format!("{dir}/{file}");
-            let text = read(&path);
-            if !text.contains("{{") {
-                by_text
-                    .entry(text.trim_end().to_string())
-                    .or_default()
-                    .push(path);
-            }
-        }
-    }
-    let mut parts: Vec<_> = by_text
-        .into_iter()
-        .map(|(text, mut paths)| {
-            paths.sort();
-            (text, format!("<<{}>>", paths.join(" or ")))
-        })
-        .collect();
-    parts.sort_by_key(|(text, _)| std::cmp::Reverse(text.len()));
-    parts
-}
-
-/// Fails unless `prompt`, with each placeholder-free part's text replaced by
-/// its marker, is the fixture `name` byte for byte.
+/// Fails unless `prompt` is the fixture `name` byte for byte.
 #[track_caller]
 fn assert_filled_as(prompt: &str, name: &str) {
-    let mut named = prompt.to_string();
-    for (text, marker) in placeholder_free_parts() {
-        named = named.replace(&text, &marker);
-    }
     let expected = read(&format!("tests/integration/fixtures/prompts/{name}"));
-    if named != expected {
-        let got: Vec<_> = named.split('\n').collect();
+    if prompt != expected {
+        let got: Vec<_> = prompt.split('\n').collect();
         let want: Vec<_> = expected.split('\n').collect();
         let line = (0..got.len().max(want.len()))
             .find(|&i| got.get(i) != want.get(i))
@@ -145,7 +105,7 @@ fn assert_filled_as(prompt: &str, name: &str) {
         panic!(
             "the prompt differs from {name} first on line {}:\n  \
              prompt:  {got:?}\n  fixture: {want:?}\n\n\
-             the prompt, its placeholder-free parts named:\n{named}",
+             the prompt:\n{prompt}",
             line + 1,
         );
     }
@@ -155,7 +115,7 @@ fn assert_filled_as(prompt: &str, name: &str) {
 fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::design_issue(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         None,
@@ -199,7 +159,7 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     };
     let gap = issue(9, "Which widgets count?", "Say which.");
     let prompt = prompts::design_issue(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &its_issue,
         Some(&SpecChangeAndDiff {
@@ -224,7 +184,7 @@ fn fix_ci_is_filled_as_before() {
         log: None,
     }];
     let prompt = prompts::pull_work(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -250,7 +210,7 @@ fn update_is_filled_as_before() {
         files: vec!["src/count.rs".into(), "Cargo.lock".into()],
     };
     let prompt = prompts::pull_work(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -271,7 +231,7 @@ fn automation_is_filled_as_before() {
     )
     .unwrap();
     let prompt = prompts::automation(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &automation,
         std::path::Path::new(ATTACHMENTS),
@@ -299,7 +259,7 @@ fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and
         "+Widgets are counted.\n",
     );
     let prompt = prompts::implement(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &ticket,
         "7-count-the-widgets",
@@ -328,7 +288,7 @@ fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_it
         "+Widgets are counted.\n",
     );
     let prompt = prompts::implement(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &ticket,
         "7-spec-change-count-widgets",
@@ -362,7 +322,7 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
         created_at: created(),
     };
     let prompt = prompts::pull_work(
-        &common::placeholders_only().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -393,41 +353,6 @@ fn the_history_is_a_series_for_merge_and_rebase_and_on_top_for_squash() {
     }
 }
 
-/// Each placeholder of the template `template` with the value `prompt`
-/// fills it with, in order, as `## name` and the value, as the fixtures
-/// hold a prompt; it fails unless `prompt` holds every word of `template`
-/// around them.
-#[track_caller]
-fn values_in(prompt: &str, template: &str) -> String {
-    let mut literals = vec![];
-    let mut names = vec![];
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        let end = start + rest[start..].find("}}").unwrap();
-        literals.push(&rest[..start]);
-        names.push(&rest[start + 2..end]);
-        rest = &rest[end + 2..];
-    }
-    literals.push(rest);
-    let mut left = prompt
-        .strip_prefix(literals[0])
-        .unwrap_or_else(|| panic!("the prompt does not start as its template:\n{prompt}"));
-    let mut values = String::new();
-    for (name, after) in names.iter().zip(&literals[1..]) {
-        let at = if after.is_empty() {
-            left.len()
-        } else {
-            left.find(after).unwrap_or_else(|| {
-                panic!("the prompt lacks the template's {after:?} after {{{{{name}}}}}:\n{prompt}")
-            })
-        };
-        values.push_str(&format!("## {name}\n\n{}\n\n", &left[..at]));
-        left = &left[at + after.len()..];
-    }
-    assert_eq!(left, "", "the prompt goes on past its template");
-    values
-}
-
 #[test_log::test(tokio::test)]
 async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
     let under = tempfile::tempdir().unwrap();
@@ -440,7 +365,7 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
     let name = repo_name();
     let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
     let prompt = prompts::judge(
-        &linewright::briefs::Briefs::shipped().templates,
+        &common::marker_briefs().templates,
         &repo(&name),
         linewright::reconcile::WorkKind::Implement,
         &criteria,
@@ -448,9 +373,7 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
     )
     .replace(into.to_str().unwrap(), "/work/replay");
 
-    let values = values_in(&prompt, read("briefs/prompts/judge.md").trim_end());
-
-    assert_filled_as(&values, "judge.txt");
+    assert_filled_as(&prompt, "judge.txt");
 }
 
 #[test_log::test(tokio::test)]
@@ -469,9 +392,10 @@ async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
         "Our judge.\n\n{{facts}} {{stage}} {{criteria}} {{replay}} {{output}}\n",
     )
     .unwrap();
-    let briefs = linewright::briefs::OperatorBriefs::read(Some(operators.path()))
-        .unwrap()
-        .briefs();
+    let briefs =
+        linewright::briefs::OperatorBriefs::read_over(common::markers(), Some(operators.path()))
+            .unwrap()
+            .briefs();
     let name = repo_name();
     let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
 
@@ -484,7 +408,7 @@ async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
     );
 
     assert!(
-        prompt.starts_with("Our judge.\n\n- Repository: "),
+        prompt.starts_with("Our judge.\n\n[parts/facts.md repo=«owner/widgets» "),
         "{prompt}"
     );
     assert_eq!(

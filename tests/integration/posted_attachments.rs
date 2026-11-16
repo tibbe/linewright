@@ -8,6 +8,7 @@ use linewright::reconcile::WorkKind;
 use linewright::runs::Ending;
 use linewright::store::local::{AttachRefusal, Write};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 /// What a session saves as its screenshot.
 const SHOT: &str = "PNG bytes";
@@ -41,12 +42,14 @@ fn implement_with_body(world: &World, body: impl Fn(&Call) -> String + Send + Sy
 #[test_log::test(tokio::test)]
 async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body_refers_to() {
     let mut world = World::new().await;
-    let named = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let named = Arc::new(Mutex::new(None));
     world.harness.on(WorkKind::Implement, {
         let named = named.clone();
         move |call| {
-            let directory = format!("`{}`", call.spec.attachments.display());
-            *named.lock().unwrap() = Some(call.spec.prompt.contains(&directory));
+            *named.lock().unwrap() = Some((
+                call.spec.prompt.clone(),
+                call.spec.attachments.display().to_string(),
+            ));
             commit_in(&call.spec.dir, &[("src/gadgets.txt", "done\n")], "Do it");
             let shot = save_shot(call);
             Ok(json!({
@@ -61,7 +64,8 @@ async fn an_implement_run_opens_its_pull_request_showing_the_screenshot_its_body
 
     world.poll().await;
 
-    assert_eq!(*named.lock().unwrap(), Some(true));
+    let (prompt, directory) = named.lock().unwrap().clone().unwrap();
+    assert_eq!(filled_in(&prompt, "directory"), directory);
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(
         pr.body,
@@ -208,13 +212,18 @@ async fn cancelled_during_the_uploads(refusal: AttachRefusal) {
 async fn an_attachment_github_refuses_is_sent_back_with_its_reason() {
     let mut world = World::new().await;
     let store = world.store.clone();
-    implement_with_body(&world, move |call| {
-        if call.followup.is_none() {
-            store.refuse_attachments(AttachRefusal::File("File is too large".into()));
-            format!("![The gadgets]({})", save_shot(call))
-        } else {
-            store.accept_attachments();
-            "Shows them.".into()
+    let shot = Arc::new(Mutex::new(String::new()));
+    implement_with_body(&world, {
+        let shot = shot.clone();
+        move |call| {
+            if call.followup.is_none() {
+                store.refuse_attachments(AttachRefusal::File("File is too large".into()));
+                *shot.lock().unwrap() = save_shot(call);
+                format!("![The gadgets]({})", shot.lock().unwrap())
+            } else {
+                store.accept_attachments();
+                "Shows them.".into()
+            }
         }
     });
     open_ticket(&world, "Gadgets");
@@ -223,13 +232,14 @@ async fn an_attachment_github_refuses_is_sent_back_with_its_reason() {
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1]
-            .starts_with("Your final message could not be used: GitHub refused the attachment `")
-            && prompts[1].contains("shot.png`: File is too large."),
-        "{}",
-        prompts[1]
+    let refused = marker(
+        "parts/attachment-refused.md",
+        &[
+            ("file", &shot.lock().unwrap()),
+            ("reason", "File is too large"),
+        ],
     );
+    assert_eq!(prompts[1], could_not_be_used(&refused));
     assert_eq!(world.store.pulls().len(), 1);
 }
 
@@ -238,19 +248,24 @@ async fn a_reference_to_a_file_of_a_kind_linewright_does_not_attach_is_sent_back
 {
     let mut world = World::new().await;
     let store = world.store.clone();
-    implement_with_body(&world, move |call| {
-        if call.followup.is_none() {
-            store.refuse_attachments(AttachRefusal::Token("Not Found".into()));
-            let tree = call.spec.attachments.join("tree.txt");
-            std::fs::write(&tree, "tree").unwrap();
-            format!(
-                "![The gadgets]({})\n\n[The tree]({})",
-                save_shot(call),
-                tree.display()
-            )
-        } else {
-            store.accept_attachments();
-            "Shows them.".into()
+    let referred = Arc::new(Mutex::new(String::new()));
+    implement_with_body(&world, {
+        let referred = referred.clone();
+        move |call| {
+            if call.followup.is_none() {
+                store.refuse_attachments(AttachRefusal::Token("Not Found".into()));
+                let tree = call.spec.attachments.join("tree.txt");
+                std::fs::write(&tree, "tree").unwrap();
+                *referred.lock().unwrap() = tree.display().to_string();
+                format!(
+                    "![The gadgets]({})\n\n[The tree]({})",
+                    save_shot(call),
+                    tree.display()
+                )
+            } else {
+                store.accept_attachments();
+                "Shows them.".into()
+            }
         }
     });
     open_ticket(&world, "Gadgets");
@@ -259,12 +274,17 @@ async fn a_reference_to_a_file_of_a_kind_linewright_does_not_attach_is_sent_back
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].starts_with("Your final message could not be used: `")
-            && prompts[1].contains("tree.txt` is not an image or a video"),
-        "{}",
-        prompts[1]
+    let kind = marker(
+        "parts/attachment-kind.md",
+        &[
+            ("file", &referred.lock().unwrap()),
+            (
+                "kinds",
+                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`",
+            ),
+        ],
     );
+    assert_eq!(prompts[1], could_not_be_used(&kind));
     assert_eq!(world.store.pulls().len(), 1);
 }
 

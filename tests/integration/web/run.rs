@@ -82,8 +82,8 @@ async fn implemented_after(maintenance: &str, maintenance_log: Option<&str>) -> 
         ),
         (
             format!("{SESSION}/followup-1.md"),
-            "Your final message could not be used: The final message holds no JSON object. \
-             End with one.\n"
+            "The test's own follow-up, long enough that the run page cuts it short at the width \
+             of one of its lines.\n"
                 .to_string(),
         ),
     ];
@@ -253,7 +253,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
             "Both reviews came back clean. One optional fix: the README and the image label use the serial c",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
             "worked for | 2m 59s",
-            "follow-up: Your final message could not be used: The final message holds no JSON object. End wi",
+            "follow-up: The test's own follow-up, long enough that the run page cuts it short at the width o",
             "Bash(git commit -qam \"Ship gh and python3 in the base image…) → exit 0, 1 line | 0s",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh and python3 in the base image\",\"pr_body\":\"## Summary\\n\\nT",
             "worked for | 6s",
@@ -378,7 +378,7 @@ async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everyth
             "Both reviews came back clean. One option",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
             "worked for | 2m 59s",
-            "follow-up: Your final message could not ",
+            "follow-up: The test's own follow-up, lon",
             "Bash(git commit -qam \"Ship gh and python",
             "{\"outcome\":\"done\",\"pr_title\":\"Ship gh an",
             "worked for | 6s",

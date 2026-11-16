@@ -27,7 +27,8 @@
 //!   some merge methods.
 //! - `local_store`: an empty local store of `REPO`, with a `Repository`'s
 //!   settings, as a `World` starts with.
-//! - `config`: the factory config a `World` starts with.
+//! - `config`: the factory config a `World` starts with, its briefs over
+//!   the markers.
 //! - `ended_runs`: how each of a world's runs ended.
 //! - `labels`: an issue's labels, sorted.
 //! - `last_comment`: the body of an issue's last comment.
@@ -58,8 +59,6 @@
 //!   - `has_ended`, `ended`, `finished`: whether it has ended, and waits for
 //!     it to end of its own accord, or however long that takes.
 //! - `briefs_with`: a `briefs` directory with one shipped file edited.
-//! - `placeholders_only`: the briefs with each first-message prompt replaced
-//!   by its placeholders, each under a heading naming it.
 //!
 //! # `back_door`: Creation Methods
 //!
@@ -209,6 +208,11 @@
 //!   naming its path and its placeholders.
 //! - `marker_briefs`: the briefs with no layer over the markers.
 //! - `marker`: the marker of a file filled with some values, as expected.
+//! - `marker_text`: the marker layer's text of one file, for a layer of a
+//!   test's own.
+//! - `filled_in`: the value a marker in a text fills a placeholder with.
+//! - `could_not_be_used`, `not_finished`: the follow-up a session is sent
+//!   back with for a reason, or a problem with its work.
 //!
 //! # `same_state`: comparing stores
 //!

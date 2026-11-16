@@ -21,11 +21,22 @@ const FOUND: &str = "GitHub Personal Access Token in the commit \
                      `8479b4565e1a22d92de1bb6edb317cdc4dc64212`, at \
                      `tests/integration/push_protection.rs:22`";
 
-/// What a session is sent of what GitHub's push protection found, in
-/// [`REFUSAL`].
-const SENT: &str = "`GitHub Personal Access Token` in the commit \
-                    `8479b4565e1a22d92de1bb6edb317cdc4dc64212` at \
-                    `tests/integration/push_protection.rs:22`";
+/// Where GitHub's push protection found the secret, in [`REFUSAL`].
+const AT: &str = "tests/integration/push_protection.rs:22";
+
+/// What a session is sent back with when GitHub's push protection finds
+/// the secret in [`REFUSAL`], at `path`.
+fn sent_back_for_secret(path: &str) -> String {
+    let found = marker(
+        "parts/pushed-secret-found.md",
+        &[
+            ("kind", "GitHub Personal Access Token"),
+            ("commit", "8479b4565e1a22d92de1bb6edb317cdc4dc64212"),
+            ("path", path),
+        ],
+    );
+    not_finished(&marker("parts/pushed-secret.md", &[("secrets", &found)]))
+}
 
 /// Commits a fake token to `src/config.rs`.
 pub(crate) fn commit_token(dir: &Path) {
@@ -80,7 +91,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains(SENT), "{}", prompts[1]);
+    assert_eq!(prompts[1], sent_back_for_secret(AT));
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(
         world
@@ -122,9 +133,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
     let comment = last_comment(&issue);
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
-            && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {SENT}."
-            ))
+            && comment.contains(&sent_back_for_secret(AT))
             && comment.contains(&format!(
                 "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection \
                  found {FOUND}."
@@ -226,9 +235,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
     let comment = last_pull_comment(&world, pr).await;
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
-            && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {SENT}."
-            )),
+            && comment.contains(&sent_back_for_secret(AT)),
         "{comment}"
     );
 }
@@ -289,11 +296,9 @@ async fn what_github_reports_of_a_secret_is_redacted() {
     world.poll().await;
 
     let prompts = world.harness.prompts(WorkKind::Implement);
-    assert!(
-        prompts[1].contains("`tests/integration/[redacted].rs:22`")
-            && !prompts[1].contains("push_protection"),
-        "{}",
-        prompts[1]
+    assert_eq!(
+        prompts[1],
+        sent_back_for_secret("tests/integration/[redacted].rs:22")
     );
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
@@ -332,9 +337,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
-            && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {SENT}."
-            )),
+            && comment.contains(&sent_back_for_secret(AT)),
         "{comment}"
     );
     assert_eq!(world.store.pulls(), []);

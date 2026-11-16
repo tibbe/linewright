@@ -533,12 +533,18 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
 #[test_log::test(tokio::test)]
 async fn an_operators_part_is_sent_and_recorded_as_the_operators() {
     let work_dir = tempfile::tempdir().unwrap();
-    let operators = briefs_with("parts/result-no-json.md", |_| {
-        "The operator's own words.\n".into()
-    });
+    let operators = tempfile::tempdir().unwrap();
+    std::fs::create_dir(operators.path().join("parts")).unwrap();
+    std::fs::write(
+        operators.path().join("parts/result-no-json.md"),
+        "The operator's own words.\n",
+    )
+    .unwrap();
     let mut world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
-        config.briefs = linewright::briefs::OperatorBriefs::read(Some(operators.path())).unwrap();
+        config.briefs =
+            linewright::briefs::OperatorBriefs::read_over(markers(), Some(operators.path()))
+                .unwrap();
     })
     .await;
     world
@@ -553,7 +559,7 @@ async fn an_operators_part_is_sent_and_recorded_as_the_operators() {
 
     let sent = world.harness.prompts(WorkKind::Triage);
     assert_eq!(sent.len(), 2);
-    assert!(sent[1].contains("The operator's own words."), "{}", sent[1]);
+    assert_eq!(sent[1], could_not_be_used("The operator's own words."));
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
     let briefs = &answer["runs"][0]["sessions"][0]["layers"]["briefs"];
     assert_eq!(briefs["parts/result-no-json.md"], "operator");

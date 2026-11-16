@@ -2313,22 +2313,22 @@ async fn a_rework_or_fix_ci_run_updates_and_commits_by_the_merge_method_with_aut
 {
     use linewright::domain::MergeMethod;
 
-    const SERIES: &str = "leave the commits the branch adds to it a coherent series";
-    const ON_TOP: &str = "add your commits on top of the branch";
+    let series = marker("parts/history-series.md", &[]);
+    let on_top = marker("parts/history-on-top.md", &[]);
     for (method, auto_merge, kind, update, history) in [
         (
             MergeMethod::Rebase,
             false,
             WorkKind::Rework,
             Stopped::Rebase,
-            SERIES,
+            &series,
         ),
         (
             MergeMethod::Squash,
             true,
             WorkKind::FixCi,
             Stopped::Merge,
-            ON_TOP,
+            &on_top,
         ),
     ] {
         let case = format!("{method}, auto-merge {auto_merge}, {kind:?}");

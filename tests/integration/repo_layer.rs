@@ -36,7 +36,10 @@ fn a_file_that_is_not_one_of_linewrights_or_a_layer_may_not_hold_holds_every_run
     .map(|path| (path.to_string(), Blob::Text("Implement it.\n".into())))
     .collect();
 
-    let layer = RepoLayer::parse(files, &OperatorBriefs::read(None).unwrap());
+    let layer = RepoLayer::parse(
+        files,
+        &OperatorBriefs::read_over(common::markers(), None).unwrap(),
+    );
 
     assert_eq!(
         layer.unusable,
@@ -70,7 +73,10 @@ fn a_file_with_wrong_placeholders_holds_the_runs_it_could_change() {
     .map(|(path, text)| (path.to_string(), Blob::Text(text.into())))
     .collect();
 
-    let layer = RepoLayer::parse(files, &OperatorBriefs::read(None).unwrap());
+    let layer = RepoLayer::parse(
+        files,
+        &OperatorBriefs::read_over(common::markers(), None).unwrap(),
+    );
 
     assert_eq!(
         layer.unusable,
@@ -123,7 +129,7 @@ fn the_repositorys_files_come_before_the_operators() {
 
     let layer = RepoLayer::parse(
         files,
-        &OperatorBriefs::read(Some(operators.path())).unwrap(),
+        &OperatorBriefs::read_over(common::markers(), Some(operators.path())).unwrap(),
     );
 
     assert_eq!(layer.unusable, []);
@@ -147,9 +153,13 @@ async fn hidden_files_and_the_automations_are_no_files_of_the_layer() {
     )
     .await;
 
-    let layer = RepoLayer::read(&store, "main", &OperatorBriefs::read(None).unwrap())
-        .await
-        .unwrap();
+    let layer = RepoLayer::read(
+        &store,
+        "main",
+        &OperatorBriefs::read_over(common::markers(), None).unwrap(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(layer.unusable, []);
 }
