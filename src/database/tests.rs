@@ -238,3 +238,10 @@ async fn a_handle_opens_a_current_schema_while_another_process_has_it_open() {
 
     assert!(db.is_ok(), "{:?}", db.map(|_| ()));
 }
+
+#[test_log::test]
+fn a_local_directory_is_on_no_network_filesystem() {
+    let dir = tempfile::tempdir().unwrap();
+
+    assert_eq!(network_filesystem(dir.path()), None);
+}
