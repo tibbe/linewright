@@ -203,6 +203,13 @@
 //! - `eventually_async`: waits until an async condition holds.
 //! - `run_ids`: the run ids in `lw runs` output.
 //!
+//! # `markers`: the briefs as markers
+//!
+//! - `markers`: Linewright's own layer of the briefs, each file a marker
+//!   naming its path and its placeholders.
+//! - `marker_briefs`: the briefs with no layer over the markers.
+//! - `marker`: the marker of a file filled with some values, as expected.
+//!
 //! # `same_state`: comparing stores
 //!
 //! - `assert_same_state`: asserts a stage left the same state in one store as
@@ -216,6 +223,7 @@ mod files;
 mod harness;
 mod http;
 mod items;
+mod markers;
 mod records;
 mod same_state;
 mod webhooks;
@@ -229,6 +237,7 @@ pub use files::*;
 pub use harness::*;
 pub use http::*;
 pub use items::*;
+pub use markers::*;
 pub use records::*;
 pub use same_state::*;
 pub use webhooks::*;

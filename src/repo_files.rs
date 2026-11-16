@@ -135,7 +135,7 @@ impl RepoLayer {
         let briefs = if layer.files.is_empty() && parsed.is_empty() {
             operator.briefs()
         } else {
-            let resolved = Briefs::resolve(&[&layer, operator.layer()]);
+            let resolved = operator.with_repository(&layer);
             unusable.extend(
                 parsed
                     .into_iter()

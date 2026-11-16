@@ -6,7 +6,7 @@ use crate::common;
 use linewright::briefs::{BriefLayer, Briefs, OperatorBriefs, Unusable};
 use linewright::git::BranchStart;
 use linewright::layer::Layer;
-use linewright::prompts::{self, LooseEnd, Readers, Reads, SentBack, Templates};
+use linewright::prompts::{self, LooseEnd, OwnTemplates, Readers, Reads, SentBack, Templates};
 use linewright::reconcile::WorkKind;
 use linewright::results::ParseError;
 use linewright::store::Blob;
@@ -39,12 +39,6 @@ fn no_json() -> SentBack<'static> {
     SentBack::Result(&ParseError::NoJson)
 }
 
-const NO_JSON: &str =
-    "The final message holds no JSON object. End with the result as a single JSON object.";
-
-const NO_COMMITS: &str = "you answered `done`, but the branch has no commits. Commit your work, \
-                          or answer `gave-up` with the reason if the ticket needs no change.";
-
 #[test_log::test]
 fn each_file_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let repository = layer(
@@ -73,7 +67,7 @@ fn each_file_comes_from_the_first_layer_that_has_it_which_is_recorded() {
         ],
     );
 
-    let resolved = Briefs::resolve(&[&repository, &operator]);
+    let resolved = Briefs::resolve(&common::markers(), &[&repository, &operator]);
 
     assert_eq!(resolved.unusable, []);
     let briefs = resolved.briefs;
@@ -83,7 +77,14 @@ fn each_file_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     );
     assert_eq!(
         prompts::loose_ends(&briefs.templates, &LooseEnd::NoCommits),
-        format!("The operator's: {NO_COMMITS}")
+        format!(
+            "The operator's: {}",
+            common::marker("parts/no-commits.md", &[])
+        )
+    );
+    assert_eq!(
+        prompts::usage_limit_reset(&briefs.templates),
+        common::marker("prompts/follow-ups/usage-limit-reset.md", &[])
     );
     let layers: BTreeMap<&str, Layer> = briefs
         .layers()
@@ -108,6 +109,25 @@ fn each_file_comes_from_the_first_layer_that_has_it_which_is_recorded() {
 }
 
 #[test_log::test]
+fn a_file_in_no_layer_is_linewrights_own_filled_into_the_file_that_holds_it() {
+    let briefs = common::marker_briefs();
+
+    assert_eq!(
+        prompts::result_error(&briefs.templates, &no_json()),
+        common::marker(
+            "prompts/follow-ups/result-error.md",
+            &[("error", &common::marker("parts/result-no-json.md", &[]))]
+        )
+    );
+    assert!(
+        briefs
+            .layers()
+            .values()
+            .all(|layer| *layer == Layer::Linewright)
+    );
+}
+
+#[test_log::test]
 fn a_file_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     let repository = layer(
         Layer::Repository,
@@ -124,7 +144,7 @@ fn a_file_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
         )],
     );
 
-    let resolved = Briefs::resolve(&[&repository, &operator]);
+    let resolved = Briefs::resolve(&common::markers(), &[&repository, &operator]);
 
     assert_eq!(
         resolved.unusable,
@@ -145,7 +165,10 @@ fn a_file_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     );
     assert_eq!(
         prompts::result_error(&resolved.briefs.templates, &no_json()),
-        format!("The operator's: {NO_JSON}")
+        format!(
+            "The operator's: {}",
+            common::marker("parts/result-no-json.md", &[])
+        )
     );
     assert_eq!(
         resolved.briefs.layers()["prompts/follow-ups/result-error.md"],
@@ -254,6 +277,46 @@ fn a_file_that_cannot_be_read_as_text_is_unusable() {
     );
 }
 
+/// The operator's briefs from `dir`, over the markers.
+#[track_caller]
+fn operator_over_markers(dir: &Path) -> OperatorBriefs {
+    OperatorBriefs::read_over(common::markers(), Some(dir)).unwrap()
+}
+
+/// The marker of `parts/facts.md`, filled with the facts of
+/// `owner/widgets` on `main`, its spec `docs/**`.
+fn facts() -> String {
+    common::marker(
+        "parts/facts.md",
+        &[
+            ("repo", "owner/widgets"),
+            ("default_branch", "main"),
+            ("spec_glob", "docs/**"),
+        ],
+    )
+}
+
+/// The marker of `parts/attachments.md`, filled for the attachments
+/// directory `/attachments`.
+fn attachments() -> String {
+    common::marker(
+        "parts/attachments.md",
+        &[
+            ("directory", "/attachments"),
+            (
+                "kinds",
+                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`",
+            ),
+            ("videos", "`.mp4`, `.mov` or `.webm`"),
+        ],
+    )
+}
+
+/// Each of `names` as its placeholder, one after another.
+fn placeholders(names: &[&str]) -> String {
+    names.iter().map(|n| format!("{{{{{n}}}}}")).collect()
+}
+
 /// A `briefs` directory holding only `files`, each at its path under it.
 fn briefs_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -288,7 +351,7 @@ fn implement_prompt(briefs: &Briefs) -> String {
 fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_linewrights() {
     let dir = briefs_dir(&[("prompts/implement.md", IMPLEMENT)]);
 
-    let operator = OperatorBriefs::read(Some(dir.path())).unwrap();
+    let operator = operator_over_markers(dir.path());
 
     assert_eq!(
         operator.layer().files.keys().collect::<Vec<_>>(),
@@ -297,22 +360,15 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
     let briefs = operator.briefs();
     let prompt = implement_prompt(&briefs);
     assert!(
-        prompt.starts_with("Our own: - Repository: `owner/widgets`"),
+        prompt.starts_with(&format!("Our own: {} 7-count-the-widgets", facts())),
         "{prompt}"
     );
     assert!(
-        prompt.contains(
-            "\n\n## Output\n\nEnd your session with a final message that is a single JSON \
-             object and nothing else, one of:\n\n- `done`, "
-        ),
-        "{prompt}"
-    );
-    assert!(
-        prompt.contains(
-            "`declined_findings` lists the review findings you did not apply.\n\n\
-             To show a screenshot or a video in the Markdown your result posts, save the file \
-             in your attachments directory, `/attachments`, "
-        ) && prompt.ends_with("in a fenced code block or a `<details>` block when it is long.\n"),
+        prompt.ends_with(&format!(
+            "\n\n## Output\n\n{}\n\n{}\n",
+            common::marker("outputs/implement.md", &[]),
+            attachments()
+        )),
         "{prompt}"
     );
     assert_eq!(briefs.layers()["prompts/implement.md"], Layer::Operator);
@@ -330,17 +386,34 @@ fn an_operators_part_and_output_are_filled_into_the_prompt() {
         ("outputs/implement.md", "Answer as you see fit.\n"),
     ]);
 
-    let briefs = OperatorBriefs::read(Some(dir.path())).unwrap().briefs();
+    let briefs = operator_over_markers(dir.path()).briefs();
     let prompt = implement_prompt(&briefs);
 
-    assert!(
-        prompt.contains("Ours: owner/widgets on main, docs/**.\n"),
-        "{prompt}"
+    let holding = common::marker("parts/new-branch.md", &[("default_branch", "main")]);
+    let output = format!("Answer as you see fit.\n\n{}", attachments());
+    assert_eq!(
+        prompt,
+        format!(
+            "{}\n",
+            common::marker(
+                "prompts/implement.md",
+                &[
+                    ("facts", "Ours: owner/widgets on main, docs/**."),
+                    ("default_branch", "main"),
+                    ("branch", "7-count-the-widgets"),
+                    ("holding", &holding),
+                    (
+                        "ticket",
+                        "### The ticket: #7 Count the widgets\n\n\
+                         Opened by @maintainer. Labels: ready-for-agent, linewright:designed.\n\n\
+                         _(empty)_"
+                    ),
+                    ("output", &output),
+                ]
+            )
+        )
     );
-    assert!(
-        prompt.contains("Answer as you see fit.\n\nTo show a screenshot"),
-        "{prompt}"
-    );
+    assert_eq!(briefs.layers()["parts/attachments.md"], Layer::Linewright);
     assert_eq!(briefs.layers()["parts/facts.md"], Layer::Operator);
     assert_eq!(briefs.layers()["outputs/implement.md"], Layer::Operator);
 }
@@ -359,7 +432,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     .unwrap();
     let name = "owner/widgets".parse().unwrap();
 
-    let briefs = OperatorBriefs::read(Some(dir.path())).unwrap().briefs();
+    let briefs = operator_over_markers(dir.path()).briefs();
     let prompt = prompts::automation(
         &briefs.templates,
         &prompts::Repo {
@@ -372,9 +445,12 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     );
 
     assert!(
-        prompt.starts_with(
-            "Mind the schedule of `weekly`, at most 3: Look.\n- Repository: `owner/widgets`"
-        ),
+        prompt.starts_with(&format!(
+            "Mind the schedule of `weekly`, at most 3: Look.\n{}\n\n{}\n\n{}\n",
+            facts(),
+            common::marker("outputs/automation.md", &[]),
+            attachments()
+        )),
         "{prompt}"
     );
     assert_eq!(briefs.layers()["prompts/automation.md"], Layer::Operator);
@@ -472,7 +548,9 @@ fn every_file_of_the_brief_has_its_values_placeholders() {
         .map(|path| (path, std::fs::read_to_string(briefs.join(path)).unwrap()))
         .collect();
 
-    let (_, unusable) = Templates::read(&mut |path| texts.get(path).map(String::as_str));
+    let (_, unusable) = Templates::read(&OwnTemplates::shipped(), &mut |path| {
+        texts.get(path).map(String::as_str)
+    });
 
     let unusable: Vec<String> = unusable
         .iter()
@@ -551,7 +629,7 @@ fn the_plugin_written_is_the_briefs_own_with_each_skill_from_its_layer() {
         &[("plugin/skills/tdd/SKILL.md", "The operator's TDD.\n")],
     );
 
-    Briefs::resolve(&[&operator])
+    Briefs::resolve(&common::markers(), &[&operator])
         .briefs
         .write_plugin(dir.path())
         .unwrap();
@@ -595,4 +673,40 @@ fn the_loose_ends_follow_up_is_read_by_every_run_whose_result_may_attach_a_secre
         assert!(readers.read_by(&RunKind::Stage(kind)), "{kind:?}");
     }
     assert!(readers.read_by(&RunKind::Automation(&automation)));
+}
+
+#[test_log::test]
+fn linewrights_own_layer_is_generated_from_each_files_path_and_placeholders() {
+    let mut asked = Vec::new();
+
+    let own = OwnTemplates::generate(|path, names| {
+        asked.push((path, names.to_vec()));
+        format!("{path}: {}\n", placeholders(names))
+    });
+
+    own.unwrap();
+    assert!(asked.contains(&("prompts/follow-ups/result-error.md", vec!["error"])));
+    assert!(asked.contains(&("parts/no-commits.md", vec![])));
+    assert!(asked.contains(&(
+        "parts/facts.md",
+        vec!["repo", "default_branch", "spec_glob"]
+    )));
+    assert_eq!(asked.len(), Templates::paths().count());
+}
+
+#[test_log::test]
+fn linewrights_own_layer_is_not_generated_from_text_that_does_not_parse_each_file_named() {
+    let error = OwnTemplates::generate(|path, names| match path {
+        "parts/facts.md" => "No placeholders.".into(),
+        "parts/no-commits.md" => "Mind the {{ticket}}.".into(),
+        _ => placeholders(names),
+    })
+    .unwrap_err();
+
+    assert_eq!(
+        format!("{error:#}"),
+        "the text of these files does not parse:\n\
+         - parts/facts.md: it lacks the placeholders `{{repo}}`, `{{default_branch}}`, `{{spec_glob}}`\n\
+         - parts/no-commits.md: it has unknown placeholders: `{{ticket}}`"
+    );
 }

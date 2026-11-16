@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
 use std::path::Path;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{Result, bail};
 
@@ -475,10 +476,26 @@ macro_rules! templates {
         },)*];
 
         impl Templates {
-            fn build(reader: &mut Reader) -> Templates {
+            fn build(reader: &mut Reader, own: &Templates) -> Templates {
                 Templates {
-                    $($field: reader.read($path),)*
+                    $($field: reader.read($path, &own.$field),)*
                 }
+            }
+
+            /// Every template from `text`'s text for its path and its
+            /// values' names, or the paths whose text does not parse, with
+            /// why.
+            fn generate(
+                text: &mut dyn FnMut(&'static str, &[&'static str]) -> String,
+            ) -> Result<Templates, Vec<(&'static str, anyhow::Error)>> {
+                let mut failed = Vec::new();
+                $(let $field = generated::<$values>($path, text, &mut failed);)*
+                if !failed.is_empty() {
+                    return Err(failed);
+                }
+                Ok(Templates {
+                    $($field: $field.expect("only a failed template is missing"),)*
+                })
             }
         }
     };
@@ -573,19 +590,89 @@ enum Ending {
     Trimmed,
 }
 
+impl File {
+    /// `text` as this file's template, ending as the file does.
+    fn parse<V: Values>(&self, text: &str) -> Result<Template<V>> {
+        let text = match self.ending {
+            Ending::AsWritten => text,
+            Ending::Trimmed => text.trim_end(),
+        };
+        Template::parse(text.to_string())
+    }
+}
+
+/// Linewright's own text of every file of [`Templates`], each of which
+/// parses with its values: the layer under all others.
+#[derive(Clone, Debug)]
+pub struct OwnTemplates(Arc<Templates>);
+
+impl OwnTemplates {
+    /// The text Linewright ships, in `briefs/`.
+    pub fn shipped() -> OwnTemplates {
+        static SHIPPED: LazyLock<OwnTemplates> = LazyLock::new(|| {
+            OwnTemplates::generate(|path, _| {
+                file(path)
+                    .expect("every template is in the table")
+                    .shipped
+                    .to_string()
+            })
+            .expect("the shipped templates have their values' placeholders")
+        });
+        SHIPPED.clone()
+    }
+
+    /// Each file's text from `text`, given its path under `briefs/` and the
+    /// names of its placeholders in its values' order. Fails naming each file
+    /// whose text does not parse.
+    pub fn generate(
+        mut text: impl FnMut(&'static str, &[&'static str]) -> String,
+    ) -> Result<OwnTemplates> {
+        match Templates::generate(&mut text) {
+            Ok(templates) => Ok(OwnTemplates(Arc::new(templates))),
+            Err(failed) => {
+                let named: Vec<String> = failed
+                    .iter()
+                    .map(|(path, error)| format!("- {path}: {error:#}"))
+                    .collect();
+                bail!(
+                    "the text of these files does not parse:\n{}",
+                    named.join("\n")
+                )
+            }
+        }
+    }
+}
+
+/// The template at `path` from `text`, or `None`, its failure added to
+/// `failed`, where it does not parse.
+fn generated<V: Values>(
+    path: &'static str,
+    text: &mut dyn FnMut(&'static str, &[&'static str]) -> String,
+    failed: &mut Vec<(&'static str, anyhow::Error)>,
+) -> Option<Template<V>> {
+    let file = file(path).expect("every template is in the table");
+    match file.parse(&text(path, &V::names())) {
+        Ok(template) => Some(template),
+        Err(error) => {
+            failed.push((path, error));
+            None
+        }
+    }
+}
+
 impl Templates {
     /// The templates, each from `lookup`'s text for its path under
-    /// `briefs/`, or the text Linewright ships where it has none, and the
-    /// paths whose text does not parse, with why, each of which takes the
-    /// shipped text.
+    /// `briefs/`, or `own`'s where it has none, and the paths whose text
+    /// does not parse, with why, each of which takes `own`'s.
     pub fn read<'a>(
+        own: &OwnTemplates,
         lookup: &mut dyn FnMut(&'static str) -> Option<&'a str>,
     ) -> (Templates, Vec<(&'static str, anyhow::Error)>) {
         let mut reader = Reader {
             lookup,
             unusable: Vec::new(),
         };
-        let templates = Templates::build(&mut reader);
+        let templates = Templates::build(&mut reader, &own.0);
         (templates, reader.unusable)
     }
 
@@ -702,23 +789,17 @@ struct Reader<'l, 'a> {
 }
 
 impl Reader<'_, '_> {
-    /// The template at `path` under `briefs/`, one of [`TABLE`]'s.
-    fn read<V: Values>(&mut self, path: &'static str) -> Template<V> {
+    /// The template at `path` under `briefs/`, one of [`TABLE`]'s, or `own`
+    /// where the lookup has none that parses.
+    fn read<V: Values>(&mut self, path: &'static str, own: &Template<V>) -> Template<V> {
         let file = file(path).expect("every template is in the table");
-        let parse = |text: &str| {
-            let text = match file.ending {
-                Ending::AsWritten => text,
-                Ending::Trimmed => text.trim_end(),
-            };
-            Template::parse(text.to_string())
-        };
         if let Some(text) = (self.lookup)(path) {
-            match parse(text) {
+            match file.parse(text) {
                 Ok(template) => return template,
                 Err(error) => self.unusable.push((path, error)),
             }
         }
-        parse(file.shipped).expect("the shipped templates have their values' placeholders")
+        own.clone()
     }
 }
 
