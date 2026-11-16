@@ -15,6 +15,7 @@ use crate::domain::{
 };
 use crate::git::{BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::WorkKind;
+use crate::replay::judge::ReplayCopy;
 use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
@@ -982,19 +983,18 @@ pub fn automation(
 }
 
 /// What the judge of a replay of a case of `stage` in `repo` is sent: the
-/// case's `criteria`, and where the parts of the replay's output in the
-/// absolute directory `output` are (`docs/specs/benchmarks.md`, Judging).
+/// case's `criteria`, and where the parts of the replay's output are in the
+/// judge's copy `replay` (`docs/specs/benchmarks.md`, Judging).
 /// Its result contract has nothing on attachments.
-pub fn judge(repo: &Repo, stage: WorkKind, criteria: &Criteria, output: &Path) -> String {
-    let part = |name: &str| output.join(name).display().to_string();
+pub fn judge(repo: &Repo, stage: WorkKind, criteria: &Criteria, replay: &ReplayCopy) -> String {
     OWN_TEMPLATES.judge.fill(&Judge {
         base: shared(repo),
         stage: stage.name().into(),
         criteria: criteria.as_str().trim_end().into(),
         replay: OWN_TEMPLATES.replay_output.fill(&ReplayOutput {
-            outcome: part("outcome"),
-            sessions: part("sessions"),
-            writes: part("writes"),
+            outcome: replay.outcome().display().to_string(),
+            sessions: replay.sessions().display().to_string(),
+            writes: replay.writes().display().to_string(),
         }),
         output: OWN_TEMPLATES.judge_output.fill(&NoValues {}),
     })

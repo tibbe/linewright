@@ -267,6 +267,19 @@ impl Workspace {
         sessions.clones.make(&purpose_name(purpose)).await
     }
 
+    /// A new, empty directory beside the clone's repository, removed with
+    /// the clone.
+    ///
+    /// # Errors
+    ///
+    /// When the directory cannot be made.
+    pub(crate) fn make_beside(&self, beside: Beside) -> Result<PathBuf> {
+        let dir = self.clone_dir.path().join(beside.name());
+        std::fs::create_dir(&dir)
+            .with_context(|| format!("making {} beside the clone", beside.name()))?;
+        Ok(dir)
+    }
+
     /// Where the repository of a clone made in `clone_dir` is.
     fn repo_in(clone_dir: &Path) -> PathBuf {
         clone_dir.join("repo")
@@ -297,6 +310,22 @@ impl Workspace {
             scratch,
             plugin,
         })
+    }
+}
+
+/// A directory that a clone's directory holds beside its repository, its
+/// scratch directory and Linewright's plugin.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Beside {
+    /// A judge's copy of the replay it judges.
+    Replay,
+}
+
+impl Beside {
+    fn name(self) -> &'static str {
+        match self {
+            Beside::Replay => "replay",
+        }
     }
 }
 

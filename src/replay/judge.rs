@@ -24,12 +24,16 @@ use crate::results::{self, Correctness, JudgeResult, Leak};
 use crate::run::RunWith;
 use crate::runs::{Ending, OutcomeName, Ran, RunId};
 use crate::session::{
-    self, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, lock_set_whole,
-    open_session, parse_retry,
+    self, Beside, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, infra,
+    lock_set_whole, open_session, parse_retry,
 };
 use crate::winding_up::WindingUp;
 use crate::work_settings::{RunKind, SessionSettings};
 use crate::{COMMAND, VERSION_AND_COMMIT};
+
+mod copy;
+
+pub use copy::ReplayCopy;
 
 const JUDGEMENT: &str = "judgement.json";
 
@@ -534,8 +538,13 @@ async fn session(
         .pushed
         .as_deref()
         .unwrap_or(&sessions.default_branch);
-    let (opened, _ws, ()) =
+    let (opened, ws, ()) =
         open_session(sessions, ctx, Purpose::Judge, branch, async |_| Ok(())).await?;
+    let copying = async { ReplayCopy::make(replayed, &ws.make_beside(Beside::Replay)?).await };
+    let copy = copying
+        .await
+        .context("copying the replay for the judge")
+        .map_err(|error| opened.ended(sessions, infra(error)))?;
     let settings = &case.properties().settings;
     let repo = Repo {
         name: &settings.repo,
@@ -543,7 +552,7 @@ async fn session(
         spec_glob: config.spec_glob.pattern(),
     };
     let (mut spec, _attachments) =
-        opened.spec(|_| prompts::judge(&repo, case.stage().kind(), case.criteria(), &replayed.dir));
+        opened.spec(|_| prompts::judge(&repo, case.stage().kind(), case.criteria(), &copy));
     let briefs = &with.briefs;
     let (result, _) =
         converse(

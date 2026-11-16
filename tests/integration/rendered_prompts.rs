@@ -12,9 +12,11 @@ use std::borrow::Cow;
 use chrono::{DateTime, Utc};
 
 use crate::common;
+use linewright::case::Case;
 use linewright::domain::*;
 use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
 use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
+use linewright::replay::judge::{ReplayCopy, Replayed};
 use linewright::working_pull::Feedback;
 
 fn created() -> Timestamp {
@@ -507,16 +509,24 @@ fn values_in(prompt: &str, template: &str) -> String {
     values
 }
 
-#[test_log::test]
-fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
+#[test_log::test(tokio::test)]
+async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
+    let under = tempfile::tempdir().unwrap();
+    let (case, out) = crate::judge::triage_output(under.path(), "done").await;
+    let case = Case::open(&case).await.unwrap();
+    let replayed = Replayed::open(&out, &case).await.unwrap();
+    let into = under.path().join("replay");
+    std::fs::create_dir(&into).unwrap();
+    let copy = ReplayCopy::make(&replayed, &into).await.unwrap();
     let name = repo_name();
     let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
     let prompt = prompts::judge(
         &repo(&name),
         linewright::reconcile::WorkKind::Implement,
         &criteria,
-        std::path::Path::new("/work/out"),
-    );
+        &copy,
+    )
+    .replace(into.to_str().unwrap(), "/work/replay");
 
     let values = values_in(&prompt, read("briefs/judge.md").trim_end());
 

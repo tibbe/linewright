@@ -5,6 +5,7 @@
 use crate::common;
 use crate::replay::{entries, gh_answer, lw_command, lw_isolated, triage_case};
 
+use std::io::Write as _;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,7 +38,7 @@ fn judged_as(verdict: &str, calls: &[&str]) -> String {
 /// replay of it whose run ended `outcome`, written in `under/out` as a
 /// replay leaves it: the ID of the case's run and the outcome.
 #[track_caller]
-fn triage_output<'a>(
+pub(crate) fn triage_output<'a>(
     under: &'a Path,
     outcome: &'a str,
 ) -> impl Future<Output = (PathBuf, PathBuf)> + 'a {
@@ -273,6 +274,122 @@ async fn a_judges_session_that_fails_on_its_infrastructure_is_retried_once() {
     assert!(judged.is_ok(), "{judged:?}");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(judge_records(&out).len(), 1);
+}
+
+/// The path the judge's prompt `prompt` gives after `label`.
+#[track_caller]
+fn named_in(prompt: &str, label: &str) -> PathBuf {
+    let line = prompt
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("- {label}: `")))
+        .unwrap_or_else(|| panic!("the prompt names no {label}:\n{prompt}"));
+    let path = line
+        .strip_suffix('`')
+        .unwrap_or_else(|| panic!("the {label} is not quoted whole:\n{prompt}"));
+    PathBuf::from(path)
+}
+
+/// What a judge saw of the replay in its copy, from the paths its prompt
+/// names.
+#[derive(Debug)]
+struct Copied {
+    root: PathBuf,
+    entries: Vec<String>,
+    outcome: String,
+    brief: String,
+    write: String,
+    attachments: Vec<String>,
+    attachment: Vec<u8>,
+}
+
+/// What the judge called with `call` sees in its copy of the replay, which
+/// it then overwrites the copy's first write of in place.
+#[track_caller]
+fn seen_then_overwritten(call: &Call) -> Copied {
+    let prompt = &call.spec.prompt;
+    let outcome = named_in(prompt, "How its run ended");
+    let sessions = named_in(
+        prompt,
+        "Each session's record, with its brief and its transcript",
+    );
+    let writes = named_in(
+        prompt,
+        "What Linewright would have written to GitHub, in order",
+    );
+    let root = outcome.parent().unwrap().to_path_buf();
+    assert_eq!(sessions, root.join("sessions"));
+    assert_eq!(writes, root.join("writes"));
+    let seen = Copied {
+        entries: entries(&root),
+        outcome: std::fs::read_to_string(&outcome).unwrap(),
+        brief: std::fs::read_to_string(sessions.join("triage/1/brief.md")).unwrap(),
+        write: std::fs::read_to_string(writes.join("0001-comment.json")).unwrap(),
+        attachments: entries(&root.join("attachments")),
+        attachment: std::fs::read(root.join("attachments/shot.png")).unwrap(),
+        root,
+    };
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(writes.join("0001-comment.json"))
+        .unwrap()
+        .write_all(b"{\"overwritten\"")
+        .unwrap();
+    seen
+}
+
+#[test_log::test(tokio::test)]
+async fn each_judge_reads_a_copy_of_only_the_parts_it_judges_removed_once_it_is_done() {
+    let under = tempfile::tempdir().unwrap();
+    let (case, out) = triage_output(under.path(), "done").await;
+    let write = r#"{"body": "See ![the export](../attachments/shot.png)."}"#;
+    std::fs::create_dir_all(out.join("sessions/triage/1")).unwrap();
+    std::fs::write(out.join("sessions/triage/1/brief.md"), "Triage it.\n").unwrap();
+    std::fs::create_dir(out.join("writes")).unwrap();
+    std::fs::write(out.join("writes/0001-comment.json"), write).unwrap();
+    std::fs::create_dir(out.join("attachments")).unwrap();
+    std::fs::write(out.join("attachments/shot.png"), b"PNG").unwrap();
+    std::fs::write(out.join("version"), "lw 1.0.0\n").unwrap();
+    std::fs::write(out.join("build.log"), "built\n").unwrap();
+    let harness = Arc::new(ScriptedHarness::default());
+    let seen = Arc::new(Mutex::new(vec![]));
+    let first = seen.clone();
+    harness.on_judge(move |call| {
+        first.lock().unwrap().push(seen_then_overwritten(call));
+        Ok(judged_as("pass", &[]))
+    });
+    judging(&case, &out, under.path(), harness.clone(), |_| {})
+        .await
+        .unwrap();
+    let second = seen.clone();
+    harness.on_judge(move |call| {
+        second.lock().unwrap().push(seen_then_overwritten(call));
+        Ok(json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string())
+    });
+
+    let regave = judging(&case, &out, under.path(), harness, |_| {}).await;
+
+    assert!(regave.is_err(), "{regave:?}");
+    assert!(out.join("judgement.json").is_file());
+    assert_eq!(judge_records(&out).len(), 1);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    for copy in seen.iter() {
+        assert!(!copy.root.starts_with(&out), "{}", copy.root.display());
+        assert_eq!(
+            copy.entries,
+            vec!["attachments", "outcome", "sessions", "writes"]
+        );
+        assert_eq!(copy.outcome, "done\n");
+        assert_eq!(copy.brief, "Triage it.\n");
+        assert_eq!(copy.write, write);
+        assert_eq!(copy.attachments, vec!["shot.png"]);
+        assert_eq!(copy.attachment, b"PNG");
+        assert!(!copy.root.exists(), "{}", copy.root.display());
+    }
+    assert_eq!(
+        std::fs::read_to_string(out.join("writes/0001-comment.json")).unwrap(),
+        write
+    );
 }
 
 #[test_log::test(tokio::test)]
