@@ -1,25 +1,4 @@
-## facts
-
-- Repository: `owner/widgets`
-- Default branch: `main`
-- Spec: the tracked files matching `docs/specs/**/*.md`
-- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-
-## default_branch
-
-main
-
-## branch
-
-7-spec-change-count-widgets
-
-## holding
-
-fresh from `main`.
-
-## ticket
-
-### The ticket: #7 Spec change: Count widgets
+[prompts/implement.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» default_branch=«main» branch=«7-spec-change-count-widgets» holding=«[parts/new-branch.md default_branch=«main»]» ticket=«### The ticket: #7 Spec change: Count widgets
 
 Opened by @reporter. Labels: bug.
 
@@ -39,13 +18,6 @@ This issue was opened for the spec change #5.
 
 ```diff
 +Widgets are counted.
-```
+```» output=«[outputs/implement.md]
 
-## output
-
-<<briefs/outputs/implement.md>>
-
-To show a screenshot or a video in the Markdown your result posts, save the file in your attachments directory, `/work/sessions/issue-7/20261001T120000Z-implement/attachments`, and refer to it by its absolute path there: as the destination of a Markdown image (`![what it shows](</path/to/file.png>)`) or link (`[what it is](</path/to/file.mp4>)`), or as an HTML `img`'s `src`. Keep the angle brackets around the path, since it may contain spaces. Linewright uploads each file you refer to and puts its URL in place of the path. A video (`.mp4`, `.mov` or `.webm`) embedded alone in its paragraph plays inline; anywhere else it becomes a link to it.
-
-Only images and videos can be attached: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`. Refer to no other file this way. Put anything else, such as text output or a log, in the Markdown itself, in a fenced code block or a `<details>` block when it is long.
-
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]»]

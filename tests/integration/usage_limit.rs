@@ -157,16 +157,12 @@ async fn a_refused_session_resumes_after_the_reset_in_the_same_clone_with_the_re
     assert_eq!(turns.len(), 2, "{turns:?}");
     assert_eq!(turns[1].session, turns[0].session);
     assert_eq!(turns[1].dir, turns[0].dir);
-    let reset = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/briefs/prompts/follow-ups/usage-limit-reset.md"
-    ))
-    .unwrap();
-    assert_eq!(turns[1].followup, Some(reset.trim_end().to_string()));
+    let reset = marker("prompts/follow-ups/usage-limit-reset.md", &[]);
+    assert_eq!(turns[1].followup, Some(reset.clone()));
     let sessions = session_records(&world).await;
     assert_eq!(sessions.len(), 1, "one session, not started again");
     assert!(sessions[0].brief.is_some());
-    assert_eq!(sessions[0].followups, [reset.trim_end()]);
+    assert_eq!(sessions[0].followups, [reset]);
     assert_eq!(world.store.pulls().len(), 1);
     let branch = format!("{}-do-the-thing", ticket.0);
     for file in ["src/turn-0.txt", "src/turn-1.txt"] {

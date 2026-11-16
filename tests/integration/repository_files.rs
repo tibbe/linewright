@@ -12,15 +12,6 @@ use serde_json::json;
 
 const CONFIG: &str = ".linewright/config.toml";
 
-/// The prompt Linewright ships at `path` under `briefs/prompts/`.
-fn shipped(path: &str) -> String {
-    std::fs::read_to_string(format!(
-        "{}/briefs/prompts/{path}",
-        env!("CARGO_MANIFEST_DIR")
-    ))
-    .unwrap()
-}
-
 async fn commit_on(world: &World, branch: &str, files: &[(&str, &str)]) {
     world
         .store
@@ -117,7 +108,7 @@ async fn a_skill_in_the_repositorys_briefs_is_the_one_in_its_sessions_plugin() {
 #[test_log::test(tokio::test)]
 async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     let mut world = World::new().await;
-    let prompt = |whose: &str| format!("{whose} rework.\n\n{}", shipped("rework.md"));
+    let prompt = |whose: &str| format!("{whose} rework.\n\n{}", marker_text("prompts/rework.md"));
     commit_on(
         &world,
         "main",

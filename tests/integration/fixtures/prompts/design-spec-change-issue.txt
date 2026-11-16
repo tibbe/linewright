@@ -1,17 +1,4 @@
-## facts
-
-- Repository: `owner/widgets`
-- Default branch: `main`
-- Spec: the tracked files matching `docs/specs/**/*.md`
-- Scratch files: in `$TMPDIR`, this session's own directory, never under a fixed path such as `/tmp`.
-
-## kind
-
-spec change
-
-## item
-
-### The issue: #7 Spec change: Spec the widget count
+[prompts/design.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» kind=«spec change» item=«### The issue: #7 Spec change: Spec the widget count
 
 Opened by @factory. Labels: ready-for-agent.
 
@@ -23,83 +10,8 @@ Opened for the spec change in #5.
 
 Seen it too.
 
-### The spec change: #5 Spec the widget count
+[parts/spec-change.md default_branch=«main» number=«#5» title=«Spec the widget count» author=«maintainer» body=«Widgets are counted.» spec_diff=«+Widgets are counted.»]» filed_gaps=«[parts/filed-gaps.md gaps=«#### #9 Which widgets count?
 
-Merged by its author @maintainer into `main`.
+Say which.»]» cutting=«[parts/cut-issue.md]» output=«[outputs/design.md kind=«spec change»]
 
-Widgets are counted.
-
-#### Spec diff
-
-```diff
-+Widgets are counted.
-```
-
-## filed_gaps
-
-### Spec gaps already filed
-
-These are open issues for the maintainer. Don't list them in `spec_gaps` again.
-
-#### #9 Which widgets count?
-
-Say which.
-
-## cutting
-
-<<briefs/parts/cut-issue.md>>
-
-## output
-
-End your session with a final message that is a single JSON object and nothing else, one of:
-
-- `designed`, with the design and, where the work is cut, the tickets: `{ "outcome": "designed", "design": "<the design, in Markdown, in the template below>", "tickets": [TICKET], "comment": "<Markdown: why the work is cut into these tickets>", "spec_gaps": [SPEC_GAP] }`. Leave `tickets` and `comment` out when the work is not cut.
-- `nothing-to-build`, when the code already does what the spec change asks: `{ "outcome": "nothing-to-build", "reason": "<Markdown: why>" }`
-- `blocked`, on a spec gap only the maintainer can answer: `{ "outcome": "blocked", "question": "<the question the maintainer must answer>", "spec_gaps": [SPEC_GAP] }`
-- `gave-up`, when the design cannot be made: `{ "outcome": "gave-up", "reason": "<why>" }`
-
-where
-
-- `TICKET` is `{ "id": "<a short id of your choosing, unique among the tickets>", "title": "<the ticket's title>", "body": "<the ticket's Markdown body>", "blocked_by": ["<ids of the tickets that must be merged first>"] }`
-- `SPEC_GAP` is `{ "title": "<issue title>", "body": "<the spec change needed, in Markdown>" }`, and `spec_gaps` lists the gaps that did not block the design (often none).
-
-The design, in this template:
-
-```markdown
-## Prior art
-
-<the software-design skill's output, as it gave it, each of its headings one level down>
-
-## Design
-
-### Today
-
-<what the code does today and where it falls short>
-
-### Decisions
-
-#### <the decision, as a question>
-
-Chosen option: "<a short title for the way taken>", because <why>.
-
-* <another way it could go>: <the case against it>
-
-### Structure
-
-<kept or changed, and why>
-
-### Modules
-
-#### <the module>
-
-<what it is responsible for>
-
-Interface: <its interface>
-```
-
-Linewright adds the tickets after it.
-
-To show a screenshot or a video in the Markdown your result posts, save the file in your attachments directory, `/work/sessions/issue-7/20261001T120000Z-implement/attachments`, and refer to it by its absolute path there: as the destination of a Markdown image (`![what it shows](</path/to/file.png>)`) or link (`[what it is](</path/to/file.mp4>)`), or as an HTML `img`'s `src`. Keep the angle brackets around the path, since it may contain spaces. Linewright uploads each file you refer to and puts its URL in place of the path. A video (`.mp4`, `.mov` or `.webm`) embedded alone in its paragraph plays inline; anywhere else it becomes a link to it.
-
-Only images and videos can be attached: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`. Refer to no other file this way. Put anything else, such as text output or a log, in the Markdown itself, in a fenced code block or a `<details>` block when it is long.
-
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]»]

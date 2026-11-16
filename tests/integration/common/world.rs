@@ -197,7 +197,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         merge_method: None,
         auto_merge: false,
         require_label: None,
-        briefs: OperatorBriefs::read(None).unwrap(),
+        briefs: OperatorBriefs::read_over(super::markers::markers(), None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         database,
         waits_out_usage_limit: false,
@@ -856,95 +856,6 @@ pub fn briefs_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile:
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     std::fs::write(file, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
     dir
-}
-
-/// Each first-message prompt and its placeholders, in the order of its
-/// table in the spec.
-const PLACEHOLDERS: &[(&str, &[&str])] = &[
-    ("triage.md", &["facts", "categories", "issue", "output"]),
-    (
-        "design.md",
-        &["facts", "kind", "item", "filed_gaps", "cutting", "output"],
-    ),
-    (
-        "implement.md",
-        &[
-            "facts",
-            "default_branch",
-            "branch",
-            "holding",
-            "ticket",
-            "output",
-        ],
-    ),
-    (
-        "rework.md",
-        &[
-            "facts",
-            "branch",
-            "pr",
-            "pr_title",
-            "description",
-            "ticket",
-            "unfinished",
-            "conflict",
-            "history",
-            "feedback",
-            "conversation",
-            "output",
-        ],
-    ),
-    (
-        "fix-ci.md",
-        &[
-            "facts",
-            "branch",
-            "pr",
-            "pr_title",
-            "description",
-            "ticket",
-            "unfinished",
-            "conflict",
-            "history",
-            "failures",
-            "output",
-        ],
-    ),
-    (
-        "update.md",
-        &[
-            "facts",
-            "branch",
-            "pr",
-            "pr_title",
-            "description",
-            "ticket",
-            "unfinished",
-            "conflict",
-            "output",
-        ],
-    ),
-    (
-        "automation.md",
-        &["facts", "name", "instructions", "max_issues", "output"],
-    ),
-];
-
-/// The briefs with each first-message prompt replaced by its placeholders,
-/// each under a heading naming it.
-pub fn placeholders_only() -> std::sync::Arc<linewright::briefs::Briefs> {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("prompts")).unwrap();
-    for (file, names) in PLACEHOLDERS {
-        let text: String = names
-            .iter()
-            .map(|name| format!("## {name}\n\n{{{{{name}}}}}\n\n"))
-            .collect();
-        std::fs::write(dir.path().join("prompts").join(file), text).unwrap();
-    }
-    linewright::briefs::OperatorBriefs::read(Some(dir.path()))
-        .unwrap()
-        .briefs()
 }
 
 /// The view `serve` holds once its first poll took its snapshot.

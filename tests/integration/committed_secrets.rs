@@ -89,16 +89,13 @@ async fn assert_secret_kept_out(world: &World) {
     }
 }
 
-/// Whether a follow-up names the commit holding `NPM_TOKEN`, the variable
-/// and the file.
-fn names_the_secret(prompt: &str, commit: &str) -> bool {
-    [commit, "`NPM_TOKEN`", "`.npmrc`"]
-        .iter()
-        .all(|named| prompt.contains(named))
-}
-
-fn reason(commit: &str) -> String {
-    format!("the commit `{commit}` adds the value of `NPM_TOKEN`, a secret, to `.npmrc`")
+/// What a session is sent back with when its commit `commit` adds the value
+/// of `variable` to `file`.
+fn sent_back_for_secret(commit: &str, variable: &str, file: &str) -> String {
+    not_finished(&marker(
+        "parts/held-credential.md",
+        &[("commit", commit), ("variable", variable), ("file", file)],
+    ))
 }
 
 #[test_log::test(tokio::test)]
@@ -142,7 +139,10 @@ async fn an_implement_run_whose_commits_hold_a_secret_is_sent_back_before_it_pus
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
-    assert!(names_the_secret(&prompts[1], &commit), "{}", prompts[1]);
+    assert_eq!(
+        prompts[1],
+        sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")
+    );
     assert_eq!(
         pushed_before_followup.lock().unwrap().clone(),
         Some(vec!["main".to_string()]),
@@ -190,7 +190,7 @@ async fn an_implement_run_whose_commits_still_hold_a_secret_after_its_follow_ups
     let commit = committed.lock().unwrap().clone();
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
-            && comment.contains(&reason(&commit)),
+            && comment.contains(&sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")),
         "{comment}"
     );
     assert_eq!(world.store.pulls(), []);
@@ -229,12 +229,15 @@ async fn a_rework_whose_commits_hold_a_secret_pushes_nothing_to_its_pull_request
     let prompts = world.harness.prompts(WorkKind::Rework);
     assert_eq!(prompts.len(), 2);
     let commit = committed.lock().unwrap().clone();
-    assert!(names_the_secret(&prompts[1], &commit), "{}", prompts[1]);
+    assert_eq!(
+        prompts[1],
+        sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")
+    );
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, head);
     let comment = last_pull_comment(&world, pr).await;
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
-            && comment.contains(&reason(&commit)),
+            && comment.contains(&sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")),
         "{comment}"
     );
     assert_secret_kept_out(&world).await;
@@ -316,13 +319,21 @@ async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_
         config.secrets = secrets_unnamed(&[("CLAUDE_CODE_OAUTH_TOKEN", token)]);
     })
     .await;
-    world.harness.on(WorkKind::Implement, move |call| {
-        commit_in(
-            &call.spec.dir,
-            &[("auth.txt", &format!("{token}\n"))],
-            "Add the token",
-        );
-        Ok(json!({"outcome": "done", "pr_title": "Token", "pr_body": "Adds it."}).to_string())
+    let committed = Arc::new(Mutex::new(String::new()));
+    world.harness.on(WorkKind::Implement, {
+        let committed = committed.clone();
+        move |call| {
+            if call.followup.is_none() {
+                commit_in(
+                    &call.spec.dir,
+                    &[("auth.txt", &format!("{token}\n"))],
+                    "Add the token",
+                );
+                *committed.lock().unwrap() =
+                    git_out(&call.spec.dir, &["rev-parse", "--short", "HEAD"]);
+            }
+            Ok(json!({"outcome": "done", "pr_title": "Token", "pr_body": "Adds it."}).to_string())
+        }
     });
     world.store.open_issue(
         "maintainer",
@@ -335,10 +346,13 @@ async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(
-        prompts[1].contains("`CLAUDE_CODE_OAUTH_TOKEN`") && prompts[1].contains("`auth.txt`"),
-        "{}",
-        prompts[1]
+    assert_eq!(
+        prompts[1],
+        sent_back_for_secret(
+            &committed.lock().unwrap(),
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "auth.txt"
+        )
     );
     assert_eq!(world.store.pulls(), []);
 }

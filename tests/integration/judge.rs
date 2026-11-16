@@ -264,19 +264,6 @@ async fn a_judges_session_that_fails_on_its_infrastructure_is_retried_once() {
     assert_eq!(judge_records(&out).len(), 1);
 }
 
-/// The path the judge's prompt `prompt` gives after `label`.
-#[track_caller]
-fn named_in(prompt: &str, label: &str) -> PathBuf {
-    let line = prompt
-        .lines()
-        .find_map(|line| line.strip_prefix(&format!("- {label}: `")))
-        .unwrap_or_else(|| panic!("the prompt names no {label}:\n{prompt}"));
-    let path = line
-        .strip_suffix('`')
-        .unwrap_or_else(|| panic!("the {label} is not quoted whole:\n{prompt}"));
-    PathBuf::from(path)
-}
-
 /// What a judge saw of the replay in its copy, from the paths its prompt
 /// names.
 #[derive(Debug)]
@@ -295,15 +282,9 @@ struct Copied {
 #[track_caller]
 fn seen_then_overwritten(call: &Call) -> Copied {
     let prompt = &call.spec.prompt;
-    let outcome = named_in(prompt, "How its run ended");
-    let sessions = named_in(
-        prompt,
-        "Each session's record, with its brief and its transcript",
-    );
-    let writes = named_in(
-        prompt,
-        "What Linewright would have written to GitHub, in order",
-    );
+    let outcome = PathBuf::from(filled_in(prompt, "outcome"));
+    let sessions = PathBuf::from(filled_in(prompt, "sessions"));
+    let writes = PathBuf::from(filled_in(prompt, "writes"));
     let root = outcome.parent().unwrap().to_path_buf();
     assert_eq!(sessions, root.join("sessions"));
     assert_eq!(writes, root.join("writes"));
