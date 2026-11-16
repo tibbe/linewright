@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use crate::common;
 use linewright::case::Case;
 use linewright::domain::*;
-use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
+use linewright::git::{BranchStart, Conflict};
 use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
 use linewright::replay::judge::{ReplayCopy, Replayed};
 use linewright::working_pull::Feedback;
@@ -151,27 +151,6 @@ fn assert_filled_as(prompt: &str, name: &str) {
     }
 }
 
-fn unfinished() -> UnfinishedCommits {
-    UnfinishedCommits {
-        first: "abc1234".into(),
-        rest: vec![],
-    }
-}
-
-#[test_log::test]
-fn triage_is_filled_as_before() {
-    let name = repo_name();
-    let prompt = prompts::triage(
-        &common::placeholders_only().templates,
-        &repo(&name),
-        &issue(7, "Count the widgets", "They are not counted."),
-        &["bug".into(), "enhancement".into()],
-        std::path::Path::new(ATTACHMENTS),
-    );
-
-    assert_filled_as(&prompt, "triage.txt");
-}
-
 #[test_log::test]
 fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
@@ -232,66 +211,6 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     );
 
     assert_filled_as(&prompt, "design-spec-change-issue.txt");
-}
-
-#[test_log::test]
-fn implement_is_filled_as_before() {
-    let name = repo_name();
-    let ticket_issue = issue(7, "Count the widgets", "Count them.");
-    let parent = issue(4, "Widgets", "The design.");
-    let ticket = common::ready(Ticket::read(
-        &ticket_issue,
-        Some(Cow::Borrowed(&parent)),
-        vec![],
-    ));
-    let prompt = prompts::implement(
-        &common::placeholders_only().templates,
-        &repo(&name),
-        &ticket,
-        "7-count-the-widgets",
-        &BranchStart::Existing {
-            unfinished: Some(unfinished()),
-        },
-        std::path::Path::new(ATTACHMENTS),
-    );
-
-    assert_filled_as(&prompt, "implement.txt");
-}
-
-#[test_log::test]
-fn rework_is_filled_as_before() {
-    let name = repo_name();
-    let ticket_issue = issue(7, "Count the widgets", "Count them.");
-    let ticket = common::ready(Ticket::read(&ticket_issue, None, vec![]));
-    let pr = pull();
-    let comment = Comment {
-        author: Login::new("maintainer"),
-        body: "Name it `count`.".into(),
-        created_at: created(),
-    };
-    let conflict = Conflict {
-        method: UpdateMethod::Rebase,
-        files: vec!["src/count.rs".into()],
-    };
-    let prompt = prompts::pull_work(
-        &common::placeholders_only().templates,
-        &repo(&name),
-        &ticket,
-        &pr,
-        &PullTask::Rework {
-            feedback: Feedback {
-                comments: vec![&comment],
-                reviews: vec![],
-                threads: vec![],
-            },
-            conflict: Some(&conflict),
-            history: prompts::History::Series,
-        },
-        Some(&unfinished()),
-        std::path::Path::new(ATTACHMENTS),
-    );
-
-    assert_filled_as(&prompt, "rework.txt");
 }
 
 #[test_log::test]

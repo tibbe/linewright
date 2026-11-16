@@ -1,1 +1,1 @@
-The branch holds {{commits}}: what an earlier run's session left uncommitted when it stopped. Fold it into your own commits, for example by resetting softly to before it and committing the work properly.
+The branch holds unfinished commits, {{commits}}: what an earlier run's session left uncommitted when it stopped. Fold them into your own commits, for example by resetting softly to before them and committing the work properly.
