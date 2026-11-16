@@ -215,11 +215,11 @@ pub(super) async fn board_page(
 ) -> Response {
     let repo = &sources.work_dir.repo;
     let person = filters.person();
-    let shown = BoardPageShown::of(&api::board_answer(&sources), person.as_ref(), repo);
+    let shown = BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
     let person_options = person_options(&shown.people, person.as_ref());
     BoardPage {
         page: Page::new(shown.title, events_path(person.as_ref())).filling_the_viewport(),
-        frame: Frame::of(&sources),
+        frame: Frame::of(&sources).await,
         board: shown.board,
         people: shown.people,
         person_options,
@@ -236,27 +236,32 @@ pub(super) async fn board_events(
 ) -> Response {
     let person = filters.person();
     let regions = move || {
-        let repo = &sources.work_dir.repo;
-        let mut regions = frame_regions(&Frame::of(&sources));
-        let shown = BoardPageShown::of(&api::board_answer(&sources), person.as_ref(), repo);
-        let title = format!(
-            r#"<title id="title">{}</title>"#,
-            html::escape(&shown.title)
-        );
-        regions.push(("title", title));
-        regions.push((
-            "board",
-            render(&BoardRegion {
-                board: &shown.board,
-            }),
-        ));
-        regions.push((
-            "people",
-            render(&PeopleRegion {
-                people: &shown.people,
-            }),
-        ));
-        regions
+        let sources = sources.clone();
+        let person = person.clone();
+        async move {
+            let repo = &sources.work_dir.repo;
+            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let shown =
+                BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
+            let title = format!(
+                r#"<title id="title">{}</title>"#,
+                html::escape(&shown.title)
+            );
+            regions.push(("title", title));
+            regions.push((
+                "board",
+                render(&BoardRegion {
+                    board: &shown.board,
+                }),
+            ));
+            regions.push((
+                "people",
+                render(&PeopleRegion {
+                    people: &shown.people,
+                }),
+            ));
+            regions
+        }
     };
     events(regions, stopping)
 }

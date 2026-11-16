@@ -201,7 +201,7 @@ async fn cancelled_during_the_uploads(refusal: AttachRefusal) {
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(world.store.pulls(), []);
     assert_eq!(world.issue(ticket).comments, [], "{refusal:?}");
-    assert_eq!(ended_runs(&world), [Ending::Cancelled], "{refusal:?}");
+    assert_eq!(ended_runs(&world).await, [Ending::Cancelled], "{refusal:?}");
 }
 
 #[test_log::test(tokio::test)]

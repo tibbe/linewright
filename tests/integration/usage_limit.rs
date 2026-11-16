@@ -163,7 +163,7 @@ async fn a_refused_session_resumes_after_the_reset_in_the_same_clone_with_the_re
     ))
     .unwrap();
     assert_eq!(turns[1].followup, Some(reset.trim_end().to_string()));
-    let sessions = session_records(&world);
+    let sessions = session_records(&world).await;
     assert_eq!(sessions.len(), 1, "one session, not started again");
     assert!(sessions[0].brief.is_some());
     assert_eq!(sessions[0].followups, [reset.trim_end()]);
@@ -330,7 +330,7 @@ async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start
     advance_past_the_reset(&world, 0);
     world.factory.settle().await;
 
-    let sessions = session_events(&world);
+    let sessions = session_events(&world).await;
     assert_eq!(sessions.len(), 1);
     let ours: Vec<&serde_json::Value> = sessions[0]
         .iter()

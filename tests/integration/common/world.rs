@@ -1,3 +1,4 @@
+use std::panic::Location;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -285,18 +286,23 @@ impl World {
 }
 
 /// How each of `world`'s runs ended, failing if one is not over.
-pub fn ended_runs(world: &World) -> Vec<Ending> {
-    Runs::new(&world.dir.path().join("work"))
-        .read()
-        .unwrap()
-        .into_iter()
-        .map(|recorded| match recorded.state {
-            State::Ended { ending, .. } => ending,
-            state @ (State::InFlight | State::Interrupted) => {
-                panic!("a run is not over: {state:?}")
-            }
-        })
-        .collect()
+#[track_caller]
+pub fn ended_runs(world: &World) -> impl Future<Output = Vec<Ending>> + '_ {
+    let caller = Location::caller();
+    async move {
+        Runs::new(&world.dir.path().join("work"))
+            .read()
+            .await
+            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))
+            .into_iter()
+            .map(|recorded| match recorded.state {
+                State::Ended { ending, .. } => ending,
+                state @ (State::InFlight | State::Interrupted) => {
+                    panic!("a run is not over at {caller}: {state:?}")
+                }
+            })
+            .collect()
+    }
 }
 
 pub fn labels(issue: &Issue) -> Vec<&str> {

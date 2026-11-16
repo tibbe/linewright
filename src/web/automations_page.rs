@@ -165,8 +165,8 @@ struct AutomationsRegion<'a> {
 
 /// The frame and the automations, from one read of `serve`'s view and the
 /// runs; `None` for the automations before the first poll.
-fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
-    let read = Read::of(sources);
+async fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
+    let read = Read::of(sources).await;
     let automations = read
         .automations
         .as_ref()
@@ -180,7 +180,7 @@ pub(super) async fn automations_page(State(sources): State<Sources>) -> Response
         "/events/automations".into(),
     )
     .filling_the_viewport();
-    match shown(&sources) {
+    match shown(&sources).await {
         (frame, Some(automations)) => AutomationsPage {
             page,
             frame,
@@ -206,17 +206,20 @@ pub(super) async fn automations_events(
     Extension(stopping): Extension<CancellationToken>,
 ) -> Response {
     let regions = move || {
-        let (frame, automations) = shown(&sources);
-        let mut regions = frame_regions(&frame);
-        if let Some(automations) = automations {
-            regions.push((
-                "automations",
-                render(&AutomationsRegion {
-                    automations: &automations,
-                }),
-            ));
+        let sources = sources.clone();
+        async move {
+            let (frame, automations) = shown(&sources).await;
+            let mut regions = frame_regions(&frame);
+            if let Some(automations) = automations {
+                regions.push((
+                    "automations",
+                    render(&AutomationsRegion {
+                        automations: &automations,
+                    }),
+                ));
+            }
+            regions
         }
-        regions
     };
     events(regions, stopping)
 }

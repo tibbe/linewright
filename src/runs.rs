@@ -1,7 +1,9 @@
+pub mod files;
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
-use std::fs::{File, TryLockError};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -17,11 +19,12 @@ use crate::harness::{Purpose, Reported, Reporter};
 use crate::input::Input;
 use crate::layer::{Layer, Source};
 use crate::phrase::{Phrase, Tone};
-use crate::reconcile::{EndedRun, OLD_DESIGN, WorkKind};
+use crate::reconcile::{EndedRun, WorkKind};
 use crate::records;
 use crate::session::{self, RecordsSessions};
 use crate::status::Paint;
 use crate::work_settings::{Effort, SessionSettings, Setting};
+use files::{End, Record, RecordedSession, RunFiles};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -207,35 +210,6 @@ pub enum Ending {
     Failed,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Record {
-    #[serde(flatten)]
-    of: RunOf,
-    n: u32,
-    /// Of an automation's run; absent from those recorded before it was.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    started_by: Option<StartedBy>,
-    started_at: Timestamp,
-    end: Option<End>,
-    sessions: Vec<RecordedSession>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    answered_until: Option<Timestamp>,
-}
-
-/// A session as its run's record keeps it, its directory relative to the
-/// work directory.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(untagged)]
-enum RecordedSession {
-    Ran {
-        dir: PathBuf,
-        #[serde(flatten)]
-        ran: Ran,
-    },
-    /// As records kept before they kept what a session ran with.
-    Dir(PathBuf),
-}
-
 /// A session of a run: where its records are, and what it ran with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionEntry {
@@ -330,230 +304,69 @@ impl Ran {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-struct End {
-    at: Timestamp,
-    ending: Ending,
-}
-
+/// The work directory's store of runs.
 #[derive(Clone, Debug)]
 pub struct Runs {
-    work_dir: PathBuf,
+    files: RunFiles,
 }
 
 impl Runs {
     pub fn new(work_dir: &Path) -> Runs {
         Runs {
-            work_dir: work_dir.to_path_buf(),
-        }
-    }
-
-    fn dir(&self) -> PathBuf {
-        self.work_dir.join("runs")
-    }
-
-    fn dir_of(&self, of: &RunOf) -> PathBuf {
-        match of {
-            RunOf::Work { item, .. } => self.dir().join("items").join(item.0.to_string()),
-            RunOf::Automation { automation } => {
-                self.dir().join(AUTOMATIONS).join(automation.to_string())
-            }
-        }
-    }
-
-    /// Where an earlier version kept the runs of `of`, if anywhere else.
-    fn old_place_of(&self, of: &RunOf) -> Option<OldPlace> {
-        match of {
-            RunOf::Work {
-                stage: WorkKind::Design,
-                ..
-            } => Some(OldPlace {
-                dir: self.dir_of(of),
-                prefix: format!("{OLD_DESIGN}-"),
-            }),
-            RunOf::Work { .. } => None,
-            RunOf::Automation { automation } => Some(OldPlace {
-                dir: self
-                    .dir()
-                    .join(OLD_AUTOMATIONS)
-                    .join(automation.to_string()),
-                prefix: file_prefix(of),
-            }),
+            files: RunFiles::new(work_dir),
         }
     }
 
     /// Begins a run of `begin`, numbered after every run of the same item
     /// and stage, or of the same automation, with no two runs given the
     /// same number, even by two processes at once.
-    pub(crate) fn begin(&self, begin: Begin, now: Timestamp) -> Result<Running> {
-        let (of, started_by) = begin.into_parts();
-        let dir = self.dir_of(&of);
-        std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
-        let prefix = file_prefix(&of);
-        let old = self.old_place_of(&of);
-        let mut n = numbers(&dir, &prefix)
-            .chain(old.iter().flat_map(|old| numbers(&old.dir, &old.prefix)))
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let (lock, lock_path) = loop {
-            let path = dir.join(format!("{prefix}{n}.lock"));
-            match File::options().write(true).create_new(true).open(&path) {
-                Ok(file) => break (file, path),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
-                Err(e) => {
-                    return Err(e).with_context(|| format!("creating {}", path.display()));
-                }
-            }
-        };
-        lock.try_lock()
-            .with_context(|| format!("locking {}", lock_path.display()))?;
-        let running = Running {
-            kept: RunRecord {
-                id: RunId { of: of.clone(), n },
-                path: lock_path.with_extension("json"),
-                record: Arc::new(Mutex::new(Record {
-                    of,
-                    n,
-                    started_by,
-                    started_at: now,
-                    end: None,
-                    sessions: vec![],
-                    answered_until: None,
-                })),
-            },
-            lock_path,
-            work_dir: self.work_dir.clone(),
-            _lock: lock,
-        };
-        running.kept.save()?;
-        Ok(running)
-    }
-
-    fn path_of(&self, id: &RunId) -> PathBuf {
-        let path = self
-            .dir_of(&id.of)
-            .join(format!("{}{}.json", file_prefix(&id.of), id.n));
-        match self.old_place_of(&id.of) {
-            Some(old) if !path.exists() && old.path(id.n).exists() => old.path(id.n),
-            _ => path,
-        }
+    pub(crate) async fn begin(&self, begin: Begin, now: Timestamp) -> Result<Running> {
+        self.files.begin_kept(begin, now, Keeping::Store).await
     }
 
     /// The input run `id` recorded at its start, `None` when it recorded
     /// none.
-    pub fn read_input(&self, id: &RunId) -> Result<Option<Input>> {
-        records::read(&input_path(&self.path_of(id)))
+    pub async fn read_input(&self, id: &RunId) -> Result<Option<Input>> {
+        let (files, id) = (self.files.clone(), id.clone());
+        off_runtime(move || files.read_input(&id)).await
     }
 
     /// A record that does not read is logged and taken as missing.
-    pub fn read_run(&self, id: &RunId) -> Option<Recorded> {
-        self.load(&self.path_of(id))
+    pub async fn read_run(&self, id: &RunId) -> Option<Recorded> {
+        let (files, id) = (self.files.clone(), id.clone());
+        off_runtime(move || files.read_run(&id)).await
     }
 
     /// `None` if the run has no record; a record that does not read fails.
-    pub fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
-        let path = self.path_of(id);
-        let record = records::read::<Record>(&path)?;
-        record
-            .map(|record| Recorded::of(record, &path, &self.work_dir))
-            .transpose()
-            .map_err(anyhow::Error::msg)
-    }
-
-    /// A record that does not read is logged and taken as missing.
-    fn load(&self, path: &Path) -> Option<Recorded> {
-        let record = records::load::<Record>(path, "a run's record")?;
-        Recorded::of(record, path, &self.work_dir)
-            .inspect_err(|e| warn!(path = %path.display(), error = e, "ignoring a run's record"))
-            .ok()
+    pub async fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
+        let (files, id) = (self.files.clone(), id.clone());
+        off_runtime(move || files.try_read_run(&id)).await
     }
 
     /// As [`Runs::read`], with a record that does not read logged and
     /// skipped, and a failure to read logged and taken as no runs.
-    pub fn read_or_none(&self) -> Vec<Recorded> {
-        self.read().unwrap_or_else(|e| {
+    pub async fn read_or_none(&self) -> Vec<Recorded> {
+        self.read().await.unwrap_or_else(|e| {
             warn!(error = format!("{e:#}"), "reading the runs' records failed");
             vec![]
         })
     }
 
-    pub fn read(&self) -> Result<Vec<Recorded>> {
-        let mut recorded = vec![];
-        for kind in ["items", AUTOMATIONS, OLD_AUTOMATIONS] {
-            for dir in entries(&self.dir().join(kind))? {
-                for path in entries(&dir)? {
-                    if path.extension().is_some_and(|e| e == "json")
-                        && !is_input(&path)
-                        && let Some(record) = self.load(&path)
-                    {
-                        recorded.push(record);
-                    }
-                }
-            }
-        }
-        Ok(recorded)
+    pub async fn read(&self) -> Result<Vec<Recorded>> {
+        let files = self.files.clone();
+        off_runtime(move || files.read_legacy()).await
     }
 }
 
-const AUTOMATIONS: &str = "automations";
-
-/// Where versions before automations were renamed from workflows kept
-/// automations' runs: read beside [`AUTOMATIONS`], never written to.
-const OLD_AUTOMATIONS: &str = "workflows";
-
-/// Where an earlier version kept a run's records: their directory and the
-/// prefix of their files.
-struct OldPlace {
-    dir: PathBuf,
-    prefix: String,
-}
-
-impl OldPlace {
-    fn path(&self, n: u32) -> PathBuf {
-        self.dir.join(format!("{}{n}.json", self.prefix))
-    }
-}
-
-/// Where the input of the run whose record is at `record` is kept: beside
-/// it, as `<stage>-<n>.input.json`.
-fn input_path(record: &Path) -> PathBuf {
-    record.with_extension(INPUT_EXTENSION)
-}
-
-fn is_input(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(&format!(".{INPUT_EXTENSION}")))
-}
-
-const INPUT_EXTENSION: &str = "input.json";
-
-fn file_prefix(of: &RunOf) -> String {
-    match of {
-        RunOf::Work { stage, .. } => format!("{}-", stage.name()),
-        RunOf::Automation { .. } => String::new(),
-    }
-}
-
-fn numbers(dir: &Path, prefix: &str) -> impl Iterator<Item = u32> {
-    entries(dir)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(move |path| {
-            let stem = path.file_stem()?.to_str()?;
-            stem.strip_prefix(prefix)?.parse().ok()
-        })
-}
-
-fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
-    match std::fs::read_dir(dir) {
-        Ok(entries) => entries
-            .map(|entry| Ok(entry?.path()))
-            .collect::<std::io::Result<_>>()
-            .with_context(|| format!("reading {}", dir.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => Err(e).with_context(|| format!("reading {}", dir.display())),
+/// What `work` gives, done on a thread where blocking is allowed: once
+/// begun, it runs to its end even if the caller is dropped. A panic in it
+/// goes on in the caller. It never gives anything when the runtime shuts
+/// down before `work` begins.
+async fn off_runtime<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(done) => done,
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        Err(_) => std::future::pending().await,
     }
 }
 
@@ -643,11 +456,21 @@ fn describe_of(of: &RunOf) -> Phrase {
 pub(crate) struct Running {
     /// Shared with its sessions' [`SessionRecorder`]s.
     kept: RunRecord,
+    keeping: Keeping,
     lock_path: PathBuf,
-    work_dir: PathBuf,
+    /// The directory its record and its sessions' are under.
+    dir: PathBuf,
     /// Locked while the run is in flight. The kernel releases the lock when
     /// the process ends however it ends.
     _lock: File,
+}
+
+/// Where a run is kept, which decides whether it records its input.
+enum Keeping {
+    /// In the work directory's store of runs, with its input.
+    Store,
+    /// As the file form of one run alone, with no input.
+    Files,
 }
 
 impl Running {
@@ -670,7 +493,7 @@ impl Running {
         settings: &SessionSettings,
         briefs: &Briefs,
     ) -> SessionRecorder {
-        let dir = dir.strip_prefix(&self.work_dir).unwrap_or(dir);
+        let dir = dir.strip_prefix(&self.dir).unwrap_or(dir);
         let index = {
             let mut record = self.kept.record.lock().unwrap();
             record.sessions.push(RecordedSession::Ran {
@@ -686,31 +509,41 @@ impl Running {
         }
     }
 
-    /// Keeps `input` as what the run was given, beside its record, as it
-    /// is: unredacted.
-    pub fn record_input(&self, input: &Input) -> Result<()> {
-        records::save(&input_path(&self.kept.path), input, "a run's input")
-    }
-
-    pub fn answered(&self, at: Timestamp) {
-        self.kept.record.lock().unwrap().answered_until = Some(at);
-        self.kept.save_or_log();
-    }
-
-    pub fn end(self, now: Timestamp, ending: Ending) {
-        self.kept.record.lock().unwrap().end = Some(End { at: now, ending });
-        self.kept.save_or_log();
-        if let Err(e) = std::fs::remove_file(&self.lock_path) {
-            warn!(path = %self.lock_path.display(), error = %e, "removing a run's lock failed");
+    /// What keeps the input the run was given, `None` for a run that
+    /// records none.
+    pub fn input_recorder(&self) -> Option<InputRecorder> {
+        match self.keeping {
+            Keeping::Store => Some(InputRecorder {
+                path: files::input_path(&self.kept.path),
+            }),
+            Keeping::Files => None,
         }
+    }
+
+    pub async fn answered(&self, at: Timestamp) {
+        self.kept.record.lock().unwrap().answered_until = Some(at);
+        let kept = self.kept.clone();
+        off_runtime(move || kept.save_or_log()).await;
+    }
+
+    /// Once begun, the run ends even if the caller is dropped.
+    pub async fn end(self, now: Timestamp, ending: Ending) {
+        off_runtime(move || {
+            self.kept.record.lock().unwrap().end = Some(End { at: now, ending });
+            self.kept.save_or_log();
+            if let Err(e) = std::fs::remove_file(&self.lock_path) {
+                warn!(path = %self.lock_path.display(), error = %e, "removing a run's lock failed");
+            }
+        })
+        .await;
     }
 }
 
-/// Its sessions' records are kept in the sessions directory of its
-/// [`Runs`], and each is a session of its record.
+/// Its sessions' records are kept in the sessions directory beside its
+/// record, and each is a session of its record.
 impl RecordsSessions for Running {
     fn record_dir(&self, purpose: &Purpose, now: Timestamp) -> Result<PathBuf> {
-        session::new_record_dir(&sessions_dir(&self.work_dir), purpose, now)
+        session::new_record_dir(&sessions_dir(&self.dir), purpose, now)
     }
 
     fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
@@ -723,9 +556,22 @@ impl RecordsSessions for Running {
 /// sessions of its runs.
 pub(crate) const SESSIONS: &str = "sessions";
 
-/// Where the records of the sessions of the runs in `work_dir` are kept.
-fn sessions_dir(work_dir: &Path) -> PathBuf {
-    work_dir.join(SESSIONS)
+/// Where the records of the sessions of the runs under `dir` are kept.
+fn sessions_dir(dir: &Path) -> PathBuf {
+    dir.join(SESSIONS)
+}
+
+/// Keeps the input a run was given.
+pub(crate) struct InputRecorder {
+    path: PathBuf,
+}
+
+impl InputRecorder {
+    /// Keeps `input` as what the run was given, as it is: unredacted.
+    pub async fn record(&self, input: Input) -> Result<()> {
+        let path = self.path.clone();
+        off_runtime(move || records::save(&path, &input, "a run's input")).await
+    }
 }
 
 /// A run's record, as it is while the run is in flight, and where it is
@@ -760,14 +606,16 @@ pub(crate) struct SessionRecorder {
 }
 
 impl SessionRecorder {
-    /// The last report wins.
+    /// The last report wins. The record is written in a task of its own,
+    /// as it is when that task writes it.
     pub fn reported(&self, reported: Reported) {
         if let RecordedSession::Ran { ran, .. } =
             &mut self.kept.record.lock().unwrap().sessions[self.index]
         {
             ran.reported_model = Some(reported.model);
         }
-        self.kept.save_or_log();
+        let kept = self.kept.clone();
+        tokio::spawn(off_runtime(move || kept.save_or_log()));
     }
 }
 
@@ -816,35 +664,6 @@ impl Recorded {
         }
     }
 
-    fn of(record: Record, path: &Path, work_dir: &Path) -> Result<Recorded, String> {
-        let state = match record.end {
-            Some(End { at, ending }) => State::Ended { at, ending },
-            None if is_locked(&path.with_extension("lock")) => State::InFlight,
-            None => State::Interrupted,
-        };
-        let id = RunId {
-            of: record.of,
-            n: record.n,
-        };
-        Ok(Recorded::new(
-            Started::new(id, record.started_by)?,
-            record.started_at,
-            state,
-            record
-                .sessions
-                .into_iter()
-                .map(|session| match session {
-                    RecordedSession::Ran { dir, ran } => SessionEntry {
-                        dir: work_dir.join(dir),
-                        ran: Some(ran),
-                    },
-                    RecordedSession::Dir(dir) => work_dir.join(dir).into(),
-                })
-                .collect(),
-            record.answered_until,
-        ))
-    }
-
     /// This run, where it ran on a pull request and its record has an end.
     pub fn ended_on_pull(&self) -> Option<EndedRun> {
         match (&self.id.of, self.state) {
@@ -860,13 +679,6 @@ impl Recorded {
             _ => None,
         }
     }
-}
-
-fn is_locked(path: &Path) -> bool {
-    let Ok(file) = File::open(path) else {
-        return false;
-    };
-    matches!(file.try_lock(), Err(TryLockError::WouldBlock))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1249,8 +1061,12 @@ pub enum ListError {
     Other(#[from] anyhow::Error),
 }
 
-pub fn answer(work_dir: &RepoWorkDir, query: &Query, now: Timestamp) -> Result<Listing, ListError> {
-    let recorded = Runs::new(&work_dir.resolve()).read()?;
+pub async fn answer(
+    work_dir: &RepoWorkDir,
+    query: &Query,
+    now: Timestamp,
+) -> Result<Listing, ListError> {
+    let recorded = Runs::new(&work_dir.resolve()).read().await?;
     Ok(list(recorded, query, now)?)
 }
 
@@ -1287,8 +1103,21 @@ fn work_dir(base: &Path, repo: &Repo) -> PathBuf {
         .unwrap_or(exact)
 }
 
+fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .map(|entry| Ok(entry?.path()))
+            .collect::<std::io::Result<_>>()
+            .with_context(|| format!("reading {}", dir.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => Err(e).with_context(|| format!("reading {}", dir.display())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::panic::Location;
+
     use super::*;
     use crate::work_settings::{Environments, Partial, RepoSettings, RunKind, WorkSettings};
 
@@ -1314,11 +1143,23 @@ mod tests {
         })
     }
 
-    fn begun(runs: &Runs, begin: Begin) -> String {
-        let running = runs.begin(begin, at("2026-10-15T09:00:00Z")).unwrap();
-        let id = running.id().to_string();
-        running.end(at("2026-10-15T09:01:00Z"), Ending::Done);
-        id
+    /// The IDs of the runs of `begins`, begun one after another in `runs`
+    /// and ended.
+    #[track_caller]
+    fn begun(runs: &Runs, begins: Vec<Begin>) -> impl Future<Output = Vec<String>> + '_ {
+        let caller = Location::caller();
+        async move {
+            let mut ids = vec![];
+            for begin in begins {
+                let running = runs
+                    .begin(begin, at("2026-10-15T09:00:00Z"))
+                    .await
+                    .unwrap_or_else(|e| panic!("beginning a run at {caller}: {e:#}"));
+                ids.push(running.id().to_string());
+                running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
+            }
+            ids
+        }
     }
 
     fn work(item: u64, stage: WorkKind) -> Begin {
@@ -1328,8 +1169,8 @@ mod tests {
         }
     }
 
-    #[test_log::test]
-    fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item() {
+    #[test_log::test(tokio::test)]
+    async fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item() {
         let work_dir = tempfile::tempdir().unwrap();
         for (path, item, stage, n) in [
             ("runs/items/1/triage-1.json", 1, "triage", 1),
@@ -1341,15 +1182,18 @@ mod tests {
         }
         let runs = Runs::new(work_dir.path());
 
-        let ids = [
-            work(1, WorkKind::Triage),
-            work(1, WorkKind::Triage),
-            work(1, WorkKind::Implement),
-            work(3, WorkKind::Rework),
-            work(3, WorkKind::FixCi),
-            work(2, WorkKind::Triage),
-        ]
-        .map(|begin| begun(&runs, begin));
+        let ids = begun(
+            &runs,
+            vec![
+                work(1, WorkKind::Triage),
+                work(1, WorkKind::Triage),
+                work(1, WorkKind::Implement),
+                work(3, WorkKind::Rework),
+                work(3, WorkKind::FixCi),
+                work(2, WorkKind::Triage),
+            ],
+        )
+        .await;
 
         assert_eq!(
             ids,
@@ -1387,9 +1231,9 @@ mod tests {
         })
     }
 
-    #[test_log::test]
-    fn a_run_is_numbered_on_from_its_runs_where_this_version_keeps_them_and_where_the_previous_did()
-    {
+    #[test_log::test(tokio::test)]
+    async fn a_run_is_numbered_on_from_its_runs_where_this_version_keeps_them_and_where_the_previous_did()
+     {
         let work_dir = tempfile::tempdir().unwrap();
         for (path, record) in [
             ("runs/workflows/weekly/1.json", workflow("weekly", 1)),
@@ -1406,34 +1250,27 @@ mod tests {
             started_by: StartedBy::Hand,
         };
 
-        let ids = [
-            by_hand("weekly"),
-            by_hand("daily"),
-            work(4, WorkKind::Design),
-        ]
-        .map(|begin| begun(&runs, begin));
+        let ids = begun(
+            &runs,
+            vec![
+                by_hand("weekly"),
+                by_hand("daily"),
+                work(4, WorkKind::Design),
+            ],
+        )
+        .await;
 
         assert_eq!(ids, ["weekly/3", "daily/5", "4/design-3"]);
     }
 
-    #[test_log::test]
-    fn what_a_runs_sessions_ran_with_reads_back_from_its_record() {
+    #[test_log::test(tokio::test)]
+    async fn what_a_runs_sessions_ran_with_reads_back_from_its_record() {
         let work_dir = tempfile::tempdir().unwrap();
-        let settings = WorkSettings {
-            flags_and_env: Partial {
-                model: Some("opus".into()),
-                ..Partial::default()
-            },
-            ..WorkSettings::default()
-        }
-        .for_run(
-            RunKind::Stage(WorkKind::Triage),
-            &RepoSettings::default(),
-            &Environments::default(),
-        );
+        let settings = opus_for_triage();
         let session = work_dir.path().join("sessions/1/triage-1");
         let running = Runs::new(work_dir.path())
             .begin(work(1, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+            .await
             .unwrap();
 
         running
@@ -1441,8 +1278,8 @@ mod tests {
             .reported(Reported {
                 model: "claude-opus-5-5".into(),
             });
-        running.end(at("2026-10-15T09:01:00Z"), Ending::Done);
-        let recorded = Runs::new(work_dir.path()).read().unwrap();
+        running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
+        let recorded = Runs::new(work_dir.path()).read().await.unwrap();
 
         let [run] = &recorded[..] else {
             panic!("one run: {recorded:#?}");
@@ -1480,5 +1317,136 @@ mod tests {
             ran.layers.prompts.get("triage.md"),
             Some(&Layer::Linewright)
         );
+    }
+
+    /// A triage run's settings, with the operator's model `opus`.
+    fn opus_for_triage() -> SessionSettings {
+        WorkSettings {
+            flags_and_env: Partial {
+                model: Some("opus".into()),
+                ..Partial::default()
+            },
+            ..WorkSettings::default()
+        }
+        .for_run(
+            RunKind::Stage(WorkKind::Triage),
+            &RepoSettings::default(),
+            &Environments::default(),
+        )
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_report_written_after_its_run_ended_keeps_the_end() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let runs = Runs::new(work_dir.path());
+        let running = runs
+            .begin(work(1, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+            .await
+            .unwrap();
+        let recorder = running.session(
+            &work_dir.path().join("sessions/1/triage-1"),
+            &opus_for_triage(),
+            &Briefs::shipped(),
+        );
+
+        recorder.reported(Reported {
+            model: "claude-opus-5-5".into(),
+        });
+        running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
+        while tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks()
+            > 0
+        {
+            tokio::task::yield_now().await;
+        }
+        let recorded = runs.read().await.unwrap();
+
+        let [run] = &recorded[..] else {
+            panic!("one run: {recorded:#?}");
+        };
+        assert_eq!(
+            (
+                run.state,
+                run.sessions
+                    .iter()
+                    .map(|session| session.ran.as_ref().and_then(Ran::model_ran))
+                    .collect::<Vec<_>>()
+            ),
+            (
+                State::Ended {
+                    at: at("2026-10-15T09:01:00Z"),
+                    ending: Ending::Done
+                },
+                vec![Some("claude-opus-5-5")]
+            )
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_run_of_the_store_records_its_input_and_one_kept_as_files_cannot() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let begin = || work(1, WorkKind::Triage);
+        let started = at("2026-10-15T09:00:00Z");
+
+        let stored = Runs::new(work_dir.path())
+            .begin(begin(), started)
+            .await
+            .unwrap();
+        let as_files = RunFiles::new(out.path())
+            .begin(begin(), started)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            (
+                stored.input_recorder().is_some(),
+                as_files.input_recorder().is_some()
+            ),
+            (true, false)
+        );
+    }
+
+    #[test_log::test]
+    fn runs_written_as_files_read_back_from_where_they_are_written() {
+        let out = tempfile::tempdir().unwrap();
+        let session = out.path().join("sessions/7/implement-2");
+        let handed_back = Recorded::new(
+            Started::new("7/implement-2".parse().unwrap(), None).unwrap(),
+            at("2026-10-15T09:00:00Z"),
+            State::Ended {
+                at: at("2026-10-15T09:05:00Z"),
+                ending: Ending::HandedBack,
+            },
+            vec![session.into()],
+            None,
+        );
+        let in_flight = |state| {
+            Recorded::new(
+                Started::new("weekly/3".parse().unwrap(), Some(StartedBy::Hand)).unwrap(),
+                at("2026-10-15T10:00:00Z"),
+                state,
+                vec![],
+                None,
+            )
+        };
+        let files = RunFiles::new(out.path());
+
+        files.write(&handed_back).unwrap();
+        files.write(&in_flight(State::InFlight)).unwrap();
+        let mut read = files.read_legacy().unwrap();
+
+        sort_newest_first(&mut read);
+        assert_eq!(read, [in_flight(State::Interrupted), handed_back]);
+        let record: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.path().join("runs/items/7/implement-2.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            record["sessions"],
+            serde_json::json!(["sessions/7/implement-2"])
+        );
+        assert!(out.path().join("runs/automations/weekly/3.json").exists());
     }
 }

@@ -168,8 +168,8 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 }
 
 /// The frame and the facts, from one answer of `status`.
-fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
-    let read = Read::of(sources);
+async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
+    let read = Read::of(sources).await;
     let names = read.names(&sources.work_dir.repo);
     let builds = read
         .linewright
@@ -220,7 +220,7 @@ fn build_html(build: &BuildShown, names: &Names) -> Html {
 }
 
 pub(super) async fn server_page(State(sources): State<Sources>) -> Response {
-    let (frame, facts) = shown(&sources);
+    let (frame, facts) = shown(&sources).await;
     ServerPage {
         page: Page::new(
             format!("Server · {}", sources.work_dir.repo),
@@ -238,10 +238,13 @@ pub(super) async fn server_events(
     Extension(stopping): Extension<CancellationToken>,
 ) -> Response {
     let regions = move || {
-        let (frame, facts) = shown(&sources);
-        let mut regions = frame_regions(&frame);
-        regions.push(("server", render(&ServerRegion { facts: &facts })));
-        regions
+        let sources = sources.clone();
+        async move {
+            let (frame, facts) = shown(&sources).await;
+            let mut regions = frame_regions(&frame);
+            regions.push(("server", render(&ServerRegion { facts: &facts })));
+            regions
+        }
     };
     events(regions, stopping)
 }

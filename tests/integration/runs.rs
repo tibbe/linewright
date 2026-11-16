@@ -1,6 +1,7 @@
 use crate::common;
 
 use std::collections::BTreeMap;
+use std::panic::Location;
 
 use chrono::TimeDelta;
 use common::*;
@@ -141,7 +142,7 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     world.approve_behind(pr).await;
     world.poll().await;
 
-    let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
+    let recorded = Runs::new(&work_dir.path().join(REPO)).read().await.unwrap();
 
     let sessions = |id: &str| {
         let run = recorded
@@ -163,7 +164,7 @@ async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
 async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not() {
     let (_world, work_dir) = hourly_by_schedule_then_by_hand().await;
 
-    let recorded = Runs::new(&work_dir.path().join(REPO)).read().unwrap();
+    let recorded = Runs::new(&work_dir.path().join(REPO)).read().await.unwrap();
 
     let mut started: Vec<(String, Option<StartedBy>)> = recorded
         .iter()
@@ -782,15 +783,27 @@ fn an_items_runs_narrowed_to_none_are_no_runs_to_list_not_none_at_all() {
 }
 
 /// What `Runs` reads from a work directory holding each of `files`.
-fn read(files: &[(&str, &str)]) -> (tempfile::TempDir, Vec<Recorded>) {
+#[track_caller]
+fn read(
+    files: &[(&str, &str)],
+) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
+    let caller = Location::caller();
     let (base, work_dir) = work_dir_holding(files);
-    let recorded = Runs::new(&work_dir.resolve()).read().unwrap();
-    (base, recorded)
+    async move {
+        let recorded = Runs::new(&work_dir.resolve())
+            .read()
+            .await
+            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"));
+        (base, recorded)
+    }
 }
 
 /// What `Runs` reads of #5's first rework, done in a minute, whose record
 /// gives its sessions as `sessions`.
-fn rework_of_5_read(sessions: &serde_json::Value) -> (tempfile::TempDir, Vec<Recorded>) {
+#[track_caller]
+fn rework_of_5_read(
+    sessions: &serde_json::Value,
+) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
     let record = item_run_record(5, "rework", 1, Some("done"), sessions);
     read(&[("runs/items/5/rework-1.json", &record)])
 }
@@ -808,16 +821,16 @@ fn rework_of_5(sessions: Vec<SessionEntry>) -> Recorded {
     )
 }
 
-#[test_log::test]
-fn a_record_from_before_runs_kept_their_pull_request_reads_as_its_run() {
-    let (_base, recorded) = rework_of_5_read(&json!([]));
+#[test_log::test(tokio::test)]
+async fn a_record_from_before_runs_kept_their_pull_request_reads_as_its_run() {
+    let (_base, recorded) = rework_of_5_read(&json!([])).await;
 
     assert_eq!(recorded, [rework_of_5(vec![])]);
 }
 
-#[test_log::test]
-fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it() {
-    let (base, recorded) = rework_of_5_read(&json!(["sessions/5/rework-1"]));
+#[test_log::test(tokio::test)]
+async fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it() {
+    let (base, recorded) = rework_of_5_read(&json!(["sessions/5/rework-1"])).await;
 
     assert_eq!(
         recorded,
@@ -830,20 +843,25 @@ fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it() {
 
 /// What the one session of #5's first rework ran with, as read from a record
 /// giving its sessions as `sessions`.
-fn ran_as_read(sessions: &serde_json::Value) -> Ran {
-    let (_base, recorded) = rework_of_5_read(sessions);
-    let [run] = &recorded[..] else {
-        panic!("one run: {recorded:#?}");
-    };
-    let [SessionEntry { ran: Some(ran), .. }] = &run.sessions[..] else {
-        panic!("one session with what it ran with: {run:#?}");
-    };
-    ran.clone()
+#[track_caller]
+fn ran_as_read(sessions: &serde_json::Value) -> impl Future<Output = Ran> + use<> {
+    let caller = Location::caller();
+    let read = rework_of_5_read(sessions);
+    async move {
+        let (_base, recorded) = read.await;
+        let [run] = &recorded[..] else {
+            panic!("one run at {caller}: {recorded:#?}");
+        };
+        let [SessionEntry { ran: Some(ran), .. }] = &run.sessions[..] else {
+            panic!("one session with what it ran with at {caller}: {run:#?}");
+        };
+        ran.clone()
+    }
 }
 
-#[test_log::test]
-fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_the_harnesss()
-{
+#[test_log::test(tokio::test)]
+async fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_the_harnesss()
+ {
     let read = ran_as_read(&json!([{
         "dir": "sessions/5/rework-1",
         "model": null,
@@ -857,7 +875,8 @@ fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_s
             },
             "prompts": {"rework.md": "linewright"}
         }
-    }]));
+    }]))
+    .await;
 
     assert_eq!(
         read,
@@ -876,8 +895,8 @@ fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_s
     );
 }
 
-#[test_log::test]
-fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
+#[test_log::test(tokio::test)]
+async fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
     let ran = ran_as_read(&json!([{
         "dir": "sessions/5/rework-1",
         "model": "opus",
@@ -889,7 +908,8 @@ fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
                 "plugin/skills/tdd/SKILL.md": "linewright"
             }
         }
-    }]));
+    }]))
+    .await;
 
     assert_eq!(
         ran.layers.prompts,
@@ -918,8 +938,8 @@ fn done_at(time: &str) -> State {
     }
 }
 
-#[test_log::test]
-fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_scheduled_and_from_where_they_are_kept()
+#[test_log::test(tokio::test)]
+async fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_scheduled_and_from_where_they_are_kept()
  {
     let old = json!({
         "workflow": "weekly",
@@ -940,7 +960,8 @@ fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_schedul
     let (_base, recorded) = read(&[
         ("runs/workflows/weekly/1.json", &old.to_string()),
         ("runs/automations/weekly/2.json", &new.to_string()),
-    ]);
+    ])
+    .await;
 
     assert_eq!(
         runs_read(&recorded),
@@ -959,11 +980,11 @@ fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_schedul
     );
 }
 
-#[test_log::test]
-fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design_run() {
+#[test_log::test(tokio::test)]
+async fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design_run() {
     let record = item_run_record(4, "tickets", 1, Some("handed-back"), &json!([]));
 
-    let (_base, recorded) = read(&[("runs/items/4/tickets-1.json", &record)]);
+    let (_base, recorded) = read(&[("runs/items/4/tickets-1.json", &record)]).await;
 
     assert_eq!(
         runs_read(&recorded),
@@ -990,16 +1011,16 @@ fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
     );
 }
 
-#[test_log::test]
-fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
+#[test_log::test(tokio::test)]
+async fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
     let record = item_run_record(1, "triage", 1, None, &json!([]));
     let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
     let runs = Runs::new(&work_dir.resolve());
     let lock = lock_of(&base.path().join(REPO).join("runs/items/1/triage-1.json"));
 
-    let held = runs_read(&runs.read().unwrap());
+    let held = runs_read(&runs.read().await.unwrap());
     drop(lock);
-    let released = runs_read(&runs.read().unwrap());
+    let released = runs_read(&runs.read().await.unwrap());
 
     assert_eq!(
         [held, released],
@@ -1010,17 +1031,17 @@ fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it
     );
 }
 
-#[test_log::test]
-fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_them() {
+#[test_log::test(tokio::test)]
+async fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_them() {
     let (_base, work_dir) = work_dir_holding(&[("runs/items", "not a directory")]);
     let runs = Runs::new(&work_dir.resolve());
 
-    assert!(runs.read().is_err());
-    assert_eq!(runs.read_or_none(), []);
+    assert!(runs.read().await.is_err());
+    assert_eq!(runs.read_or_none().await, []);
 }
 
-#[test_log::test]
-fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_however_it_ended() {
+#[test_log::test(tokio::test)]
+async fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_however_it_ended() {
     let ended = item_run_record(20, "fix-ci", 1, Some("handed-back"), &json!([]));
     let interrupted = item_run_record(20, "fix-ci", 2, None, &json!([]));
     let on_an_issue = item_run_record(2, "implement", 1, Some("done"), &json!([]));
@@ -1033,6 +1054,7 @@ fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_however_it
 
     let ended_on_pulls: Vec<EndedRun> = runs
         .read()
+        .await
         .unwrap()
         .iter()
         .filter_map(Recorded::ended_on_pull)

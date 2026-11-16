@@ -69,7 +69,8 @@ fn design_case() -> impl Future<Output = DesignCase> {
             caller,
             "the run's ID",
         );
-        let capturable = case::capturable(&Runs::new(&work), &work.join(case::CASES), &run, &name);
+        let capturable =
+            case::capturable(&Runs::new(&work), &work.join(case::CASES), &run, &name).await;
         let capturable = ok(capturable, caller, "the run");
         let criteria = ok(
             Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),

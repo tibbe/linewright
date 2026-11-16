@@ -333,7 +333,7 @@ async fn cancelling_a_run_during_its_maintenance_command_ends_the_command_at_onc
 
     assert!(started.elapsed() < Duration::from_secs(30));
     assert!(!running(&pid));
-    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
+    assert_eq!(ended_runs(&world).await, [Ending::Cancelled]);
     assert_eq!(
         world.harness.prompts(WorkKind::Implement),
         Vec::<String>::new()

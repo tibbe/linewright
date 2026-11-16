@@ -70,7 +70,7 @@ async fn a_cancel_after_an_implement_run_begins_pushing_its_result_does_not_stop
     world.factory.settle().await;
 
     assert_eq!(world.store.pulls().len(), 1);
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
+    assert_eq!(ended_runs(&world).await, [linewright::runs::Ending::Done]);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -104,7 +104,10 @@ async fn an_implement_run_cancelled_as_its_session_answers_keeps_its_work_and_po
             .unwrap(),
         "done\n"
     );
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright::runs::Ending::Cancelled]
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -136,7 +139,7 @@ async fn a_cancel_after_a_rework_begins_pushing_its_result_does_not_stop_it() {
             .unwrap(),
         "renamed\n"
     );
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
+    assert_eq!(ended_runs(&world).await, [linewright::runs::Ending::Done]);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -174,7 +177,10 @@ async fn a_rework_cancelled_before_its_push_by_its_pull_request_closing_pushes_a
             .is_err()
     );
     assert_ne!(last_pull_comment(&world, pr).await, "Renamed.");
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright::runs::Ending::Cancelled]
+    );
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -215,7 +221,10 @@ async fn an_attempt_retried_after_an_infrastructure_failure_can_be_cancelled_dur
 
     assert_eq!(world.store.pulls(), []);
     assert_eq!(world.issue(ticket).comments, []);
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Cancelled]);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright::runs::Ending::Cancelled]
+    );
 }
 
 /// Starts triaging an issue, pauses the run once it removes `needs-triage`,
@@ -241,7 +250,7 @@ async fn a_triage_run_cancelled_while_it_records_its_result_records_all_of_it() 
     let issue = world.issue(issue);
     assert_eq!(labels(&issue), ["bug", "ready-for-agent"]);
     assert_eq!(last_comment(&issue), TRIAGE_BRIEF);
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::Done]);
+    assert_eq!(ended_runs(&world).await, [linewright::runs::Ending::Done]);
     assert!(
         log.text()
             .contains("the run is applying its result; left to finish"),
@@ -260,7 +269,10 @@ async fn a_run_whose_recording_fails_after_a_cancel_arrived_is_handed_back() {
 
     let issue = world.issue(issue);
     assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
-    assert_eq!(ended_runs(&world), [linewright::runs::Ending::HandedBack]);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright::runs::Ending::HandedBack]
+    );
 }
 
 #[test_log::test(tokio::test)]

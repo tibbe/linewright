@@ -426,9 +426,9 @@ struct Read {
 }
 
 impl Read {
-    fn of(sources: &Sources) -> Read {
+    async fn of(sources: &Sources) -> Read {
         let view = api::view(sources);
-        let recorded = api::recorded_or_none(sources);
+        let recorded = api::recorded_or_none(sources).await;
         let now = sources.clock.now();
         let status = api::status_of(sources, view.as_ref(), &recorded);
         Read {
@@ -447,8 +447,8 @@ impl Read {
 }
 
 impl Frame {
-    fn of(sources: &Sources) -> Frame {
-        Frame::of_read(sources, &Read::of(sources))
+    async fn of(sources: &Sources) -> Frame {
+        Frame::of_read(sources, &Read::of(sources).await)
     }
 
     fn of_read(sources: &Sources, read: &Read) -> Frame {
@@ -568,10 +568,13 @@ impl Sent {
 
 /// Sends every region `regions` gives at once, then each time one of them
 /// changed, each as a partial that morphs into the page.
-fn events(
-    regions: impl Fn() -> Vec<(&'static str, String)> + Send + 'static,
+fn events<Regions>(
+    regions: impl Fn() -> Regions + Send + 'static,
     stopping: CancellationToken,
-) -> Response {
+) -> Response
+where
+    Regions: Future<Output = Vec<(&'static str, String)>> + Send,
+{
     let events = futures_util::stream::unfold(
         (Sent::default(), samples(), regions, stopping),
         |(mut sent, mut samples, regions, stopping)| async move {
@@ -580,7 +583,7 @@ fn events(
                     _ = samples.tick() => {}
                     () = stopping.cancelled() => return None,
                 }
-                if let Some(message) = sent.changed(regions()) {
+                if let Some(message) = sent.changed(regions().await) {
                     let event = Ok::<_, Infallible>(Event::default().data(message));
                     return Some((event, (sent, samples, regions, stopping)));
                 }

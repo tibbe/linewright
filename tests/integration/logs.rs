@@ -309,8 +309,8 @@ async fn logs_shows_a_secret_in_the_maintenance_command_redacted() {
     );
 }
 
-#[test_log::test]
-fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript() {
+#[test_log::test(tokio::test)]
+async fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript() {
     let record = item_run_record(
         5,
         "rework",
@@ -332,7 +332,7 @@ fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript()
         ("sessions/5/rework-1/output.jsonl", &output),
     ]);
 
-    let transcript = logs::answer(&work_dir, &item(5)).unwrap();
+    let transcript = logs::answer(&work_dir, &item(5)).await.unwrap();
 
     assert_eq!(
         transcript::render(&transcript, Verbosity::Compact, false),
@@ -343,15 +343,15 @@ fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transcript()
     );
 }
 
-#[test_log::test]
-fn a_named_run_whose_record_does_not_read_fails_saying_why() {
+#[test_log::test(tokio::test)]
+async fn a_named_run_whose_record_does_not_read_fails_saying_why() {
     let (_base, work_dir) = work_dir_holding(&[("runs/items/1/implement-1.json", "not a record")]);
     let named = Which::Run {
         id: "1/implement-1".parse().unwrap(),
         item: None,
     };
 
-    let answered = logs::answer(&work_dir, &named);
+    let answered = logs::answer(&work_dir, &named).await;
 
     let Err(LogsError::Other(e)) = answered else {
         panic!("not a failure to read: {answered:?}");
@@ -362,15 +362,15 @@ fn a_named_run_whose_record_does_not_read_fails_saying_why() {
     );
 }
 
-#[test_log::test]
-fn a_session_yet_to_write_anything_counts_as_started() {
+#[test_log::test(tokio::test)]
+async fn a_session_yet_to_write_anything_counts_as_started() {
     let record = item_run_record(1, "triage", 1, None, &json!(["sessions/1/triage-1"]));
     let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
     let repo_dir = base.path().join(REPO);
     std::fs::create_dir_all(repo_dir.join("sessions/1/triage-1")).unwrap();
     let _lock = lock_of(&repo_dir.join("runs/items/1/triage-1.json"));
 
-    let transcript = logs::answer(&work_dir, &item(1)).unwrap();
+    let transcript = logs::answer(&work_dir, &item(1)).await.unwrap();
 
     assert_eq!(
         transcript::render(&transcript, Verbosity::Compact, false),
@@ -383,8 +383,8 @@ fn a_session_yet_to_write_anything_counts_as_started() {
 }
 
 /// `docs/specs/design_system.md`, Transcripts, Running.
-#[test_log::test]
-fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_interrupted() {
+#[test_log::test(tokio::test)]
+async fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_interrupted() {
     let made = |at: &str| {
         output_of(&[
             json!({"type": "linewright-turn", "started_at": at, "started_by": "brief"}),
@@ -397,7 +397,7 @@ fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_i
             }),
         ])
     };
-    let shown = |ending: Option<&str>| {
+    let shown = async |ending: Option<&str>| {
         let sessions = json!(["sessions/5/rework-1", "sessions/5/rework-1-2"]);
         let record = item_run_record(5, "rework", 1, ending, &sessions);
         let (base, work_dir) = work_dir_holding(&[
@@ -414,12 +414,12 @@ fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_i
         let _lock = ending
             .is_none()
             .then(|| lock_of(&base.path().join(REPO).join("runs/items/5/rework-1.json")));
-        let transcript = logs::answer(&work_dir, &item(5)).unwrap();
+        let transcript = logs::answer(&work_dir, &item(5)).await.unwrap();
         transcript::render(&transcript, Verbosity::Compact, false)
     };
 
     assert_eq!(
-        shown(None),
+        shown(None).await,
         "run: 5/rework-1\n\
          session 1: started 2026-10-14 12:00:05 UTC\n \
          0:00  Bash(cargo test) → interrupted\n \
@@ -428,7 +428,7 @@ fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_i
          0:00  Bash(cargo test) → running\n"
     );
     assert_eq!(
-        shown(Some("done")),
+        shown(Some("done")).await,
         "run: 5/rework-1\n\
          session 1: started 2026-10-14 12:00:05 UTC\n \
          0:00  Bash(cargo test) → interrupted\n \

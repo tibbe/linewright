@@ -2,6 +2,8 @@
 //! narrowed by its filters (`docs/specs/design_system.md`, Filters): the
 //! item, the stage and the time since which runs started.
 
+use std::sync::Arc;
+
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
@@ -117,13 +119,13 @@ impl Filters {
 /// The runs as the narrowing lists them, all of them, or why they are not
 /// listed, and the status the page answers with. An item without runs is
 /// "No runs", not a page that is not there.
-fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
+async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
     let now = sources.clock.now();
     let query = match &narrowing.narrowed {
         Ok(narrowed) => narrowed.query(now),
         Err(e) => return (StatusCode::BAD_REQUEST, RunsShown::Unlisted(e.clone())),
     };
-    match runs::answer(&sources.work_dir, &query, now) {
+    match runs::answer(&sources.work_dir, &query, now).await {
         Ok(listing) => {
             let view = api::view(sources);
             let names = Names::of(
@@ -161,14 +163,14 @@ pub(super) async fn runs_page(
     Query(fields): Query<FilterQuery>,
 ) -> Response {
     let narrowing = Narrowing::of(&fields);
-    let (status, runs) = listed(&sources, &narrowing);
+    let (status, runs) = listed(&sources, &narrowing).await;
     let page = RunsPage {
         page: Page::new(
             format!("Runs · {}", sources.work_dir.repo),
             narrowing.path("/events/runs"),
         )
         .filling_the_viewport(),
-        frame: Frame::of(&sources),
+        frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         runs,
     };
@@ -182,12 +184,16 @@ pub(super) async fn runs_events(
     Extension(stopping): Extension<CancellationToken>,
     Query(fields): Query<FilterQuery>,
 ) -> Response {
-    let narrowing = Narrowing::of(&fields);
+    let narrowing = Arc::new(Narrowing::of(&fields));
     let regions = move || {
-        let mut regions = frame_regions(&Frame::of(&sources));
-        let (_, runs) = listed(&sources, &narrowing);
-        regions.push(("runs", render(&RunsRegion { runs: &runs })));
-        regions
+        let sources = sources.clone();
+        let narrowing = narrowing.clone();
+        async move {
+            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let (_, runs) = listed(&sources, &narrowing).await;
+            regions.push(("runs", render(&RunsRegion { runs: &runs })));
+            regions
+        }
     };
     events(regions, stopping)
 }

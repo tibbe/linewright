@@ -151,6 +151,7 @@ pub enum ServeEnd {
 
 pub struct Factory {
     shell: Arc<Shell>,
+    recorded_runs: Runs,
     runs: JoinSet<()>,
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
@@ -299,11 +300,15 @@ impl Factory {
             operator_prompts: config.prompts,
             settings,
             work_dir: config.work_dir,
-            runs: runs.clone(),
-            records_input: true,
         });
         Ok(Factory {
             shell: Arc::new(shell),
+            memory: Memory {
+                ended_runs: ended_runs(&runs).await,
+                pulls: pulls.unwrap_or_default(),
+                ..Memory::default()
+            },
+            recorded_runs: runs,
             runs: JoinSet::new(),
             refusals,
             live: HashMap::new(),
@@ -311,11 +316,6 @@ impl Factory {
             winding_up: config.winding_up,
             last_scheduled_runs,
             automation_files: AutomationFiles::default(),
-            memory: Memory {
-                ended_runs: ended_runs(&runs),
-                pulls: pulls.unwrap_or_default(),
-                ..Memory::default()
-            },
             pull_records_file,
             environment,
             kept: None,
@@ -346,7 +346,7 @@ impl Factory {
     }
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
-        self.reap_before_reading();
+        self.reap_before_reading().await;
         let shell = &self.shell;
         let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
@@ -394,7 +394,7 @@ impl Factory {
         let Some(mut kept) = self.kept.clone() else {
             return self.cycle().await;
         };
-        self.reap_before_reading();
+        self.reap_before_reading().await;
         let shell = &self.shell;
         let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
@@ -495,7 +495,7 @@ impl Factory {
                         }
                     }
                     Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
-                        self.finished(result);
+                        self.finished(result).await;
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
                     Some(reply) = asked.recv() => {
@@ -743,7 +743,13 @@ impl Factory {
             shell,
             &repo,
             &automation,
-            begin_automation(shell, name, StartedBy::Hand)?,
+            begin_automation(
+                &self.recorded_runs,
+                name,
+                StartedBy::Hand,
+                shell.sessions.clock.now(),
+            )
+            .await?,
             cancel.clone(),
         );
         let stopping = self.ends.stopping();
@@ -785,7 +791,7 @@ impl Factory {
 
     pub async fn next_finished(&mut self) {
         if let Some(result) = self.runs.join_next_with_id().await {
-            self.finished(result);
+            self.finished(result).await;
         }
     }
 
@@ -812,9 +818,9 @@ impl Factory {
 
     /// Takes in the runs that have ended and the usage limits reported, so
     /// that a run that ends during the read that follows stays live for it.
-    fn reap_before_reading(&mut self) {
+    async fn reap_before_reading(&mut self) {
         while let Some(result) = self.runs.try_join_next_with_id() {
-            self.finished(result);
+            self.finished(result).await;
         }
         while let Ok(limit) = self.refusals.try_recv() {
             self.refused(limit);
@@ -861,7 +867,7 @@ impl Factory {
         }
     }
 
-    fn finished(&mut self, result: Result<(Id, ()), tokio::task::JoinError>) {
+    async fn finished(&mut self, result: Result<(Id, ()), tokio::task::JoinError>) {
         let id = match result {
             Ok((id, ())) => id,
             Err(e) => {
@@ -885,7 +891,7 @@ impl Factory {
         let Running::Work(run) = running else {
             return;
         };
-        let ended = self.shell.runs.read_run(&in_flight.id);
+        let ended = self.recorded_runs.read_run(&in_flight.id).await;
         self.memory
             .ended_runs
             .extend(ended.as_ref().and_then(Recorded::ended_on_pull));
@@ -940,13 +946,16 @@ impl Factory {
         match action {
             Action::Start(work) => {
                 let shell = &self.shell;
-                let running = shell.runs.begin(
-                    Begin::Work {
-                        item: work.item(),
-                        stage: work.kind(),
-                    },
-                    shell.sessions.clock.now(),
-                )?;
+                let running = self
+                    .recorded_runs
+                    .begin(
+                        Begin::Work {
+                            item: work.item(),
+                            stage: work.kind(),
+                        },
+                        shell.sessions.clock.now(),
+                    )
+                    .await?;
                 let id = running.id().to_string();
                 let in_flight = running.in_flight();
                 let cancel = Cancellation::default();
@@ -1094,7 +1103,13 @@ impl Factory {
                 last_scheduled_runs.save(&self.shell.work_dir)?;
             }
             Action::RunAutomation(automation) => {
-                let running = begin_automation(&self.shell, &automation.name, StartedBy::Schedule)?;
+                let running = begin_automation(
+                    &self.recorded_runs,
+                    &automation.name,
+                    StartedBy::Schedule,
+                    self.shell.sessions.clock.now(),
+                )
+                .await?;
                 let in_flight = running.in_flight();
                 let cancel = Cancellation::default();
                 let shell = self.shell.clone();
@@ -1119,28 +1134,29 @@ impl Factory {
     }
 }
 
-fn ended_runs(runs: &Runs) -> Vec<EndedRun> {
+async fn ended_runs(runs: &Runs) -> Vec<EndedRun> {
     runs.read_or_none()
+        .await
         .iter()
         .filter_map(Recorded::ended_on_pull)
         .collect()
 }
 
-fn begin_automation(
-    shell: &Shell,
+async fn begin_automation(
+    runs: &Runs,
     name: &AutomationName,
     started_by: StartedBy,
+    now: Timestamp,
 ) -> Result<runs::Running> {
-    shell
-        .runs
-        .begin(
-            Begin::Automation {
-                automation: name.clone(),
-                started_by,
-            },
-            shell.sessions.clock.now(),
-        )
-        .with_context(|| format!("recording the run of the automation `{name}`"))
+    runs.begin(
+        Begin::Automation {
+            automation: name.clone(),
+            started_by,
+        },
+        now,
+    )
+    .await
+    .with_context(|| format!("recording the run of the automation `{name}`"))
 }
 
 async fn run_and_log(

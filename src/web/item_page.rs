@@ -215,13 +215,17 @@ const RUNS_SHOWN: usize = 10;
 
 /// #`number`'s latest runs, from their records, whether or not Linewright
 /// manages it.
-fn item_runs(sources: &Sources, number: Number, names: &Names) -> RunsShown {
+async fn item_runs(sources: &Sources, number: Number, names: &Names<'_>) -> RunsShown {
     let query = runs::Query {
         item: Some(number),
         limit: Some(RUNS_SHOWN),
         ..runs::Query::default()
     };
-    let listed = runs::list(api::recorded_or_none(sources), &query, sources.clock.now());
+    let listed = runs::list(
+        api::recorded_or_none(sources).await,
+        &query,
+        sources.clock.now(),
+    );
     RunsShown::of_item(listed, number, names)
 }
 
@@ -255,13 +259,13 @@ pub(super) async fn item_page(
         format!("/events/items/{}", number.0),
     )
     .filling_the_viewport();
-    let frame = Frame::of(&sources);
+    let frame = Frame::of(&sources).await;
     match api::item_facts(&sources, number).await {
         Ok((facts, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
                 item: ItemShown::of(&facts, &names),
-                runs: item_runs(&sources, number, &names),
+                runs: item_runs(&sources, number, &names).await,
                 page,
                 frame,
             }
@@ -297,30 +301,33 @@ pub(super) async fn item_events(
     Path(number): Path<Number>,
 ) -> Response {
     let regions = move || {
-        let mut regions = frame_regions(&Frame::of(&sources));
-        let in_view = api::explaining(&sources).ok();
-        let names = names(
-            &sources,
-            in_view.as_ref().map(|in_view| &*in_view.view.snapshot),
-        );
-        if let Some(in_view) = &in_view
-            && let Some(answer) =
-                explain::explain_in_view(&in_view.view, &in_view.recorded, number, in_view.now)
-        {
-            let board = board::board(&in_view.view, &in_view.recorded, in_view.now);
-            let facts = item_facts::item_facts(
-                &answer,
-                &in_view.view,
-                &board,
-                &in_view.recorded,
-                in_view.now,
+        let sources = sources.clone();
+        async move {
+            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let in_view = api::explaining(&sources).await.ok();
+            let names = names(
+                &sources,
+                in_view.as_ref().map(|in_view| &*in_view.view.snapshot),
             );
-            let item = ItemShown::of(&facts, &names);
-            regions.push(("item", render(&ItemRegion { item: &item })));
+            if let Some(in_view) = &in_view
+                && let Some(answer) =
+                    explain::explain_in_view(&in_view.view, &in_view.recorded, number, in_view.now)
+            {
+                let board = board::board(&in_view.view, &in_view.recorded, in_view.now);
+                let facts = item_facts::item_facts(
+                    &answer,
+                    &in_view.view,
+                    &board,
+                    &in_view.recorded,
+                    in_view.now,
+                );
+                let item = ItemShown::of(&facts, &names);
+                regions.push(("item", render(&ItemRegion { item: &item })));
+            }
+            let runs = item_runs(&sources, number, &names).await;
+            regions.push(("runs", render(&RunsRegion { runs: &runs })));
+            regions
         }
-        let runs = item_runs(&sources, number, &names);
-        regions.push(("runs", render(&RunsRegion { runs: &runs })));
-        regions
     };
     events(regions, stopping)
 }

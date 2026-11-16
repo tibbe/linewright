@@ -113,7 +113,7 @@ async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
         serving,
     } = served;
     assert_eq!(serving.ended().await, ServeEnd::Drained);
-    assert_eq!(ended_runs(&ended), [Ending::Done]);
+    assert_eq!(ended_runs(&ended).await, [Ending::Done]);
     assert_eq!(ended.store.pulls().len(), 1);
     assert!(ended.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
     assert_eq!(ended.issue(held_back).assignees, []);
@@ -160,7 +160,7 @@ async fn a_drain_waits_for_a_run_waiting_out_the_usage_limit() {
         serving,
     } = served;
     assert_eq!(serving.ended().await, ServeEnd::Drained);
-    assert_eq!(ended_runs(&ended), [Ending::Done]);
+    assert_eq!(ended_runs(&ended).await, [Ending::Done]);
 }
 
 #[test_log::test(tokio::test)]
@@ -185,7 +185,13 @@ async fn a_stop_while_draining_cancels_the_runs_in_flight() {
     );
     drop(agent);
     let runs = Runs::new(&served.world.dir.path().join("work"));
-    let ended: Vec<State> = runs.read().unwrap().into_iter().map(|r| r.state).collect();
+    let ended: Vec<State> = runs
+        .read()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.state)
+        .collect();
     assert!(
         matches!(
             ended.as_slice(),
@@ -223,7 +229,7 @@ async fn a_stop_while_a_run_records_its_outcome_waits_for_it_to_record_all_of_it
     let triaged = served.world.issue(issue);
     assert_eq!(labels(&triaged), ["bug", "ready-for-agent"]);
     assert_eq!(last_comment(&triaged), TRIAGE_BRIEF);
-    assert_eq!(ended_runs(&served.world), [Ending::Done]);
+    assert_eq!(ended_runs(&served.world).await, [Ending::Done]);
 }
 
 fn run(id: &str) -> linewright::runs::RunId {

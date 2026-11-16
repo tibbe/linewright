@@ -23,9 +23,9 @@ pub(super) struct Offer {
 impl Offer {
     /// The offer for run `id`, if it can be captured. A run whose records
     /// do not read is logged and offers none.
-    pub(super) fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
+    pub(super) async fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
         let runs = Runs::new(&sources.work_dir.resolve());
-        match case::capturable_run(&runs, id) {
+        match case::capturable_run(&runs, id).await {
             Ok(run) => Some(Offer {
                 run: run.id().clone(),
             }),
@@ -131,7 +131,9 @@ pub(super) async fn capture(
         &work_dir.join(case::CASES),
         &run,
         &name,
-    ) {
+    )
+    .await
+    {
         Ok(capturable) => case::capture(served.store(), capturable, &criteria).await,
         Err(e) => Err(e),
     };

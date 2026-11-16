@@ -32,7 +32,7 @@ async fn a_session_whose_agent_answered_ends_with_its_end() {
 
     world.poll().await;
 
-    let sessions = session_events(&world);
+    let sessions = session_events(&world).await;
     assert_eq!(sessions.len(), 1);
     assert_eq!(
         linewrights(&sessions[0]),
@@ -60,7 +60,7 @@ async fn a_session_whose_agent_failed_ends_with_its_end() {
 
     world.poll().await;
 
-    let sessions = session_events(&world);
+    let sessions = session_events(&world).await;
     assert_ne!(sessions, [] as [std::vec::Vec<serde_json::Value>; 0]);
     for session in &sessions {
         assert_eq!(
