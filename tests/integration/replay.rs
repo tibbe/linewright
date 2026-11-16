@@ -104,7 +104,7 @@ fn replayed<'a>(
         let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
-        let ended = replay::run(&case, &output, harness, config).await;
+        let ended = Box::pin(replay::run(&case, &output, harness, config)).await;
         winding_up.wait().await;
         Replayed { out, ended }
     }
