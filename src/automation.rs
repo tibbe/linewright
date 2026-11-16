@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
 use croner::Cron;
 use croner::parser::{CronParser, Seconds, Year};
 use serde::{Deserialize, Serialize};
+use sqlx::{Row as _, SqliteConnection};
 
 use crate::briefs;
 use crate::config;
+use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
 use crate::records;
 use crate::repo_files;
@@ -122,35 +124,70 @@ impl LastScheduledRuns {
         }
     }
 
-    /// Empty when the record is missing or unreadable, which is logged: every
-    /// automation then counts as seen for the first time. Until the record is
-    /// first saved, the one an earlier version kept stands in for it.
-    pub fn load(work_dir: &Path) -> LastScheduledRuns {
-        let path = last_scheduled_runs_path(work_dir);
-        let path = if path.exists() {
-            path
-        } else {
-            old_last_scheduled_runs_path(work_dir)
-        };
-        records::load(&path, WHAT).unwrap_or_default()
+    /// Empty until first saved: every automation then counts as seen for
+    /// the first time.
+    pub async fn load(db: &Database) -> Result<LastScheduledRuns> {
+        let rows = sqlx::query("SELECT name, last_scheduled_run FROM automation_schedules")
+            .fetch_all(db.pool())
+            .await
+            .context("reading the automations' last scheduled runs")?;
+        rows.iter()
+            .map(|row| {
+                let name = row
+                    .try_get::<&str, _>("name")?
+                    .parse()
+                    .map_err(anyhow::Error::msg)?;
+                Ok((name, parse_time(row.try_get("last_scheduled_run")?)?))
+            })
+            .collect()
     }
 
-    pub fn save(&self, work_dir: &Path) -> Result<()> {
-        records::save(&last_scheduled_runs_path(work_dir), self, WHAT)
+    /// Keeps these as the last scheduled runs, in place of those kept.
+    pub async fn save(&self, db: &Database) -> Result<()> {
+        let mut tx = db.pool().begin().await.context(SAVING)?;
+        self.replace(&mut tx).await.context(SAVING)?;
+        tx.commit().await.context(SAVING)
     }
+
+    async fn replace(&self, conn: &mut SqliteConnection) -> Result<()> {
+        sqlx::query("DELETE FROM automation_schedules")
+            .execute(&mut *conn)
+            .await?;
+        for (name, at) in &self.0 {
+            sqlx::query(
+                "INSERT INTO automation_schedules (name, last_scheduled_run) VALUES (?, ?)",
+            )
+            .bind(&name.0)
+            .bind(time_text(*at))
+            .execute(&mut *conn)
+            .await?;
+        }
+        Ok(())
+    }
+}
+
+/// Keeps the last scheduled runs an earlier release kept in `work_dir`, if
+/// they read, logging and skipping a record that does not. Where none was
+/// kept since automations were renamed from workflows, the one a release
+/// before kept stands in for it.
+pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
+    let path = work_dir.join("automation-runs.json");
+    let path = if path.try_exists()? {
+        path
+    } else {
+        work_dir.join("workflow-runs.json")
+    };
+    let Some(runs) = records::load::<LastScheduledRuns>(&path, WHAT) else {
+        return Ok(());
+    };
+    runs.replace(conn)
+        .await
+        .context("importing the automations' last scheduled runs")
 }
 
 const WHAT: &str = "the automations' last scheduled runs";
 
-fn last_scheduled_runs_path(work_dir: &Path) -> PathBuf {
-    work_dir.join("automation-runs.json")
-}
-
-/// Where versions before automations were renamed from workflows kept the
-/// record: read until the record is first saved, never written to.
-fn old_last_scheduled_runs_path(work_dir: &Path) -> PathBuf {
-    work_dir.join("workflow-runs.json")
-}
+const SAVING: &str = "recording the automations' last scheduled runs";
 
 impl FromIterator<(AutomationName, Timestamp)> for LastScheduledRuns {
     fn from_iter<I: IntoIterator<Item = (AutomationName, Timestamp)>>(

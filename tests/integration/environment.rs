@@ -359,7 +359,7 @@ fn kept_files(dir: &Path) -> Vec<PathBuf> {
 }
 
 #[test_log::test(tokio::test)]
-async fn no_secret_is_kept_in_a_builds_record_its_output_or_the_state_file() {
+async fn no_secret_is_kept_in_a_builds_record_its_output_or_the_environments_state() {
     let secret = "sk-registry-0123456789";
     let mut world = World::with(|config| {
         config.secrets = secrets_of(&[("REGISTRY_TOKEN", secret)]);
@@ -380,10 +380,14 @@ async fn no_secret_is_kept_in_a_builds_record_its_output_or_the_state_file() {
 
     let environment = world.dir.path().join("work/environment");
     let kept = kept_files(&environment);
-    assert!(
-        kept.iter().any(|file| file.ends_with("state.json")),
-        "{kept:?}"
-    );
+    let pool = back_door(&world.dir.path().join("work")).await;
+    let state: Vec<(String, i64, String, String, String)> =
+        sqlx::query_as("SELECT dir, build, built_from, built_at, fingerprint FROM environments")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(state.len(), 1, "{state:?}");
+    assert!(!format!("{state:?}").contains(secret), "{state:?}");
     let output = kept
         .iter()
         .find(|file| file.ends_with("output.log"))

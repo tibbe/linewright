@@ -6,9 +6,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
+use sqlx::sqlite::SqliteRow;
+use sqlx::{Row as _, SqliteConnection};
 
+use crate::database::{Database, parse_time, time_text};
 use crate::domain::{Login, Mergeability, Number, PullState, Snapshot, Timestamp};
 use crate::records;
 
@@ -87,21 +90,113 @@ impl PullRecords {
         unknown
     }
 
-    /// `None` when there is no record, and when it is unreadable, which is
-    /// logged.
-    pub fn load(work_dir: &Path) -> Option<PullRecords> {
-        records::load(&path(work_dir), WHAT)
+    /// `None` until the record is first kept.
+    pub async fn load(db: &Database) -> Result<Option<PullRecords>> {
+        let mut tx = db.pool().begin().await.context(READING)?;
+        let pool = &mut *tx;
+        let kept: Option<String> = sqlx::query_scalar("SELECT record FROM kept WHERE record = ?")
+            .bind(KEPT)
+            .fetch_optional(&mut *pool)
+            .await
+            .context("reading whether the record of Linewright's pull requests is kept")?;
+        if kept.is_none() {
+            return Ok(None);
+        }
+        let mut records = PullRecords::default();
+        let commented = sqlx::query("SELECT pr, commented_at FROM pull_records")
+            .fetch_all(&mut *pool)
+            .await
+            .context(READING)?;
+        for row in commented {
+            let record = records.0.entry(pr_of(&row)?).or_default();
+            record.commented = row
+                .try_get::<Option<&str>, _>("commented_at")?
+                .map(parse_time)
+                .transpose()?;
+        }
+        let failed = sqlx::query("SELECT pr, reason, at FROM failed_merges ORDER BY pr, seq")
+            .fetch_all(&mut *pool)
+            .await
+            .context("reading Linewright's failed merges")?;
+        for row in failed {
+            records
+                .0
+                .entry(pr_of(&row)?)
+                .or_default()
+                .failed_merges
+                .push(FailedMerge {
+                    reason: row.try_get("reason")?,
+                    at: parse_time(row.try_get("at")?)?,
+                });
+        }
+        Ok(Some(records))
     }
 
-    pub fn save(&self, work_dir: &Path) -> Result<()> {
-        records::save(&path(work_dir), self, WHAT)
+    /// Keeps this as the record, in place of the one kept, if any.
+    pub async fn save(&self, db: &Database) -> Result<()> {
+        let mut tx = db.pool().begin().await.context(SAVING)?;
+        self.replace(&mut tx).await.context(SAVING)?;
+        tx.commit().await.context(SAVING)
     }
+
+    async fn replace(&self, conn: &mut SqliteConnection) -> Result<()> {
+        sqlx::query("INSERT OR IGNORE INTO kept (record) VALUES (?)")
+            .bind(KEPT)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("DELETE FROM pull_records")
+            .execute(&mut *conn)
+            .await?;
+        for (pr, record) in &self.0 {
+            let pr = i64::try_from(pr.0)
+                .with_context(|| format!("{pr} is beyond what the database keeps"))?;
+            sqlx::query("INSERT INTO pull_records (pr, commented_at) VALUES (?, ?)")
+                .bind(pr)
+                .bind(record.commented.map(time_text))
+                .execute(&mut *conn)
+                .await?;
+            for (seq, failed) in (0_i64..).zip(&record.failed_merges) {
+                sqlx::query("INSERT INTO failed_merges (pr, seq, reason, at) VALUES (?, ?, ?, ?)")
+                    .bind(pr)
+                    .bind(seq)
+                    .bind(&failed.reason)
+                    .bind(time_text(failed.at))
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Keeps the record an earlier release kept in `work_dir`, if it reads,
+/// logging and skipping one that does not.
+pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
+    let Some(records) = records::load::<PullRecords>(&legacy_path(work_dir), WHAT) else {
+        return Ok(());
+    };
+    records
+        .replace(conn)
+        .await
+        .context("importing the record of Linewright's pull requests")
 }
 
 const WHAT: &str = "the record of Linewright's pull requests";
 
-/// Not the requirements-keyed `held-for-review.json` an earlier release
-/// kept, which reads as no record.
-fn path(work_dir: &Path) -> PathBuf {
+const READING: &str = "reading the record of Linewright's pull requests";
+
+const SAVING: &str = "recording Linewright's pull requests";
+
+/// The row of `kept` that says the record is kept.
+const KEPT: &str = "pull-records";
+
+fn pr_of(row: &SqliteRow) -> Result<Number> {
+    Ok(Number(u64::try_from(row.try_get::<i64, _>("pr")?)?))
+}
+
+/// Where earlier releases kept the record. Not the requirements-keyed
+/// `held-for-review.json` a release before them kept, which reads as no
+/// record.
+fn legacy_path(work_dir: &Path) -> PathBuf {
     work_dir.join("pull-requests.json")
 }

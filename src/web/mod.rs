@@ -430,7 +430,7 @@ impl Read {
         let view = api::view(sources);
         let recorded = api::recorded_or_none(sources).await;
         let now = sources.clock.now();
-        let status = api::status_of(sources, view.as_ref(), &recorded);
+        let status = api::status_of(sources, view.as_ref(), &recorded).await;
         Read {
             automations: view
                 .as_ref()

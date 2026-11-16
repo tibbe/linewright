@@ -421,7 +421,7 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 pub(crate) async fn status_answer(sources: &Sources) -> Status {
     let view = view(sources);
     let recorded = recorded_or_none(sources).await;
-    status_of(sources, view.as_ref(), &recorded)
+    status_of(sources, view.as_ref(), &recorded).await
 }
 
 /// `serve`'s view, `None` before the first poll.
@@ -435,7 +435,15 @@ pub(crate) async fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
 }
 
 /// What `status` answers of `view` and `recorded`.
-pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Recorded]) -> Status {
+pub(crate) async fn status_of(
+    sources: &Sources,
+    view: Option<&View>,
+    recorded: &[Recorded],
+) -> Status {
+    let environment = environment_or_none(sources)
+        .await
+        .and_then(|answer| answer.environment)
+        .map(|environment| environment.shown);
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
     status::status(StatusSources {
         serving: &sources.serving,
@@ -443,9 +451,7 @@ pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Reco
         polling: sources.polling.borrow().as_ref(),
         view,
         recorded,
-        environment: environment_or_none(sources)
-            .and_then(|answer| answer.environment)
-            .map(|environment| environment.shown),
+        environment,
         drain_deadline: sources.ends.deadline(),
         now: sources.clock.now(),
     })
@@ -453,21 +459,34 @@ pub(crate) fn status_of(sources: &Sources, view: Option<&View>, recorded: &[Reco
 
 /// The environment's directory.
 pub(crate) fn environment_dir(sources: &Sources) -> PathBuf {
-    environment::dir(&sources.work_dir.resolve())
+    environment::dir(sources.runs.database().work_dir())
 }
 
 /// What is kept of the environment, or nothing when it does not read,
 /// which is logged.
-pub(crate) fn environment_or_none(
+pub(crate) async fn environment_or_none(
     sources: &Sources,
 ) -> Option<environment_shown::EnvironmentAnswer> {
-    environment_shown::answer(&environment_dir(sources), false)
+    kept_environment(sources)
+        .await
         .inspect_err(|e| error!(error = format!("{e:#}"), "reading the environment failed"))
         .ok()
 }
 
 async fn answer_environment(State(sources): State<Sources>) -> Response {
-    answer(environment_shown::answer(&environment_dir(&sources), false).map_err(Unanswered::Failed))
+    answer(kept_environment(&sources).await.map_err(Unanswered::Failed))
+}
+
+/// What is kept of the environment.
+async fn kept_environment(
+    sources: &Sources,
+) -> anyhow::Result<environment_shown::EnvironmentAnswer> {
+    environment_shown::answer(
+        &environment_dir(sources),
+        Some(sources.runs.database()),
+        false,
+    )
+    .await
 }
 
 /// Which build `/environment/follow` follows.

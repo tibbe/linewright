@@ -6,7 +6,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, SecondsFormat};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sqlx::sqlite::SqliteRow;
@@ -14,8 +13,8 @@ use sqlx::{Row as _, SqliteConnection, SqlitePool};
 
 use super::files::{End, Record, RecordedSession};
 use super::{Ran, Recorded, RunId, RunOf, SessionEntry, Started, State};
-use crate::database::Database;
-use crate::domain::{Number, Timestamp};
+use crate::database::{Database, parse_time, time_text};
+use crate::domain::Number;
 use crate::input::Input;
 
 /// What a write of a run changes of its rows.
@@ -369,18 +368,6 @@ fn session(row: &SqliteRow, work_dir: &Path) -> Result<SessionEntry> {
         .transpose()
         .with_context(|| format!("reading what the session in {} ran with", dir.display()))?;
     Ok(SessionEntry { dir, ran })
-}
-
-/// A timestamp as the database keeps it: RFC 3339 in UTC, to the
-/// nanosecond, so that the text of two times sorts as the times do.
-fn time_text(at: Timestamp) -> String {
-    at.to_rfc3339_opts(SecondsFormat::Nanos, true)
-}
-
-fn parse_time(at: &str) -> Result<Timestamp> {
-    Ok(DateTime::parse_from_rfc3339(at)
-        .with_context(|| format!("{at:?} is not a time"))?
-        .to_utc())
 }
 
 /// The text a unit variant of an enum serializes as.

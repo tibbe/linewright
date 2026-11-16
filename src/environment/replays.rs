@@ -13,6 +13,7 @@ use tracing::{info, warn};
 use super::kept::{self, Builds};
 use super::lifecycle::Fingerprint;
 use super::{Build, BuildDir, Builder, Source, Start, build_locked};
+use crate::database::Database;
 use crate::domain::Timestamp;
 use crate::git::CommitId;
 use crate::work_settings::SetupSettings;
@@ -78,6 +79,12 @@ pub fn outlived(built: Option<Timestamp>, now: Timestamp, max_age: TimeDelta) ->
     built.is_none_or(|at| now - at > max_age)
 }
 
+/// Whether `name` is the name of an environment's directory set aside to be
+/// removed.
+pub(crate) fn is_set_aside(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|name| name.starts_with(REMOVED))
+}
+
 /// Makes the environment of `head` with `setup` ready for a replay, once
 /// every environment under `base` that is [`outlived`] at `now` and that no
 /// replay holds is removed. It uses the environment of `head` and `setup`
@@ -97,10 +104,7 @@ pub async fn prepare(
     now: Timestamp,
     max_age: TimeDelta,
 ) -> Result<InUse, Unprepared> {
-    let swept = base.to_path_buf();
-    if let Err(e) = tokio::task::spawn_blocking(move || sweep(&swept, now, max_age)).await {
-        warn!(error = %e, "removing the old environments of replays failed");
-    }
+    sweep(base, &builder.database, now, max_age).await;
     let Some(settings) = setup else {
         return Ok(InUse {
             source: Source::default(),
@@ -112,10 +116,17 @@ pub async fn prepare(
     let held = hold(dir.clone()).await.map_err(Unprepared::Unavailable)?;
     let builds = Builds::new(dir);
     let lock = builds.lock().await.map_err(Unprepared::Unavailable)?;
-    let (id, built_output) = match builds.named() {
+    let named = builds
+        .named(&builder.database)
+        .await
+        .map_err(Unprepared::Unavailable)?;
+    let (id, built_output) = match named {
         Some(built) => (built.id, None),
         None => {
-            let id = builds.next_id(&lock).map_err(Unprepared::Unavailable)?;
+            let id = builds
+                .next_id(&builder.database, &lock)
+                .await
+                .map_err(Unprepared::Unavailable)?;
             info!(%head, "the environment of a replay is building");
             let start = Start::Commit(head);
             let built =
@@ -188,8 +199,9 @@ fn is_at(file: &File, path: &Path) -> Result<bool> {
 }
 
 /// Removes each environment under `base` that is [`outlived`] at `now` and
-/// that no replay holds, and what earlier removals left.
-fn sweep(base: &Path, now: Timestamp, max_age: TimeDelta) {
+/// that no replay holds, with its row of `db`, and what earlier removals
+/// left.
+async fn sweep(base: &Path, db: &Database, now: Timestamp, max_age: TimeDelta) {
     let entries = match std::fs::read_dir(base) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
@@ -206,14 +218,11 @@ fn sweep(base: &Path, now: Timestamp, max_age: TimeDelta) {
                 continue;
             }
         };
-        let set_aside = dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(REMOVED));
+        let set_aside = dir.file_name().is_some_and(is_set_aside);
         let removed = if set_aside {
-            kept::remove(&dir)
+            remove_off_runtime(dir.clone()).await
         } else {
-            remove_if_outlived(base, &dir, now, max_age)
+            remove_if_outlived(base, &dir, db, now, max_age).await
         };
         if let Err(e) = removed {
             warn!(
@@ -225,10 +234,16 @@ fn sweep(base: &Path, now: Timestamp, max_age: TimeDelta) {
     }
 }
 
-/// Removes the environment `dir` under `base` if it is [`outlived`] at
-/// `now` and no replay holds it. It is set aside first, so that a replay
-/// holding it meanwhile makes it anew.
-fn remove_if_outlived(base: &Path, dir: &Path, now: Timestamp, max_age: TimeDelta) -> Result<()> {
+/// Removes the environment `dir` under `base`, and its row of `db`, if it
+/// is [`outlived`] at `now` and no replay holds it. It is set aside first,
+/// so that a replay holding it meanwhile makes it anew.
+async fn remove_if_outlived(
+    base: &Path,
+    dir: &Path,
+    db: &Database,
+    now: Timestamp,
+    max_age: TimeDelta,
+) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -244,12 +259,22 @@ fn remove_if_outlived(base: &Path, dir: &Path, now: Timestamp, max_age: TimeDelt
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e).context("opening the environment's hold"),
     };
-    let built = Builds::new(dir.to_path_buf()).named().map(|built| built.at);
+    let builds = Builds::new(dir.to_path_buf());
+    let built = builds.named(db).await?.map(|built| built.at);
     if !outlived(built, now, max_age) {
         return Ok(());
     }
     info!(dir = %dir.display(), "an environment of a replay is removed");
+    builds.forget(db).await?;
     let aside = base.join(format!("{REMOVED}{}", uuid::Uuid::new_v4()));
     std::fs::rename(dir, &aside).context("setting the environment aside")?;
-    kept::remove(&aside)
+    remove_off_runtime(aside).await
+}
+
+/// Removes `dir`, as [`kept::remove`] does, on a thread where blocking is
+/// allowed.
+async fn remove_off_runtime(dir: PathBuf) -> Result<()> {
+    tokio::task::spawn_blocking(move || kept::remove(&dir))
+        .await
+        .context("removing an environment of a replay")?
 }

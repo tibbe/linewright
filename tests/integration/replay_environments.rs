@@ -12,6 +12,7 @@ use std::time::Duration;
 use chrono::TimeDelta;
 use common::*;
 use linewright::clock::Clock as _;
+use linewright::database::Database;
 use linewright::domain::Timestamp;
 use linewright::environment::replays::{self, BuildFailed, InUse, Unprepared};
 use linewright::environment::{self, Builder, Environment, SetupRead};
@@ -23,9 +24,10 @@ use linewright::work_settings::{SetupCommand, SetupSettings};
 
 const MAX_AGE: TimeDelta = TimeDelta::days(1);
 
-/// What builds `world`'s repository, with `GREETING` set to `greeting`.
+/// What builds `world`'s repository in the work directory of `database`,
+/// with `GREETING` set to `greeting`.
 #[track_caller]
-fn builder(world: &World, greeting: &str) -> Builder {
+fn builder(world: &World, database: &Database, greeting: &str) -> Builder {
     let given = SessionEnv::new(
         PassEnv::default(),
         SetEnv::new([("GREETING".to_string(), greeting.to_string())]).unwrap(),
@@ -41,6 +43,7 @@ fn builder(world: &World, greeting: &str) -> Builder {
         given: Arc::new(given),
         default_branch: "main".into(),
         winding_up: linewright::winding_up::WindingUp::default(),
+        database: database.clone(),
     }
 }
 
@@ -70,21 +73,30 @@ fn head(world: &World) -> impl Future<Output = CommitId> + '_ {
     }
 }
 
-/// The environments of replays of `world`'s repository, from its head.
+/// The environments of replays of `world`'s repository, from its head, in
+/// a work directory.
 struct Replays<'a> {
     world: &'a World,
+    database: Database,
     base: PathBuf,
     head: CommitId,
 }
 
 impl Replays<'_> {
+    /// The environments of replays in the work directory `work_dir`.
     #[track_caller]
-    fn new(world: &World, base: PathBuf) -> impl Future<Output = Replays<'_>> {
+    fn new<'a>(world: &'a World, work_dir: &Path) -> impl Future<Output = Replays<'a>> + use<'a> {
+        let caller = Location::caller();
         let head = head(world);
+        let work_dir = work_dir.to_path_buf();
         async move {
+            let database = Database::open(&work_dir)
+                .await
+                .unwrap_or_else(|e| panic!("opening the database at {caller} failed: {e:#}"));
             Replays {
                 world,
-                base,
+                database,
+                base: replays::dir(&work_dir),
                 head: head.await,
             }
         }
@@ -101,7 +113,7 @@ impl Replays<'_> {
         replays::prepare(
             &self.base,
             &self.head,
-            builder(self.world, greeting),
+            builder(self.world, &self.database, greeting),
             command.map(setup),
             now,
             MAX_AGE,
@@ -180,8 +192,8 @@ fn installing(marks: &Marks, version: &str) -> String {
 async fn two_replays_of_the_same_head_and_setup_build_once_the_second_waiting_for_the_first() {
     let marks = Marks::new();
     let world = World::new().await;
-    let base = tempfile::tempdir().unwrap();
-    let replays = Replays::new(&world, base.path().to_path_buf()).await;
+    let work_dir = tempfile::tempdir().unwrap();
+    let replays = Replays::new(&world, work_dir.path()).await;
     let gate = marks.path("go");
     let command = format!(
         "{}; while [ ! -e '{}' ]; do sleep 0.05; done",
@@ -214,8 +226,8 @@ async fn two_replays_of_the_same_head_and_setup_build_once_the_second_waiting_fo
 async fn a_changed_setup_command_or_variable_builds_a_new_environment_beside_the_old() {
     let marks = Marks::new();
     let world = World::new().await;
-    let base = tempfile::tempdir().unwrap();
-    let replays = Replays::new(&world, base.path().to_path_buf()).await;
+    let work_dir = tempfile::tempdir().unwrap();
+    let replays = Replays::new(&world, work_dir.path()).await;
     let now = world.clock.now();
     let (v1, v2) = (installing(&marks, "v1"), installing(&marks, "v2"));
 
@@ -257,8 +269,8 @@ fn an_environment_is_outlived_once_older_than_max_age_or_without_a_build() {
 async fn an_environment_older_than_max_age_is_removed_at_the_next_replay_unless_one_uses_it() {
     let marks = Marks::new();
     let world = World::new().await;
-    let base = tempfile::tempdir().unwrap();
-    let replays = Replays::new(&world, base.path().to_path_buf()).await;
+    let work_dir = tempfile::tempdir().unwrap();
+    let replays = Replays::new(&world, work_dir.path()).await;
     let start = world.clock.now();
     let later = start + MAX_AGE + TimeDelta::minutes(1);
     let (unused, used) = (installing(&marks, "v1"), installing(&marks, "v2"));
@@ -285,8 +297,8 @@ async fn an_environment_older_than_max_age_is_removed_at_the_next_replay_unless_
 async fn a_failed_build_gives_its_output_and_a_later_replay_builds_anew() {
     let marks = Marks::new();
     let world = World::new().await;
-    let base = tempfile::tempdir().unwrap();
-    let replays = Replays::new(&world, base.path().to_path_buf()).await;
+    let work_dir = tempfile::tempdir().unwrap();
+    let replays = Replays::new(&world, work_dir.path()).await;
     let now = world.clock.now();
     let fail = marks.path("fail");
     let command = format!(
@@ -315,8 +327,8 @@ async fn a_failed_build_gives_its_output_and_a_later_replay_builds_anew() {
 #[test_log::test(tokio::test)]
 async fn an_environment_is_built_from_the_head_it_is_given() {
     let world = World::new().await;
-    let base = tempfile::tempdir().unwrap();
-    let replays = Replays::new(&world, base.path().to_path_buf()).await;
+    let work_dir = tempfile::tempdir().unwrap();
+    let replays = Replays::new(&world, work_dir.path()).await;
     world
         .store
         .commit("maintainer", "main", &[("README.md", "later\n")], "Change")
@@ -340,7 +352,8 @@ async fn a_replay_leaves_the_environment_of_serve_as_it_is() {
     let work_dir = tempfile::tempdir().unwrap();
     let start = world.clock.now();
     let serving = environment::dir(work_dir.path());
-    let mut served = Environment::open(serving.clone(), builder(&world, "hi"))
+    let database = Database::open(work_dir.path()).await.unwrap();
+    let mut served = Environment::open(serving.clone(), builder(&world, &database, "hi"))
         .await
         .unwrap();
     let command = installing(&marks, "v1");
@@ -349,7 +362,7 @@ async fn a_replay_leaves_the_environment_of_serve_as_it_is() {
         .await
         .unwrap();
     let before = files_under(&serving);
-    let replays = Replays::new(&world, replays::dir(work_dir.path())).await;
+    let replays = Replays::new(&world, work_dir.path()).await;
 
     let in_use = replays
         .ready(Some(&command), "hi", start + MAX_AGE * 2)
@@ -377,4 +390,48 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
     }
     found.sort();
     found
+}
+
+#[test_log::test(tokio::test)]
+async fn after_an_upgrade_from_files_a_replay_uses_the_environment_an_earlier_replay_built_until_it_is_old()
+ {
+    let marks = Marks::new();
+    let world = World::new().await;
+    let earlier = tempfile::tempdir().unwrap();
+    let command = installing(&marks, "v1");
+    let start = world.clock.now();
+    let built = Replays::new(&world, earlier.path()).await;
+    drop(built.ready(Some(&command), "hi", start).await);
+    let [name] = built.kept().try_into().unwrap();
+    let upgraded = tempfile::tempdir().unwrap();
+    environment_as_an_earlier_release_left(
+        earlier.path(),
+        &format!("replays/environments/{name}"),
+        upgraded.path(),
+    )
+    .await;
+
+    let replays = Replays::new(&world, upgraded.path()).await;
+    let reused = replays.ready(Some(&command), "hi", start).await;
+
+    assert_eq!(marks.builds(), 1, "not built again");
+    assert_eq!(installed(&reused).await.as_deref(), Some("v1 hi\n"));
+    drop(reused);
+    let later = start + MAX_AGE + TimeDelta::minutes(1);
+    // A child another test forks holds this process's locks until it execs:
+    // https://man7.org/linux/man-pages/man2/flock.2.html
+    for _ in 0..50 {
+        replays.ready(None, "hi", later).await;
+        if replays.kept().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(replays.kept(), Vec::<String>::new());
+    let pool = back_door(upgraded.path()).await;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM environments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the removed environment's row is removed too");
 }

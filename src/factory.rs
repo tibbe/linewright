@@ -154,6 +154,7 @@ pub enum ServeEnd {
 
 pub struct Factory {
     shell: Arc<Shell>,
+    database: Database,
     recorded_runs: Runs,
     runs: JoinSet<()>,
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
@@ -246,10 +247,14 @@ impl Factory {
             merge_method = %settings.merge_method,
             "started"
         );
-        let last_scheduled_runs = LastScheduledRuns::load(&config.work_dir);
+        let last_scheduled_runs = LastScheduledRuns::load(&config.database)
+            .await
+            .context("reading the automations' last scheduled runs")?;
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let runs = Runs::new(config.database.clone());
-        let pulls = PullRecords::load(&config.work_dir);
+        let pulls = PullRecords::load(&config.database)
+            .await
+            .context("reading the record of Linewright's pull requests")?;
         let pull_records_file = match &pulls {
             Some(saved) => PullRecordsFile::Kept {
                 saved: Some(saved.clone()),
@@ -258,7 +263,7 @@ impl Factory {
             None => PullRecordsFile::Missing,
         };
         let environment = Environment::open(
-            environment::dir(&config.work_dir),
+            environment::dir(config.database.work_dir()),
             environment::Builder {
                 store: store.clone(),
                 harness: harness.clone(),
@@ -268,6 +273,7 @@ impl Factory {
                 given: config.environments.pipeline.clone(),
                 default_branch: settings.default_branch.clone(),
                 winding_up: config.winding_up.clone(),
+                database: config.database.clone(),
             },
         )
         .await?;
@@ -311,6 +317,7 @@ impl Factory {
                 pulls: pulls.unwrap_or_default(),
                 ..Memory::default()
             },
+            database: config.database,
             recorded_runs: runs,
             runs: JoinSet::new(),
             refusals,
@@ -364,7 +371,7 @@ impl Factory {
             self.labeled_old_tracking_issues = true;
         }
         let repo = self.read_repo_files().await?;
-        self.poll_environment(&repo);
+        self.poll_environment(&repo).await;
         self.written.clear();
         let kept = Kept {
             snapshot: Arc::new(snapshot),
@@ -429,7 +436,7 @@ impl Factory {
         kept.read_at
             .extend(read.into_iter().map(|item| (item, now)));
         kept.repo = self.read_repo_files().await?;
-        self.poll_environment(&kept.repo);
+        self.poll_environment(&kept.repo).await;
         self.written.clear();
         Ok(self.reconcile(kept, vec![], now).await)
     }
@@ -617,7 +624,7 @@ impl Factory {
         };
         self.take_shown_comments(snapshot, now);
         self.memory.retain_open(snapshot);
-        self.record_pulls();
+        self.record_pulls().await;
         let mut actions = reconcile(
             snapshot,
             &live,
@@ -664,9 +671,11 @@ impl Factory {
     }
 
     /// Gives the environment the `setup` table `repo` holds.
-    fn poll_environment(&mut self, repo: &RepoLayer) {
+    async fn poll_environment(&mut self, repo: &RepoLayer) {
         let read = self.setup_read(repo);
-        self.environment.poll(read, self.shell.sessions.clock.now());
+        self.environment
+            .poll(read, self.shell.sessions.clock.now())
+            .await;
     }
 
     /// Makes the environment ready for a run without `serve`
@@ -848,14 +857,14 @@ impl Factory {
         }
     }
 
-    fn record_pulls(&mut self) {
+    async fn record_pulls(&mut self) {
         let PullRecordsFile::Kept { saved, .. } = &mut self.pull_records_file else {
             return;
         };
         if saved.as_ref() == Some(&self.memory.pulls) {
             return;
         }
-        match self.memory.pulls.save(&self.shell.work_dir) {
+        match self.memory.pulls.save(&self.database).await {
             Ok(()) => *saved = Some(self.memory.pulls.clone()),
             Err(e) => warn!(
                 error = format!("{e:#}"),
@@ -1063,7 +1072,7 @@ impl Factory {
                     warn!(pr = pr.0, reason, "merge failed");
                     let at = self.shell.sessions.clock.now();
                     self.memory.pulls.merge_failed(*pr, reason, at);
-                    self.record_pulls();
+                    self.record_pulls().await;
                 }
             }
             Action::CommentRequirements { pr, requires } => {
@@ -1075,7 +1084,7 @@ impl Factory {
                 store.comment(*pr, &requirements_note(requires)).await?;
                 let at = self.shell.sessions.clock.now();
                 self.memory.pulls.commented(*pr, at);
-                self.record_pulls();
+                self.record_pulls().await;
             }
             Action::CloseTracking { issue } => {
                 info!(issue = issue.0, "closing tracking issue");
@@ -1103,7 +1112,7 @@ impl Factory {
             }
             Action::RecordLastScheduledRuns(last_scheduled_runs) => {
                 self.last_scheduled_runs = last_scheduled_runs.clone();
-                last_scheduled_runs.save(&self.shell.work_dir)?;
+                last_scheduled_runs.save(&self.database).await?;
             }
             Action::RunAutomation(automation) => {
                 let running = begin_automation(

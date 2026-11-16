@@ -313,12 +313,14 @@ async fn kept_environment(
     config: &Config,
     work_dir: &RepoWorkDir,
 ) -> Result<shown::EnvironmentAnswer> {
-    let dir = environment::dir(&work_dir.resolve());
-    let setup_command = match shown::setup_given(&dir) {
+    let work_dir = work_dir.resolve();
+    let db = Database::open_existing(&work_dir).await?;
+    let dir = environment::dir(&work_dir);
+    let setup_command = match shown::setup_given(&dir, db.as_ref()).await? {
         Some(_) => false,
         None => setup_command_before_any_poll(config).await?,
     };
-    shown::answer(&dir, setup_command)
+    shown::answer(&dir, db.as_ref(), setup_command).await
 }
 
 /// Whether there is a setup command, as the operator's settings and the

@@ -327,6 +327,11 @@ impl Runs {
         self.db.work_dir()
     }
 
+    /// The database the runs are kept in.
+    pub fn database(&self) -> &Database {
+        &self.db
+    }
+
     /// Begins a run of `begin`, numbered after every run of the same item
     /// and stage, or of the same automation, with no two runs given the
     /// same number, even by two processes at once. It holds its lock, so

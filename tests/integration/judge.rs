@@ -61,18 +61,6 @@ pub(crate) fn triage_output<'a>(
     }
 }
 
-/// Copies the directory `from` to `to`, as `cp -R` does.
-#[track_caller]
-fn copy_dir(from: &Path, to: &Path) {
-    let copied = std::process::Command::new("cp")
-        .arg("-R")
-        .arg(from)
-        .arg(to)
-        .status()
-        .unwrap();
-    assert!(copied.success());
-}
-
 /// Judges the output `out` of a replay of the case in `case` with the
 /// judges `harness` scripts and the factory config `adjust` makes of the
 /// tests' own, its work directory under `under`, keeping the judgement it

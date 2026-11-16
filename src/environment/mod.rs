@@ -2,7 +2,7 @@
 //! setup command, that every session's clone starts from
 //! (`docs/specs/sessions.md`, Environment).
 
-mod kept;
+pub(crate) mod kept;
 pub mod lifecycle;
 pub mod replays;
 pub mod shown;
@@ -20,6 +20,7 @@ use tracing::{info, warn};
 
 use crate::bash_command::{self, Status};
 use crate::clock::Clock;
+use crate::database::Database;
 use crate::domain::Timestamp;
 use crate::git::{self, CommitId};
 use crate::harness::{GhReach, Harness};
@@ -64,6 +65,9 @@ pub struct Builder {
     pub default_branch: String,
     /// What removes the builds retired or abandoned.
     pub winding_up: WindingUp,
+    /// The database of the work directory the environment is in, which
+    /// names the build that is the environment.
+    pub database: Database,
 }
 
 impl Builder {
@@ -147,8 +151,8 @@ pub struct Environment {
     builds: Builds,
     builder: Arc<Builder>,
     state: State,
-    /// What the state file names, and its build: the environment sessions
-    /// start from.
+    /// The build named as the environment, and its build: the environment
+    /// sessions start from.
     built: Option<(Built, Arc<BuildDir>)>,
     /// The latest build started since Linewright started.
     tried: Option<Basis>,
@@ -277,12 +281,13 @@ pub enum RebuildTaken {
 pub struct BuildEnd(Result<Result<Built, String>, JoinError>);
 
 impl Environment {
-    /// Opens the environment kept under `dir`, removing every build the
-    /// state file doesn't name but the record of the latest that failed.
+    /// Opens the environment kept under `dir`, removing every build but the
+    /// one named as the environment and the record of the latest that
+    /// failed.
     pub async fn open(dir: PathBuf, builder: Builder) -> Result<Environment> {
         let builds = Builds::new(dir);
         let built = builds
-            .open()
+            .open(&builder.database)
             .await
             .context("opening the environment's builds")?
             .map(|built| {
@@ -321,8 +326,8 @@ impl Environment {
     /// Takes the `setup` table read at a poll, and starts the build that
     /// `serve` starting or a trigger asks for. Without a setup command there
     /// is no environment, and what is kept of it stays as it is.
-    pub fn poll(&mut self, read: SetupRead, now: Timestamp) {
-        let Some(settings) = self.take_read(read) else {
+    pub async fn poll(&mut self, read: SetupRead, now: Timestamp) {
+        let Some(settings) = self.take_read(read).await else {
             return;
         };
         if self.holds.any() {
@@ -391,7 +396,7 @@ impl Environment {
     /// for the build, as `lw environment rebuild` without `serve` does.
     /// `Err` when builds are held; otherwise `None` without a setup command.
     pub async fn rebuild_now(&mut self, read: SetupRead) -> Result<Option<BuildEnded>> {
-        self.take_read(read);
+        self.take_read(read).await;
         match self.refused() {
             Some(RebuildTaken::Refused { reason }) => bail!("no build starts: {reason}"),
             Some(_) => return Ok(None),
@@ -491,7 +496,7 @@ impl Environment {
     /// otherwise built first. Polls start no build from then on. `Err` says
     /// why no environment can be had.
     pub async fn prepare(&mut self, read: SetupRead, now: Timestamp) -> Result<()> {
-        let settings = self.take_read(read);
+        let settings = self.take_read(read).await;
         if let Some(settings) = settings.filter(|_| !self.holds.any())
             && let Some(event) = self.polled(&settings, now)
         {
@@ -509,7 +514,7 @@ impl Environment {
     }
 
     /// Takes `read` in, and returns the `setup` table now in force, if any.
-    fn take_read(&mut self, read: SetupRead) -> Option<SetupSettings> {
+    async fn take_read(&mut self, read: SetupRead) -> Option<SetupSettings> {
         match read {
             SetupRead::Unusable => {
                 self.holds.unusable = true;
@@ -518,7 +523,7 @@ impl Environment {
             SetupRead::Given(given) => {
                 self.holds.unusable = false;
                 self.setup = std::mem::replace(&mut self.setup, Setup::Unset).after(given);
-                self.keep_setup();
+                self.keep_setup().await;
             }
         }
         self.publish();
@@ -527,12 +532,16 @@ impl Environment {
 
     /// Keeps whether there is a setup command, for what is shown of the
     /// environment, when it changed.
-    fn keep_setup(&mut self) {
+    async fn keep_setup(&mut self) {
         let given = self.setup.active().is_some();
         if self.kept_setup == Some(given) {
             return;
         }
-        match self.builds.keep_setup_given(given) {
+        match self
+            .builds
+            .keep_setup_given(&self.builder.database, given)
+            .await
+        {
             Ok(()) => self.kept_setup = Some(given),
             Err(e) => warn!(
                 error = format!("{e:#}"),
@@ -609,7 +618,7 @@ impl Environment {
         }));
     }
 
-    /// Makes `built`, which the state file names, the environment. The build
+    /// Makes `built`, which the database names, the environment. The build
     /// it replaces is removed once no copy from it is in progress.
     fn replace(&mut self, built: Built) {
         let build = Arc::new(BuildDir::new(Build::new(
@@ -681,7 +690,7 @@ impl Build {
 }
 
 /// Builds the environment with `settings` under `builds`' lock, and names
-/// the build in the state file once it succeeds. `Err` says why it failed.
+/// the build as the environment once it succeeds. `Err` says why it failed.
 async fn build(
     builder: &Builder,
     builds: &Builds,
@@ -689,7 +698,10 @@ async fn build(
     fingerprint: Fingerprint,
 ) -> Result<Built, String> {
     let lock = builds.lock().await.map_err(|e| format!("{e:#}"))?;
-    let id = builds.next_id(&lock).map_err(|e| format!("{e:#}"))?;
+    let id = builds
+        .next_id(&builder.database, &lock)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
     let start = Start::DefaultBranch;
     build_locked(builder, builds, &lock, id, start, settings, fingerprint).await
 }
@@ -727,7 +739,11 @@ async fn build_locked(
                 at,
                 fingerprint,
             };
-            match kept::remove(&dir.join(kept::TMP)).and_then(|()| builds.write_state(&built)) {
+            let named = async {
+                kept::remove(&dir.join(kept::TMP))?;
+                builds.write_state(&builder.database, &built).await
+            };
+            match named.await {
                 Ok(()) => {
                     abandoned.done();
                     return Ok(built);

@@ -136,6 +136,12 @@ impl Fingerprint {
         &self.0
     }
 
+    /// The fingerprint whose hash, as [`Fingerprint::as_str`] gave it, was
+    /// kept.
+    pub(super) fn kept(hash: String) -> Fingerprint {
+        Fingerprint(hash)
+    }
+
     /// The fingerprint of `command` run with `variables`, in any order, but
     /// for `TMPDIR`.
     pub fn of<N: AsRef<OsStr>, V: AsRef<OsStr>>(

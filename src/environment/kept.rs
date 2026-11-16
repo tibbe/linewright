@@ -1,17 +1,20 @@
 //! What is kept of the environment across restarts: a directory per build,
-//! with its record and output, and the state file naming the build that is
-//! the environment (`docs/specs/sessions.md`, Building, Kept).
+//! with its record and output, and the environment's row of the database,
+//! naming the build that is the environment (`docs/specs/sessions.md`,
+//! Building, Kept).
 
 use std::fs::File;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sqlx::{Row as _, SqliteConnection};
 use tracing::warn;
 
 use super::lifecycle::{Basis, Fingerprint};
+use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
+use crate::records;
 use crate::transcript::lines::BuildMaintenanceLine;
 use crate::tree;
 
@@ -28,12 +31,12 @@ const LEASE: &str = "lease";
 
 /// The builds' directories, in the environment's directory.
 const BUILDS: &str = "builds";
-/// The state file, in the environment's directory.
+/// Where earlier releases kept the state, in the environment's directory.
 const STATE: &str = "state.json";
 /// The file the builds' lock is held on, in the environment's directory.
 const LOCK: &str = "lock";
-/// Whether the latest poll gave a setup command, in the environment's
-/// directory.
+/// Where earlier releases kept whether the latest poll gave a setup
+/// command, in the environment's directory.
 const SETUP: &str = "setup.json";
 
 /// The builds of one repository's environment, under its directory.
@@ -60,7 +63,7 @@ impl std::str::FromStr for BuildId {
     }
 }
 
-/// The build that is the environment, as the state file names it.
+/// The build that is the environment, as its row names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Built {
     pub id: BuildId,
@@ -134,8 +137,8 @@ impl BuildRecord {
     }
 }
 
-/// The exclusive lock on the builds, held through a build and the state
-/// file's replacement, and let go when dropped.
+/// The exclusive lock on the builds, held through a build and the naming of
+/// the build that is the environment, and let go when dropped.
 pub struct Lock(#[expect(dead_code, reason = "held for its lock")] File);
 
 impl Builds {
@@ -183,22 +186,38 @@ impl Builds {
 
     /// Whether the latest poll gave a setup command, `None` before the
     /// first.
-    pub fn setup_given(&self) -> Option<bool> {
-        let text = std::fs::read_to_string(self.dir.join(SETUP)).ok()?;
-        serde_json::from_str::<SetupGiven>(&text)
-            .ok()
-            .map(|given| given.setup_command)
+    pub async fn setup_given(&self, db: &Database) -> Result<Option<bool>> {
+        let given: Option<Option<bool>> =
+            sqlx::query_scalar("SELECT setup_command FROM environments WHERE dir = ?")
+                .bind(self.key(db)?)
+                .fetch_optional(db.pool())
+                .await
+                .context("reading whether there is a setup command")?;
+        Ok(given.flatten())
     }
 
     /// Keeps whether the latest poll gave a setup command.
-    pub fn keep_setup_given(&self, setup_command: bool) -> Result<()> {
-        std::fs::create_dir_all(&self.dir).context("creating the environment's directory")?;
-        let text = serde_json::to_string(&SetupGiven { setup_command })
-            .expect("whether there is a setup command serializes");
-        let partial = self.dir.join(format!("{SETUP}.new"));
-        std::fs::write(&partial, text)
-            .and_then(|()| std::fs::rename(&partial, self.dir.join(SETUP)))
+    pub async fn keep_setup_given(&self, db: &Database, setup_command: bool) -> Result<()> {
+        keep_setup_given(db.pool(), &self.key(db)?, setup_command)
+            .await
             .context("keeping whether there is a setup command")
+    }
+
+    /// The environment's key in the database: its directory under the work
+    /// directory.
+    fn key(&self, db: &Database) -> Result<String> {
+        key(db.work_dir(), &self.dir)
+    }
+
+    /// Forgets the build that is the environment, and whether there is a
+    /// setup command.
+    pub async fn forget(&self, db: &Database) -> Result<()> {
+        sqlx::query("DELETE FROM environments WHERE dir = ?")
+            .bind(self.key(db)?)
+            .execute(db.pool())
+            .await
+            .context("forgetting the environment")?;
+        Ok(())
     }
 
     /// The record of each build kept, by number.
@@ -226,38 +245,52 @@ impl Builds {
         Ok(ids)
     }
 
-    /// The number of the next build, taken under the lock.
-    pub fn next_id(&self, _: &Lock) -> Result<BuildId> {
+    /// The number of the next build, taken under the lock: after every
+    /// build there is, and after the build named as the environment, even
+    /// once its directory is gone.
+    pub async fn next_id(&self, db: &Database, _: &Lock) -> Result<BuildId> {
+        let named: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT build FROM environments WHERE dir = ?")
+                .bind(self.key(db)?)
+                .fetch_optional(db.pool())
+                .await
+                .context("reading the environment's state")?;
+        let named = named.flatten().map_or(Ok(0), u64::try_from)?;
         let last = self.listed()?.last().map_or(0, |id| id.0);
-        Ok(BuildId(last + 1))
+        Ok(BuildId(last.max(named) + 1))
     }
 
-    /// The build the state file names, if its clone is there.
-    pub fn named(&self) -> Option<Built> {
-        let text = match std::fs::read_to_string(self.dir.join(STATE)) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(e) => {
-                warn!(error = %e, "reading the environment's state failed: there is none");
-                return None;
-            }
+    /// The build named as the environment, if its clone is there.
+    pub async fn named(&self, db: &Database) -> Result<Option<Built>> {
+        let row = sqlx::query(
+            "SELECT build, built_from, built_at, fingerprint FROM environments
+                WHERE dir = ? AND build IS NOT NULL",
+        )
+        .bind(self.key(db)?)
+        .fetch_optional(db.pool())
+        .await
+        .context("reading the environment's state")?;
+        let Some(row) = row else {
+            return Ok(None);
         };
-        let built: Built = serde_json::from_str(&text)
-            .inspect_err(
-                |e| warn!(error = %e, "the environment's state does not parse: there is none"),
-            )
-            .ok()?;
-        self.build_dir(built.id)
+        let built = Built {
+            id: BuildId(u64::try_from(row.try_get::<i64, _>("build")?)?),
+            commit: row.try_get("built_from")?,
+            at: parse_time(row.try_get("built_at")?)?,
+            fingerprint: Fingerprint::kept(row.try_get("fingerprint")?),
+        };
+        Ok(self
+            .build_dir(built.id)
             .join(REPO)
             .is_dir()
-            .then_some(built)
+            .then_some(built))
     }
 
-    /// Under the lock, the build the state file names, once every other
+    /// Under the lock, the build named as the environment, once every other
     /// build is removed but the record of the latest that failed.
-    pub async fn open(&self) -> Result<Option<Built>> {
+    pub async fn open(&self, db: &Database) -> Result<Option<Built>> {
         let _lock = self.lock().await?;
-        let built = self.named();
+        let built = self.named(db).await?;
         let named = built.as_ref().map(|built| built.id);
         let latest_failed = self.latest_failed()?;
         for id in self.listed()? {
@@ -299,19 +332,15 @@ impl Builds {
         std::fs::read_to_string(self.build_dir(id).join(OUTPUT)).ok()
     }
 
-    /// Names `built` in the state file, replacing it whole.
-    pub fn write_state(&self, built: &Built) -> Result<()> {
-        let text = serde_json::to_string_pretty(built).expect("a build serializes");
-        let partial = self.dir.join(format!("{STATE}.new"));
-        let mut file = File::create(&partial).context("writing the environment's state")?;
-        file.write_all(text.as_bytes())
-            .and_then(|()| file.sync_all())
-            .context("writing the environment's state")?;
-        std::fs::rename(&partial, self.dir.join(STATE)).context("replacing the environment's state")
+    /// Names `built` as the environment.
+    pub async fn write_state(&self, db: &Database, built: &Built) -> Result<()> {
+        write_state(db.pool(), &self.key(db)?, built)
+            .await
+            .context("naming the environment's build")
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct SetupGiven {
     setup_command: bool,
 }
@@ -363,4 +392,109 @@ pub fn remove_unleased(dir: &Path) -> Result<()> {
 /// [`tree::remove`].
 pub fn remove(path: &Path) -> Result<()> {
     tree::remove(path)
+}
+
+/// The key in the database of the environment in `dir`: its path under
+/// `work_dir`.
+fn key(work_dir: &Path, dir: &Path) -> Result<String> {
+    let under = dir.strip_prefix(work_dir).with_context(|| {
+        format!(
+            "the environment {} is outside the work directory {}",
+            dir.display(),
+            work_dir.display()
+        )
+    })?;
+    under
+        .to_str()
+        .map(str::to_owned)
+        .with_context(|| format!("the environment {} is not named in UTF-8", dir.display()))
+}
+
+async fn write_state<'c>(
+    conn: impl sqlx::SqliteExecutor<'c>,
+    key: &str,
+    built: &Built,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO environments (dir, build, built_from, built_at, fingerprint)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (dir) DO UPDATE SET build = excluded.build,
+                built_from = excluded.built_from, built_at = excluded.built_at,
+                fingerprint = excluded.fingerprint",
+    )
+    .bind(key)
+    .bind(
+        i64::try_from(built.id.0)
+            .context("the build's number is beyond what the database keeps")?,
+    )
+    .bind(&built.commit)
+    .bind(time_text(built.at))
+    .bind(built.fingerprint.as_str())
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+async fn keep_setup_given<'c>(
+    conn: impl sqlx::SqliteExecutor<'c>,
+    key: &str,
+    setup_command: bool,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO environments (dir, setup_command) VALUES (?, ?)
+            ON CONFLICT (dir) DO UPDATE SET setup_command = excluded.setup_command",
+    )
+    .bind(key)
+    .bind(setup_command)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Keeps the state of the environment of `work_dir`, and of each
+/// environment of its replays, that earlier releases kept as files in their
+/// directories, logging and skipping a file that does not read.
+pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
+    let mut dirs = vec![super::dir(work_dir)];
+    let replays = super::replays::dir(work_dir);
+    match std::fs::read_dir(&replays) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.with_context(|| format!("listing {}", replays.display()))?;
+                if !super::replays::is_set_aside(&entry.file_name()) {
+                    dirs.push(entry.path());
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("listing {}", replays.display())),
+    }
+    for dir in dirs {
+        let key = match key(work_dir, &dir) {
+            Ok(key) => key,
+            Err(e) => {
+                warn!(
+                    error = format!("{e:#}"),
+                    "ignoring the state of an environment"
+                );
+                continue;
+            }
+        };
+        let built = records::load::<Built>(&dir.join(STATE), "the environment's state");
+        if let Some(built) = built {
+            write_state(&mut *conn, &key, &built)
+                .await
+                .with_context(|| format!("importing the state of {}", dir.display()))?;
+        }
+        let given =
+            records::load::<SetupGiven>(&dir.join(SETUP), "whether there is a setup command");
+        if let Some(SetupGiven { setup_command }) = given {
+            keep_setup_given(&mut *conn, &key, setup_command)
+                .await
+                .with_context(|| {
+                    format!("importing whether {} has a setup command", dir.display())
+                })?;
+        }
+    }
+    Ok(())
 }
