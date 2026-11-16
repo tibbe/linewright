@@ -790,14 +790,14 @@ fn an_items_runs_narrowed_to_none_are_no_runs_to_list_not_none_at_all() {
     );
 }
 
-/// What `Runs` reads from a work directory holding each of `files`.
+/// What `Runs` reads from a work directory whose database keeps each of
+/// `records`.
 #[track_caller]
-fn read(
-    files: &[(&str, &str)],
-) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
+fn read(records: &[&str]) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
     let caller = Location::caller();
-    let (base, work_dir) = work_dir_holding(files);
+    let kept = work_dir_keeping(records, &[]);
     async move {
+        let (base, work_dir) = kept.await;
         let recorded = runs_in(&work_dir.resolve())
             .await
             .read()
@@ -814,7 +814,7 @@ fn rework_of_5_read(
     sessions: &serde_json::Value,
 ) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
     let record = item_run_record(5, "rework", 1, Some("done"), sessions);
-    read(&[("runs/items/5/rework-1.json", &record)])
+    read(&[&record])
 }
 
 fn rework_of_5(sessions: Vec<SessionEntry>) -> Recorded {
@@ -969,74 +969,6 @@ fn runs_read(recorded: &[Recorded]) -> Vec<(String, Option<StartedBy>, State)> {
     read
 }
 
-fn done_at(time: &str) -> State {
-    State::Ended {
-        at: at(time),
-        ending: Ending::Done,
-    }
-}
-
-#[test_log::test(tokio::test)]
-async fn an_automations_runs_read_from_where_the_previous_version_kept_them_as_scheduled_and_from_where_they_are_kept()
- {
-    let old = json!({
-        "workflow": "weekly",
-        "n": 1,
-        "started_at": "2026-09-28T06:00:00Z",
-        "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
-        "sessions": [],
-    });
-    let new = json!({
-        "automation": "weekly",
-        "n": 2,
-        "started_by": "hand",
-        "started_at": "2026-10-05T06:00:00Z",
-        "end": {"at": "2026-10-05T06:05:00Z", "ending": "done"},
-        "sessions": [],
-    });
-
-    let (_base, recorded) = read(&[
-        ("runs/workflows/weekly/1.json", &old.to_string()),
-        ("runs/automations/weekly/2.json", &new.to_string()),
-    ])
-    .await;
-
-    assert_eq!(
-        runs_read(&recorded),
-        [
-            (
-                "weekly/1".to_string(),
-                Some(StartedBy::Schedule),
-                done_at("2026-09-28T06:05:00Z"),
-            ),
-            (
-                "weekly/2".to_string(),
-                Some(StartedBy::Hand),
-                done_at("2026-10-05T06:05:00Z"),
-            ),
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_spec_changes_run_the_previous_version_recorded_as_tickets_reads_as_a_design_run() {
-    let record = item_run_record(4, "tickets", 1, Some("handed-back"), &json!([]));
-
-    let (_base, recorded) = read(&[("runs/items/4/tickets-1.json", &record)]).await;
-
-    assert_eq!(
-        runs_read(&recorded),
-        [(
-            "4/design-1".to_string(),
-            None,
-            State::Ended {
-                at: at("2026-10-14T12:01:00Z"),
-                ending: Ending::HandedBack,
-            },
-        )]
-    );
-}
-
 #[test_log::test]
 fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
     assert_eq!(
@@ -1093,7 +1025,7 @@ async fn lw_runs_on_a_database_a_newer_release_made_exits_1_naming_that_release(
 #[test_log::test(tokio::test)]
 async fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
     let record = item_run_record(1, "triage", 1, None, &json!([]));
-    let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
+    let (base, work_dir) = work_dir_keeping(&[&record], &[]).await;
     let runs = runs_in(&work_dir.resolve()).await;
     let lock = lock_of(&base.path().join(REPO).join("runs/items/1/triage-1.json"));
 
@@ -1130,11 +1062,7 @@ async fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_howe
     let ended = item_run_record(20, "fix-ci", 1, Some("handed-back"), &json!([]));
     let interrupted = item_run_record(20, "fix-ci", 2, None, &json!([]));
     let on_an_issue = item_run_record(2, "implement", 1, Some("done"), &json!([]));
-    let (_base, work_dir) = work_dir_holding(&[
-        ("runs/items/20/fix-ci-1.json", &ended),
-        ("runs/items/20/fix-ci-2.json", &interrupted),
-        ("runs/items/2/implement-1.json", &on_an_issue),
-    ]);
+    let (_base, work_dir) = work_dir_keeping(&[&ended, &interrupted, &on_an_issue], &[]).await;
     let runs = runs_in(&work_dir.resolve()).await;
 
     let ended_on_pulls: Vec<EndedRun> = runs

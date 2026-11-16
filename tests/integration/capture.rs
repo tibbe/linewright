@@ -8,7 +8,6 @@ use common::*;
 use linewright::case::{self, CaptureError, CaseName, Criteria};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
-use linewright::runs::files::RunFiles;
 use linewright::runs::{RunId, Runs};
 use linewright::store::API_VERSION;
 use serde_json::{Value, json};
@@ -240,44 +239,6 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
             .map(|(branch, head)| format!("refs/heads/{branch} {head}"))
             .collect::<Vec<_>>()
     );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_run_imported_with_its_input_from_an_earlier_releases_files_is_captured() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
-    let kept = runs(&world).await;
-    let recorded = kept.read_run(&id(&run)).await.unwrap();
-    let input = kept.read_input(&id(&run)).await.unwrap().unwrap();
-    let earlier = tempfile::tempdir().unwrap();
-    RunFiles::new(earlier.path()).write(&recorded).unwrap();
-    write_files(
-        earlier.path(),
-        &[(
-            &format!("runs/items/{run}.input.json"),
-            &serde_json::to_string(&input).unwrap(),
-        )],
-    );
-
-    let imported = runs_in(earlier.path()).await;
-    let capturable = case::capturable(
-        &imported,
-        &earlier.path().join("cases"),
-        &id(&run),
-        &"gadgets".parse().unwrap(),
-    )
-    .await
-    .unwrap();
-    let dir = case::capture(
-        &*world.store,
-        capturable,
-        &Criteria::parse("A good result adds gadgets.\n").unwrap(),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(dir, earlier.path().join("cases/gadgets"));
-    assert_eq!(read_json(&dir.join("case.json"))["run"], json!(run));
 }
 
 #[test_log::test(tokio::test)]

@@ -223,11 +223,7 @@ async fn write_session(
     Ok(())
 }
 
-pub(super) async fn write_input(
-    conn: &mut SqliteConnection,
-    row: i64,
-    input: &Input,
-) -> Result<()> {
+async fn write_input(conn: &mut SqliteConnection, row: i64, input: &Input) -> Result<()> {
     sqlx::query("INSERT OR REPLACE INTO run_inputs (run, input) VALUES (?, ?)")
         .bind(row)
         .bind(serde_json::to_string(input)?)

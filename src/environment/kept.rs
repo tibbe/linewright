@@ -8,13 +8,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row as _, SqliteConnection};
-use tracing::warn;
+use sqlx::Row as _;
 
 use super::lifecycle::{Basis, Fingerprint};
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
-use crate::records;
 use crate::transcript::lines::BuildMaintenanceLine;
 use crate::tree;
 
@@ -31,14 +29,8 @@ const LEASE: &str = "lease";
 
 /// The builds' directories, in the environment's directory.
 const BUILDS: &str = "builds";
-/// Where earlier releases kept the state, in the environment's directory.
-const STATE: &str = "state.json";
 /// The file the builds' lock is held on, in the environment's directory.
 const LOCK: &str = "lock";
-/// Where earlier releases kept whether the latest poll gave a setup
-/// command, in the environment's directory.
-const SETUP: &str = "setup.json";
-
 /// The builds of one repository's environment, under its directory.
 #[derive(Clone, Debug)]
 pub struct Builds {
@@ -64,7 +56,7 @@ impl std::str::FromStr for BuildId {
 }
 
 /// The build that is the environment, as its row names it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Built {
     pub id: BuildId,
     /// The commit of the default branch it was built from.
@@ -340,11 +332,6 @@ impl Builds {
     }
 }
 
-#[derive(Deserialize)]
-struct SetupGiven {
-    setup_command: bool,
-}
-
 /// Creates the directory of a build, `dir`.
 pub async fn create(dir: &Path) -> Result<()> {
     tokio::fs::create_dir_all(dir)
@@ -448,53 +435,5 @@ async fn keep_setup_given<'c>(
     .bind(setup_command)
     .execute(conn)
     .await?;
-    Ok(())
-}
-
-/// Keeps the state of the environment of `work_dir`, and of each
-/// environment of its replays, that earlier releases kept as files in their
-/// directories, logging and skipping a file that does not read.
-pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
-    let mut dirs = vec![super::dir(work_dir)];
-    let replays = super::replays::dir(work_dir);
-    match std::fs::read_dir(&replays) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry.with_context(|| format!("listing {}", replays.display()))?;
-                if !super::replays::is_set_aside(&entry.file_name()) {
-                    dirs.push(entry.path());
-                }
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e).with_context(|| format!("listing {}", replays.display())),
-    }
-    for dir in dirs {
-        let key = match key(work_dir, &dir) {
-            Ok(key) => key,
-            Err(e) => {
-                warn!(
-                    error = format!("{e:#}"),
-                    "ignoring the state of an environment"
-                );
-                continue;
-            }
-        };
-        let built = records::load::<Built>(&dir.join(STATE), "the environment's state");
-        if let Some(built) = built {
-            write_state(&mut *conn, &key, &built)
-                .await
-                .with_context(|| format!("importing the state of {}", dir.display()))?;
-        }
-        let given =
-            records::load::<SetupGiven>(&dir.join(SETUP), "whether there is a setup command");
-        if let Some(SetupGiven { setup_command }) = given {
-            keep_setup_given(&mut *conn, &key, setup_command)
-                .await
-                .with_context(|| {
-                    format!("importing whether {} has a setup command", dir.display())
-                })?;
-        }
-    }
     Ok(())
 }

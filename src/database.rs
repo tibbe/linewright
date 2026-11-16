@@ -3,16 +3,14 @@
 
 use std::cmp::Ordering;
 use std::fs::{File, TryLockError};
-use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat};
+use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::domain::Timestamp;
 
@@ -26,25 +24,18 @@ const LOCK_FILE: &str = "linewright.db.lock";
 /// How long a statement waits for another connection's write lock.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-mod import;
-
 /// A change of the schema, from the version before it to its own.
 pub(crate) enum Migration {
     Sql(&'static str),
-    /// Rust code, given the schema change's transaction and the work
-    /// directory.
-    Steps(for<'a> fn(&'a mut Transaction<'static, Sqlite>, &'a Path) -> StepsFuture<'a>),
 }
 
-pub(crate) type StepsFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
-
 /// Every change of the schema, in order: the schema's version is how many of
-/// them a database has had. A released migration never changes; a later
-/// change is a new entry.
+/// them a database has had. The schema a released migration makes never
+/// changes; a later change is a new entry.
 static MIGRATIONS: &[Migration] = &[
     RELEASES_TABLE,
-    Migration::Steps(runs_kept),
-    Migration::Steps(bookkeeping_kept),
+    Migration::Sql(RUNS_TABLES),
+    Migration::Sql(BOOKKEEPING_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -55,18 +46,7 @@ const RELEASES_TABLE: Migration = Migration::Sql(
     ) STRICT",
 );
 
-/// Each run outside a replay, its sessions and the input it recorded, with
-/// the runs and inputs that earlier releases kept as files.
-fn runs_kept<'a>(tx: &'a mut Transaction<'static, Sqlite>, work_dir: &'a Path) -> StepsFuture<'a> {
-    Box::pin(async move {
-        sqlx::raw_sql(RUNS_TABLES)
-            .execute(&mut **tx)
-            .await
-            .context("making the runs' tables")?;
-        import::runs(tx, work_dir).await
-    })
-}
-
+/// Each run outside a replay, its sessions and the input it recorded.
 const RUNS_TABLES: &str = "CREATE TABLE runs (
         id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('item', 'automation')),
@@ -102,21 +82,7 @@ const RUNS_TABLES: &str = "CREATE TABLE runs (
     ) STRICT;";
 
 /// Linewright's record of its pull requests, each automation's last
-/// scheduled run and the state of each environment, with what earlier
-/// releases kept of them as files.
-fn bookkeeping_kept<'a>(
-    tx: &'a mut Transaction<'static, Sqlite>,
-    work_dir: &'a Path,
-) -> StepsFuture<'a> {
-    Box::pin(async move {
-        sqlx::raw_sql(BOOKKEEPING_TABLES)
-            .execute(&mut **tx)
-            .await
-            .context("making the bookkeeping's tables")?;
-        import::bookkeeping(tx, work_dir).await
-    })
-}
-
+/// scheduled run and the state of each environment.
 const BOOKKEEPING_TABLES: &str = "CREATE TABLE kept (
         record TEXT PRIMARY KEY CHECK (record IN ('pull-records'))
     ) STRICT;
@@ -251,7 +217,7 @@ impl Database {
         let path = work_dir.join(DATABASE_FILE);
         let made = !exists(&path)?;
         let pool = connect(&path, absent).await?;
-        match settle(&pool, &lock, held, work_dir, migrations).await {
+        match settle(&pool, &lock, held, migrations).await {
             Ok(()) => Ok(Database {
                 pool,
                 work_dir: work_dir.into(),
@@ -325,7 +291,6 @@ async fn settle(
     pool: &SqlitePool,
     lock: &Lock,
     held: Held,
-    work_dir: &Path,
     migrations: &'static [Migration],
 ) -> Result<(), OpenError> {
     match standing(pool, migrations).await? {
@@ -334,7 +299,7 @@ async fn settle(
         Standing::Behind(_) if held == Held::Shared && !lock.try_exclusive()? => {
             return Err(OpenError::OthersOpen);
         }
-        Standing::Behind(version) => migrate(pool, work_dir, version, migrations).await?,
+        Standing::Behind(version) => migrate(pool, version, migrations).await?,
     }
     lock.shared().await?;
     match standing(pool, migrations).await? {
@@ -348,7 +313,6 @@ async fn settle(
 /// that made it.
 async fn migrate(
     pool: &SqlitePool,
-    work_dir: &Path,
     version: u32,
     migrations: &'static [Migration],
 ) -> anyhow::Result<()> {
@@ -357,15 +321,11 @@ async fn migrate(
         .await
         .context("beginning the database's schema change")?;
     for (index, migration) in migrations.iter().enumerate().skip(version as usize) {
-        match migration {
-            Migration::Sql(sql) => sqlx::raw_sql(sqlx::AssertSqlSafe(*sql))
-                .execute(&mut *tx)
-                .await
-                .map(drop)
-                .map_err(anyhow::Error::new),
-            Migration::Steps(steps) => steps(&mut tx, work_dir).await,
-        }
-        .with_context(|| format!("changing the database's schema to version {}", index + 1))?;
+        let Migration::Sql(sql) = migration;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(*sql))
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("changing the database's schema to version {}", index + 1))?;
     }
     let target = schema_version(migrations);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(

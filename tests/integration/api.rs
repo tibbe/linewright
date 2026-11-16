@@ -43,8 +43,9 @@ fn sources(work_dir: RepoWorkDir) -> impl Future<Output = Sources> {
     }
 }
 
-/// The local API's router, driven in-process, over a work directory holding
-/// `files`.
+/// The local API's router, driven in-process, over a work directory whose
+/// database keeps each of `records`, a run's record in the form a run's
+/// record file has.
 struct Routed {
     router: Router,
     ends: Ends,
@@ -54,11 +55,11 @@ struct Routed {
 
 impl Routed {
     #[track_caller]
-    fn over(files: &[(&str, &str)]) -> impl Future<Output = Routed> + use<> {
-        let (dir, work_dir) = work_dir_holding(files);
-        let sources = sources(work_dir);
+    fn over(records: &[&str]) -> impl Future<Output = Routed> + use<> {
+        let kept = work_dir_keeping(records, &[]);
         async move {
-            let sources = sources.await;
+            let (dir, work_dir) = kept.await;
+            let sources = sources(work_dir).await;
             let ends = sources.ends.clone();
             let stopping = CancellationToken::new();
             Routed {
@@ -152,7 +153,7 @@ async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
 #[test_log::test(tokio::test)]
 async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
     let record = item_run_record(1, "triage", 1, Some("done"), &serde_json::json!([]));
-    let routed = Routed::over(&[("runs/items/1/triage-1.json", &record)]).await;
+    let routed = Routed::over(&[&record]).await;
 
     let response = routed
         .response(

@@ -273,48 +273,6 @@ fn tallied(n: u64) -> Tallied {
 }
 
 #[test_log::test(tokio::test)]
-async fn after_an_upgrade_from_files_serve_uses_the_environment_built_before_and_environment_shows_it()
- {
-    let marks = crate::environment::Marks::new();
-    let mut world = World::new().await;
-    set_up_with(
-        &world,
-        &format!("echo built >> '{}'", marks.path("builds").display()),
-    )
-    .await;
-    world.poll().await;
-    let earlier = world.dir.path().join("work");
-    let upgraded = tempfile::tempdir().unwrap();
-    let work_dir = upgraded.path().join(REPO);
-    environment_as_an_earlier_release_left(&earlier, "environment", &work_dir).await;
-    let state = environment_state(&earlier, "environment").await;
-
-    world
-        .restart(|config| config.work_dir = work_dir.clone())
-        .await;
-    world.poll().await;
-    let shown = lw_in(upgraded.path(), &["environment", "--json"]).await;
-
-    assert_eq!(marks.builds(), 1, "not built again");
-    let answer: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
-    let built = &answer["environment"]["built"];
-    assert_eq!(
-        (
-            built["commit"].as_str(),
-            built["at"]
-                .as_str()
-                .map(|at| at.parse::<chrono::DateTime<chrono::Utc>>().unwrap()),
-        ),
-        (
-            state["commit"].as_str(),
-            state["at"].as_str().map(|at| at.parse().unwrap()),
-        ),
-        "{}",
-        shown.stderr
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn once_the_environments_directory_is_removed_by_hand_the_next_build_takes_a_number_after_the_one_it_held()
  {
     let (mut world, work_dir) = world_in_work_dir().await;

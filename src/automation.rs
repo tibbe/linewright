@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -13,7 +12,6 @@ use crate::briefs;
 use crate::config;
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
-use crate::records;
 use crate::repo_files;
 use crate::store::Store;
 use crate::work_settings::{MAINTENANCE, Partial, RepositorySetting, SETUP};
@@ -101,8 +99,7 @@ impl fmt::Display for AutomationName {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LastScheduledRuns(BTreeMap<AutomationName, Timestamp>);
 
 impl LastScheduledRuns {
@@ -165,27 +162,6 @@ impl LastScheduledRuns {
         Ok(())
     }
 }
-
-/// Keeps the last scheduled runs an earlier release kept in `work_dir`, if
-/// they read, logging and skipping a record that does not. Where none was
-/// kept since automations were renamed from workflows, the one a release
-/// before kept stands in for it.
-pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
-    let path = work_dir.join("automation-runs.json");
-    let path = if path.try_exists()? {
-        path
-    } else {
-        work_dir.join("workflow-runs.json")
-    };
-    let Some(runs) = records::load::<LastScheduledRuns>(&path, WHAT) else {
-        return Ok(());
-    };
-    runs.replace(conn)
-        .await
-        .context("importing the automations' last scheduled runs")
-}
-
-const WHAT: &str = "the automations' last scheduled runs";
 
 const SAVING: &str = "recording the automations' last scheduled runs";
 
