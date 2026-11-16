@@ -1070,7 +1070,7 @@ struct PageFollower {
 impl FollowedRun {
     /// Following the run `id` from its start, giving what comes after the
     /// change made at `after`, if one is given.
-    fn start(
+    async fn start(
         sources: &Sources,
         id: &RunId,
         verbose: bool,
@@ -1081,7 +1081,7 @@ impl FollowedRun {
             item: None,
         };
         Ok(FollowedRun {
-            records: RunRecords::start(&sources.work_dir, &which)?,
+            records: RunRecords::start(&sources.work_dir, &which).await?,
             page: PageFollower {
                 feed: Feed::default(),
                 view: RunView::new(id.clone(), item_line(sources, id), verbose),
@@ -1176,12 +1176,16 @@ fn item_line(sources: &Sources, id: &RunId) -> Html {
 
 /// The transcript as its records hold it now, and while the run is in
 /// flight where its page's stream follows it from.
-fn read(sources: &Sources, id: RunId, verbose: bool) -> Result<(String, Option<Follow>), RunError> {
+async fn read(
+    sources: &Sources,
+    id: RunId,
+    verbose: bool,
+) -> Result<(String, Option<Follow>), RunError> {
     let FollowedRun {
         mut records,
         mut page,
-    } = FollowedRun::start(sources, &id, verbose, None)?;
-    records.read().map_err(LogsError::Other)?;
+    } = FollowedRun::start(sources, &id, verbose, None).await?;
+    records.read().await.map_err(LogsError::Other)?;
     let made = page.made(&records);
     let follow = (!records.ended()).then(|| match made.last() {
         Some((last, _)) => Follow::After(EventId {
@@ -1211,11 +1215,13 @@ pub(super) async fn run_page(
 ) -> Response {
     let verbose = query.verbose();
     let title = format!("{id} · {}", sources.work_dir.repo);
-    let frame = Frame::of(&sources);
-    let shown = run_id(&id).and_then(|run| {
-        let (transcript, follow) = read(&sources, run.clone(), verbose)?;
-        Ok((run, transcript, follow))
-    });
+    let frame = Frame::of(&sources).await;
+    let shown = match run_id(&id) {
+        Ok(run) => read(&sources, run.clone(), verbose)
+            .await
+            .map(|(transcript, follow)| (run, transcript, follow)),
+        Err(e) => Err(e),
+    };
     match shown {
         Ok((run, transcript, follow)) => RunPage {
             page: Page::new(title, page_path(&run, "/events", verbose, follow.as_ref())),
@@ -1223,6 +1229,7 @@ pub(super) async fn run_page(
             verbose,
             switched: page_path(&run, "", !verbose, None),
             capture: Offer::of(&sources, &run)
+                .await
                 .map(|offer| offer.html(&sources))
                 .unwrap_or_default(),
             transcript,
@@ -1273,7 +1280,7 @@ pub(super) async fn run_events(
                     .into_response();
                 }
             };
-            match FollowedRun::start(&sources, &run, query.verbose(), after) {
+            match FollowedRun::start(&sources, &run, query.verbose(), after).await {
                 Ok(followed) => Some(followed),
                 Err(e) => {
                     let e = RunError::from(e);
@@ -1284,10 +1291,10 @@ pub(super) async fn run_events(
         }
         _ => None,
     };
-    let offered = run_id(&id)
-        .ok()
-        .and_then(|run| Offer::of(&sources, &run))
-        .is_some();
+    let offered = match run_id(&id) {
+        Ok(run) => Offer::of(&sources, &run).await.is_some(),
+        Err(_) => false,
+    };
     let stream = RunStream {
         sent: Sent::default(),
         samples: samples(),
@@ -1342,7 +1349,7 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    let mut regions = frame_regions(&Frame::of(&self.sources));
+                    let mut regions = frame_regions(&Frame::of(&self.sources).await);
                     if self.offered {
                         regions.push(Offer::region(&self.sources));
                     }

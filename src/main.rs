@@ -537,8 +537,8 @@ fn read_as<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T,
 
 async fn list_runs(config: &Config, query: &Query, json: bool) -> u8 {
     let resource = format!("/api/runs?{}", api::query_string(query));
-    let answer = ask_or_read(config, &resource, "runs", |work_dir| {
-        runs::answer(work_dir, query, SystemClock.now())
+    let answer = ask_or_read(config, &resource, "runs", async |work_dir| {
+        runs::answer(work_dir, query, SystemClock.now()).await
     })
     .await;
     print_answer(answer.map(|answer| answer.text(json)))
@@ -578,8 +578,8 @@ impl Printing {
 
 async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> u8 {
     let resource = format!("/api/logs?{}", api::query_string(which));
-    let answer = ask_or_read(config, &resource, "a transcript", |work_dir| {
-        logs::answer(work_dir, which)
+    let answer = ask_or_read(config, &resource, "a transcript", async |work_dir| {
+        logs::answer(work_dir, which).await
     })
     .await;
     if follow
@@ -682,7 +682,8 @@ async fn follow_records(
     after: Option<After>,
     printing: Printing,
 ) -> u8 {
-    let mut following = match Following::start(work_dir, &query.which, query.verbosity, after) {
+    let mut following = match Following::start(work_dir, &query.which, query.verbosity, after).await
+    {
         Ok(following) => following,
         Err(e) => return print_answer(Err(unanswered(e.into()))),
     };
@@ -716,7 +717,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     config: &Config,
     resource: &str,
     what: &str,
-    read: impl FnOnce(&RepoWorkDir) -> Result<T, E>,
+    read: impl AsyncFnOnce(&RepoWorkDir) -> Result<T, E>,
 ) -> Result<Answer<T>, (u8, String)> {
     let work_dir = config.repo_work_dir().map_err(|e| failed(&e))?;
     match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
@@ -724,7 +725,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
             let value = read_as(&body, what)?;
             Ok(Answer::Served { body, value })
         }
-        Err(RequestError::NotServing { .. }) => match read(&work_dir).map_err(Into::into) {
+        Err(RequestError::NotServing { .. }) => match read(&work_dir).await.map_err(Into::into) {
             Ok(value) => Ok(Answer::Read(value)),
             Err(e) => Err(unanswered(e)),
         },
@@ -921,7 +922,7 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: &Path) 
     };
     let runs = runs::Runs::new(&work_dir);
     let cases = work_dir.join(case::CASES);
-    let capturable = match case::capturable(&runs, &cases, id, name) {
+    let capturable = match case::capturable(&runs, &cases, id, name).await {
         Ok(capturable) => capturable,
         Err(e) => return print_answer(Err(refusal(e))),
     };

@@ -32,7 +32,7 @@ use crate::results::{
     self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
     SpecGap, SpecGaps, TriageResult,
 };
-use crate::runs::{Ending, Running, Runs};
+use crate::runs::{Ending, Running};
 use crate::secrets::Held;
 use crate::session::{
     Cancellation, Failure, Refused, Rejection, SessionCtx, Sessions, Workspace, converse, infra,
@@ -55,9 +55,6 @@ pub(crate) struct Shell {
     pub operator_prompts: OperatorPrompts,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
-    pub runs: Runs,
-    /// Whether a triage, design or implement run records its input.
-    pub records_input: bool,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
     _by_new: (),
 }
@@ -82,9 +79,6 @@ pub(crate) struct ShellParts {
     pub operator_prompts: OperatorPrompts,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
-    pub runs: Runs,
-    /// Whether a triage, design or implement run records its input.
-    pub records_input: bool,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -134,8 +128,6 @@ impl Shell {
             operator_prompts: parts.operator_prompts,
             settings: parts.settings,
             work_dir: parts.work_dir,
-            runs: parts.runs,
-            records_input: parts.records_input,
             _by_new: (),
         }
     }
@@ -283,19 +275,20 @@ async fn push_result(
 }
 
 /// Records what a triage, design or implement run is given, as it starts
-/// (`docs/specs/benchmarks.md`, "Recording a run's input"). A failure is
-/// logged, and the run goes on without input.
+/// (`docs/specs/benchmarks.md`, "Recording a run's input"), where its run
+/// records input. A failure is logged, and the run goes on without input.
 async fn record_input(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) {
-    if !shell.records_input {
+    let Some(recorder) = ctx.run.input_recorder() else {
         return;
-    }
+    };
     let Some(wanted) = input::wanted(snapshot, work, &shell.settings.default_branch) else {
         return;
     };
     let start = ctx.run.in_flight().started_at;
-    let recorded = input::record(&*shell.sessions.store, &wanted, start)
-        .await
-        .and_then(|input| ctx.run.record_input(&input));
+    let recorded = match input::record(&*shell.sessions.store, &wanted, start).await {
+        Ok(input) => recorder.record(input).await,
+        Err(e) => Err(e),
+    };
     if let Err(e) = recorded {
         let error = shell.sessions.secrets.redaction().apply(&format!("{e:#}"));
         warn!(run = %ctx.run.id(), error, "recording the run's input failed; it goes on without");
@@ -310,7 +303,7 @@ pub(crate) async fn run(
     ctx: Ctx,
 ) -> Ending {
     let ending = drive(&shell, &work, &snapshot, &ctx).await;
-    ctx.run.end(shell.sessions.clock.now(), ending);
+    ctx.run.end(shell.sessions.clock.now(), ending).await;
     ending
 }
 
@@ -1504,7 +1497,7 @@ async fn pull_work(
                 .await
                 .map_err(apply)?;
             if kind == WorkKind::Rework {
-                ctx.run.answered(read_at);
+                ctx.run.answered(read_at).await;
             }
             file_spec_gaps(shell, &spec_gaps, ticket.number(), &shell.required_label())
                 .await
@@ -1614,7 +1607,7 @@ pub(crate) async fn automation(
             Ending::Failed
         }
     };
-    ctx.run.end(shell.sessions.clock.now(), ending);
+    ctx.run.end(shell.sessions.clock.now(), ending).await;
     match ended {
         Ok(result) => Ok(AutomationEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),

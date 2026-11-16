@@ -232,8 +232,8 @@ impl CapturableRun {
 }
 
 /// `run`, of those `runs` keeps, if it can be captured, or why not.
-pub fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, CaptureError> {
-    if runs.try_read_run(run)?.is_none() {
+pub async fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, CaptureError> {
+    if runs.try_read_run(run).await?.is_none() {
         return Err(CaptureError::NoSuchRun(run.clone()));
     }
     let (stage, item) =
@@ -245,7 +245,8 @@ pub fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, Capture
         heads,
         properties,
     } = runs
-        .read_input(run)?
+        .read_input(run)
+        .await?
         .ok_or_else(|| CaptureError::NoInput(run.clone()))?;
     let properties = properties.ok_or_else(|| CaptureError::Lacks {
         run: run.clone(),
@@ -276,13 +277,13 @@ pub struct Capturable {
 /// `run`, of those `runs` keeps, to capture as the case `name` in `cases`,
 /// or why it cannot be: read without the store, so that a capture refused
 /// is refused before reaching it.
-pub fn capturable(
+pub async fn capturable(
     runs: &Runs,
     cases: &Path,
     run: &RunId,
     name: &CaseName,
 ) -> Result<Capturable, CaptureError> {
-    let run = capturable_run(runs, run)?;
+    let run = capturable_run(runs, run).await?;
     if cases.join(name.as_str()).symlink_metadata().is_ok() {
         return Err(CaptureError::Taken(name.clone()));
     }

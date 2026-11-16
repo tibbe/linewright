@@ -413,12 +413,13 @@ impl Listeners {
 }
 
 async fn answer_status(State(sources): State<Sources>) -> Response {
-    json_response(StatusCode::OK, &status_answer(&sources))
+    json_response(StatusCode::OK, &status_answer(&sources).await)
 }
 
-pub(crate) fn status_answer(sources: &Sources) -> Status {
+pub(crate) async fn status_answer(sources: &Sources) -> Status {
     let view = view(sources);
-    status_of(sources, view.as_ref(), &recorded_or_none(sources))
+    let recorded = recorded_or_none(sources).await;
+    status_of(sources, view.as_ref(), &recorded)
 }
 
 /// `serve`'s view, `None` before the first poll.
@@ -427,8 +428,8 @@ pub(crate) fn view(sources: &Sources) -> Option<View> {
 }
 
 /// Every run's record, or none when they do not read, which is logged.
-pub(crate) fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
-    Runs::new(&sources.work_dir.resolve()).read_or_none()
+pub(crate) async fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
+    Runs::new(&sources.work_dir.resolve()).read_or_none().await
 }
 
 /// What `status` answers of `view` and `recorded`.
@@ -652,11 +653,11 @@ async fn answer_stop(
 }
 
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
-    answer(runs::answer(&sources.work_dir, &query, sources.clock.now()))
+    answer(runs::answer(&sources.work_dir, &query, sources.clock.now()).await)
 }
 
 async fn answer_logs(State(sources): State<Sources>, Query(which): Query<logs::Which>) -> Response {
-    answer(logs::answer(&sources.work_dir, &which))
+    answer(logs::answer(&sources.work_dir, &which).await)
 }
 
 pub const LINE_EVENT: &str = "line";
@@ -687,7 +688,7 @@ async fn follow_logs(
         ),
         Some(Err(e)) => return error_response(StatusCode::BAD_REQUEST, e),
     };
-    let started = match Following::start(&sources.work_dir, &which, query.verbosity, after) {
+    let started = match Following::start(&sources.work_dir, &which, query.verbosity, after).await {
         Ok(started) => started,
         Err(e) => return answer(Err::<(), _>(e)),
     };
@@ -928,11 +929,12 @@ pub(crate) struct Explaining {
     pub(crate) now: Timestamp,
 }
 
-pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
+pub(crate) async fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
     let served = sources.served.borrow().clone();
     let served = served.ok_or(Unexplained::NotPolledYet)?;
     let recorded = Runs::new(&sources.work_dir.resolve())
         .read()
+        .await
         .map_err(Unexplained::Failed)?;
     Ok(Explaining {
         view: served.view(),
@@ -943,9 +945,10 @@ pub(crate) fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
 }
 
 /// The board of `serve`'s view now: an empty one before the first poll.
-pub(crate) fn board_answer(sources: &Sources) -> Board {
+pub(crate) async fn board_answer(sources: &Sources) -> Board {
     let view = view(sources);
-    view.map(|view| board::board(&view, &recorded_or_none(sources), sources.clock.now()))
+    let recorded = recorded_or_none(sources).await;
+    view.map(|view| board::board(&view, &recorded, sources.clock.now()))
         .unwrap_or_default()
 }
 
@@ -986,7 +989,7 @@ async fn item_answer_in_view(
     sources: &Sources,
     number: Number,
 ) -> Result<(explain::Answer, Explaining), Unexplained> {
-    let explaining = explaining(sources)?;
+    let explaining = explaining(sources).await?;
     let Explaining {
         view,
         store,

@@ -27,8 +27,7 @@ fn id(id: &str) -> RunId {
     id.parse().unwrap()
 }
 
-/// Captures run `run` of `world` as the case `named`, with `criteria`:
-/// refused, if at all, as the call is made.
+/// Captures run `run` of `world` as the case `named`, with `criteria`.
 #[track_caller]
 fn capture<'a>(
     world: &'a World,
@@ -38,8 +37,11 @@ fn capture<'a>(
 ) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
     let named: CaseName = named.parse().unwrap();
     let criteria = Criteria::parse(criteria).unwrap();
-    let capturable = case::capturable(&runs(world), &cases(world), &id(run), &named);
-    async move { case::capture(&*world.store, capturable?, &criteria).await }
+    let run = id(run);
+    async move {
+        let capturable = case::capturable(&runs(world), &cases(world), &run, &named).await?;
+        case::capture(&*world.store, capturable, &criteria).await
+    }
 }
 
 /// The lines `git` writes with `args` in the repository at `dir`, failing
@@ -167,7 +169,7 @@ async fn implemented(world: &mut World) -> String {
 async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria() {
     let mut world = World::new().await;
     let (ticket, run, heads) = implemented_on_a_branch(&mut world).await;
-    let started_at = runs(&world).read_run(&id(&run)).unwrap().started_at;
+    let started_at = runs(&world).read_run(&id(&run)).await.unwrap().started_at;
 
     let dir = capture(&world, &run, "gadgets-1", "A good result adds gadgets.\n")
         .await
@@ -206,7 +208,7 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         item["resources"][format!("issues/{}", ticket.0)]["title"],
         world.issue(ticket).title
     );
-    let input = runs(&world).read_input(&id(&run)).unwrap().unwrap();
+    let input = runs(&world).read_input(&id(&run)).await.unwrap().unwrap();
     assert_eq!(
         read_json(&dir.join("properties.json")),
         serde_json::to_value(input.properties.unwrap()).unwrap()

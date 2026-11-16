@@ -67,6 +67,7 @@ async fn case_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
         &id,
         &CaseName::suggested(&id),
     )
+    .await
     .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
     let criteria = Criteria::parse("It triages the issue.\n")
         .unwrap_or_else(|| panic!("blank criteria at {caller}"));
@@ -432,7 +433,7 @@ async fn a_replays_run_does_not_count_toward_max_runs() {
 
     world.poll().await;
 
-    assert_eq!(ended_runs(&world), vec![Ending::Done, Ending::Done]);
+    assert_eq!(ended_runs(&world).await, vec![Ending::Done, Ending::Done]);
     gate.release();
     assert_eq!(replaying.await.unwrap(), Ok(Ending::HandedBack));
 }

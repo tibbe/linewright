@@ -24,7 +24,8 @@ use crate::factory::FactoryConfig;
 use crate::harness::{GhReach, Harness};
 use crate::repo_files::{RepoLayer, holding};
 use crate::run::{self, Shell, ShellParts};
-use crate::runs::{Begin, Ending, OutcomeName, Runs, Unended};
+use crate::runs::files::RunFiles;
+use crate::runs::{Begin, Ending, OutcomeName, Unended};
 use crate::serving::Signals;
 use crate::session::{Cancellation, Sessions};
 use crate::store::local::LocalStore;
@@ -263,7 +264,6 @@ async fn run_in(
     let store: Arc<dyn Store> = Arc::new(Journal::new(setting.store.clone(), out.path()));
     let clock = setting.clock.clone();
     let settings = setting.settings.clone();
-    let runs = Runs::new(out.path());
     let shell = Shell::new(ShellParts {
         sessions: setting.sessions(
             case,
@@ -286,8 +286,6 @@ async fn run_in(
         operator_prompts: config.prompts,
         settings,
         work_dir: config.work_dir,
-        runs: runs.clone(),
-        records_input: false,
     });
     let now = clock.now();
     let snapshot = shell
@@ -298,13 +296,15 @@ async fn run_in(
         .context("taking a snapshot of the case")?;
     let issue = case.item();
     let work = case.stage().work(issue);
-    let running = runs.begin(
-        Begin::Work {
-            item: issue,
-            stage: kind,
-        },
-        now,
-    )?;
+    let running = RunFiles::new(out.path())
+        .begin(
+            Begin::Work {
+                item: issue,
+                stage: kind,
+            },
+            now,
+        )
+        .await?;
     out.in_flight()?;
     info!(run = %running.id(), case = %case.run(), "replaying");
     let ctx = run::Ctx {

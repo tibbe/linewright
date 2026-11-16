@@ -374,7 +374,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_can_be_cancell
 
     assert_eq!(world.store.pulls(), []);
     assert_eq!(world.issue(ticket).comments, []);
-    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
+    assert_eq!(ended_runs(&world).await, [Ending::Cancelled]);
 }
 
 #[test_log::test(tokio::test)]
@@ -413,5 +413,5 @@ async fn a_cancel_during_a_push_github_then_refuses_over_a_secret_ends_the_run_w
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(world.store.pulls(), []);
     assert_eq!(world.issue(ticket).comments, []);
-    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
+    assert_eq!(ended_runs(&world).await, [Ending::Cancelled]);
 }

@@ -119,16 +119,17 @@ pub enum LogsError {
 
 /// The run `which` names. A run named by its ID whose record does not read
 /// is an error, not a run that is missing.
-fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
+async fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
     if let Which::Run { id, .. } = which {
         runs.try_read_run(id)
+            .await
             .with_context(|| format!("reading the record of {id}"))?;
     }
-    Ok(pick(&runs.read()?, which)?)
+    Ok(pick(&runs.read().await?, which)?)
 }
 
-pub fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
-    let run = pick_from(&Runs::new(&work_dir.resolve()), which)?;
+pub async fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
+    let run = pick_from(&Runs::new(&work_dir.resolve()), which).await?;
     let mut records = run
         .sessions
         .iter()
@@ -221,9 +222,9 @@ pub struct RunRecords {
 }
 
 impl RunRecords {
-    pub fn start(work_dir: &RepoWorkDir, which: &Which) -> Result<RunRecords, LogsError> {
+    pub async fn start(work_dir: &RepoWorkDir, which: &Which) -> Result<RunRecords, LogsError> {
         let runs = Runs::new(&work_dir.resolve());
-        let run = pick_from(&runs, which)?.started();
+        let run = pick_from(&runs, which).await?.started();
         Ok(RunRecords {
             runs,
             run,
@@ -242,10 +243,11 @@ impl RunRecords {
 
     /// Reads what the run's records hold now: whether it has ended, and
     /// each of its sessions' records, with what it ran with.
-    pub fn read(&mut self) -> anyhow::Result<()> {
+    pub async fn read(&mut self) -> anyhow::Result<()> {
         let recorded = self
             .runs
             .read_run(self.run.id())
+            .await
             .with_context(|| format!("reading the record of {}", self.run.id()))?;
         self.ended = recorded.state != State::InFlight;
         for (i, SessionEntry { dir, ran }) in recorded.sessions.iter().enumerate() {
@@ -273,7 +275,7 @@ impl RunRecords {
             return Ok(None);
         }
         loop {
-            self.read()?;
+            self.read().await?;
             let made = made(self);
             if !made.is_empty() || self.ended {
                 return Ok(Some(made));
@@ -300,13 +302,13 @@ pub struct Following {
 }
 
 impl Following {
-    pub fn start(
+    pub async fn start(
         work_dir: &RepoWorkDir,
         which: &Which,
         verbosity: Verbosity,
         after: Option<After>,
     ) -> Result<Following, LogsError> {
-        let records = RunRecords::start(work_dir, which)?;
+        let records = RunRecords::start(work_dir, which).await?;
         let follower = Follower::new(records.started().clone(), verbosity, after);
         Ok(Following { records, follower })
     }
@@ -330,8 +332,8 @@ impl Following {
 
     /// The next lines to show of what the run's records hold now, without
     /// waiting for more.
-    pub fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
-        self.records.read()?;
+    pub async fn read(&mut self) -> anyhow::Result<Vec<FollowedLine>> {
+        self.records.read().await?;
         Ok(lines(&mut self.follower, &self.records))
     }
 }

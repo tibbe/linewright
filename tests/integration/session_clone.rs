@@ -14,13 +14,17 @@ use linewright::store::local::{Paused, Write};
 
 /// How many sessions each of `world`'s runs started.
 #[track_caller]
-fn sessions_per_run(world: &World) -> Vec<usize> {
-    Runs::new(&world.dir.path().join("work"))
-        .read()
-        .unwrap()
-        .iter()
-        .map(|run| run.sessions.len())
-        .collect()
+fn sessions_per_run(world: &World) -> impl Future<Output = Vec<usize>> + '_ {
+    let caller = Location::caller();
+    async move {
+        Runs::new(&world.dir.path().join("work"))
+            .read()
+            .await
+            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))
+            .iter()
+            .map(|run| run.sessions.len())
+            .collect()
+    }
 }
 
 /// The clones left in `world`'s work directory once every removal pending
@@ -87,7 +91,7 @@ async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a
         world.harness.prompts(WorkKind::Triage),
         Vec::<String>::new()
     );
-    assert_eq!(sessions_per_run(&world), [2]);
+    assert_eq!(sessions_per_run(&world).await, [2]);
     assert_eq!(clones_left(&world).await, Vec::<std::ffi::OsString>::new());
     let issue = world.issue(issue);
     assert!(labels(&issue).contains(&"ready-for-human"));
@@ -119,7 +123,7 @@ async fn a_fetch_into_the_copy_of_the_environment_that_fails_twice_hands_the_ite
         world.harness.prompts(WorkKind::Implement),
         Vec::<String>::new()
     );
-    assert_eq!(sessions_per_run(&world), [2]);
+    assert_eq!(sessions_per_run(&world).await, [2]);
     let issue = world.issue(ticket);
     let comment = last_comment(&issue);
     assert!(
@@ -144,7 +148,7 @@ async fn a_clone_still_being_made_at_its_sessions_deadline_is_the_session_timing
     world.poll().await;
 
     assert!(started.elapsed() < Duration::from_secs(20));
-    assert_eq!(sessions_per_run(&world), [1], "not retried");
+    assert_eq!(sessions_per_run(&world).await, [1], "not retried");
     let issue = world.issue(issue);
     assert!(labels(&issue).contains(&"ready-for-human"));
     let comment = last_comment(&issue);
@@ -170,8 +174,8 @@ async fn cancelling_a_run_while_its_clone_is_being_made_ends_it_cancelled_and_re
     world.factory.cycle().await.unwrap();
     world.factory.settle().await;
 
-    assert_eq!(ended_runs(&world), [Ending::Cancelled]);
-    assert_eq!(sessions_per_run(&world), [1]);
+    assert_eq!(ended_runs(&world).await, [Ending::Cancelled]);
+    assert_eq!(sessions_per_run(&world).await, [1]);
     assert_eq!(clones_left(&world).await, Vec::<std::ffi::OsString>::new());
     assert_eq!(
         world.harness.prompts(WorkKind::Implement),
@@ -195,7 +199,7 @@ async fn an_update_with_a_conflict_works_in_a_clone_of_its_own() {
     world.factory.settle().await;
 
     assert_eq!(world.harness.prompts(WorkKind::Update).len(), 1);
-    assert_eq!(*sessions_per_run(&world).last().unwrap(), 1);
+    assert_eq!(*sessions_per_run(&world).await.last().unwrap(), 1);
 }
 
 /// A world whose work dir is `REPO`'s, with `configure`d.
@@ -288,7 +292,7 @@ async fn a_session_whose_clone_could_not_be_made_ends_with_its_end() {
     second.fail();
     world.factory.settle().await;
 
-    let sessions = session_events(&world);
+    let sessions = session_events(&world).await;
 
     let kinds: Vec<Vec<&str>> = sessions
         .iter()

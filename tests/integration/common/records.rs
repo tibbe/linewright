@@ -1,3 +1,4 @@
+use std::panic::Location;
 use std::path::Path;
 
 use linewright::runs::RepoWorkDir;
@@ -54,28 +55,51 @@ pub fn output_of(events: &[serde_json::Value]) -> String {
 /// The record of each session of each run `world` recorded, in the order of
 /// its runs' records.
 #[track_caller]
-pub fn session_records(world: &super::World) -> Vec<linewright::transcript::SessionRecord> {
-    let runs = linewright::runs::Runs::new(&world.dir.path().join("work"))
-        .read()
-        .unwrap();
-    runs.iter()
-        .flat_map(|run| &run.sessions)
-        .map(|session| linewright::transcript::SessionRecord::read(&session.dir).unwrap())
-        .collect()
+pub fn session_records(
+    world: &super::World,
+) -> impl Future<Output = Vec<linewright::transcript::SessionRecord>> + '_ {
+    let caller = Location::caller();
+    async move {
+        let runs = linewright::runs::Runs::new(&world.dir.path().join("work"))
+            .read()
+            .await
+            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"));
+        runs.iter()
+            .flat_map(|run| &run.sessions)
+            .map(|session| {
+                linewright::transcript::SessionRecord::read(&session.dir).unwrap_or_else(|e| {
+                    panic!(
+                        "reading the session in {} at {caller}: {e:#}",
+                        session.dir.display()
+                    )
+                })
+            })
+            .collect()
+    }
 }
 
 /// The events of each session of each run `world` recorded, in the order of
 /// its runs' records, each as its session's transcript holds it.
 #[track_caller]
-pub fn session_events(world: &super::World) -> Vec<Vec<serde_json::Value>> {
-    session_records(world)
-        .into_iter()
-        .map(|record| {
-            record
-                .output
-                .lines()
-                .map(|line| serde_json::from_str(line).unwrap())
-                .collect()
-        })
-        .collect()
+pub fn session_events(
+    world: &super::World,
+) -> impl Future<Output = Vec<Vec<serde_json::Value>>> + '_ {
+    let caller = Location::caller();
+    let records = session_records(world);
+    async move {
+        records
+            .await
+            .into_iter()
+            .map(|record| {
+                record
+                    .output
+                    .lines()
+                    .map(|line| {
+                        serde_json::from_str(line)
+                            .unwrap_or_else(|e| panic!("an event at {caller}: {e}"))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
 }
