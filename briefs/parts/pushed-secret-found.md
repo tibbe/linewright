@@ -1,1 +1,1 @@
-`{{kind}}` in the commit `{{commit}}`, at `{{path}}`
+`{{kind}}` in the commit `{{commit}}` at `{{path}}`

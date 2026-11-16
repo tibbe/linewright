@@ -1,1 +1,1 @@
-the branch still holds {{commits}}, from an earlier run; fold it into your own commits.
+the branch still holds unfinished commits from an earlier run, {{commits}}; fold them into your own commits.

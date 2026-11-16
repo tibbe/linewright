@@ -3,7 +3,7 @@ End your session with a final message that is a single JSON object and nothing e
 ```
 {
   "outcome": "ready-for-agent" | "needs-info" | "ready-for-human",
-  "category": {{category_choices}},
+  "category": "<one of {{category_choices}}>",
   "comment": "<the Markdown comment to post on the issue>",
   "ask": ["<for needs-info: the login of each person the question is for>"]
 }

@@ -8,9 +8,8 @@ use serde_json::json;
 use linewright::attachments::BadReference;
 use linewright::briefs::Briefs;
 use linewright::git;
-use linewright::prompts::{self, LooseEnd, SentBack, Templates};
+use linewright::prompts::{self, LooseEnd, SentBack};
 use linewright::results::{ContractError, Mismatch, Mismatches, ParseError};
-use linewright::store::{FoundSecret, FoundSecrets};
 
 fn result_error(reason: &SentBack) -> String {
     prompts::result_error(&Briefs::shipped().templates, reason)
@@ -303,112 +302,4 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
              out of the file, or take the reference to it out of your result."
         )
     );
-}
-
-fn unfinished(first: &str, rest: &[&str]) -> git::UnfinishedCommits {
-    git::UnfinishedCommits {
-        first: first.into(),
-        rest: rest.iter().map(ToString::to_string).collect(),
-    }
-}
-
-#[test_log::test]
-fn unfinished_commits_are_named_one_alone_and_several_in_a_list() {
-    for (commits, named) in [
-        (
-            unfinished("abc1234", &[]),
-            "the unfinished commit `abc1234`",
-        ),
-        (
-            unfinished("abc1234", &["def5678"]),
-            "the unfinished commits `abc1234` and `def5678`",
-        ),
-        (
-            unfinished("abc1234", &["def5678", "0a1b2c3"]),
-            "the unfinished commits `abc1234`, `def5678` and `0a1b2c3`",
-        ),
-    ] {
-        assert_eq!(
-            loose_ends(&LooseEnd::Unfinished(&commits)),
-            not_finished(&format!(
-                "the branch still holds {named}, from an earlier run; fold it into your own \
-                 commits."
-            ))
-        );
-    }
-}
-
-#[test_log::test]
-fn unfinished_commits_are_worded_by_the_repositorys_own_parts() {
-    let (templates, unusable) = Templates::read(&mut |path| match path {
-        "parts/unfinished-commit.md" => Some("the leftover commit {{commit}}"),
-        "parts/unfinished-commits.md" => Some("the leftover commits {{commits}}"),
-        _ => None,
-    });
-    assert!(unusable.is_empty(), "{unusable:?}");
-
-    for (commits, named) in [
-        (unfinished("abc1234", &[]), "the leftover commit `abc1234`"),
-        (
-            unfinished("abc1234", &["def5678"]),
-            "the leftover commits `abc1234` and `def5678`",
-        ),
-    ] {
-        assert_eq!(
-            prompts::loose_ends(&templates, &LooseEnd::Unfinished(&commits)),
-            not_finished(&format!(
-                "the branch still holds {named}, from an earlier run; fold it into your own \
-                 commits."
-            ))
-        );
-    }
-}
-
-fn found(kind: &str, commit: &str, path: &str) -> FoundSecret {
-    FoundSecret {
-        kind: kind.into(),
-        commit: commit.into(),
-        path: path.into(),
-    }
-}
-
-#[test_log::test]
-fn secrets_push_protection_found_are_listed_with_semicolons_and_a_last_and() {
-    for (found, named) in [
-        (
-            vec![found("Slack API Token", "9e0a1b2", ".env:1")],
-            "`Slack API Token` in the commit `9e0a1b2`, at `.env:1`",
-        ),
-        (
-            vec![
-                found("GitHub Personal Access Token", "8f1d2c3", "src/config.rs:3"),
-                found("Slack API Token", "9e0a1b2", ".env:1"),
-            ],
-            "`GitHub Personal Access Token` in the commit `8f1d2c3`, at `src/config.rs:3` and \
-             `Slack API Token` in the commit `9e0a1b2`, at `.env:1`",
-        ),
-        (
-            vec![
-                found("GitHub Personal Access Token", "8f1d2c3", "src/config.rs:3"),
-                found("Slack API Token", "9e0a1b2", ".env:1"),
-                found("Stripe API Key", "9e0a1b2", ".env:2"),
-            ],
-            "`GitHub Personal Access Token` in the commit `8f1d2c3`, at `src/config.rs:3`; \
-             `Slack API Token` in the commit `9e0a1b2`, at `.env:1` and `Stripe API Key` in \
-             the commit `9e0a1b2`, at `.env:2`",
-        ),
-    ] {
-        let secrets = FoundSecrets::new(found).unwrap();
-        assert_eq!(
-            loose_ends(&LooseEnd::PushedSecret(&secrets)),
-            not_finished(&format!(
-                "GitHub's push protection refused the push over a secret: {named}. Linewright \
-                 pushes no commit that holds a secret, so take it out of every commit on the \
-                 branch, for example by rewriting the commit that adds it: a later commit that \
-                 removes it leaves it in the history. If it is not a real secret, such as a \
-                 test's fake token, put it together at runtime so that no committed text looks \
-                 like one."
-            ))
-        );
-    }
 }

@@ -24,7 +24,7 @@ const FOUND: &str = "GitHub Personal Access Token in the commit \
 /// What a session is sent of what GitHub's push protection found, in
 /// [`REFUSAL`].
 const SENT: &str = "`GitHub Personal Access Token` in the commit \
-                    `8479b4565e1a22d92de1bb6edb317cdc4dc64212`, at \
+                    `8479b4565e1a22d92de1bb6edb317cdc4dc64212` at \
                     `tests/integration/push_protection.rs:22`";
 
 /// Commits a fake token to `src/config.rs`.
