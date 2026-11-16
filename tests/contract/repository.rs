@@ -76,9 +76,14 @@ async fn the_properties_are_recorded_as_githubs_answers_naming_the_repository_an
             .is_boolean(),
         "the merge methods are not GitHub's answer"
     );
+    // GitHub serves a branch's rules for a public repository or on a paid
+    // plan only, and refuses them otherwise, as for a private repository on
+    // a free plan:
+    // <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets>
+    let rules = answer(Property::Rules)?;
     ensure!(
-        answer(Property::Rules)?.is_array(),
-        "the rules are not GitHub's list"
+        rules.is_array() || rules.is_null(),
+        "the rules are neither GitHub's list nor its refusal for the plan: {rules}"
     );
     answer(Property::Protection)?;
     Ok(())
