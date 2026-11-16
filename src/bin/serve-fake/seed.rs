@@ -64,6 +64,10 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
                 ("README.md", "# Widgets\n"),
                 (".linewright/config.toml", SETTINGS),
                 (".linewright/automations/weekly.md", WEEKLY),
+                (
+                    ".linewright/briefs/plugin/skills/triage/SKILL.md",
+                    "# Triage\n\nTriage the widgets' issues.\n",
+                ),
             ],
             "Start",
         )
