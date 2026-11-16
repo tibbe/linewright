@@ -172,15 +172,16 @@ Linewright on itself in a locked-down container.
 
 ## The work directory
 
-`work-dir` holds Linewright's database of its runs and bookkeeping, and beside
-it the runs' transcripts and attachments, the clones, the environment and the
+`work-dir` holds Linewright's records of its runs and bookkeeping in one
+database, `linewright.db` in each repository's work directory, and beside it
+the runs' transcripts and attachments, the clones, the environment and the
 cases. Keep it on a local filesystem: the database does not work over NFS or
 SMB, and Linewright warns at startup when it finds one. Under Docker Desktop
 on macOS, put it in a named volume rather than a bind mount.
 
 To back it up, copy the work directory while no `lw` command runs on it. While
 `serve` runs, copy the database with SQLite's online backup, such as
-`sqlite3 DATABASE ".backup COPY"`, then the rest of the directory.
+`sqlite3 linewright.db ".backup COPY"`, then the rest of the directory.
 
 Back up the work directory before you upgrade. Each release updates the
 database to its own schema when it first opens it, but not while another `lw`
