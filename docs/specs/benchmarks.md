@@ -204,6 +204,14 @@ The judge is an agent in a session of its own.
 - **The clone of the judge.** Linewright checks out, from the commits of the
   output, the branch that it would have pushed, if the run pushes one. If the
   run pushes none, the clone is at the head of the case's default branch.
+- **What the judge reads.** Each session of the judge reads the replay from a
+  copy that Linewright makes for that session, in a directory apart from the
+  output. The copy holds the outcome, the sessions' records, the writes and the
+  attachments that the writes refer to, each at its path in the output. It
+  holds nothing else of the output, so that the judge does not get an earlier
+  judgement. Linewright removes the copy as it removes the clone of the
+  session ([Stages](runs.md#stages)). A change that the judge makes to the
+  copy does not change the output.
 - **The prompt.** Linewright sends the judge the prompt `briefs/judge.md`, which
   no layer overrides, with these placeholders filled:
 
@@ -212,7 +220,7 @@ The judge is an agent in a session of its own.
   | `{{facts}}`    | as in every prompt ([Contract](runs.md#contract))                                        |
   | `{{stage}}`    | the stage of the case                                                                    |
   | `{{criteria}}` | the criteria of the case                                                                 |
-  | `{{replay}}`   | where the outcome, the sessions' records and the writes of the replay are (`replay-output.md`) |
+  | `{{replay}}`   | where the outcome, the sessions' records and the writes are in the judge's copy (`replay-output.md`) |
   | `{{output}}`   | the result contract of the judge, `briefs/outputs/judge.md`, with nothing on attachments |
 
 - **The result.** The session of the judge ends with a result that matches
@@ -254,3 +262,5 @@ The judge is an agent in a session of its own.
 - Judging a replay against anything other than the criteria of the case.
 - Combining the judgements of several judges on one replay.
 - Checking a judgement against the judgement of a person.
+- Preventing a judge from reading the earlier judgement outside its copy, such
+  as in the directory of the output.
