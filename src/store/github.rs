@@ -1372,18 +1372,39 @@ impl GitHub {
         Ok(pr.into_pull(pushes, &rules))
     }
 
-    /// What the rulesets on `branch` require: nothing when GitHub does not
-    /// give them.
-    async fn branch_rules(&self, branch: &str) -> BranchRules {
-        let rules: Result<Vec<Value>> = self
+    /// The rules GitHub applies to `branch`
+    /// (<https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>),
+    /// `None` when GitHub refuses them for the repository's plan, as it does
+    /// for a private repository on a free plan
+    /// (<https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets>).
+    /// An error on any other answer, GitHub's [`ErrorResponse`] among them.
+    async fn rules(&self, branch: &str) -> Result<Option<Vec<Value>>> {
+        let rules = self
             .rest(
                 Method::GET,
-                &self.repo_path(&format!("/rules/branches/{branch}")),
+                &self.repo_path(&format!("/rules/branches/{}", percent_encode(branch))),
                 None,
             )
             .await;
         match rules {
-            Ok(rules) => BranchRules::from_rules(&rules),
+            Ok(rules) => Ok(Some(rules)),
+            Err(e) => match e.downcast_ref::<ErrorResponse>() {
+                Some(refusal)
+                    if refusal.status == StatusCode::FORBIDDEN
+                        && refusal.message().starts_with(PLAN_REFUSAL) =>
+                {
+                    Ok(None)
+                }
+                _ => Err(e),
+            },
+        }
+    }
+
+    /// What the rulesets on `branch` require: nothing when GitHub does not
+    /// give them.
+    async fn branch_rules(&self, branch: &str) -> BranchRules {
+        match self.rules(branch).await {
+            Ok(rules) => BranchRules::from_rules(&rules.unwrap_or_default()),
             Err(e) => {
                 tracing::warn!(
                     branch,
@@ -1426,9 +1447,14 @@ impl GitHub {
     }
 }
 
+/// How the message of GitHub's refusal of a feature for the repository's plan
+/// begins, such as "Upgrade to GitHub Pro or make this repository public to
+/// enable this feature.": GitHub documents no other mark of it.
+const PLAN_REFUSAL: &str = "Upgrade to GitHub";
+
 /// What the rulesets on a branch require that GitHub does not always report
 /// elsewhere.
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq)]
 struct BranchRules {
     /// Reported or not.
     checks: Vec<String>,
@@ -3381,21 +3407,13 @@ impl Store for GitHub {
         let branch = repository["default_branch"]
             .as_str()
             .context("GitHub gave the repository no default branch")?;
-        let rules = self
-            .rest::<Value>(
-                Method::GET,
-                &self.repo_path(&format!("/rules/branches/{branch}")),
-                None,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    branch,
-                    error = format!("{e:#}"),
-                    "reading the branch's rules"
-                );
+        let rules = match self.rules(branch).await? {
+            Some(rules) => Value::Array(rules),
+            None => {
+                tracing::debug!(branch, "GitHub refuses the branch's rules for the plan");
                 Value::Null
-            });
+            }
+        };
         // Classic branch protection is readable by admins only:
         // <https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection>
         let protection = self
@@ -6749,19 +6767,42 @@ mod recording_tests {
     /// requests made with [`API_VERSION`], and refused any other.
     #[track_caller]
     fn serving_recorded() -> impl Future<Output = GitHub> {
+        serving_recorded_with_rules(None)
+    }
+
+    /// [`serving_recorded`]'s store, answering a request for `main`'s rules
+    /// with `rules` in place of the recorded list, when given.
+    #[track_caller]
+    fn serving_recorded_with_rules(
+        rules: Option<(Status, &'static str)>,
+    ) -> impl Future<Output = GitHub> {
         let caller = std::panic::Location::caller();
         async move {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .unwrap_or_else(|e| panic!("serving the recorded answers at {caller}: {e}"));
-            serving_on(listener)
+            serving_on(listener, rules)
         }
     }
 
-    /// [`serving_recorded`]'s store, served on `listener`, with the
-    /// repository, tibbe-bot's account and the answer to
-    /// [`properties::ISSUE_TYPES_AND_MERGE_METHODS_QUERY`] as GitHub gave them on 2026-11-15.
-    fn serving_on(listener: tokio::net::TcpListener) -> GitHub {
+    /// What GitHub answered, read with [`API_VERSION`], for `main`'s rules on
+    /// tibbe/linewright-contract, a private repository on a free plan, on
+    /// 2026-11-16.
+    fn rules_refused_by_plan() -> (Status, &'static str) {
+        (
+            Status::FORBIDDEN,
+            include_str!("fixtures/rest-rules-refused-by-plan.json"),
+        )
+    }
+
+    /// [`serving_recorded_with_rules`]'s store, served on `listener`, with
+    /// the repository, tibbe-bot's account and the answer to
+    /// [`properties::ISSUE_TYPES_AND_MERGE_METHODS_QUERY`] as GitHub gave them on 2026-11-15,
+    /// and `main`'s rules as `rules`, when given.
+    fn serving_on(
+        listener: tokio::net::TcpListener,
+        rules: Option<(Status, &'static str)>,
+    ) -> GitHub {
         fn pinned(
             headers: &HeaderMap,
             answer: Option<(Status, &'static str)>,
@@ -6791,11 +6832,19 @@ mod recording_tests {
         let address = listener
             .local_addr()
             .expect("a bound listener has an address");
-        let app = axum::Router::new()
-            .route(
-                "/repos/tibbe/linewright/{*path}",
-                axum::routing::get(answer),
-            )
+        let mut app = axum::Router::new().route(
+            "/repos/tibbe/linewright/{*path}",
+            axum::routing::get(answer),
+        );
+        if let Some(rules) = rules {
+            app = app.route(
+                "/repos/tibbe/linewright/rules/branches/main",
+                axum::routing::get(move |headers: HeaderMap| async move {
+                    pinned(&headers, Some(rules))
+                }),
+            );
+        }
+        let app = app
             .route(
                 "/repos/tibbe/linewright",
                 axum::routing::get(fixed(include_str!("fixtures/rest-repository.json"))),
@@ -6932,6 +6981,40 @@ mod recording_tests {
             .into_iter()
             .collect()
         );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_rules_are_recorded_as_null_when_github_refuses_them_for_the_plan() {
+        let github = serving_recorded_with_rules(Some(rules_refused_by_plan())).await;
+
+        let recorded = github.record_properties().await.unwrap();
+
+        assert_eq!(recorded.resource(Property::Rules), Some(&Value::Null));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn recording_the_properties_fails_when_github_refuses_the_rules_for_another_reason() {
+        let github = serving_recorded_with_rules(Some((
+            Status::FORBIDDEN,
+            include_str!("fixtures/attachment-forbidden.json"),
+        )))
+        .await;
+
+        let error = github.record_properties().await.unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<ErrorResponse>().unwrap().status,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_branch_has_no_rules_when_github_refuses_them_for_the_plan() {
+        let github = serving_recorded_with_rules(Some(rules_refused_by_plan())).await;
+
+        let rules = github.branch_rules("main").await;
+
+        assert_eq!(rules, BranchRules::default());
     }
 
     #[test_log::test(tokio::test)]

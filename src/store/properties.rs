@@ -29,8 +29,9 @@ pub enum Property {
     /// The `data` of the answer to [`ISSUE_TYPES_AND_MERGE_METHODS_QUERY`].
     IssueTypesAndMergeMethods,
     /// <https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch>
-    /// for the default branch, or `null` when GitHub did not answer with
-    /// them, which reads as no rules.
+    /// for the default branch, or `null` when GitHub refuses rules for the
+    /// repository's plan, as it does for a private repository on a free
+    /// plan, which reads as no rules.
     Rules,
     /// <https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection>
     /// for the default branch, or `null` when GitHub did not answer with it,
