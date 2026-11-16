@@ -25,6 +25,13 @@ const BRISK_MILLIS: u64 = 1000;
 /// in flight the longest of the seed's sessions.
 const STEADY_MILLIS: u64 = 3000;
 
+/// The repository's settings: a setup command.
+const SETTINGS: &str = "[setup]\ncommand = \"echo ready\"\n";
+
+/// An automation that runs on Mondays at 06:00, which the clock starts
+/// after.
+const WEEKLY: &str = "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook around.\n";
+
 /// When the clock starts, so that the pages show the same times on every
 /// run.
 pub fn started_at() -> Timestamp {
@@ -53,7 +60,11 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
         .commit(
             MAINTAINER,
             DEFAULT_BRANCH,
-            &[("README.md", "# Widgets\n")],
+            &[
+                ("README.md", "# Widgets\n"),
+                (".linewright/config.toml", SETTINGS),
+                (".linewright/automations/weekly.md", WEEKLY),
+            ],
             "Start",
         )
         .await?;

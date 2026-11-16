@@ -4,7 +4,9 @@
 //! nothing it does reaches either. It serves the web UI on a free port of
 //! `127.0.0.1`, and once the factory has started prints its URL and then the
 //! `playwright-cli` command that sets the browser's clock to its own. It keeps
-//! all it writes in a temporary directory it removes once a signal stops it.
+//! all it writes in a temporary directory it removes once a signal stops it,
+//! but for the work directory when `SERVE_FAKE_WORK_DIR` names one: so that
+//! one release can serve the work directory another left.
 //!
 //! It runs `lw` and `fake-claude` from beside itself, as
 //! `cargo build --features fake-claude` leaves them.
@@ -118,14 +120,19 @@ fn fake_agent(dir: &Path, fake_claude: &Path, clock: &dyn Clock) -> Result<Strin
         .map_err(|path| anyhow::anyhow!("{} is not UTF-8", PathBuf::from(path).display()))
 }
 
-/// Serving the seed's repository from `dir` on `port`, each stage's sessions
-/// told their stage, as `fake-claude` takes its steps by it.
+/// The variable that names the work directory to keep.
+const WORK_DIR: &str = "SERVE_FAKE_WORK_DIR";
+
+/// Serving the seed's repository from `dir` on `port`, with the work
+/// directory [`WORK_DIR`] names or one in `dir`, each stage's sessions told
+/// their stage, as `fake-claude` takes its steps by it.
 fn config(dir: &Path, port: u16) -> Result<Config> {
+    let work = std::env::var_os(WORK_DIR).map_or_else(|| dir.join("work"), PathBuf::from);
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
          poll-interval = \"1s\"\n",
         repo = seed::REPO,
-        work = dir.join("work").display(),
+        work = work.display(),
     );
     for stage in WorkKind::ALL {
         let name = stage.name();
