@@ -294,12 +294,7 @@ values!(ExistingBranch {
     default_branch,
     unfinished
 });
-values!(Commits { commits });
-values!(
-    /// The unfinished commits, from `parts/unfinished-commits.md`.
-    CommitList { commits: List }
-);
-values!(UnfinishedCommit { commit });
+values!(Commits { commits: List });
 values!(Stopped {
     default_branch,
     files: List
@@ -563,8 +558,6 @@ templates! {
     full_log: FullLog = "parts/full-log.md", FIX_CI, Trimmed;
     filed_gaps: FiledGapsPart = "parts/filed-gaps.md", TICKET_WORK, Trimmed;
     fold_unfinished: Commits = "parts/fold-unfinished.md", BRANCH_WORK, Trimmed;
-    unfinished_commit: UnfinishedCommit = "parts/unfinished-commit.md", BRANCH_WORK, Trimmed;
-    unfinished_commits: CommitList = "parts/unfinished-commits.md", BRANCH_WORK, Trimmed;
     held_secret: HeldSecret = "parts/held-credential.md", BRANCH_WORK, Trimmed;
     pushed_secret: PushedSecret = "parts/pushed-secret.md", BRANCH_WORK, Trimmed;
     pushed_secret_found: PushedSecretFound = "parts/pushed-secret-found.md", BRANCH_WORK, Trimmed;
@@ -981,11 +974,7 @@ pub fn implement(
         }),
         BranchStart::Existing { unfinished } => templates.existing_branch.fill(&ExistingBranch {
             default_branch: repo.default_branch.into(),
-            unfinished: unfinished_sentence(
-                templates,
-                &templates.unfinished_or_discard,
-                unfinished.as_ref(),
-            ),
+            unfinished: unfinished_sentence(&templates.unfinished_or_discard, unfinished.as_ref()),
         }),
     };
     templates.implement.fill(&Implement {
@@ -1016,7 +1005,7 @@ pub fn pull_work(
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
         pr_title: pr.title.clone(),
-        unfinished: unfinished_sentence(templates, &templates.unfinished, unfinished),
+        unfinished: unfinished_sentence(&templates.unfinished, unfinished),
         conflict,
         description: or_none(&pr.body).into(),
         ticket: render_ticket(templates, ticket),
@@ -1100,17 +1089,13 @@ fn stopped(
 
 /// The sentence `part` says of the `unfinished` commits, led by a space to
 /// follow the one before it, or nothing.
-fn unfinished_sentence(
-    templates: &Templates,
-    part: &Template<Commits>,
-    unfinished: Option<&UnfinishedCommits>,
-) -> String {
+fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedCommits>) -> String {
     unfinished
         .map(|u| {
             format!(
                 " {}",
                 part.fill(&Commits {
-                    commits: unfinished_commits(templates, u)
+                    commits: unfinished_commits(u)
                 })
             )
         })
@@ -1352,7 +1337,7 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
         }
         LooseEnd::NoCommits => templates.no_commits.fill(&NoValues {}),
         LooseEnd::Unfinished(unfinished) => templates.fold_unfinished.fill(&Commits {
-            commits: unfinished_commits(templates, unfinished),
+            commits: unfinished_commits(unfinished),
         }),
         LooseEnd::HeldSecret(held) => templates.held_secret.fill(&HeldSecret {
             commit: held.commit.clone(),
@@ -1385,17 +1370,9 @@ fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> List {
     List::of(found).expect("push protection found at least one secret")
 }
 
-/// Names the unfinished `commits`, one from `parts/unfinished-commit.md` and
-/// several from `parts/unfinished-commits.md`.
-fn unfinished_commits(templates: &Templates, commits: &UnfinishedCommits) -> String {
-    if commits.rest.is_empty() {
-        return templates.unfinished_commit.fill(&UnfinishedCommit {
-            commit: code(&commits.first),
-        });
-    }
-    templates.unfinished_commits.fill(&CommitList {
-        commits: List::new(code(&commits.first), commits.rest.iter().map(|c| code(c))),
-    })
+/// The unfinished `commits`, each as code.
+fn unfinished_commits(commits: &UnfinishedCommits) -> List {
+    List::new(code(&commits.first), commits.rest.iter().map(|c| code(c)))
 }
 
 pub fn usage_limit_reset(templates: &Templates) -> String {
