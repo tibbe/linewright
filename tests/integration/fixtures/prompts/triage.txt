@@ -7,7 +7,7 @@
 
 ## categories
 
-`bug`, `enhancement`
+`bug` or `enhancement`
 
 ## issue
 
