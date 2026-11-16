@@ -959,7 +959,14 @@ fn startup_logs_the_files_the_operators_prompts_provide() {
 
 #[test_log::test]
 fn linewrights_own_prompts_can_be_the_operators_prompts() {
-    let prompts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/prompts");
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/prompts");
+    let dir = tempfile::tempdir().unwrap();
+    for path in linewright::briefs::Briefs::shipped().layers().keys() {
+        let copy = dir.path().join(path);
+        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        std::fs::copy(shipped.join(path), copy).unwrap();
+    }
+    let prompts = dir.path();
 
     let (succeeded, log) = lw(
         std::path::Path::new(""),

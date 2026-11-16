@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use crate::common;
 
 use linewright::briefs::{Briefs, OperatorPrompts, PromptLayer, Unusable};
 use linewright::git::BranchStart;
 use linewright::layer::Layer;
-use linewright::prompts::{self, Readers, Reads};
+use linewright::prompts::{self, Readers, Reads, Templates};
 use linewright::reconcile::WorkKind;
 use linewright::store::Blob;
 use linewright::work_settings::RunKind;
@@ -52,11 +53,11 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     assert_eq!(resolved.unusable, []);
     let briefs = resolved.briefs;
     assert_eq!(
-        prompts::result_error(&briefs.prompts, "no JSON"),
+        prompts::result_error(&briefs.templates, "no JSON"),
         "The repository's: no JSON"
     );
     assert_eq!(
-        prompts::loose_ends(&briefs.prompts, "a stash"),
+        prompts::loose_ends(&briefs.templates, "a stash"),
         "The operator's: a stash"
     );
     let layers: BTreeMap<&str, Layer> = briefs
@@ -95,7 +96,7 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
         }]
     );
     assert_eq!(
-        prompts::result_error(&resolved.briefs.prompts, "no JSON"),
+        prompts::result_error(&resolved.briefs.templates, "no JSON"),
         "The operator's: no JSON"
     );
     assert_eq!(
@@ -194,7 +195,7 @@ fn implement_prompt(briefs: &Briefs) -> String {
     let issue = common::ticket(7, "Count the widgets");
     let name = "owner/widgets".parse().unwrap();
     prompts::implement(
-        &briefs.prompts,
+        &briefs.templates,
         &prompts::Repo {
             name: &name,
             default_branch: "main",
@@ -259,7 +260,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
 
     let briefs = OperatorPrompts::read(Some(dir.path())).unwrap().briefs();
     let prompt = prompts::automation(
-        &briefs.prompts,
+        &briefs.templates,
         &prompts::Repo {
             name: &name,
             default_branch: "main",
@@ -339,39 +340,92 @@ fn an_operators_part_or_result_contract_is_refused() {
 
 #[test_log::test]
 fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
+    let briefs = Briefs::shipped();
+    let overridden: Vec<&str> = briefs.layers().keys().map(String::as_str).collect();
+
     assert_eq!(
-        prompts::Prompts::paths(),
+        overridden,
         [
-            "triage.md",
+            "automation.md",
             "design.md",
+            "fix-ci.md",
+            "follow-ups/late-feedback.md",
+            "follow-ups/loose-ends.md",
+            "follow-ups/result-error.md",
+            "follow-ups/usage-limit-reset.md",
             "implement.md",
             "rework.md",
-            "fix-ci.md",
+            "triage.md",
             "update.md",
-            "automation.md",
-            "follow-ups/result-error.md",
-            "follow-ups/loose-ends.md",
-            "follow-ups/usage-limit-reset.md",
-            "follow-ups/late-feedback.md",
         ]
     );
-    for path in prompts::Prompts::paths() {
+    for path in overridden {
         assert!(
-            prompts::readers(path).is_some(),
+            prompts::readers(&format!("prompts/{path}")).is_some(),
             "{path} has no readers declared"
         );
     }
-    assert_eq!(prompts::readers("tickets.md"), None);
-    assert_eq!(prompts::readers("parts/facts.md"), None);
-    assert_eq!(prompts::readers("outputs/implement.md"), None);
+}
+
+#[test_log::test]
+fn every_file_of_the_brief_but_the_plugin_has_its_readers_by_its_path_under_briefs() {
+    let paths: Vec<&str> = Templates::paths().collect();
+    let distinct: std::collections::BTreeSet<&str> = paths.iter().copied().collect();
+
+    assert_eq!(distinct.len(), paths.len());
+    for path in [
+        "prompts/implement.md",
+        "prompts/judge.md",
+        "prompts/follow-ups/result-error.md",
+        "parts/facts.md",
+        "outputs/implement.md",
+    ] {
+        assert!(paths.contains(&path), "{path}");
+        assert!(prompts::readers(path).is_some(), "{path}");
+    }
+    assert_eq!(prompts::readers("implement.md"), None);
+    assert_eq!(prompts::readers("prompts/tickets.md"), None);
+    assert_eq!(prompts::readers("results/implement.schema.json"), None);
+}
+
+#[test_log::test]
+fn every_file_of_the_brief_has_its_values_placeholders() {
+    let briefs = Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs");
+    let texts: BTreeMap<&str, String> = Templates::paths()
+        .map(|path| (path, std::fs::read_to_string(briefs.join(path)).unwrap()))
+        .collect();
+
+    let (_, unusable) = Templates::read(&mut |path| texts.get(path).map(String::as_str));
+
+    let unusable: Vec<String> = unusable
+        .iter()
+        .map(|(path, error)| format!("{path}: {error:#}"))
+        .collect();
+    assert_eq!(unusable, Vec::<String>::new());
+}
+
+#[test_log::test]
+fn the_judges_files_are_read_by_the_judge_only() {
+    for path in [
+        "prompts/judge.md",
+        "outputs/judge.md",
+        "parts/replay-output.md",
+    ] {
+        let readers = prompts::readers(path).unwrap();
+
+        assert!(readers.read_by(&RunKind::Judge), "{path}");
+        for kind in WorkKind::ALL {
+            assert!(!readers.read_by(&RunKind::Stage(kind)), "{path}");
+        }
+    }
 }
 
 #[test_log::test]
 fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     let fix_ci = RunKind::Stage(WorkKind::FixCi);
     let implement = RunKind::Stage(WorkKind::Implement);
-    let fix_ci_prompt = prompts::readers("fix-ci.md").unwrap();
-    let result_error = prompts::readers("follow-ups/result-error.md").unwrap();
+    let fix_ci_prompt = prompts::readers("prompts/fix-ci.md").unwrap();
+    let result_error = prompts::readers("prompts/follow-ups/result-error.md").unwrap();
     let automation = linewright::automation::parse(
         &"weekly".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook.\n",
@@ -388,14 +442,46 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
 fn a_file_with_an_error_holds_the_judge_only_where_it_holds_every_run() {
     let holds_the_judge = |path| prompts::readers(path).unwrap().read_by(&RunKind::Judge);
 
-    assert!(holds_the_judge("follow-ups/result-error.md"));
-    assert!(holds_the_judge("follow-ups/usage-limit-reset.md"));
+    assert!(holds_the_judge("prompts/follow-ups/result-error.md"));
+    assert!(holds_the_judge("prompts/follow-ups/usage-limit-reset.md"));
     for path in [
-        "triage.md",
-        "implement.md",
-        "fix-ci.md",
-        "follow-ups/late-feedback.md",
+        "prompts/triage.md",
+        "prompts/implement.md",
+        "prompts/fix-ci.md",
+        "prompts/follow-ups/late-feedback.md",
     ] {
         assert!(!holds_the_judge(path), "{path}");
     }
+}
+
+#[test_log::test]
+fn the_plugin_written_is_every_file_of_briefs_plugin_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+
+    Briefs::shipped().write_plugin(dir.path()).unwrap();
+
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/plugin");
+    let written = files_under(dir.path());
+    assert!(written.contains_key(".claude-plugin/plugin.json"));
+    assert_eq!(written, files_under(&shipped));
+}
+
+/// Every file under `root`, hidden ones too, by its path under it, with its
+/// text.
+#[track_caller]
+fn files_under(root: &Path) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                let under = path.strip_prefix(root).unwrap().to_str().unwrap();
+                files.insert(under.to_string(), std::fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
+    files
 }

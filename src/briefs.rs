@@ -5,15 +5,17 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
-use crate::prompts::{self, Prompts, Readers};
+use crate::prompts::{self, Readers, Templates};
 use crate::store::Blob;
 
-/// The prompts a session is sent, each from the first layer that has it
-/// (docs/specs/operation.md, "Prompts"). Its skills are always Linewright's
-/// own, which [`Briefs::write_plugin`] writes.
+/// The brief a session is sent: its templates, each prompt from the first
+/// layer that has it (docs/specs/operation.md, "Briefs"), and its plugin,
+/// which [`Briefs::write_plugin`] writes, always Linewright's own.
 #[derive(Clone, Debug)]
 pub struct Briefs {
-    pub prompts: Prompts,
+    pub templates: Templates,
+    /// The plugin's files, by their paths under `briefs/plugin/`.
+    plugin: BTreeMap<String, String>,
     /// The layer of each prompt, by its path under the prompts' root.
     layers: BTreeMap<String, Layer>,
 }
@@ -53,7 +55,8 @@ pub struct OperatorPrompts {
     briefs: Arc<Briefs>,
 }
 
-/// The skills every session is given, as a Claude Code plugin.
+/// The skills every session is given, as a Claude Code plugin, by their
+/// paths under `briefs/plugin/`: every file there, as a test checks.
 const PLUGIN: [(&str, &str); 15] = [
     (
         ".claude-plugin/plugin.json",
@@ -114,12 +117,40 @@ const PLUGIN: [(&str, &str); 15] = [
     ),
 ];
 
+/// The plugin's files, by their paths under `briefs/plugin/`.
+fn shipped_plugin() -> BTreeMap<String, String> {
+    PLUGIN
+        .iter()
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+        .collect()
+}
+
+/// The path under `briefs/` of the file at `path` under a layer's root, if
+/// a layer may override it.
+fn in_briefs(path: &str) -> Option<String> {
+    let in_briefs = format!("{PROMPTS}{path}");
+    in_layer(&in_briefs).is_some().then_some(in_briefs)
+}
+
+/// The path under a layer's root of the file of the brief at `path` under
+/// `briefs/`, if a layer may override it: only the stage prompts and the
+/// follow-ups, under `prompts/`, and so not the judge's prompt.
+fn in_layer(path: &str) -> Option<&str> {
+    path.strip_prefix(PROMPTS).filter(|_| path != JUDGE_PROMPT)
+}
+
+/// Where the prompts are under `briefs/`, which is a layer's root.
+const PROMPTS: &str = "prompts/";
+
+/// The judge's prompt, which no layer overrides.
+const JUDGE_PROMPT: &str = "prompts/judge.md";
+
 impl PromptLayer {
     /// The layer holding `files`, each by its path under the layer's root,
     /// and those of them it cannot use: a file that is not one of
     /// Linewright's prompts, or a prompt that cannot be read as text. A
     /// file is skipped when it is hidden (docs/specs/operation.md,
-    /// "Prompts").
+    /// "Briefs").
     pub fn parse(
         layer: Layer,
         files: impl IntoIterator<Item = (String, Blob)>,
@@ -133,7 +164,7 @@ impl PromptLayer {
             if is_hidden(&path) {
                 continue;
             }
-            let (error, holds) = match prompts::readers(&path) {
+            let (error, holds) = match in_briefs(&path).and_then(|path| prompts::readers(&path)) {
                 Some(readers) => match blob.text() {
                     Ok(text) => {
                         parsed.files.insert(path, text);
@@ -171,8 +202,8 @@ impl Briefs {
     /// Takes each prompt from the first of `layers` that has it and whose
     /// file can be used, or else from the prompts Linewright ships.
     pub fn resolve(layers: &[&PromptLayer]) -> Resolved {
-        let mut candidates: BTreeMap<&str, Vec<&PromptLayer>> = Prompts::paths()
-            .into_iter()
+        let mut candidates: BTreeMap<&str, Vec<&PromptLayer>> = Templates::paths()
+            .filter_map(in_layer)
             .map(|path| {
                 let having = layers
                     .iter()
@@ -183,25 +214,26 @@ impl Briefs {
             })
             .collect();
         let mut unusable = Vec::new();
-        let prompts = loop {
-            let (prompts, failed) = Prompts::read(&mut |path| {
+        let templates = loop {
+            let (templates, failed) = Templates::read(&mut |path| {
+                let path = in_layer(path)?;
                 let layer = candidates.get(path)?.first()?;
                 layer.files.get(path).map(String::as_str)
             });
             if failed.is_empty() {
-                break prompts;
+                break templates;
             }
             for (path, error) in failed {
+                let in_layer = in_layer(path).expect("only a path with a layer's file fails");
                 let having = candidates
-                    .get_mut(path)
+                    .get_mut(in_layer)
                     .expect("only a path with a layer's file fails");
                 let layer = having.remove(0);
                 unusable.push(Unusable {
-                    path: path.to_string(),
+                    path: in_layer.to_string(),
                     layer: layer.layer,
                     error: format!("{error:#}"),
-                    holds: prompts::readers(path)
-                        .expect("only one of Linewright's prompts is read"),
+                    holds: prompts::readers(path).expect("only a template is read"),
                 });
             }
         };
@@ -216,7 +248,8 @@ impl Briefs {
             .collect();
         Resolved {
             briefs: Briefs {
-                prompts,
+                templates,
+                plugin: shipped_plugin(),
                 layers: layers_of,
             },
             unusable,
@@ -228,9 +261,9 @@ impl Briefs {
         &self.layers
     }
 
-    /// Writes Linewright's skills, the same for every session, to `dir`.
-    pub fn write_plugin(dir: &Path) -> std::io::Result<()> {
-        for (path, text) in PLUGIN {
+    /// Writes the plugin's files to `dir`.
+    pub fn write_plugin(&self, dir: &Path) -> std::io::Result<()> {
+        for (path, text) in &self.plugin {
             let path = dir.join(path);
             std::fs::create_dir_all(path.parent().expect("plugin files sit in a directory"))?;
             std::fs::write(path, text)?;

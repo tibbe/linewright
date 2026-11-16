@@ -265,7 +265,7 @@ async fn push_result(
 ) -> Result<(), Rejection> {
     match push(shell, dir, commit, branch, mode).await {
         Pushed::Protected(secrets) => Err(Rejection::Retry {
-            followup: prompts::pushed_secret(&ctx.with.briefs.prompts, &secrets),
+            followup: prompts::pushed_secret(&ctx.with.briefs.templates, &secrets),
             note: Some(hand_back::protected_note(&secrets)),
         }),
         other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
@@ -596,7 +596,7 @@ async fn post_attachments(
     dir: &Dir,
     result: &mut impl Posts,
 ) -> Result<(), Refused> {
-    let prompts = &ctx.with.briefs.prompts;
+    let templates = &ctx.with.briefs.templates;
     let sent_back = |followup| Err(Refused::Untouched(Rejection::retry(followup)));
     let resolved = {
         let markdown = result.markdown();
@@ -606,12 +606,12 @@ async fn post_attachments(
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(Refusal::Secret { variable, path }) => {
-            return sent_back(prompts::attachment_secret(prompts, &variable, &path));
+            return sent_back(prompts::attachment_secret(templates, &variable, &path));
         }
         Err(
             refusal @ (Refusal::NotAFile { .. } | Refusal::Kind { .. } | Refusal::Outside { .. }),
         ) => {
-            return sent_back(prompts::result_error(prompts, &refusal.to_string()));
+            return sent_back(prompts::result_error(templates, &refusal.to_string()));
         }
     };
     let mut urls = BTreeMap::new();
@@ -627,7 +627,7 @@ async fn post_attachments(
                 continue;
             }
             Err(AttachError::RefusedFile { reason }) => {
-                return sent_back(prompts::attachment_refused(prompts, file.path(), &reason));
+                return sent_back(prompts::attachment_refused(templates, file.path(), &reason));
             }
             Err(AttachError::RefusedToken { reason }) => {
                 Failure::HandBack(hand_back::refused_attachment(file.name(), &reason))
@@ -661,7 +661,7 @@ async fn triage(shell: &Shell, ctx: &Ctx, issue: &Issue) -> Result<(), Failure> 
     let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
     let (mut spec, dir) = opened.spec(|attachments| {
         prompts::triage(
-            &ctx.with.briefs.prompts,
+            &ctx.with.briefs.templates,
             &shell.repo(),
             issue,
             &categories,
@@ -808,7 +808,7 @@ async fn design_issue(
     };
     let prompt = |attachments: &Path| {
         prompts::design_issue(
-            &ctx.with.briefs.prompts,
+            &ctx.with.briefs.templates,
             &shell.repo(),
             issue,
             spec_change.as_ref(),
@@ -1055,7 +1055,7 @@ async fn implement(
     .await?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::implement(
-            &ctx.with.briefs.prompts,
+            &ctx.with.briefs.templates,
             &shell.repo(),
             ticket,
             &branch,
@@ -1072,26 +1072,26 @@ async fn implement(
         }
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::retry(prompts::loose_ends(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &problem,
             )));
         }
         let commits = git::commits_past(dir, base, "HEAD").await?;
         if commits.is_empty() {
             return Err(Rejection::retry(prompts::loose_ends(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
             )));
         }
         if let Some(unfinished) = git::unfinished_of(&commits) {
             return Err(Rejection::retry(prompts::fold_unfinished(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base]).await? {
             return Err(Rejection::retry(prompts::held_secret(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &held,
             )));
         }
@@ -1285,7 +1285,7 @@ async fn pull_work(
     let linewright = &shell.policy.linewright;
     let purpose = Purpose::Work { subject, kind };
     if let Task::Update = task {
-        let ws = Workspace::clone(&shell.sessions, &purpose, &pr.head_ref)
+        let ws = Workspace::clone(&shell.sessions, &ctx.with.briefs, &purpose, &pr.head_ref)
             .await
             .map_err(infra)?;
         let start = git::head(&ws.dir).await.map_err(infra)?;
@@ -1347,7 +1347,7 @@ async fn pull_work(
     let before = git::work_state(dir).await.map_err(infra).map_err(ended)?;
     let (mut spec, attachments) = opened.spec(|attachments| {
         prompts::pull_work(
-            &ctx.with.briefs.prompts,
+            &ctx.with.briefs.templates,
             &shell.repo(),
             ticket,
             pr,
@@ -1365,19 +1365,19 @@ async fn pull_work(
         };
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::retry(prompts::loose_ends(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &problem,
             )));
         }
         if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
             return Err(Rejection::retry(prompts::fold_unfinished(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &unfinished,
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base, upstream]).await? {
             return Err(Rejection::retry(prompts::held_secret(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &held,
             )));
         }
@@ -1426,7 +1426,7 @@ async fn pull_work(
             .extend(feedback_people(&arrived, linewright));
         shown.threads = pr_now.threads.iter().map(|t| t.id.clone()).collect();
         Err(Rejection::Resume(prompts::late_feedback(
-            &ctx.with.briefs.prompts,
+            &ctx.with.briefs.templates,
             &pr_now,
             &arrived,
         )))
@@ -1569,7 +1569,7 @@ pub(crate) async fn automation(
         let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
         let (mut spec, dir) = opened.spec(|attachments| {
             prompts::automation(
-                &ctx.with.briefs.prompts,
+                &ctx.with.briefs.templates,
                 &shell.repo(),
                 automation,
                 attachments,

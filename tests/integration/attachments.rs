@@ -525,7 +525,7 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
         .briefs();
 
     let followup = linewright::prompts::attachment_secret(
-        &briefs.prompts,
+        &briefs.templates,
         "NPM_TOKEN",
         std::path::Path::new("/record/attachments/log.txt"),
     );
