@@ -13,9 +13,9 @@ implement
 
 ### The replay's output
 
-- How its run ended: `/work/out/outcome`
-- Each session's record, with its brief and its transcript: `/work/out/sessions`
-- What Linewright would have written to GitHub, in order: `/work/out/writes`
+- How its run ended: `/work/replay/outcome`
+- Each session's record, with its brief and its transcript: `/work/replay/sessions`
+- What Linewright would have written to GitHub, in order: `/work/replay/writes`
 
 The repository is checked out at what the replay left: the branch it would have pushed, where it pushed one, and the default branch otherwise.
 

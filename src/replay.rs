@@ -34,6 +34,9 @@ use crate::work_settings::RunKind;
 use crate::{COMMAND, VERSION_AND_COMMIT};
 
 const OUTCOME: &str = "outcome";
+/// The directory of the output that keeps the sessions' records, as the
+/// runs of the replay keep them in the output.
+const SESSIONS: &str = crate::runs::SESSIONS;
 /// The directory of the output that keeps the writes.
 const WRITES: &str = "writes";
 /// The directory of the output that keeps the attachments.

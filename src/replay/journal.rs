@@ -163,19 +163,19 @@ async fn write_new(path: &Path, contents: &[u8]) -> Result<()> {
         .with_context(|| format!("writing {}", path.display()))
 }
 
+/// Whether `c` can be in the name an attachment is kept under: an ASCII
+/// letter, digit, `.`, `-` or `_`.
+pub(super) fn in_safe_name(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')
+}
+
 /// `name` with each character other than an ASCII letter, digit, `.`, `-`
 /// or `_` replaced by `-`, and a leading `.` too: `attachment` for an empty
 /// `name`.
 fn safe_name(name: &str) -> String {
     let safe: String = name
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if in_safe_name(c) { c } else { '-' })
         .collect();
     match safe.strip_prefix('.') {
         Some(rest) => format!("-{rest}"),
