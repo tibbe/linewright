@@ -39,7 +39,10 @@ async fn opening_an_existing_database_makes_nothing_where_there_is_none() {
 
 const NOTES: Migration = Migration::Sql("CREATE TABLE notes (text TEXT NOT NULL) STRICT");
 
-/// The schema of a release after this one, which adds a table of notes.
+/// The schema of a release before the one that adds a table of notes.
+static RELEASES_ONLY: &[Migration] = &[RELEASES_TABLE];
+
+/// The schema of a release after that one, which adds a table of notes.
 static WITH_NOTES: &[Migration] = &[RELEASES_TABLE, NOTES];
 
 static FAILING_AFTER_NOTES: &[Migration] = &[
@@ -58,7 +61,11 @@ static FAILING_AFTER_NOTES: &[Migration] = &[
 #[test_log::test(tokio::test)]
 async fn a_failing_migration_leaves_the_database_as_it_was() {
     let work_dir = tempfile::tempdir().unwrap();
-    drop(Database::open(work_dir.path()).await.unwrap());
+    drop(
+        Database::open_in(work_dir.path(), RELEASES_ONLY, Absent::Make)
+            .await
+            .unwrap(),
+    );
 
     let failed = Database::open_in(work_dir.path(), FAILING_AFTER_NOTES, Absent::Make).await;
 
@@ -92,7 +99,7 @@ async fn a_database_that_fails_to_be_made_is_not_left_behind() {
 async fn a_database_a_newer_release_made_is_refused_naming_that_release() {
     let work_dir = tempfile::tempdir().unwrap();
     let db = Database::open(work_dir.path()).await.unwrap();
-    sqlx::raw_sql("PRAGMA user_version = 2; INSERT INTO releases VALUES (2, '9.9.9')")
+    sqlx::raw_sql("PRAGMA user_version = 99; INSERT INTO releases VALUES (99, '9.9.9')")
         .execute(db.pool())
         .await
         .unwrap();
@@ -100,7 +107,7 @@ async fn a_database_a_newer_release_made_is_refused_naming_that_release() {
 
     let refused = Database::open(work_dir.path()).await;
 
-    let Err(e @ OpenError::Newer { version: 2, .. }) = refused else {
+    let Err(e @ OpenError::Newer { version: 99, .. }) = refused else {
         panic!("{:?}", refused.map(|_| ()));
     };
     let message = e.to_string();

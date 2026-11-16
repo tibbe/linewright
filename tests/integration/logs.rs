@@ -332,7 +332,9 @@ async fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transc
         ("sessions/5/rework-1/output.jsonl", &output),
     ]);
 
-    let transcript = logs::answer(&work_dir, &item(5)).await.unwrap();
+    let transcript = logs::answer(Some(&runs_in(&work_dir.resolve()).await), &item(5))
+        .await
+        .unwrap();
 
     assert_eq!(
         transcript::render(&transcript, Verbosity::Compact, false),
@@ -345,20 +347,27 @@ async fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transc
 
 #[test_log::test(tokio::test)]
 async fn a_named_run_whose_record_does_not_read_fails_saying_why() {
-    let (_base, work_dir) = work_dir_holding(&[("runs/items/1/implement-1.json", "not a record")]);
+    let (_base, work_dir) = work_dir_holding(&[]);
+    let runs = runs_in(&work_dir.resolve()).await;
+    let unreadable_session = json!([{"dir": "sessions/1/implement-1", "model": 5}]);
+    let record = item_run_record(1, "implement", 1, Some("done"), &unreadable_session);
+    keep_record(&work_dir.resolve(), &serde_json::from_str(&record).unwrap()).await;
     let named = Which::Run {
         id: "1/implement-1".parse().unwrap(),
         item: None,
     };
 
-    let answered = logs::answer(&work_dir, &named).await;
+    let answered = logs::answer(Some(&runs), &named).await;
 
     let Err(LogsError::Other(e)) = answered else {
         panic!("not a failure to read: {answered:?}");
     };
     assert_eq!(
         format!("{e:#}"),
-        "reading the record of 1/implement-1: expected ident at line 1 column 2"
+        format!(
+            "reading the record of 1/implement-1: reading what the session in {} ran with: invalid type: integer `5`, expected a string at line 1 column 10",
+            work_dir.resolve().join("sessions/1/implement-1").display()
+        )
     );
 }
 
@@ -370,7 +379,9 @@ async fn a_session_yet_to_write_anything_counts_as_started() {
     std::fs::create_dir_all(repo_dir.join("sessions/1/triage-1")).unwrap();
     let _lock = lock_of(&repo_dir.join("runs/items/1/triage-1.json"));
 
-    let transcript = logs::answer(&work_dir, &item(1)).await.unwrap();
+    let transcript = logs::answer(Some(&runs_in(&work_dir.resolve()).await), &item(1))
+        .await
+        .unwrap();
 
     assert_eq!(
         transcript::render(&transcript, Verbosity::Compact, false),
@@ -414,7 +425,9 @@ async fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returne
         let _lock = ending
             .is_none()
             .then(|| lock_of(&base.path().join(REPO).join("runs/items/5/rework-1.json")));
-        let transcript = logs::answer(&work_dir, &item(5)).await.unwrap();
+        let transcript = logs::answer(Some(&runs_in(&work_dir.resolve()).await), &item(5))
+            .await
+            .unwrap();
         transcript::render(&transcript, Verbosity::Compact, false)
     };
 

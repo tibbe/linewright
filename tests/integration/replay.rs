@@ -15,7 +15,7 @@ use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
 use linewright::reconcile::WorkKind;
 use linewright::replay::{self, OutputRefusal};
-use linewright::runs::{Ending, Runs};
+use linewright::runs::Ending;
 use linewright::store::github::SESSION_TOKEN_VARIABLE;
 use linewright::work_settings::{RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
@@ -62,7 +62,7 @@ async fn case_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
         .parse()
         .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
     let capturable = case::capturable(
-        &Runs::new(&work),
+        &runs_in(&work).await,
         &work.join(case::CASES),
         &id,
         &CaseName::suggested(&id),
@@ -101,7 +101,7 @@ fn replayed<'a>(
         let out = under.join("out");
         let output =
             replay::Output::make(&out).unwrap_or_else(|e| panic!("the output at {caller}: {e}"));
-        let mut config = config(&under.join("work").join(REPO));
+        let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
         let ended = replay::run(&case, &output, harness, config).await;
@@ -423,10 +423,12 @@ async fn a_replays_run_does_not_count_toward_max_runs() {
     let replaying = {
         let under = under.path().to_path_buf();
         tokio::spawn(async move {
-            replayed(&case, &under, harness, |config| config.work_dir = work)
-                .await
-                .ended
-                .map_err(|e| format!("{e:#}"))
+            Box::pin(replayed(&case, &under, harness, |config| {
+                config.work_dir = work;
+            }))
+            .await
+            .ended
+            .map_err(|e| format!("{e:#}"))
         })
     };
     gate.begun().await;
@@ -493,7 +495,7 @@ async fn a_replays_setting_refuses_a_file_that_would_hold_the_kind_of_run_it_is_
     );
     let case = Case::open(&case).await.unwrap();
     let under = tempfile::tempdir().unwrap();
-    let config = config(&under.path().join("work").join(REPO));
+    let config = config(&under.path().join("work").join(REPO)).await;
     let prepare = |name: &'static str, kind: WorkKind| {
         let case = &case;
         let config = &config;

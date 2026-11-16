@@ -12,6 +12,7 @@ use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
     ResolveError, Settings, Since,
 };
+use linewright::database::Database;
 use linewright::domain::{Number, Timestamp};
 use linewright::drain::{self, Asked, Exiting, Said, Stop, Taken, Timeout, Waiting, Was};
 use linewright::ending::{Ends, StopBy};
@@ -23,7 +24,7 @@ use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::replay::judge::{self, JudgeRecord};
 use linewright::replay::{self, Output};
 use linewright::repo_files::RepoLayer;
-use linewright::runs::{self, Query, RepoWorkDir, RunId};
+use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use linewright::serving::{self, OnUsageLimit, Starting, prompts};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
@@ -506,7 +507,7 @@ async fn rebuild_here(
     log: &Log,
 ) -> Result<u8> {
     log.begin();
-    let mut factory = start(config, OnUsageLimit::End, Ends::new(), winding_up).await?;
+    let mut factory = start(config, None, OnUsageLimit::End, Ends::new(), winding_up).await?;
     let ended = factory
         .rebuild_environment()
         .await?
@@ -537,8 +538,8 @@ fn read_as<T: serde::de::DeserializeOwned>(body: &[u8], what: &str) -> Result<T,
 
 async fn list_runs(config: &Config, query: &Query, json: bool) -> u8 {
     let resource = format!("/api/runs?{}", api::query_string(query));
-    let answer = ask_or_read(config, &resource, "runs", async |work_dir| {
-        runs::answer(work_dir, query, SystemClock.now()).await
+    let answer = ask_or_read(config, &resource, "runs", async |runs| {
+        runs::answer(runs, query, SystemClock.now()).await
     })
     .await;
     print_answer(answer.map(|answer| answer.text(json)))
@@ -578,8 +579,8 @@ impl Printing {
 
 async fn show_logs(config: &Config, which: &Which, printing: Printing, follow: bool) -> u8 {
     let resource = format!("/api/logs?{}", api::query_string(which));
-    let answer = ask_or_read(config, &resource, "a transcript", async |work_dir| {
-        logs::answer(work_dir, which).await
+    let answer = ask_or_read(config, &resource, "a transcript", async |runs| {
+        logs::answer(runs, which).await
     })
     .await;
     if follow
@@ -682,8 +683,12 @@ async fn follow_records(
     after: Option<After>,
     printing: Printing,
 ) -> u8 {
-    let mut following = match Following::start(work_dir, &query.which, query.verbosity, after).await
-    {
+    let runs = match existing_runs(&work_dir.resolve()).await {
+        Ok(runs) => runs,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let started = Following::start(runs.as_ref(), &query.which, query.verbosity, after).await;
+    let mut following = match started {
         Ok(following) => following,
         Err(e) => return print_answer(Err(unanswered(e.into()))),
     };
@@ -717,7 +722,7 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
     config: &Config,
     resource: &str,
     what: &str,
-    read: impl AsyncFnOnce(&RepoWorkDir) -> Result<T, E>,
+    read: impl AsyncFnOnce(Option<&Runs>) -> Result<T, E>,
 ) -> Result<Answer<T>, (u8, String)> {
     let work_dir = config.repo_work_dir().map_err(|e| failed(&e))?;
     match api::get_answer(&socket_dir(), &work_dir.repo, resource).await {
@@ -725,10 +730,15 @@ async fn ask_or_read<T: serde::de::DeserializeOwned, E: Into<Unanswered>>(
             let value = read_as(&body, what)?;
             Ok(Answer::Served { body, value })
         }
-        Err(RequestError::NotServing { .. }) => match read(&work_dir).await.map_err(Into::into) {
-            Ok(value) => Ok(Answer::Read(value)),
-            Err(e) => Err(unanswered(e)),
-        },
+        Err(RequestError::NotServing { .. }) => {
+            let runs = existing_runs(&work_dir.resolve())
+                .await
+                .map_err(|e| failed(&e))?;
+            match read(runs.as_ref()).await.map_err(Into::into) {
+                Ok(value) => Ok(Answer::Read(value)),
+                Err(e) => Err(unanswered(e)),
+            }
+        }
         Err(e) => Err(refused(&e)),
     }
 }
@@ -869,13 +879,22 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
                 Arc::new(SystemClock),
                 &socket_dir(),
                 winding_up,
-                |ends| start(&config, OnUsageLimit::Wait, ends, winding_up),
+                |ends, database| {
+                    start(
+                        &config,
+                        Some(database),
+                        OnUsageLimit::Wait,
+                        ends,
+                        winding_up,
+                    )
+                },
             )
             .await
         }
         Command::Once => {
             log.begin();
-            let mut factory = start(&config, OnUsageLimit::End, Ends::new(), winding_up).await?;
+            let mut factory =
+                start(&config, None, OnUsageLimit::End, Ends::new(), winding_up).await?;
             let prepared = factory.prepare_environment().await;
             if let Err(e) = &prepared {
                 error!(
@@ -900,7 +919,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             command: AutomationCommand::Run { name },
         } => {
             log.begin();
-            start(&config, OnUsageLimit::End, Ends::new(), winding_up)
+            start(&config, None, OnUsageLimit::End, Ends::new(), winding_up)
                 .await?
                 .run_automation(&name)
                 .await
@@ -920,7 +939,11 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: &Path) 
         Ok(work_dir) => work_dir.resolve(),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let runs = runs::Runs::new(&work_dir);
+    let runs = match existing_runs(&work_dir).await {
+        Ok(Some(runs)) => runs,
+        Ok(None) => return print_answer(Err(refusal(CaptureError::NoSuchRun(id.clone())))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
     let cases = work_dir.join(case::CASES);
     let capturable = match case::capturable(&runs, &cases, id, name).await {
         Ok(capturable) => capturable,
@@ -1011,10 +1034,15 @@ async fn on_case(
 ) -> Result<(ClaudeCode, FactoryConfig)> {
     let starting = Starting::replaying(config, HARNESS_PROGRAM, || Ok(token)).await?;
     let harness = starting.harness(own_program()?, Arc::new(SystemClock));
-    let work_dir = config.work_dir_for(&case.properties().settings.repo);
+    let work_dir = RepoWorkDir {
+        base: config.work_dir.clone(),
+        repo: case.properties().settings.repo.clone(),
+    };
+    let database = Database::open(&work_dir.resolve()).await?;
     let factory_config = starting.factory_config(
         config,
-        work_dir,
+        database.work_dir().to_path_buf(),
+        database,
         OnUsageLimit::End,
         Ends::new(),
         winding_up.clone(),
@@ -1107,22 +1135,33 @@ fn own_program() -> Result<PathBuf> {
     std::env::current_exe().context("finding Linewright's own program")
 }
 
-fn work_dir(config: &Config, github: &GitHub) -> std::path::PathBuf {
-    config.work_dir.join(github.full_name())
+/// The runs of the database of `work_dir`, or `None`, making nothing, when
+/// there is no database.
+async fn existing_runs(work_dir: &Path) -> Result<Option<Runs>> {
+    Ok(Database::open_existing(work_dir).await?.map(Runs::new))
 }
 
+/// Starts the factory in the work directory of `database`, or, if `None`,
+/// of the repository's database, opened once Linewright's settings pass the
+/// checks of its start.
 async fn start(
     config: &Config,
+    database: Option<Database>,
     on_usage_limit: OnUsageLimit,
     ends: Ends,
     winding_up: &WindingUp,
 ) -> Result<Factory> {
     let starting = Starting::new(config, HARNESS_PROGRAM, session_token).await?;
+    let database = match database {
+        Some(database) => database,
+        None => Database::open(&config.repo_work_dir()?.resolve()).await?,
+    };
     let harness = starting.harness(own_program()?, Arc::new(SystemClock));
     let github = connect(config, token()?).await?;
     let factory_config = starting.factory_config(
         config,
-        work_dir(config, &github),
+        database.work_dir().to_path_buf(),
+        database,
         on_usage_limit,
         ends,
         winding_up.clone(),

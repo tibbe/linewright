@@ -129,7 +129,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
         world.clock.clone(),
         linewright::factory::FactoryConfig {
             waits_out_usage_limit: true,
-            ..config(&world.dir.path().join("work"))
+            ..config(&world.dir.path().join("work")).await
         },
     )
     .await
@@ -265,7 +265,7 @@ impl Served {
             world.clock.clone(),
             linewright::factory::FactoryConfig {
                 waits_out_usage_limit: true,
-                ..config(&world.dir.path().join("work"))
+                ..config(&world.dir.path().join("work")).await
             },
         )
         .await

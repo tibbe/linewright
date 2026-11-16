@@ -17,6 +17,7 @@ use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastS
 use crate::briefs::OperatorPrompts;
 use crate::clock::Clock;
 use crate::clones::Clones;
+use crate::database::Database;
 use crate::domain::{
     IssueCloseReason, Item, MergeMethod, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
     Timestamp, Windows, label,
@@ -66,6 +67,8 @@ pub struct FactoryConfig {
     /// The operator's layer of the prompts.
     pub prompts: OperatorPrompts,
     pub work_dir: PathBuf,
+    /// The database of `work_dir`.
+    pub database: Database,
     pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
     /// Linewright's secrets, refused in the commits a session's result
@@ -245,7 +248,7 @@ impl Factory {
         );
         let last_scheduled_runs = LastScheduledRuns::load(&config.work_dir);
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
-        let runs = Runs::new(&config.work_dir);
+        let runs = Runs::new(config.database.clone());
         let pulls = PullRecords::load(&config.work_dir);
         let pull_records_file = match &pulls {
             Some(saved) => PullRecordsFile::Kept {

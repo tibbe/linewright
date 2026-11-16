@@ -23,11 +23,9 @@ const LOCK_FILE: &str = "linewright.db.lock";
 /// How long a statement waits for another connection's write lock.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+mod import;
+
 /// A change of the schema, from the version before it to its own.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no module keeps its records in the database")
-)]
 pub(crate) enum Migration {
     Sql(&'static str),
     /// Rust code, given the schema change's transaction and the work
@@ -40,7 +38,7 @@ pub(crate) type StepsFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>
 /// Every change of the schema, in order: the schema's version is how many of
 /// them a database has had. A released migration never changes; a later
 /// change is a new entry.
-static MIGRATIONS: &[Migration] = &[RELEASES_TABLE];
+static MIGRATIONS: &[Migration] = &[RELEASES_TABLE, Migration::Steps(runs_kept)];
 
 /// The table of the release that made each schema version.
 const RELEASES_TABLE: Migration = Migration::Sql(
@@ -50,16 +48,59 @@ const RELEASES_TABLE: Migration = Migration::Sql(
     ) STRICT",
 );
 
+/// Each run outside a replay, its sessions and the input it recorded, with
+/// the runs and inputs that earlier releases kept as files.
+fn runs_kept<'a>(tx: &'a mut Transaction<'static, Sqlite>, work_dir: &'a Path) -> StepsFuture<'a> {
+    Box::pin(async move {
+        sqlx::raw_sql(RUNS_TABLES)
+            .execute(&mut **tx)
+            .await
+            .context("making the runs' tables")?;
+        import::runs(tx, work_dir).await
+    })
+}
+
+const RUNS_TABLES: &str = "CREATE TABLE runs (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'automation')),
+        item INTEGER,
+        stage TEXT,
+        automation TEXT,
+        n INTEGER NOT NULL CHECK (n > 0),
+        started_by TEXT CHECK (started_by IN ('schedule', 'hand')),
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        ending TEXT CHECK (ending IN ('done', 'handed-back', 'cancelled', 'usage-limit', 'failed')),
+        answered_until TEXT,
+        CHECK (
+            (kind = 'item' AND item IS NOT NULL AND stage IS NOT NULL
+                AND automation IS NULL AND started_by IS NULL)
+            OR (kind = 'automation' AND automation IS NOT NULL AND started_by IS NOT NULL
+                AND item IS NULL AND stage IS NULL)
+        ),
+        CHECK ((ended_at IS NULL) = (ending IS NULL))
+    ) STRICT;
+    CREATE UNIQUE INDEX runs_of_items ON runs (item, stage, n) WHERE kind = 'item';
+    CREATE UNIQUE INDEX runs_of_automations ON runs (automation, n) WHERE kind = 'automation';
+    CREATE TABLE sessions (
+        run INTEGER NOT NULL REFERENCES runs (id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        dir TEXT NOT NULL,
+        ran TEXT,
+        PRIMARY KEY (run, seq)
+    ) STRICT;
+    CREATE TABLE run_inputs (
+        run INTEGER PRIMARY KEY REFERENCES runs (id) ON DELETE CASCADE,
+        input TEXT NOT NULL
+    ) STRICT;";
+
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,
 /// lives.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Database {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no module keeps its records in the database")
-    )]
     pool: SqlitePool,
+    work_dir: Arc<Path>,
     _lock: Lock,
 }
 
@@ -100,9 +141,20 @@ enum Standing {
 }
 
 impl Database {
-    /// Opens the work directory's database, making it when there is none,
-    /// and brings its schema to this release's.
+    /// Opens the work directory's database, making it, and the work
+    /// directory, when there is none, and brings its schema to this
+    /// release's. It warns first when the work directory is on a network
+    /// filesystem.
     pub async fn open(work_dir: &Path) -> Result<Database, OpenError> {
+        std::fs::create_dir_all(work_dir)
+            .with_context(|| format!("creating {}", work_dir.display()))?;
+        if let Some(filesystem) = network_filesystem(work_dir) {
+            tracing::warn!(
+                work_dir = %work_dir.display(),
+                filesystem,
+                "the work directory is on a network filesystem: keep it on a local filesystem"
+            );
+        }
         Self::open_in(work_dir, MIGRATIONS, Absent::Make).await
     }
 
@@ -117,12 +169,13 @@ impl Database {
             .map(Some)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no module keeps its records in the database")
-    )]
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// The work directory the database is in.
+    pub fn work_dir(&self) -> &Path {
+        &self.work_dir
     }
 
     /// Opens the database in `work_dir` with the schema `migrations` make,
@@ -144,7 +197,11 @@ impl Database {
         let made = !exists(&path)?;
         let pool = connect(&path, absent).await?;
         match settle(&pool, &lock, held, work_dir, migrations).await {
-            Ok(()) => Ok(Database { pool, _lock: lock }),
+            Ok(()) => Ok(Database {
+                pool,
+                work_dir: work_dir.into(),
+                _lock: lock,
+            }),
             Err(e) => {
                 if made {
                     pool.close().await;
@@ -157,7 +214,7 @@ impl Database {
 }
 
 /// The lock file beside the database, open.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Lock {
     file: Arc<File>,
     path: Arc<Path>,

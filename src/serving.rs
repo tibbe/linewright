@@ -15,9 +15,11 @@ use crate::briefs::OperatorPrompts;
 use crate::child;
 use crate::clock::Clock;
 use crate::config::Config;
+use crate::database::Database;
 use crate::ending::{Ends, Event, Signal, Step};
 use crate::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use crate::harness::claude::ClaudeCode;
+use crate::runs::Runs;
 use crate::secrets::Secrets;
 use crate::status;
 use crate::store::github::SESSION_TOKEN_VARIABLE;
@@ -45,7 +47,7 @@ pub async fn serve<Start, Started>(
     start: Start,
 ) -> Result<()>
 where
-    Start: FnOnce(Ends) -> Started,
+    Start: FnOnce(Ends, Database) -> Started,
     Started: Future<Output = Result<Factory>>,
 {
     // PID 1, as `lw` can be in a container, is sent only the signals it has
@@ -57,6 +59,7 @@ where
     let since = clock.now();
     let work_dir = config.repo_work_dir()?;
     let claimed = api::claim(socket_dir, &work_dir.repo)?;
+    let database = Database::open(&work_dir.resolve()).await?;
     let pending = Pending::default();
     let listener = match &config.webhooks {
         Some(webhooks) => Some(Listener::bind(webhooks, pending.clone(), clock.clone()).await?),
@@ -73,6 +76,7 @@ where
         deliveries: listener.as_ref().map(Listener::tally),
         clock,
         work_dir,
+        runs: Runs::new(database.clone()),
         ends: ends.clone(),
         environment,
         exiting: winding_up.exiting(),
@@ -86,7 +90,10 @@ where
         ui,
         api: Api::serve(claimed, sources),
     };
-    let stopped = run_factory(config, &ends, &pending, &publish, start).await;
+    let stopped = run_factory(config, &ends, &pending, &publish, |ends| {
+        start(ends, database)
+    })
+    .await;
     listeners.let_go_after(winding_up).await;
     stopped
 }
@@ -243,6 +250,7 @@ impl Starting {
         self,
         config: &Config,
         work_dir: PathBuf,
+        database: Database,
         on_usage_limit: OnUsageLimit,
         ends: Ends,
         winding_up: WindingUp,
@@ -264,6 +272,7 @@ impl Starting {
             require_label: config.require_label.clone(),
             prompts: self.prompts,
             work_dir,
+            database,
             waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
             session_token: self.sessions.token,
             secrets: self.sessions.secrets,

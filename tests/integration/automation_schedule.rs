@@ -22,7 +22,7 @@ async fn restart(world: &mut World) {
         world.store.clone(),
         world.harness.clone(),
         world.clock.clone(),
-        config(&world.dir.path().join("work")),
+        config(&world.dir.path().join("work")).await,
     )
     .await
     .unwrap();

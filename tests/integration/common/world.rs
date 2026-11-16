@@ -5,13 +5,14 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
 use linewright::briefs::OperatorPrompts;
+use linewright::database::Database;
 use linewright::domain::{
     CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows, label,
 };
 use linewright::factory::{Factory, FactoryConfig, ServeEnd, SessionToken};
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::runs::{Ending, Runs, State};
+use linewright::runs::{Ending, State};
 use linewright::secrets::Secrets;
 use linewright::session::subject_name;
 use linewright::spec_glob::SpecGlob;
@@ -29,6 +30,7 @@ use super::cli::REPO;
 use super::clock::FakeClock;
 use super::files::commit_in;
 use super::harness::{ScriptedHarness, failed_session, subject_file};
+use super::records::runs_in;
 
 pub const LINEWRIGHT: &str = "factory";
 
@@ -159,7 +161,21 @@ pub async fn local_store(
     .unwrap()
 }
 
-pub fn config(work_dir: &Path) -> FactoryConfig {
+/// The config a world's factory starts with, over the database of
+/// `work_dir`, which it makes.
+#[track_caller]
+pub fn config(work_dir: &Path) -> impl Future<Output = FactoryConfig> + use<> {
+    let caller = Location::caller();
+    let work_dir = work_dir.to_path_buf();
+    async move {
+        let database = Database::open(&work_dir)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
+        config_over(&work_dir, database)
+    }
+}
+
+fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
     FactoryConfig {
         spec_glob: SpecGlob::default(),
         spec_lookback: TimeDelta::days(7),
@@ -183,6 +199,7 @@ pub fn config(work_dir: &Path) -> FactoryConfig {
         require_label: None,
         prompts: OperatorPrompts::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
+        database,
         waits_out_usage_limit: false,
         session_token: SessionToken::Separate("session-token".into()),
         secrets: Secrets::default(),
@@ -249,8 +266,9 @@ impl World {
             Store::create_label(&*store, label).await.unwrap();
         }
         let harness = Arc::new(ScriptedHarness::default());
-        let mut config = config(&dir.path().join("work"));
+        let mut config = config(&dir.path().join("work")).await;
         adjust(&mut config);
+        config.database = Database::open(&config.work_dir).await?;
         let factory = Factory::start(store.clone(), harness.clone(), clock.clone(), config).await?;
         Ok(World {
             store,
@@ -262,8 +280,9 @@ impl World {
     }
 
     pub async fn restart(&mut self, adjust: impl FnOnce(&mut FactoryConfig)) {
-        let mut config = config(&self.dir.path().join("work"));
+        let mut config = config(&self.dir.path().join("work")).await;
         adjust(&mut config);
+        config.database = Database::open(&config.work_dir).await.unwrap();
         self.factory = Factory::start(
             self.store.clone(),
             self.harness.clone(),
@@ -290,7 +309,8 @@ impl World {
 pub fn ended_runs(world: &World) -> impl Future<Output = Vec<Ending>> + '_ {
     let caller = Location::caller();
     async move {
-        Runs::new(&world.dir.path().join("work"))
+        runs_in(&world.dir.path().join("work"))
+            .await
             .read()
             .await
             .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))

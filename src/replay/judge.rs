@@ -272,12 +272,13 @@ pub fn discard(dir: &Path) {
 
 /// The judge's one session is recorded in the record's directory, and what
 /// it ran with is kept for its judgement.
+#[async_trait::async_trait]
 impl RecordsSessions for JudgeRecord {
     fn record_dir(&self, _purpose: &Purpose, _now: Timestamp) -> Result<PathBuf> {
         Ok(self.dir.clone())
     }
 
-    fn session(&self, _dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
+    async fn session(&self, _dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
         *lock_set_whole(&self.ran) = Some(Ran::new(settings, briefs));
         let ran = self.ran.clone();
         Reporter::new(move |reported| {

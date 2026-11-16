@@ -46,27 +46,33 @@ fn work_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
 }
 
 /// What `serve` answers from, over `served` and `polling`, with webhooks
-/// off.
+/// off, and the runs of the database of the work directory, which it makes.
+#[track_caller]
 fn sources(
     dir: &tempfile::TempDir,
     clock: &std::sync::Arc<FakeClock>,
     since: linewright::domain::Timestamp,
     served: tokio::sync::watch::Receiver<Option<linewright::api::Served>>,
     polling: tokio::sync::watch::Receiver<Option<linewright::status::Polling>>,
-) -> Sources {
-    Sources {
-        serving: linewright::status::Serving { since, max_runs: 4 },
-        served,
-        polling,
-        deliveries: None,
-        clock: clock.clone(),
-        work_dir: linewright::runs::RepoWorkDir {
-            base: dir.path().join("work"),
-            repo: REPO.parse().unwrap(),
-        },
-        ends: linewright::ending::Ends::new(),
-        environment: linewright::api::EnvironmentLink::default(),
-        exiting: linewright::winding_up::WindingUp::default().exiting(),
+) -> impl Future<Output = Sources> + use<> {
+    let runs = runs_in(&work_dir(dir));
+    let (clock, base) = (clock.clone(), dir.path().join("work"));
+    async move {
+        Sources {
+            serving: linewright::status::Serving { since, max_runs: 4 },
+            served,
+            polling,
+            deliveries: None,
+            clock,
+            work_dir: linewright::runs::RepoWorkDir {
+                base,
+                repo: REPO.parse().unwrap(),
+            },
+            runs: runs.await,
+            ends: linewright::ending::Ends::new(),
+            environment: linewright::api::EnvironmentLink::default(),
+            exiting: linewright::winding_up::WindingUp::default().exiting(),
+        }
     }
 }
 
@@ -108,6 +114,7 @@ impl Web {
                 serving.served.clone(),
                 serving.polling.clone(),
             )
+            .await
         };
         let router = web::router(sources, UiHosts::default(), stopping.clone());
         Web {
@@ -133,7 +140,7 @@ impl Web {
             self.store.clone(),
             self.harness.clone(),
             self.clock.clone(),
-            config(&self.work_dir()),
+            config(&self.work_dir()).await,
         )
         .await
         .unwrap()
@@ -232,7 +239,7 @@ impl Pages {
         let since = clock.now();
         let sources = Sources {
             deliveries: listener.as_ref().map(Listener::tally),
-            ..sources(&dir, &clock, since, served_receiver, polling)
+            ..sources(&dir, &clock, since, served_receiver, polling).await
         };
         let stopping = CancellationToken::new();
         let router = web::router(sources.clone(), UiHosts::default(), stopping.clone());
@@ -274,9 +281,17 @@ impl Pages {
             .unwrap()
     }
 
-    /// Writes the run `record`, as its run would have kept it.
-    fn record(&self, record: &serde_json::Value) {
-        write_record(&work_dir(&self.dir), record);
+    /// Keeps the run `record`, in the form of a run's record file, as its
+    /// run would have kept it.
+    #[track_caller]
+    fn record(&self, record: &serde_json::Value) -> impl Future<Output = ()> + use<> {
+        keep_record(&work_dir(&self.dir), record)
+    }
+
+    /// Keeps `input` as the input the run `id` recorded.
+    #[track_caller]
+    fn input(&self, id: &str, input: &serde_json::Value) -> impl Future<Output = ()> + use<> {
+        keep_input(&work_dir(&self.dir), id, input)
     }
 
     /// Writes each of `files`, a path under the work directory and what it
@@ -590,7 +605,13 @@ fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
 
 /// Records run `n` of #`item`'s triage as started at `started_at` and never
 /// ended nor in flight: interrupted, as when its process died.
-fn record_interrupted(pages: &Pages, item: u64, n: u32, started_at: &str) {
+#[track_caller]
+fn record_interrupted(
+    pages: &Pages,
+    item: u64,
+    n: u32,
+    started_at: &str,
+) -> impl Future<Output = ()> + use<> {
     let record = serde_json::json!({
         "item": item,
         "stage": "triage",
@@ -599,20 +620,5 @@ fn record_interrupted(pages: &Pages, item: u64, n: u32, started_at: &str) {
         "end": null,
         "sessions": [],
     });
-    pages.record(&record);
-}
-
-/// Writes the record of a run, an item's or an automation's, into
-/// `work_dir`, where its run keeps it.
-fn write_record(work_dir: &std::path::Path, record: &serde_json::Value) {
-    let path = match record["automation"].as_str() {
-        Some(automation) => format!("runs/automations/{automation}/{}.json", record["n"]),
-        None => format!(
-            "runs/items/{}/{}-{}.json",
-            record["item"],
-            record["stage"].as_str().unwrap(),
-            record["n"]
-        ),
-    };
-    write_files(work_dir, &[(&path, &record.to_string())]);
+    pages.record(&record)
 }

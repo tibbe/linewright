@@ -1,17 +1,17 @@
 //! The file form of a run: its record, and its sessions' directories, under
 //! a directory.
 
-use std::fs::{File, TryLockError};
+use std::collections::HashSet;
+use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::{
-    Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, RunRecord, Running, SessionEntry, Started,
-    StartedBy, State, entries, off_runtime,
+    Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, Running, SessionEntry, Started, StartedBy,
+    State, entries, is_locked, off_runtime,
 };
 use crate::domain::Timestamp;
 use crate::input::Input;
@@ -21,16 +21,60 @@ use crate::records;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Record {
     #[serde(flatten)]
-    of: RunOf,
-    n: u32,
+    pub(super) of: RunOf,
+    pub(super) n: u32,
     /// Of an automation's run; absent from those recorded before it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    started_by: Option<StartedBy>,
+    pub(super) started_by: Option<StartedBy>,
     pub(super) started_at: Timestamp,
     pub(super) end: Option<End>,
     pub(super) sessions: Vec<RecordedSession>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) answered_until: Option<Timestamp>,
+}
+
+impl Record {
+    pub(super) fn id(&self) -> RunId {
+        RunId {
+            of: self.of.clone(),
+            n: self.n,
+        }
+    }
+
+    /// The record of run `id` as it begins at `now`.
+    pub(super) fn begun(id: RunId, started_by: Option<StartedBy>, now: Timestamp) -> Record {
+        Record {
+            of: id.of,
+            n: id.n,
+            started_by,
+            started_at: now,
+            end: None,
+            sessions: vec![],
+            answered_until: None,
+        }
+    }
+
+    /// The record of `recorded`, each session's directory relative to `dir`
+    /// where it is under it.
+    pub(super) fn of(recorded: &Recorded, dir: &Path) -> Record {
+        let Started { id, by } = recorded.started();
+        Record {
+            of: id.of,
+            n: id.n,
+            started_by: by,
+            started_at: recorded.started_at,
+            end: match recorded.state {
+                State::Ended { at, ending } => Some(End { at, ending }),
+                State::InFlight | State::Interrupted => None,
+            },
+            sessions: recorded
+                .sessions
+                .iter()
+                .map(|session| RecordedSession::of(session, dir))
+                .collect(),
+            answered_until: recorded.answered_until,
+        }
+    }
 }
 
 /// A session as its run's record keeps it, its directory relative to the
@@ -45,6 +89,21 @@ pub(super) enum RecordedSession {
     },
     /// As records kept before they kept what a session ran with.
     Dir(PathBuf),
+}
+
+impl RecordedSession {
+    /// `session`, its directory relative to `dir` where it is under it.
+    pub(super) fn of(session: &SessionEntry, dir: &Path) -> RecordedSession {
+        let SessionEntry { dir: session, ran } = session;
+        let session = session.strip_prefix(dir).unwrap_or(session).to_path_buf();
+        match ran {
+            Some(ran) => RecordedSession::Ran {
+                dir: session,
+                ran: ran.clone(),
+            },
+            None => RecordedSession::Dir(session),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -103,25 +162,16 @@ impl RunFiles {
         }
     }
 
-    /// Begins a run of `begin` here, which records no input.
+    /// Begins a run of `begin` here, which records no input, numbered after
+    /// every run of the same item and stage, or of the same automation,
+    /// with no two runs given the same number, even by two processes at
+    /// once.
     pub(crate) async fn begin(&self, begin: Begin, now: Timestamp) -> Result<Running> {
-        self.begin_kept(begin, now, Keeping::Files).await
-    }
-
-    /// Begins a run of `begin`, kept as `keeping` says, numbered after every
-    /// run of the same item and stage, or of the same automation, with no
-    /// two runs given the same number, even by two processes at once.
-    pub(super) async fn begin_kept(
-        &self,
-        begin: Begin,
-        now: Timestamp,
-        keeping: Keeping,
-    ) -> Result<Running> {
         let files = self.clone();
-        off_runtime(move || files.begin_now(begin, now, keeping)).await
+        off_runtime(move || files.begin_now(begin, now)).await
     }
 
-    fn begin_now(&self, begin: Begin, now: Timestamp, keeping: Keeping) -> Result<Running> {
+    fn begin_now(&self, begin: Begin, now: Timestamp) -> Result<Running> {
         let (of, started_by) = begin.into_parts();
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
@@ -144,92 +194,29 @@ impl RunFiles {
         };
         lock.try_lock()
             .with_context(|| format!("locking {}", lock_path.display()))?;
-        let running = Running {
-            kept: RunRecord {
-                id: RunId { of: of.clone(), n },
-                path: lock_path.with_extension("json"),
-                record: Arc::new(Mutex::new(Record {
-                    of,
-                    n,
-                    started_by,
-                    started_at: now,
-                    end: None,
-                    sessions: vec![],
-                    answered_until: None,
-                })),
-            },
-            keeping,
+        let record = Record::begun(RunId { of, n }, started_by, now);
+        let path = lock_path.with_extension("json");
+        records::save(&path, &record, "a run's record")?;
+        Ok(Running::new(
+            record,
+            Keeping::Files { path },
             lock_path,
-            dir: self.dir.clone(),
-            _lock: lock,
-        };
-        running.kept.save()?;
-        Ok(running)
+            self.dir.clone(),
+            lock,
+        ))
     }
 
     /// Writes `recorded` here, each session's directory kept relative to
     /// this directory where it is under it. A run with no end is written
     /// with none, and reads back as interrupted.
     pub fn write(&self, recorded: &Recorded) -> Result<()> {
-        let Started { id, by } = recorded.started();
-        let path = self.dir_of(&id.of).join(record_file(&id));
-        std::fs::create_dir_all(path.parent().expect("a run's record is in a directory"))
-            .context("creating the runs' directory")?;
-        let record = Record {
-            of: id.of,
-            n: id.n,
-            started_by: by,
-            started_at: recorded.started_at,
-            end: match recorded.state {
-                State::Ended { at, ending } => Some(End { at, ending }),
-                State::InFlight | State::Interrupted => None,
-            },
-            sessions: recorded
-                .sessions
-                .iter()
-                .map(|SessionEntry { dir, ran }| {
-                    let dir = dir.strip_prefix(&self.dir).unwrap_or(dir).to_path_buf();
-                    match ran {
-                        Some(ran) => RecordedSession::Ran {
-                            dir,
-                            ran: ran.clone(),
-                        },
-                        None => RecordedSession::Dir(dir),
-                    }
-                })
-                .collect(),
-            answered_until: recorded.answered_until,
-        };
-        records::save(&path, &record, "a run's record")
+        let path = self.record_path(&recorded.id);
+        records::save(&path, &Record::of(recorded, &self.dir), "a run's record")
     }
 
-    fn path_of(&self, id: &RunId) -> PathBuf {
-        let path = self.dir_of(&id.of).join(record_file(id));
-        match self.old_place_of(&id.of) {
-            Some(old) if !path.exists() && old.path(id.n).exists() => old.path(id.n),
-            _ => path,
-        }
-    }
-
-    /// The input run `id` recorded at its start, `None` when it recorded
-    /// none.
-    pub(super) fn read_input(&self, id: &RunId) -> Result<Option<Input>> {
-        records::read(&input_path(&self.path_of(id)))
-    }
-
-    /// A record that does not read is logged and taken as missing.
-    pub(super) fn read_run(&self, id: &RunId) -> Option<Recorded> {
-        self.load(&self.path_of(id))
-    }
-
-    /// `None` if the run has no record; a record that does not read fails.
-    pub(super) fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
-        let path = self.path_of(id);
-        let record = records::read::<Record>(&path)?;
-        record
-            .map(|record| recorded(record, &path, &self.dir))
-            .transpose()
-            .map_err(anyhow::Error::msg)
+    /// Where the record of run `id` is kept here.
+    pub(super) fn record_path(&self, id: &RunId) -> PathBuf {
+        self.dir_of(&id.of).join(record_file(id))
     }
 
     /// A record that does not read is logged and taken as missing.
@@ -240,24 +227,39 @@ impl RunFiles {
             .ok()
     }
 
-    /// Every run whose record is here, where this version keeps it or where
-    /// an earlier one did, with a record that does not read logged and
-    /// skipped.
-    pub fn read_legacy(&self) -> Result<Vec<Recorded>> {
-        let mut recorded = vec![];
+    /// Every run whose record is here, where this release keeps it or
+    /// where an earlier one did, with the input it recorded. Of two records
+    /// of one run, the one where this release keeps it wins. A record or an
+    /// input that does not read is logged and skipped.
+    pub(crate) fn read_legacy(&self) -> Result<Vec<(Recorded, Option<Input>)>> {
+        let mut current = vec![];
+        let mut old = vec![];
         for kind in ["items", AUTOMATIONS, OLD_AUTOMATIONS] {
             for dir in entries(&self.runs_dir().join(kind))? {
+                if !dir.is_dir() {
+                    continue;
+                }
                 for path in entries(&dir)? {
                     if path.extension().is_some_and(|e| e == "json")
                         && !is_input(&path)
                         && let Some(record) = self.load(&path)
                     {
-                        recorded.push(record);
+                        let input = records::load(&input_path(&path), "a run's input");
+                        if path == self.record_path(&record.id) {
+                            current.push((record, input));
+                        } else {
+                            old.push((record, input));
+                        }
                     }
                 }
             }
         }
-        Ok(recorded)
+        let mut read = HashSet::new();
+        Ok(current
+            .into_iter()
+            .chain(old)
+            .filter(|(record, _)| read.insert(record.id.to_string()))
+            .collect())
     }
 }
 
@@ -274,19 +276,13 @@ struct OldPlace {
     prefix: String,
 }
 
-impl OldPlace {
-    fn path(&self, n: u32) -> PathBuf {
-        self.dir.join(format!("{}{n}.json", self.prefix))
-    }
-}
-
 fn record_file(id: &RunId) -> String {
     format!("{}{}.json", file_prefix(&id.of), id.n)
 }
 
 /// Where the input of the run whose record is at `record` is kept: beside
 /// it, as `<stage>-<n>.input.json`.
-pub(super) fn input_path(record: &Path) -> PathBuf {
+fn input_path(record: &Path) -> PathBuf {
     record.with_extension(INPUT_EXTENSION)
 }
 
@@ -343,11 +339,4 @@ fn recorded(record: Record, path: &Path, dir: &Path) -> Result<Recorded, String>
             .collect(),
         record.answered_until,
     ))
-}
-
-fn is_locked(path: &Path) -> bool {
-    let Ok(file) = File::open(path) else {
-        return false;
-    };
-    matches!(file.try_lock(), Err(TryLockError::WouldBlock))
 }

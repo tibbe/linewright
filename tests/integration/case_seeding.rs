@@ -16,7 +16,6 @@ use linewright::domain::{MergeMethod, Number, Windows, label};
 use linewright::git::CommitId;
 use linewright::input;
 use linewright::reconcile::Work;
-use linewright::runs::Runs;
 use linewright::spec_gap;
 use linewright::store::local::LocalStore;
 use linewright::store::{NewIssue, NewPull, Store};
@@ -70,7 +69,7 @@ fn design_case() -> impl Future<Output = DesignCase> {
             "the run's ID",
         );
         let capturable =
-            case::capturable(&Runs::new(&work), &work.join(case::CASES), &run, &name).await;
+            case::capturable(&runs_in(&work).await, &work.join(case::CASES), &run, &name).await;
         let capturable = ok(capturable, caller, "the run");
         let criteria = ok(
             Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),

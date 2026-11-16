@@ -1081,7 +1081,7 @@ impl FollowedRun {
             item: None,
         };
         Ok(FollowedRun {
-            records: RunRecords::start(&sources.work_dir, &which).await?,
+            records: RunRecords::start(Some(&sources.runs), &which).await?,
             page: PageFollower {
                 feed: Feed::default(),
                 view: RunView::new(id.clone(), item_line(sources, id), verbose),

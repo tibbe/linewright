@@ -95,7 +95,7 @@ fn judging<'a>(
             .unwrap_or_else(|e| panic!("opening the output at {caller}: {e}"));
         let record = JudgeRecord::make(&replayed)
             .unwrap_or_else(|e| panic!("making the judge's record at {caller}: {e}"));
-        let mut config = config(&under.join("work").join(REPO));
+        let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
         let judged = judge::run(&case, &replayed, record, harness, config).await;

@@ -80,7 +80,7 @@ async fn a_refresh_decides_on_the_items_it_reads_as_a_poll_of_the_same_store_doe
         world.store.clone(),
         world.harness.clone(),
         world.clock.clone(),
-        config(&world.dir.path().join("poller")),
+        config(&world.dir.path().join("poller")).await,
     )
     .await
     .unwrap();

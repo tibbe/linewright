@@ -52,7 +52,13 @@ pub(super) fn with(parsed: &[(&str, &str)], broken: bool) -> View {
 
 /// Writes the record of weekly's run `n`, by hand, started at `started`,
 /// ended a minute later as `ending` or, if none, still in flight.
-fn record_weekly(pages: &Pages, n: u32, started: &str, ending: Option<&str>) {
+#[track_caller]
+fn record_weekly(
+    pages: &Pages,
+    n: u32,
+    started: &str,
+    ending: Option<&str>,
+) -> impl Future<Output = ()> + use<> {
     let ended = at(started) + chrono::TimeDelta::minutes(1);
     let record = json!({
         "automation": "weekly",
@@ -62,7 +68,7 @@ fn record_weekly(pages: &Pages, n: u32, started: &str, ending: Option<&str>) {
         "end": ending.map(|ending| json!({"at": ended, "ending": ending})),
         "sessions": [],
     });
-    pages.record(&record);
+    pages.record(&record)
 }
 
 /// The unparsed files, as a reader reads them.
@@ -112,7 +118,7 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
         ..with(&[("weekly", WEEKLY), ("hourly", HOURLY)], true)
     })
     .await;
-    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("done"));
+    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("done")).await;
 
     let html = pages.page("/automations").await;
 
@@ -187,7 +193,7 @@ async fn an_automation_file_that_does_not_parse_is_a_hold_on_every_page_linking_
 async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_a_newer_one_starts()
 {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
-    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("failed"));
+    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("failed")).await;
 
     let held = [(
         "automation weekly: last run weekly/1 failed".to_string(),
@@ -197,7 +203,7 @@ async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_
         assert_eq!(holds(&pages.page(path).await), held, "{path}");
     }
 
-    record_weekly(&pages, 2, "2026-10-01T11:30:00Z", None);
+    record_weekly(&pages, 2, "2026-10-01T11:30:00Z", None).await;
     let in_flight = lock_of(&pages.path("runs/automations/weekly/2.json"));
     let running = pages.page("/automations").await;
     assert_eq!(
@@ -206,7 +212,7 @@ async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_
     );
     assert_eq!(holds(&running), Vec::<(String, String)>::new());
 
-    record_weekly(&pages, 2, "2026-10-01T11:30:00Z", Some("done"));
+    record_weekly(&pages, 2, "2026-10-01T11:30:00Z", Some("done")).await;
     drop(in_flight);
     let done = pages.page("/automations").await;
     assert_eq!(
@@ -219,7 +225,7 @@ async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_
 #[test_log::test(tokio::test)]
 async fn a_run_handed_back_is_a_failed_last_run() {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
-    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("handed-back"));
+    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("handed-back")).await;
 
     let held = holds(&pages.page("/automations").await);
 
@@ -239,7 +245,7 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let (_unpolled, served) = tokio::sync::watch::channel(None);
     let (_unended, polling) = tokio::sync::watch::channel(None);
     let router = web::router(
-        sources(&dir, &clock, clock.now(), served, polling),
+        sources(&dir, &clock, clock.now(), served, polling).await,
         UiHosts::default(),
         CancellationToken::new(),
     );

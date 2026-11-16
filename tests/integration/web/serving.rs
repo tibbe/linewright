@@ -146,7 +146,6 @@ async fn a_pages_stream_passes_through_a_proxy_unbuffered_unchanged_and_uncached
 #[test_log::test(tokio::test)]
 async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_and_none_before() {
     let pages = pages().await;
-    tokio::time::pause();
     let response = pages.response("/events/items/1").await;
     let mut body = response.into_body();
     let mut next = async || {
@@ -155,6 +154,11 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
     };
 
     let regions = next().await;
+    // The clock is paused only once the regions are sent: the page reads the
+    // runs from SQLite on a thread of SQLx's, which a paused clock does not
+    // wait for before it jumps ahead
+    // (<https://docs.rs/tokio/latest/tokio/time/fn.pause.html>).
+    tokio::time::pause();
     let sent = tokio::time::Instant::now();
     let first = next().await;
     let first_after = sent.elapsed();
@@ -169,13 +173,14 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
     // https://docs.rs/tokio/latest/tokio/time/fn.sleep.html
     let tick = Duration::from_millis(1);
     let quiet = Duration::from_secs(15);
+    let before_the_pause = Duration::from_secs(1);
     assert!(
-        (quiet..=quiet + tick).contains(&first_after),
+        (quiet.checked_sub(before_the_pause).unwrap()..=quiet + tick).contains(&first_after),
         "{first_after:?}"
     );
     assert!(
-        (quiet * 2..=quiet * 2 + tick * 2).contains(&second_after),
-        "{second_after:?}"
+        (quiet..=quiet + tick).contains(&second_after.checked_sub(first_after).unwrap()),
+        "{first_after:?}, then {second_after:?}"
     );
 }
 
