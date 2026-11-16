@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use std::fmt::{self, Write};
 use std::marker::PhantomData;
 use std::path::Path;
-use std::sync::LazyLock;
 
 use anyhow::{Result, bail};
 
@@ -331,31 +330,6 @@ impl<V> fmt::Debug for Template<V> {
     }
 }
 
-/// [`Reader::read`] for the template at `$path` under `briefs/prompts/`,
-/// which Linewright ships, sent to the runs `$readers`.
-macro_rules! template {
-    ($reader:expr, $path:literal, $readers:expr) => {
-        $reader.read(
-            $path,
-            $readers,
-            include_str!(concat!("../briefs/prompts/", $path)),
-        )
-    };
-}
-
-/// Linewright's own template at `$path` under `briefs/`, which no layer
-/// overrides, without its trailing newline.
-macro_rules! own_template {
-    ($path:literal) => {
-        Template::parse(
-            include_str!(concat!("../briefs/", $path))
-                .trim_end()
-                .to_string(),
-        )
-        .expect(concat!("briefs/", $path, " has its values' placeholders"))
-    };
-}
-
 impl<V: Values> Template<V> {
     /// Fails unless `text`'s placeholders are exactly the values'.
     fn parse(text: String) -> Result<Template<V>> {
@@ -451,154 +425,132 @@ fn braced(names: &[&str]) -> String {
         .join(", ")
 }
 
-/// The prompts Linewright sends sessions, each from the first layer that has
-/// it (docs/specs/operation.md, "Prompts").
-#[derive(Clone, Debug)]
-pub struct Prompts {
-    triage: Template<Triage>,
-    design: Template<Design>,
-    implement: Template<Implement>,
-    rework: Template<Rework>,
-    fix_ci: Template<FixCi>,
-    update: Template<PullRequest>,
-    automation: Template<AutomationRun>,
-    result_error: Template<ResultError>,
-    loose_ends: Template<LooseEnds>,
-    usage_limit_reset: Template<NoValues>,
-    late_feedback: Template<LateFeedback>,
+/// Declares [`Templates`] and [`TABLE`] from one row per file of the brief:
+/// its field, its values, its path under `briefs/`, the runs that read it
+/// and how its text ends.
+macro_rules! templates {
+    ($($field:ident: $values:ident = $path:literal, $readers:expr, $ending:ident;)*) => {
+        /// Every file of the brief Linewright fills and sends sessions
+        /// (docs/specs/operation.md, "Briefs").
+        #[derive(Clone, Debug)]
+        pub struct Templates {
+            $($field: Template<$values>,)*
+        }
+
+        /// Every file of [`Templates`], as Linewright ships it.
+        const TABLE: &[File] = &[$(File {
+            path: $path,
+            readers: $readers,
+            ending: Ending::$ending,
+            shipped: include_str!(concat!("../briefs/", $path)),
+        },)*];
+
+        impl Templates {
+            fn build(reader: &mut Reader) -> Templates {
+                Templates {
+                    $($field: reader.read($path),)*
+                }
+            }
+        }
+    };
 }
 
-/// The parts Linewright builds its prompts from, and each first-message
-/// prompt's result contract, filled into its `{{output}}`: Linewright's own,
-/// which no layer overrides (docs/specs/operation.md, "Prompts").
-struct OwnTemplates {
-    facts: Template<Facts>,
-    spec_change: Template<SpecChange>,
-    cut_issue: Template<NoValues>,
-    new_branch: Template<DefaultBranch>,
-    existing_branch: Template<ExistingBranch>,
-    unfinished: Template<Commits>,
-    unfinished_or_discard: Template<Commits>,
-    conflict_rebase: Template<Stopped>,
-    conflict_merge: Template<Stopped>,
-    history_series: Template<NoValues>,
-    history_on_top: Template<NoValues>,
-    update_rebase: Template<Stopped>,
-    update_merge: Template<Stopped>,
-    full_log: Template<FullLog>,
-    filed_gaps: Template<FiledGapsPart>,
-    fold_unfinished: Template<Commits>,
-    held_secret: Template<HeldSecret>,
-    pushed_secret: Template<PushedSecret>,
-    attachments: Template<Attachments>,
-    attachment_secret: Template<AttachmentSecret>,
-    attachment_refused: Template<AttachmentRefused>,
-    triage_output: Template<TriageOutput>,
-    design_output: Template<DesignOutput>,
-    implement_output: Template<NoValues>,
-    rework_output: Template<NoValues>,
-    fix_ci_output: Template<NoValues>,
-    update_output: Template<NoValues>,
-    automation_output: Template<NoValues>,
-    judge: Template<Judge>,
-    replay_output: Template<ReplayOutput>,
-    judge_output: Template<NoValues>,
+templates! {
+    triage: Triage = "prompts/triage.md", TRIAGE, AsWritten;
+    design: Design = "prompts/design.md", DESIGN, AsWritten;
+    implement: Implement = "prompts/implement.md", IMPLEMENT, AsWritten;
+    rework: Rework = "prompts/rework.md", REWORK, AsWritten;
+    fix_ci: FixCi = "prompts/fix-ci.md", FIX_CI, AsWritten;
+    update: PullRequest = "prompts/update.md", UPDATE, AsWritten;
+    automation: AutomationRun = "prompts/automation.md", AUTOMATIONS, AsWritten;
+    judge: Judge = "prompts/judge.md", JUDGE, Trimmed;
+    result_error: ResultError = "prompts/follow-ups/result-error.md", Readers::Every, Trimmed;
+    loose_ends: LooseEnds = "prompts/follow-ups/loose-ends.md", BRANCH_WORK, Trimmed;
+    usage_limit_reset: NoValues = "prompts/follow-ups/usage-limit-reset.md", Readers::Every, Trimmed;
+    late_feedback: LateFeedback = "prompts/follow-ups/late-feedback.md", PULL_WORK, Trimmed;
+    facts: Facts = "parts/facts.md", Readers::Every, Trimmed;
+    spec_change: SpecChange = "parts/spec-change.md", DESIGN, Trimmed;
+    cut_issue: NoValues = "parts/cut-issue.md", DESIGN, Trimmed;
+    new_branch: DefaultBranch = "parts/new-branch.md", IMPLEMENT, Trimmed;
+    existing_branch: ExistingBranch = "parts/existing-branch.md", IMPLEMENT, Trimmed;
+    unfinished: Commits = "parts/unfinished.md", PULL_WORK, Trimmed;
+    unfinished_or_discard: Commits = "parts/unfinished-or-discard.md", IMPLEMENT, Trimmed;
+    conflict_rebase: Stopped = "parts/conflict-rebase.md", FIXES, Trimmed;
+    conflict_merge: Stopped = "parts/conflict-merge.md", FIXES, Trimmed;
+    history_series: NoValues = "parts/history-series.md", FIXES, Trimmed;
+    history_on_top: NoValues = "parts/history-on-top.md", FIXES, Trimmed;
+    update_rebase: Stopped = "parts/update-rebase.md", UPDATE, Trimmed;
+    update_merge: Stopped = "parts/update-merge.md", UPDATE, Trimmed;
+    full_log: FullLog = "parts/full-log.md", FIX_CI, Trimmed;
+    filed_gaps: FiledGapsPart = "parts/filed-gaps.md", TICKET_WORK, Trimmed;
+    fold_unfinished: Commits = "parts/fold-unfinished.md", BRANCH_WORK, Trimmed;
+    held_secret: HeldSecret = "parts/held-credential.md", BRANCH_WORK, Trimmed;
+    pushed_secret: PushedSecret = "parts/pushed-secret.md", BRANCH_WORK, Trimmed;
+    attachments: Attachments = "parts/attachments.md", ATTACHING, Trimmed;
+    attachment_secret: AttachmentSecret = "parts/attachment-secret.md", ATTACHING, Trimmed;
+    attachment_refused: AttachmentRefused = "parts/attachment-refused.md", ATTACHING, Trimmed;
+    replay_output: ReplayOutput = "parts/replay-output.md", JUDGE, Trimmed;
+    triage_output: TriageOutput = "outputs/triage.md", TRIAGE, Trimmed;
+    design_output: DesignOutput = "outputs/design.md", DESIGN, Trimmed;
+    implement_output: NoValues = "outputs/implement.md", IMPLEMENT, Trimmed;
+    rework_output: NoValues = "outputs/rework.md", REWORK, Trimmed;
+    fix_ci_output: NoValues = "outputs/fix-ci.md", FIX_CI, Trimmed;
+    update_output: NoValues = "outputs/update.md", UPDATE, Trimmed;
+    automation_output: NoValues = "outputs/automation.md", AUTOMATIONS, Trimmed;
+    judge_output: NoValues = "outputs/judge.md", JUDGE, Trimmed;
 }
 
-static OWN_TEMPLATES: LazyLock<OwnTemplates> = LazyLock::new(|| OwnTemplates {
-    facts: own_template!("parts/facts.md"),
-    spec_change: own_template!("parts/spec-change.md"),
-    cut_issue: own_template!("parts/cut-issue.md"),
-    new_branch: own_template!("parts/new-branch.md"),
-    existing_branch: own_template!("parts/existing-branch.md"),
-    unfinished: own_template!("parts/unfinished.md"),
-    unfinished_or_discard: own_template!("parts/unfinished-or-discard.md"),
-    conflict_rebase: own_template!("parts/conflict-rebase.md"),
-    conflict_merge: own_template!("parts/conflict-merge.md"),
-    history_series: own_template!("parts/history-series.md"),
-    history_on_top: own_template!("parts/history-on-top.md"),
-    update_rebase: own_template!("parts/update-rebase.md"),
-    update_merge: own_template!("parts/update-merge.md"),
-    full_log: own_template!("parts/full-log.md"),
-    filed_gaps: own_template!("parts/filed-gaps.md"),
-    fold_unfinished: own_template!("parts/fold-unfinished.md"),
-    held_secret: own_template!("parts/held-credential.md"),
-    pushed_secret: own_template!("parts/pushed-secret.md"),
-    attachments: own_template!("parts/attachments.md"),
-    attachment_secret: own_template!("parts/attachment-secret.md"),
-    attachment_refused: own_template!("parts/attachment-refused.md"),
-    triage_output: own_template!("outputs/triage.md"),
-    design_output: own_template!("outputs/design.md"),
-    implement_output: own_template!("outputs/implement.md"),
-    rework_output: own_template!("outputs/rework.md"),
-    fix_ci_output: own_template!("outputs/fix-ci.md"),
-    update_output: own_template!("outputs/update.md"),
-    automation_output: own_template!("outputs/automation.md"),
-    judge: own_template!("judge.md"),
-    replay_output: own_template!("parts/replay-output.md"),
-    judge_output: own_template!("outputs/judge.md"),
-});
+/// A file of the brief: its path under `briefs/`, the runs that read it, how
+/// its text ends and its text as Linewright ships it.
+struct File {
+    path: &'static str,
+    readers: Readers,
+    ending: Ending,
+    shipped: &'static str,
+}
 
-impl Prompts {
-    /// The prompts, each from `lookup`'s text for its path under the prompts' root,
-    /// or the text Linewright ships where it has none, and the paths whose
-    /// text does not parse, with why, each of which takes the shipped text.
+/// How much of a file's text is used.
+#[derive(Clone, Copy)]
+enum Ending {
+    /// All of it: a stage's or an automation's first message, as written.
+    AsWritten,
+    /// All but its trailing newline, as it is filled into another or follows
+    /// a first message.
+    Trimmed,
+}
+
+impl Templates {
+    /// The templates, each from `lookup`'s text for its path under
+    /// `briefs/`, or the text Linewright ships where it has none, and the
+    /// paths whose text does not parse, with why, each of which takes the
+    /// shipped text.
     pub fn read<'a>(
         lookup: &mut dyn FnMut(&'static str) -> Option<&'a str>,
-    ) -> (Prompts, Vec<(&'static str, anyhow::Error)>) {
+    ) -> (Templates, Vec<(&'static str, anyhow::Error)>) {
         let mut reader = Reader {
             lookup,
             unusable: Vec::new(),
-            layout: Vec::new(),
         };
-        let prompts = Prompts::build(&mut reader);
-        (prompts, reader.unusable)
+        let templates = Templates::build(&mut reader);
+        (templates, reader.unusable)
     }
 
-    /// The path under the prompts' root of every prompt a layer may override,
-    /// with the runs it is sent to: the table that says which runs a file holds
-    /// (docs/specs/repository.md, "Linewright's files").
-    fn layout() -> &'static [(&'static str, Readers)] {
-        static LAYOUT: LazyLock<Vec<(&'static str, Readers)>> = LazyLock::new(|| {
-            let mut reader = Reader {
-                lookup: &mut |_| None,
-                unusable: Vec::new(),
-                layout: Vec::new(),
-            };
-            Prompts::build(&mut reader);
-            reader.layout
-        });
-        &LAYOUT
-    }
-
-    fn build(reader: &mut Reader) -> Prompts {
-        Prompts {
-            triage: template!(reader, "triage.md", TRIAGE),
-            design: template!(reader, "design.md", DESIGN),
-            implement: template!(reader, "implement.md", IMPLEMENT),
-            rework: template!(reader, "rework.md", REWORK),
-            fix_ci: template!(reader, "fix-ci.md", FIX_CI),
-            update: template!(reader, "update.md", UPDATE),
-            automation: template!(reader, "automation.md", AUTOMATIONS),
-            result_error: template!(reader, "follow-ups/result-error.md", Readers::Every),
-            loose_ends: template!(reader, "follow-ups/loose-ends.md", BRANCH_WORK),
-            usage_limit_reset: template!(reader, "follow-ups/usage-limit-reset.md", Readers::Every),
-            late_feedback: template!(reader, "follow-ups/late-feedback.md", PULL_WORK),
-        }
-    }
-
-    /// The path under the prompts' root of every prompt a layer may override.
-    pub fn paths() -> Vec<&'static str> {
-        Prompts::layout().iter().map(|(path, _)| *path).collect()
+    /// The path under `briefs/` of every template.
+    pub fn paths() -> impl Iterator<Item = &'static str> {
+        TABLE.iter().map(|file| file.path)
     }
 }
 
-/// The runs the template at `path` under the prompts' root is sent to, or `None`
-/// for a path that is no template's.
+/// The runs the template at `path` under `briefs/` is sent to, or `None` for
+/// a path that is no template's: the table that says which runs a file holds
+/// (docs/specs/repository.md, "Linewright's files").
 pub fn readers(path: &str) -> Option<Readers> {
-    Prompts::layout()
-        .iter()
-        .find_map(|(p, readers)| (*p == path).then_some(*readers))
+    file(path).map(|file| file.readers)
+}
+
+/// The file of [`TABLE`] at `path` under `briefs/`, if there is one.
+fn file(path: &str) -> Option<&'static File> {
+    TABLE.iter().find(|file| file.path == path)
 }
 
 /// Which runs a brief file is sent to, and so which runs a file that cannot
@@ -614,6 +566,8 @@ pub enum Readers {
 pub enum Reads {
     Stage(WorkKind),
     Automations,
+    /// The judge of a replay (docs/specs/benchmarks.md, "Judging").
+    Judge,
 }
 
 impl Readers {
@@ -623,7 +577,7 @@ impl Readers {
             Readers::Only(reads) => reads.iter().any(|reads| match (reads, run) {
                 (Reads::Stage(kind), RunKind::Stage(run)) => kind == run,
                 (Reads::Automations, RunKind::Automation(_)) => true,
-                (_, RunKind::Judge) => false,
+                (Reads::Judge, RunKind::Judge) => true,
                 _ => false,
             }),
         }
@@ -637,6 +591,12 @@ const REWORK: Readers = Readers::Only(&[Reads::Stage(WorkKind::Rework)]);
 const FIX_CI: Readers = Readers::Only(&[Reads::Stage(WorkKind::FixCi)]);
 const UPDATE: Readers = Readers::Only(&[Reads::Stage(WorkKind::Update)]);
 const AUTOMATIONS: Readers = Readers::Only(&[Reads::Automations]);
+const JUDGE: Readers = Readers::Only(&[Reads::Judge]);
+/// The runs that rework a pull request or fix its CI.
+const FIXES: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+]);
 const PULL_WORK: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::Rework),
     Reads::Stage(WorkKind::FixCi),
@@ -649,30 +609,42 @@ const BRANCH_WORK: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::FixCi),
     Reads::Stage(WorkKind::Update),
 ]);
+/// The runs that are sent the spec gaps filed for their item: design's, and
+/// those that work on a ticket's branch.
+const TICKET_WORK: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Design),
+    Reads::Stage(WorkKind::Implement),
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+]);
+/// The runs whose result may attach files: every stage's and every
+/// automation's.
+const ATTACHING: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Triage),
+    Reads::Stage(WorkKind::Design),
+    Reads::Stage(WorkKind::Implement),
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+    Reads::Automations,
+]);
 
-/// The templates read from a lookup: each read one's path with the runs it is
-/// sent to, and the paths whose text could not be used, with why.
+/// The templates read from a lookup, and the paths whose text could not be
+/// used, with why.
 struct Reader<'l, 'a> {
     lookup: &'l mut dyn FnMut(&'static str) -> Option<&'a str>,
     unusable: Vec<(&'static str, anyhow::Error)>,
-    layout: Vec<(&'static str, Readers)>,
 }
 
 impl Reader<'_, '_> {
-    /// The template at `path`, which ships as `shipped`. A follow-up is used
-    /// without its trailing newline.
-    fn read<V: Values>(
-        &mut self,
-        path: &'static str,
-        readers: Readers,
-        shipped: &str,
-    ) -> Template<V> {
-        self.layout.push((path, readers));
+    /// The template at `path` under `briefs/`, one of [`TABLE`]'s.
+    fn read<V: Values>(&mut self, path: &'static str) -> Template<V> {
+        let file = file(path).expect("every template is in the table");
         let parse = |text: &str| {
-            let text = if path.contains('/') {
-                text.trim_end()
-            } else {
-                text
+            let text = match file.ending {
+                Ending::AsWritten => text,
+                Ending::Trimmed => text.trim_end(),
             };
             Template::parse(text.to_string())
         };
@@ -682,15 +654,15 @@ impl Reader<'_, '_> {
                 Err(error) => self.unusable.push((path, error)),
             }
         }
-        parse(shipped).expect("the shipped prompts have their values' placeholders")
+        parse(file.shipped).expect("the shipped templates have their values' placeholders")
     }
 }
 
 /// The values every first-message prompt shares, its facts filled from
 /// `parts/facts.md`.
-fn shared(repo: &Repo) -> Shared {
+fn shared(templates: &Templates, repo: &Repo) -> Shared {
     Shared {
-        facts: OWN_TEMPLATES.facts.fill(&Facts {
+        facts: templates.facts.fill(&Facts {
             repo: repo.name.to_string(),
             default_branch: repo.default_branch.into(),
             spec_glob: repo.spec_glob.into(),
@@ -699,7 +671,7 @@ fn shared(repo: &Repo) -> Shared {
 }
 
 pub fn triage(
-    prompts: &Prompts,
+    templates: &Templates,
     repo: &Repo,
     issue: &Issue,
     categories: &[String],
@@ -707,8 +679,8 @@ pub fn triage(
 ) -> String {
     let mut rendered = String::new();
     write_issue(&mut rendered, "The issue", issue);
-    prompts.triage.fill(&Triage {
-        base: shared(repo),
+    templates.triage.fill(&Triage {
+        base: shared(templates, repo),
         categories: categories
             .iter()
             .map(|c| format!("`{c}`"))
@@ -716,7 +688,8 @@ pub fn triage(
             .join(", "),
         issue: rendered.trim_end().into(),
         output: with_attachments(
-            &OWN_TEMPLATES.triage_output.fill(&TriageOutput {
+            templates,
+            &templates.triage_output.fill(&TriageOutput {
                 category_choices: categories
                     .iter()
                     .map(|c| format!("\"{c}\""))
@@ -755,7 +728,7 @@ pub struct SpecChangeAndDiff {
 /// asks, followed for a spec change's issue by its `spec_change`
 /// (docs/specs/design.md, "The session").
 pub fn design_issue(
-    prompts: &Prompts,
+    templates: &Templates,
     repo: &Repo,
     issue: &Issue,
     spec_change: Option<&SpecChangeAndDiff>,
@@ -768,6 +741,7 @@ pub fn design_issue(
         None => DesignOf::Issue,
         Some(spec_change) => {
             item.push_str(&render_spec_change(
+                templates,
                 repo,
                 &spec_change.spec_change,
                 &spec_change.diff,
@@ -775,18 +749,23 @@ pub fn design_issue(
             DesignOf::SpecChange
         }
     };
-    prompts.design.fill(&Design {
-        base: shared(repo),
+    templates.design.fill(&Design {
+        base: shared(templates, repo),
         kind: of.noun().into(),
         item: item.trim_end().into(),
-        filed_gaps: render_filed_gaps(filed_gaps),
-        cutting: OWN_TEMPLATES.cut_issue.fill(&NoValues {}),
-        output: design_output(of, attachments),
+        filed_gaps: render_filed_gaps(templates, filed_gaps),
+        cutting: templates.cut_issue.fill(&NoValues {}),
+        output: design_output(templates, of, attachments),
     })
 }
 
-fn render_spec_change(repo: &Repo, spec_change: &MergedPull, diff: &str) -> String {
-    OWN_TEMPLATES.spec_change.fill(&SpecChange {
+fn render_spec_change(
+    templates: &Templates,
+    repo: &Repo,
+    spec_change: &MergedPull,
+    diff: &str,
+) -> String {
+    templates.spec_change.fill(&SpecChange {
         default_branch: repo.default_branch.into(),
         number: spec_change.number.to_string(),
         title: spec_change.title.clone(),
@@ -796,9 +775,10 @@ fn render_spec_change(repo: &Repo, spec_change: &MergedPull, diff: &str) -> Stri
     })
 }
 
-fn design_output(of: DesignOf, attachments: &Path) -> String {
+fn design_output(templates: &Templates, of: DesignOf, attachments: &Path) -> String {
     with_attachments(
-        &OWN_TEMPLATES.design_output.fill(&DesignOutput {
+        templates,
+        &templates.design_output.fill(&DesignOutput {
             kind: of.noun().into(),
         }),
         attachments,
@@ -808,8 +788,8 @@ fn design_output(of: DesignOf, attachments: &Path) -> String {
 /// A stage's result contract `output`, followed by the attachments
 /// contract naming the session's `attachments` directory and the kinds of
 /// file Linewright attaches (docs/specs/runs.md, "Every prompt").
-fn with_attachments(output: &str, attachments: &Path) -> String {
-    let contract = OWN_TEMPLATES.attachments.fill(&Attachments {
+fn with_attachments(templates: &Templates, output: &str, attachments: &Path) -> String {
+    let contract = templates.attachments.fill(&Attachments {
         directory: attachments.display().to_string(),
         kinds: crate::attachments::attachable(),
         videos: crate::attachments::videos(),
@@ -818,7 +798,7 @@ fn with_attachments(output: &str, attachments: &Path) -> String {
 }
 
 pub fn implement(
-    prompts: &Prompts,
+    templates: &Templates,
     repo: &Repo,
     ticket: &Ticket,
     branch: &str,
@@ -826,34 +806,30 @@ pub fn implement(
     attachments: &Path,
 ) -> String {
     let holding = match start {
-        BranchStart::New => OWN_TEMPLATES.new_branch.fill(&DefaultBranch {
+        BranchStart::New => templates.new_branch.fill(&DefaultBranch {
             default_branch: repo.default_branch.into(),
         }),
-        BranchStart::Existing { unfinished } => {
-            OWN_TEMPLATES.existing_branch.fill(&ExistingBranch {
-                default_branch: repo.default_branch.into(),
-                unfinished: unfinished_sentence(
-                    &OWN_TEMPLATES.unfinished_or_discard,
-                    unfinished.as_ref(),
-                ),
-            })
-        }
+        BranchStart::Existing { unfinished } => templates.existing_branch.fill(&ExistingBranch {
+            default_branch: repo.default_branch.into(),
+            unfinished: unfinished_sentence(&templates.unfinished_or_discard, unfinished.as_ref()),
+        }),
     };
-    prompts.implement.fill(&Implement {
-        base: shared(repo),
+    templates.implement.fill(&Implement {
+        base: shared(templates, repo),
         default_branch: repo.default_branch.into(),
         branch: branch.into(),
         holding,
-        ticket: render_ticket(ticket),
+        ticket: render_ticket(templates, ticket),
         output: with_attachments(
-            &OWN_TEMPLATES.implement_output.fill(&NoValues {}),
+            templates,
+            &templates.implement_output.fill(&NoValues {}),
             attachments,
         ),
     })
 }
 
 pub fn pull_work(
-    prompts: &Prompts,
+    templates: &Templates,
     repo: &Repo,
     ticket: &Ticket,
     pr: &Pull,
@@ -862,22 +838,22 @@ pub fn pull_work(
     attachments: &Path,
 ) -> String {
     let pull_request = |conflict: String, output: &Template<NoValues>| PullRequest {
-        base: shared(repo),
+        base: shared(templates, repo),
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
         pr_title: pr.title.clone(),
-        unfinished: unfinished_sentence(&OWN_TEMPLATES.unfinished, unfinished),
+        unfinished: unfinished_sentence(&templates.unfinished, unfinished),
         conflict,
         description: or_none(&pr.body).into(),
-        ticket: render_ticket(ticket),
-        output: with_attachments(&output.fill(&NoValues {}), attachments),
+        ticket: render_ticket(templates, ticket),
+        output: with_attachments(templates, &output.fill(&NoValues {}), attachments),
     };
     let first_update = |conflict: Option<&Conflict>| {
         conflict
             .map(|c| {
                 stopped(
-                    &OWN_TEMPLATES.conflict_rebase,
-                    &OWN_TEMPLATES.conflict_merge,
+                    &templates.conflict_rebase,
+                    &templates.conflict_merge,
                     repo,
                     c,
                 )
@@ -886,8 +862,8 @@ pub fn pull_work(
     };
     let history = |history: &History| {
         match history {
-            History::Series => &OWN_TEMPLATES.history_series,
-            History::OnTop => &OWN_TEMPLATES.history_on_top,
+            History::Series => &templates.history_series,
+            History::OnTop => &templates.history_on_top,
         }
         .fill(&NoValues {})
     };
@@ -898,8 +874,8 @@ pub fn pull_work(
             history: how,
         } => {
             let (feedback, conversation) = render_feedback(pr, feedback);
-            prompts.rework.fill(&Rework {
-                base: pull_request(first_update(*conflict), &OWN_TEMPLATES.rework_output),
+            templates.rework.fill(&Rework {
+                base: pull_request(first_update(*conflict), &templates.rework_output),
                 history: history(how),
                 feedback,
                 conversation,
@@ -909,19 +885,19 @@ pub fn pull_work(
             failures,
             conflict,
             history: how,
-        } => prompts.fix_ci.fill(&FixCi {
-            base: pull_request(first_update(*conflict), &OWN_TEMPLATES.fix_ci_output),
+        } => templates.fix_ci.fill(&FixCi {
+            base: pull_request(first_update(*conflict), &templates.fix_ci_output),
             history: history(how),
-            failures: render_failures(failures),
+            failures: render_failures(templates, failures),
         }),
-        PullTask::Update(conflict) => prompts.update.fill(&pull_request(
+        PullTask::Update(conflict) => templates.update.fill(&pull_request(
             stopped(
-                &OWN_TEMPLATES.update_rebase,
-                &OWN_TEMPLATES.update_merge,
+                &templates.update_rebase,
+                &templates.update_merge,
                 repo,
                 conflict,
             ),
-            &OWN_TEMPLATES.update_output,
+            &templates.update_output,
         )),
     }
 }
@@ -965,18 +941,19 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
 }
 
 pub fn automation(
-    prompts: &Prompts,
+    templates: &Templates,
     repo: &Repo,
     automation: &Automation,
     attachments: &Path,
 ) -> String {
-    prompts.automation.fill(&AutomationRun {
-        base: shared(repo),
+    templates.automation.fill(&AutomationRun {
+        base: shared(templates, repo),
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
         output: with_attachments(
-            &OWN_TEMPLATES.automation_output.fill(&NoValues {}),
+            templates,
+            &templates.automation_output.fill(&NoValues {}),
             attachments,
         ),
     })
@@ -986,28 +963,34 @@ pub fn automation(
 /// case's `criteria`, and where the parts of the replay's output are in the
 /// judge's copy `replay` (`docs/specs/benchmarks.md`, Judging).
 /// Its result contract has nothing on attachments.
-pub fn judge(repo: &Repo, stage: WorkKind, criteria: &Criteria, replay: &ReplayCopy) -> String {
-    OWN_TEMPLATES.judge.fill(&Judge {
-        base: shared(repo),
+pub fn judge(
+    templates: &Templates,
+    repo: &Repo,
+    stage: WorkKind,
+    criteria: &Criteria,
+    replay: &ReplayCopy,
+) -> String {
+    templates.judge.fill(&Judge {
+        base: shared(templates, repo),
         stage: stage.name().into(),
         criteria: criteria.as_str().trim_end().into(),
-        replay: OWN_TEMPLATES.replay_output.fill(&ReplayOutput {
+        replay: templates.replay_output.fill(&ReplayOutput {
             outcome: replay.outcome().display().to_string(),
             sessions: replay.sessions().display().to_string(),
             writes: replay.writes().display().to_string(),
         }),
-        output: OWN_TEMPLATES.judge_output.fill(&NoValues {}),
+        output: templates.judge_output.fill(&NoValues {}),
     })
 }
 
-pub fn result_error(prompts: &Prompts, error: &str) -> String {
-    prompts.result_error.fill(&ResultError {
+pub fn result_error(templates: &Templates, error: &str) -> String {
+    templates.result_error.fill(&ResultError {
         error: error.into(),
     })
 }
 
-pub fn loose_ends(prompts: &Prompts, problem: &str) -> String {
-    prompts.loose_ends.fill(&LooseEnds {
+pub fn loose_ends(templates: &Templates, problem: &str) -> String {
+    templates.loose_ends.fill(&LooseEnds {
         problem: problem.into(),
     })
 }
@@ -1026,10 +1009,10 @@ pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
 
 /// What a `done` answer is sent back with while the branch still holds the
 /// `unfinished` commits.
-pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> String {
+pub fn fold_unfinished(templates: &Templates, unfinished: &UnfinishedCommits) -> String {
     loose_ends(
-        prompts,
-        &OWN_TEMPLATES.fold_unfinished.fill(&Commits {
+        templates,
+        &templates.fold_unfinished.fill(&Commits {
             commits: unfinished_commits(unfinished),
         }),
     )
@@ -1037,10 +1020,10 @@ pub fn fold_unfinished(prompts: &Prompts, unfinished: &UnfinishedCommits) -> Str
 
 /// What a `done` answer is sent back with while its commits hold a
 /// secret, as `held` says.
-pub fn held_secret(prompts: &Prompts, held: &Held) -> String {
+pub fn held_secret(templates: &Templates, held: &Held) -> String {
     loose_ends(
-        prompts,
-        &OWN_TEMPLATES.held_secret.fill(&HeldSecret {
+        templates,
+        &templates.held_secret.fill(&HeldSecret {
             commit: held.commit.clone(),
             variable: held.variable.clone(),
             file: held.file.clone(),
@@ -1050,10 +1033,10 @@ pub fn held_secret(prompts: &Prompts, held: &Held) -> String {
 
 /// What a `done` answer is sent back with while GitHub's push protection
 /// refuses its push, finding `secrets`.
-pub fn pushed_secret(prompts: &Prompts, secrets: &FoundSecrets) -> String {
+pub fn pushed_secret(templates: &Templates, secrets: &FoundSecrets) -> String {
     loose_ends(
-        prompts,
-        &OWN_TEMPLATES.pushed_secret.fill(&PushedSecret {
+        templates,
+        &templates.pushed_secret.fill(&PushedSecret {
             secrets: secrets.to_string(),
         }),
     )
@@ -1061,10 +1044,10 @@ pub fn pushed_secret(prompts: &Prompts, secrets: &FoundSecrets) -> String {
 
 /// What a result is sent back with while the attachment `file` it refers to
 /// holds the secret of `variable`.
-pub fn attachment_secret(prompts: &Prompts, variable: &str, file: &Path) -> String {
+pub fn attachment_secret(templates: &Templates, variable: &str, file: &Path) -> String {
     loose_ends(
-        prompts,
-        &OWN_TEMPLATES.attachment_secret.fill(&AttachmentSecret {
+        templates,
+        &templates.attachment_secret.fill(&AttachmentSecret {
             variable: variable.into(),
             file: file.display().to_string(),
         }),
@@ -1073,23 +1056,23 @@ pub fn attachment_secret(prompts: &Prompts, variable: &str, file: &Path) -> Stri
 
 /// What a result is sent back with while GitHub refuses the attachment
 /// `file` it refers to, for `reason`.
-pub fn attachment_refused(prompts: &Prompts, file: &Path, reason: &str) -> String {
+pub fn attachment_refused(templates: &Templates, file: &Path, reason: &str) -> String {
     result_error(
-        prompts,
-        &OWN_TEMPLATES.attachment_refused.fill(&AttachmentRefused {
+        templates,
+        &templates.attachment_refused.fill(&AttachmentRefused {
             file: file.display().to_string(),
             reason: reason.into(),
         }),
     )
 }
 
-pub fn usage_limit_reset(prompts: &Prompts) -> String {
-    prompts.usage_limit_reset.fill(&NoValues {})
+pub fn usage_limit_reset(templates: &Templates) -> String {
+    templates.usage_limit_reset.fill(&NoValues {})
 }
 
-pub fn late_feedback(prompts: &Prompts, pr: &Pull, feedback: &Feedback) -> String {
+pub fn late_feedback(templates: &Templates, pr: &Pull, feedback: &Feedback) -> String {
     let (feedback, conversation) = render_feedback(pr, feedback);
-    prompts.late_feedback.fill(&LateFeedback {
+    templates.late_feedback.fill(&LateFeedback {
         feedback,
         conversation,
     })
@@ -1124,7 +1107,7 @@ fn write_comments(task: &mut String, heading: &str, comments: &[Comment]) {
 }
 
 /// The ticket as a task shows it, without trailing whitespace.
-fn render_ticket(ticket: &Ticket) -> String {
+fn render_ticket(templates: &Templates, ticket: &Ticket) -> String {
     let mut task = String::new();
     write_issue(&mut task, "The ticket", ticket.issue);
     if let Some(parent) = ticket.parent.as_deref() {
@@ -1151,12 +1134,12 @@ fn render_ticket(ticket: &Ticket) -> String {
             spec_diff.trim_end()
         );
     }
-    task.push_str(&render_filed_gaps(&ticket.filed_gaps));
+    task.push_str(&render_filed_gaps(templates, &ticket.filed_gaps));
     task.trim_end().to_string()
 }
 
 /// The spec gaps already filed for an item, or nothing when there are none.
-fn render_filed_gaps(filed_gaps: &[&Issue]) -> String {
+fn render_filed_gaps(templates: &Templates, filed_gaps: &[&Issue]) -> String {
     if filed_gaps.is_empty() {
         return String::new();
     }
@@ -1170,12 +1153,12 @@ fn render_filed_gaps(filed_gaps: &[&Issue]) -> String {
             gap.body.trim()
         );
     }
-    OWN_TEMPLATES.filed_gaps.fill(&FiledGapsPart {
+    templates.filed_gaps.fill(&FiledGapsPart {
         gaps: gaps.trim_end().into(),
     })
 }
 
-fn render_failures(failures: &[CheckFailure]) -> String {
+fn render_failures(templates: &Templates, failures: &[CheckFailure]) -> String {
     let mut task = String::new();
     for failure in failures {
         let _ = writeln!(
@@ -1190,7 +1173,7 @@ fn render_failures(failures: &[CheckFailure]) -> String {
             let _ = writeln!(
                 task,
                 "{}\n",
-                OWN_TEMPLATES.full_log.fill(&FullLog {
+                templates.full_log.fill(&FullLog {
                     job: full.job.to_string(),
                     repo: full.repo.clone(),
                 })
@@ -1262,15 +1245,5 @@ fn or_none(text: &str) -> &str {
         "_(empty)_"
     } else {
         text.trim()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_log::test]
-    fn linewrights_own_templates_have_their_values_placeholders() {
-        LazyLock::force(&OWN_TEMPLATES);
     }
 }

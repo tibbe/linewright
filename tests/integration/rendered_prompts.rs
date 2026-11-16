@@ -162,7 +162,7 @@ fn unfinished() -> UnfinishedCommits {
 fn triage_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::triage(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         &["bug".into(), "enhancement".into()],
@@ -176,7 +176,7 @@ fn triage_is_filled_as_before() {
 fn design_of_an_issue_is_filled_as_before() {
     let name = repo_name();
     let prompt = prompts::design_issue(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &issue(7, "Count the widgets", "They are not counted."),
         None,
@@ -220,7 +220,7 @@ fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
     };
     let gap = issue(9, "Which widgets count?", "Say which.");
     let prompt = prompts::design_issue(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &its_issue,
         Some(&SpecChangeAndDiff {
@@ -245,7 +245,7 @@ fn implement_is_filled_as_before() {
         vec![],
     ));
     let prompt = prompts::implement(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         "7-count-the-widgets",
@@ -274,7 +274,7 @@ fn rework_is_filled_as_before() {
         files: vec!["src/count.rs".into()],
     };
     let prompt = prompts::pull_work(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         &pr,
@@ -305,7 +305,7 @@ fn fix_ci_is_filled_as_before() {
         log: None,
     }];
     let prompt = prompts::pull_work(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -331,7 +331,7 @@ fn update_is_filled_as_before() {
         files: vec!["src/count.rs".into(), "Cargo.lock".into()],
     };
     let prompt = prompts::pull_work(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -352,7 +352,7 @@ fn automation_is_filled_as_before() {
     )
     .unwrap();
     let prompt = prompts::automation(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &automation,
         std::path::Path::new(ATTACHMENTS),
@@ -380,7 +380,7 @@ fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and
         "+Widgets are counted.\n",
     );
     let prompt = prompts::implement(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         "7-count-the-widgets",
@@ -409,7 +409,7 @@ fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_it
         "+Widgets are counted.\n",
     );
     let prompt = prompts::implement(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         "7-spec-change-count-widgets",
@@ -443,7 +443,7 @@ fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
         created_at: created(),
     };
     let prompt = prompts::pull_work(
-        &common::placeholders_only().prompts,
+        &common::placeholders_only().templates,
         &repo(&name),
         &ticket,
         &pull(),
@@ -521,6 +521,7 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
     let name = repo_name();
     let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
     let prompt = prompts::judge(
+        &linewright::briefs::Briefs::shipped().templates,
         &repo(&name),
         linewright::reconcile::WorkKind::Implement,
         &criteria,
@@ -528,7 +529,7 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
     )
     .replace(into.to_str().unwrap(), "/work/replay");
 
-    let values = values_in(&prompt, read("briefs/judge.md").trim_end());
+    let values = values_in(&prompt, read("briefs/prompts/judge.md").trim_end());
 
     assert_filled_as(&values, "judge.txt");
 }

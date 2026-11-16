@@ -4785,7 +4785,7 @@ fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_i
             path: ".linewright/prompts/implement.md".into(),
             error: "the prompt has no `{{output}}`".into(),
         },
-        holds: prompts::readers("implement.md").unwrap(),
+        holds: prompts::readers("prompts/implement.md").unwrap(),
     };
 
     let decided = decisions(

@@ -518,7 +518,7 @@ async fn judge_in(
 }
 
 /// The judge's session in `sessions`, recorded in `record`, on what the
-/// replay left: sent the filled `briefs/judge.md`, until its result is
+/// replay left: sent the filled `briefs/prompts/judge.md`, until its result is
 /// accepted.
 async fn session(
     case: &Case,
@@ -551,9 +551,16 @@ async fn session(
         default_branch: &sessions.default_branch,
         spec_glob: config.spec_glob.pattern(),
     };
-    let (mut spec, _attachments) =
-        opened.spec(|_| prompts::judge(&repo, case.stage().kind(), case.criteria(), &copy));
     let briefs = &with.briefs;
+    let (mut spec, _attachments) = opened.spec(|_| {
+        prompts::judge(
+            &briefs.templates,
+            &repo,
+            case.stage().kind(),
+            case.criteria(),
+            &copy,
+        )
+    });
     let (result, _) =
         converse(
             sessions,

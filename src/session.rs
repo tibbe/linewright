@@ -218,11 +218,16 @@ impl Workspace {
     /// A session's clone in `clone_dir`: a copy of the environment with
     /// `branch` checked out in it, or a plain clone of `branch` without an
     /// environment (docs/specs/sessions.md, Environment, "A session's clone").
-    async fn make(sessions: &Sessions, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
+    async fn make(
+        sessions: &Sessions,
+        briefs: &Briefs,
+        clone_dir: CloneDir,
+        branch: &str,
+    ) -> Result<Workspace> {
         let Some(lease) = sessions.environment.lease() else {
-            return Workspace::clone_in(sessions, clone_dir, branch).await;
+            return Workspace::clone_in(sessions, briefs, clone_dir, branch).await;
         };
-        Workspace::create(sessions, clone_dir, async |dir| {
+        Workspace::create(sessions, briefs, clone_dir, async |dir| {
             lease.copy_to(dir).await?;
             drop(lease);
             git::configure(dir, &[KEEPS_REFLOGS]).await?;
@@ -239,11 +244,13 @@ impl Workspace {
     /// A clone of `branch` of its own, for work that needs no session.
     pub(crate) async fn clone(
         sessions: &Sessions,
+        briefs: &Briefs,
         purpose: &Purpose,
         branch: &str,
     ) -> Result<Workspace> {
         Workspace::clone_in(
             sessions,
+            briefs,
             Workspace::clone_dir(sessions, purpose).await?,
             branch,
         )
@@ -251,8 +258,13 @@ impl Workspace {
     }
 
     /// A plain clone of `branch` in `clone_dir`.
-    async fn clone_in(sessions: &Sessions, clone_dir: CloneDir, branch: &str) -> Result<Workspace> {
-        Workspace::create(sessions, clone_dir, async |dir| {
+    async fn clone_in(
+        sessions: &Sessions,
+        briefs: &Briefs,
+        clone_dir: CloneDir,
+        branch: &str,
+    ) -> Result<Workspace> {
+        Workspace::create(sessions, briefs, clone_dir, async |dir| {
             sessions
                 .store
                 .clone_repo(dir, branch, &[KEEPS_REFLOGS])
@@ -288,9 +300,10 @@ impl Workspace {
     /// A new workspace in `clone_dir`, whose repository `fill` makes at the
     /// path it is given, which does not exist yet. The repository is then
     /// given [`clone_config`], and the workspace a scratch directory and
-    /// Linewright's plugin.
+    /// the plugin of `briefs`.
     async fn create(
         sessions: &Sessions,
+        briefs: &Briefs,
         clone_dir: CloneDir,
         fill: impl AsyncFnOnce(&Path) -> Result<()>,
     ) -> Result<Workspace> {
@@ -302,7 +315,9 @@ impl Workspace {
             .await
             .context("creating a scratch directory")?;
         let plugin = clone_dir.path().join("plugin");
-        Briefs::write_plugin(&plugin).context("writing Linewright's plugin")?;
+        briefs
+            .write_plugin(&plugin)
+            .context("writing the brief's plugin")?;
         Ok(Workspace {
             leftovers: None,
             clone_dir,
@@ -471,7 +486,7 @@ impl From<anyhow::Error> for Rejection {
 
 /// Sends a result that does not parse back to the session with its `error`.
 pub(crate) fn parse_retry(briefs: &Briefs) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::retry(prompts::result_error(&briefs.prompts, &error))
+    |error| Rejection::retry(prompts::result_error(&briefs.templates, &error))
 }
 
 /// Runs a session until `accept` takes its result, in session, and `begin`
@@ -649,7 +664,7 @@ async fn take_turn(
         info!(subject, %resets_at, "usage limit reset; resuming the session");
         next = NextTurn::Resume {
             session,
-            prompt: prompts::usage_limit_reset(&ctx.with.briefs.prompts),
+            prompt: prompts::usage_limit_reset(&ctx.with.briefs.templates),
         };
     }
 }
@@ -793,7 +808,7 @@ async fn open_in<'a, T>(
     let making = async {
         let clone_dir = Workspace::clone_dir(sessions, &purpose).await?;
         repo = Some(Workspace::repo_in(clone_dir.path()));
-        let ws = Workspace::make(sessions, clone_dir, branch).await?;
+        let ws = Workspace::make(sessions, &ctx.with.briefs, clone_dir, branch).await?;
         let checked_out = check_out(&ws.dir).await?;
         Ok::<_, anyhow::Error>((ws, checked_out))
     };

@@ -69,7 +69,7 @@ fn section(failures: &[CheckFailure], name: &str) -> String {
         spec_glob: "docs/specs/**/*.md",
     };
     let brief = prompts::pull_work(
-        &crate::common::placeholders_only().prompts,
+        &crate::common::placeholders_only().templates,
         &repo,
         &ticket,
         &pull(),
