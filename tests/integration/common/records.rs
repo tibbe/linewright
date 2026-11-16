@@ -4,11 +4,10 @@ use std::path::Path;
 use linewright::database::Database;
 use linewright::runs::{RepoWorkDir, Runs};
 
-use super::{REPO, copy_dir, write_files};
+use super::{REPO, write_files};
 
 /// A work directory whose repository's directory holds each of `files`, a
-/// path under it and what it holds, as runs, or an earlier version, left
-/// them.
+/// path under it and what it holds, as runs left them.
 pub fn work_dir_holding(files: &[(&str, &str)]) -> (tempfile::TempDir, RepoWorkDir) {
     let base = tempfile::tempdir().unwrap();
     write_files(&base.path().join(REPO), files);
@@ -17,6 +16,36 @@ pub fn work_dir_holding(files: &[(&str, &str)]) -> (tempfile::TempDir, RepoWorkD
         repo: REPO.parse().unwrap(),
     };
     (base, work_dir)
+}
+
+/// A work directory as [`work_dir_holding`] makes it, whose database keeps
+/// each of `records`, a run's record in the form a run's record file has.
+#[track_caller]
+pub fn work_dir_keeping(
+    records: &[&str],
+    files: &[(&str, &str)],
+) -> impl Future<Output = (tempfile::TempDir, RepoWorkDir)> + use<> {
+    let caller = Location::caller();
+    let (base, work_dir) = work_dir_holding(files);
+    let records: Vec<serde_json::Value> = records
+        .iter()
+        .map(|record| {
+            serde_json::from_str(record)
+                .unwrap_or_else(|e| panic!("the record {record} at {caller}: {e}"))
+        })
+        .collect();
+    Box::pin(async move {
+        let dir = work_dir.resolve();
+        drop(
+            Database::open(&dir)
+                .await
+                .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}")),
+        );
+        for record in &records {
+            keep_record(&dir, record).await;
+        }
+        (base, work_dir)
+    })
 }
 
 /// The record of the run of `stage` on `item` numbered `n`, started at
@@ -40,8 +69,7 @@ pub fn item_run_record(
     .to_string()
 }
 
-/// The runs of the database of `work_dir`, made if there is none, which
-/// imports the runs kept there as files.
+/// The runs of the database of `work_dir`, made if there is none.
 #[track_caller]
 pub fn runs_in(work_dir: &Path) -> impl Future<Output = Runs> + use<> {
     let caller = Location::caller();
@@ -278,54 +306,5 @@ pub fn session_events(
                     .collect()
             })
             .collect()
-    }
-}
-
-/// The build that is the environment in `dir`, a directory under the work
-/// directory `work_dir`, as the database there names it: its number, commit,
-/// time and fingerprint, as an earlier release kept them in `state.json`.
-#[track_caller]
-pub fn environment_state(
-    work_dir: &Path,
-    dir: &str,
-) -> impl Future<Output = serde_json::Value> + use<> {
-    let caller = Location::caller();
-    let pool = back_door(work_dir);
-    let dir = dir.to_string();
-    async move {
-        let (id, commit, at, fingerprint): (i64, String, String, String) = sqlx::query_as(
-            "SELECT build, built_from, built_at, fingerprint FROM environments WHERE dir = ?",
-        )
-        .bind(&dir)
-        .fetch_one(&pool.await)
-        .await
-        .unwrap_or_else(|e| panic!("reading the state of {dir} at {caller}: {e}"));
-        serde_json::json!({"id": id, "commit": commit, "at": at, "fingerprint": fingerprint})
-    }
-}
-
-/// Leaves the environment in `dir` under the work directory `from` in the
-/// work directory `to`, as an earlier release that kept its state as files
-/// left it: its directory, holding the state `from`'s database names, and
-/// that its latest poll gave a setup command.
-#[track_caller]
-pub fn environment_as_an_earlier_release_left(
-    from: &Path,
-    dir: &str,
-    to: &Path,
-) -> impl Future<Output = ()> + use<> {
-    let state = environment_state(from, dir);
-    let (from, to) = (from.join(dir), to.join(dir));
-    async move {
-        let state = state.await;
-        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-        copy_dir(&from, &to);
-        write_files(
-            &to,
-            &[
-                ("state.json", &state.to_string()),
-                ("setup.json", r#"{"setup_command": true}"#),
-            ],
-        );
     }
 }

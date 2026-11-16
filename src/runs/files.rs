@@ -1,21 +1,17 @@
 //! The file form of a run: its record, and its sessions' directories, under
 //! a directory.
 
-use std::collections::HashSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use super::{
     Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, Running, SessionEntry, Started, StartedBy,
-    State, entries, is_locked, off_runtime,
+    State, entries, off_runtime,
 };
 use crate::domain::Timestamp;
-use crate::input::Input;
-use crate::reconcile::{OLD_DESIGN, WorkKind};
 use crate::records;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,27 +137,6 @@ impl RunFiles {
         }
     }
 
-    /// Where an earlier version kept the runs of `of`, if anywhere else.
-    fn old_place_of(&self, of: &RunOf) -> Option<OldPlace> {
-        match of {
-            RunOf::Work {
-                stage: WorkKind::Design,
-                ..
-            } => Some(OldPlace {
-                dir: self.dir_of(of),
-                prefix: format!("{OLD_DESIGN}-"),
-            }),
-            RunOf::Work { .. } => None,
-            RunOf::Automation { automation } => Some(OldPlace {
-                dir: self
-                    .runs_dir()
-                    .join(OLD_AUTOMATIONS)
-                    .join(automation.to_string()),
-                prefix: file_prefix(of),
-            }),
-        }
-    }
-
     /// Begins a run of `begin` here, which records no input, numbered after
     /// every run of the same item and stage, or of the same automation,
     /// with no two runs given the same number, even by two processes at
@@ -176,12 +151,7 @@ impl RunFiles {
         let dir = self.dir_of(&of);
         std::fs::create_dir_all(&dir).context("creating the runs' directory")?;
         let prefix = file_prefix(&of);
-        let old = self.old_place_of(&of);
-        let mut n = numbers(&dir, &prefix)
-            .chain(old.iter().flat_map(|old| numbers(&old.dir, &old.prefix)))
-            .max()
-            .unwrap_or(0)
-            + 1;
+        let mut n = numbers(&dir, &prefix).max().unwrap_or(0) + 1;
         let (lock, lock_path) = loop {
             let path = dir.join(format!("{prefix}{n}.lock"));
             match File::options().write(true).create_new(true).open(&path) {
@@ -208,7 +178,7 @@ impl RunFiles {
 
     /// Writes `recorded` here, each session's directory kept relative to
     /// this directory where it is under it. A run with no end is written
-    /// with none, and reads back as interrupted.
+    /// with none.
     pub fn write(&self, recorded: &Recorded) -> Result<()> {
         let path = self.record_path(&recorded.id);
         records::save(&path, &Record::of(recorded, &self.dir), "a run's record")
@@ -218,81 +188,13 @@ impl RunFiles {
     pub(super) fn record_path(&self, id: &RunId) -> PathBuf {
         self.dir_of(&id.of).join(record_file(id))
     }
-
-    /// A record that does not read is logged and taken as missing.
-    fn load(&self, path: &Path) -> Option<Recorded> {
-        let record = records::load::<Record>(path, "a run's record")?;
-        recorded(record, path, &self.dir)
-            .inspect_err(|e| warn!(path = %path.display(), error = e, "ignoring a run's record"))
-            .ok()
-    }
-
-    /// Every run whose record is here, where this release keeps it or
-    /// where an earlier one did, with the input it recorded. Of two records
-    /// of one run, the one where this release keeps it wins. A record or an
-    /// input that does not read is logged and skipped.
-    pub(crate) fn read_legacy(&self) -> Result<Vec<(Recorded, Option<Input>)>> {
-        let mut current = vec![];
-        let mut old = vec![];
-        for kind in ["items", AUTOMATIONS, OLD_AUTOMATIONS] {
-            for dir in entries(&self.runs_dir().join(kind))? {
-                if !dir.is_dir() {
-                    continue;
-                }
-                for path in entries(&dir)? {
-                    if path.extension().is_some_and(|e| e == "json")
-                        && !is_input(&path)
-                        && let Some(record) = self.load(&path)
-                    {
-                        let input = records::load(&input_path(&path), "a run's input");
-                        if path == self.record_path(&record.id) {
-                            current.push((record, input));
-                        } else {
-                            old.push((record, input));
-                        }
-                    }
-                }
-            }
-        }
-        let mut read = HashSet::new();
-        Ok(current
-            .into_iter()
-            .chain(old)
-            .filter(|(record, _)| read.insert(record.id.to_string()))
-            .collect())
-    }
 }
 
 const AUTOMATIONS: &str = "automations";
 
-/// Where versions before automations were renamed from workflows kept
-/// automations' runs: read beside [`AUTOMATIONS`], never written to.
-const OLD_AUTOMATIONS: &str = "workflows";
-
-/// Where an earlier version kept a run's records: their directory and the
-/// prefix of their files.
-struct OldPlace {
-    dir: PathBuf,
-    prefix: String,
-}
-
 fn record_file(id: &RunId) -> String {
     format!("{}{}.json", file_prefix(&id.of), id.n)
 }
-
-/// Where the input of the run whose record is at `record` is kept: beside
-/// it, as `<stage>-<n>.input.json`.
-fn input_path(record: &Path) -> PathBuf {
-    record.with_extension(INPUT_EXTENSION)
-}
-
-fn is_input(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(&format!(".{INPUT_EXTENSION}")))
-}
-
-const INPUT_EXTENSION: &str = "input.json";
 
 fn file_prefix(of: &RunOf) -> String {
     match of {
@@ -309,34 +211,4 @@ fn numbers(dir: &Path, prefix: &str) -> impl Iterator<Item = u32> {
             let stem = path.file_stem()?.to_str()?;
             stem.strip_prefix(prefix)?.parse().ok()
         })
-}
-
-/// The run whose record at `path` under `dir` is `record`.
-fn recorded(record: Record, path: &Path, dir: &Path) -> Result<Recorded, String> {
-    let state = match record.end {
-        Some(End { at, ending }) => State::Ended { at, ending },
-        None if is_locked(&path.with_extension("lock")) => State::InFlight,
-        None => State::Interrupted,
-    };
-    let id = RunId {
-        of: record.of,
-        n: record.n,
-    };
-    Ok(Recorded::new(
-        Started::new(id, record.started_by)?,
-        record.started_at,
-        state,
-        record
-            .sessions
-            .into_iter()
-            .map(|session| match session {
-                RecordedSession::Ran { dir: session, ran } => SessionEntry {
-                    dir: dir.join(session),
-                    ran: Some(ran),
-                },
-                RecordedSession::Dir(session) => dir.join(session).into(),
-            })
-            .collect(),
-        record.answered_until,
-    ))
 }

@@ -6,9 +6,8 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
-use crate::domain::{Number, Timestamp};
-use crate::environment::kept::{BuildId, Builds};
-use crate::pull_records::{FailedMerge, PullRecords};
+use crate::environment::kept::Builds;
+use crate::pull_records::PullRecords;
 use tokio::process::{Child, Command};
 
 /// The bytes of a database file's header that give its write and read
@@ -53,14 +52,10 @@ static WITH_NOTES: &[Migration] = &[RELEASES_TABLE, NOTES];
 static FAILING_AFTER_NOTES: &[Migration] = &[
     RELEASES_TABLE,
     NOTES,
-    Migration::Steps(|tx, _| {
-        Box::pin(async move {
-            sqlx::query("INSERT INTO notes (text) VALUES ('half done')")
-                .execute(&mut **tx)
-                .await?;
-            anyhow::bail!("the step fails")
-        })
-    }),
+    Migration::Sql(
+        "INSERT INTO notes (text) VALUES ('half done');
+        INSERT INTO missing (text) VALUES ('fails')",
+    ),
 ];
 
 #[test_log::test(tokio::test)]
@@ -258,84 +253,10 @@ fn a_local_directory_is_on_no_network_filesystem() {
     assert_eq!(network_filesystem(dir.path()), None);
 }
 
-/// The schema of the release before the one that keeps the bookkeeping in
-/// the database, which kept only the runs.
-fn runs_only() -> &'static [Migration] {
-    &MIGRATIONS[..2]
-}
-
-/// The work directory `dir`, its database made by the release before the
-/// one that keeps the bookkeeping, then each of `files`, a path under it and
-/// what it holds, written as that release left them.
-#[track_caller]
-fn upgraded_from<'a>(
-    dir: &'a Path,
-    files: &'a [(&str, &str)],
-) -> impl Future<Output = Database> + 'a {
-    let caller = Location::caller();
-    async move {
-        drop(
-            Database::open_in(dir, runs_only(), Absent::Make)
-                .await
-                .unwrap_or_else(|e| panic!("making the earlier database at {caller}: {e:#}")),
-        );
-        for (path, text) in files {
-            let path = dir.join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        }
-        Database::open(dir)
-            .await
-            .unwrap_or_else(|e| panic!("upgrading the database at {caller}: {e:#}"))
-    }
-}
-
 #[test_log::test(tokio::test)]
-async fn an_upgrade_keeps_the_record_of_linewrights_pull_requests_and_leaves_its_file() {
+async fn the_record_of_linewrights_pull_requests_reads_as_none_kept_until_one_is_saved() {
     let work_dir = tempfile::tempdir().unwrap();
-    let file = r#"{
-        "12": {"commented": "2026-10-01T10:00:00Z"},
-        "14": {"failed_merges": [
-            {"reason": "Head branch was modified.", "at": "2026-10-01T11:00:00Z"},
-            {"reason": "Pull Request is not mergeable", "at": "2026-10-01T11:05:00Z"}
-        ]}
-    }"#;
-
-    let db = upgraded_from(work_dir.path(), &[("pull-requests.json", file)]).await;
-
-    let records = PullRecords::load(&db).await.unwrap().expect("kept");
-    let at = |t: &str| t.parse::<Timestamp>().unwrap();
-    assert_eq!(
-        (
-            records.last_commented(Number(12)),
-            records.last_commented(Number(14)),
-            records.failed_merges(Number(12)),
-            records.failed_merges(Number(14)),
-        ),
-        (
-            Some(at("2026-10-01T10:00:00Z")),
-            None,
-            &[][..],
-            &[
-                FailedMerge {
-                    reason: "Head branch was modified.".into(),
-                    at: at("2026-10-01T11:00:00Z"),
-                },
-                FailedMerge {
-                    reason: "Pull Request is not mergeable".into(),
-                    at: at("2026-10-01T11:05:00Z"),
-                },
-            ][..],
-        )
-    );
-    assert!(work_dir.path().join("pull-requests.json").is_file());
-}
-
-#[test_log::test(tokio::test)]
-async fn an_upgrade_skips_a_record_of_linewrights_pull_requests_that_does_not_read_which_reads_as_none_kept_until_one_is_saved()
- {
-    let work_dir = tempfile::tempdir().unwrap();
-    let db = upgraded_from(work_dir.path(), &[("pull-requests.json", "not JSON")]).await;
+    let db = Database::open(work_dir.path()).await.unwrap();
 
     let before = PullRecords::load(&db).await.unwrap();
     PullRecords::default().save(&db).await.unwrap();
@@ -345,119 +266,58 @@ async fn an_upgrade_skips_a_record_of_linewrights_pull_requests_that_does_not_re
 }
 
 #[test_log::test(tokio::test)]
-async fn an_upgrade_keeps_each_automations_last_scheduled_run() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let file = r#"{"hourly": "2026-10-01T11:00:00Z", "daily": "2026-09-30T00:00:00Z"}"#;
-
-    let db = upgraded_from(work_dir.path(), &[("automation-runs.json", file)]).await;
-
-    let runs = LastScheduledRuns::load(&db).await.unwrap();
-    let at = |t: &str| t.parse::<Timestamp>().unwrap();
-    assert_eq!(
-        [
-            ("hourly", runs.get(&"hourly".parse().unwrap())),
-            ("daily", runs.get(&"daily".parse().unwrap()))
-        ],
-        [
-            ("hourly", Some(at("2026-10-01T11:00:00Z"))),
-            ("daily", Some(at("2026-09-30T00:00:00Z")))
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn an_upgrade_keeps_the_last_scheduled_runs_a_release_kept_before_automations_were_renamed_only_where_there_are_no_later_ones()
- {
-    let renamed = tempfile::tempdir().unwrap();
-    let not_renamed = tempfile::tempdir().unwrap();
-    let older = (
-        "workflow-runs.json",
-        r#"{"hourly": "2026-10-01T09:00:00Z"}"#,
-    );
-    let later = (
-        "automation-runs.json",
-        r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
-    );
-
-    let both = upgraded_from(renamed.path(), &[older, later]).await;
-    let only_older = upgraded_from(not_renamed.path(), &[older]).await;
-
-    let hourly = "hourly".parse().unwrap();
-    let at = |t: &str| t.parse::<Timestamp>().unwrap();
-    assert_eq!(
-        [
-            LastScheduledRuns::load(&both).await.unwrap().get(&hourly),
-            LastScheduledRuns::load(&only_older)
-                .await
-                .unwrap()
-                .get(&hourly),
-        ],
-        [
-            Some(at("2026-10-01T11:00:00Z")),
-            Some(at("2026-10-01T09:00:00Z"))
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn an_upgrade_keeps_the_build_that_is_each_environment_and_whether_there_is_a_setup_command()
+async fn a_new_database_keeps_none_of_the_records_linewright_0_22_0_kept_in_files_and_leaves_them()
 {
     let work_dir = tempfile::tempdir().unwrap();
-    let served = crate::environment::dir(work_dir.path());
-    let replayed = crate::environment::replays::dir(work_dir.path()).join("c0ffee-f1f1");
-    for build in [served.join("builds/3/repo"), replayed.join("builds/1/repo")] {
-        std::fs::create_dir_all(build).unwrap();
+    let files = [
+        (
+            "pull-requests.json",
+            r#"{"12": {"commented": "2026-10-01T10:00:00Z"}}"#,
+        ),
+        (
+            "automation-runs.json",
+            r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
+        ),
+        (
+            "environment/state.json",
+            r#"{"id": 3, "commit": "abc123", "at": "2026-10-01T10:00:00Z", "fingerprint": "f1f1"}"#,
+        ),
+        (
+            "runs/items/1/triage-1.json",
+            r#"{"item": 1, "stage": "triage", "n": 1, "started_at": "2026-10-14T12:00:00Z",
+                "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"}, "sessions": []}"#,
+        ),
+    ];
+    for (path, text) in files {
+        let path = work_dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
     }
-    let state = |id: u64, commit: &str| {
-        format!(
-            r#"{{"id": {id}, "commit": "{commit}", "at": "2026-10-01T10:00:00Z", "fingerprint": "f1f1"}}"#
-        )
-    };
-    let (served_state, replayed_state) = (state(3, "abc123"), state(1, "c0ffee"));
+    std::fs::create_dir_all(work_dir.path().join("environment/builds/3/repo")).unwrap();
 
-    let db = upgraded_from(
-        work_dir.path(),
-        &[
-            ("environment/state.json", &served_state),
-            ("environment/setup.json", r#"{"setup_command": true}"#),
-            (
-                "replays/environments/c0ffee-f1f1/state.json",
-                &replayed_state,
-            ),
-        ],
-    )
-    .await;
+    let db = Database::open(work_dir.path()).await.unwrap();
 
-    let [served, replayed] = [served, replayed].map(Builds::new);
-    let mut kept = vec![];
-    for builds in [&served, &replayed] {
-        let built = builds.named(&db).await.unwrap().expect("named");
-        kept.push((
-            built.id,
-            built.commit,
-            built.at.to_rfc3339(),
-            built.fingerprint.as_str().to_string(),
-            builds.setup_given(&db).await.unwrap(),
-        ));
-    }
-    let at = "2026-10-01T10:00:00+00:00".to_string();
+    let served = Builds::new(crate::environment::dir(work_dir.path()));
     assert_eq!(
-        kept,
-        [
-            (
-                "3".parse::<BuildId>().unwrap(),
-                "abc123".into(),
-                at.clone(),
-                "f1f1".into(),
-                Some(true)
-            ),
-            (
-                "1".parse::<BuildId>().unwrap(),
-                "c0ffee".into(),
-                at,
-                "f1f1".into(),
-                None
-            ),
-        ]
+        (
+            PullRecords::load(&db).await.unwrap(),
+            LastScheduledRuns::load(&db)
+                .await
+                .unwrap()
+                .get(&"hourly".parse().unwrap()),
+            served.named(&db).await.unwrap().map(|built| built.id),
+            crate::runs::Runs::new(db.clone())
+                .read()
+                .await
+                .unwrap()
+                .len(),
+        ),
+        (None, None, None, 0)
     );
+    for (path, text) in files {
+        assert_eq!(
+            std::fs::read_to_string(work_dir.path().join(path)).unwrap(),
+            text
+        );
+    }
 }

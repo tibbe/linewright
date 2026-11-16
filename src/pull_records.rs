@@ -4,31 +4,25 @@
 //! Working a pull request).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
-use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row as _, SqliteConnection};
 
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::{Login, Mergeability, Number, PullState, Snapshot, Timestamp};
-use crate::records;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PullRecords(BTreeMap<Number, PullRecord>);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct PullRecord {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     commented: Option<Timestamp>,
     /// Oldest first.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     failed_merges: Vec<FailedMerge>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailedMerge {
     /// GitHub's reason.
     pub reason: String,
@@ -169,20 +163,6 @@ impl PullRecords {
     }
 }
 
-/// Keeps the record an earlier release kept in `work_dir`, if it reads,
-/// logging and skipping one that does not.
-pub(crate) async fn import(conn: &mut SqliteConnection, work_dir: &Path) -> Result<()> {
-    let Some(records) = records::load::<PullRecords>(&legacy_path(work_dir), WHAT) else {
-        return Ok(());
-    };
-    records
-        .replace(conn)
-        .await
-        .context("importing the record of Linewright's pull requests")
-}
-
-const WHAT: &str = "the record of Linewright's pull requests";
-
 const READING: &str = "reading the record of Linewright's pull requests";
 
 const SAVING: &str = "recording Linewright's pull requests";
@@ -192,11 +172,4 @@ const KEPT: &str = "pull-records";
 
 fn pr_of(row: &SqliteRow) -> Result<Number> {
     Ok(Number(u64::try_from(row.try_get::<i64, _>("pr")?)?))
-}
-
-/// Where earlier releases kept the record. Not the requirements-keyed
-/// `held-for-review.json` a release before them kept, which reads as no
-/// record.
-fn legacy_path(work_dir: &Path) -> PathBuf {
-    work_dir.join("pull-requests.json")
 }

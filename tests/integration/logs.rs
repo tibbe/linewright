@@ -327,10 +327,8 @@ async fn a_run_recorded_before_sessions_kept_what_they_ran_with_shows_its_transc
         }),
         json!({"type": "result", "subtype": "success", "is_error": false, "result": "Renamed it."}),
     ]);
-    let (_base, work_dir) = work_dir_holding(&[
-        ("runs/items/5/rework-1.json", &record),
-        ("sessions/5/rework-1/output.jsonl", &output),
-    ]);
+    let (_base, work_dir) =
+        work_dir_keeping(&[&record], &[("sessions/5/rework-1/output.jsonl", &output)]).await;
 
     let transcript = logs::answer(Some(&runs_in(&work_dir.resolve()).await), &item(5))
         .await
@@ -374,7 +372,7 @@ async fn a_named_run_whose_record_does_not_read_fails_saying_why() {
 #[test_log::test(tokio::test)]
 async fn a_session_yet_to_write_anything_counts_as_started() {
     let record = item_run_record(1, "triage", 1, None, &json!(["sessions/1/triage-1"]));
-    let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
+    let (base, work_dir) = work_dir_keeping(&[&record], &[]).await;
     let repo_dir = base.path().join(REPO);
     std::fs::create_dir_all(repo_dir.join("sessions/1/triage-1")).unwrap();
     let _lock = lock_of(&repo_dir.join("runs/items/1/triage-1.json"));
@@ -411,17 +409,20 @@ async fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returne
     let shown = async |ending: Option<&str>| {
         let sessions = json!(["sessions/5/rework-1", "sessions/5/rework-1-2"]);
         let record = item_run_record(5, "rework", 1, ending, &sessions);
-        let (base, work_dir) = work_dir_holding(&[
-            ("runs/items/5/rework-1.json", &record),
-            (
-                "sessions/5/rework-1/output.jsonl",
-                &made("2026-10-14T12:00:05Z"),
-            ),
-            (
-                "sessions/5/rework-1-2/output.jsonl",
-                &made("2026-10-14T12:00:30Z"),
-            ),
-        ]);
+        let (base, work_dir) = work_dir_keeping(
+            &[&record],
+            &[
+                (
+                    "sessions/5/rework-1/output.jsonl",
+                    &made("2026-10-14T12:00:05Z"),
+                ),
+                (
+                    "sessions/5/rework-1-2/output.jsonl",
+                    &made("2026-10-14T12:00:30Z"),
+                ),
+            ],
+        )
+        .await;
         let _lock = ending
             .is_none()
             .then(|| lock_of(&base.path().join(REPO).join("runs/items/5/rework-1.json")));

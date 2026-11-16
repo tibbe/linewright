@@ -81,7 +81,7 @@ pub fn outlived(built: Option<Timestamp>, now: Timestamp, max_age: TimeDelta) ->
 
 /// Whether `name` is the name of an environment's directory set aside to be
 /// removed.
-pub(crate) fn is_set_aside(name: &std::ffi::OsStr) -> bool {
+fn is_set_aside(name: &std::ffi::OsStr) -> bool {
     name.to_str().is_some_and(|name| name.starts_with(REMOVED))
 }
 

@@ -58,7 +58,6 @@ async fn serve() -> Result<()> {
     let store =
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
-    seed::earlier_runs(&config.work_dir.join(seed::REPO))?;
     let winding_up = WindingUp::default();
     let url = format!("http://127.0.0.1:{port}/");
     serving::serve(

@@ -28,7 +28,6 @@ use crate::status::Paint;
 use crate::work_settings::{Effort, SessionSettings, Setting};
 use files::{End, Record, RecordedSession, RunFiles};
 use rows::{Change, RunRow};
-use sqlx::SqliteConnection;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -427,22 +426,6 @@ impl Runs {
     fn is_held(&self, id: &RunId) -> bool {
         is_locked(&lock_path(self.work_dir(), id))
     }
-}
-
-/// Keeps `recorded`, a run an earlier release kept as files in `work_dir`,
-/// with the input it recorded, in the database `conn` is a connection to.
-/// A run with no end is kept with none, and reads as interrupted.
-pub(crate) async fn import(
-    conn: &mut SqliteConnection,
-    work_dir: &Path,
-    recorded: &Recorded,
-    input: Option<&Input>,
-) -> Result<()> {
-    let row = rows::insert(&mut *conn, &Record::of(recorded, work_dir)).await?;
-    if let Some(input) = input {
-        rows::write_input(conn, row, input).await?;
-    }
-    Ok(())
 }
 
 /// Where the lock of run `id` is in `work_dir`.
@@ -1277,11 +1260,18 @@ mod tests {
         time.parse().unwrap()
     }
 
-    /// Writes `record` as the file `path` under `work_dir`, as a run left it.
-    fn left(work_dir: &Path, path: &str, record: &serde_json::Value) {
-        let path = work_dir.join(path);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, record.to_string()).unwrap();
+    /// Keeps `record` in the database of `runs`, as a run left it.
+    #[track_caller]
+    fn keep(runs: &Runs, record: serde_json::Value) -> impl Future<Output = ()> + '_ {
+        let caller = Location::caller();
+        async move {
+            let record: Record = serde_json::from_value(record)
+                .unwrap_or_else(|e| panic!("reading the record at {caller}: {e}"));
+            let mut conn = runs.db.pool().acquire().await.unwrap();
+            rows::insert(&mut conn, &record)
+                .await
+                .unwrap_or_else(|e| panic!("keeping the record at {caller}: {e:#}"));
+        }
     }
 
     fn ended(item: u64, stage: &str, n: u32) -> serde_json::Value {
@@ -1314,8 +1304,7 @@ mod tests {
         }
     }
 
-    /// The runs of the database of `work_dir`, which opening imports the
-    /// runs kept there as files.
+    /// The runs of the database of `work_dir`.
     #[track_caller]
     fn runs_in(work_dir: &Path) -> impl Future<Output = Runs> + '_ {
         let caller = Location::caller();
@@ -1334,18 +1323,31 @@ mod tests {
         }
     }
 
+    fn automation(name: &str, n: u32) -> serde_json::Value {
+        serde_json::json!({
+            "automation": name,
+            "n": n,
+            "started_by": "schedule",
+            "started_at": "2026-10-14T06:00:00Z",
+            "end": {"at": "2026-10-14T06:05:00Z", "ending": "done"},
+            "sessions": [],
+        })
+    }
+
     #[test_log::test(tokio::test)]
-    async fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item() {
+    async fn a_run_is_numbered_on_from_the_recorded_runs_of_its_stage_on_its_item_or_of_its_automation()
+     {
         let work_dir = tempfile::tempdir().unwrap();
-        for (path, item, stage, n) in [
-            ("runs/items/1/triage-1.json", 1, "triage", 1),
-            ("runs/items/1/triage-2.json", 1, "triage", 2),
-            ("runs/items/1/implement-1.json", 1, "implement", 1),
-            ("runs/items/3/rework-1.json", 3, "rework", 1),
-        ] {
-            left(work_dir.path(), path, &ended(item, stage, n));
-        }
         let runs = runs_in(work_dir.path()).await;
+        for (item, stage, n) in [
+            (1, "triage", 1),
+            (1, "triage", 2),
+            (1, "implement", 1),
+            (3, "rework", 1),
+        ] {
+            keep(&runs, ended(item, stage, n)).await;
+        }
+        keep(&runs, automation("weekly", 2)).await;
 
         let ids = begun(
             &runs,
@@ -1356,6 +1358,14 @@ mod tests {
                 work(3, WorkKind::Rework),
                 work(3, WorkKind::FixCi),
                 work(2, WorkKind::Triage),
+                Begin::Automation {
+                    automation: "weekly".parse().unwrap(),
+                    started_by: StartedBy::Hand,
+                },
+                Begin::Automation {
+                    automation: "daily".parse().unwrap(),
+                    started_by: StartedBy::Hand,
+                },
             ],
         )
         .await;
@@ -1369,165 +1379,10 @@ mod tests {
                 "3/rework-2",
                 "3/fix-ci-1",
                 "2/triage-1",
+                "weekly/3",
+                "daily/1",
             ]
         );
-    }
-
-    fn automation(name: &str, n: u32) -> serde_json::Value {
-        serde_json::json!({
-            "automation": name,
-            "n": n,
-            "started_by": "schedule",
-            "started_at": "2026-10-14T06:00:00Z",
-            "end": {"at": "2026-10-14T06:05:00Z", "ending": "done"},
-            "sessions": [],
-        })
-    }
-
-    /// The record of an automation's run as the version before automations
-    /// were renamed from workflows kept it.
-    fn workflow(name: &str, n: u32) -> serde_json::Value {
-        serde_json::json!({
-            "workflow": name,
-            "n": n,
-            "started_at": "2026-09-28T06:00:00Z",
-            "end": {"at": "2026-09-28T06:05:00Z", "ending": "done"},
-            "sessions": [],
-        })
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn a_run_is_numbered_on_from_its_runs_where_this_version_keeps_them_and_where_the_previous_did()
-     {
-        let work_dir = tempfile::tempdir().unwrap();
-        for (path, record) in [
-            ("runs/workflows/weekly/1.json", workflow("weekly", 1)),
-            ("runs/automations/weekly/2.json", automation("weekly", 2)),
-            ("runs/workflows/daily/4.json", workflow("daily", 4)),
-            ("runs/items/4/tickets-2.json", ended(4, "tickets", 2)),
-            ("runs/items/4/design-1.json", ended(4, "design", 1)),
-        ] {
-            left(work_dir.path(), path, &record);
-        }
-        let runs = runs_in(work_dir.path()).await;
-        let by_hand = |name: &str| Begin::Automation {
-            automation: name.parse().unwrap(),
-            started_by: StartedBy::Hand,
-        };
-
-        let ids = begun(
-            &runs,
-            vec![
-                by_hand("weekly"),
-                by_hand("daily"),
-                work(4, WorkKind::Design),
-            ],
-        )
-        .await;
-
-        assert_eq!(ids, ["weekly/3", "daily/5", "4/design-3"]);
-    }
-
-    /// The input of #1's triage run 2, as a run records it.
-    fn input() -> serde_json::Value {
-        serde_json::json!({
-            "api_version": "2022-11-28",
-            "start": "2026-10-14T12:00:00Z",
-            "items": [],
-            "heads": {"main": "0123456789abcdef0123456789abcdef01234567"},
-        })
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn opening_imports_the_runs_and_inputs_an_earlier_release_kept_as_files_and_leaves_them()
-    {
-        let work_dir = tempfile::tempdir().unwrap();
-        let mut interrupted = ended(1, "triage", 2);
-        interrupted["end"] = serde_json::Value::Null;
-        let mut handed_back_at_the_old_place = ended(4, "design", 1);
-        handed_back_at_the_old_place["end"]["ending"] = "handed-back".into();
-        for (path, record) in [
-            ("runs/items/1/triage-1.json", ended(1, "triage", 1)),
-            ("runs/items/1/triage-2.json", interrupted),
-            ("runs/items/1/triage-2.input.json", input()),
-            ("runs/items/4/design-1.json", ended(4, "design", 1)),
-            ("runs/items/4/tickets-1.json", handed_back_at_the_old_place),
-            ("runs/items/4/tickets-2.json", ended(4, "tickets", 2)),
-            ("runs/workflows/weekly/1.json", workflow("weekly", 1)),
-        ] {
-            left(work_dir.path(), path, &record);
-        }
-        left(
-            work_dir.path(),
-            "runs/items/3/rework-1.json",
-            &serde_json::json!("not a record"),
-        );
-        left(
-            work_dir.path(),
-            "runs/items/.DS_Store",
-            &serde_json::json!("not a run's directory"),
-        );
-        let files_before = files_under(work_dir.path());
-
-        let runs = runs_in(work_dir.path()).await;
-
-        let read: BTreeMap<String, State> = runs
-            .read()
-            .await
-            .unwrap()
-            .iter()
-            .map(|run| (run.id.to_string(), run.state))
-            .collect();
-        let done = |at: &str| State::Ended {
-            at: self::at(at),
-            ending: Ending::Done,
-        };
-        assert_eq!(
-            read,
-            BTreeMap::from([
-                ("1/triage-1".to_string(), done("2026-10-14T12:01:00Z")),
-                ("1/triage-2".to_string(), State::Interrupted),
-                ("4/design-1".to_string(), done("2026-10-14T12:01:00Z")),
-                ("4/design-2".to_string(), done("2026-10-14T12:01:00Z")),
-                ("weekly/1".to_string(), done("2026-09-28T06:05:00Z")),
-            ])
-        );
-        let triage = |n| RunId {
-            of: RunOf::Work {
-                item: Number(1),
-                stage: WorkKind::Triage,
-            },
-            n,
-        };
-        assert_eq!(
-            (
-                runs.read_input(&triage(2))
-                    .await
-                    .unwrap()
-                    .map(|input| serde_json::to_value(input).unwrap()["heads"].clone()),
-                runs.read_input(&triage(1)).await.unwrap(),
-            ),
-            (Some(input()["heads"].clone()), None)
-        );
-        assert!(files_under(work_dir.path()).is_superset(&files_before));
-    }
-
-    /// The files under `dir`, by their paths under it.
-    #[track_caller]
-    fn files_under(dir: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let mut files = std::collections::BTreeSet::new();
-        let mut dirs = vec![dir.to_path_buf()];
-        while let Some(next) = dirs.pop() {
-            for entry in std::fs::read_dir(next).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else {
-                    files.insert(path.strip_prefix(dir).unwrap().to_path_buf());
-                }
-            }
-        }
-        files
     }
 
     #[test_log::test(tokio::test)]
@@ -1738,7 +1593,8 @@ mod tests {
     }
 
     #[test_log::test]
-    fn runs_written_as_files_read_back_from_where_they_are_written() {
+    fn a_run_written_as_files_is_its_record_at_its_place_and_one_with_no_end_is_written_with_none()
+    {
         let out = tempfile::tempdir().unwrap();
         let session = out.path().join("sessions/7/implement-2");
         let handed_back = Recorded::new(
@@ -1764,23 +1620,33 @@ mod tests {
 
         files.write(&handed_back).unwrap();
         files.write(&in_flight(State::InFlight)).unwrap();
-        let mut read: Vec<Recorded> = files
-            .read_legacy()
-            .unwrap()
-            .into_iter()
-            .map(|(recorded, _)| recorded)
-            .collect();
 
-        sort_newest_first(&mut read);
-        assert_eq!(read, [in_flight(State::Interrupted), handed_back]);
-        let record: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(out.path().join("runs/items/7/implement-2.json")).unwrap(),
-        )
-        .unwrap();
+        let written = |path: &str| -> serde_json::Value {
+            serde_json::from_str(&std::fs::read_to_string(out.path().join(path)).unwrap()).unwrap()
+        };
         assert_eq!(
-            record["sessions"],
-            serde_json::json!(["sessions/7/implement-2"])
+            [
+                written("runs/items/7/implement-2.json"),
+                written("runs/automations/weekly/3.json"),
+            ],
+            [
+                serde_json::json!({
+                    "item": 7,
+                    "stage": "implement",
+                    "n": 2,
+                    "started_at": "2026-10-15T09:00:00Z",
+                    "end": {"at": "2026-10-15T09:05:00Z", "ending": "handed-back"},
+                    "sessions": ["sessions/7/implement-2"],
+                }),
+                serde_json::json!({
+                    "automation": "weekly",
+                    "n": 3,
+                    "started_by": "hand",
+                    "started_at": "2026-10-15T10:00:00Z",
+                    "end": null,
+                    "sessions": [],
+                }),
+            ]
         );
-        assert!(out.path().join("runs/automations/weekly/3.json").exists());
     }
 }

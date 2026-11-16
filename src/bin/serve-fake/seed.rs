@@ -2,7 +2,6 @@
 //! fake agent does in each stage.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use anyhow::Result;
 use linewright::domain::{Login, MergeMethods, Timestamp, label};
@@ -103,57 +102,6 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
     for title in ["Stack the board's lanes", "Shorten the cards' lines"] {
         let ticket = store.open_issue(LINEWRIGHT, title, "", &[label::NEEDS_INFO]);
         store.add_sub_issue_as(LINEWRIGHT, tracking, ticket)?;
-    }
-    Ok(())
-}
-
-/// Writes into `work_dir` the runs an earlier release kept there as files,
-/// the day before the clock starts: #3's, which was done, each where that
-/// release kept it, one at the place of a release before it, one that was
-/// interrupted, and a record that does not read.
-///
-/// # Errors
-///
-/// When a file cannot be written.
-pub fn earlier_runs(work_dir: &Path) -> Result<()> {
-    let ended = |stage: &str, n: u32, at: &str, ending: Option<&str>| {
-        json!({
-            "item": 3,
-            "stage": stage,
-            "n": n,
-            "started_at": format!("2026-03-01T{at}:00Z"),
-            "end": ending.map(|ending| json!({"at": format!("2026-03-01T{at}:30Z"), "ending": ending})),
-            "sessions": [],
-        })
-        .to_string()
-    };
-    let weekly = json!({
-        "workflow": "weekly",
-        "n": 1,
-        "started_at": "2026-03-01T06:00:00Z",
-        "end": {"at": "2026-03-01T06:05:00Z", "ending": "done"},
-        "sessions": [],
-    })
-    .to_string();
-    for (path, record) in [
-        (
-            "runs/items/3/triage-1.json",
-            ended("triage", 1, "10:00", Some("done")),
-        ),
-        (
-            "runs/items/3/tickets-1.json",
-            ended("design", 1, "11:00", Some("done")),
-        ),
-        (
-            "runs/items/3/triage-2.json",
-            ended("triage", 2, "12:00", None),
-        ),
-        ("runs/items/3/rework-1.json", "not a record".into()),
-        ("runs/workflows/weekly/1.json", weekly),
-    ] {
-        let path = work_dir.join(path);
-        std::fs::create_dir_all(path.parent().expect("a run's record is in a directory"))?;
-        std::fs::write(path, record)?;
     }
     Ok(())
 }

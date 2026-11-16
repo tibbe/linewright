@@ -2,25 +2,6 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use tracing::warn;
-
-/// The record at `path`, `None` when it is missing, and when it is
-/// unreadable, which is logged as ignoring `what`.
-pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(serde_json::from_str(&text)?)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
-pub(crate) fn load<T: DeserializeOwned>(path: &Path, what: &str) -> Option<T> {
-    read(path).unwrap_or_else(|e| {
-        warn!(path = %path.display(), error = format!("{e:#}"), "ignoring {what}");
-        None
-    })
-}
 
 /// Records `value` at `path`, whole: a crash leaves the old record or the
 /// new one.
