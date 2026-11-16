@@ -131,22 +131,29 @@ pub async fn setup_given(dir: &Path, db: Option<&Database>) -> Result<Option<boo
 
 /// What is kept of the environment under `dir`, whose state `db` keeps,
 /// where there is a database: `setup_command` is whether there is a setup
-/// command when no poll has said yet.
+/// command when no poll has said yet. The records are read before the name,
+/// since a build is named before its record ends: a build read as ended
+/// successfully is read named.
 pub async fn answer(
     dir: &Path,
     db: Option<&Database>,
     setup_command: bool,
 ) -> Result<EnvironmentAnswer> {
     let builds = Builds::new(dir.to_path_buf());
-    let (given, named) = match db {
-        Some(db) => (builds.setup_given(db).await?, builds.named(db).await?),
-        None => (None, None),
+    let given = match db {
+        Some(db) => builds.setup_given(db).await?,
+        None => None,
     };
     if !given.unwrap_or(setup_command) {
         return Ok(EnvironmentAnswer { environment: None });
     }
     let building = builds.is_building()?;
-    let mut shown = shown(building, named, builds.records()?);
+    let records = builds.records()?;
+    let named = match db {
+        Some(db) => builds.named(db).await?,
+        None => None,
+    };
+    let mut shown = shown(building, named, records);
     if let Some(build) = shown.builds.last_mut().filter(|build| build.in_progress()) {
         let mut following = FollowingBuild::start(dir, build.build, 0);
         let so_far = match following.read_output(false)? {

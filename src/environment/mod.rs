@@ -741,7 +741,8 @@ async fn build_locked(
             };
             let named = async {
                 kept::remove(&dir.join(kept::TMP))?;
-                builds.write_state(&builder.database, &built).await
+                builds.write_state(&builder.database, &built).await?;
+                record.save(&dir)
             };
             match named.await {
                 Ok(()) => {
@@ -751,11 +752,14 @@ async fn build_locked(
                 Err(e) => kept_error(builder, &mut record, &dir, &e),
             }
         }
-        Ok((_, ran)) => format!(
-            "the setup command {}; its output is in {}",
-            describe(ran.status, settings),
-            dir.join(kept::OUTPUT).display()
-        ),
+        Ok((_, ran)) => match record.save(&dir) {
+            Ok(()) => format!(
+                "the setup command {}; its output is in {}",
+                describe(ran.status, settings),
+                dir.join(kept::OUTPUT).display()
+            ),
+            Err(e) => kept_error(builder, &mut record, &dir, &e),
+        },
         Err(e) => kept_error(builder, &mut record, &dir, &e),
     };
     let removed = kept::remove(&dir.join(kept::REPO))
@@ -802,7 +806,10 @@ fn describe(status: Status, settings: &SetupSettings) -> String {
 
 /// Runs the setup command in a clone of the default branch in `dir`, at
 /// `start`, which keeps `record`, and returns the commit it cloned and how
-/// the command ran. Once the command ends, what it left running is ended.
+/// the command ran. Once the command ends, what it left running is ended,
+/// and `record` holds its end, which the caller keeps: a build that
+/// succeeded is named as the environment first, so that no reader finds it
+/// ended and the environment still none.
 async fn run(
     builder: &Builder,
     dir: &Path,
@@ -857,7 +864,6 @@ async fn run(
         duration_seconds: ran.duration.as_secs_f64(),
         output: ran.output.clone(),
     });
-    record.save(dir)?;
     Ok((commit, ran))
 }
 
