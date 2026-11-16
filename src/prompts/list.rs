@@ -1,19 +1,11 @@
 //! A list Linewright fills into a prompt (docs/specs/runs.md, "Contract").
 
-/// The word before a list's last item.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Conjunction {
-    And,
-    Or,
-}
-
 /// One or more items, each data in its form, such as `` `abc1234` `` or
 /// `"done"`, or a filled part. It has no text of its own: it is rendered by
 /// where its placeholder sits.
 pub(super) struct List {
     first: String,
     rest: Vec<String>,
-    conjunction: Conjunction,
 }
 
 /// Where a list's placeholder sits.
@@ -26,56 +18,28 @@ pub(super) enum Placement {
 }
 
 impl List {
-    pub(super) fn new(
-        first: String,
-        rest: impl IntoIterator<Item = String>,
-        conjunction: Conjunction,
-    ) -> List {
+    pub(super) fn new(first: String, rest: impl IntoIterator<Item = String>) -> List {
         List {
             first,
             rest: rest.into_iter().collect(),
-            conjunction,
         }
     }
 
     /// The `items` as a list, or `None` when there are none.
-    pub(super) fn of(
-        items: impl IntoIterator<Item = String>,
-        conjunction: Conjunction,
-    ) -> Option<List> {
+    pub(super) fn of(items: impl IntoIterator<Item = String>) -> Option<List> {
         let mut items = items.into_iter();
         let first = items.next()?;
-        Some(List::new(first, items, conjunction))
+        Some(List::new(first, items))
     }
 
-    /// Inline, the items joined with ", ", or with "; " where an item holds
-    /// a comma, and the last joined by the conjunction alone, as in "a, b and
-    /// c" or "a, b; c, d or e, f". Alone, a `- item` line per item, an
-    /// item's further lines indented under its bullet, with no line ending
-    /// after the last.
+    /// Inline, the items separated by ", ", as in "a, b, c". Alone, a
+    /// `- item` line per item, an item's further lines indented under its
+    /// bullet, with no line ending after the last.
     pub(super) fn render(&self, placement: Placement) -> String {
-        let items: Vec<&str> = std::iter::once(&self.first)
-            .chain(&self.rest)
-            .map(String::as_str)
-            .collect();
+        let items = std::iter::once(&self.first).chain(&self.rest);
         match placement {
-            Placement::Inline => match items.split_last() {
-                Some((last, leading)) if !leading.is_empty() => {
-                    let separator = if items.iter().any(|item| item.contains(',')) {
-                        "; "
-                    } else {
-                        ", "
-                    };
-                    let before_last = match self.conjunction {
-                        Conjunction::And => " and ",
-                        Conjunction::Or => " or ",
-                    };
-                    format!("{}{before_last}{last}", leading.join(separator))
-                }
-                _ => self.first.clone(),
-            },
+            Placement::Inline => items.map(String::as_str).collect::<Vec<_>>().join(", "),
             Placement::Alone => items
-                .iter()
                 .map(|item| {
                     let item = item.trim_end_matches(['\n', '\r']);
                     format!("- {}", item.replace('\n', "\n  "))

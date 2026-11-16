@@ -20,7 +20,7 @@ Seen it too.
 
 Store them in one table.» output=«[outputs/rework.md]
 
-[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]» history=«[parts/history-on-top.md]» feedback=«**@maintainer** (2026-10-01 12:00 UTC):
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`» videos=«`.mp4`, `.mov`, `.webm`»]» history=«[parts/history-on-top.md]» feedback=«**@maintainer** (2026-10-01 12:00 UTC):
 
 Name it `count`.» conversation=«**@maintainer** (2026-10-01 12:00 UTC):
 

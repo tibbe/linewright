@@ -14,4 +14,4 @@ Seen it too.
 
 Say which.»]» cutting=«[parts/cut-issue.md]» output=«[outputs/design.md kind=«spec change»]
 
-[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]»]
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`» videos=«`.mp4`, `.mov`, `.webm`»]»]

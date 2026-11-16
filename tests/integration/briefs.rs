@@ -305,9 +305,9 @@ fn attachments() -> String {
             ("directory", "/attachments"),
             (
                 "kinds",
-                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`",
+                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`",
             ),
-            ("videos", "`.mp4`, `.mov` or `.webm`"),
+            ("videos", "`.mp4`, `.mov`, `.webm`"),
         ],
     )
 }

@@ -20,4 +20,4 @@ This issue was opened for the spec change #5.
 +Widgets are counted.
 ```» output=«[outputs/implement.md]
 
-[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`» videos=«`.mp4`, `.mov` or `.webm`»]»]
+[parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`» videos=«`.mp4`, `.mov`, `.webm`»]»]

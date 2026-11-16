@@ -11,6 +11,7 @@ use linewright::attachments::BadReference;
 use linewright::git;
 use linewright::prompts::{self, LooseEnd, SentBack};
 use linewright::results::{ContractError, Mismatch, Mismatches, ParseError};
+use linewright::store::{FoundSecret, FoundSecrets};
 
 fn result_error(reason: &SentBack) -> String {
     prompts::result_error(&common::marker_briefs().templates, reason)
@@ -80,12 +81,12 @@ fn a_result_that_does_not_match_its_schema_is_sent_back_with_each_mismatch() {
             "parts/result-outcome.md",
             &[
                 ("outcome", r#""finished""#),
-                ("outcomes", r#""done" or "blocked""#),
+                ("outcomes", r#""done", "blocked""#),
             ],
         ),
         marker(
             "parts/result-outcome-missing.md",
-            &[("outcomes", r#""done" or "blocked""#)],
+            &[("outcomes", r#""done", "blocked""#)],
         ),
         marker(
             "parts/result-at.md",
@@ -109,7 +110,7 @@ fn a_result_that_does_not_match_its_schema_is_sent_back_with_each_mismatch() {
             "parts/result-schema.md",
             &[(
                 "mismatches",
-                &format!("{missing}, {outcome}, {outcome_missing}, {at} and {whole}")
+                &format!("{missing}, {outcome}, {outcome_missing}, {at}, {whole}")
             )]
         ))
     );
@@ -167,48 +168,8 @@ fn a_category_outside_the_categories_is_sent_back_with_the_categories() {
             "parts/result-category.md",
             &[
                 ("category", r#""chore""#),
-                ("categories", r#""bug" or "docs""#)
+                ("categories", r#""bug", "docs""#)
             ]
-        ))
-    );
-}
-
-#[test_log::test]
-fn categories_holding_a_comma_are_listed_with_semicolons_and_a_last_or() {
-    assert_eq!(
-        parse_error(&ParseError::Category {
-            category: "chore".into(),
-            categories: vec!["bug, minor".into(), "docs".into(), "feature".into()],
-        }),
-        could_not_be_used(&marker(
-            "parts/result-category.md",
-            &[
-                ("category", r#""chore""#),
-                ("categories", r#""bug, minor"; "docs" or "feature""#)
-            ]
-        ))
-    );
-}
-
-#[test_log::test]
-fn the_outcomes_a_result_may_have_are_listed_with_commas_and_a_last_or() {
-    let error = ParseError::Schema(Mismatches::new(
-        Mismatch::Outcome {
-            outcome: None,
-            outcomes: vec!["done".into(), "blocked".into(), "gave-up".into()],
-        },
-        vec![],
-    ));
-    let missing = marker(
-        "parts/result-outcome-missing.md",
-        &[("outcomes", r#""done", "blocked" or "gave-up""#)],
-    );
-
-    assert_eq!(
-        parse_error(&error),
-        could_not_be_used(&marker(
-            "parts/result-schema.md",
-            &[("mismatches", &missing)]
         ))
     );
 }
@@ -262,7 +223,7 @@ fn a_reference_to_a_kind_linewright_does_not_attach_is_sent_back_with_the_kinds(
                 ("file", "/record/attachments/tree.txt"),
                 (
                     "kinds",
-                    "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and \
+                    "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, \
                      `.webm`"
                 )
             ]
@@ -333,6 +294,41 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
                 ("variable", "NPM_TOKEN"),
                 ("file", "/record/attachments/log.txt")
             ]
+        ))
+    );
+}
+
+#[test_log::test]
+fn the_follow_up_for_secrets_push_protection_found_names_each_of_them() {
+    let found = |kind: &str, commit: &str, path: &str| FoundSecret {
+        kind: kind.into(),
+        commit: commit.into(),
+        path: path.into(),
+    };
+    let secrets = FoundSecrets::new(vec![
+        found("GitHub Personal Access Token", "abc1234", ".env:1"),
+        found("npm Access Token", "def5678", ".npmrc:2"),
+    ])
+    .unwrap();
+    let marked = |kind: &str, commit: &str, path: &str| {
+        marker(
+            "parts/pushed-secret-found.md",
+            &[("kind", kind), ("commit", commit), ("path", path)],
+        )
+    };
+
+    assert_eq!(
+        loose_ends(&LooseEnd::PushedSecret(&secrets)),
+        not_finished(&marker(
+            "parts/pushed-secret.md",
+            &[(
+                "secrets",
+                &format!(
+                    "{}, {}",
+                    marked("GitHub Personal Access Token", "abc1234", ".env:1"),
+                    marked("npm Access Token", "def5678", ".npmrc:2")
+                )
+            )]
         ))
     );
 }
