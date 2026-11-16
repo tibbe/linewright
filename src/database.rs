@@ -332,6 +332,72 @@ fn remove_made(path: &Path) {
     }
 }
 
+/// The name of the network filesystem `path` is on, or `None` when it is on
+/// a local one, or its filesystem cannot be told.
+pub fn network_filesystem(path: &Path) -> Option<String> {
+    let stat = rustix::fs::statfs(path).ok()?;
+    network_filesystem_of(&stat).map(str::to_owned)
+}
+
+/// The magic numbers of `statfs(2)`'s `f_type` that name a network
+/// filesystem. <https://man7.org/linux/man-pages/man2/statfs.2.html>
+#[cfg(target_os = "linux")]
+const NETWORK_FILESYSTEMS: &[(u32, &str)] = &[
+    (0x6969, "nfs"),
+    (0x517B, "smb"),
+    (0xFF53_4D42, "cifs"),
+    (0xFE53_4D42, "smb2"),
+    (0x5346_414F, "afs"),
+    (0x6B41_4653, "afs"),
+    (0x7375_7245, "coda"),
+    (0x564C, "ncp"),
+    (0x00C3_6400, "ceph"),
+    (0x0102_1997, "9p"),
+    (0x7461_636F, "ocfs2"),
+    (0x0116_1970, "gfs2"),
+    (0x0BD0_0BD0, "lustre"),
+    (0x2003_0528, "orangefs"),
+];
+
+#[cfg(target_os = "linux")]
+fn network_filesystem_of(stat: &rustix::fs::StatFs) -> Option<&'static str> {
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::unnecessary_cast,
+        reason = "the magic numbers are 32 bits, which `f_type` holds wider or signed on some targets"
+    )]
+    let magic = stat.f_type as u32;
+    NETWORK_FILESYSTEMS
+        .iter()
+        .find(|(network, _)| *network == magic)
+        .map(|(_, name)| *name)
+}
+
+/// The names of `statfs(2)`'s `f_fstypename` that are network filesystems.
+/// <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/statfs.2.html>
+#[cfg(target_os = "macos")]
+const NETWORK_FILESYSTEMS: &[&str] = &["nfs", "smbfs", "afpfs", "webdav", "cifs", "ftp"];
+
+#[cfg(target_os = "macos")]
+fn network_filesystem_of(stat: &rustix::fs::StatFs) -> Option<&'static str> {
+    let name: Vec<u8> = stat
+        .f_fstypename
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| u8::from_ne_bytes(c.to_ne_bytes()))
+        .collect();
+    NETWORK_FILESYSTEMS
+        .iter()
+        .find(|network| network.as_bytes() == name)
+        .copied()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn network_filesystem_of(_: &rustix::fs::StatFs) -> Option<&'static str> {
+    None
+}
+
 fn schema_version(migrations: &[Migration]) -> u32 {
     u32::try_from(migrations.len()).expect("fewer than 2^32 migrations")
 }
