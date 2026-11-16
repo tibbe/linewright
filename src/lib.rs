@@ -29,6 +29,7 @@ pub mod ending;
 pub mod environment;
 pub mod event_stream;
 pub mod explain;
+pub mod export;
 pub mod factory;
 pub mod git;
 pub mod harness;

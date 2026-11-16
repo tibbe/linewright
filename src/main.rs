@@ -18,6 +18,7 @@ use linewright::drain::{self, Asked, Exiting, Said, Stop, Taken, Timeout, Waitin
 use linewright::ending::{Ends, StopBy};
 use linewright::environment::shown::{self, Followed, FollowingBuild};
 use linewright::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
+use linewright::export::{self, ExportError};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
@@ -874,6 +875,9 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             };
             return Ok(show_logs(&config, &which, printing, follow).await);
         }
+        Command::Export { id, dir } => {
+            return Ok(export(&config, &id, &dir).await);
+        }
         Command::Serve => {
             log.begin();
             serving::serve(
@@ -928,6 +932,27 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         }
     };
     done.map(|()| SUCCESS)
+}
+
+/// Writes run `id` into `dir`, with or without `serve`.
+async fn export(config: &Config, id: &RunId, dir: &Path) -> u8 {
+    let work_dir = match config.repo_work_dir() {
+        Ok(work_dir) => work_dir.resolve(),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let runs = match existing_runs(&work_dir).await {
+        Ok(runs) => runs,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        export::run(runs.as_ref(), id, dir)
+            .await
+            .map(|dir| format!("Exported {id} into {}\n", dir.display()))
+            .map_err(|e| match e {
+                ExportError::NoSuchRun(_) => refused(&RequestError::NotFound(e.to_string())),
+                ExportError::Refused(_) | ExportError::Failed(_) => failed(&anyhow::Error::from(e)),
+            }),
+    )
 }
 
 /// Captures run `id` as the case `name`, with the criteria in the file

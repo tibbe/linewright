@@ -333,7 +333,10 @@ work directory when no `serve` runs. They exit 3 when they need a `serve` and
 none runs for the repository, and 4 when #N or the run ID names nothing.
 
 `lw export ID DIR` writes a run's outcome, briefs, transcripts and attachments
-into DIR as plain files, whether or not `serve` runs.
+into DIR as plain files, in the form a replay's output gives its run, whether
+or not `serve` runs. DIR is made if missing and refused unless empty, as a
+replay's output is. A run in flight is written as it is when the command
+starts. It exits 4 when the run ID names nothing.
 
 ## The web UI
 

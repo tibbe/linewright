@@ -26,6 +26,7 @@ mod environment;
 mod environment_lifecycle;
 mod environment_shown;
 mod explain;
+mod export;
 mod fix_brief;
 mod front_door;
 mod git;

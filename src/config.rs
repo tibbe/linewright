@@ -134,6 +134,14 @@ pub enum Command {
         #[arg(long)]
         follow: bool,
     },
+    /// Write run ID, such as 43/implement-2, into DIR as the output of a
+    /// replay gives its run: its outcome, its record and its sessions, as
+    /// they are now.
+    Export {
+        id: RunId,
+        /// Made if missing, and refused unless empty.
+        dir: PathBuf,
+    },
     /// Show the environment and the output of its builds: the latest, and
     /// the latest that failed when the latest succeeded. `environment
     /// rebuild` builds it now.
