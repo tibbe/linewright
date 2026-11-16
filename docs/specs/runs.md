@@ -102,7 +102,10 @@ automation's `automation.md` ([Briefs](operation.md#briefs)). Where
 Linewright fills a placeholder with its own wording rather than the item's
 data, the wording is a part in `briefs/parts/`. The placeholder's row names the
 part or, where there is a part for each case, gives examples. What Linewright
-fills into a part, such as a key of the result, is data.
+fills into a part, such as a key of the result, is data. Linewright fills in a
+list as its items, each data or a part, joined with commas, or with semicolons
+where an item holds a comma, and a last `and` or `or`. That joining is not
+wording.
 
 - **Every prompt.** `{{facts}}` is the repository, its default branch and the
   spec glob (`facts.md`), and `{{output}}` is the stage's result contract,
