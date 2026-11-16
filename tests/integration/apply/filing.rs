@@ -3,8 +3,8 @@ use linewright::apply::{Asks, Designed, StatusTo};
 use linewright::automation::{self, Automation};
 use linewright::domain::{Number, StatusLabel};
 use linewright::results::{
-    AutomationIssue, AutomationIssueLabel, AutomationResult, ImplementResult, IssueWork, SpecGap,
-    Tickets,
+    self, AutomationIssue, AutomationIssueLabel, AutomationResult, Cut, DesignResult,
+    ImplementResult, IssueWork, SpecGap, Tickets,
 };
 use linewright::spec_gap::FiledGaps;
 use linewright::store::{NewIssue, NewPull};
@@ -14,11 +14,30 @@ use serde_json::json;
 
 use crate::common::{merged_pull, ticket};
 
+/// The cut a design session answers with `tickets`, as Linewright parses it.
+#[track_caller]
+fn parsed_cut(tickets: &serde_json::Value) -> Cut {
+    let designed = json!({
+        "outcome": "designed",
+        "design": "D.",
+        "tickets": tickets,
+        "comment": "Small steps.",
+    });
+    match results::parse::<DesignResult<IssueWork>>(&designed.to_string()) {
+        Ok(DesignResult::Designed {
+            cut: IssueWork::Cut(cut),
+            ..
+        }) => cut,
+        other => panic!("not a cut: {other:?}"),
+    }
+}
+
 /// Tickets titled `title`, each blocked by the earlier ones `blocked_by`
 /// gives by position.
+#[track_caller]
 fn tickets(drafts: &[(&str, Vec<usize>)]) -> Tickets {
     let id = |i: usize| format!("t{i}");
-    serde_json::from_value(json!(
+    parsed_cut(&json!(
         drafts
             .iter()
             .enumerate()
@@ -30,7 +49,7 @@ fn tickets(drafts: &[(&str, Vec<usize>)]) -> Tickets {
             }))
             .collect::<Vec<_>>()
     ))
-    .unwrap()
+    .tickets
 }
 
 fn new_issue(title: &str, body: &str, labels: &[&str]) -> NewIssue {
@@ -74,10 +93,7 @@ fn gap(title: &str) -> SpecGap {
     }
 )]
 #[case::an_issue_cut_into_tickets_is_their_tracking_issue_with_no_status_or_linewright(
-    IssueWork::Cut(serde_json::from_value(json!({
-        "tickets": [{"id": "a", "title": "Store", "body": "Build it."}],
-        "comment": "Small steps.",
-    })).unwrap()),
+    IssueWork::Cut(parsed_cut(&json!([{"id": "a", "title": "Store", "body": "Build it."}]))),
     Asks {
         designed: Some(Designed::Add),
         status: Some(StatusTo::Clear),

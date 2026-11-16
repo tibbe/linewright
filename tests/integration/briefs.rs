@@ -6,8 +6,9 @@ use crate::common;
 use linewright::briefs::{Briefs, OperatorPrompts, PromptLayer, Unusable};
 use linewright::git::BranchStart;
 use linewright::layer::Layer;
-use linewright::prompts::{self, Readers, Reads, Templates};
+use linewright::prompts::{self, LooseEnd, Readers, Reads, SentBack, Templates};
 use linewright::reconcile::WorkKind;
+use linewright::results::ParseError;
 use linewright::store::Blob;
 use linewright::work_settings::RunKind;
 
@@ -34,6 +35,16 @@ fn not_a_prompt(path: &str) -> Unusable {
     }
 }
 
+fn no_json() -> SentBack<'static> {
+    SentBack::Result(&ParseError::NoJson)
+}
+
+const NO_JSON: &str =
+    "The final message holds no JSON object. End with the result as a single JSON object.";
+
+const NO_COMMITS: &str = "you answered `done`, but the branch has no commits. Commit your work, \
+                          or answer `gave-up` with the reason if the ticket needs no change.";
+
 #[test_log::test]
 fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let repository = layer(
@@ -53,12 +64,12 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     assert_eq!(resolved.unusable, []);
     let briefs = resolved.briefs;
     assert_eq!(
-        prompts::result_error(&briefs.templates, "no JSON"),
-        "The repository's: no JSON"
+        prompts::result_error(&briefs.templates, &no_json()),
+        format!("The repository's: {NO_JSON}")
     );
     assert_eq!(
-        prompts::loose_ends(&briefs.templates, "a stash"),
-        "The operator's: a stash"
+        prompts::loose_ends(&briefs.templates, &LooseEnd::NoCommits),
+        format!("The operator's: {NO_COMMITS}")
     );
     let layers: BTreeMap<&str, Layer> = briefs
         .layers()
@@ -96,8 +107,8 @@ fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
         }]
     );
     assert_eq!(
-        prompts::result_error(&resolved.briefs.templates, "no JSON"),
-        "The operator's: no JSON"
+        prompts::result_error(&resolved.briefs.templates, &no_json()),
+        format!("The operator's: {NO_JSON}")
     );
     assert_eq!(
         resolved.briefs.layers()["follow-ups/result-error.md"],

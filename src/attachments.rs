@@ -38,41 +38,32 @@ impl Dir {
 
 /// Why a result's references can't be posted, each naming the path as the
 /// Markdown writes it.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
+    /// A reference to no file Linewright can attach.
+    Reference(BadReference),
+    /// A referenced file holding the secret of `variable`.
+    Secret { variable: String, path: PathBuf },
+}
+
+/// A reference to no file Linewright can attach.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BadReference {
     /// A path in the directory that is not a regular file reached through
     /// real directories: missing, a symlink, or behind a symlinked
     /// directory.
-    #[error(
-        "`{}` is in the attachments directory but is not a regular file there: \
-         put the file itself at that path, not a symlink to it, or take the reference out",
-        path.display()
-    )]
     NotAFile { path: PathBuf },
     /// An absolute path outside the directory where something other than a
     /// directory exists.
-    #[error(
-        "`{}` is outside the attachments directory: copy the file into the directory \
-         and refer to it there",
-        path.display()
-    )]
     Outside { path: PathBuf },
     /// A regular file in the directory of a kind Linewright doesn't attach.
-    #[error(
-        "`{}` is not an image or a video: only {} files can be attached. Put anything else, \
-         such as text output or a log, in the Markdown itself, in a fenced code block or a \
-         `<details>` block when it is long, or take the reference out",
-        path.display(),
-        attachable()
-    )]
     Kind { path: PathBuf },
-    /// A referenced file holding one of Linewright's secrets.
-    #[error(
-        "`{}` holds the secret of `{variable}`: take the secret out of the file, \
-         or take the reference out",
-        path.display()
-    )]
-    Secret { variable: String, path: PathBuf },
+}
+
+impl From<BadReference> for Refusal {
+    fn from(reference: BadReference) -> Refusal {
+        Refusal::Reference(reference)
+    }
 }
 
 /// A file the Markdown refers to.
@@ -169,7 +160,7 @@ pub fn resolve(dir: &Dir, markdown: &[&str], secrets: &Secrets) -> Result<Resolv
         let mut text_splices = Vec::new();
         for (found, file) in attached {
             if !files.contains(&file) {
-                let bytes = fs::read(&file.path).map_err(|_| Refusal::NotAFile {
+                let bytes = fs::read(&file.path).map_err(|_| BadReference::NotAFile {
                     path: PathBuf::from(&found.written),
                 })?;
                 if let Some(variable) = secrets.held_in(&bytes) {
@@ -220,12 +211,12 @@ fn judge(
     dir: &Path,
     written: &str,
     entry: impl Fn(&Path) -> Entry,
-) -> Result<Option<File>, Refusal> {
+) -> Result<Option<File>, BadReference> {
     let path = lexically_normal(Path::new(written));
     let Ok(rest) = path.strip_prefix(dir) else {
         return match entry(&path) {
             Entry::Nothing | Entry::Directory => Ok(None),
-            Entry::File | Entry::Other => Err(Refusal::Outside {
+            Entry::File | Entry::Other => Err(BadReference::Outside {
                 path: PathBuf::from(written),
             }),
         };
@@ -244,7 +235,7 @@ fn judge(
         }
         if wanted == Entry::File {
             let Some(kind) = kind(&path) else {
-                return Err(Refusal::Kind {
+                return Err(BadReference::Kind {
                     path: PathBuf::from(written),
                 });
             };
@@ -255,7 +246,7 @@ fn judge(
             }));
         }
     }
-    Err(Refusal::NotAFile {
+    Err(BadReference::NotAFile {
         path: PathBuf::from(written),
     })
 }

@@ -6,15 +6,17 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use crate::attachments::BadReference;
 use crate::automation::Automation;
 use crate::case::Criteria;
 use crate::domain;
 use crate::domain::{
     CheckFailure, Comment, Issue, MergeMethod, MergedPull, Number, Parent, Pull, UpdateMethod,
 };
-use crate::git::{BranchStart, Conflict, UnfinishedCommits};
+use crate::git::{self, BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::WorkKind;
 use crate::replay::judge::ReplayCopy;
+use crate::results::{ContractError, Mismatch, ParseError};
 use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
@@ -301,6 +303,22 @@ values!(
 );
 values!(AttachmentSecret { variable, file });
 values!(AttachmentRefused { file, reason });
+values!(AttachmentFile { file });
+values!(AttachmentKind { file, kinds });
+values!(SchemaMismatches { mismatches });
+values!(MissingKey { key });
+values!(Outcome { outcome, outcomes });
+values!(Outcomes { outcomes });
+values!(At { at, error });
+values!(Written { written });
+values!(TicketId { id });
+values!(Blocker { id, blocker });
+values!(Category {
+    category,
+    categories
+});
+values!(Thread { thread });
+values!(Status { status });
 values!(NoValues {});
 values!(LateFeedback {
     feedback,
@@ -490,6 +508,28 @@ templates! {
     attachment_secret: AttachmentSecret = "parts/attachment-secret.md", ATTACHING, Trimmed;
     attachment_refused: AttachmentRefused = "parts/attachment-refused.md", ATTACHING, Trimmed;
     replay_output: ReplayOutput = "parts/replay-output.md", JUDGE, Trimmed;
+    result_no_json: NoValues = "parts/result-no-json.md", Readers::Every, Trimmed;
+    result_not_json: ResultError = "parts/result-not-json.md", Readers::Every, Trimmed;
+    result_schema: SchemaMismatches = "parts/result-schema.md", Readers::Every, Trimmed;
+    result_missing: MissingKey = "parts/result-missing.md", Readers::Every, Trimmed;
+    result_outcome: Outcome = "parts/result-outcome.md", OUTCOMES, Trimmed;
+    result_outcome_missing: Outcomes = "parts/result-outcome-missing.md", OUTCOMES, Trimmed;
+    result_at: At = "parts/result-at.md", Readers::Every, Trimmed;
+    result_whole: ResultError = "parts/result-whole.md", Readers::Every, Trimmed;
+    result_contract: ResultError = "parts/result-contract.md", Readers::Every, Trimmed;
+    result_login: Written = "parts/result-login.md", TRIAGE, Trimmed;
+    result_ticket_id: TicketId = "parts/result-ticket-id.md", DESIGN, Trimmed;
+    result_ticket_blocker: Blocker = "parts/result-ticket-blocker.md", DESIGN, Trimmed;
+    result_ticket_cycle: NoValues = "parts/result-ticket-cycle.md", DESIGN, Trimmed;
+    result_category: Category = "parts/result-category.md", TRIAGE, Trimmed;
+    result_thread: Thread = "parts/result-thread.md", PULL_WORK, Trimmed;
+    attachment_not_a_file: AttachmentFile = "parts/attachment-not-a-file.md", ATTACHING, Trimmed;
+    attachment_outside: AttachmentFile = "parts/attachment-outside.md", ATTACHING, Trimmed;
+    attachment_kind: AttachmentKind = "parts/attachment-kind.md", ATTACHING, Trimmed;
+    rebase_in_progress: NoValues = "parts/rebase-in-progress.md", BRANCH_WORK, Trimmed;
+    merge_in_progress: NoValues = "parts/merge-in-progress.md", BRANCH_WORK, Trimmed;
+    uncommitted: Status = "parts/uncommitted.md", BRANCH_WORK, Trimmed;
+    no_commits: NoValues = "parts/no-commits.md", IMPLEMENT, Trimmed;
     triage_output: TriageOutput = "outputs/triage.md", TRIAGE, Trimmed;
     design_output: DesignOutput = "outputs/design.md", DESIGN, Trimmed;
     implement_output: NoValues = "outputs/implement.md", IMPLEMENT, Trimmed;
@@ -617,6 +657,16 @@ const TICKET_WORK: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::Rework),
     Reads::Stage(WorkKind::FixCi),
     Reads::Stage(WorkKind::Update),
+]);
+/// The runs whose result schema has a branch for each outcome, which a
+/// result with none of them is sent back naming.
+const OUTCOMES: Readers = Readers::Only(&[
+    Reads::Stage(WorkKind::Design),
+    Reads::Stage(WorkKind::Implement),
+    Reads::Stage(WorkKind::Rework),
+    Reads::Stage(WorkKind::FixCi),
+    Reads::Stage(WorkKind::Update),
+    Reads::Judge,
 ]);
 /// The runs whose result may attach files: every stage's and every
 /// automation's.
@@ -983,16 +1033,188 @@ pub fn judge(
     })
 }
 
-pub fn result_error(templates: &Templates, error: &str) -> String {
-    templates.result_error.fill(&ResultError {
-        error: error.into(),
-    })
+/// Why a result is sent back to its session to be answered again
+/// (docs/specs/runs.md, "Contract").
+#[derive(Debug)]
+pub enum SentBack<'a> {
+    /// The final message holds no result Linewright can use.
+    Result(&'a ParseError),
+    /// The result refers to no file Linewright can attach.
+    Reference(&'a BadReference),
+    /// GitHub refuses the attachment `file` for `reason`.
+    AttachmentRefused { file: &'a Path, reason: &'a str },
+    /// A reply is to `thread`, which is not one of the pull request's.
+    UnknownThread { thread: &'a str },
 }
 
-pub fn loose_ends(templates: &Templates, problem: &str) -> String {
-    templates.loose_ends.fill(&LooseEnds {
-        problem: problem.into(),
-    })
+/// What is still wrong with a session's work when it answers `done`
+/// (docs/specs/runs.md, "Contract").
+#[derive(Debug)]
+pub enum LooseEnd<'a> {
+    /// A rebase or merge in progress, or uncommitted changes.
+    Git(&'a git::LooseEnd),
+    /// The branch has no commits.
+    NoCommits,
+    /// The branch holds unfinished commits.
+    Unfinished(&'a UnfinishedCommits),
+    /// Its commits hold a secret, as `held` says.
+    HeldSecret(&'a Held),
+    /// GitHub's push protection refuses its push, finding the secrets.
+    PushedSecret(&'a FoundSecrets),
+    /// The attachment `file` it refers to holds the secret of `variable`.
+    AttachmentSecret { variable: &'a str, file: &'a Path },
+}
+
+/// What a session is sent back with when its result can't be used, for
+/// the reason `sent_back`.
+pub fn result_error(templates: &Templates, sent_back: &SentBack) -> String {
+    let error = match sent_back {
+        SentBack::Result(error) => parse_error(templates, error),
+        SentBack::Reference(reference) => bad_reference(templates, reference),
+        SentBack::AttachmentRefused { file, reason } => {
+            templates.attachment_refused.fill(&AttachmentRefused {
+                file: file.display().to_string(),
+                reason: (*reason).into(),
+            })
+        }
+        SentBack::UnknownThread { thread } => templates.result_thread.fill(&Thread {
+            thread: (*thread).into(),
+        }),
+    };
+    templates.result_error.fill(&ResultError { error })
+}
+
+fn parse_error(templates: &Templates, error: &ParseError) -> String {
+    match error {
+        ParseError::NoJson => templates.result_no_json.fill(&NoValues {}),
+        ParseError::NotJson { error } => templates.result_not_json.fill(&ResultError {
+            error: error.clone(),
+        }),
+        ParseError::Schema(mismatches) => templates.result_schema.fill(&SchemaMismatches {
+            mismatches: mismatches
+                .iter()
+                .map(|m| format!("- {}\n", mismatch(templates, m)))
+                .collect(),
+        }),
+        ParseError::Contract(error) => templates.result_contract.fill(&ResultError {
+            error: contract_error(templates, error),
+        }),
+        ParseError::Category {
+            category,
+            categories,
+        } => templates.result_category.fill(&Category {
+            category: format!("{category:?}"),
+            categories: quoted(categories),
+        }),
+    }
+}
+
+fn mismatch(templates: &Templates, mismatch: &Mismatch) -> String {
+    match mismatch {
+        Mismatch::Missing { key } => templates
+            .result_missing
+            .fill(&MissingKey { key: key.clone() }),
+        Mismatch::Outcome {
+            outcome: Some(outcome),
+            outcomes,
+        } => templates.result_outcome.fill(&Outcome {
+            outcome: outcome.to_string(),
+            outcomes: quoted(outcomes),
+        }),
+        Mismatch::Outcome {
+            outcome: None,
+            outcomes,
+        } => templates.result_outcome_missing.fill(&Outcomes {
+            outcomes: quoted(outcomes),
+        }),
+        Mismatch::At { at, error } => templates.result_at.fill(&At {
+            at: at.clone(),
+            error: error.clone(),
+        }),
+        Mismatch::Whole { error } => templates.result_whole.fill(&ResultError {
+            error: error.clone(),
+        }),
+    }
+}
+
+fn contract_error(templates: &Templates, error: &ContractError) -> String {
+    match error {
+        ContractError::Serde { error } => error.clone(),
+        ContractError::Login { written } => templates.result_login.fill(&Written {
+            written: format!("{written:?}"),
+        }),
+        ContractError::DuplicateId { id } => templates.result_ticket_id.fill(&TicketId {
+            id: format!("{id:?}"),
+        }),
+        ContractError::UnknownBlocker { id, blocker } => {
+            templates.result_ticket_blocker.fill(&Blocker {
+                id: format!("{id:?}"),
+                blocker: format!("{blocker:?}"),
+            })
+        }
+        ContractError::Cycle => templates.result_ticket_cycle.fill(&NoValues {}),
+    }
+}
+
+fn bad_reference(templates: &Templates, reference: &BadReference) -> String {
+    match reference {
+        BadReference::NotAFile { path } => templates.attachment_not_a_file.fill(&AttachmentFile {
+            file: path.display().to_string(),
+        }),
+        BadReference::Outside { path } => templates.attachment_outside.fill(&AttachmentFile {
+            file: path.display().to_string(),
+        }),
+        BadReference::Kind { path } => templates.attachment_kind.fill(&AttachmentKind {
+            file: path.display().to_string(),
+            kinds: crate::attachments::attachable(),
+        }),
+    }
+}
+
+/// Each of `values` quoted, as in `"bug", "docs"`.
+fn quoted(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| format!("{value:?}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What a session is sent back with when it answers `done` while its work
+/// is not finished, for `problem`.
+pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
+    let problem = match problem {
+        LooseEnd::Git(git::LooseEnd::RebaseInProgress) => {
+            templates.rebase_in_progress.fill(&NoValues {})
+        }
+        LooseEnd::Git(git::LooseEnd::MergeInProgress) => {
+            templates.merge_in_progress.fill(&NoValues {})
+        }
+        LooseEnd::Git(git::LooseEnd::Uncommitted { status }) => {
+            templates.uncommitted.fill(&Status {
+                status: status.clone(),
+            })
+        }
+        LooseEnd::NoCommits => templates.no_commits.fill(&NoValues {}),
+        LooseEnd::Unfinished(unfinished) => templates.fold_unfinished.fill(&Commits {
+            commits: unfinished_commits(unfinished),
+        }),
+        LooseEnd::HeldSecret(held) => templates.held_secret.fill(&HeldSecret {
+            commit: held.commit.clone(),
+            variable: held.variable.clone(),
+            file: held.file.clone(),
+        }),
+        LooseEnd::PushedSecret(secrets) => templates.pushed_secret.fill(&PushedSecret {
+            secrets: secrets.to_string(),
+        }),
+        LooseEnd::AttachmentSecret { variable, file } => {
+            templates.attachment_secret.fill(&AttachmentSecret {
+                variable: (*variable).into(),
+                file: file.display().to_string(),
+            })
+        }
+    };
+    templates.loose_ends.fill(&LooseEnds { problem })
 }
 
 /// Names the unfinished `commits`, as in "the unfinished commit `abc1234`".
@@ -1005,65 +1227,6 @@ pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
         .chain(middle.iter().map(|c| format!("`{c}`")))
         .collect();
     format!("the unfinished commits {} and `{last}`", leading.join(", "))
-}
-
-/// What a `done` answer is sent back with while the branch still holds the
-/// `unfinished` commits.
-pub fn fold_unfinished(templates: &Templates, unfinished: &UnfinishedCommits) -> String {
-    loose_ends(
-        templates,
-        &templates.fold_unfinished.fill(&Commits {
-            commits: unfinished_commits(unfinished),
-        }),
-    )
-}
-
-/// What a `done` answer is sent back with while its commits hold a
-/// secret, as `held` says.
-pub fn held_secret(templates: &Templates, held: &Held) -> String {
-    loose_ends(
-        templates,
-        &templates.held_secret.fill(&HeldSecret {
-            commit: held.commit.clone(),
-            variable: held.variable.clone(),
-            file: held.file.clone(),
-        }),
-    )
-}
-
-/// What a `done` answer is sent back with while GitHub's push protection
-/// refuses its push, finding `secrets`.
-pub fn pushed_secret(templates: &Templates, secrets: &FoundSecrets) -> String {
-    loose_ends(
-        templates,
-        &templates.pushed_secret.fill(&PushedSecret {
-            secrets: secrets.to_string(),
-        }),
-    )
-}
-
-/// What a result is sent back with while the attachment `file` it refers to
-/// holds the secret of `variable`.
-pub fn attachment_secret(templates: &Templates, variable: &str, file: &Path) -> String {
-    loose_ends(
-        templates,
-        &templates.attachment_secret.fill(&AttachmentSecret {
-            variable: variable.into(),
-            file: file.display().to_string(),
-        }),
-    )
-}
-
-/// What a result is sent back with while GitHub refuses the attachment
-/// `file` it refers to, for `reason`.
-pub fn attachment_refused(templates: &Templates, file: &Path, reason: &str) -> String {
-    result_error(
-        templates,
-        &templates.attachment_refused.fill(&AttachmentRefused {
-            file: file.display().to_string(),
-            reason: reason.into(),
-        }),
-    )
 }
 
 pub fn usage_limit_reset(templates: &Templates) -> String {

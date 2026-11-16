@@ -10,13 +10,11 @@ use serde_json::Value;
 
 use crate::domain::Login;
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(tag = "outcome", rename_all = "kebab-case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TriageOutcome {
     ReadyForAgent,
     NeedsInfo {
         /// The people the question is for: none asks the reporter.
-        #[serde(default, deserialize_with = "logins")]
         ask: Vec<Login>,
     },
     ReadyForHuman,
@@ -29,22 +27,58 @@ impl TriageOutcome {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TriageResult {
-    #[serde(flatten)]
     pub outcome: TriageOutcome,
     pub category: String,
-    #[serde(deserialize_with = "trimmed")]
     pub comment: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct TicketDraft {
-    pub id: String,
-    pub title: String,
-    pub body: String,
+/// A triage result as the session wrote it, its logins not yet read.
+#[derive(Deserialize)]
+struct WrittenTriage {
+    #[serde(flatten)]
+    outcome: WrittenTriageOutcome,
+    category: String,
+    #[serde(deserialize_with = "trimmed")]
+    comment: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+enum WrittenTriageOutcome {
+    ReadyForAgent,
+    NeedsInfo {
+        #[serde(default)]
+        ask: Vec<String>,
+    },
+    ReadyForHuman,
+}
+
+impl WrittenTriage {
+    fn read(self) -> Result<TriageResult, ContractError> {
+        let outcome = match self.outcome {
+            WrittenTriageOutcome::ReadyForAgent => TriageOutcome::ReadyForAgent,
+            WrittenTriageOutcome::NeedsInfo { ask } => {
+                TriageOutcome::NeedsInfo { ask: logins(ask)? }
+            }
+            WrittenTriageOutcome::ReadyForHuman => TriageOutcome::ReadyForHuman,
+        };
+        Ok(TriageResult {
+            outcome,
+            category: self.category,
+            comment: self.comment,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct TicketDraft {
+    id: String,
+    title: String,
+    body: String,
     #[serde(default)]
-    pub blocked_by: Vec<String>,
+    blocked_by: Vec<String>,
 }
 
 /// What a design session answers (docs/specs/design.md, "Designing"), with
@@ -76,51 +110,74 @@ pub enum DesignResult<C> {
     },
 }
 
+impl<C> DesignResult<C> {
+    /// The result with its cut, if it has one, made into a `D` by `f`, or
+    /// `f`'s error.
+    fn try_map_cut<D, E>(self, f: impl FnOnce(C) -> Result<D, E>) -> Result<DesignResult<D>, E> {
+        Ok(match self {
+            DesignResult::Designed {
+                design,
+                cut,
+                spec_gaps,
+            } => DesignResult::Designed {
+                design,
+                cut: f(cut)?,
+                spec_gaps,
+            },
+            DesignResult::NothingToBuild { reason } => DesignResult::NothingToBuild { reason },
+            DesignResult::Blocked {
+                question,
+                spec_gaps,
+            } => DesignResult::Blocked {
+                question,
+                spec_gaps,
+            },
+            DesignResult::GaveUp { reason } => DesignResult::GaveUp { reason },
+        })
+    }
+}
+
 /// The tickets an issue's work is cut into (docs/specs/design.md,
 /// "Cutting").
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cut {
     pub tickets: Tickets,
     /// Why the work is cut into these tickets.
-    #[serde(deserialize_with = "trimmed")]
     pub comment: String,
 }
 
 /// What an issue's work is: built as it is, in one session, or cut into
 /// tickets (docs/specs/design.md, "Cutting").
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "RawIssueWork")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IssueWork {
     AsItIs,
     Cut(Cut),
 }
 
+/// An issue's work as the session wrote it, its tickets not yet ordered.
 #[derive(Deserialize)]
-struct RawIssueWork {
+struct WrittenWork {
     #[serde(default)]
     tickets: Vec<TicketDraft>,
     #[serde(default)]
     comment: Option<String>,
 }
 
-impl TryFrom<RawIssueWork> for IssueWork {
-    type Error = String;
-
-    fn try_from(raw: RawIssueWork) -> Result<IssueWork, String> {
-        if raw.tickets.is_empty() {
+impl WrittenWork {
+    fn read(self) -> Result<IssueWork, ContractError> {
+        if self.tickets.is_empty() {
             return Ok(IssueWork::AsItIs);
         }
         Ok(IssueWork::Cut(Cut {
-            tickets: raw.tickets.try_into()?,
-            comment: raw.comment.unwrap_or_default().trim().to_string(),
+            tickets: Tickets(ordered(&self.tickets)?),
+            comment: self.comment.unwrap_or_default().trim().to_string(),
         }))
     }
 }
 
 /// At least one ticket, as the schemas require, ordered so that every ticket
 /// comes after those blocking it.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "Vec<TicketDraft>")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tickets(Vec<Ticket>);
 
 impl Tickets {
@@ -222,13 +279,14 @@ fn trimmed<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Erro
     Ok(String::deserialize(deserializer)?.trim().to_string())
 }
 
-/// GitHub logins, written with or without a leading `@`, each once.
-fn logins<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Login>, D::Error> {
+/// The GitHub logins `asked`, each written with or without a leading `@`,
+/// each once.
+fn logins(asked: Vec<String>) -> Result<Vec<Login>, ContractError> {
     let mut logins: Vec<Login> = vec![];
-    for written in Vec::<String>::deserialize(deserializer)? {
-        let login = Login::parse(written.trim().trim_start_matches('@')).ok_or_else(|| {
-            serde::de::Error::custom(format!("{written:?} is not a GitHub login"))
-        })?;
+    for written in asked {
+        let Some(login) = Login::parse(written.trim().trim_start_matches('@')) else {
+            return Err(ContractError::Login { written });
+        };
         if !logins.contains(&login) {
             logins.push(login);
         }
@@ -236,46 +294,37 @@ fn logins<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Login>, D::E
     Ok(logins)
 }
 
-pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult, String> {
+/// The triage result in `message`, whose category must be one of
+/// `categories`.
+pub fn parse_triage(message: &str, categories: &[String]) -> Result<TriageResult, ParseError> {
     let result: TriageResult = parse(message)?;
     if !categories.contains(&result.category) {
-        return Err(format!(
-            "`category` is {:?}; it must be one of {}.",
-            result.category,
-            categories
-                .iter()
-                .map(|c| format!("{c:?}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        return Err(ParseError::Category {
+            category: result.category,
+            categories: categories.to_vec(),
+        });
     }
     Ok(result)
-}
-
-impl TryFrom<Vec<TicketDraft>> for Tickets {
-    type Error = String;
-
-    fn try_from(drafts: Vec<TicketDraft>) -> Result<Tickets, String> {
-        ordered(&drafts).map(Tickets)
-    }
 }
 
 /// `drafts` ordered so that every ticket comes after those blocking it,
 /// keeping their order wherever that already holds, or why they cannot be:
 /// a repeated id, a blocker that is not a ticket, or a cycle.
-fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
+fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, ContractError> {
     let mut by_id = BTreeMap::new();
     for ticket in drafts {
         if by_id.insert(ticket.id.clone(), ticket).is_some() {
-            return Err(format!("two tickets have the id {:?}", ticket.id));
+            return Err(ContractError::DuplicateId {
+                id: ticket.id.clone(),
+            });
         }
     }
     for ticket in drafts {
         if let Some(unknown) = ticket.blocked_by.iter().find(|b| !by_id.contains_key(*b)) {
-            return Err(format!(
-                "ticket {:?} is blocked by {unknown:?}, which is not a ticket id",
-                ticket.id
-            ));
+            return Err(ContractError::UnknownBlocker {
+                id: ticket.id.clone(),
+                blocker: unknown.clone(),
+            });
         }
     }
     let mut placed: BTreeMap<&str, usize> = BTreeMap::new();
@@ -286,7 +335,7 @@ fn ordered(drafts: &[TicketDraft]) -> Result<Vec<Ticket>, String> {
                 && t.blocked_by.iter().all(|b| placed.contains_key(b.as_str()))
         });
         let Some(next) = next else {
-            return Err("the tickets' blocked_by edges form a cycle".into());
+            return Err(ContractError::Cycle);
         };
         placed.insert(&next.id, ordered.len());
         ordered.push(Ticket {
@@ -581,32 +630,139 @@ impl From<Leak> for LeakFields {
 
 /// A result type and the JSON Schema its session's result matches
 /// (docs/specs/runs.md, "Contract").
-pub trait Contract: DeserializeOwned {
+pub trait Contract: Sized {
     const SCHEMA: ResultSchema;
+
+    /// The result `value`, which matches [`Self::SCHEMA`], holds, or why it
+    /// holds none.
+    fn read(value: Value) -> Result<Self, ContractError>;
+}
+
+/// The `T` that `value` deserializes to, or serde's error.
+fn deserialized<T: DeserializeOwned>(value: Value) -> Result<T, ContractError> {
+    serde_json::from_value(value).map_err(|e| ContractError::Serde {
+        error: e.to_string(),
+    })
 }
 
 impl Contract for TriageResult {
     const SCHEMA: ResultSchema = ResultSchema::Triage;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized::<WrittenTriage>(value)?.read()
+    }
 }
 
 impl Contract for DesignResult<IssueWork> {
     const SCHEMA: ResultSchema = ResultSchema::DesignIssue;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized::<DesignResult<WrittenWork>>(value)?.try_map_cut(WrittenWork::read)
+    }
 }
 
 impl Contract for ImplementResult {
     const SCHEMA: ResultSchema = ResultSchema::Implement;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized(value)
+    }
 }
 
 impl Contract for PullWorkResult {
     const SCHEMA: ResultSchema = ResultSchema::PullRequest;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized(value)
+    }
 }
 
 impl Contract for AutomationResult {
     const SCHEMA: ResultSchema = ResultSchema::Automation;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized(value)
+    }
 }
 
 impl Contract for JudgeResult {
     const SCHEMA: ResultSchema = ResultSchema::Judge;
+
+    fn read(value: Value) -> Result<Self, ContractError> {
+        deserialized(value)
+    }
+}
+
+/// Why a session's final message holds no result Linewright can use
+/// (docs/specs/runs.md, "Contract").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ParseError {
+    /// The message holds no JSON object.
+    NoJson,
+    /// The result is not JSON, as serde's `error` says.
+    NotJson { error: String },
+    /// The result does not match its schema.
+    Schema(Mismatches),
+    /// The result matches its schema but holds no result Linewright reads.
+    Contract(ContractError),
+    /// A triage result's `category` is not one of the repository's
+    /// `categories`.
+    Category {
+        category: String,
+        categories: Vec<String>,
+    },
+}
+
+/// The ways a result does not match its schema: at least one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mismatches {
+    first: Mismatch,
+    rest: Vec<Mismatch>,
+}
+
+impl Mismatches {
+    pub fn new(first: Mismatch, rest: Vec<Mismatch>) -> Mismatches {
+        Mismatches { first, rest }
+    }
+
+    /// The mismatches, in the order the schema's validator found them.
+    pub fn iter(&self) -> impl Iterator<Item = &Mismatch> {
+        std::iter::once(&self.first).chain(&self.rest)
+    }
+}
+
+/// One way a result does not match its schema, each key named by its JSON
+/// pointer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mismatch {
+    /// A required `key` is missing.
+    Missing { key: String },
+    /// The result's `outcome`, or its lack of one, is none of the schema's
+    /// `outcomes`.
+    Outcome {
+        outcome: Option<Value>,
+        outcomes: Vec<String>,
+    },
+    /// The value at `at` does not match, as the validator's `error` says.
+    At { at: String, error: String },
+    /// The result as a whole does not match, as the validator's `error`
+    /// says.
+    Whole { error: String },
+}
+
+/// Why a result that matches its schema holds no result Linewright reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContractError {
+    /// The result does not deserialize, as serde's `error` says.
+    Serde { error: String },
+    /// A person asked, as `written`, is not a GitHub login.
+    Login { written: String },
+    /// Two tickets have the same `id`.
+    DuplicateId { id: String },
+    /// The ticket `id` is blocked by `blocker`, which is no ticket's id.
+    UnknownBlocker { id: String, blocker: String },
+    /// The tickets' `blocked_by` edges form a cycle.
+    Cycle,
 }
 
 /// A stage's result schema in `briefs/results/`, or the judge's.
@@ -758,15 +914,16 @@ fn branch_outcome<'a>(
         .ok_or_else(|| "a `oneOf` branch has no `outcome` const".to_string())
 }
 
-/// Why `value` does not match `schema`, each failing key named by its JSON
-/// pointer, or `None` when it does.
-fn mismatch(schema: &Schema, value: &Value) -> Option<String> {
-    let mut lines = vec![];
+/// How `value` does not match `schema`, or `None` when it does. Where the
+/// result names one of its outcomes, only that outcome's branch's
+/// mismatches are given.
+fn mismatches(schema: &Schema, value: &Value) -> Option<Mismatches> {
+    let mut found = vec![];
     for error in schema.validator.iter_errors(value) {
         let (ValidationErrorKind::OneOfNotValid { context }, true) =
             (error.kind(), error.instance_path().is_empty())
         else {
-            lines.push(describe(&error));
+            found.push(mismatch(&error));
             continue;
         };
         let outcome = value.get("outcome");
@@ -776,58 +933,50 @@ fn mismatch(schema: &Schema, value: &Value) -> Option<String> {
             .position(|o| outcome.and_then(Value::as_str) == Some(o))
         {
             Some(branch) => {
-                lines.extend(context.get(branch).into_iter().flatten().map(describe));
+                found.extend(context.get(branch).into_iter().flatten().map(mismatch));
             }
-            None => lines.push(format!(
-                "`/outcome` is {}; it must be one of {}",
-                outcome.map_or_else(|| "missing".to_string(), Value::to_string),
-                schema
-                    .outcomes
-                    .iter()
-                    .map(|o| format!("{o:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
+            None => found.push(Mismatch::Outcome {
+                outcome: outcome.cloned(),
+                outcomes: schema.outcomes.clone(),
+            }),
         }
     }
-    (!lines.is_empty()).then(|| {
-        format!(
-            "The result does not match its schema:\n\n{}",
-            lines
-                .iter()
-                .map(|line| format!("- {line}\n"))
-                .collect::<String>()
-        )
-    })
+    let mut found = found.into_iter();
+    let first = found.next()?;
+    Some(Mismatches::new(first, found.collect()))
 }
 
-fn describe(error: &ValidationError<'_>) -> String {
+fn mismatch(error: &ValidationError<'_>) -> Mismatch {
     let at = error.instance_path().as_str();
     if let ValidationErrorKind::Required { property } = error.kind() {
         let key = property
             .as_str()
             .map_or_else(|| property.to_string(), str::to_string);
-        format!("`{at}/{key}` is missing")
+        Mismatch::Missing {
+            key: format!("{at}/{key}"),
+        }
     } else if at.is_empty() {
-        format!("the result: {error}")
+        Mismatch::Whole {
+            error: error.to_string(),
+        }
     } else {
-        format!("`{at}`: {error}")
+        Mismatch::At {
+            at: at.to_string(),
+            error: error.to_string(),
+        }
     }
 }
 
-pub fn parse<T: Contract>(message: &str) -> Result<T, String> {
-    let json = extract_json(message).ok_or_else(|| {
-        "The final message holds no JSON object. End with the result as a single JSON object."
-            .to_string()
+/// The result in `message`, or why it holds none.
+pub fn parse<T: Contract>(message: &str) -> Result<T, ParseError> {
+    let json = extract_json(message).ok_or(ParseError::NoJson)?;
+    let value: Value = serde_json::from_str(json).map_err(|e| ParseError::NotJson {
+        error: e.to_string(),
     })?;
-    let value: Value =
-        serde_json::from_str(json).map_err(|e| format!("The result is not valid JSON: {e}."))?;
-    let schema = &SCHEMAS[&T::SCHEMA];
-    if let Some(mismatch) = mismatch(schema, &value) {
-        return Err(mismatch);
+    if let Some(mismatches) = mismatches(&SCHEMAS[&T::SCHEMA], &value) {
+        return Err(ParseError::Schema(mismatches));
     }
-    serde_json::from_value(value)
-        .map_err(|e| format!("The result JSON does not match the contract: {e}."))
+    T::read(value).map_err(ParseError::Contract)
 }
 
 pub fn json_value(message: &str) -> Option<Value> {
@@ -902,11 +1051,44 @@ mod tests {
 
     use super::*;
 
-    fn rejected<T: Contract + std::fmt::Debug>(result: &Value) -> String {
+    #[track_caller]
+    fn rejected<T: Contract + std::fmt::Debug>(result: &Value) -> ParseError {
         parse::<T>(&result.to_string()).expect_err("the result is sent back")
     }
 
-    fn triage(result: &Value) -> Result<TriageResult, String> {
+    /// The mismatches `error` is, failing unless it is the schema's.
+    #[track_caller]
+    fn mismatches(error: ParseError) -> Vec<Mismatch> {
+        let ParseError::Schema(mismatches) = error else {
+            panic!("not a schema mismatch: {error:?}");
+        };
+        mismatches.iter().cloned().collect()
+    }
+
+    /// The error at `key` among `error`'s mismatches, failing unless there is
+    /// one.
+    #[track_caller]
+    fn error_at(sent_back: ParseError, key: &str) -> String {
+        let found = mismatches(sent_back);
+        found
+            .iter()
+            .find_map(|m| {
+                if let Mismatch::At { at, error } = m
+                    && at == key
+                {
+                    Some(error.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| panic!("no mismatch at {key}: {found:?}"))
+    }
+
+    fn missing(key: &str) -> Mismatch {
+        Mismatch::Missing { key: key.into() }
+    }
+
+    fn triage(result: &Value) -> Result<TriageResult, ParseError> {
         parse_triage(&result.to_string(), &["bug".to_string()])
     }
 
@@ -934,16 +1116,13 @@ mod tests {
         let error = rejected::<ImplementResult>(&done(
             &json!({"declined_findings": [{"finding": "Rename it."}]}),
         ));
-        assert!(
-            error.contains("`/declined_findings/0/reason` is missing"),
-            "{error}"
-        );
+        assert_eq!(mismatches(error), [missing("/declined_findings/0/reason")]);
     }
 
     #[test_log::test]
     fn declined_findings_that_are_not_an_array_are_sent_back() {
         let error = rejected::<ImplementResult>(&done(&json!({"declined_findings": "none"})));
-        assert!(error.contains("`/declined_findings`: "), "{error}");
+        let error = error_at(error, "/declined_findings");
         assert!(error.contains("\"array\""), "{error}");
     }
 
@@ -1004,7 +1183,14 @@ mod tests {
         ] {
             let error = rejected::<JudgeResult>(&judged(&leak));
 
-            assert!(error.contains("/leak"), "{error}");
+            assert!(
+                mismatches(error.clone()).iter().any(|m| matches!(
+                    m,
+                    Mismatch::At { at, .. } | Mismatch::Missing { key: at }
+                        if at.starts_with("/leak")
+                )),
+                "{error:?}"
+            );
         }
     }
 
@@ -1040,27 +1226,23 @@ mod tests {
 
     #[test_log::test]
     fn an_outcome_no_branch_has_lists_the_allowed_outcomes() {
+        let outcomes = vec!["done".to_string(), "blocked".into(), "gave-up".into()];
         let error = rejected::<ImplementResult>(&json!({"outcome": "finished", "reason": "Done."}));
-        assert!(
-            error.contains(
-                r#"`/outcome` is "finished"; it must be one of "done", "blocked", "gave-up""#
-            ),
-            "{error}"
-        );
+        assert!(mismatches(error).contains(&Mismatch::Outcome {
+            outcome: Some(json!("finished")),
+            outcomes: outcomes.clone(),
+        }));
         let missing = rejected::<ImplementResult>(&json!({"reason": "Done."}));
-        assert!(
-            missing.contains("`/outcome` is missing; it must be one of"),
-            "{missing}"
-        );
+        assert!(mismatches(missing).contains(&Mismatch::Outcome {
+            outcome: None,
+            outcomes,
+        }));
     }
 
     #[test_log::test]
     fn only_the_errors_of_the_branch_the_outcome_names_are_given() {
         let error = rejected::<ImplementResult>(&json!({"outcome": "blocked"}));
-        assert_eq!(
-            error,
-            "The result does not match its schema:\n\n- `/question` is missing\n"
-        );
+        assert_eq!(mismatches(error), [missing("/question")]);
     }
 
     #[test_log::test]
@@ -1080,16 +1262,14 @@ mod tests {
     fn a_login_of_40_characters_is_sent_back() {
         let error = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which?", "ask": ["b".repeat(40)]}))
             .unwrap_err();
-        assert!(error.contains("`/ask/0`: "), "{error}");
+        error_at(error, "/ask/0");
     }
 
     #[test_log::test]
     fn a_pull_request_title_is_trimmed_and_a_blank_one_sent_back() {
         let error = rejected::<ImplementResult>(&done(&json!({"pr_title": " "})));
-        assert!(
-            error.contains("`/pr_title`: \" \" does not match"),
-            "{error}"
-        );
+        let error = error_at(error, "/pr_title");
+        assert!(error.starts_with("\" \" does not match"), "{error}");
         let result =
             parse::<ImplementResult>(&done(&json!({"pr_title": " Report gadgets "})).to_string());
         assert_eq!(
@@ -1106,8 +1286,9 @@ mod tests {
     fn asking_something_that_is_not_a_login_is_sent_back() {
         let error = triage(&json!({"outcome": "needs-info", "category": "bug", "comment": "Which version?", "ask": ["the reporter"]}))
             .unwrap_err();
+        let error = error_at(error, "/ask/0");
         assert!(
-            error.contains("`/ask/0`: \"the reporter\" does not match"),
+            error.starts_with("\"the reporter\" does not match"),
             "{error}"
         );
     }
@@ -1116,9 +1297,9 @@ mod tests {
     fn a_triage_outcome_outside_the_three_states_is_sent_back() {
         let error =
             triage(&json!({"outcome": "done", "category": "bug", "comment": "Fine."})).unwrap_err();
-        assert!(
-            error.contains(r#"`/outcome`: "done" is not one of "ready-for-agent", "needs-info" or "ready-for-human""#),
-            "{error}"
+        assert_eq!(
+            error_at(error, "/outcome"),
+            r#""done" is not one of "ready-for-agent", "needs-info" or "ready-for-human""#
         );
     }
 
@@ -1129,9 +1310,11 @@ mod tests {
             "issues": [{"title": "Fix it", "body": "It is broken.", "label": "bug"}],
         }));
         assert_eq!(
-            error,
-            "The result does not match its schema:\n\n\
-             - `/issues/0/label`: \"bug\" is not one of \"ready-for-agent\" or \"ready-for-human\"\n"
+            mismatches(error),
+            [Mismatch::At {
+                at: "/issues/0/label".into(),
+                error: r#""bug" is not one of "ready-for-agent" or "ready-for-human""#.into(),
+            }]
         );
     }
 
@@ -1140,7 +1323,13 @@ mod tests {
         let error =
             triage(&json!({"outcome": "ready-for-agent", "category": "chore", "comment": "Fine."}))
                 .unwrap_err();
-        assert_eq!(error, r#"`category` is "chore"; it must be one of "bug"."#);
+        assert_eq!(
+            error,
+            ParseError::Category {
+                category: "chore".into(),
+                categories: vec!["bug".into()],
+            }
+        );
     }
 
     #[test_log::test]
@@ -1164,10 +1353,10 @@ mod tests {
         let error = rejected::<DesignResult<IssueWork>>(
             &json!({"outcome": "designed", "design": "D.", "tickets": [ticket("a", &[])]}),
         );
-        assert!(error.contains("`/comment` is missing"), "{error}");
+        assert_eq!(mismatches(error), [missing("/comment")]);
     }
 
-    fn cut(tickets: &[Value]) -> Result<DesignResult<IssueWork>, String> {
+    fn cut(tickets: &[Value]) -> Result<DesignResult<IssueWork>, ParseError> {
         parse(
             &json!({"outcome": "designed", "design": "D.", "tickets": tickets, "comment": "Cut."})
                 .to_string(),
@@ -1178,7 +1367,7 @@ mod tests {
     fn two_tickets_with_one_id_are_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &[]), ticket("a", &[])]).unwrap_err(),
-            "The result JSON does not match the contract: two tickets have the id \"a\"."
+            ParseError::Contract(ContractError::DuplicateId { id: "a".into() })
         );
     }
 
@@ -1186,8 +1375,10 @@ mod tests {
     fn a_ticket_blocked_by_no_ticket_is_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &["b"])]).unwrap_err(),
-            "The result JSON does not match the contract: \
-             ticket \"a\" is blocked by \"b\", which is not a ticket id."
+            ParseError::Contract(ContractError::UnknownBlocker {
+                id: "a".into(),
+                blocker: "b".into(),
+            })
         );
     }
 
@@ -1195,7 +1386,7 @@ mod tests {
     fn tickets_blocking_each_other_are_sent_back() {
         assert_eq!(
             cut(&[ticket("a", &["b"]), ticket("b", &["a"])]).unwrap_err(),
-            "The result JSON does not match the contract: the tickets' blocked_by edges form a cycle."
+            ParseError::Contract(ContractError::Cycle)
         );
     }
 
@@ -1206,7 +1397,7 @@ mod tests {
             "comment": "Fixed.",
             "replies": [{"thread": "T1", "body": "Done.", "resolve": "yes"}],
         }));
-        assert!(error.contains("`/replies/0/resolve`: "), "{error}");
+        let error = error_at(error, "/replies/0/resolve");
         assert!(error.contains("\"boolean\""), "{error}");
     }
 
@@ -1246,6 +1437,6 @@ mod tests {
     #[test_log::test]
     fn a_message_with_no_object_is_sent_back() {
         let error = parse::<AutomationResult>("I think it's a bug.").unwrap_err();
-        assert!(error.contains("holds no JSON object"), "{error}");
+        assert_eq!(error, ParseError::NoJson);
     }
 }

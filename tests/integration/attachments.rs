@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::common;
 
 use common::secrets_unnamed;
-use linewright::attachments::{self, Dir, Refusal, Resolved};
+use linewright::attachments::{self, BadReference, Dir, Refusal, Resolved};
 use linewright::secrets::Secrets;
 
 /// A session's record directory and its attachments directory in it.
@@ -331,16 +331,9 @@ fn a_missing_file_is_refused() {
         .unwrap_err();
     assert_eq!(
         refusal,
-        Refusal::NotAFile {
+        Refusal::Reference(BadReference::NotAFile {
             path: format!("{dir}/missing.png").into()
-        }
-    );
-    assert_eq!(
-        refusal.to_string(),
-        format!(
-            "`{dir}/missing.png` is in the attachments directory but is not a regular file there: \
-             put the file itself at that path, not a symlink to it, or take the reference out"
-        )
+        })
     );
 }
 
@@ -354,18 +347,9 @@ fn a_file_of_a_kind_linewright_does_not_attach_is_refused() {
         .unwrap_err();
     assert_eq!(
         refusal,
-        Refusal::Kind {
+        Refusal::Reference(BadReference::Kind {
             path: format!("{dir}/tree.txt").into()
-        }
-    );
-    assert_eq!(
-        refusal.to_string(),
-        format!(
-            "`{dir}/tree.txt` is not an image or a video: only `.png`, `.jpg`, `.jpeg`, \
-             `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm` files can be attached. Put \
-             anything else, such as text output or a log, in the Markdown itself, in a fenced \
-             code block or a `<details>` block when it is long, or take the reference out"
-        )
+        })
     );
 }
 
@@ -386,9 +370,9 @@ fn a_missing_file_of_a_kind_linewright_does_not_attach_is_not_a_file() {
         record
             .resolve(&format!("[notes]({dir}/notes.txt)"))
             .unwrap_err(),
-        Refusal::NotAFile {
+        Refusal::Reference(BadReference::NotAFile {
             path: format!("{dir}/notes.txt").into()
-        }
+        })
     );
 }
 
@@ -401,9 +385,9 @@ fn a_file_of_a_kind_linewright_does_not_attach_is_refused_for_its_kind_before_it
     assert_eq!(
         attachments::resolve(&record.dir, &[&format!("[env]({dir}/env.txt)")], &secrets)
             .unwrap_err(),
-        Refusal::Kind {
+        Refusal::Reference(BadReference::Kind {
             path: format!("{dir}/env.txt").into()
-        }
+        })
     );
 }
 
@@ -417,9 +401,9 @@ fn a_symlink_is_refused() {
         record
             .resolve(&format!("![x]({dir}/link.png)"))
             .unwrap_err(),
-        Refusal::NotAFile {
+        Refusal::Reference(BadReference::NotAFile {
             path: format!("{dir}/link.png").into()
-        }
+        })
     );
 }
 
@@ -437,9 +421,9 @@ fn a_file_behind_a_symlinked_directory_is_refused() {
         record
             .resolve(&format!("<img src=\"{dir}/linked/shot.png\">"))
             .unwrap_err(),
-        Refusal::NotAFile {
+        Refusal::Reference(BadReference::NotAFile {
             path: format!("{dir}/linked/shot.png").into()
-        }
+        })
     );
 }
 
@@ -453,16 +437,9 @@ fn a_dot_dot_escape_from_the_directory_is_refused() {
         .unwrap_err();
     assert_eq!(
         refusal,
-        Refusal::Outside {
+        Refusal::Reference(BadReference::Outside {
             path: format!("{dir}/../notes.txt").into()
-        }
-    );
-    assert_eq!(
-        refusal.to_string(),
-        format!(
-            "`{dir}/../notes.txt` is outside the attachments directory: copy the file into \
-             the directory and refer to it there"
-        )
+        })
     );
 }
 
@@ -476,7 +453,7 @@ fn a_file_outside_the_directory_is_refused() {
         record
             .resolve(&format!("![x]({})", file.display()))
             .unwrap_err(),
-        Refusal::Outside { path: file }
+        Refusal::Reference(BadReference::Outside { path: file })
     );
 }
 
@@ -508,34 +485,6 @@ fn a_secret_in_a_binary_file_is_refused() {
             variable: "GITHUB_TOKEN".to_string(),
             path: format!("{dir}/shot.png").into()
         }
-    );
-    assert_eq!(
-        refusal.to_string(),
-        format!(
-            "`{dir}/shot.png` holds the secret of `GITHUB_TOKEN`: take the secret out of the \
-             file, or take the reference out"
-        )
-    );
-}
-
-#[test_log::test]
-fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_file() {
-    let briefs = linewright::briefs::OperatorPrompts::read(None)
-        .unwrap()
-        .briefs();
-
-    let followup = linewright::prompts::attachment_secret(
-        &briefs.templates,
-        "NPM_TOKEN",
-        std::path::Path::new("/record/attachments/log.txt"),
-    );
-
-    assert_eq!(
-        followup,
-        "Your work is not finished: the attachment `/record/attachments/log.txt` holds the \
-         value of `NPM_TOKEN`, a secret. Linewright uploads no attachment that holds a secret, \
-         so take the secret out of the file, or take the reference to it out of your result.\
-         \n\nFix that, then answer again with only the result JSON object."
     );
 }
 
