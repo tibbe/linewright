@@ -483,7 +483,7 @@ templates! {
     automation: AutomationRun = "prompts/automation.md", AUTOMATIONS, AsWritten;
     judge: Judge = "prompts/judge.md", JUDGE, Trimmed;
     result_error: ResultError = "prompts/follow-ups/result-error.md", Readers::Every, Trimmed;
-    loose_ends: LooseEnds = "prompts/follow-ups/loose-ends.md", BRANCH_WORK, Trimmed;
+    loose_ends: LooseEnds = "prompts/follow-ups/loose-ends.md", ATTACHING, Trimmed;
     usage_limit_reset: NoValues = "prompts/follow-ups/usage-limit-reset.md", Readers::Every, Trimmed;
     late_feedback: LateFeedback = "prompts/follow-ups/late-feedback.md", PULL_WORK, Trimmed;
     facts: Facts = "parts/facts.md", Readers::Every, Trimmed;
