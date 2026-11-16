@@ -375,8 +375,14 @@ impl Runs {
     }
 
     /// `None` if the run has no record; a record that does not read fails.
+    /// A run with no end reads as in flight if its lock was held as its
+    /// record was read: a run records its end before it lets go of its lock.
     pub async fn try_read_run(&self, id: &RunId) -> Result<Option<Recorded>> {
-        rows::read_one(self.db.pool(), self.work_dir(), id, |id| self.is_held(id)).await
+        let held_before = self.is_held(id);
+        rows::read_one(self.db.pool(), self.work_dir(), id, |id| {
+            held_before || self.is_held(id)
+        })
+        .await
     }
 
     /// As [`Runs::read`], with a failure to read logged and taken as no
