@@ -496,3 +496,18 @@ fn files_under(root: &Path) -> BTreeMap<String, String> {
     }
     files
 }
+
+#[test_log::test]
+fn the_loose_ends_follow_up_is_read_by_every_run_whose_result_may_attach_a_secret() {
+    let readers = prompts::readers("prompts/follow-ups/loose-ends.md").unwrap();
+    let automation = linewright::automation::parse(
+        &"weekly".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook.\n",
+    )
+    .unwrap();
+
+    for kind in WorkKind::ALL {
+        assert!(readers.read_by(&RunKind::Stage(kind)), "{kind:?}");
+    }
+    assert!(readers.read_by(&RunKind::Automation(&automation)));
+}
