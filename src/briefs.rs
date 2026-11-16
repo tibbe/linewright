@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 
 use crate::layer::Layer;
-use crate::prompts::{self, Readers, Templates};
+use crate::prompts::{self, OwnTemplates, Readers, Templates};
 use crate::store::Blob;
 
 /// The brief a session is sent: its templates and its plugin, each file
@@ -52,6 +52,8 @@ pub struct Resolved {
 /// the briefs it makes over Linewright's.
 #[derive(Clone, Debug)]
 pub struct OperatorBriefs {
+    /// Linewright's own layer, under the operator's.
+    own: OwnTemplates,
     layer: BriefLayer,
     briefs: Arc<Briefs>,
 }
@@ -194,12 +196,13 @@ pub(crate) fn is_hidden(path: &str) -> bool {
 
 impl Briefs {
     pub fn shipped() -> Briefs {
-        Briefs::resolve(&[]).briefs
+        Briefs::resolve(&OwnTemplates::shipped(), &[]).briefs
     }
 
     /// Takes each file from the first of `layers` that has it and whose file
-    /// can be used, or else from Linewright's own briefs.
-    pub fn resolve(layers: &[&BriefLayer]) -> Resolved {
+    /// can be used, or else from Linewright's own layer, `own`, whose files
+    /// report [`Layer::Linewright`] whatever their text.
+    pub fn resolve(own: &OwnTemplates, layers: &[&BriefLayer]) -> Resolved {
         let layers_having = |path: &str| -> Vec<&BriefLayer> {
             layers
                 .iter()
@@ -218,7 +221,7 @@ impl Briefs {
             holds: readers(path).expect("only a file a layer may hold is resolved"),
         };
         let templates = loop {
-            let (templates, failed) = Templates::read(&mut |path| {
+            let (templates, failed) = Templates::read(own, &mut |path| {
                 let layer = candidates.get(path)?.first()?;
                 layer.files.get(path).map(String::as_str)
             });
@@ -293,6 +296,12 @@ impl OperatorBriefs {
     /// hidden ones aside, must be one a layer may hold and usable; the error
     /// names each that is not.
     pub fn read(dir: Option<&Path>) -> Result<OperatorBriefs> {
+        OperatorBriefs::read_over(OwnTemplates::shipped(), dir)
+    }
+
+    /// As [`OperatorBriefs::read`], over `own` in place of Linewright's
+    /// shipped text.
+    pub fn read_over(own: OwnTemplates, dir: Option<&Path>) -> Result<OperatorBriefs> {
         let mut files = Vec::new();
         if let Some(dir) = dir {
             for path in files_under(dir)? {
@@ -303,7 +312,7 @@ impl OperatorBriefs {
             }
         }
         let (layer, mut unusable) = BriefLayer::parse(Layer::Operator, files);
-        let resolved = Briefs::resolve(&[&layer]);
+        let resolved = Briefs::resolve(&own, &[&layer]);
         unusable.extend(resolved.unusable);
         if let Some(dir) = dir
             && !unusable.is_empty()
@@ -320,6 +329,7 @@ impl OperatorBriefs {
             ));
         }
         Ok(OperatorBriefs {
+            own,
             layer,
             briefs: Arc::new(resolved.briefs),
         })
@@ -327,6 +337,12 @@ impl OperatorBriefs {
 
     pub fn layer(&self) -> &BriefLayer {
         &self.layer
+    }
+
+    /// The briefs of `repository`'s layer over the operator's and
+    /// Linewright's own.
+    pub fn with_repository(&self, repository: &BriefLayer) -> Resolved {
+        Briefs::resolve(&self.own, &[repository, &self.layer])
     }
 
     /// The briefs of a run with no layer above the operator's.
