@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex;
 
+use super::{ATTACHMENTS, WRITES, attachment_link};
 use crate::domain::{
     CheckFailure, IssueCloseReason, Login, MergeMethod, MergedPull, Number, Pull, Snapshot,
     Windows, label,
@@ -17,11 +18,6 @@ use crate::store::{
     AnyItem, AttachError, Blob, Identity, IssueRead, NewIssue, NewPull, PeoplesPullRead, PushError,
     PushMode, RecordedItem, RecordedProperties, RepoSettings, Store,
 };
-
-/// The directory of the output that keeps the writes.
-pub(super) const WRITES: &str = "writes";
-/// The directory of the output that keeps the attachments.
-const ATTACHMENTS: &str = "attachments";
 
 /// A [`Store`] that keeps each write made through it as plain files under
 /// its output, in the order of the calls, and answers every read from the
@@ -335,7 +331,7 @@ impl Store for Journal {
         _content_type: &str,
     ) -> Result<String, AttachError> {
         let name = self.keep_attachment(file, name).await?;
-        Ok(format!("../{ATTACHMENTS}/{name}"))
+        Ok(attachment_link(&name))
     }
 
     async fn heads(&self, branches: &[String]) -> Result<BTreeMap<String, CommitId>> {

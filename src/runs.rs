@@ -719,9 +719,13 @@ impl RecordsSessions for Running {
     }
 }
 
+/// The directory of a work directory that keeps the records of the
+/// sessions of its runs.
+pub(crate) const SESSIONS: &str = "sessions";
+
 /// Where the records of the sessions of the runs in `work_dir` are kept.
 fn sessions_dir(work_dir: &Path) -> PathBuf {
-    work_dir.join("sessions")
+    work_dir.join(SESSIONS)
 }
 
 /// A run's record, as it is while the run is in flight, and where it is
