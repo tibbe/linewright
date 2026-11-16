@@ -39,7 +39,7 @@ Seen it too.
 
 ## conflict
 
-A merge of `origin/main` stopped on conflicts in `src/count.rs`, `Cargo.lock`. Finish it with `git commit`.
+A merge of `origin/main` stopped on conflicts in `src/count.rs` and `Cargo.lock`. Finish it with `git commit`.
 
 ## output
 

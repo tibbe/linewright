@@ -336,30 +336,22 @@ const KINDS: [Kind; 9] = [
     },
 ];
 
-/// Every kind of file Linewright attaches, as a list such as "`.png`, …,
-/// `.mov` and `.webm`".
-pub fn attachable() -> String {
-    listed(KINDS.into_iter(), "and")
+/// The extension of every kind of file Linewright attaches, such as `png`:
+/// the first and the rest.
+pub fn attachable() -> (&'static str, impl Iterator<Item = &'static str>) {
+    let [first, rest @ ..] = KINDS;
+    (first.extension, rest.into_iter().map(|kind| kind.extension))
 }
 
-/// The kinds of video Linewright attaches, as a list such as "`.mp4`,
-/// `.mov` or `.webm`".
-pub fn videos() -> String {
-    listed(
-        KINDS.into_iter().filter(|kind| kind.media == Media::Video),
-        "or",
-    )
-}
-
-/// `kinds`' extensions, each with its dot in backticks, in a list whose
-/// last two are joined by `last`.
-fn listed(kinds: impl Iterator<Item = Kind>, last: &str) -> String {
-    let written: Vec<String> = kinds.map(|kind| format!("`.{}`", kind.extension)).collect();
-    match written.split_last() {
-        None => String::new(),
-        Some((only, [])) => only.clone(),
-        Some((final_one, rest)) => format!("{} {last} {final_one}", rest.join(", ")),
-    }
+/// The extension of every kind of video Linewright attaches, such as `mp4`:
+/// the first and the rest.
+pub fn videos() -> (&'static str, impl Iterator<Item = &'static str>) {
+    let mut videos = KINDS
+        .into_iter()
+        .filter(|kind| kind.media == Media::Video)
+        .map(|kind| kind.extension);
+    let first = videos.next().expect("`KINDS` holds videos");
+    (first, videos)
 }
 
 /// The kind of the file at `path`, told by its extension whatever its

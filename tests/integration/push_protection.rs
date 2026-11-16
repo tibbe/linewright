@@ -21,6 +21,12 @@ const FOUND: &str = "GitHub Personal Access Token in the commit \
                      `8479b4565e1a22d92de1bb6edb317cdc4dc64212`, at \
                      `tests/integration/push_protection.rs:22`";
 
+/// What a session is sent of what GitHub's push protection found, in
+/// [`REFUSAL`].
+const SENT: &str = "`GitHub Personal Access Token` in the commit \
+                    `8479b4565e1a22d92de1bb6edb317cdc4dc64212`, at \
+                    `tests/integration/push_protection.rs:22`";
+
 /// Commits a fake token to `src/config.rs`.
 pub(crate) fn commit_token(dir: &Path) {
     // Whole, the token would trip GitHub's push protection on this file
@@ -74,7 +80,7 @@ async fn an_implement_run_whose_push_github_refuses_over_a_secret_is_sent_back_a
 
     let prompts = world.harness.prompts(WorkKind::Implement);
     assert_eq!(prompts.len(), 2);
-    assert!(prompts[1].contains(FOUND), "{}", prompts[1]);
+    assert!(prompts[1].contains(SENT), "{}", prompts[1]);
     let pr = world.store.snapshot_pull(world.store.pulls()[0]).await;
     assert_eq!(
         world
@@ -117,7 +123,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
             && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {FOUND}."
+                "GitHub's push protection refused the push over a secret: {SENT}."
             ))
             && comment.contains(&format!(
                 "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection \
@@ -221,7 +227,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
             && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {FOUND}."
+                "GitHub's push protection refused the push over a secret: {SENT}."
             )),
         "{comment}"
     );
@@ -327,7 +333,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
     assert!(
         comment.contains("still could not be used after 1 follow-up(s)")
             && comment.contains(&format!(
-                "GitHub's push protection refused the push over a secret: {FOUND}."
+                "GitHub's push protection refused the push over a secret: {SENT}."
             )),
         "{comment}"
     );

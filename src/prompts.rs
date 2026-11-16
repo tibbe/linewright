@@ -23,6 +23,10 @@ use crate::store::FoundSecrets;
 use crate::work_settings::RunKind;
 use crate::working_pull::Feedback;
 
+mod list;
+
+use list::{Conjunction, list};
+
 pub struct Repo<'a> {
     pub name: &'a domain::Repo,
     pub default_branch: &'a str,
@@ -279,6 +283,7 @@ values!(ExistingBranch {
     unfinished
 });
 values!(Commits { commits });
+values!(UnfinishedCommit { commit });
 values!(Stopped {
     default_branch,
     files
@@ -293,6 +298,7 @@ values!(HeldSecret {
     file
 });
 values!(PushedSecret { secrets });
+values!(PushedSecretFound { kind, commit, path });
 values!(
     /// The attachments contract, from `parts/attachments.md`.
     Attachments {
@@ -502,8 +508,11 @@ templates! {
     full_log: FullLog = "parts/full-log.md", FIX_CI, Trimmed;
     filed_gaps: FiledGapsPart = "parts/filed-gaps.md", TICKET_WORK, Trimmed;
     fold_unfinished: Commits = "parts/fold-unfinished.md", BRANCH_WORK, Trimmed;
+    unfinished_commit: UnfinishedCommit = "parts/unfinished-commit.md", BRANCH_WORK, Trimmed;
+    unfinished_commits: Commits = "parts/unfinished-commits.md", BRANCH_WORK, Trimmed;
     held_secret: HeldSecret = "parts/held-credential.md", BRANCH_WORK, Trimmed;
     pushed_secret: PushedSecret = "parts/pushed-secret.md", BRANCH_WORK, Trimmed;
+    pushed_secret_found: PushedSecretFound = "parts/pushed-secret-found.md", BRANCH_WORK, Trimmed;
     attachments: Attachments = "parts/attachments.md", ATTACHING, Trimmed;
     attachment_secret: AttachmentSecret = "parts/attachment-secret.md", ATTACHING, Trimmed;
     attachment_refused: AttachmentRefused = "parts/attachment-refused.md", ATTACHING, Trimmed;
@@ -731,11 +740,7 @@ pub fn triage(
     write_issue(&mut rendered, "The issue", issue);
     templates.triage.fill(&Triage {
         base: shared(templates, repo),
-        categories: categories
-            .iter()
-            .map(|c| format!("`{c}`"))
-            .collect::<Vec<_>>()
-            .join(", "),
+        categories: listed(categories, code, Conjunction::Or, CATEGORIES_NEVER_EMPTY),
         issue: rendered.trim_end().into(),
         output: with_attachments(
             templates,
@@ -841,8 +846,8 @@ fn design_output(templates: &Templates, of: DesignOf, attachments: &Path) -> Str
 fn with_attachments(templates: &Templates, output: &str, attachments: &Path) -> String {
     let contract = templates.attachments.fill(&Attachments {
         directory: attachments.display().to_string(),
-        kinds: crate::attachments::attachable(),
-        videos: crate::attachments::videos(),
+        kinds: extensions(crate::attachments::attachable(), Conjunction::And),
+        videos: extensions(crate::attachments::videos(), Conjunction::Or),
     });
     format!("{output}\n\n{contract}")
 }
@@ -861,7 +866,11 @@ pub fn implement(
         }),
         BranchStart::Existing { unfinished } => templates.existing_branch.fill(&ExistingBranch {
             default_branch: repo.default_branch.into(),
-            unfinished: unfinished_sentence(&templates.unfinished_or_discard, unfinished.as_ref()),
+            unfinished: unfinished_sentence(
+                templates,
+                &templates.unfinished_or_discard,
+                unfinished.as_ref(),
+            ),
         }),
     };
     templates.implement.fill(&Implement {
@@ -892,7 +901,7 @@ pub fn pull_work(
         branch: pr.head_ref.clone(),
         pr: pr.number.to_string(),
         pr_title: pr.title.clone(),
-        unfinished: unfinished_sentence(&templates.unfinished, unfinished),
+        unfinished: unfinished_sentence(templates, &templates.unfinished, unfinished),
         conflict,
         description: or_none(&pr.body).into(),
         ticket: render_ticket(templates, ticket),
@@ -966,24 +975,28 @@ fn stopped(
     };
     part.fill(&Stopped {
         default_branch: repo.default_branch.into(),
-        files: conflict
-            .files
-            .iter()
-            .map(|f| format!("`{f}`"))
-            .collect::<Vec<_>>()
-            .join(", "),
+        files: listed(
+            &conflict.files,
+            code,
+            Conjunction::And,
+            "an update stops on conflicts in at least one file",
+        ),
     })
 }
 
 /// The sentence `part` says of the `unfinished` commits, led by a space to
 /// follow the one before it, or nothing.
-fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedCommits>) -> String {
+fn unfinished_sentence(
+    templates: &Templates,
+    part: &Template<Commits>,
+    unfinished: Option<&UnfinishedCommits>,
+) -> String {
     unfinished
         .map(|u| {
             format!(
                 " {}",
                 part.fill(&Commits {
-                    commits: unfinished_commits(u)
+                    commits: unfinished_commits(templates, u)
                 })
             )
         })
@@ -1104,7 +1117,7 @@ fn parse_error(templates: &Templates, error: &ParseError) -> String {
             categories,
         } => templates.result_category.fill(&Category {
             category: format!("{category:?}"),
-            categories: quoted(categories),
+            categories: listed(categories, quoted, Conjunction::Or, CATEGORIES_NEVER_EMPTY),
         }),
     }
 }
@@ -1119,13 +1132,13 @@ fn mismatch(templates: &Templates, mismatch: &Mismatch) -> String {
             outcomes,
         } => templates.result_outcome.fill(&Outcome {
             outcome: outcome.to_string(),
-            outcomes: quoted(outcomes),
+            outcomes: listed(outcomes, quoted, Conjunction::Or, OUTCOMES_NEVER_EMPTY),
         }),
         Mismatch::Outcome {
             outcome: None,
             outcomes,
         } => templates.result_outcome_missing.fill(&Outcomes {
-            outcomes: quoted(outcomes),
+            outcomes: listed(outcomes, quoted, Conjunction::Or, OUTCOMES_NEVER_EMPTY),
         }),
         Mismatch::At { at, error } => templates.result_at.fill(&At {
             at: at.clone(),
@@ -1166,18 +1179,53 @@ fn bad_reference(templates: &Templates, reference: &BadReference) -> String {
         }),
         BadReference::Kind { path } => templates.attachment_kind.fill(&AttachmentKind {
             file: path.display().to_string(),
-            kinds: crate::attachments::attachable(),
+            kinds: extensions(crate::attachments::attachable(), Conjunction::And),
         }),
     }
 }
 
-/// Each of `values` quoted, as in `"bug", "docs"`.
-fn quoted(values: &[String]) -> String {
-    values
-        .iter()
-        .map(|value| format!("{value:?}"))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// Why a result's outcomes, the branches of its schema's `oneOf`, are never
+/// empty.
+const OUTCOMES_NEVER_EMPTY: &str = "a result that names none of its outcomes has a `oneOf` of them";
+
+/// Why a repository's categories are never empty.
+const CATEGORIES_NEVER_EMPTY: &str =
+    "the categories are the enabled issue types, or the labels where there are none";
+
+/// Each of `values` as `as_item` writes it, in a list ending in
+/// `conjunction`.
+///
+/// # Panics
+///
+/// When `values` is empty, with `never_empty`, why they never are.
+fn listed(
+    values: &[String],
+    as_item: fn(&str) -> String,
+    conjunction: Conjunction,
+    never_empty: &str,
+) -> String {
+    let (first, rest) = values.split_first().expect(never_empty);
+    list(as_item(first), rest.iter().map(|v| as_item(v)), conjunction)
+}
+
+/// The `first` and `rest` extensions, each with its dot as code, in a list
+/// ending in `conjunction`, as in "`.mp4`, `.mov` or `.webm`".
+fn extensions(
+    (first, rest): (&str, impl Iterator<Item = &'static str>),
+    conjunction: Conjunction,
+) -> String {
+    let as_item = |extension: &str| format!("`.{extension}`");
+    list(as_item(first), rest.map(as_item), conjunction)
+}
+
+/// `value` quoted, as in `"bug"`.
+fn quoted(value: &str) -> String {
+    format!("{value:?}")
+}
+
+/// `value` as code, as in `` `bug` ``.
+fn code(value: &str) -> String {
+    format!("`{value}`")
 }
 
 /// What a session is sent back with when it answers `done` while its work
@@ -1197,7 +1245,7 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
         }
         LooseEnd::NoCommits => templates.no_commits.fill(&NoValues {}),
         LooseEnd::Unfinished(unfinished) => templates.fold_unfinished.fill(&Commits {
-            commits: unfinished_commits(unfinished),
+            commits: unfinished_commits(templates, unfinished),
         }),
         LooseEnd::HeldSecret(held) => templates.held_secret.fill(&HeldSecret {
             commit: held.commit.clone(),
@@ -1205,7 +1253,7 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
             file: held.file.clone(),
         }),
         LooseEnd::PushedSecret(secrets) => templates.pushed_secret.fill(&PushedSecret {
-            secrets: secrets.to_string(),
+            secrets: pushed_secrets(templates, secrets),
         }),
         LooseEnd::AttachmentSecret { variable, file } => {
             templates.attachment_secret.fill(&AttachmentSecret {
@@ -1217,16 +1265,37 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
     templates.loose_ends.fill(&LooseEnds { problem })
 }
 
-/// Names the unfinished `commits`, as in "the unfinished commit `abc1234`".
-pub fn unfinished_commits(commits: &UnfinishedCommits) -> String {
-    let first = format!("`{}`", commits.first);
-    let Some((last, middle)) = commits.rest.split_last() else {
-        return format!("the unfinished commit {first}");
-    };
-    let leading: Vec<String> = std::iter::once(first)
-        .chain(middle.iter().map(|c| format!("`{c}`")))
-        .collect();
-    format!("the unfinished commits {} and `{last}`", leading.join(", "))
+/// Each of the `secrets` push protection found, from
+/// `parts/pushed-secret-found.md`, in a list ending in `and`.
+fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> String {
+    let mut found = secrets.iter().map(|secret| {
+        templates.pushed_secret_found.fill(&PushedSecretFound {
+            kind: secret.kind.clone(),
+            commit: secret.commit.clone(),
+            path: secret.path.clone(),
+        })
+    });
+    let first = found
+        .next()
+        .expect("push protection found at least one secret");
+    list(first, found, Conjunction::And)
+}
+
+/// Names the unfinished `commits`, one from `parts/unfinished-commit.md` and
+/// several from `parts/unfinished-commits.md`.
+fn unfinished_commits(templates: &Templates, commits: &UnfinishedCommits) -> String {
+    if commits.rest.is_empty() {
+        return templates.unfinished_commit.fill(&UnfinishedCommit {
+            commit: code(&commits.first),
+        });
+    }
+    templates.unfinished_commits.fill(&Commits {
+        commits: list(
+            code(&commits.first),
+            commits.rest.iter().map(|c| code(c)),
+            Conjunction::And,
+        ),
+    })
 }
 
 pub fn usage_limit_reset(templates: &Templates) -> String {
