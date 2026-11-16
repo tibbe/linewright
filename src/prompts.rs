@@ -216,7 +216,7 @@ values!(Triage: Shared {
 values!(
     /// Triage's result contract, from `outputs/triage.md`.
     TriageOutput {
-        category_choices,
+        category_choices: List,
         author
     }
 );
@@ -864,11 +864,7 @@ pub fn triage(
         output: with_attachments(
             templates,
             &templates.triage_output.fill(&TriageOutput {
-                category_choices: categories
-                    .iter()
-                    .map(|c| format!("\"{c}\""))
-                    .collect::<Vec<_>>()
-                    .join(" | "),
+                category_choices: listed(categories, str::to_string, CATEGORIES_NEVER_EMPTY),
                 author: issue.author.to_string(),
             }),
             attachments,

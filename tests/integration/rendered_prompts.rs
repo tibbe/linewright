@@ -416,3 +416,24 @@ async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
         linewright::layer::Layer::Operator
     );
 }
+
+#[test_log::test]
+fn triage_lists_its_categories_as_code_and_as_they_are_in_its_result_contract() {
+    let name = repo_name();
+    let prompt = prompts::triage(
+        &linewright::briefs::Briefs::shipped().templates,
+        &repo(&name),
+        &issue(7, "Count the widgets", "They are not counted."),
+        &["bug".into(), "feature".into()],
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert!(
+        prompt.contains("Categories to choose from: `bug`, `feature`\n"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(r#""category": "<one of bug, feature>","#),
+        "{prompt}"
+    );
+}
