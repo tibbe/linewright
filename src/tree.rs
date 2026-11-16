@@ -210,8 +210,6 @@ async fn clone_whole(from: &Path, to: &Path) -> Result<bool> {
     let (from, to) = (from.to_owned(), to.to_owned());
     tokio::task::spawn_blocking(move || match reflink_copy::reflink(&from, &to) {
         Ok(()) => Ok(true),
-        // std reads `ENOTSUP` as no `ErrorKind` on macOS, only `EOPNOTSUPP`
-        // (https://github.com/rust-lang/rust/pull/158580).
         Err(e) if matches!(Errno::from_io_error(&e), Some(Errno::NOTSUP | Errno::XDEV)) => {
             remove(&to)?;
             Ok(false)
