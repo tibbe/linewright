@@ -59,17 +59,6 @@ path, is a file.
 - **A newer schema.** A release refuses a database whose schema a newer
   release made. The error names that release, and says to restore a backup
   from before it.
-- **Records in files.** When Linewright makes the database, it reads into it the
-  records in these files of the work directory, as Linewright 0.22.0 reads them,
-  under the names that release reads. It does this in the transaction that makes
-  the database, and leaves the files.
-
-  | Files                                                                    | Hold                                          |
-  | ------------------------------------------------------------------------ | --------------------------------------------- |
-  | `*.json` under `runs/`                                                   | the runs, and with `.input.json` their inputs |
-  | `pull-requests.json`                                                     | Linewright's pull requests                    |
-  | `automation-runs.json`                                                   | each automation's last scheduled run          |
-  | `state.json`, `setup.json` and each build's `build.json`, under `environment/` and each directory in `replays/environments/` | the environments and their builds |
 
 ## Agent sessions
 
