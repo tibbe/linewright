@@ -26,7 +26,7 @@ use linewright::replay::judge::{self, JudgeRecord};
 use linewright::replay::{self, Output};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
-use linewright::serving::{self, OnUsageLimit, Starting, prompts};
+use linewright::serving::{self, OnUsageLimit, Starting, briefs};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::transcript::{self, After, InFlight, Verbosity};
@@ -337,7 +337,7 @@ async fn setup_command_before_any_poll(config: &Config) -> Result<bool> {
         .await
         .context("reading the repository's settings")?
         .default_branch;
-    let repo = RepoLayer::read(&github, &branch, &prompts(config)?)
+    let repo = RepoLayer::read(&github, &branch, &briefs(config)?)
         .await
         .context("reading Linewright's files in the repository")?;
     Ok(config.work.setup(&repo.settings).is_some())

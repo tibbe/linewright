@@ -1670,14 +1670,14 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
 }
 
 #[test_log::test(tokio::test)]
-async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linewrights() {
+async fn status_names_a_file_in_the_repositorys_briefs_that_a_layer_may_not_hold() {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     world
         .store
         .commit(
             "maintainer",
             "main",
-            &[(".linewright/prompts/implment.md", "Implement it.\n")],
+            &[(".linewright/briefs/prompts/implment.md", "Implement it.\n")],
             "Tune the implementing",
         )
         .await
@@ -1689,8 +1689,8 @@ async fn status_names_a_file_in_the_repositorys_prompts_that_is_not_one_of_linew
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert!(
         output.stdout.lines().any(|line| line
-            == "repository file Linewright cannot use: `.linewright/prompts/implment.md`: \
-                not one of Linewright's prompts"),
+            == "repository file Linewright cannot use: `.linewright/briefs/prompts/implment.md`: \
+                not a file a layer may hold"),
         "{}",
         output.stdout
     );

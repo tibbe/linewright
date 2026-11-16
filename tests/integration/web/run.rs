@@ -202,8 +202,8 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
         "session-env: Linewright's own",
         "session-pass-env: Linewright's own",
         "maintenance: Linewright's own",
-        "follow-ups/result-error.md: Linewright's own",
-        "implement.md: the operator's",
+        "prompts/follow-ups/result-error.md: Linewright's own",
+        "prompts/implement.md: the operator's",
     ]
     .map(String::from)
     .to_vec();

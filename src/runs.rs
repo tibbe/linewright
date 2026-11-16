@@ -230,7 +230,7 @@ impl From<PathBuf> for SessionEntry {
 
 /// What a session ran with: its model and effort as Linewright set them,
 /// the model as the harness reported it ran, and where each of its settings
-/// and prompt files came from.
+/// and brief files came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "KeptRan")]
 pub struct Ran {
@@ -280,13 +280,38 @@ impl From<KeptRan> for Ran {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "KeptLayers")]
 pub struct Layers {
     pub settings: BTreeMap<Setting, Source>,
-    /// By the prompt's path under the prompts' root. A record kept before
-    /// prompts were the only layered files has its paths under the briefs'
-    /// root, such as `prompts/triage.md` and `plugin/skills/tdd/SKILL.md`.
-    #[serde(alias = "briefs")]
-    pub prompts: BTreeMap<String, Layer>,
+    /// By the file's path under `briefs/`, such as `prompts/triage.md` or
+    /// `plugin/skills/tdd/SKILL.md`.
+    pub briefs: BTreeMap<String, Layer>,
+}
+
+/// [`Layers`] as a record holds it: its brief files under `briefs`, or
+/// under `prompts` by their paths under `briefs/prompts/`.
+#[derive(Deserialize)]
+struct KeptLayers {
+    settings: BTreeMap<Setting, Source>,
+    briefs: Option<BTreeMap<String, Layer>>,
+    prompts: Option<BTreeMap<String, Layer>>,
+}
+
+impl From<KeptLayers> for Layers {
+    fn from(kept: KeptLayers) -> Layers {
+        let briefs = match (kept.briefs, kept.prompts) {
+            (Some(briefs), _) => briefs,
+            (None, prompts) => prompts
+                .into_iter()
+                .flatten()
+                .map(|(path, layer)| (format!("prompts/{path}"), layer))
+                .collect(),
+        };
+        Layers {
+            settings: kept.settings,
+            briefs,
+        }
+    }
 }
 
 impl Ran {
@@ -297,7 +322,7 @@ impl Ran {
             effort: settings.effort_set(),
             layers: Layers {
                 settings: settings.sources(),
-                prompts: briefs.layers().clone(),
+                briefs: briefs.layers().clone(),
             },
         }
     }
@@ -1605,7 +1630,7 @@ mod tests {
             })
         );
         assert_eq!(
-            ran.layers.prompts.get("triage.md"),
+            ran.layers.briefs.get("prompts/triage.md"),
             Some(&Layer::Linewright)
         );
     }

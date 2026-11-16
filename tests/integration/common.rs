@@ -57,7 +57,7 @@
 //!   - `drain`, `stop`, `kill`: drains, stops or aborts it.
 //!   - `has_ended`, `ended`, `finished`: whether it has ended, and waits for
 //!     it to end of its own accord, or however long that takes.
-//! - `prompts_with`: a `prompts` directory with one shipped prompt edited.
+//! - `briefs_with`: a `briefs` directory with one shipped file edited.
 //! - `placeholders_only`: the briefs with each first-message prompt replaced
 //!   by its placeholders, each under a heading naming it.
 //!

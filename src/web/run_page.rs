@@ -483,7 +483,7 @@ fn maintenance(model: &Session) -> &Maintenance {
 }
 
 /// A session's model and effort, opening to where each of its settings and
-/// prompt files came from; open from the start with `verbose`
+/// brief files came from; open from the start with `verbose`
 /// (`docs/specs/design_system.md`, The run page, A session's settings).
 fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
     let said = format!(
@@ -503,16 +503,16 @@ fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
             .iter()
             .map(|(setting, source)| item("setting", setting.name(), source.whose()))
             .collect();
-        let prompts: String = ran
+        let briefs: String = ran
             .layers
-            .prompts
+            .briefs
             .iter()
-            .map(|(path, layer)| item("prompt", path, layer.whose()))
+            .map(|(path, layer)| item("brief", path, layer.whose()))
             .collect();
         Fold {
             open: verbose,
             body: format!(
-                r#"<div class="layers text-muted"><ul>{settings}</ul><ul class="font-mono">{prompts}</ul></div>"#
+                r#"<div class="layers text-muted"><ul>{settings}</ul><ul class="font-mono">{briefs}</ul></div>"#
             ),
         }
     });

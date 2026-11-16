@@ -491,7 +491,7 @@ async fn a_replays_setting_refuses_a_file_that_would_hold_the_kind_of_run_it_is_
     let (_, case) = triage_case(&mut world).await;
     commit_to_case(
         &case,
-        &[(".linewright/prompts/implement.md", "Do {{nope}}\n")],
+        &[(".linewright/briefs/prompts/implement.md", "Do {{nope}}\n")],
     );
     let case = Case::open(&case).await.unwrap();
     let under = tempfile::tempdir().unwrap();
@@ -520,7 +520,8 @@ async fn a_replays_setting_refuses_a_file_that_would_hold_the_kind_of_run_it_is_
     assert!(triage.is_ok(), "{:#}", triage.err().unwrap());
     let error = format!("{:#}", implement.err().unwrap());
     assert!(
-        error.contains(".linewright/prompts/implement.md") && error.contains("would hold the run"),
+        error.contains(".linewright/briefs/prompts/implement.md")
+            && error.contains("would hold the run"),
         "{error}"
     );
     drop(triage);

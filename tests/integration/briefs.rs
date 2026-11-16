@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::common;
 
-use linewright::briefs::{Briefs, OperatorPrompts, PromptLayer, Unusable};
+use linewright::briefs::{BriefLayer, Briefs, OperatorBriefs, Unusable};
 use linewright::git::BranchStart;
 use linewright::layer::Layer;
 use linewright::prompts::{self, LooseEnd, Readers, Reads, SentBack, Templates};
@@ -12,9 +12,9 @@ use linewright::results::ParseError;
 use linewright::store::Blob;
 use linewright::work_settings::RunKind;
 
-/// The layer of `files`, each of which must be one of Linewright's prompts.
-fn layer(layer: Layer, files: &[(&str, &str)]) -> PromptLayer {
-    let (layer, unusable) = PromptLayer::parse(layer, listing(files));
+/// The layer of `files`, each of which must be one a layer may hold.
+fn layer(layer: Layer, files: &[(&str, &str)]) -> BriefLayer {
+    let (layer, unusable) = BriefLayer::parse(layer, listing(files));
     assert_eq!(unusable, []);
     layer
 }
@@ -26,11 +26,11 @@ fn listing(files: &[(&str, &str)]) -> Vec<(String, Blob)> {
         .collect()
 }
 
-fn not_a_prompt(path: &str) -> Unusable {
+fn not_held(path: &str) -> Unusable {
     Unusable {
         path: path.into(),
         layer: Layer::Repository,
-        error: "not one of Linewright's prompts".into(),
+        error: "not a file a layer may hold".into(),
         holds: Readers::Every,
     }
 }
@@ -46,16 +46,30 @@ const NO_COMMITS: &str = "you answered `done`, but the branch has no commits. Co
                           or answer `gave-up` with the reason if the ticket needs no change.";
 
 #[test_log::test]
-fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
+fn each_file_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let repository = layer(
         Layer::Repository,
-        &[("follow-ups/result-error.md", "The repository's: {{error}}")],
+        &[
+            (
+                "prompts/follow-ups/result-error.md",
+                "The repository's: {{error}}",
+            ),
+            ("parts/result-no-json.md", "The repository's own words."),
+        ],
     );
     let operator = layer(
         Layer::Operator,
         &[
-            ("follow-ups/result-error.md", "The operator's: {{error}}"),
-            ("follow-ups/loose-ends.md", "The operator's: {{problem}}"),
+            (
+                "prompts/follow-ups/result-error.md",
+                "The operator's: {{error}}",
+            ),
+            (
+                "prompts/follow-ups/loose-ends.md",
+                "The operator's: {{problem}}",
+            ),
+            ("parts/result-no-json.md", "The operator's own words."),
+            ("plugin/skills/tdd/SKILL.md", "The operator's TDD.\n"),
         ],
     );
 
@@ -65,7 +79,7 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
     let briefs = resolved.briefs;
     assert_eq!(
         prompts::result_error(&briefs.templates, &no_json()),
-        format!("The repository's: {NO_JSON}")
+        "The repository's: The repository's own words."
     );
     assert_eq!(
         prompts::loose_ends(&briefs.templates, &LooseEnd::NoCommits),
@@ -76,60 +90,98 @@ fn each_prompt_comes_from_the_first_layer_that_has_it_which_is_recorded() {
         .iter()
         .map(|(path, layer)| (path.as_str(), *layer))
         .collect();
-    assert_eq!(layers["follow-ups/result-error.md"], Layer::Repository);
-    assert_eq!(layers["follow-ups/loose-ends.md"], Layer::Operator);
-    assert_eq!(layers["triage.md"], Layer::Linewright);
-    assert_eq!(layers.len(), 11);
-    assert!(!layers.contains_key("parts/facts.md"));
-    assert!(!layers.contains_key("outputs/implement.md"));
+    assert_eq!(
+        layers["prompts/follow-ups/result-error.md"],
+        Layer::Repository
+    );
+    assert_eq!(layers["parts/result-no-json.md"], Layer::Repository);
+    assert_eq!(layers["prompts/follow-ups/loose-ends.md"], Layer::Operator);
+    assert_eq!(layers["plugin/skills/tdd/SKILL.md"], Layer::Operator);
+    assert_eq!(layers["prompts/triage.md"], Layer::Linewright);
+    assert_eq!(layers["parts/facts.md"], Layer::Linewright);
+    assert_eq!(
+        layers["plugin/skills/implement/SKILL.md"],
+        Layer::Linewright
+    );
+    assert!(!layers.contains_key("plugin/.claude-plugin/plugin.json"));
+    assert!(!layers.contains_key("results/implement.schema.json"));
 }
 
 #[test_log::test]
-fn a_prompt_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
+fn a_file_that_cannot_be_used_is_reported_and_the_next_layers_stands_in() {
     let repository = layer(
         Layer::Repository,
-        &[("follow-ups/result-error.md", "No placeholder.")],
+        &[
+            ("prompts/follow-ups/result-error.md", "No placeholder."),
+            ("plugin/skills/tdd/SKILL.md", "Mind the {{ticket}}.\n"),
+        ],
     );
     let operator = layer(
         Layer::Operator,
-        &[("follow-ups/result-error.md", "The operator's: {{error}}")],
+        &[(
+            "prompts/follow-ups/result-error.md",
+            "The operator's: {{error}}",
+        )],
     );
 
     let resolved = Briefs::resolve(&[&repository, &operator]);
 
     assert_eq!(
         resolved.unusable,
-        [Unusable {
-            path: "follow-ups/result-error.md".into(),
-            layer: Layer::Repository,
-            error: "it lacks the placeholders `{{error}}`".into(),
-            holds: Readers::Every,
-        }]
+        [
+            Unusable {
+                path: "plugin/skills/tdd/SKILL.md".into(),
+                layer: Layer::Repository,
+                error: "it has unknown placeholders: `{{ticket}}`".into(),
+                holds: Readers::Every,
+            },
+            Unusable {
+                path: "prompts/follow-ups/result-error.md".into(),
+                layer: Layer::Repository,
+                error: "it lacks the placeholders `{{error}}`".into(),
+                holds: Readers::Every,
+            },
+        ]
     );
     assert_eq!(
         prompts::result_error(&resolved.briefs.templates, &no_json()),
         format!("The operator's: {NO_JSON}")
     );
     assert_eq!(
-        resolved.briefs.layers()["follow-ups/result-error.md"],
+        resolved.briefs.layers()["prompts/follow-ups/result-error.md"],
         Layer::Operator
+    );
+    assert_eq!(
+        resolved.briefs.layers()["plugin/skills/tdd/SKILL.md"],
+        Layer::Linewright
     );
 }
 
 #[test_log::test]
-fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_skipped() {
-    let directory_at_a_prompts_path = ("rework.md/x".to_string(), Blob::Text("Ours.".into()));
-    let (layer, unusable) = PromptLayer::parse(
+fn a_layers_files_that_it_may_not_hold_are_unusable_and_hidden_ones_skipped() {
+    let directory_at_a_prompts_path = (
+        "prompts/rework.md/x".to_string(),
+        Blob::Text("Ours.".into()),
+    );
+    let (layer, unusable) = BriefLayer::parse(
         Layer::Repository,
         listing(&[
-            ("implment.md", "A misspelling."),
-            ("prompts/implement.md", "The layout of an earlier release."),
-            ("plugin/skills/tdd/SKILL.md", "Our own TDD."),
+            ("prompts/implment.md", "A misspelling."),
+            ("implement.md", "The layout of an earlier release."),
+            ("results/implement.schema.json", "{}"),
+            ("plugin/skills/mine/SKILL.md", "A skill of our own."),
             ("README.md", "Ours."),
             (".DS_Store", "Finder's."),
             (".git/HEAD", "ref: refs/heads/main"),
             ("parts/.facts.md.swp", "An editor's."),
-            ("follow-ups/result-error.md", "Ours: {{error}}"),
+            ("plugin/.claude-plugin/plugin.json", "{}"),
+            ("prompts/follow-ups/result-error.md", "Ours: {{error}}"),
+            (
+                "parts/facts.md",
+                "Ours: {{repo}} {{default_branch}} {{spec_glob}}",
+            ),
+            ("outputs/implement.md", "Ours."),
+            ("plugin/skills/tdd/SKILL.md", "Our own TDD."),
         ])
         .into_iter()
         .chain([
@@ -143,29 +195,36 @@ fn a_layers_files_that_are_not_linewrights_prompts_are_unusable_and_hidden_ones_
 
     assert_eq!(
         layer.files.keys().collect::<Vec<_>>(),
-        ["follow-ups/result-error.md"]
+        [
+            "outputs/implement.md",
+            "parts/facts.md",
+            "plugin/skills/tdd/SKILL.md",
+            "prompts/follow-ups/result-error.md",
+        ]
     );
     assert_eq!(
         unusable,
         [
-            not_a_prompt("README.md"),
-            not_a_prompt("implment.md"),
-            not_a_prompt("logo.png"),
-            not_a_prompt("parts/x/y.md"),
-            not_a_prompt("plugin/skills/tdd/SKILL.md"),
-            not_a_prompt("prompts/implement.md"),
-            not_a_prompt("rework.md/x"),
+            not_held("README.md"),
+            not_held("implement.md"),
+            not_held("logo.png"),
+            not_held("parts/x/y.md"),
+            not_held("plugin/skills/mine/SKILL.md"),
+            not_held("prompts/implment.md"),
+            not_held("prompts/rework.md/x"),
+            not_held("results/implement.schema.json"),
         ]
     );
 }
 
 #[test_log::test]
-fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
-    let (layer, unusable) = PromptLayer::parse(
+fn a_file_that_cannot_be_read_as_text_is_unusable() {
+    let (layer, unusable) = BriefLayer::parse(
         Layer::Operator,
         [
-            ("triage.md".to_string(), Blob::Binary),
-            ("design.md".to_string(), Blob::TooLarge),
+            ("prompts/triage.md".to_string(), Blob::Binary),
+            ("prompts/design.md".to_string(), Blob::TooLarge),
+            ("plugin/LICENSE".to_string(), Blob::Binary),
         ],
     );
 
@@ -174,13 +233,19 @@ fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
         unusable,
         [
             Unusable {
-                path: "design.md".into(),
+                path: "plugin/LICENSE".into(),
+                layer: Layer::Operator,
+                error: "it is not text".into(),
+                holds: Readers::Every,
+            },
+            Unusable {
+                path: "prompts/design.md".into(),
                 layer: Layer::Operator,
                 error: "it is too large to read".into(),
                 holds: Readers::Only(&[Reads::Stage(WorkKind::Design)]),
             },
             Unusable {
-                path: "triage.md".into(),
+                path: "prompts/triage.md".into(),
                 layer: Layer::Operator,
                 error: "it is not text".into(),
                 holds: Readers::Only(&[Reads::Stage(WorkKind::Triage)]),
@@ -189,8 +254,8 @@ fn a_prompt_that_cannot_be_read_as_text_is_unusable() {
     );
 }
 
-/// A `prompts` directory holding only `files`, each at its path under it.
-fn prompts_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
+/// A `briefs` directory holding only `files`, each at its path under it.
+fn briefs_dir(files: &[(&str, &str)]) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for (path, text) in files {
         let path = dir.path().join(path);
@@ -221,13 +286,13 @@ fn implement_prompt(briefs: &Briefs) -> String {
 
 #[test_log::test]
 fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_linewrights() {
-    let dir = prompts_dir(&[("implement.md", IMPLEMENT)]);
+    let dir = briefs_dir(&[("prompts/implement.md", IMPLEMENT)]);
 
-    let operator = OperatorPrompts::read(Some(dir.path())).unwrap();
+    let operator = OperatorBriefs::read(Some(dir.path())).unwrap();
 
     assert_eq!(
         operator.layer().files.keys().collect::<Vec<_>>(),
-        ["implement.md"]
+        ["prompts/implement.md"]
     );
     let briefs = operator.briefs();
     let prompt = implement_prompt(&briefs);
@@ -250,15 +315,40 @@ fn an_operators_directory_with_one_prompt_changes_that_prompt_and_the_rest_are_l
         ) && prompt.ends_with("in a fenced code block or a `<details>` block when it is long.\n"),
         "{prompt}"
     );
-    assert_eq!(briefs.layers()["implement.md"], Layer::Operator);
-    assert!(!briefs.layers().contains_key("outputs/implement.md"));
-    assert_eq!(briefs.layers()["triage.md"], Layer::Linewright);
+    assert_eq!(briefs.layers()["prompts/implement.md"], Layer::Operator);
+    assert_eq!(briefs.layers()["outputs/implement.md"], Layer::Linewright);
+    assert_eq!(briefs.layers()["prompts/triage.md"], Layer::Linewright);
+}
+
+#[test_log::test]
+fn an_operators_part_and_output_are_filled_into_the_prompt() {
+    let dir = briefs_dir(&[
+        (
+            "parts/facts.md",
+            "Ours: {{repo}} on {{default_branch}}, {{spec_glob}}.\n",
+        ),
+        ("outputs/implement.md", "Answer as you see fit.\n"),
+    ]);
+
+    let briefs = OperatorBriefs::read(Some(dir.path())).unwrap().briefs();
+    let prompt = implement_prompt(&briefs);
+
+    assert!(
+        prompt.contains("Ours: owner/widgets on main, docs/**.\n"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("Answer as you see fit.\n\nTo show a screenshot"),
+        "{prompt}"
+    );
+    assert_eq!(briefs.layers()["parts/facts.md"], Layer::Operator);
+    assert_eq!(briefs.layers()["outputs/implement.md"], Layer::Operator);
 }
 
 #[test_log::test]
 fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
-    let dir = prompts_dir(&[(
-        "automation.md",
+    let dir = briefs_dir(&[(
+        "prompts/automation.md",
         "Mind the schedule of `{{name}}`, at most {{max_issues}}: {{instructions}}\n\
          {{facts}}\n\n{{output}}\n",
     )]);
@@ -269,7 +359,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     .unwrap();
     let name = "owner/widgets".parse().unwrap();
 
-    let briefs = OperatorPrompts::read(Some(dir.path())).unwrap().briefs();
+    let briefs = OperatorBriefs::read(Some(dir.path())).unwrap().briefs();
     let prompt = prompts::automation(
         &briefs.templates,
         &prompts::Repo {
@@ -287,95 +377,71 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
         ),
         "{prompt}"
     );
-    assert_eq!(briefs.layers()["automation.md"], Layer::Operator);
+    assert_eq!(briefs.layers()["prompts/automation.md"], Layer::Operator);
 }
 
 #[test_log::test]
 fn an_operators_hidden_files_are_skipped() {
-    let dir = prompts_dir(&[
+    let dir = briefs_dir(&[
         (".DS_Store", "Finder's."),
         (".git/HEAD", "ref: refs/heads/main"),
-        ("implement.md", IMPLEMENT),
+        ("plugin/.claude-plugin/plugin.json", "{}"),
+        ("prompts/implement.md", IMPLEMENT),
     ]);
 
-    let operator = OperatorPrompts::read(Some(dir.path())).unwrap();
+    let operator = OperatorBriefs::read(Some(dir.path())).unwrap();
 
     assert_eq!(
         operator.layer().files.keys().collect::<Vec<_>>(),
-        ["implement.md"]
+        ["prompts/implement.md"]
     );
 }
 
 #[test_log::test]
 fn an_operators_files_that_cannot_be_used_are_refused_each_named() {
-    let dir = prompts_dir(&[
-        ("implment.md", "A misspelling."),
-        ("plugin/skills/tdd/SKILL.md", "Our own TDD."),
+    let dir = briefs_dir(&[
+        ("prompts/implment.md", "A misspelling."),
+        ("results/implement.schema.json", "{}"),
+        ("plugin/skills/tdd/SKILL.md", "Mind {{this}}."),
         (
-            "implement.md",
+            "prompts/implement.md",
             "{{facts}} {{branch}} {{holding}} {{default_branch}} {{ticket}}",
         ),
     ]);
 
-    let error = OperatorPrompts::read(Some(dir.path())).unwrap_err();
+    let error = OperatorBriefs::read(Some(dir.path())).unwrap_err();
 
     assert_eq!(
         format!("{error:#}"),
         format!(
-            "the `prompts` directory {} holds files Linewright cannot use:\n\
-             - implement.md: it lacks the placeholders `{{{{output}}}}`\n\
-             - implment.md: not one of Linewright's prompts\n\
-             - plugin/skills/tdd/SKILL.md: not one of Linewright's prompts",
+            "the `briefs` directory {} holds files Linewright cannot use:\n\
+             - plugin/skills/tdd/SKILL.md: it has unknown placeholders: `{{{{this}}}}`\n\
+             - prompts/implement.md: it lacks the placeholders `{{{{output}}}}`\n\
+             - prompts/implment.md: not a file a layer may hold\n\
+             - results/implement.schema.json: not a file a layer may hold",
             dir.path().display()
         )
     );
 }
 
 #[test_log::test]
-fn an_operators_part_or_result_contract_is_refused() {
-    for path in ["parts/facts.md", "outputs/implement.md"] {
-        let dir = prompts_dir(&[(path, "Ours.\n")]);
+fn every_file_of_the_brief_but_the_results_and_the_plugins_manifest_is_layered() {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs");
+    let expected: Vec<String> = ["prompts", "parts", "outputs", "plugin"]
+        .into_iter()
+        .flat_map(|dir| {
+            files_under(&shipped.join(dir))
+                .into_keys()
+                .filter(|path| !path.split('/').any(|name| name.starts_with('.')))
+                .map(move |path| format!("{dir}/{path}"))
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
 
-        let error = OperatorPrompts::read(Some(dir.path())).unwrap_err();
+    let layered: Vec<String> = Briefs::shipped().layers().keys().cloned().collect();
 
-        assert_eq!(
-            format!("{error:#}"),
-            format!(
-                "the `prompts` directory {} holds files Linewright cannot use:\n\
-                 - {path}: not one of Linewright's prompts",
-                dir.path().display()
-            )
-        );
-    }
-}
-
-#[test_log::test]
-fn the_prompts_a_layer_may_override_are_the_stage_prompts_and_the_follow_ups() {
-    let briefs = Briefs::shipped();
-    let overridden: Vec<&str> = briefs.layers().keys().map(String::as_str).collect();
-
-    assert_eq!(
-        overridden,
-        [
-            "automation.md",
-            "design.md",
-            "fix-ci.md",
-            "follow-ups/late-feedback.md",
-            "follow-ups/loose-ends.md",
-            "follow-ups/result-error.md",
-            "follow-ups/usage-limit-reset.md",
-            "implement.md",
-            "rework.md",
-            "triage.md",
-            "update.md",
-        ]
-    );
-    for path in overridden {
-        assert!(
-            prompts::readers(&format!("prompts/{path}")).is_some(),
-            "{path} has no readers declared"
-        );
-    }
+    assert_eq!(layered, expected);
 }
 
 #[test_log::test]
@@ -475,6 +541,25 @@ fn the_plugin_written_is_every_file_of_briefs_plugin_as_it_is() {
     let written = files_under(dir.path());
     assert!(written.contains_key(".claude-plugin/plugin.json"));
     assert_eq!(written, files_under(&shipped));
+}
+
+#[test_log::test]
+fn the_plugin_written_is_the_briefs_own_with_each_skill_from_its_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    let operator = layer(
+        Layer::Operator,
+        &[("plugin/skills/tdd/SKILL.md", "The operator's TDD.\n")],
+    );
+
+    Briefs::resolve(&[&operator])
+        .briefs
+        .write_plugin(dir.path())
+        .unwrap();
+
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/plugin");
+    let mut expected = files_under(&shipped);
+    expected.insert("skills/tdd/SKILL.md".into(), "The operator's TDD.\n".into());
+    assert_eq!(files_under(dir.path()), expected);
 }
 
 /// Every file under `root`, hidden ones too, by its path under it, with its

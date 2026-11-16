@@ -192,8 +192,8 @@ fn work_held_by_a_file_of_the_repositorys_waits_for_the_default_branch_to_fix_it
     let held = View {
         unusable: vec![
             unusable(
-                ".linewright/prompts/implment.md",
-                "not one of Linewright's prompts",
+                ".linewright/briefs/prompts/implment.md",
+                "not a file a layer may hold",
             ),
             unusable(
                 ".linewright/config.toml",
@@ -206,8 +206,8 @@ fn work_held_by_a_file_of_the_repositorys_waits_for_the_default_branch_to_fix_it
     assert_eq!(
         text(&held, 42)[3..],
         [
-            "waiting for: the default branch to fix `.linewright/prompts/implment.md`, \
-             which Linewright cannot use: not one of Linewright's prompts",
+            "waiting for: the default branch to fix `.linewright/briefs/prompts/implment.md`, \
+             which Linewright cannot use: not a file a layer may hold",
             "waiting for: the default branch to fix `.linewright/config.toml`, \
              which Linewright cannot use: the setting `max-runs` is the operator's",
         ]

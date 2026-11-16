@@ -8,22 +8,22 @@ use crate::layer::Layer;
 use crate::prompts::{self, Readers, Templates};
 use crate::store::Blob;
 
-/// The brief a session is sent: its templates, each prompt from the first
-/// layer that has it (docs/specs/operation.md, "Briefs"), and its plugin,
-/// which [`Briefs::write_plugin`] writes, always Linewright's own.
+/// The brief a session is sent: its templates and its plugin, each file
+/// from the first layer that has it (docs/specs/operation.md, "Briefs").
 #[derive(Clone, Debug)]
 pub struct Briefs {
     pub templates: Templates,
     /// The plugin's files, by their paths under `briefs/plugin/`.
     plugin: BTreeMap<String, String>,
-    /// The layer of each prompt, by its path under the prompts' root.
+    /// The layer of each file a layer may hold, by its path under `briefs/`.
     layers: BTreeMap<String, Layer>,
 }
 
-/// One layer of the prompts: each of Linewright's prompts it has, by its
-/// path under the prompts' root, such as `follow-ups/result-error.md`.
+/// One layer of the briefs: each file it has that a layer may hold, by its
+/// path under `briefs/`, such as `prompts/implement.md` or
+/// `plugin/skills/tdd/SKILL.md`.
 #[derive(Clone, Debug)]
-pub struct PromptLayer {
+pub struct BriefLayer {
     pub layer: Layer,
     pub files: BTreeMap<String, String>,
 }
@@ -31,27 +31,28 @@ pub struct PromptLayer {
 /// A layer's file Linewright cannot use, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unusable {
+    /// Its path under the layer's root.
     pub path: String,
     pub layer: Layer,
     pub error: String,
-    /// The runs that would read it: every run for a file that is not one of
-    /// Linewright's prompts, as no stage is known to read it.
+    /// The runs that would read it: every run for a file that a layer may
+    /// not hold, as no run is known to read it.
     pub holds: Readers,
 }
 
-/// The briefs resolved from layers, and the prompts in them that could not
-/// be used, for each of which the next layer's file stands in.
+/// The briefs resolved from layers, and the files in them that could not be
+/// used, for each of which the next layer's file stands in.
 #[derive(Clone, Debug)]
 pub struct Resolved {
     pub briefs: Briefs,
     pub unusable: Vec<Unusable>,
 }
 
-/// The operator's layer of the prompts, each of whose files can be used,
-/// and the briefs it makes over Linewright's.
+/// The operator's layer of the briefs, each of whose files can be used, and
+/// the briefs it makes over Linewright's.
 #[derive(Clone, Debug)]
-pub struct OperatorPrompts {
-    layer: PromptLayer,
+pub struct OperatorBriefs {
+    layer: BriefLayer,
     briefs: Arc<Briefs>,
 }
 
@@ -125,37 +126,34 @@ fn shipped_plugin() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The path under `briefs/` of the file at `path` under a layer's root, if
-/// a layer may override it.
-fn in_briefs(path: &str) -> Option<String> {
-    let in_briefs = format!("{PROMPTS}{path}");
-    in_layer(&in_briefs).is_some().then_some(in_briefs)
+/// Where the plugin is under `briefs/`.
+const PLUGIN_DIR: &str = "plugin/";
+
+/// The path under `briefs/` of each of the plugin's files a layer may hold:
+/// all but the hidden ones.
+fn plugin_paths() -> impl Iterator<Item = String> {
+    PLUGIN
+        .iter()
+        .filter(|(path, _)| !is_hidden(path))
+        .map(|(path, _)| format!("{PLUGIN_DIR}{path}"))
 }
 
-/// The path under a layer's root of the file of the brief at `path` under
-/// `briefs/`, if a layer may override it: only the stage prompts and the
-/// follow-ups, under `prompts/`, and so not the judge's prompt.
-fn in_layer(path: &str) -> Option<&str> {
-    path.strip_prefix(PROMPTS).filter(|_| path != JUDGE_PROMPT)
+/// The runs that read the file at `path` under `briefs/`, or `None` for a
+/// file a layer may not hold: every run reads the plugin.
+fn readers(path: &str) -> Option<Readers> {
+    prompts::readers(path).or_else(|| plugin_paths().any(|p| p == path).then_some(Readers::Every))
 }
 
-/// Where the prompts are under `briefs/`, which is a layer's root.
-const PROMPTS: &str = "prompts/";
-
-/// The judge's prompt, which no layer overrides.
-const JUDGE_PROMPT: &str = "prompts/judge.md";
-
-impl PromptLayer {
+impl BriefLayer {
     /// The layer holding `files`, each by its path under the layer's root,
-    /// and those of them it cannot use: a file that is not one of
-    /// Linewright's prompts, or a prompt that cannot be read as text. A
-    /// file is skipped when it is hidden (docs/specs/operation.md,
-    /// "Briefs").
+    /// and those of them it cannot use: a file that a layer may not hold, or
+    /// one that cannot be read as text. A file is skipped when it is hidden
+    /// (docs/specs/operation.md, "Briefs").
     pub fn parse(
         layer: Layer,
         files: impl IntoIterator<Item = (String, Blob)>,
-    ) -> (PromptLayer, Vec<Unusable>) {
-        let mut parsed = PromptLayer {
+    ) -> (BriefLayer, Vec<Unusable>) {
+        let mut parsed = BriefLayer {
             layer,
             files: BTreeMap::new(),
         };
@@ -164,7 +162,7 @@ impl PromptLayer {
             if is_hidden(&path) {
                 continue;
             }
-            let (error, holds) = match in_briefs(&path).and_then(|path| prompts::readers(&path)) {
+            let (error, holds) = match readers(&path) {
                 Some(readers) => match blob.text() {
                     Ok(text) => {
                         parsed.files.insert(path, text);
@@ -172,7 +170,7 @@ impl PromptLayer {
                     }
                     Err(error) => (error, readers),
                 },
-                None => (NOT_A_PROMPT, Readers::Every),
+                None => (NOT_HELD, Readers::Every),
             };
             unusable.push(Unusable {
                 path,
@@ -186,7 +184,7 @@ impl PromptLayer {
     }
 }
 
-const NOT_A_PROMPT: &str = "not one of Linewright's prompts";
+const NOT_HELD: &str = "not a file a layer may hold";
 
 /// Whether any part of `path` names a hidden entry: one whose name starts
 /// with `.`.
@@ -199,24 +197,28 @@ impl Briefs {
         Briefs::resolve(&[]).briefs
     }
 
-    /// Takes each prompt from the first of `layers` that has it and whose
-    /// file can be used, or else from the prompts Linewright ships.
-    pub fn resolve(layers: &[&PromptLayer]) -> Resolved {
-        let mut candidates: BTreeMap<&str, Vec<&PromptLayer>> = Templates::paths()
-            .filter_map(in_layer)
-            .map(|path| {
-                let having = layers
-                    .iter()
-                    .filter(|layer| layer.files.contains_key(path))
-                    .copied()
-                    .collect();
-                (path, having)
-            })
+    /// Takes each file from the first of `layers` that has it and whose file
+    /// can be used, or else from Linewright's own briefs.
+    pub fn resolve(layers: &[&BriefLayer]) -> Resolved {
+        let layers_having = |path: &str| -> Vec<&BriefLayer> {
+            layers
+                .iter()
+                .filter(|layer| layer.files.contains_key(path))
+                .copied()
+                .collect()
+        };
+        let mut candidates: BTreeMap<&str, Vec<&BriefLayer>> = Templates::paths()
+            .map(|path| (path, layers_having(path)))
             .collect();
         let mut unusable = Vec::new();
+        let unusable_file = |layer: &BriefLayer, path: &str, error: String| Unusable {
+            path: path.to_string(),
+            layer: layer.layer,
+            error,
+            holds: readers(path).expect("only a file a layer may hold is resolved"),
+        };
         let templates = loop {
             let (templates, failed) = Templates::read(&mut |path| {
-                let path = in_layer(path)?;
                 let layer = candidates.get(path)?.first()?;
                 layer.files.get(path).map(String::as_str)
             });
@@ -224,20 +226,14 @@ impl Briefs {
                 break templates;
             }
             for (path, error) in failed {
-                let in_layer = in_layer(path).expect("only a path with a layer's file fails");
                 let having = candidates
-                    .get_mut(in_layer)
+                    .get_mut(path)
                     .expect("only a path with a layer's file fails");
                 let layer = having.remove(0);
-                unusable.push(Unusable {
-                    path: in_layer.to_string(),
-                    layer: layer.layer,
-                    error: format!("{error:#}"),
-                    holds: prompts::readers(path).expect("only a template is read"),
-                });
+                unusable.push(unusable_file(layer, path, format!("{error:#}")));
             }
         };
-        let layers_of = candidates
+        let mut layers_of: BTreeMap<String, Layer> = candidates
             .into_iter()
             .map(|(path, having)| {
                 let layer = having
@@ -246,17 +242,36 @@ impl Briefs {
                 (path.to_string(), layer)
             })
             .collect();
+        let mut plugin = shipped_plugin();
+        for path in plugin_paths() {
+            let mut from = Layer::Linewright;
+            for layer in layers_having(&path) {
+                let text = &layer.files[&path];
+                match prompts::without_placeholders(text) {
+                    Ok(()) => {
+                        let under = path.strip_prefix(PLUGIN_DIR).expect("a plugin path");
+                        plugin.insert(under.to_string(), text.clone());
+                        from = layer.layer;
+                        break;
+                    }
+                    Err(error) => unusable.push(unusable_file(layer, &path, format!("{error:#}"))),
+                }
+            }
+            layers_of.insert(path, from);
+        }
+        unusable.sort_by(|a, b| a.path.cmp(&b.path));
         Resolved {
             briefs: Briefs {
                 templates,
-                plugin: shipped_plugin(),
+                plugin,
                 layers: layers_of,
             },
             unusable,
         }
     }
 
-    /// The layer each prompt came from, by its path under the prompts' root.
+    /// The layer each file a layer may hold came from, by its path under
+    /// `briefs/`.
     pub fn layers(&self) -> &BTreeMap<String, Layer> {
         &self.layers
     }
@@ -272,22 +287,22 @@ impl Briefs {
     }
 }
 
-impl OperatorPrompts {
-    /// The operator's layer, from the `prompts` directory, laid out as
-    /// Linewright's own prompts are, if one is set. Every file it holds,
-    /// hidden ones aside, must be one of Linewright's prompts and usable;
-    /// the error names each that is not.
-    pub fn read(dir: Option<&Path>) -> Result<OperatorPrompts> {
+impl OperatorBriefs {
+    /// The operator's layer, from the `briefs` directory, laid out as
+    /// Linewright's own `briefs/`, if one is set. Every file it holds,
+    /// hidden ones aside, must be one a layer may hold and usable; the error
+    /// names each that is not.
+    pub fn read(dir: Option<&Path>) -> Result<OperatorBriefs> {
         let mut files = Vec::new();
         if let Some(dir) = dir {
             for path in files_under(dir)? {
                 let file = dir.join(&path);
                 let bytes = std::fs::read(&file)
-                    .with_context(|| format!("reading the prompt {}", file.display()))?;
+                    .with_context(|| format!("reading the brief file {}", file.display()))?;
                 files.push((path, Blob::from_bytes(bytes)));
             }
         }
-        let (layer, mut unusable) = PromptLayer::parse(Layer::Operator, files);
+        let (layer, mut unusable) = BriefLayer::parse(Layer::Operator, files);
         let resolved = Briefs::resolve(&[&layer]);
         unusable.extend(resolved.unusable);
         if let Some(dir) = dir
@@ -299,18 +314,18 @@ impl OperatorPrompts {
                 .map(|unusable| format!("- {}: {}", unusable.path, unusable.error))
                 .collect();
             return Err(anyhow!(
-                "the `prompts` directory {} holds files Linewright cannot use:\n{}",
+                "the `briefs` directory {} holds files Linewright cannot use:\n{}",
                 dir.display(),
                 named.join("\n")
             ));
         }
-        Ok(OperatorPrompts {
+        Ok(OperatorBriefs {
             layer,
             briefs: Arc::new(resolved.briefs),
         })
     }
 
-    pub fn layer(&self) -> &PromptLayer {
+    pub fn layer(&self) -> &BriefLayer {
         &self.layer
     }
 
@@ -328,10 +343,10 @@ fn files_under(dir: &Path) -> Result<Vec<String>> {
     let mut dirs = vec![(dir.to_path_buf(), String::new())];
     while let Some((at, prefix)) = dirs.pop() {
         let entries = std::fs::read_dir(&at)
-            .with_context(|| format!("reading the prompts directory {}", at.display()))?;
+            .with_context(|| format!("reading the briefs directory {}", at.display()))?;
         for entry in entries {
             let entry =
-                entry.with_context(|| format!("reading the prompts directory {}", at.display()))?;
+                entry.with_context(|| format!("reading the briefs directory {}", at.display()))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if is_hidden(&name) {
                 continue;

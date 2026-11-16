@@ -330,7 +330,7 @@ impl Workspace {
 }
 
 /// A directory that a clone's directory holds beside its repository, its
-/// scratch directory and Linewright's plugin.
+/// scratch directory and its brief's plugin.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Beside {
     /// A judge's copy of the replay it judges.

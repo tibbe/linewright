@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use chrono::TimeDelta;
 use linewright::api::{Publish, Served};
-use linewright::briefs::OperatorPrompts;
+use linewright::briefs::OperatorBriefs;
 use linewright::database::Database;
 use linewright::domain::{
     CheckState, Issue, Login, MergeMethod, MergeMethods, Number, ReviewState, Windows, label,
@@ -197,7 +197,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         merge_method: None,
         auto_merge: false,
         require_label: None,
-        prompts: OperatorPrompts::read(None).unwrap(),
+        briefs: OperatorBriefs::read(None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         database,
         waits_out_usage_limit: false,
@@ -845,16 +845,16 @@ impl Serving {
     }
 }
 
-/// A `prompts` directory holding only the shipped prompt at `path`, changed
-/// by `edit`.
-pub fn prompts_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
+/// A `briefs` directory holding only the shipped file at `path` under
+/// `briefs/`, changed by `edit`.
+pub fn briefs_with(path: &str, edit: impl FnOnce(String) -> String) -> tempfile::TempDir {
     let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("briefs/prompts")
+        .join("briefs")
         .join(path);
     let dir = tempfile::tempdir().unwrap();
-    let prompt = dir.path().join(path);
-    std::fs::create_dir_all(prompt.parent().unwrap()).unwrap();
-    std::fs::write(prompt, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
+    let file = dir.path().join(path);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, edit(std::fs::read_to_string(shipped).unwrap())).unwrap();
     dir
 }
 
@@ -934,14 +934,15 @@ const PLACEHOLDERS: &[(&str, &[&str])] = &[
 /// each under a heading naming it.
 pub fn placeholders_only() -> std::sync::Arc<linewright::briefs::Briefs> {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("prompts")).unwrap();
     for (file, names) in PLACEHOLDERS {
         let text: String = names
             .iter()
             .map(|name| format!("## {name}\n\n{{{{{name}}}}}\n\n"))
             .collect();
-        std::fs::write(dir.path().join(file), text).unwrap();
+        std::fs::write(dir.path().join("prompts").join(file), text).unwrap();
     }
-    linewright::briefs::OperatorPrompts::read(Some(dir.path()))
+    linewright::briefs::OperatorBriefs::read(Some(dir.path()))
         .unwrap()
         .briefs()
 }

@@ -4782,7 +4782,7 @@ fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_i
     ]);
     let broken = Unusable {
         file: FileError {
-            path: ".linewright/prompts/implement.md".into(),
+            path: ".linewright/briefs/prompts/implement.md".into(),
             error: "the prompt has no `{{output}}`".into(),
         },
         holds: prompts::readers("prompts/implement.md").unwrap(),
@@ -4802,7 +4802,7 @@ fn a_file_of_the_repositorys_that_cannot_be_used_holds_only_the_runs_that_read_i
     assert_eq!(
         decided.waits.get(&Number(2)),
         Some(&vec![Wait::RepositoryFile(FileError {
-            path: ".linewright/prompts/implement.md".into(),
+            path: ".linewright/briefs/prompts/implement.md".into(),
             error: "the prompt has no `{{output}}`".into(),
         })])
     );

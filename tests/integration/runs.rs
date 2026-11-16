@@ -531,14 +531,14 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
+async fn an_operators_part_is_sent_and_recorded_as_the_operators() {
     let work_dir = tempfile::tempdir().unwrap();
-    let operators = prompts_with("follow-ups/result-error.md", |text| {
-        format!("The operator's follow-up.\n\n{text}")
+    let operators = briefs_with("parts/result-no-json.md", |_| {
+        "The operator's own words.\n".into()
     });
     let mut world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
-        config.prompts = linewright::briefs::OperatorPrompts::read(Some(operators.path())).unwrap();
+        config.briefs = linewright::briefs::OperatorBriefs::read(Some(operators.path())).unwrap();
     })
     .await;
     world
@@ -553,14 +553,11 @@ async fn an_operators_prompt_is_sent_and_recorded_as_the_operators() {
 
     let sent = world.harness.prompts(WorkKind::Triage);
     assert_eq!(sent.len(), 2);
-    assert!(
-        sent[1].starts_with("The operator's follow-up.\n\n"),
-        "{}",
-        sent[1]
-    );
+    assert!(sent[1].contains("The operator's own words."), "{}", sent[1]);
     let answer: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
-    let prompts = &answer["runs"][0]["sessions"][0]["layers"]["prompts"];
-    assert_eq!(prompts["follow-ups/result-error.md"], "operator");
+    let briefs = &answer["runs"][0]["sessions"][0]["layers"]["briefs"];
+    assert_eq!(briefs["parts/result-no-json.md"], "operator");
+    assert_eq!(briefs["prompts/follow-ups/result-error.md"], "linewright");
 }
 
 fn ran(model: Option<&str>, reported_model: Option<&str>, effort: Option<Effort>) -> Ran {
@@ -570,7 +567,7 @@ fn ran(model: Option<&str>, reported_model: Option<&str>, effort: Option<Effort>
         effort,
         layers: Layers {
             settings: BTreeMap::new(),
-            prompts: BTreeMap::new(),
+            briefs: BTreeMap::new(),
         },
     }
 }
@@ -637,7 +634,7 @@ fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
 }
 
 #[test_log::test]
-fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_and_prompts_came_from()
+fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_and_brief_files_came_from()
  {
     let mut run = work(1, WorkKind::Triage, 1, "2026-10-14T12:00:00Z");
     run.sessions = vec![
@@ -650,9 +647,12 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
                         (Setting::EFFORT, Source::Harness),
                         (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Repository)),
                     ]),
-                    prompts: BTreeMap::from([
-                        ("triage.md".to_string(), Layer::Linewright),
-                        ("follow-ups/result-error.md".to_string(), Layer::Operator),
+                    briefs: BTreeMap::from([
+                        ("prompts/triage.md".to_string(), Layer::Linewright),
+                        (
+                            "prompts/follow-ups/result-error.md".to_string(),
+                            Layer::Operator,
+                        ),
                     ]),
                 },
                 ..ran(Some("opus"), Some("claude-opus-5-5"), None)
@@ -684,9 +684,9 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
                                 "effort": "harness",
                                 "session-timeout": "repository",
                             },
-                            "prompts": {
-                                "follow-ups/result-error.md": "operator",
-                                "triage.md": "linewright",
+                            "briefs": {
+                                "prompts/follow-ups/result-error.md": "operator",
+                                "prompts/triage.md": "linewright",
                             },
                         },
                     },
@@ -897,10 +897,39 @@ async fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_
                     (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Linewright)),
                     (Setting::SESSION_ENV, Source::Layer(Layer::Linewright)),
                 ]),
-                prompts: BTreeMap::from([("rework.md".to_string(), Layer::Linewright)]),
+                briefs: BTreeMap::from([("prompts/rework.md".to_string(), Layer::Linewright)]),
             },
             ..ran(None, None, None)
         }
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_record_from_when_only_the_prompts_came_in_layers_reads_them_by_their_paths_under_briefs()
+{
+    let ran = ran_as_read(&json!([{
+        "dir": "sessions/5/rework-1",
+        "model": "opus",
+        "effort": null,
+        "layers": {
+            "settings": {"model": "operator", "effort": "linewright"},
+            "prompts": {
+                "rework.md": "operator",
+                "follow-ups/result-error.md": "repository"
+            }
+        }
+    }]))
+    .await;
+
+    assert_eq!(
+        ran.layers.briefs,
+        BTreeMap::from([
+            ("prompts/rework.md".to_string(), Layer::Operator),
+            (
+                "prompts/follow-ups/result-error.md".to_string(),
+                Layer::Repository
+            ),
+        ])
     );
 }
 
@@ -921,7 +950,7 @@ async fn a_record_from_when_skills_came_in_layers_reads_its_layers_as_kept() {
     .await;
 
     assert_eq!(
-        ran.layers.prompts,
+        ran.layers.briefs,
         BTreeMap::from([
             ("prompts/rework.md".to_string(), Layer::Operator),
             ("plugin/skills/tdd/SKILL.md".to_string(), Layer::Linewright),

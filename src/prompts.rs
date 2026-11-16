@@ -411,6 +411,11 @@ impl<V: Values> Template<V> {
     }
 }
 
+/// Fails unless `text` has no placeholders.
+pub fn without_placeholders(text: &str) -> Result<()> {
+    Template::<NoValues>::parse(text.to_string()).map(drop)
+}
+
 /// Each `{{name}}` in `text`: where it starts, its name and where it ends.
 fn placeholders(text: &str) -> impl Iterator<Item = (usize, &str, usize)> {
     let mut from = 0;
@@ -453,12 +458,12 @@ fn braced(names: &[&str]) -> String {
 /// its field, its values, its path under `briefs/`, the runs that read it
 /// and how its text ends.
 macro_rules! templates {
-    ($($field:ident: $values:ident = $path:literal, $readers:expr, $ending:ident;)*) => {
+    ($($(#[$attr:meta])* $field:ident: $values:ident = $path:literal, $readers:expr, $ending:ident;)*) => {
         /// Every file of the brief Linewright fills and sends sessions
         /// (docs/specs/operation.md, "Briefs").
         #[derive(Clone, Debug)]
         pub struct Templates {
-            $($field: Template<$values>,)*
+            $($(#[$attr])* $field: Template<$values>,)*
         }
 
         /// Every file of [`Templates`], as Linewright ships it.
