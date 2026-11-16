@@ -6,19 +6,14 @@ What Linewright gives its agents, built into the binary:
 - `prompts/`: what Linewright sends a session, from its first message to the
   follow-ups;
 - `parts/` and `outputs/`: Linewright's own wording of what it fills into the
-  prompts' placeholders, which no layer overrides;
-- `results/`: each stage's result schema, and the judge's, which Linewright
-  checks a session's result against;
-- `judge.md`: what Linewright sends the judge of a replay, which no layer
-  overrides.
+  prompts' placeholders, such as a result contract or why a result was sent
+  back;
+- `results/`: each session's result schema, which Linewright checks the result
+  against.
 
-The skills are always these. The `prompts` setting names a directory laid out
-as `prompts/` is, the operator's layer over it. Linewright takes each file in
-it in place of the one here, and every file it lacks comes from here. At
-startup it logs which files it takes from the directory. A file in it that is
-not one of the prompts here, such as a misspelt `implment.md`, stops Linewright
-at startup with an error naming it. Linewright skips hidden files, whose name
-or directory's name starts with `.`.
+Every text Linewright sends an agent is a file here. An operator or a
+repository can replace any of them but the result schemas, as
+[Briefs](../docs/specs/operation.md#briefs) says.
 
 ## `plugin/`
 
@@ -52,7 +47,7 @@ use too.
 
 ## `prompts/`
 
-These are Linewright's own. Each prompt is the session's first message as
+Each prompt is the session's first message as
 sent, with a `{{name}}` placeholder for each value Linewright fills in, such as
 the ticket or the default branch. The placeholders a prompt has are fixed.
 Linewright refuses to start with a prompt that lacks one or has one it doesn't
@@ -67,6 +62,7 @@ know.
 | `fix-ci.md` | CI fixes, likewise |
 | `update.md` | an update's conflict, likewise |
 | `automation.md` | automation runs |
+| `judge.md` | the judge of a replay |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
 
 When a placeholder alone on its line is filled with nothing, its line and the
@@ -78,9 +74,10 @@ are, so the prompts are not wrapped.
 What Linewright fills into a prompt's placeholders: `outputs/` holds each
 stage's result contract, which fills `{{output}}`, and `parts/` the rest, such
 as the attachments contract appended to every `{{output}}` and the parts of a
-follow-up. No layer overrides them, so a prompt written over keeps the contract
-Linewright reads, and the `prompts` setting's directory may not hold them. Like
-the prompts, they are not wrapped.
+follow-up, among them each reason Linewright gives for sending a result back.
+A layer may hold them too; a result contract it rewords still has to describe
+the result that the schema in `results/` accepts. Like the prompts, they are
+not wrapped.
 
 [`src/prompts.rs`](../src/prompts.rs) declares, beside the templates
 (`readers`), which runs read each file. Every run gets the plugin.

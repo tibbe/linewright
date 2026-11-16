@@ -1,0 +1,1 @@
+`{{file}}` is not an image or a video: only {{kinds}} files can be attached. Put anything else, such as text output or a log, in the Markdown itself, in a fenced code block or a `<details>` block when it is long, or take the reference out

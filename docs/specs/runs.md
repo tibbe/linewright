@@ -98,10 +98,11 @@ Each stage's area decides its session's contract: the value Linewright fills
 into each of its prompt's placeholders, and the result the session ends with,
 which Linewright parses. What the agent does between the two is the prompt's.
 A stage's session is sent the prompt [Stages](#stages) names, and an
-automation's `automation.md` ([Prompts](operation.md#prompts)). Where
+automation's `automation.md` ([Briefs](operation.md#briefs)). Where
 Linewright fills a placeholder with its own wording rather than the item's
-data, the wording is a part in `briefs/parts/`, and the placeholder's row names
-it.
+data, the wording is a part in `briefs/parts/`. The placeholder's row names the
+part or, where there is a part for each case, gives examples. What Linewright
+fills into a part, such as a key of the result, is data.
 
 - **Every prompt.** `{{facts}}` is the repository, its default branch and the
   spec glob (`facts.md`), and `{{output}}` is the stage's result contract,
@@ -120,8 +121,8 @@ it.
 
   | follow-up                         | placeholder        | value                                                                                                                                  |
   | --------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-  | `follow-ups/result-error.md`      | `{{error}}`        | why the result could not be used; for an attachment GitHub refuses, `attachment-refused.md` |
-  | `follow-ups/loose-ends.md`        | `{{problem}}`      | what is still wrong with the session's work: unfinished commits on its branch (`fold-unfinished.md`), or a secret in its commits (`held-credential.md`), its push (`pushed-secret.md`) or its attachments (`attachment-secret.md`) |
+  | `follow-ups/result-error.md`      | `{{error}}`        | why the result could not be used: a part for each reason, such as `result-no-json.md` for a final message with no JSON object or `attachment-refused.md` for an attachment that GitHub refuses |
+  | `follow-ups/loose-ends.md`        | `{{problem}}`      | what is still wrong with the session's work: a part for each problem, such as `fold-unfinished.md` for unfinished commits on its branch or `held-credential.md` for a secret in its commits |
   | `follow-ups/late-feedback.md`     | `{{feedback}}`     | the feedback posted while the session worked ([Rework](pull_requests.md#rework))                                                       |
   | `follow-ups/late-feedback.md`     | `{{conversation}}` | the pull request's comments and its unresolved threads                                                                                 |
   | `follow-ups/usage-limit-reset.md` | none               |                                                                                                                                        |
@@ -221,7 +222,7 @@ A run ends in one of these outcomes, each with its name in JSON.
   sessions' transcripts and attachments directories, and with each session's
   model and effort, as the
   harness reports it ran them or else as they were set, and where each of its
-  settings and prompt files came from: the repository, the operator or
+  settings and brief files came from: the repository, the operator or
   Linewright's own, or, for a model or effort none set, the harness.
 
 ## Holds

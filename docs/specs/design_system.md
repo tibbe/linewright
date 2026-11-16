@@ -396,7 +396,7 @@ under its session's heading.
   wait for the usage limit to reset, and up to its last entry where its end is
   not known, as when a restart interrupted its run.
 - **A session's settings.** Under its heading, the session's model and effort
-  open on click to where its settings and prompt files came from.
+  open on click to where its settings and brief files came from.
 - **Views.** The page shows the transcripts as the agent's own default view
   does or, with the verbose switch, as its verbose view does, such as the
   agent's thinking open only with the switch, but never what the agent was

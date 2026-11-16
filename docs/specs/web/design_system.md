@@ -81,7 +81,7 @@ two themes of its own.
 
 - **Lines.** Every entry's line starts with a column for a chevron, which an
   entry that opens shows, pointing right while closed and down while open, and
-  the others leave empty. A session's settings and prompt files open with the
+  the others leave empty. A session's settings and brief files open with the
   same chevron.
 - **Indents.** An entry's text, on every line it takes, and what the entry
   opens to start where its first line's text does.

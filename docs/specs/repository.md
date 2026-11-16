@@ -67,8 +67,8 @@ repository and about Linewright's account in the repository.
 The repository holds, under `.linewright/` on its default branch, what it
 tells Linewright: its automations in `automations/`
 ([Automations](automations.md)), its settings for the work in `config.toml`
-([The repository's file](operation.md#the-repositorys-file)) and its prompts
-in `prompts/` ([Prompts](operation.md#prompts)).
+([The repository's file](operation.md#the-repositorys-file)) and its briefs in
+`briefs/` ([Briefs](operation.md#briefs)).
 
 - **When they are read.** As a run starts, from the default branch as it is
   then, so that a change takes effect once merged and every run on a branch
@@ -283,8 +283,8 @@ Linewright exits with an error at startup when it cannot work.
   - with webhooks on, `serve` can listen on `webhook-address`;
   - every setting's value is one it takes, and every setting of a feature that
     is off is at its default ([Configuration](operation.md#configuration));
-  - every file in the operator's layer of prompts is one of Linewright's and
-    has its placeholders ([Prompts](operation.md#prompts));
+  - every file in the operator's layer of briefs is one that a layer may hold
+    and has its placeholders ([Briefs](operation.md#briefs));
   - unless `ui-address` is empty, `serve` can listen on it.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.
