@@ -9,8 +9,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-use super::journal::WRITES;
-use super::{BUILD_LOG, CASE, COMMITS, OUTCOME, Setting, in_own_dir, write_whole};
+use super::{BUILD_LOG, CASE, COMMITS, OUTCOME, Setting, WRITES, in_own_dir, write_whole};
 use crate::apply::hand_back;
 use crate::briefs::Briefs;
 use crate::case::Case;

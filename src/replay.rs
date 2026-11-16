@@ -34,10 +34,19 @@ use crate::work_settings::RunKind;
 use crate::{COMMAND, VERSION_AND_COMMIT};
 
 const OUTCOME: &str = "outcome";
+/// The directory of the output that keeps the writes.
+const WRITES: &str = "writes";
+/// The directory of the output that keeps the attachments.
+const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
 const CASE: &str = "case";
 const BUILD_LOG: &str = "build.log";
 const COMMITS: &str = "commits.git";
+
+/// The link to the attachment `name` from the writes, its path from them.
+fn attachment_link(name: &str) -> String {
+    format!("../{ATTACHMENTS}/{name}")
+}
 
 /// The directory of a replay's output: one that held nothing.
 #[derive(Clone, Debug)]
