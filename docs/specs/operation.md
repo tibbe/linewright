@@ -117,7 +117,7 @@ repository's file, the operator's file, default.
 | `work-dir`                                   | `linewright/` under the user's data directory |
 | `model`                                      | the harness's choice                        |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
-| `prompts` (the operator's layer, [Prompts](#prompts)) | none                               |
+| `briefs` (the operator's layer, [Briefs](#briefs)) | none |
 | `session-env` (variables' values)            | none                                        |
 | `session-pass-env` (variable names)          | none                                        |
 | `secrets` (variable names)                   | none                                        |
@@ -210,23 +210,27 @@ on its default branch, the same TOML as the operator's file.
   Linewright's in the repository
   ([Linewright's files](repository.md#linewrights-files)).
 
-## Prompts
+## Briefs
 
-A session's prompts come in three layers, each a directory laid out as the
-prompts Linewright ships: the repository's `.linewright/prompts/`, the
-operator's `prompts` directory and Linewright's own, `briefs/prompts/`. Each
-file is taken from the first layer that has it. Linewright's own layer holds
-only what a layer may override: the stage prompts ([Stages](runs.md#stages))
-and the follow-ups ([Contract](runs.md#contract)).
+A session's brief comes in three layers, each a directory laid out as
+Linewright's own `briefs/`: the repository's `.linewright/briefs/`, the
+operator's `briefs` directory and Linewright's own. Each file is taken from the
+first layer that has it.
 
-- **Placeholders.** A prompt's placeholders are fixed: Linewright refuses a
-  prompt that lacks one or holds one it doesn't know.
-- **The result contract.** A prompt's `{{output}}` is filled with
-  Linewright's own wording of its result contract, so a prompt written over
-  keeps the contract Linewright reads.
-- **Other files.** A file in the operator's layer that is not one of
-  Linewright's prompts, hidden files aside, is an error at startup
-  ([Startup](repository.md#startup)).
+- **What a layer may hold.** A layer may hold any file of Linewright's own
+  briefs, but for the result schemas in `results/`
+  ([Contract](runs.md#contract)): the prompts in `prompts/`, the wording that
+  Linewright fills into them in `parts/` and `outputs/`, and the plugin with
+  its skills in `plugin/`.
+- **Placeholders.** A file's placeholders are fixed: Linewright refuses a file
+  that lacks one or holds one that it doesn't know.
+- **The result contract.** The result's schema decides which result
+  Linewright accepts, whatever a layer's wording of the result contract says.
+- **A file that Linewright cannot use.** A file that a layer may not hold, or
+  that Linewright refuses, hidden files aside, is an error: at startup in the
+  operator's layer ([Startup](repository.md#startup)), and a file with an
+  error in the repository's
+  ([Linewright's files](repository.md#linewrights-files)).
 - **Logged at startup.** Linewright logs which files the operator's layer
   provides.
 
@@ -300,8 +304,6 @@ that answers a question, or asks `serve` to act, logs nothing.
   added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
   `max-runs`, in the repository's file, other than the `setup` table.
-- Layers of skills: the repository or the operator replacing Linewright's
-  skills.
 - How Linewright is released (`docs/releasing.md`).
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.

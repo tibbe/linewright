@@ -232,7 +232,7 @@ _Avoid_: quiet mode, freeze, gate
 ### Operation
 
 **Layer**:
-One of the ranked places a setting or a prompt file can be set, such as a
+One of the ranked places a setting or a file of a brief can be set, such as a
 flag or the repository's file, each the repository's, the operator's or
 Linewright's own.
 _Avoid_: scope, level, tier, source, overlay, override, drop-in

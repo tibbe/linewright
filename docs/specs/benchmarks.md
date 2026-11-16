@@ -212,8 +212,8 @@ The judge is an agent in a session of its own.
   judgement. Linewright removes the copy as it removes the clone of the
   session ([Stages](runs.md#stages)). A change that the judge makes to the
   copy does not change the output.
-- **The prompt.** Linewright sends the judge the prompt `briefs/judge.md`, which
-  no layer overrides, with these placeholders filled:
+- **The prompt.** Linewright sends the judge the prompt `prompts/judge.md`
+  ([Briefs](operation.md#briefs)), with these placeholders filled:
 
   | placeholder    | value                                                                                    |
   | -------------- | ---------------------------------------------------------------------------------------- |
