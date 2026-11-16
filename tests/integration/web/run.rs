@@ -95,7 +95,7 @@ async fn implemented_after(maintenance: &str, maintenance_log: Option<&str>) -> 
         .map(|(path, text)| (path.as_str(), text.as_str()))
         .collect();
     pages.write(&files);
-    pages.record(&record);
+    pages.record(&record).await;
     pages
 }
 
@@ -761,7 +761,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
             "message": {"content": [{"type": "text", "text": "Nothing needs doing."}]},
         }),
     ]);
-    pages.record(&record);
+    pages.record(&record).await;
     pages.write(&[(&format!("{session}/output.jsonl"), &output)]);
 
     let runs = pages.page("/runs").await;
@@ -806,7 +806,7 @@ async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_
             "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
             "sessions": [],
         });
-        pages.record(&record);
+        pages.record(&record).await;
     }
 
     let by_hand = pages.page("/runs/hourly/2").await;
@@ -826,14 +826,16 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
         vec![open_pull(2, LINEWRIGHT, &[1], &[LINEWRIGHT])],
     ))
     .await;
-    pages.record(&json!({
-        "item": 2,
-        "stage": "update",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
-        "sessions": [],
-    }));
+    pages
+        .record(&json!({
+            "item": 2,
+            "stage": "update",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:01:00Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
 
     let html = pages.page("/runs/2/update-1").await;
 
@@ -959,14 +961,16 @@ async fn the_page_of_a_run_whose_maintenance_command_failed_shows_it_open_under_
             (&format!("{dir}/setup.log"), "npm ERR! missing lockfile\n"),
         ]);
     }
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
-        "sessions": sessions.map(|(dir, _)| ran(dir)),
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
+            "sessions": sessions.map(|(dir, _)| ran(dir)),
+        }))
+        .await;
 
     let html = pages.page("/runs/1/triage-1").await;
 
@@ -998,14 +1002,16 @@ async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_o
         &format!("{dir}/output.jsonl"),
         &format!("{}\n", maintenance_started(start, "npm ci")),
     )]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": null,
-        "sessions": [ran(dir)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": null,
+            "sessions": [ran(dir)],
+        }))
+        .await;
     let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
 
     let read = pages.page("/runs/1/triage-1").await;
@@ -1130,14 +1136,16 @@ async fn the_page_of_a_run_whose_clone_could_not_be_made_shows_its_error_open() 
             Some("fetching origin: fatal: could not read from remote"),
         ),
     )]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
-        "sessions": [ran(dir)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
+            "sessions": [ran(dir)],
+        }))
+        .await;
 
     let html = pages.page("/runs/1/triage-1").await;
 
@@ -1163,14 +1171,16 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
         &format!("{dir}/output.jsonl"),
         &format!("{}\n", clone_started(start)),
     )]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": null,
-        "sessions": [ran(dir)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": null,
+            "sessions": [ran(dir)],
+        }))
+        .await;
     let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
 
     let read = pages.page("/runs/1/triage-1").await;
@@ -1223,14 +1233,16 @@ async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
             clone_ended(start + chrono::TimeDelta::seconds(2), 2.0, None),
         ),
     )]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": null,
-        "sessions": [ran(dir)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": null,
+            "sessions": [ran(dir)],
+        }))
+        .await;
     let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
 
     let read = pages.page("/runs/1/triage-1").await;
@@ -1316,14 +1328,16 @@ async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessi
         ]},
     });
     pages.write(&[(&format!("{dir}/output.jsonl"), &format!("{call}\n"))]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
-        "sessions": [ran(dir)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
+            "sessions": [ran(dir)],
+        }))
+        .await;
 
     let html = pages.page("/runs/1/triage-1").await;
 
@@ -1367,14 +1381,16 @@ const TRIAGING: &str = "sessions/issue-1/20261014T120000Z-triage";
 async fn triaged(output: &str, end: serde_json::Value) -> Pages {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     pages.write(&[(&format!("{TRIAGING}/output.jsonl"), output)]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": end,
-        "sessions": [ran(TRIAGING)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": end,
+            "sessions": [ran(TRIAGING)],
+        }))
+        .await;
     pages
 }
 
@@ -1555,14 +1571,16 @@ async fn the_working_step_goes_once_the_run_ends() {
     let read = pages.page("/runs/1/triage-1").await;
     let events_path = events_path(&read).unwrap().to_string();
     let mut events = stream_with_ids(&pages, &events_path, None).await;
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-14T12:00:00Z",
-        "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
-        "sessions": [ran(TRIAGING)],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:05:00Z", "ending": "handed-back"},
+            "sessions": [ran(TRIAGING)],
+        }))
+        .await;
     drop(in_flight);
     let ended = transcript_events(&mut events, |sent| {
         sent.iter().any(|(_, data)| data.contains("s1-working"))

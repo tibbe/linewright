@@ -125,7 +125,7 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsSh
         Ok(narrowed) => narrowed.query(now),
         Err(e) => return (StatusCode::BAD_REQUEST, RunsShown::Unlisted(e.clone())),
     };
-    match runs::answer(&sources.work_dir, &query, now).await {
+    match runs::answer(Some(&sources.runs), &query, now).await {
         Ok(listing) => {
             let view = api::view(sources);
             let names = Names::of(

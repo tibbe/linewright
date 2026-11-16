@@ -9,7 +9,7 @@ use std::time::Duration;
 use common::*;
 use linewright::factory::FactoryConfig;
 use linewright::reconcile::WorkKind;
-use linewright::runs::{Ending, Runs};
+use linewright::runs::Ending;
 use linewright::store::local::{Paused, Write};
 
 /// How many sessions each of `world`'s runs started.
@@ -17,7 +17,8 @@ use linewright::store::local::{Paused, Write};
 fn sessions_per_run(world: &World) -> impl Future<Output = Vec<usize>> + '_ {
     let caller = Location::caller();
     async move {
-        Runs::new(&world.dir.path().join("work"))
+        runs_in(&world.dir.path().join("work"))
+            .await
             .read()
             .await
             .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))

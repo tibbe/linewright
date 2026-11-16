@@ -25,14 +25,16 @@ fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
-        pages.record(&json!({
-            "item": 1,
-            "stage": "implement",
-            "n": 1,
-            "started_at": "2026-10-13T10:09:00Z",
-            "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
-            "sessions": [],
-        }));
+        pages
+            .record(&json!({
+                "item": 1,
+                "stage": "implement",
+                "n": 1,
+                "started_at": "2026-10-13T10:09:00Z",
+                "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
+                "sessions": [],
+            }))
+            .await;
         let properties = match recorded {
             Recorded::Nothing => return pages,
             Recorded::WithoutProperties => None,
@@ -43,7 +45,7 @@ fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
             .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
             .await
             .unwrap_or_else(|e| panic!("committing on main at {caller}: {e:#}"));
-        record_input(&pages, &head, properties);
+        record_input(&pages, &head, properties).await;
         pages
     }
 }
@@ -56,7 +58,11 @@ fn properties() -> serde_json::Value {
 /// Writes the input #1's implement run 1 recorded: `main` at `head`, with
 /// `properties`, if any.
 #[track_caller]
-fn record_input(pages: &Pages, head: &str, properties: Option<serde_json::Value>) {
+fn record_input(
+    pages: &Pages,
+    head: &str,
+    properties: Option<serde_json::Value>,
+) -> impl Future<Output = ()> + use<> {
     let mut input = json!({
         "api_version": linewright::store::API_VERSION,
         "start": "2026-10-13T10:09:00Z",
@@ -66,7 +72,7 @@ fn record_input(pages: &Pages, head: &str, properties: Option<serde_json::Value>
     if let Some(properties) = properties {
         input["properties"] = properties;
     }
-    pages.write(&[("runs/items/1/implement-1.input.json", &input.to_string())]);
+    pages.input("1/implement-1", &input)
 }
 
 /// The capture form on `html`, if it shows one.
@@ -252,7 +258,7 @@ async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
 async fn a_failed_capture_writes_nothing_and_says_why() {
     let pages = implemented(Recorded::Nothing).await;
     let missing = "0123456789abcdef0123456789abcdef01234567";
-    record_input(&pages, missing, Some(properties()));
+    record_input(&pages, missing, Some(properties())).await;
 
     let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 

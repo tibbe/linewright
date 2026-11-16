@@ -311,6 +311,8 @@ pub struct Sources {
     pub deliveries: Option<Tally>,
     pub clock: Arc<dyn Clock>,
     pub work_dir: RepoWorkDir,
+    /// The runs of `serve`'s work directory.
+    pub runs: Runs,
     /// What a drain asked for goes through.
     pub ends: Ends,
     pub environment: EnvironmentLink,
@@ -429,7 +431,7 @@ pub(crate) fn view(sources: &Sources) -> Option<View> {
 
 /// Every run's record, or none when they do not read, which is logged.
 pub(crate) async fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
-    Runs::new(&sources.work_dir.resolve()).read_or_none().await
+    sources.runs.read_or_none().await
 }
 
 /// What `status` answers of `view` and `recorded`.
@@ -653,11 +655,11 @@ async fn answer_stop(
 }
 
 async fn answer_runs(State(sources): State<Sources>, Query(query): Query<runs::Query>) -> Response {
-    answer(runs::answer(&sources.work_dir, &query, sources.clock.now()).await)
+    answer(runs::answer(Some(&sources.runs), &query, sources.clock.now()).await)
 }
 
 async fn answer_logs(State(sources): State<Sources>, Query(which): Query<logs::Which>) -> Response {
-    answer(logs::answer(&sources.work_dir, &which).await)
+    answer(logs::answer(Some(&sources.runs), &which).await)
 }
 
 pub const LINE_EVENT: &str = "line";
@@ -688,7 +690,8 @@ async fn follow_logs(
         ),
         Some(Err(e)) => return error_response(StatusCode::BAD_REQUEST, e),
     };
-    let started = match Following::start(&sources.work_dir, &which, query.verbosity, after).await {
+    let started = match Following::start(Some(&sources.runs), &which, query.verbosity, after).await
+    {
         Ok(started) => started,
         Err(e) => return answer(Err::<(), _>(e)),
     };
@@ -932,10 +935,7 @@ pub(crate) struct Explaining {
 pub(crate) async fn explaining(sources: &Sources) -> Result<Explaining, Unexplained> {
     let served = sources.served.borrow().clone();
     let served = served.ok_or(Unexplained::NotPolledYet)?;
-    let recorded = Runs::new(&sources.work_dir.resolve())
-        .read()
-        .await
-        .map_err(Unexplained::Failed)?;
+    let recorded = sources.runs.read().await.map_err(Unexplained::Failed)?;
     Ok(Explaining {
         view: served.view(),
         store: served.store,

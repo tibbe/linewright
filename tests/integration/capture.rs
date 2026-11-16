@@ -8,14 +8,16 @@ use common::*;
 use linewright::case::{self, CaptureError, CaseName, Criteria};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
+use linewright::runs::files::RunFiles;
 use linewright::runs::{RunId, Runs};
 use linewright::store::API_VERSION;
 use serde_json::{Value, json};
 
 const SECRET: &str = "s3cr3t-of-the-maintainer";
 
-fn runs(world: &World) -> Runs {
-    Runs::new(&world.dir.path().join("work"))
+#[track_caller]
+fn runs(world: &World) -> impl Future<Output = Runs> + use<> {
+    runs_in(&world.dir.path().join("work"))
 }
 
 fn cases(world: &World) -> PathBuf {
@@ -39,7 +41,7 @@ fn capture<'a>(
     let criteria = Criteria::parse(criteria).unwrap();
     let run = id(run);
     async move {
-        let capturable = case::capturable(&runs(world), &cases(world), &run, &named).await?;
+        let capturable = case::capturable(&runs(world).await, &cases(world), &run, &named).await?;
         case::capture(&*world.store, capturable, &criteria).await
     }
 }
@@ -87,24 +89,18 @@ fn read_json(path: &Path) -> Value {
 /// Takes the properties out of every input recorded in the repository's work
 /// directory `work`, as Linewright recorded inputs before it recorded the
 /// properties.
-/// It walks the runs' records alone: a run's clone may still be being
-/// removed.
 #[track_caller]
-fn record_as_before_the_properties(work: &Path) {
-    #[track_caller]
-    fn strip(dir: &Path) {
-        for entry in std::fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                strip(&path);
-            } else if path.to_string_lossy().ends_with(".input.json") {
-                let mut input = read_json(&path);
-                input.as_object_mut().unwrap().remove("properties");
-                std::fs::write(&path, input.to_string()).unwrap();
-            }
-        }
+fn record_as_before_the_properties(work: &Path) -> impl Future<Output = ()> + use<> {
+    let caller = Location::caller();
+    let pool = back_door(work);
+    async move {
+        let pool = pool.await;
+        sqlx::query("UPDATE run_inputs SET input = json_remove(input, '$.properties')")
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("taking out the properties at {caller}: {e}"));
+        pool.close().await;
     }
-    strip(&work.join("runs"));
 }
 
 /// Leaves the store's repository holding one commit, made afresh on
@@ -169,7 +165,12 @@ async fn implemented(world: &mut World) -> String {
 async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria() {
     let mut world = World::new().await;
     let (ticket, run, heads) = implemented_on_a_branch(&mut world).await;
-    let started_at = runs(&world).read_run(&id(&run)).await.unwrap().started_at;
+    let started_at = runs(&world)
+        .await
+        .read_run(&id(&run))
+        .await
+        .unwrap()
+        .started_at;
 
     let dir = capture(&world, &run, "gadgets-1", "A good result adds gadgets.\n")
         .await
@@ -208,7 +209,12 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         item["resources"][format!("issues/{}", ticket.0)]["title"],
         world.issue(ticket).title
     );
-    let input = runs(&world).read_input(&id(&run)).await.unwrap().unwrap();
+    let input = runs(&world)
+        .await
+        .read_input(&id(&run))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         read_json(&dir.join("properties.json")),
         serde_json::to_value(input.properties.unwrap()).unwrap()
@@ -234,6 +240,44 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
             .map(|(branch, head)| format!("refs/heads/{branch} {head}"))
             .collect::<Vec<_>>()
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_imported_with_its_input_from_an_earlier_releases_files_is_captured() {
+    let mut world = World::new().await;
+    let run = implemented(&mut world).await;
+    let kept = runs(&world).await;
+    let recorded = kept.read_run(&id(&run)).await.unwrap();
+    let input = kept.read_input(&id(&run)).await.unwrap().unwrap();
+    let earlier = tempfile::tempdir().unwrap();
+    RunFiles::new(earlier.path()).write(&recorded).unwrap();
+    write_files(
+        earlier.path(),
+        &[(
+            &format!("runs/items/{run}.input.json"),
+            &serde_json::to_string(&input).unwrap(),
+        )],
+    );
+
+    let imported = runs_in(earlier.path()).await;
+    let capturable = case::capturable(
+        &imported,
+        &earlier.path().join("cases"),
+        &id(&run),
+        &"gadgets".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let dir = case::capture(
+        &*world.store,
+        capturable,
+        &Criteria::parse("A good result adds gadgets.\n").unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(dir, earlier.path().join("cases/gadgets"));
+    assert_eq!(read_json(&dir.join("case.json"))["run"], json!(run));
 }
 
 #[test_log::test(tokio::test)]
@@ -305,7 +349,7 @@ async fn a_run_that_recorded_no_input_is_refused() {
 async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    record_as_before_the_properties(&world.dir.path().join("work"));
+    record_as_before_the_properties(&world.dir.path().join("work")).await;
 
     let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
 
@@ -429,7 +473,7 @@ async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
 async fn lw_capture_of_a_run_recorded_without_its_properties_exits_1_naming_them() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
-    record_as_before_the_properties(&work_dir.path().join(REPO));
+    record_as_before_the_properties(&work_dir.path().join(REPO)).await;
 
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 

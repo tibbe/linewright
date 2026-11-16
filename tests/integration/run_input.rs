@@ -11,8 +11,9 @@ use linewright::runs::{RunId, Runs};
 use linewright::spec_gap;
 use linewright::store::{API_VERSION, NewIssue, Property, RecordedItem, Resource, Store};
 
-fn runs(world: &World) -> Runs {
-    Runs::new(&world.dir.path().join("work"))
+#[track_caller]
+fn runs(world: &World) -> impl Future<Output = Runs> + use<> {
+    runs_in(&world.dir.path().join("work"))
 }
 
 /// The input the run `id` recorded, if any.
@@ -24,6 +25,7 @@ fn input_of<'a>(world: &'a World, id: &str) -> impl Future<Output = Option<Input
         .unwrap_or_else(|e| panic!("the run {id} at {caller}: {e}"));
     async move {
         runs(world)
+            .await
             .read_input(&id)
             .await
             .unwrap_or_else(|e| panic!("reading the input of {id} at {caller}: {e:#}"))
@@ -155,7 +157,11 @@ async fn an_automations_runs_record_no_input() {
 
     for id in ["hourly/1", "hourly/2"] {
         assert!(
-            runs(&world).read_run(&id.parse().unwrap()).await.is_some(),
+            runs(&world)
+                .await
+                .read_run(&id.parse().unwrap())
+                .await
+                .is_some(),
             "{id}"
         );
         assert_eq!(input_of(&world, id).await, None, "{id}");

@@ -17,23 +17,29 @@ use tokio_util::sync::CancellationToken;
 
 /// What `serve`'s local API answers from before its first poll, over a work
 /// directory holding nothing but what a test writes there.
-fn sources(work_dir: RepoWorkDir) -> Sources {
-    let clock = Arc::new(FakeClock::new());
-    let (_, served) = tokio::sync::watch::channel(None);
-    let (_, polling) = tokio::sync::watch::channel(None);
-    Sources {
-        serving: linewright::status::Serving {
-            since: clock.now(),
-            max_runs: 4,
-        },
-        served,
-        polling,
-        deliveries: None,
-        clock,
-        work_dir,
-        ends: Ends::new(),
-        environment: api::EnvironmentLink::default(),
-        exiting: linewright::winding_up::WindingUp::default().exiting(),
+#[track_caller]
+fn sources(work_dir: RepoWorkDir) -> impl Future<Output = Sources> {
+    let runs = runs_in(&work_dir.resolve());
+    async move {
+        let runs = runs.await;
+        let clock = Arc::new(FakeClock::new());
+        let (_, served) = tokio::sync::watch::channel(None);
+        let (_, polling) = tokio::sync::watch::channel(None);
+        Sources {
+            serving: linewright::status::Serving {
+                since: clock.now(),
+                max_runs: 4,
+            },
+            served,
+            polling,
+            deliveries: None,
+            clock,
+            work_dir,
+            runs,
+            ends: Ends::new(),
+            environment: api::EnvironmentLink::default(),
+            exiting: linewright::winding_up::WindingUp::default().exiting(),
+        }
     }
 }
 
@@ -47,16 +53,20 @@ struct Routed {
 }
 
 impl Routed {
-    fn over(files: &[(&str, &str)]) -> Routed {
+    #[track_caller]
+    fn over(files: &[(&str, &str)]) -> impl Future<Output = Routed> + use<> {
         let (dir, work_dir) = work_dir_holding(files);
         let sources = sources(work_dir);
-        let ends = sources.ends.clone();
-        let stopping = CancellationToken::new();
-        Routed {
-            router: api::router(sources, stopping.clone()),
-            ends,
-            stopping,
-            _work_dir: dir,
+        async move {
+            let sources = sources.await;
+            let ends = sources.ends.clone();
+            let stopping = CancellationToken::new();
+            Routed {
+                router: api::router(sources, stopping.clone()),
+                ends,
+                stopping,
+                _work_dir: dir,
+            }
         }
     }
 
@@ -85,7 +95,7 @@ impl Drop for Routed {
 /// `/api/`, and serves none of the web UI.
 #[test_log::test(tokio::test)]
 async fn the_api_answers_under_api_and_nothing_else() {
-    let routed = Routed::over(&[]);
+    let routed = Routed::over(&[]).await;
     let elsewhere = [
         (hyper::Method::GET, "/"),
         (hyper::Method::GET, "/items/1"),
@@ -113,7 +123,7 @@ async fn the_api_answers_under_api_and_nothing_else() {
 
 #[test_log::test(tokio::test)]
 async fn a_request_whose_host_is_not_local_is_refused() {
-    let routed = Routed::over(&[]);
+    let routed = Routed::over(&[]).await;
 
     for host in [Some("evil.example"), None] {
         let (status, body) = routed.answer(hyper::Method::GET, host, "/api/status").await;
@@ -128,7 +138,7 @@ async fn a_request_whose_host_is_not_local_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
-    let routed = Routed::over(&[]);
+    let routed = Routed::over(&[]).await;
 
     let (status, _) = routed
         .answer(hyper::Method::POST, Some("evil.example"), "/api/drain")
@@ -142,7 +152,7 @@ async fn a_drain_whose_host_is_not_local_is_refused_and_changes_nothing() {
 #[test_log::test(tokio::test)]
 async fn following_a_transcript_passes_through_a_proxy_unbuffered_unchanged_and_uncached() {
     let record = item_run_record(1, "triage", 1, Some("done"), &serde_json::json!([]));
-    let routed = Routed::over(&[("runs/items/1/triage-1.json", &record)]);
+    let routed = Routed::over(&[("runs/items/1/triage-1.json", &record)]).await;
 
     let response = routed
         .response(
@@ -193,7 +203,7 @@ async fn a_claim_is_held_until_the_api_stops_and_then_can_be_taken_again() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = socket_dir_in(runtime_dir.path());
     let (_work_dir, work_dir) = work_dir_holding(&[]);
-    let api = Api::serve(api::claim(&dir, REPO).unwrap(), sources(work_dir));
+    let api = Api::serve(api::claim(&dir, REPO).unwrap(), sources(work_dir).await);
 
     let claimed_while_served = api::is_claimed(&dir, REPO).unwrap();
     let second_claim = api::claim(&dir, REPO);

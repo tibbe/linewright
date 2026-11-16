@@ -63,7 +63,7 @@ async fn serve() -> Result<()> {
         clock.clone(),
         &dir.join("run"),
         &winding_up,
-        |ends| async {
+        |ends, database| async {
             let starting = Starting::new(&config, &agent, || {
                 Ok(SessionToken::Separate("serve-fake".into()))
             })
@@ -72,6 +72,7 @@ async fn serve() -> Result<()> {
             let factory_config = starting.factory_config(
                 &config,
                 config.work_dir.join(seed::REPO),
+                database,
                 OnUsageLimit::Wait,
                 ends,
                 winding_up.clone(),

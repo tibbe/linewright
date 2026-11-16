@@ -13,7 +13,7 @@ use super::html::{self, Html};
 use super::run_path;
 use crate::api::Sources;
 use crate::case::{self, CRITERIA_REQUIRED, CaptureError, CaseName, Criteria, Refusal};
-use crate::runs::{RunId, Runs};
+use crate::runs::RunId;
 
 /// The run page's offer to capture its run as a case.
 pub(super) struct Offer {
@@ -24,8 +24,7 @@ impl Offer {
     /// The offer for run `id`, if it can be captured. A run whose records
     /// do not read is logged and offers none.
     pub(super) async fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
-        let runs = Runs::new(&sources.work_dir.resolve());
-        match case::capturable_run(&runs, id).await {
+        match case::capturable_run(&sources.runs, id).await {
             Ok(run) => Some(Offer {
                 run: run.id().clone(),
             }),
@@ -126,17 +125,11 @@ pub(super) async fn capture(
         return said_not(StatusCode::SERVICE_UNAVAILABLE, NOT_POLLED);
     };
     let work_dir = sources.work_dir.resolve();
-    let captured = match case::capturable(
-        &Runs::new(&work_dir),
-        &work_dir.join(case::CASES),
-        &run,
-        &name,
-    )
-    .await
-    {
-        Ok(capturable) => case::capture(served.store(), capturable, &criteria).await,
-        Err(e) => Err(e),
-    };
+    let captured =
+        match case::capturable(&sources.runs, &work_dir.join(case::CASES), &run, &name).await {
+            Ok(capturable) => case::capture(served.store(), capturable, &criteria).await,
+            Err(e) => Err(e),
+        };
     match captured {
         Ok(dir) => {
             info!(run = %run, case = %dir.display(), "captured a run as a case");

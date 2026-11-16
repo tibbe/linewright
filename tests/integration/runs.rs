@@ -9,7 +9,7 @@ use linewright::domain::Number;
 use linewright::layer::{Layer, Source};
 use linewright::reconcile::{EndedRun, WorkKind};
 use linewright::runs::{
-    self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, Runs, SessionEntry,
+    self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, SessionEntry,
     Started, StartedBy, State,
 };
 use linewright::session_env::SetEnv;
@@ -142,7 +142,11 @@ async fn a_run_that_starts_no_session_is_recorded_with_none_linked() {
     world.approve_behind(pr).await;
     world.poll().await;
 
-    let recorded = Runs::new(&work_dir.path().join(REPO)).read().await.unwrap();
+    let recorded = runs_in(&work_dir.path().join(REPO))
+        .await
+        .read()
+        .await
+        .unwrap();
 
     let sessions = |id: &str| {
         let run = recorded
@@ -164,7 +168,11 @@ async fn hourly_by_schedule_then_by_hand() -> (World, tempfile::TempDir) {
 async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not() {
     let (_world, work_dir) = hourly_by_schedule_then_by_hand().await;
 
-    let recorded = Runs::new(&work_dir.path().join(REPO)).read().await.unwrap();
+    let recorded = runs_in(&work_dir.path().join(REPO))
+        .await
+        .read()
+        .await
+        .unwrap();
 
     let mut started: Vec<(String, Option<StartedBy>)> = recorded
         .iter()
@@ -790,7 +798,8 @@ fn read(
     let caller = Location::caller();
     let (base, work_dir) = work_dir_holding(files);
     async move {
-        let recorded = Runs::new(&work_dir.resolve())
+        let recorded = runs_in(&work_dir.resolve())
+            .await
             .read()
             .await
             .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"));
@@ -1012,10 +1021,51 @@ fn a_stage_the_previous_version_named_tickets_is_none_to_ask_for() {
 }
 
 #[test_log::test(tokio::test)]
+async fn lw_runs_where_there_is_no_database_lists_none_and_makes_none() {
+    let (base, _work_dir) = work_dir_holding(&[(
+        "runs/items/1/triage-1.json",
+        &item_run_record(1, "triage", 1, Some("done"), &json!([])),
+    )]);
+
+    let output = lw_in(base.path(), &["runs"]).await;
+
+    assert_eq!(
+        (output.code, output.stdout.as_str()),
+        (Some(0), ""),
+        "{}",
+        output.stderr
+    );
+    assert!(!base.path().join(REPO).join("linewright.db").exists());
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_runs_on_a_database_a_newer_release_made_exits_1_naming_that_release() {
+    let (base, work_dir) = work_dir_holding(&[]);
+    drop(runs_in(&work_dir.resolve()).await);
+    let pool = back_door(&work_dir.resolve()).await;
+    sqlx::raw_sql("PRAGMA user_version = 999; INSERT INTO releases VALUES (999, '99.0.0')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+
+    let output = lw_in(base.path(), &["runs"]).await;
+
+    assert_eq!(output.code, Some(1), "{}", output.stderr);
+    assert!(
+        output.stderr.contains(
+            "was made by Linewright 99.0.0, a newer release: to run this release, restore a backup"
+        ),
+        "{}",
+        output.stderr
+    );
+}
+
+#[test_log::test(tokio::test)]
 async fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_once_it_is_not() {
     let record = item_run_record(1, "triage", 1, None, &json!([]));
     let (base, work_dir) = work_dir_holding(&[("runs/items/1/triage-1.json", &record)]);
-    let runs = Runs::new(&work_dir.resolve());
+    let runs = runs_in(&work_dir.resolve()).await;
     let lock = lock_of(&base.path().join(REPO).join("runs/items/1/triage-1.json"));
 
     let held = runs_read(&runs.read().await.unwrap());
@@ -1033,8 +1083,14 @@ async fn a_run_with_no_end_is_in_flight_while_its_lock_is_held_and_interrupted_o
 
 #[test_log::test(tokio::test)]
 async fn runs_whose_records_cannot_be_read_are_none_to_an_answer_that_does_without_them() {
-    let (_base, work_dir) = work_dir_holding(&[("runs/items", "not a directory")]);
-    let runs = Runs::new(&work_dir.resolve());
+    let (_base, work_dir) = work_dir_holding(&[]);
+    let runs = runs_in(&work_dir.resolve()).await;
+    let unreadable_session = json!([{"dir": "sessions/1/triage-1", "model": 5}]);
+    keep_record(
+        &work_dir.resolve(),
+        &serde_json::from_str(&item_run_record(1, "triage", 1, None, &unreadable_session)).unwrap(),
+    )
+    .await;
 
     assert!(runs.read().await.is_err());
     assert_eq!(runs.read_or_none().await, []);
@@ -1050,7 +1106,7 @@ async fn the_runs_ended_on_a_pull_request_are_those_whose_record_has_an_end_howe
         ("runs/items/20/fix-ci-2.json", &interrupted),
         ("runs/items/2/implement-1.json", &on_an_issue),
     ]);
-    let runs = Runs::new(&work_dir.resolve());
+    let runs = runs_in(&work_dir.resolve()).await;
 
     let ended_on_pulls: Vec<EndedRun> = runs
         .read()

@@ -99,16 +99,18 @@ impl Answering {
         let since = clock.now();
         let work_dir = dir.path().join("work");
         let serving = Serving::start(factory, poll_interval, pending);
+        let work_dir = linewright::runs::RepoWorkDir {
+            base: work_dir,
+            repo: REPO.parse().unwrap(),
+        };
         let sources = Sources {
             serving: linewright::status::Serving { since, max_runs: 4 },
             served: serving.served.clone(),
             polling: serving.polling.clone(),
             deliveries: listener.as_ref().map(Listener::tally),
             clock: clock.clone(),
-            work_dir: linewright::runs::RepoWorkDir {
-                base: work_dir,
-                repo: REPO.parse().unwrap(),
-            },
+            runs: runs_in(&work_dir.resolve()).await,
+            work_dir,
             ends: ends.clone(),
             environment: serving.environment.clone(),
             exiting: winding_up.exiting(),
@@ -1263,10 +1265,16 @@ async fn logs_follow_says_why_and_exits_1_when_serve_cannot_follow_the_run() {
     let follow = Watching::start(answering.runtime_dir.path(), &["logs", "1", "--follow"]);
     follow.shows("→ exit 0, 19 lines\n").await;
 
-    let [record] = &files_named(answering._dir.path(), "items/1/triage-1.json")[..] else {
-        panic!("one record of 1/triage-1");
+    let [database] = &files_named(answering._dir.path(), &format!("{REPO}/linewright.db"))[..]
+    else {
+        panic!("one database");
     };
-    std::fs::write(record, "not a record").unwrap();
+    let pool = back_door(database.parent().unwrap()).await;
+    sqlx::query("UPDATE sessions SET ran = 'not a record'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
     let (code, _, stderr) = follow.exits().await;
 
     assert_eq!(code, Some(1), "{stderr}");

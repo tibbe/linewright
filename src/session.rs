@@ -50,6 +50,7 @@ pub(crate) struct Sessions {
 }
 
 /// Where the records of sessions go, and what keeps what each ran.
+#[async_trait::async_trait]
 pub(crate) trait RecordsSessions: Sync {
     /// A new directory, made now, for the record of a session of `purpose`
     /// that starts `now`.
@@ -57,7 +58,7 @@ pub(crate) trait RecordsSessions: Sync {
 
     /// Records the session whose record is in `dir`, run with `settings`
     /// and `briefs`, and gives what records what the harness reports of it.
-    fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter;
+    async fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter;
 }
 
 /// What a session works with that is not shared by every session.
@@ -802,7 +803,10 @@ async fn open_in<'a, T>(
     let attachments = Dir::create(&record)
         .context("creating the attachments directory")
         .map_err(infra)?;
-    let report = ctx.records.session(&record, settings, &ctx.with.briefs);
+    let report = ctx
+        .records
+        .session(&record, settings, &ctx.with.briefs)
+        .await;
     let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
     let started_at = sessions.clock.now();
     let started = tokio::time::Instant::now();

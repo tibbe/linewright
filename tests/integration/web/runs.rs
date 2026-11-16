@@ -31,14 +31,16 @@ async fn two_issues_triaged() -> Pages {
         (1, "2026-10-01T12:00:00Z", "2026-10-01T12:01:00Z"),
         (2, "2026-10-01T12:05:00Z", "2026-10-01T12:07:30Z"),
     ] {
-        pages.record(&json!({
-            "item": item,
-            "stage": "triage",
-            "n": 1,
-            "started_at": started,
-            "end": {"at": ended, "ending": "done"},
-            "sessions": [],
-        }));
+        pages
+            .record(&json!({
+                "item": item,
+                "stage": "triage",
+                "n": 1,
+                "started_at": started,
+                "end": {"at": ended, "ending": "done"},
+                "sessions": [],
+            }))
+            .await;
     }
     pages
 }
@@ -214,7 +216,7 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
             "end": {"at": ended, "ending": "done"},
             "sessions": [],
         });
-        pages.record(&record);
+        pages.record(&record).await;
     }
 
     let html = pages.page("/runs").await;
@@ -257,7 +259,7 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
 #[test_log::test(tokio::test)]
 async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
     let pages = Pages::of(a_ticket()).await;
-    record_interrupted(&pages, 1, 1, "2026-10-01T11:00:00Z");
+    record_interrupted(&pages, 1, 1, "2026-10-01T11:00:00Z").await;
 
     let html = pages.page("/runs").await;
 
@@ -280,7 +282,7 @@ async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
 #[test_log::test(tokio::test)]
 async fn the_runs_page_names_an_item_linewright_does_not_hold_by_its_number_alone() {
     let pages = Pages::of(a_ticket()).await;
-    record_interrupted(&pages, 9, 1, "2026-10-01T11:00:00Z");
+    record_interrupted(&pages, 9, 1, "2026-10-01T11:00:00Z").await;
 
     let html = pages.page("/runs").await;
 
@@ -380,14 +382,16 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
 #[test_log::test(tokio::test)]
 async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
     let pages = Pages::of(view(vec![ticket(1, "Do it")], vec![])).await;
-    pages.record(&json!({
-        "item": 1,
-        "stage": "implement",
-        "n": 1,
-        "started_at": "2026-10-01T11:00:00Z",
-        "end": {"at": "2026-10-01T11:10:00Z", "ending": "handed-back"},
-        "sessions": [],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "implement",
+            "n": 1,
+            "started_at": "2026-10-01T11:00:00Z",
+            "end": {"at": "2026-10-01T11:10:00Z", "ending": "handed-back"},
+            "sessions": [],
+        }))
+        .await;
 
     for page in ["/runs", "/items/1"] {
         let html = pages.page(page).await;

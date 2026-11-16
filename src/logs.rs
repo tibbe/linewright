@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
-use crate::runs::{self, Recorded, RepoWorkDir, RunId, Runs, SessionEntry, Started, State};
+use crate::runs::{self, Recorded, RunId, Runs, SessionEntry, Started, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
@@ -117,6 +117,14 @@ pub enum LogsError {
     Other(#[from] anyhow::Error),
 }
 
+/// Why `which` names no run of none.
+fn no_run_among_none(which: &Which) -> NoSuchRun {
+    match which {
+        Which::Item(number) => NoSuchRun::NoRuns(*number),
+        Which::Run { id, .. } => NoSuchRun::NoRun(id.clone()),
+    }
+}
+
 /// The run `which` names. A run named by its ID whose record does not read
 /// is an error, not a run that is missing. Its record is read once, so a
 /// record that stops reading in between is never taken as missing.
@@ -133,8 +141,11 @@ async fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
     Ok(pick(&recorded, which)?)
 }
 
-pub async fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
-    let run = pick_from(&Runs::new(&work_dir.resolve()), which).await?;
+/// The transcript of the run `which` names of `runs`, or of none where there
+/// is no database.
+pub async fn answer(runs: Option<&Runs>, which: &Which) -> Result<Transcript, LogsError> {
+    let runs = runs.ok_or_else(|| no_run_among_none(which))?;
+    let run = pick_from(runs, which).await?;
     let mut records = run
         .sessions
         .iter()
@@ -227,11 +238,13 @@ pub struct RunRecords {
 }
 
 impl RunRecords {
-    pub async fn start(work_dir: &RepoWorkDir, which: &Which) -> Result<RunRecords, LogsError> {
-        let runs = Runs::new(&work_dir.resolve());
-        let run = pick_from(&runs, which).await?.started();
+    /// The records of the run `which` names of `runs`, or of none where
+    /// there is no database.
+    pub async fn start(runs: Option<&Runs>, which: &Which) -> Result<RunRecords, LogsError> {
+        let runs = runs.ok_or_else(|| no_run_among_none(which))?;
+        let run = pick_from(runs, which).await?.started();
         Ok(RunRecords {
-            runs,
+            runs: runs.clone(),
             run,
             sessions: vec![],
             ended: false,
@@ -308,12 +321,12 @@ pub struct Following {
 
 impl Following {
     pub async fn start(
-        work_dir: &RepoWorkDir,
+        runs: Option<&Runs>,
         which: &Which,
         verbosity: Verbosity,
         after: Option<After>,
     ) -> Result<Following, LogsError> {
-        let records = RunRecords::start(work_dir, which).await?;
+        let records = RunRecords::start(runs, which).await?;
         let follower = Follower::new(records.started().clone(), verbosity, after);
         Ok(Following { records, follower })
     }

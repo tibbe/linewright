@@ -161,12 +161,12 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
         "end": null,
         "sessions": [],
     });
-    pages.record(&record);
+    pages.record(&record).await;
     let in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
 
     let running_html = pages.page("/items/1").await;
     record["end"] = json!({"at": "2026-10-01T12:01:00Z", "ending": "done"});
-    pages.record(&record);
+    pages.record(&record).await;
     drop(in_flight);
     pages.publish(for_the_maintainer());
     let html = pages.page("/items/1").await;
@@ -219,7 +219,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
 async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the_runs_page() {
     let pages = Pages::of(for_the_maintainer()).await;
     for n in 1..=12 {
-        record_interrupted(&pages, 1, n, &format!("2026-10-01T{:02}:00:00Z", n - 1));
+        record_interrupted(&pages, 1, n, &format!("2026-10-01T{:02}:00:00Z", n - 1)).await;
     }
 
     let html = pages.page("/items/1").await;
@@ -283,7 +283,7 @@ async fn the_item_pages_stream_sends_the_runs_of_an_item_linewright_leaves_as_th
         .map(|(_, html)| text(select(&html, "#runs")[0]));
     assert_eq!(none.as_deref(), Some("No runs"));
 
-    record_interrupted(&pages, closed.0, 1, "2026-10-01T11:00:00Z");
+    record_interrupted(&pages, closed.0, 1, "2026-10-01T11:00:00Z").await;
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv())
         .await
         .unwrap()
@@ -354,14 +354,16 @@ async fn the_item_pages_stream_sends_nothing_when_its_runs_agent_produces_output
     let output = "sessions/issue-1/20261001T120000Z-triage/output.jsonl";
     let turn = json!({"type": "linewright-turn", "started_at": "2026-10-01T12:00:00Z", "started_by": "brief"});
     pages.write(&[(output, &output_of(&[turn]))]);
-    pages.record(&json!({
-        "item": 1,
-        "stage": "triage",
-        "n": 1,
-        "started_at": "2026-10-01T12:00:00Z",
-        "end": null,
-        "sessions": ["sessions/issue-1/20261001T120000Z-triage"],
-    }));
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-01T12:00:00Z",
+            "end": null,
+            "sessions": ["sessions/issue-1/20261001T120000Z-triage"],
+        }))
+        .await;
     let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
     let mut events = stream(&pages, "/events/items/1").await;
     tokio::time::timeout(Duration::from_secs(5), events.recv())

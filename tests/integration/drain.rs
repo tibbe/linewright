@@ -8,7 +8,7 @@ use linewright::domain::Login;
 use linewright::drain::{self, Said, Timeout, Waiting, Was};
 use linewright::factory::{Factory, ServeEnd};
 use linewright::harness::SessionError;
-use linewright::runs::{Ending, Runs, State};
+use linewright::runs::{Ending, State};
 use linewright::webhook::Pending;
 use linewright::winding_up::Remaining;
 
@@ -27,7 +27,7 @@ impl Served {
             world.clock.clone(),
             linewright::factory::FactoryConfig {
                 waits_out_usage_limit: true,
-                ..config(&world.dir.path().join("work"))
+                ..config(&world.dir.path().join("work")).await
             },
         )
         .await
@@ -184,7 +184,7 @@ async fn a_stop_while_draining_cancels_the_runs_in_flight() {
         ServeEnd::Stop
     );
     drop(agent);
-    let runs = Runs::new(&served.world.dir.path().join("work"));
+    let runs = runs_in(&served.world.dir.path().join("work")).await;
     let ended: Vec<State> = runs
         .read()
         .await

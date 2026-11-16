@@ -291,7 +291,7 @@ async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_
     );
 }
 
-#[test_log::test(tokio::test(start_paused = true))]
+#[test_log::test(tokio::test)]
 async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_those_a_new_view_changes()
  {
     let pages = Pages::of(a_board()).await;
@@ -499,7 +499,7 @@ async fn the_board_with_no_person_or_a_blank_one_shows_every_card() {
     }
 }
 
-#[test_log::test(tokio::test(start_paused = true))]
+#[test_log::test(tokio::test)]
 async fn the_boards_stream_narrowed_to_a_person_sends_their_cards_and_the_people() {
     let pages = Pages::of(a_board()).await;
     let mut events = stream(&pages, "/events/?person=alice").await;
@@ -943,14 +943,16 @@ async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_t
         vec![linewrights_pull(2, &[1], &[CheckState::Pending])],
     ))
     .await;
-    pages.record(&serde_json::json!({
-        "item": 5,
-        "stage": "implement",
-        "n": 1,
-        "started_at": "2026-10-01T09:30:00Z",
-        "end": {"at": "2026-10-01T10:00:00Z", "ending": "handed-back"},
-        "sessions": [],
-    }));
+    pages
+        .record(&serde_json::json!({
+            "item": 5,
+            "stage": "implement",
+            "n": 1,
+            "started_at": "2026-10-01T09:30:00Z",
+            "end": {"at": "2026-10-01T10:00:00Z", "ending": "handed-back"},
+            "sessions": [],
+        }))
+        .await;
 
     let html = pages.page("/").await;
 
