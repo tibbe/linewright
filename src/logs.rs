@@ -118,14 +118,19 @@ pub enum LogsError {
 }
 
 /// The run `which` names. A run named by its ID whose record does not read
-/// is an error, not a run that is missing.
+/// is an error, not a run that is missing. Its record is read once, so a
+/// record that stops reading in between is never taken as missing.
 async fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
-    if let Which::Run { id, .. } = which {
-        runs.try_read_run(id)
+    let recorded = match which {
+        Which::Run { id, .. } => runs
+            .try_read_run(id)
             .await
-            .with_context(|| format!("reading the record of {id}"))?;
-    }
-    Ok(pick(&runs.read().await?, which)?)
+            .with_context(|| format!("reading the record of {id}"))?
+            .into_iter()
+            .collect(),
+        Which::Item(_) => runs.read().await?,
+    };
+    Ok(pick(&recorded, which)?)
 }
 
 pub async fn answer(work_dir: &RepoWorkDir, which: &Which) -> Result<Transcript, LogsError> {
