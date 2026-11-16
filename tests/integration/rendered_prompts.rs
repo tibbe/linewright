@@ -533,3 +533,43 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
 
     assert_filled_as(&values, "judge.txt");
 }
+
+#[test_log::test(tokio::test)]
+async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
+    let under = tempfile::tempdir().unwrap();
+    let (case, out) = crate::judge::triage_output(under.path(), "done").await;
+    let case = Case::open(&case).await.unwrap();
+    let replayed = Replayed::open(&out, &case).await.unwrap();
+    let into = under.path().join("replay");
+    std::fs::create_dir(&into).unwrap();
+    let copy = ReplayCopy::make(&replayed, &into).await.unwrap();
+    let operators = tempfile::tempdir().unwrap();
+    std::fs::create_dir(operators.path().join("prompts")).unwrap();
+    std::fs::write(
+        operators.path().join("prompts/judge.md"),
+        "Our judge.\n\n{{facts}} {{stage}} {{criteria}} {{replay}} {{output}}\n",
+    )
+    .unwrap();
+    let briefs = linewright::briefs::OperatorBriefs::read(Some(operators.path()))
+        .unwrap()
+        .briefs();
+    let name = repo_name();
+    let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
+
+    let prompt = prompts::judge(
+        &briefs.templates,
+        &repo(&name),
+        linewright::reconcile::WorkKind::Implement,
+        &criteria,
+        &copy,
+    );
+
+    assert!(
+        prompt.starts_with("Our judge.\n\n- Repository: "),
+        "{prompt}"
+    );
+    assert_eq!(
+        briefs.layers()["prompts/judge.md"],
+        linewright::layer::Layer::Operator
+    );
+}

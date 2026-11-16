@@ -17,7 +17,7 @@ use crate::apply::triage::{self, CategoryChange};
 use crate::apply::{Asks, Designed, StatusTo};
 use crate::attachments::{self, Dir, Refusal};
 use crate::automation::Automation;
-use crate::briefs::{Briefs, OperatorPrompts};
+use crate::briefs::{Briefs, OperatorBriefs};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
     Timestamp, Windows, label,
@@ -53,8 +53,8 @@ pub(crate) struct Shell {
     /// The operator's settings for sessions.
     pub work: WorkSettings,
     pub environments: Environments,
-    /// The operator's layer of the prompts.
-    pub operator_prompts: OperatorPrompts,
+    /// The operator's layer of the briefs.
+    pub operator_briefs: OperatorBriefs,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
@@ -77,8 +77,8 @@ pub(crate) struct ShellParts {
     /// The operator's settings for sessions.
     pub work: WorkSettings,
     pub environments: Environments,
-    /// The operator's layer of the prompts.
-    pub operator_prompts: OperatorPrompts,
+    /// The operator's layer of the briefs.
+    pub operator_briefs: OperatorBriefs,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
 }
@@ -127,7 +127,7 @@ impl Shell {
             sessions: parts.sessions,
             work: parts.work,
             environments: parts.environments,
-            operator_prompts: parts.operator_prompts,
+            operator_briefs: parts.operator_briefs,
             settings: parts.settings,
             work_dir: parts.work_dir,
             _by_new: (),

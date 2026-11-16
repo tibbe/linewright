@@ -141,17 +141,20 @@ Keep it quick when nothing has changed: every session runs it.
 - **Its output** is kept with the run, redacted, in `maintenance.log` in the
   session's directory under `sessions/` in the work directory.
 
-### Prompts
+### Briefs
 
-`prompts` names a directory of your own versions of the prompts Linewright sends
-sessions, laid out as Linewright's own in
-[`briefs/prompts/`](../briefs/prompts/), such as `implement.md` or
-`follow-ups/result-error.md`. Each file in it is taken in place of Linewright's,
-and the rest stay Linewright's. Linewright logs at startup which files it takes
-from the directory, and exits with an error naming every file in it that is not
-one of its prompts, is not UTF-8 text, or whose placeholders are not the
-prompt's: one missing, or one Linewright doesn't know. Hidden files, whose name
-or directory's name starts with `.`, are skipped.
+`briefs` names a directory of your own versions of the files of the briefs
+Linewright sends sessions, laid out as Linewright's own
+[`briefs/`](../briefs/), such as `prompts/implement.md`,
+`parts/result-no-json.md` or `plugin/skills/tdd/SKILL.md`. Each file in it is
+taken in place of Linewright's, and the rest stay Linewright's. It may hold any
+file under `prompts/`, `parts/`, `outputs/` and `plugin/`, but not the result
+schemas in `results/`. Linewright logs at startup which files it takes from the
+directory, by their paths under it, and exits with an error naming every file in
+it that it may not hold, is not UTF-8 text, or whose placeholders are not the
+file's: one missing, or one Linewright doesn't know. A file of the plugin has
+none. Hidden files, whose name or directory's name starts with `.`, are skipped.
+A repository's `.linewright/briefs/`, laid out the same way, comes before it.
 [Tuning the briefs](tuning-briefs.md) has how to try a change.
 
 ## The container image

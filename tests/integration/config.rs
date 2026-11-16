@@ -758,21 +758,21 @@ fn a_bad_value_or_an_unknown_key_is_an_error_naming_the_setting() {
 }
 
 #[test_log::test]
-fn the_operators_layer_of_prompts_is_the_prompts_setting_from_a_flag_variable_or_the_file() {
-    let from_flag = resolve(&["--prompts", "flag/"], &[], None).unwrap();
-    let from_env = resolve(&[], &[("LINEWRIGHT_PROMPTS", "env/")], None).unwrap();
-    let from_file = resolve(&[], &[], Some("prompts = \"file/\"\n")).unwrap();
+fn the_operators_layer_of_briefs_is_the_briefs_setting_from_a_flag_variable_or_the_file() {
+    let from_flag = resolve(&["--briefs", "flag/"], &[], None).unwrap();
+    let from_env = resolve(&[], &[("LINEWRIGHT_BRIEFS", "env/")], None).unwrap();
+    let from_file = resolve(&[], &[], Some("briefs = \"file/\"\n")).unwrap();
 
-    assert_eq!(from_flag.prompts, Some("flag/".into()));
-    assert_eq!(from_env.prompts, Some("env/".into()));
-    assert_eq!(from_file.prompts, Some("file/".into()));
+    assert_eq!(from_flag.briefs, Some("flag/".into()));
+    assert_eq!(from_env.briefs, Some("env/".into()));
+    assert_eq!(from_file.briefs, Some("file/".into()));
 }
 
 #[test_log::test]
-fn the_earlier_briefs_key_is_an_unknown_setting() {
-    let error = resolve(&[], &[], Some("briefs = \"mine/\"\n")).unwrap_err();
+fn the_earlier_prompts_key_is_an_unknown_setting() {
+    let error = resolve(&[], &[], Some("prompts = \"mine/\"\n")).unwrap_err();
 
-    assert!(error.contains("an unknown setting `briefs`"), "{error}");
+    assert!(error.contains("an unknown setting `prompts`"), "{error}");
 }
 
 fn blames_the_command_line(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> bool {

@@ -320,10 +320,10 @@ pub struct Settings {
     /// can set its own [default: the harness's]
     #[arg(long, global = true)]
     pub effort: Option<String>,
-    /// A directory laid out as the prompts Linewright ships, each file in it
+    /// A directory laid out as the briefs Linewright ships, each file in it
     /// taken in place of Linewright's own [default: none]
     #[arg(long, global = true)]
-    pub prompts: Option<String>,
+    pub briefs: Option<String>,
     /// A variable to set in agent sessions, its value taken as written and
     /// replacing a passed variable of the same name; given once per
     /// variable, and added to the config file's; a stage's table in the
@@ -414,7 +414,7 @@ pub struct Config {
     /// `model`, `effort`, `session-timeout`, `maintenance` and the stages'
     /// tables, and where `session-env` and `session-pass-env` came from.
     pub work: WorkSettings,
-    pub prompts: Option<PathBuf>,
+    pub briefs: Option<PathBuf>,
     pub session_env: SessionEnv,
     pub secrets: VariableNames,
     pub result_retries: u32,
@@ -443,7 +443,7 @@ impl Settings {
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("effort", &self.effort),
-            ("prompts", &self.prompts),
+            ("briefs", &self.briefs),
             ("session-pass-env", &self.session_pass_env),
             ("secrets", &self.secrets),
             ("session-timeout", &self.session_timeout),
@@ -545,7 +545,7 @@ const SETTINGS: [(&str, Form); 29] = [
     ("work-dir", VALUE),
     stage_entry(StageSetting::Repository(RepositorySetting::Model)),
     stage_entry(StageSetting::Repository(RepositorySetting::Effort)),
-    ("prompts", VALUE),
+    ("briefs", VALUE),
     stage_entry(StageSetting::SessionEnv),
     stage_entry(StageSetting::SessionPassEnv),
     ("secrets", list(VARIABLE_NAME)),
@@ -1110,7 +1110,7 @@ impl Config {
             max_runs: number("max-runs", "4")? as usize,
             work_dir,
             work,
-            prompts: get("prompts").map(PathBuf::from),
+            briefs: get("briefs").map(PathBuf::from),
             session_env,
             secrets,
             result_retries: number("result-retries", "1")?,

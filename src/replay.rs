@@ -283,7 +283,7 @@ async fn run_in(
         require_label: config.require_label,
         work: config.work,
         environments: config.environments,
-        operator_prompts: config.prompts,
+        operator_briefs: config.briefs,
         settings,
         work_dir: config.work_dir,
     });
@@ -371,7 +371,7 @@ impl Setting {
         if let Some(method) = config.merge_method {
             settings.merge_method = method;
         }
-        let repo = RepoLayer::read(store.as_ref(), &settings.default_branch, &config.prompts)
+        let repo = RepoLayer::read(store.as_ref(), &settings.default_branch, &config.briefs)
             .await
             .context("reading Linewright's files in the case")?;
         if let Some(file) = holding(&repo.unusable, kind).first() {

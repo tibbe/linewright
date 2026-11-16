@@ -83,13 +83,45 @@ async fn the_repositorys_file_on_the_default_branch_sets_its_sessions_settings()
 }
 
 #[test_log::test(tokio::test)]
+async fn a_skill_in_the_repositorys_briefs_is_the_one_in_its_sessions_plugin() {
+    let mut world = World::new().await;
+    commit_on(
+        &world,
+        "main",
+        &[(
+            ".linewright/briefs/plugin/skills/triage/SKILL.md",
+            "The repository's triage.\n",
+        )],
+    )
+    .await;
+    let skill = Arc::new(Mutex::new(None));
+    world.harness.on(WorkKind::Triage, {
+        let skill = skill.clone();
+        move |call| {
+            *skill.lock().unwrap() = Some(
+                std::fs::read_to_string(call.spec.plugin.join("skills/triage/SKILL.md")).unwrap(),
+            );
+            Ok(ready_for_agent())
+        }
+    });
+    open_for_triage(&world);
+
+    world.poll().await;
+
+    assert_eq!(
+        skill.lock().unwrap().as_deref(),
+        Some("The repository's triage.\n")
+    );
+}
+
+#[test_log::test(tokio::test)]
 async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     let mut world = World::new().await;
     let prompt = |whose: &str| format!("{whose} rework.\n\n{}", shipped("rework.md"));
     commit_on(
         &world,
         "main",
-        &[(".linewright/prompts/rework.md", &prompt("Main's"))],
+        &[(".linewright/briefs/prompts/rework.md", &prompt("Main's"))],
     )
     .await;
     let (_, pr) = world.ticket_in_review().await;
@@ -97,7 +129,10 @@ async fn a_run_on_another_branch_is_sent_the_prompts_of_the_default_branch() {
     commit_on(
         &world,
         &branch,
-        &[(".linewright/prompts/rework.md", &prompt("The branch's"))],
+        &[(
+            ".linewright/briefs/prompts/rework.md",
+            &prompt("The branch's"),
+        )],
     )
     .await;
     world.rework_asked(pr);
@@ -164,7 +199,7 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
         &[
             (".linewright/automations/hourly.md", HOURLY),
             (
-                ".linewright/prompts/automation.md",
+                ".linewright/briefs/prompts/automation.md",
                 "Do {{instructions}} {{nope}}\n",
             ),
         ],
@@ -179,7 +214,7 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
 
     let error = format!("{error:#}");
     assert!(
-        error.contains(".linewright/prompts/automation.md"),
+        error.contains(".linewright/briefs/prompts/automation.md"),
         "{error}"
     );
     assert_eq!(

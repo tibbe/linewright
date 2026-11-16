@@ -1,5 +1,5 @@
 //! Linewright's files in the repository: its settings for the work and its
-//! prompts, read from the default branch as a run starts
+//! briefs, read from the default branch as a run starts
 //! (`docs/specs/repository.md`, Linewright's files).
 
 use std::collections::BTreeMap;
@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::automation;
-use crate::briefs::{self, Briefs, OperatorPrompts, PromptLayer};
+use crate::briefs::{self, BriefLayer, Briefs, OperatorBriefs};
 use crate::layer::Layer;
 use crate::prompts::Readers;
 use crate::store::{Blob, Store};
@@ -29,8 +29,8 @@ const DIR: &str = linewright_path!("");
 /// The repository's file (`docs/specs/operation.md`, The repository's file).
 pub const CONFIG: &str = linewright_path!("/config.toml");
 
-/// The repository's layer of the prompts, laid out as `briefs/prompts/` is.
-pub const PROMPTS: &str = linewright_path!("/prompts");
+/// The repository's layer of the briefs, laid out as `briefs/` is.
+pub const BRIEFS: &str = linewright_path!("/briefs");
 
 /// A file of the repository's Linewright cannot use, and why.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -61,8 +61,8 @@ pub fn holding<'a>(unusable: &'a [Unusable], run: &RunKind) -> Vec<&'a FileError
 #[derive(Clone, Debug)]
 pub struct RepoLayer {
     pub settings: RepoSettings,
-    /// The briefs, each prompt from the repository's layer, the operator's
-    /// or Linewright's own.
+    /// The briefs, each file from the repository's layer, the operator's or
+    /// Linewright's own.
     pub briefs: Arc<Briefs>,
     pub unusable: Vec<Unusable>,
 }
@@ -74,7 +74,7 @@ impl RepoLayer {
     pub async fn read(
         store: &dyn Store,
         branch: &str,
-        operator: &OperatorPrompts,
+        operator: &OperatorBriefs,
     ) -> Result<RepoLayer> {
         let listed = store.list_files(branch, DIR).await?;
         let files = store.read_files(branch, &RepoLayer::paths(listed)).await?;
@@ -94,15 +94,16 @@ impl RepoLayer {
     }
 
     /// The layer the repository's `files`, by their paths in the repository,
-    /// make over the operator's prompts. A file that cannot be used holds
+    /// make over the operator's briefs. A file that cannot be used holds
     /// the runs it could change, and the next layer's stands in for every
-    /// other run: a config every run, a prompt the runs it is sent to, and
-    /// a file that is not one of Linewright's every run
+    /// other run: a config every run, a brief file the runs it is sent to,
+    /// and a file that is not one of Linewright's, or that a layer may not
+    /// hold, every run
     /// (`docs/specs/repository.md`, Linewright's files).
-    pub fn parse(files: BTreeMap<String, Blob>, operator: &OperatorPrompts) -> RepoLayer {
+    pub fn parse(files: BTreeMap<String, Blob>, operator: &OperatorBriefs) -> RepoLayer {
         let mut unusable = Vec::new();
         let mut settings = RepoSettings::default();
-        let mut prompts = Vec::new();
+        let mut brief_files = Vec::new();
         for (path, blob) in files {
             if path == CONFIG {
                 let parsed = blob.text().map_err(str::to_string).and_then(|text| {
@@ -116,10 +117,10 @@ impl RepoLayer {
                     }),
                 }
             } else if let Some(under) = path
-                .strip_prefix(PROMPTS)
+                .strip_prefix(BRIEFS)
                 .and_then(|under| under.strip_prefix('/'))
             {
-                prompts.push((under.to_string(), blob));
+                brief_files.push((under.to_string(), blob));
             } else {
                 unusable.push(Unusable {
                     file: FileError {
@@ -130,7 +131,7 @@ impl RepoLayer {
                 });
             }
         }
-        let (layer, parsed) = PromptLayer::parse(Layer::Repository, prompts);
+        let (layer, parsed) = BriefLayer::parse(Layer::Repository, brief_files);
         let briefs = if layer.files.is_empty() && parsed.is_empty() {
             operator.briefs()
         } else {
@@ -142,7 +143,7 @@ impl RepoLayer {
                     .map(|file| Unusable {
                         holds: file.holds,
                         file: FileError {
-                            path: format!("{PROMPTS}/{}", file.path),
+                            path: format!("{BRIEFS}/{}", file.path),
                             error: file.error,
                         },
                     }),

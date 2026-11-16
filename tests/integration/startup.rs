@@ -881,15 +881,17 @@ fn without_a_separate_token_or_with_an_empty_one_sessions_are_given_linewrights(
 
 #[test_log::test]
 fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() {
-    let prompts = prompts_with("update.md", |text| text.replace("{{ticket}}", "{{tikcet}}"));
+    let briefs = briefs_with("prompts/update.md", |text| {
+        text.replace("{{ticket}}", "{{tikcet}}")
+    });
 
     let (succeeded, error) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
-            "--prompts",
-            prompts.path().to_str().unwrap(),
+            "--briefs",
+            briefs.path().to_str().unwrap(),
             "once",
         ],
         &[],
@@ -897,22 +899,22 @@ fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() 
 
     assert!(!succeeded, "{error}");
     assert!(
-        error.contains("- update.md: it has unknown placeholders: `{{tikcet}}`"),
+        error.contains("- prompts/update.md: it has unknown placeholders: `{{tikcet}}`"),
         "{error}"
     );
 }
 
 #[test_log::test]
 fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
-    let prompts = prompts_with("triage.md", |text| text.replace("{{issue}}", ""));
+    let briefs = briefs_with("prompts/triage.md", |text| text.replace("{{issue}}", ""));
 
     let (succeeded, error) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
-            "--prompts",
-            prompts.path().to_str().unwrap(),
+            "--briefs",
+            briefs.path().to_str().unwrap(),
             "once",
         ],
         &[],
@@ -920,23 +922,23 @@ fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
 
     assert!(!succeeded, "{error}");
     assert!(
-        error.contains("- triage.md: it lacks the placeholders `{{issue}}`"),
+        error.contains("- prompts/triage.md: it lacks the placeholders `{{issue}}`"),
         "{error}"
     );
 }
 
 #[test_log::test]
-fn startup_logs_the_files_the_operators_prompts_provide() {
-    let prompts = prompts_with("implement.md", |text| text);
-    std::fs::write(prompts.path().join(".DS_Store"), "Finder's.").unwrap();
+fn startup_logs_the_files_the_operators_briefs_provide() {
+    let briefs = briefs_with("prompts/implement.md", |text| text);
+    std::fs::write(briefs.path().join(".DS_Store"), "Finder's.").unwrap();
 
     let (succeeded, log) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
-            "--prompts",
-            prompts.path().to_str().unwrap(),
+            "--briefs",
+            briefs.path().to_str().unwrap(),
             "--log-format",
             "json",
             "once",
@@ -953,29 +955,29 @@ fn startup_logs_the_files_the_operators_prompts_provide() {
             .unwrap_or_else(|| panic!("no {message:?} logged: {log}"))
     };
     assert_eq!(
-        logged("the operator's prompts provide these files"),
-        "implement.md"
+        logged("the operator's briefs provide these files"),
+        "prompts/implement.md"
     );
 }
 
 #[test_log::test]
-fn linewrights_own_prompts_can_be_the_operators_prompts() {
-    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs/prompts");
+fn linewrights_own_briefs_can_be_the_operators_briefs() {
+    let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs");
     let dir = tempfile::tempdir().unwrap();
     for path in linewright::briefs::Briefs::shipped().layers().keys() {
         let copy = dir.path().join(path);
         std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
         std::fs::copy(shipped.join(path), copy).unwrap();
     }
-    let prompts = dir.path();
+    let briefs = dir.path();
 
     let (succeeded, log) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
-            "--prompts",
-            prompts.to_str().unwrap(),
+            "--briefs",
+            briefs.to_str().unwrap(),
             "--log-format",
             "json",
             "once",
@@ -985,26 +987,26 @@ fn linewrights_own_prompts_can_be_the_operators_prompts() {
 
     assert!(!succeeded, "fails later, without `git`: {log}");
     assert!(
-        log.contains("the operator's prompts provide these files"),
+        log.contains("the operator's briefs provide these files"),
         "{log}"
     );
 }
 
 #[test_log::test]
-fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_each() {
-    let prompts = prompts_with("implement.md", |text| text);
-    std::fs::write(prompts.path().join("implment.md"), "A misspelling.").unwrap();
-    let skill = prompts.path().join("plugin/skills/tdd/SKILL.md");
-    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(skill, "Our own TDD.").unwrap();
+fn files_in_the_operators_briefs_that_a_layer_may_not_hold_are_an_error_naming_each() {
+    let briefs = briefs_with("prompts/implement.md", |text| text);
+    std::fs::write(briefs.path().join("prompts/implment.md"), "A misspelling.").unwrap();
+    let schema = briefs.path().join("results/implement.schema.json");
+    std::fs::create_dir_all(schema.parent().unwrap()).unwrap();
+    std::fs::write(schema, "{}").unwrap();
 
     let (succeeded, error) = lw(
         std::path::Path::new(""),
         &[
             "--repo",
             "owner/name",
-            "--prompts",
-            prompts.path().to_str().unwrap(),
+            "--briefs",
+            briefs.path().to_str().unwrap(),
             "serve",
         ],
         &[],
@@ -1012,11 +1014,11 @@ fn files_in_the_operators_prompts_that_are_not_linewrights_are_an_error_naming_e
 
     assert!(!succeeded, "{error}");
     assert!(
-        error.contains("- implment.md: not one of Linewright's prompts"),
+        error.contains("- prompts/implment.md: not a file a layer may hold"),
         "{error}"
     );
     assert!(
-        error.contains("- plugin/skills/tdd/SKILL.md: not one of Linewright's prompts"),
+        error.contains("- results/implement.schema.json: not a file a layer may hold"),
         "{error}"
     );
 }

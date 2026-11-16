@@ -11,7 +11,7 @@ use tokio::signal::unix::signal;
 use tracing::{info, warn};
 
 use crate::api::{self, Api, Listeners, Publish, Sources};
-use crate::briefs::OperatorPrompts;
+use crate::briefs::OperatorBriefs;
 use crate::child;
 use crate::clock::Clock;
 use crate::config::Config;
@@ -169,12 +169,12 @@ impl Signals {
 }
 
 /// What a factory starts with besides its store and its clock: `bash`,
-/// the operator's prompts, the token sessions are given and the secrets
+/// the operator's briefs, the token sessions are given and the secrets
 /// redacted from what they say, and their environments.
 pub struct Starting {
     program: String,
     bash: PathBuf,
-    prompts: OperatorPrompts,
+    briefs: OperatorBriefs,
     sessions: SessionCredentials,
     environments: Environments,
 }
@@ -186,7 +186,7 @@ impl Starting {
     ///
     /// # Errors
     ///
-    /// When the operator's prompts cannot be read, `git`, `bash` or
+    /// When the operator's briefs cannot be read, `git`, `bash` or
     /// `program` is not on the path, `token` fails, or a secret cannot be
     /// read.
     pub async fn new(
@@ -217,7 +217,7 @@ impl Starting {
         token: impl FnOnce() -> Result<SessionToken>,
         gh_through_gate: bool,
     ) -> Result<Starting> {
-        let prompts = prompts(config)?;
+        let briefs = briefs(config)?;
         require_tool("git").await?;
         let bash = require_bash()?;
         require_tool(program).await?;
@@ -226,7 +226,7 @@ impl Starting {
         Ok(Starting {
             program: program.into(),
             bash,
-            prompts,
+            briefs,
             sessions,
             environments,
         })
@@ -270,7 +270,7 @@ impl Starting {
             merge_method: config.merge_method,
             auto_merge: config.auto_merge,
             require_label: config.require_label.clone(),
-            prompts: self.prompts,
+            briefs: self.briefs,
             work_dir,
             database,
             waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
@@ -353,21 +353,23 @@ fn environments(config: &Config, gh_through_gate: bool) -> Environments {
     split.environments
 }
 
-/// The operator's prompts. Logs which files they provide.
+/// The operator's briefs. Logs which files they provide, by their paths
+/// under `briefs/`.
 ///
 /// # Errors
 ///
-/// When the `prompts` directory `config` names cannot be read.
-pub fn prompts(config: &Config) -> Result<OperatorPrompts> {
-    let prompts = OperatorPrompts::read(config.prompts.as_deref())?;
-    if config.prompts.is_some() {
-        let provided: Vec<&str> = prompts.layer().files.keys().map(String::as_str).collect();
+/// When the `briefs` directory `config` names cannot be read, or holds a
+/// file Linewright cannot use.
+pub fn briefs(config: &Config) -> Result<OperatorBriefs> {
+    let briefs = OperatorBriefs::read(config.briefs.as_deref())?;
+    if config.briefs.is_some() {
+        let provided: Vec<&str> = briefs.layer().files.keys().map(String::as_str).collect();
         info!(
             files = provided.join(" "),
-            "the operator's prompts provide these files"
+            "the operator's briefs provide these files"
         );
     }
-    Ok(prompts)
+    Ok(briefs)
 }
 
 #[derive(Clone, Copy)]
