@@ -729,6 +729,11 @@ impl Mismatches {
     pub fn iter(&self) -> impl Iterator<Item = &Mismatch> {
         std::iter::once(&self.first).chain(&self.rest)
     }
+
+    /// The first mismatch and the rest, in the order of [`Mismatches::iter`].
+    pub fn split(&self) -> (&Mismatch, &[Mismatch]) {
+        (&self.first, &self.rest)
+    }
 }
 
 /// One way a result does not match its schema, each key named by its JSON

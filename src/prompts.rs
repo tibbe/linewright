@@ -26,7 +26,7 @@ use crate::working_pull::Feedback;
 
 mod list;
 
-use list::{Conjunction, list};
+use list::{Conjunction, List, Placement};
 
 pub struct Repo<'a> {
     pub name: &'a domain::Repo,
@@ -157,17 +157,28 @@ pub enum PullTask<'a> {
 trait Values {
     /// The placeholders, one per value.
     fn names() -> Vec<&'static str>;
-    fn value(&self, name: &str) -> Option<&str>;
+    fn value(&self, name: &str) -> Option<Value<'_>>;
+}
+
+/// What a placeholder is filled with.
+enum Value<'a> {
+    Text(&'a str),
+    List(&'a List),
 }
 
 /// Declares the values of a template: a field per placeholder, after those of
-/// `base`, if given, which it holds as `base`.
+/// `base`, if given, which it holds as `base`. A field is text unless it is
+/// declared a `List`, as in `items: List`.
 macro_rules! values {
-    ($(#[$doc:meta])* $name:ident $(: $base:ident)? { $($field:ident),* $(,)? }) => {
+    (@type) => { String };
+    (@type List) => { List };
+    (@value $field:expr) => { Value::Text($field) };
+    (@value $field:expr, List) => { Value::List($field) };
+    ($(#[$doc:meta])* $name:ident $(: $base:ident)? { $($field:ident $(: $list:ident)?),* $(,)? }) => {
         $(#[$doc])*
         struct $name {
             $(base: $base,)?
-            $($field: String,)*
+            $($field: values!(@type $($list)?),)*
         }
 
         impl Values for $name {
@@ -175,9 +186,9 @@ macro_rules! values {
                 [$(<$base as Values>::names(),)? vec![$(stringify!($field)),*]].concat()
             }
 
-            fn value(&self, name: &str) -> Option<&str> {
+            fn value(&self, name: &str) -> Option<Value<'_>> {
                 match name {
-                    $(stringify!($field) => Some(&self.$field),)*
+                    $(stringify!($field) => Some(values!(@value &self.$field $(, $list)?)),)*
                     _ => None$(.or_else(|| <$base as Values>::value(&self.base, name)))?,
                 }
             }
@@ -198,7 +209,7 @@ values!(
     Shared { facts }
 );
 values!(Triage: Shared {
-    categories,
+    categories: List,
     issue,
     output
 });
@@ -284,10 +295,14 @@ values!(ExistingBranch {
     unfinished
 });
 values!(Commits { commits });
+values!(
+    /// The unfinished commits, from `parts/unfinished-commits.md`.
+    CommitList { commits: List }
+);
 values!(UnfinishedCommit { commit });
 values!(Stopped {
     default_branch,
-    files
+    files: List
 });
 values!(FullLog { job, repo });
 values!(FiledGapsPart { gaps });
@@ -298,31 +313,34 @@ values!(HeldSecret {
     variable,
     file
 });
-values!(PushedSecret { secrets });
+values!(PushedSecret { secrets: List });
 values!(PushedSecretFound { kind, commit, path });
 values!(
     /// The attachments contract, from `parts/attachments.md`.
     Attachments {
         directory,
-        kinds,
-        videos
+        kinds: List,
+        videos: List
     }
 );
 values!(AttachmentSecret { variable, file });
 values!(AttachmentRefused { file, reason });
 values!(AttachmentFile { file });
-values!(AttachmentKind { file, kinds });
-values!(SchemaMismatches { mismatches });
+values!(AttachmentKind { file, kinds: List });
+values!(SchemaMismatches { mismatches: List });
 values!(MissingKey { key });
-values!(Outcome { outcome, outcomes });
-values!(Outcomes { outcomes });
+values!(Outcome {
+    outcome,
+    outcomes: List
+});
+values!(Outcomes { outcomes: List });
 values!(At { at, error });
 values!(Written { written });
 values!(TicketId { id });
 values!(Blocker { id, blocker });
 values!(Category {
     category,
-    categories
+    categories: List
 });
 values!(Thread { thread });
 values!(Status { status });
@@ -384,7 +402,9 @@ impl<V: Values> Template<V> {
 
     /// Fills each placeholder with its value. A placeholder alone on its line
     /// that is filled with nothing takes the line with it, and the blank line
-    /// after it, so an optional paragraph leaves no gap.
+    /// after it, so an optional paragraph leaves no gap. A list is a bullet
+    /// line per item where its placeholder is alone on its line, ending in a
+    /// line ending, and inline anywhere else.
     fn fill(&self, values: &V) -> String {
         let value = |name: &str| {
             values
@@ -394,16 +414,29 @@ impl<V: Values> Template<V> {
         let mut filled = String::with_capacity(self.text.len());
         let mut lines = self.text.split_inclusive('\n').peekable();
         while let Some(line) = lines.next() {
-            if let Some(name) = alone(line)
-                && value(name).is_empty()
-            {
-                lines.next_if(|next| next.trim().is_empty());
+            if let Some((name, ending)) = alone(line) {
+                match value(name) {
+                    Value::Text("") => {
+                        lines.next_if(|next| next.trim().is_empty());
+                    }
+                    Value::Text(text) => {
+                        filled.push_str(text);
+                        filled.push_str(ending);
+                    }
+                    Value::List(list) => {
+                        filled.push_str(&list.render(Placement::Alone));
+                        filled.push_str(if ending.is_empty() { "\n" } else { ending });
+                    }
+                }
                 continue;
             }
             let mut rest = line;
             while let Some((start, name, end)) = placeholders(rest).next() {
                 filled.push_str(&rest[..start]);
-                filled.push_str(value(name));
+                match value(name) {
+                    Value::Text(text) => filled.push_str(text),
+                    Value::List(list) => filled.push_str(&list.render(Placement::Inline)),
+                }
                 rest = &rest[end..];
             }
             filled.push_str(rest);
@@ -438,11 +471,11 @@ fn placeholders(text: &str) -> impl Iterator<Item = (usize, &str, usize)> {
     })
 }
 
-/// The placeholder that is all of `line`, if one is.
-fn alone(line: &str) -> Option<&str> {
-    let line = line.trim_end_matches(['\n', '\r']);
-    match placeholders(line).next() {
-        Some((0, name, end)) if end == line.len() => Some(name),
+/// The placeholder that is all of `line`, if one is, and the line's ending.
+fn alone(line: &str) -> Option<(&str, &str)> {
+    let text = line.trim_end_matches(['\n', '\r']);
+    match placeholders(text).next() {
+        Some((0, name, end)) if end == text.len() => Some((name, &line[end..])),
         _ => None,
     }
 }
@@ -531,7 +564,7 @@ templates! {
     filed_gaps: FiledGapsPart = "parts/filed-gaps.md", TICKET_WORK, Trimmed;
     fold_unfinished: Commits = "parts/fold-unfinished.md", BRANCH_WORK, Trimmed;
     unfinished_commit: UnfinishedCommit = "parts/unfinished-commit.md", BRANCH_WORK, Trimmed;
-    unfinished_commits: Commits = "parts/unfinished-commits.md", BRANCH_WORK, Trimmed;
+    unfinished_commits: CommitList = "parts/unfinished-commits.md", BRANCH_WORK, Trimmed;
     held_secret: HeldSecret = "parts/held-credential.md", BRANCH_WORK, Trimmed;
     pushed_secret: PushedSecret = "parts/pushed-secret.md", BRANCH_WORK, Trimmed;
     pushed_secret_found: PushedSecretFound = "parts/pushed-secret-found.md", BRANCH_WORK, Trimmed;
@@ -1190,10 +1223,14 @@ fn parse_error(templates: &Templates, error: &ParseError) -> String {
             error: error.clone(),
         }),
         ParseError::Schema(mismatches) => templates.result_schema.fill(&SchemaMismatches {
-            mismatches: mismatches
-                .iter()
-                .map(|m| format!("- {}\n", mismatch(templates, m)))
-                .collect(),
+            mismatches: {
+                let (first, rest) = mismatches.split();
+                List::new(
+                    mismatch(templates, first),
+                    rest.iter().map(|m| mismatch(templates, m)),
+                    Conjunction::And,
+                )
+            },
         }),
         ParseError::Contract(error) => templates.result_contract.fill(&ResultError {
             error: contract_error(templates, error),
@@ -1289,9 +1326,8 @@ fn listed(
     as_item: fn(&str) -> String,
     conjunction: Conjunction,
     never_empty: &str,
-) -> String {
-    let (first, rest) = values.split_first().expect(never_empty);
-    list(as_item(first), rest.iter().map(|v| as_item(v)), conjunction)
+) -> List {
+    List::of(values.iter().map(|v| as_item(v)), conjunction).expect(never_empty)
 }
 
 /// The `first` and `rest` extensions, each with its dot as code, in a list
@@ -1299,9 +1335,9 @@ fn listed(
 fn extensions(
     (first, rest): (&str, impl Iterator<Item = &'static str>),
     conjunction: Conjunction,
-) -> String {
+) -> List {
     let as_item = |extension: &str| format!("`.{extension}`");
-    list(as_item(first), rest.map(as_item), conjunction)
+    List::new(as_item(first), rest.map(as_item), conjunction)
 }
 
 /// `value` quoted, as in `"bug"`.
@@ -1353,18 +1389,15 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
 
 /// Each of the `secrets` push protection found, from
 /// `parts/pushed-secret-found.md`, in a list ending in `and`.
-fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> String {
-    let mut found = secrets.iter().map(|secret| {
+fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> List {
+    let found = secrets.iter().map(|secret| {
         templates.pushed_secret_found.fill(&PushedSecretFound {
             kind: secret.kind.clone(),
             commit: secret.commit.clone(),
             path: secret.path.clone(),
         })
     });
-    let first = found
-        .next()
-        .expect("push protection found at least one secret");
-    list(first, found, Conjunction::And)
+    List::of(found, Conjunction::And).expect("push protection found at least one secret")
 }
 
 /// Names the unfinished `commits`, one from `parts/unfinished-commit.md` and
@@ -1375,8 +1408,8 @@ fn unfinished_commits(templates: &Templates, commits: &UnfinishedCommits) -> Str
             commit: code(&commits.first),
         });
     }
-    templates.unfinished_commits.fill(&Commits {
-        commits: list(
+    templates.unfinished_commits.fill(&CommitList {
+        commits: List::new(
             code(&commits.first),
             commits.rest.iter().map(|c| code(c)),
             Conjunction::And,
@@ -1563,5 +1596,109 @@ fn or_none(text: &str) -> &str {
         "_(empty)_"
     } else {
         text.trim()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    values!(Listed { title, items: List });
+
+    #[track_caller]
+    fn filled(text: &str, items: &[&str], conjunction: Conjunction) -> String {
+        let template = Template::<Listed>::parse(text.into()).unwrap();
+        template.fill(&Listed {
+            title: "Items".into(),
+            items: List::of(
+                items.iter().map(std::string::ToString::to_string),
+                conjunction,
+            )
+            .unwrap(),
+        })
+    }
+
+    #[test_log::test]
+    fn a_list_within_a_line_is_its_one_item() {
+        assert_eq!(
+            filled("{{title}}: {{items}}.\n", &["`a`"], Conjunction::And),
+            "Items: `a`.\n"
+        );
+    }
+
+    #[test_log::test]
+    fn a_list_within_a_line_is_its_items_joined_with_commas_and_a_last_conjunction() {
+        assert_eq!(
+            filled(
+                "{{title}}: {{items}}.\n",
+                &["`a`", "`b`", "`c`"],
+                Conjunction::And
+            ),
+            "Items: `a`, `b` and `c`.\n"
+        );
+        assert_eq!(
+            filled(
+                "{{title}}: {{items}}.\n",
+                &["a", "b, c", "d"],
+                Conjunction::Or
+            ),
+            "Items: a; b, c or d.\n"
+        );
+    }
+
+    #[test_log::test]
+    fn a_list_alone_on_its_line_is_a_bullet_line_for_its_one_item() {
+        assert_eq!(
+            filled(
+                "{{title}}:\n\n{{items}}\n\nMore.\n",
+                &["a"],
+                Conjunction::And
+            ),
+            "Items:\n\n- a\n\nMore.\n"
+        );
+    }
+
+    #[test_log::test]
+    fn a_list_alone_on_its_line_is_a_bullet_line_per_item() {
+        assert_eq!(
+            filled(
+                "{{title}}:\n\n{{items}}\n\nMore.\n",
+                &["a", "b, c"],
+                Conjunction::And
+            ),
+            "Items:\n\n- a\n- b, c\n\nMore.\n"
+        );
+    }
+
+    #[test_log::test]
+    fn a_list_alone_on_the_last_line_ends_with_a_line_ending() {
+        assert_eq!(
+            filled("{{title}}:\n\n{{items}}", &["a", "b"], Conjunction::And),
+            "Items:\n\n- a\n- b\n"
+        );
+    }
+
+    #[test_log::test]
+    fn an_items_further_lines_are_indented_under_its_bullet() {
+        assert_eq!(
+            filled(
+                "{{title}}:\n{{items}}\n",
+                &["a\nmore", "b"],
+                Conjunction::And
+            ),
+            "Items:\n- a\n  more\n- b\n"
+        );
+    }
+
+    #[test_log::test]
+    fn an_items_own_line_ending_leaves_no_blank_line_under_its_bullet() {
+        assert_eq!(
+            filled(
+                "{{title}}:\n{{items}}\n",
+                &["a:\n- b\n", "c"],
+                Conjunction::And
+            ),
+            "Items:\n- a:\n  - b\n- c\n"
+        );
     }
 }
