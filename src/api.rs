@@ -421,7 +421,11 @@ async fn answer_status(State(sources): State<Sources>) -> Response {
 pub(crate) async fn status_answer(sources: &Sources) -> Status {
     let view = view(sources);
     let recorded = recorded_or_none(sources).await;
-    status_of(sources, view.as_ref(), &recorded).await
+    let environment = environment_or_none(sources)
+        .await
+        .and_then(|answer| answer.environment)
+        .map(|environment| environment.shown);
+    status_of(sources, view.as_ref(), &recorded, environment)
 }
 
 /// `serve`'s view, `None` before the first poll.
@@ -434,16 +438,13 @@ pub(crate) async fn recorded_or_none(sources: &Sources) -> Vec<Recorded> {
     sources.runs.read_or_none().await
 }
 
-/// What `status` answers of `view` and `recorded`.
-pub(crate) async fn status_of(
+/// What `status` answers of `view`, `recorded` and `environment`.
+pub(crate) fn status_of(
     sources: &Sources,
     view: Option<&View>,
     recorded: &[Recorded],
+    environment: Option<environment_shown::EnvironmentShown>,
 ) -> Status {
-    let environment = environment_or_none(sources)
-        .await
-        .and_then(|answer| answer.environment)
-        .map(|environment| environment.shown);
     let webhooks = sources.deliveries.as_ref().map(Tally::get);
     status::status(StatusSources {
         serving: &sources.serving,

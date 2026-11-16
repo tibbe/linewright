@@ -15,7 +15,7 @@ use super::html::{self, Html};
 use super::names::Names;
 use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
 use super::{Frame, Hold, Page, Read, events, frame_regions, render};
-use crate::api::{self, Sources};
+use crate::api::Sources;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown};
 use crate::phrase::{Phrase, Tone};
 use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
@@ -171,13 +171,8 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
     let read = Read::of(sources).await;
     let names = read.names(&sources.work_dir.repo);
-    let kept = match read.linewright.environment {
-        Some(_) => api::environment_or_none(sources).await,
-        None => None,
-    };
-    let builds = kept
-        .and_then(|answer| answer.environment)
-        .map_or_else(Vec::new, |environment| environment.builds)
+    let builds = read
+        .builds
         .iter()
         .map(|build| build_html(build, &names))
         .collect();

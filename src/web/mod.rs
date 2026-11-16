@@ -41,7 +41,7 @@ use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
 use crate::domain::{Repo, Snapshot, Timestamp};
-use crate::environment::shown::{Attention, EnvironmentShown};
+use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::phrase::{Phrase, Tone};
@@ -423,6 +423,9 @@ struct Read {
     automations: Option<Automations>,
     /// The view's, `None` before the first poll.
     snapshot: Option<Arc<Snapshot>>,
+    /// The environment's builds, from the same read as what `status` says
+    /// of it.
+    builds: Vec<BuildShown>,
 }
 
 impl Read {
@@ -430,8 +433,15 @@ impl Read {
         let view = api::view(sources);
         let recorded = api::recorded_or_none(sources).await;
         let now = sources.clock.now();
-        let status = api::status_of(sources, view.as_ref(), &recorded).await;
+        let (environment, builds) = api::environment_or_none(sources)
+            .await
+            .and_then(|answer| answer.environment)
+            .map_or((None, Vec::new()), |environment| {
+                (Some(environment.shown), environment.builds)
+            });
+        let status = api::status_of(sources, view.as_ref(), &recorded, environment);
         Read {
+            builds,
             automations: view
                 .as_ref()
                 .map(|view| Automations::of(&status, view, &recorded, now)),
