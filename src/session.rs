@@ -18,10 +18,10 @@ use crate::git;
 use crate::harness::{
     GhReach, Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
 };
-use crate::prompts;
+use crate::prompts::{self, SentBack};
 use crate::reconcile::Subject;
 use crate::redaction::Redaction;
-use crate::results;
+use crate::results::{self, ParseError};
 use crate::run::RunWith;
 use crate::secrets::Secrets;
 use crate::store::{Identity, Store};
@@ -485,8 +485,13 @@ impl From<anyhow::Error> for Rejection {
 }
 
 /// Sends a result that does not parse back to the session with its `error`.
-pub(crate) fn parse_retry(briefs: &Briefs) -> impl Fn(String) -> Rejection + '_ {
-    |error| Rejection::retry(prompts::result_error(&briefs.templates, &error))
+pub(crate) fn parse_retry(briefs: &Briefs) -> impl Fn(ParseError) -> Rejection + '_ {
+    |error| {
+        Rejection::retry(prompts::result_error(
+            &briefs.templates,
+            &SentBack::Result(&error),
+        ))
+    }
 }
 
 /// Runs a session until `accept` takes its result, in session, and `begin`

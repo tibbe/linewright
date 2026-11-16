@@ -25,7 +25,9 @@ use crate::domain::{
 use crate::git::{self, CommitId, WorkState};
 use crate::harness::{NextTurn, Purpose, Turn, UsageLimit};
 use crate::input;
-use crate::prompts::{self, DesignOf, Repo, SpecChangeAndDiff, Ticket, TicketRead};
+use crate::prompts::{
+    self, DesignOf, LooseEnd, Repo, SentBack, SpecChangeAndDiff, Ticket, TicketRead,
+};
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
 use crate::repo_files::RepoLayer;
 use crate::results::{
@@ -265,7 +267,10 @@ async fn push_result(
 ) -> Result<(), Rejection> {
     match push(shell, dir, commit, branch, mode).await {
         Pushed::Protected(secrets) => Err(Rejection::Retry {
-            followup: prompts::pushed_secret(&ctx.with.briefs.templates, &secrets),
+            followup: prompts::loose_ends(
+                &ctx.with.briefs.templates,
+                &LooseEnd::PushedSecret(&secrets),
+            ),
             note: Some(hand_back::protected_note(&secrets)),
         }),
         other @ (Pushed::Done | Pushed::Refused(_) | Pushed::Failed(_)) => {
@@ -606,12 +611,19 @@ async fn post_attachments(
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(Refusal::Secret { variable, path }) => {
-            return sent_back(prompts::attachment_secret(templates, &variable, &path));
+            return sent_back(prompts::loose_ends(
+                templates,
+                &LooseEnd::AttachmentSecret {
+                    variable: &variable,
+                    file: &path,
+                },
+            ));
         }
-        Err(
-            refusal @ (Refusal::NotAFile { .. } | Refusal::Kind { .. } | Refusal::Outside { .. }),
-        ) => {
-            return sent_back(prompts::result_error(templates, &refusal.to_string()));
+        Err(Refusal::Reference(reference)) => {
+            return sent_back(prompts::result_error(
+                templates,
+                &SentBack::Reference(&reference),
+            ));
         }
     };
     let mut urls = BTreeMap::new();
@@ -627,7 +639,13 @@ async fn post_attachments(
                 continue;
             }
             Err(AttachError::RefusedFile { reason }) => {
-                return sent_back(prompts::attachment_refused(templates, file.path(), &reason));
+                return sent_back(prompts::result_error(
+                    templates,
+                    &SentBack::AttachmentRefused {
+                        file: file.path(),
+                        reason: &reason,
+                    },
+                ));
             }
             Err(AttachError::RefusedToken { reason }) => {
                 Failure::HandBack(hand_back::refused_attachment(file.name(), &reason))
@@ -1073,26 +1091,26 @@ async fn implement(
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &problem,
+                &LooseEnd::Git(&problem),
             )));
         }
         let commits = git::commits_past(dir, base, "HEAD").await?;
         if commits.is_empty() {
             return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                "you answered `done`, but the branch has no commits. Commit your work, or answer `gave-up` with the reason if the ticket needs no change.",
+                &LooseEnd::NoCommits,
             )));
         }
         if let Some(unfinished) = git::unfinished_of(&commits) {
-            return Err(Rejection::retry(prompts::fold_unfinished(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &unfinished,
+                &LooseEnd::Unfinished(&unfinished),
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base]).await? {
-            return Err(Rejection::retry(prompts::held_secret(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &held,
+                &LooseEnd::HeldSecret(&held),
             )));
         }
         Ok(result)
@@ -1366,25 +1384,27 @@ async fn pull_work(
         if let Some(problem) = git::loose_ends(dir).await? {
             return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &problem,
+                &LooseEnd::Git(&problem),
             )));
         }
         if let Some(unfinished) = git::unfinished_commits(dir, upstream, "HEAD").await? {
-            return Err(Rejection::retry(prompts::fold_unfinished(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &unfinished,
+                &LooseEnd::Unfinished(&unfinished),
             )));
         }
         if let Some(held) = held_secret(shell, dir, &[base, upstream]).await? {
-            return Err(Rejection::retry(prompts::held_secret(
+            return Err(Rejection::retry(prompts::loose_ends(
                 &ctx.with.briefs.templates,
-                &held,
+                &LooseEnd::HeldSecret(&held),
             )));
         }
         if let Some(unknown) = replies.iter().find(|r| !pr_threads.contains(&r.thread)) {
-            return Err(parse_retry(&ctx.with.briefs)(format!(
-                "`{}` is not a thread on the pull request",
-                unknown.thread
+            return Err(Rejection::retry(prompts::result_error(
+                &ctx.with.briefs.templates,
+                &SentBack::UnknownThread {
+                    thread: &unknown.thread,
+                },
             )));
         }
         Ok(result)

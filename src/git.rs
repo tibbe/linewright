@@ -469,13 +469,6 @@ impl Backend {
 }
 
 impl InProgress {
-    fn describe(self) -> &'static str {
-        match self {
-            InProgress::Rebase(_) => "a rebase is in progress",
-            InProgress::Merge => "a merge is in progress",
-        }
-    }
-
     /// The commit the branch was at before the operation, and the tree that
     /// holds the branch with the operation's `work` tree applied to it, so
     /// the work is kept without finishing the operation.
@@ -600,18 +593,32 @@ async fn git_paths<const N: usize>(dir: &Path, names: [&str; N]) -> Result<[Stri
     })
 }
 
+/// What keeps a session's work from being finished.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LooseEnd {
+    RebaseInProgress,
+    MergeInProgress,
+    /// Changes to tracked files are uncommitted, as `git status --porcelain`
+    /// gives them in `status`, without its trailing newline.
+    Uncommitted {
+        status: String,
+    },
+}
+
 /// What keeps the work in `dir` from being finished: a rebase or merge in
 /// progress, or uncommitted changes to tracked files.
-pub async fn loose_ends(dir: &Path) -> Result<Option<String>> {
+pub async fn loose_ends(dir: &Path) -> Result<Option<LooseEnd>> {
     if let Some(operation) = in_progress(dir).await? {
-        return Ok(Some(format!("{}; finish it.", operation.describe())));
+        return Ok(Some(match operation {
+            InProgress::Rebase(_) => LooseEnd::RebaseInProgress,
+            InProgress::Merge => LooseEnd::MergeInProgress,
+        }));
     }
     let status = git(dir, &["status", "--porcelain", "--untracked-files=no"]).await?;
     if !status.trim().is_empty() {
-        return Ok(Some(format!(
-            "there are uncommitted changes; commit them:\n\n```\n{}\n```",
-            status.trim_end()
-        )));
+        return Ok(Some(LooseEnd::Uncommitted {
+            status: status.trim_end().to_string(),
+        }));
     }
     Ok(None)
 }
