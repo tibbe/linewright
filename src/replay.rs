@@ -81,17 +81,8 @@ impl Output {
     ///
     /// When `dir` holds anything, or cannot be made or read.
     pub fn make(dir: &Path) -> Result<Output, OutputRefusal> {
-        let unusable = |error| OutputRefusal::Unusable {
-            dir: dir.to_path_buf(),
-            error,
-        };
-        std::fs::create_dir_all(dir).map_err(unusable)?;
-        let dir = std::path::absolute(dir).map_err(unusable)?;
-        if std::fs::read_dir(&dir).map_err(unusable)?.next().is_some() {
-            return Err(OutputRefusal::NotEmpty(dir));
-        }
         Ok(Output {
-            dir,
+            dir: make_empty_dir(dir)?,
             ended: Arc::default(),
         })
     }
@@ -125,18 +116,18 @@ impl Output {
         if ended.is_some() {
             return Ok(false);
         }
-        self.write_outcome(OutcomeName::Unended(Unended::Interrupted))?;
+        write_outcome(&self.dir, OutcomeName::Unended(Unended::Interrupted))?;
         Ok(true)
     }
 
     fn in_flight(&self) -> Result<()> {
         let _ended = self.lock_ended();
-        self.write_outcome(OutcomeName::Unended(Unended::InFlight))
+        write_outcome(&self.dir, OutcomeName::Unended(Unended::InFlight))
     }
 
     fn ended(&self, ending: Ending) -> Result<()> {
         let mut ended = self.lock_ended();
-        self.write_outcome(OutcomeName::Ended(ending))?;
+        write_outcome(&self.dir, OutcomeName::Ended(ending))?;
         *ended = Some(ending);
         Ok(())
     }
@@ -147,21 +138,43 @@ impl Output {
             .expect("the output's lock is not poisoned")
     }
 
-    fn write_outcome(&self, outcome: OutcomeName) -> Result<()> {
-        let name = serde_json::to_value(outcome)?;
-        let name = name.as_str().context("an outcome's name is a string")?;
-        self.write(OUTCOME, &format!("{name}\n"))
-    }
-
     /// Replaces the file `name` with one holding `text`, so that a reader
     /// sees the one or the other whole.
     fn write(&self, name: &str, text: &str) -> Result<()> {
-        write_whole(
-            &self.dir.join(name),
-            &self.dir.join(format!(".{name}")),
-            text,
-        )
+        write_part(&self.dir, name, text)
     }
+}
+
+/// The directory `dir`, made when it is missing, as an absolute path.
+///
+/// # Errors
+///
+/// When `dir` holds anything, or cannot be made or read.
+pub(crate) fn make_empty_dir(dir: &Path) -> Result<PathBuf, OutputRefusal> {
+    let unusable = |error| OutputRefusal::Unusable {
+        dir: dir.to_path_buf(),
+        error,
+    };
+    std::fs::create_dir_all(dir).map_err(unusable)?;
+    let dir = std::path::absolute(dir).map_err(unusable)?;
+    if std::fs::read_dir(&dir).map_err(unusable)?.next().is_some() {
+        return Err(OutputRefusal::NotEmpty(dir));
+    }
+    Ok(dir)
+}
+
+/// Replaces the outcome part in the output's directory `dir` with
+/// `outcome`, so that a reader sees the one or the other whole.
+pub(crate) fn write_outcome(dir: &Path, outcome: OutcomeName) -> Result<()> {
+    let name = serde_json::to_value(outcome)?;
+    let name = name.as_str().context("an outcome's name is a string")?;
+    write_part(dir, OUTCOME, &format!("{name}\n"))
+}
+
+/// Replaces the part `name` in the output's directory `dir` with one
+/// holding `text`, so that a reader sees the one or the other whole.
+fn write_part(dir: &Path, name: &str, text: &str) -> Result<()> {
+    write_whole(&dir.join(name), &dir.join(format!(".{name}")), text)
 }
 
 /// Replaces the file at `path` with one holding `text`, written first at
