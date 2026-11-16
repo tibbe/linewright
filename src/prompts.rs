@@ -26,7 +26,7 @@ use crate::working_pull::Feedback;
 
 mod list;
 
-use list::{Conjunction, List, Placement};
+use list::{List, Placement};
 
 pub struct Repo<'a> {
     pub name: &'a domain::Repo,
@@ -859,7 +859,7 @@ pub fn triage(
     write_issue(&mut rendered, "The issue", issue);
     templates.triage.fill(&Triage {
         base: shared(templates, repo),
-        categories: listed(categories, code, Conjunction::Or, CATEGORIES_NEVER_EMPTY),
+        categories: listed(categories, code, CATEGORIES_NEVER_EMPTY),
         issue: rendered.trim_end().into(),
         output: with_attachments(
             templates,
@@ -965,8 +965,8 @@ fn design_output(templates: &Templates, of: DesignOf, attachments: &Path) -> Str
 fn with_attachments(templates: &Templates, output: &str, attachments: &Path) -> String {
     let contract = templates.attachments.fill(&Attachments {
         directory: attachments.display().to_string(),
-        kinds: extensions(crate::attachments::attachable(), Conjunction::And),
-        videos: extensions(crate::attachments::videos(), Conjunction::Or),
+        kinds: extensions(crate::attachments::attachable()),
+        videos: extensions(crate::attachments::videos()),
     });
     format!("{output}\n\n{contract}")
 }
@@ -1097,7 +1097,6 @@ fn stopped(
         files: listed(
             &conflict.files,
             code,
-            Conjunction::And,
             "an update stops on conflicts in at least one file",
         ),
     })
@@ -1228,7 +1227,6 @@ fn parse_error(templates: &Templates, error: &ParseError) -> String {
                 List::new(
                     mismatch(templates, first),
                     rest.iter().map(|m| mismatch(templates, m)),
-                    Conjunction::And,
                 )
             },
         }),
@@ -1240,7 +1238,7 @@ fn parse_error(templates: &Templates, error: &ParseError) -> String {
             categories,
         } => templates.result_category.fill(&Category {
             category: format!("{category:?}"),
-            categories: listed(categories, quoted, Conjunction::Or, CATEGORIES_NEVER_EMPTY),
+            categories: listed(categories, quoted, CATEGORIES_NEVER_EMPTY),
         }),
     }
 }
@@ -1255,13 +1253,13 @@ fn mismatch(templates: &Templates, mismatch: &Mismatch) -> String {
             outcomes,
         } => templates.result_outcome.fill(&Outcome {
             outcome: outcome.to_string(),
-            outcomes: listed(outcomes, quoted, Conjunction::Or, OUTCOMES_NEVER_EMPTY),
+            outcomes: listed(outcomes, quoted, OUTCOMES_NEVER_EMPTY),
         }),
         Mismatch::Outcome {
             outcome: None,
             outcomes,
         } => templates.result_outcome_missing.fill(&Outcomes {
-            outcomes: listed(outcomes, quoted, Conjunction::Or, OUTCOMES_NEVER_EMPTY),
+            outcomes: listed(outcomes, quoted, OUTCOMES_NEVER_EMPTY),
         }),
         Mismatch::At { at, error } => templates.result_at.fill(&At {
             at: at.clone(),
@@ -1302,7 +1300,7 @@ fn bad_reference(templates: &Templates, reference: &BadReference) -> String {
         }),
         BadReference::Kind { path } => templates.attachment_kind.fill(&AttachmentKind {
             file: path.display().to_string(),
-            kinds: extensions(crate::attachments::attachable(), Conjunction::And),
+            kinds: extensions(crate::attachments::attachable()),
         }),
     }
 }
@@ -1315,29 +1313,20 @@ const OUTCOMES_NEVER_EMPTY: &str = "a result that names none of its outcomes has
 const CATEGORIES_NEVER_EMPTY: &str =
     "the categories are the enabled issue types, or the labels where there are none";
 
-/// Each of `values` as `as_item` writes it, in a list ending in
-/// `conjunction`.
+/// Each of `values` as `as_item` writes it, in a list.
 ///
 /// # Panics
 ///
 /// When `values` is empty, with `never_empty`, why they never are.
-fn listed(
-    values: &[String],
-    as_item: fn(&str) -> String,
-    conjunction: Conjunction,
-    never_empty: &str,
-) -> List {
-    List::of(values.iter().map(|v| as_item(v)), conjunction).expect(never_empty)
+fn listed(values: &[String], as_item: fn(&str) -> String, never_empty: &str) -> List {
+    List::of(values.iter().map(|v| as_item(v))).expect(never_empty)
 }
 
-/// The `first` and `rest` extensions, each with its dot as code, in a list
-/// ending in `conjunction`, as in "`.mp4`, `.mov` or `.webm`".
-fn extensions(
-    (first, rest): (&str, impl Iterator<Item = &'static str>),
-    conjunction: Conjunction,
-) -> List {
+/// The `first` and `rest` extensions, each with its dot as code, in a list,
+/// as in "`.mp4`, `.mov`, `.webm`".
+fn extensions((first, rest): (&str, impl Iterator<Item = &'static str>)) -> List {
     let as_item = |extension: &str| format!("`.{extension}`");
-    List::new(as_item(first), rest.map(as_item), conjunction)
+    List::new(as_item(first), rest.map(as_item))
 }
 
 /// `value` quoted, as in `"bug"`.
@@ -1388,7 +1377,7 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
 }
 
 /// Each of the `secrets` push protection found, from
-/// `parts/pushed-secret-found.md`, in a list ending in `and`.
+/// `parts/pushed-secret-found.md`, in a list.
 fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> List {
     let found = secrets.iter().map(|secret| {
         templates.pushed_secret_found.fill(&PushedSecretFound {
@@ -1397,7 +1386,7 @@ fn pushed_secrets(templates: &Templates, secrets: &FoundSecrets) -> List {
             path: secret.path.clone(),
         })
     });
-    List::of(found, Conjunction::And).expect("push protection found at least one secret")
+    List::of(found).expect("push protection found at least one secret")
 }
 
 /// Names the unfinished `commits`, one from `parts/unfinished-commit.md` and
@@ -1409,11 +1398,7 @@ fn unfinished_commits(templates: &Templates, commits: &UnfinishedCommits) -> Str
         });
     }
     templates.unfinished_commits.fill(&CommitList {
-        commits: List::new(
-            code(&commits.first),
-            commits.rest.iter().map(|c| code(c)),
-            Conjunction::And,
-        ),
+        commits: List::new(code(&commits.first), commits.rest.iter().map(|c| code(c))),
     })
 }
 
@@ -1606,54 +1591,35 @@ mod tests {
     values!(Listed { title, items: List });
 
     #[track_caller]
-    fn filled(text: &str, items: &[&str], conjunction: Conjunction) -> String {
+    fn filled(text: &str, items: &[&str]) -> String {
         let template = Template::<Listed>::parse(text.into()).unwrap();
         template.fill(&Listed {
             title: "Items".into(),
-            items: List::of(
-                items.iter().map(std::string::ToString::to_string),
-                conjunction,
-            )
-            .unwrap(),
+            items: List::of(items.iter().map(std::string::ToString::to_string)).unwrap(),
         })
     }
 
     #[test_log::test]
     fn a_list_within_a_line_is_its_one_item() {
-        assert_eq!(
-            filled("{{title}}: {{items}}.\n", &["`a`"], Conjunction::And),
-            "Items: `a`.\n"
-        );
+        assert_eq!(filled("{{title}}: {{items}}.\n", &["`a`"]), "Items: `a`.\n");
     }
 
     #[test_log::test]
-    fn a_list_within_a_line_is_its_items_joined_with_commas_and_a_last_conjunction() {
+    fn a_list_within_a_line_is_its_items_separated_by_commas() {
         assert_eq!(
-            filled(
-                "{{title}}: {{items}}.\n",
-                &["`a`", "`b`", "`c`"],
-                Conjunction::And
-            ),
-            "Items: `a`, `b` and `c`.\n"
+            filled("{{title}}: {{items}}.\n", &["`a`", "`b`", "`c`"]),
+            "Items: `a`, `b`, `c`.\n"
         );
         assert_eq!(
-            filled(
-                "{{title}}: {{items}}.\n",
-                &["a", "b, c", "d"],
-                Conjunction::Or
-            ),
-            "Items: a; b, c or d.\n"
+            filled("{{title}}: {{items}}.\n", &["a", "b, c", "d"]),
+            "Items: a, b, c, d.\n"
         );
     }
 
     #[test_log::test]
     fn a_list_alone_on_its_line_is_a_bullet_line_for_its_one_item() {
         assert_eq!(
-            filled(
-                "{{title}}:\n\n{{items}}\n\nMore.\n",
-                &["a"],
-                Conjunction::And
-            ),
+            filled("{{title}}:\n\n{{items}}\n\nMore.\n", &["a"]),
             "Items:\n\n- a\n\nMore.\n"
         );
     }
@@ -1661,11 +1627,7 @@ mod tests {
     #[test_log::test]
     fn a_list_alone_on_its_line_is_a_bullet_line_per_item() {
         assert_eq!(
-            filled(
-                "{{title}}:\n\n{{items}}\n\nMore.\n",
-                &["a", "b, c"],
-                Conjunction::And
-            ),
+            filled("{{title}}:\n\n{{items}}\n\nMore.\n", &["a", "b, c"]),
             "Items:\n\n- a\n- b, c\n\nMore.\n"
         );
     }
@@ -1673,7 +1635,7 @@ mod tests {
     #[test_log::test]
     fn a_list_alone_on_the_last_line_ends_with_a_line_ending() {
         assert_eq!(
-            filled("{{title}}:\n\n{{items}}", &["a", "b"], Conjunction::And),
+            filled("{{title}}:\n\n{{items}}", &["a", "b"]),
             "Items:\n\n- a\n- b\n"
         );
     }
@@ -1681,11 +1643,7 @@ mod tests {
     #[test_log::test]
     fn an_items_further_lines_are_indented_under_its_bullet() {
         assert_eq!(
-            filled(
-                "{{title}}:\n{{items}}\n",
-                &["a\nmore", "b"],
-                Conjunction::And
-            ),
+            filled("{{title}}:\n{{items}}\n", &["a\nmore", "b"]),
             "Items:\n- a\n  more\n- b\n"
         );
     }
@@ -1693,11 +1651,7 @@ mod tests {
     #[test_log::test]
     fn an_items_own_line_ending_leaves_no_blank_line_under_its_bullet() {
         assert_eq!(
-            filled(
-                "{{title}}:\n{{items}}\n",
-                &["a:\n- b\n", "c"],
-                Conjunction::And
-            ),
+            filled("{{title}}:\n{{items}}\n", &["a:\n- b\n", "c"]),
             "Items:\n- a:\n  - b\n- c\n"
         );
     }

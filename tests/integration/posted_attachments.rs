@@ -280,7 +280,7 @@ async fn a_reference_to_a_file_of_a_kind_linewright_does_not_attach_is_sent_back
             ("file", &referred.lock().unwrap()),
             (
                 "kinds",
-                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`",
+                "`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`",
             ),
         ],
     );
