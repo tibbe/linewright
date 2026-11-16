@@ -2,6 +2,7 @@ use crate::common;
 
 use chrono::TimeDelta;
 use common::*;
+use linewright::clock::Clock as _;
 use linewright::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueEvent, Linked, Number, PullState,
 };
@@ -2713,6 +2714,91 @@ async fn with_auto_merge_two_merges_failed_before_a_restart_hand_the_pull_reques
         &format!("Merging {pr} failed twice. GitHub's reason: Pull Request is not mergeable"),
     )
     .await;
+}
+
+/// A work directory holding `pull-requests.json`, `record`, as an earlier
+/// release that kept it as a file left it.
+fn pull_records_an_earlier_release_left(record: &Value) -> tempfile::TempDir {
+    let upgraded = tempfile::tempdir().unwrap();
+    write_files(
+        upgraded.path(),
+        &[("pull-requests.json", &record.to_string())],
+    );
+    upgraded
+}
+
+#[test_log::test(tokio::test)]
+async fn with_auto_merge_two_merges_failed_before_an_upgrade_from_files_hand_the_pull_request_back_after_it()
+ {
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
+    let (ticket, pr) = world.ticket_in_review().await;
+    world
+        .store
+        .refuse_merges(pr, "Pull Request is not mergeable");
+    world.ready_for_review(pr).await;
+    let failed = json!({"reason": "Pull Request is not mergeable", "at": world.clock.now()});
+    let upgraded = pull_records_an_earlier_release_left(&json!({
+        pr.0.to_string(): {"failed_merges": [failed, failed]}
+    }));
+
+    world
+        .restart(|config| {
+            config.auto_merge = AUTO_MERGE;
+            config.work_dir = upgraded.path().to_path_buf();
+        })
+        .await;
+    world.poll().await;
+
+    assert_stalled(
+        &world,
+        ticket,
+        pr,
+        &format!("Merging {pr} failed twice. GitHub's reason: Pull Request is not mergeable"),
+    )
+    .await;
+}
+
+#[test_log::test(tokio::test)]
+async fn with_auto_merge_after_an_upgrade_from_files_a_pull_request_commented_on_before_it_is_not_commented_on_again_and_one_not_commented_on_is()
+ {
+    use linewright::domain::Requirement;
+
+    let mut world = World::with(|config| config.auto_merge = AUTO_MERGE).await;
+    let (_, commented) = world.ticket_in_review().await;
+    world.held_for_a_code_owners_review(commented).await;
+    let (_, not_commented) = world.ticket_in_review().await;
+    world.store.block_merge(
+        not_commented,
+        vec![Requirement::CodeOwnerReview {
+            owners: vec!["alice".into()],
+        }],
+    );
+    world.ready_for_review(not_commented).await;
+    let upgraded = pull_records_an_earlier_release_left(&json!({
+        commented.0.to_string(): {"commented": world.clock.now()}
+    }));
+
+    world
+        .restart(|config| {
+            config.auto_merge = AUTO_MERGE;
+            config.work_dir = upgraded.path().to_path_buf();
+        })
+        .await;
+    world.poll().await;
+
+    let notes = |pull: &linewright::domain::Pull| {
+        comment_bodies(pull)
+            .into_iter()
+            .filter(|body| *body == CODE_OWNER_NOTE)
+            .count()
+    };
+    assert_eq!(
+        [
+            notes(&world.store.snapshot_pull(commented).await),
+            notes(&world.store.snapshot_pull(not_commented).await),
+        ],
+        [1, 1]
+    );
 }
 
 fn assert_run_ended_keeping_its_claim(

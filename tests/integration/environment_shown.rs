@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use common::*;
 use linewright::clock::Clock as _;
+use linewright::database::Database;
 use linewright::environment::{BuildEnded, Builder, Environment, RebuildTaken, SetupRead, Tallied};
 use linewright::redaction::Redaction;
 use linewright::work_settings::{SetupCommand, SetupSettings};
@@ -139,8 +140,8 @@ async fn without_serve_and_with_no_setup_command_a_rebuild_builds_nothing() {
     assert_eq!(rebuilt, None);
 }
 
-/// The environment of `world`'s repository, kept in `dir`, as `serve` drives
-/// it.
+/// The environment of `world`'s repository, kept in the work directory
+/// `dir`, as `serve` drives it.
 #[track_caller]
 fn environment_of<'a>(world: &'a World, dir: &'a Path) -> impl Future<Output = Environment> + 'a {
     let caller = std::panic::Location::caller();
@@ -154,8 +155,11 @@ fn environment_of<'a>(world: &'a World, dir: &'a Path) -> impl Future<Output = E
             given: Arc::default(),
             default_branch: "main".into(),
             winding_up: linewright::winding_up::WindingUp::default(),
+            database: Database::open(dir)
+                .await
+                .unwrap_or_else(|e| panic!("opening the database at {caller} failed: {e:#}")),
         };
-        Environment::open(dir.to_path_buf(), builder)
+        Environment::open(linewright::environment::dir(dir), builder)
             .await
             .unwrap_or_else(|e| panic!("opening the environment at {caller} failed: {e:#}"))
     }
@@ -175,7 +179,9 @@ async fn a_rebuild_starts_now_or_after_the_build_in_progress_and_a_drain_refuses
     let world = World::new().await;
     let dir = tempfile::tempdir().unwrap();
     let mut environment = environment_of(&world, dir.path()).await;
-    environment.poll(setting_up("true"), world.clock.now());
+    environment
+        .poll(setting_up("true"), world.clock.now())
+        .await;
     environment.settle().await;
 
     let started = environment.rebuild();
@@ -209,15 +215,23 @@ async fn a_config_file_linewright_cannot_use_refuses_a_rebuild_even_from_the_sta
     let dir = tempfile::tempdir().unwrap();
     let mut environment = environment_of(&world, dir.path()).await;
 
-    environment.poll(SetupRead::Given(None), world.clock.now());
+    environment
+        .poll(SetupRead::Given(None), world.clock.now())
+        .await;
     let none = environment.rebuild();
-    environment.poll(setting_up("true"), world.clock.now());
+    environment
+        .poll(setting_up("true"), world.clock.now())
+        .await;
     environment.settle().await;
-    environment.poll(SetupRead::Unusable, world.clock.now());
+    environment
+        .poll(SetupRead::Unusable, world.clock.now())
+        .await;
     let refused = environment.rebuild();
     let other_dir = tempfile::tempdir().unwrap();
     let mut unusable_from_the_start = environment_of(&world, other_dir.path()).await;
-    unusable_from_the_start.poll(SetupRead::Unusable, world.clock.now());
+    unusable_from_the_start
+        .poll(SetupRead::Unusable, world.clock.now())
+        .await;
     let refused_from_the_start = unusable_from_the_start.rebuild();
 
     let reason = "`.linewright/config.toml` cannot be used, which holds the builds";
@@ -256,4 +270,70 @@ async fn without_serve_a_config_file_linewright_cannot_use_refuses_a_rebuild_bef
 /// The `n`th build since the environment was opened.
 fn tallied(n: u64) -> Tallied {
     serde_json::from_value(serde_json::json!(n)).unwrap()
+}
+
+#[test_log::test(tokio::test)]
+async fn after_an_upgrade_from_files_serve_uses_the_environment_built_before_and_environment_shows_it()
+ {
+    let marks = crate::environment::Marks::new();
+    let mut world = World::new().await;
+    set_up_with(
+        &world,
+        &format!("echo built >> '{}'", marks.path("builds").display()),
+    )
+    .await;
+    world.poll().await;
+    let earlier = world.dir.path().join("work");
+    let upgraded = tempfile::tempdir().unwrap();
+    let work_dir = upgraded.path().join(REPO);
+    environment_as_an_earlier_release_left(&earlier, "environment", &work_dir).await;
+    let state = environment_state(&earlier, "environment").await;
+
+    world
+        .restart(|config| config.work_dir = work_dir.clone())
+        .await;
+    world.poll().await;
+    let shown = lw_in(upgraded.path(), &["environment", "--json"]).await;
+
+    assert_eq!(marks.builds(), 1, "not built again");
+    let answer: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
+    let built = &answer["environment"]["built"];
+    assert_eq!(
+        (
+            built["commit"].as_str(),
+            built["at"]
+                .as_str()
+                .map(|at| at.parse::<chrono::DateTime<chrono::Utc>>().unwrap()),
+        ),
+        (
+            state["commit"].as_str(),
+            state["at"].as_str().map(|at| at.parse().unwrap()),
+        ),
+        "{}",
+        shown.stderr
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn once_the_environments_directory_is_removed_by_hand_the_next_build_takes_a_number_after_the_one_it_held()
+ {
+    let (mut world, work_dir) = world_in_work_dir().await;
+    let in_work_dir = |config: &mut linewright::factory::FactoryConfig| {
+        config.work_dir = work_dir.path().join(REPO);
+    };
+    set_up_with(&world, "echo installed").await;
+    world.factory.prepare_environment().await.unwrap();
+    std::fs::remove_dir_all(work_dir.path().join(REPO).join("environment")).unwrap();
+
+    world.restart(in_work_dir).await;
+    world.factory.prepare_environment().await.unwrap();
+    let shown = lw_in(work_dir.path(), &["environment"]).await;
+
+    let builds: Vec<&str> = shown
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("build "))
+        .collect();
+    assert_eq!(builds.len(), 1, "{}", shown.stdout);
+    assert!(builds[0].starts_with("build 2: "), "{}", shown.stdout);
 }

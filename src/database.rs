@@ -10,8 +10,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use chrono::{DateTime, SecondsFormat};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool, Transaction};
+
+use crate::domain::Timestamp;
 
 /// The database's file, in the work directory.
 const DATABASE_FILE: &str = "linewright.db";
@@ -38,7 +41,11 @@ pub(crate) type StepsFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>
 /// Every change of the schema, in order: the schema's version is how many of
 /// them a database has had. A released migration never changes; a later
 /// change is a new entry.
-static MIGRATIONS: &[Migration] = &[RELEASES_TABLE, Migration::Steps(runs_kept)];
+static MIGRATIONS: &[Migration] = &[
+    RELEASES_TABLE,
+    Migration::Steps(runs_kept),
+    Migration::Steps(bookkeeping_kept),
+];
 
 /// The table of the release that made each schema version.
 const RELEASES_TABLE: Migration = Migration::Sql(
@@ -92,6 +99,54 @@ const RUNS_TABLES: &str = "CREATE TABLE runs (
     CREATE TABLE run_inputs (
         run INTEGER PRIMARY KEY REFERENCES runs (id) ON DELETE CASCADE,
         input TEXT NOT NULL
+    ) STRICT;";
+
+/// Linewright's record of its pull requests, each automation's last
+/// scheduled run and the state of each environment, with what earlier
+/// releases kept of them as files.
+fn bookkeeping_kept<'a>(
+    tx: &'a mut Transaction<'static, Sqlite>,
+    work_dir: &'a Path,
+) -> StepsFuture<'a> {
+    Box::pin(async move {
+        sqlx::raw_sql(BOOKKEEPING_TABLES)
+            .execute(&mut **tx)
+            .await
+            .context("making the bookkeeping's tables")?;
+        import::bookkeeping(tx, work_dir).await
+    })
+}
+
+const BOOKKEEPING_TABLES: &str = "CREATE TABLE kept (
+        record TEXT PRIMARY KEY CHECK (record IN ('pull-records'))
+    ) STRICT;
+    CREATE TABLE pull_records (
+        pr INTEGER PRIMARY KEY,
+        commented_at TEXT
+    ) STRICT;
+    CREATE TABLE failed_merges (
+        pr INTEGER NOT NULL REFERENCES pull_records (pr) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        at TEXT NOT NULL,
+        PRIMARY KEY (pr, seq)
+    ) STRICT;
+    CREATE TABLE automation_schedules (
+        name TEXT PRIMARY KEY,
+        last_scheduled_run TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE environments (
+        dir TEXT PRIMARY KEY,
+        build INTEGER,
+        built_from TEXT,
+        built_at TEXT,
+        fingerprint TEXT,
+        setup_command INTEGER CHECK (setup_command IN (0, 1)),
+        CHECK (
+            (build IS NULL) = (built_from IS NULL)
+            AND (build IS NULL) = (built_at IS NULL)
+            AND (build IS NULL) = (fingerprint IS NULL)
+        )
     ) STRICT;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
@@ -453,6 +508,19 @@ fn network_filesystem_of(stat: &rustix::fs::StatFs) -> Option<&'static str> {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn network_filesystem_of(_: &rustix::fs::StatFs) -> Option<&'static str> {
     None
+}
+
+/// A timestamp as the database keeps it: RFC 3339 in UTC, to the
+/// nanosecond, so that the text of two times sorts as the times do.
+pub(crate) fn time_text(at: Timestamp) -> String {
+    at.to_rfc3339_opts(SecondsFormat::Nanos, true)
+}
+
+/// A time the database keeps, as [`time_text`] gives it.
+pub(crate) fn parse_time(at: &str) -> anyhow::Result<Timestamp> {
+    Ok(DateTime::parse_from_rfc3339(at)
+        .with_context(|| format!("{at:?} is not a time"))?
+        .to_utc())
 }
 
 fn schema_version(migrations: &[Migration]) -> u32 {

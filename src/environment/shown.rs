@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::kept::{self, BuildId, BuildRecord, Builds, Built};
+use crate::database::Database;
 use crate::domain::Timestamp;
 use crate::phrase::Phrase;
 use crate::status::{Fact, Paint};
@@ -119,20 +120,33 @@ impl BuildShown {
 }
 
 /// Whether the latest poll that read the repository's files gave a setup
-/// command, as kept under `dir`; `None` before the first.
-pub fn setup_given(dir: &Path) -> Option<bool> {
-    Builds::new(dir.to_path_buf()).setup_given()
+/// command, as `db` keeps it of the environment under `dir`; `None` before
+/// the first, and where there is no database.
+pub async fn setup_given(dir: &Path, db: Option<&Database>) -> Result<Option<bool>> {
+    match db {
+        Some(db) => Builds::new(dir.to_path_buf()).setup_given(db).await,
+        None => Ok(None),
+    }
 }
 
-/// What is kept of the environment under `dir`, `setup_command` being
-/// whether there is a setup command when no poll has said yet.
-pub fn answer(dir: &Path, setup_command: bool) -> Result<EnvironmentAnswer> {
+/// What is kept of the environment under `dir`, whose state `db` keeps,
+/// where there is a database: `setup_command` is whether there is a setup
+/// command when no poll has said yet.
+pub async fn answer(
+    dir: &Path,
+    db: Option<&Database>,
+    setup_command: bool,
+) -> Result<EnvironmentAnswer> {
     let builds = Builds::new(dir.to_path_buf());
-    if !builds.setup_given().unwrap_or(setup_command) {
+    let (given, named) = match db {
+        Some(db) => (builds.setup_given(db).await?, builds.named(db).await?),
+        None => (None, None),
+    };
+    if !given.unwrap_or(setup_command) {
         return Ok(EnvironmentAnswer { environment: None });
     }
     let building = builds.is_building()?;
-    let mut shown = shown(building, builds.named(), builds.records()?);
+    let mut shown = shown(building, named, builds.records()?);
     if let Some(build) = shown.builds.last_mut().filter(|build| build.in_progress()) {
         let mut following = FollowingBuild::start(dir, build.build, 0);
         let so_far = match following.read_output(false)? {
@@ -149,8 +163,8 @@ pub fn answer(dir: &Path, setup_command: bool) -> Result<EnvironmentAnswer> {
     })
 }
 
-/// The environment and its builds as shown, from the build the state file
-/// names, `built`, and the records of the builds kept, by number, the
+/// The environment and its builds as shown, from the build named as the
+/// environment, `built`, and the records of the builds kept, by number, the
 /// latest being in progress if it has not ended and a build is `building`.
 fn shown(
     building: bool,

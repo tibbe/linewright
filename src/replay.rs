@@ -398,11 +398,12 @@ impl Setting {
             given: config.environments.pipeline.clone(),
             default_branch: settings.default_branch.clone(),
             winding_up: config.winding_up.clone(),
+            database: config.database.clone(),
         };
         let max_age = TimeDelta::from_std(config.work.setup_max_age(&repo.settings))
             .context("`setup.max-age` is too long")?;
         let prepared = replays::prepare(
-            &replays::dir(&config.work_dir),
+            &replays::dir(config.database.work_dir()),
             head,
             builder,
             config.work.setup(&repo.settings),

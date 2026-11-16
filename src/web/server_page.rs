@@ -171,12 +171,11 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
     let read = Read::of(sources).await;
     let names = read.names(&sources.work_dir.repo);
-    let builds = read
-        .linewright
-        .environment
-        .is_some()
-        .then(|| api::environment_or_none(sources))
-        .flatten()
+    let kept = match read.linewright.environment {
+        Some(_) => api::environment_or_none(sources).await,
+        None => None,
+    };
+    let builds = kept
         .and_then(|answer| answer.environment)
         .map_or_else(Vec::new, |environment| environment.builds)
         .iter()

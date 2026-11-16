@@ -3,9 +3,7 @@ use std::time::Duration;
 use crate::common;
 
 use chrono::{DateTime, Utc};
-use linewright::automation::{
-    self, Automation, AutomationName, LastScheduledRuns, Unparsed, parse,
-};
+use linewright::automation::{self, Automation, AutomationName, Unparsed, parse};
 use linewright::work_settings::{Effort, Partial};
 
 fn utc(text: &str) -> DateTime<Utc> {
@@ -262,19 +260,4 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
             },
         ]
     );
-}
-
-#[test_log::test]
-fn the_last_scheduled_runs_the_previous_version_recorded_are_loaded() {
-    let work_dir = tempfile::tempdir().unwrap();
-    let recorded_by_the_previous_version = work_dir.path().join("workflow-runs.json");
-    std::fs::write(
-        recorded_by_the_previous_version,
-        r#"{"hourly": "2026-10-01T11:00:00Z"}"#,
-    )
-    .unwrap();
-
-    let runs = LastScheduledRuns::load(work_dir.path());
-
-    assert_eq!(runs.get(&name("hourly")), Some(utc("2026-10-01T11:00:00Z")));
 }

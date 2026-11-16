@@ -4,7 +4,7 @@ use std::path::Path;
 use linewright::database::Database;
 use linewright::runs::{RepoWorkDir, Runs};
 
-use super::{REPO, write_files};
+use super::{REPO, copy_dir, write_files};
 
 /// A work directory whose repository's directory holds each of `files`, a
 /// path under it and what it holds, as runs, or an earlier version, left
@@ -278,5 +278,54 @@ pub fn session_events(
                     .collect()
             })
             .collect()
+    }
+}
+
+/// The build that is the environment in `dir`, a directory under the work
+/// directory `work_dir`, as the database there names it: its number, commit,
+/// time and fingerprint, as an earlier release kept them in `state.json`.
+#[track_caller]
+pub fn environment_state(
+    work_dir: &Path,
+    dir: &str,
+) -> impl Future<Output = serde_json::Value> + use<> {
+    let caller = Location::caller();
+    let pool = back_door(work_dir);
+    let dir = dir.to_string();
+    async move {
+        let (id, commit, at, fingerprint): (i64, String, String, String) = sqlx::query_as(
+            "SELECT build, built_from, built_at, fingerprint FROM environments WHERE dir = ?",
+        )
+        .bind(&dir)
+        .fetch_one(&pool.await)
+        .await
+        .unwrap_or_else(|e| panic!("reading the state of {dir} at {caller}: {e}"));
+        serde_json::json!({"id": id, "commit": commit, "at": at, "fingerprint": fingerprint})
+    }
+}
+
+/// Leaves the environment in `dir` under the work directory `from` in the
+/// work directory `to`, as an earlier release that kept its state as files
+/// left it: its directory, holding the state `from`'s database names, and
+/// that its latest poll gave a setup command.
+#[track_caller]
+pub fn environment_as_an_earlier_release_left(
+    from: &Path,
+    dir: &str,
+    to: &Path,
+) -> impl Future<Output = ()> + use<> {
+    let state = environment_state(from, dir);
+    let (from, to) = (from.join(dir), to.join(dir));
+    async move {
+        let state = state.await;
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        copy_dir(&from, &to);
+        write_files(
+            &to,
+            &[
+                ("state.json", &state.to_string()),
+                ("setup.json", r#"{"setup_command": true}"#),
+            ],
+        );
     }
 }
