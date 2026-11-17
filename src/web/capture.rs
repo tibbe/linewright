@@ -254,7 +254,9 @@ fn said_not(status: StatusCode, why: &str) -> Response {
 
 /// `said`, in an alert of `kind`.
 fn alert(kind: &str, said: &str) -> axum::response::Html<String> {
-    axum::response::Html(format!(r#"<p class="alert alert-soft {kind}">{said}</p>"#))
+    axum::response::Html(format!(
+        r#"<p class="alert alert-soft {kind}"><span>{said}</span></p>"#
+    ))
 }
 
 /// Why `headers` do not show a request came from a page of the same origin,
