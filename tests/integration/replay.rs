@@ -16,14 +16,14 @@ use linewright::domain::Number;
 use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
 use linewright::reconcile::WorkKind;
-use linewright::replay::{self, OutputRefusal};
+use linewright::replay::{self, Configuration, ConfigurationRefusal, OutputRefusal};
 use linewright::runs::Ending;
 use linewright::store::github::SESSION_TOKEN_VARIABLE;
-use linewright::work_settings::{RunKind, Setup, SetupCommand};
+use linewright::work_settings::{Effort, RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
 /// What each triage answers: a bug, ready for an agent.
-fn triaged() -> String {
+pub(crate) fn triaged() -> String {
     json!({
         "outcome": "ready-for-agent",
         "category": "bug",
@@ -79,8 +79,8 @@ async fn case_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
 }
 
 /// A replay's output, and how its run ended or why it did not run.
-struct Replayed {
-    out: PathBuf,
+pub(crate) struct Replayed {
+    pub(crate) out: PathBuf,
     ended: anyhow::Result<Ending>,
 }
 
@@ -95,6 +95,18 @@ fn replayed<'a>(
     harness: Arc<ScriptedHarness>,
     adjust: impl FnOnce(&mut FactoryConfig) + 'a,
 ) -> impl Future<Output = Replayed> + 'a {
+    replayed_with(dir, under, harness, adjust, None)
+}
+
+/// [`replayed`], with `configuration` if one is given.
+#[track_caller]
+pub(crate) fn replayed_with<'a>(
+    dir: &'a Path,
+    under: &'a Path,
+    harness: Arc<ScriptedHarness>,
+    adjust: impl FnOnce(&mut FactoryConfig) + 'a,
+    configuration: Option<&'a Configuration>,
+) -> impl Future<Output = Replayed> + 'a {
     let caller = Location::caller();
     async move {
         let case = Case::open(dir)
@@ -106,7 +118,7 @@ fn replayed<'a>(
         let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
-        let ended = Box::pin(replay::run(&case, &output, harness, config)).await;
+        let ended = Box::pin(replay::run(&case, &output, harness, config, configuration)).await;
         winding_up.wait().await;
         Replayed { out, ended }
     }
@@ -1107,4 +1119,217 @@ async fn a_signal_during_the_build_ends_the_build_with_lw_replay() {
             .success()
     })
     .await;
+}
+
+/// Linewright's own text of the file at `path` under `briefs/`, below a
+/// line `marker`.
+#[track_caller]
+fn marked(path: &str, marker: &str) -> String {
+    let own = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("briefs")
+        .join(path);
+    let own =
+        std::fs::read_to_string(&own).unwrap_or_else(|e| panic!("reading {}: {e}", own.display()));
+    format!("{marker}\n{own}")
+}
+
+/// Writes `files`, by their paths in it, into the directory `dir`.
+#[track_caller]
+fn write_files(dir: &Path, files: &[(&str, &str)]) {
+    for (path, text) in files {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+    }
+}
+
+/// The configuration in `dir`, holding `files` by their paths in it.
+#[track_caller]
+pub(crate) fn configuration(dir: &Path, files: &[(&str, &str)]) -> Configuration {
+    std::fs::create_dir_all(dir).unwrap();
+    write_files(dir, files);
+    Configuration::read(dir).unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test_log::test(tokio::test)]
+async fn a_configuration_wins_over_the_cases_files_and_the_flags_leaving_the_rest_to_them() {
+    let mut world = World::new().await;
+    let (issue, case) = triage_case(&mut world).await;
+    let repository_triage = marked("prompts/triage.md", "THE REPOSITORY'S TRIAGE");
+    commit_to_case(
+        &case,
+        &[
+            (
+                ".linewright/config.toml",
+                "[stage.triage]\nmodel = \"repository-model\"\neffort = \"low\"\n",
+            ),
+            (".linewright/briefs/prompts/triage.md", &repository_triage),
+            (
+                ".linewright/briefs/prompts/implement.md",
+                &marked("prompts/implement.md", "THE REPOSITORY'S IMPLEMENT"),
+            ),
+        ],
+    );
+    let harness = Arc::new(ScriptedHarness::default());
+    let ran_with = Arc::new(Mutex::new(vec![]));
+    let seen = ran_with.clone();
+    harness.on(WorkKind::Triage, move |call| {
+        seen.lock()
+            .unwrap()
+            .push((call.spec.model.clone(), call.spec.effort));
+        Ok(triaged())
+    });
+    let under = tempfile::tempdir().unwrap();
+    let settings = "model = \"configuration-model\"\n";
+    let configuration_triage = marked("prompts/triage.md", "THE CONFIGURATION'S TRIAGE");
+    let configuration = configuration(
+        &under.path().join("configuration"),
+        &[
+            ("config.toml", settings),
+            ("briefs/prompts/triage.md", &configuration_triage),
+        ],
+    );
+
+    let replayed = replayed_with(
+        &case,
+        under.path(),
+        harness.clone(),
+        |config| config.work.flags_and_env.model = Some("flag-model".into()),
+        Some(&configuration),
+    )
+    .await;
+
+    assert_eq!(replayed.ended.as_ref().unwrap(), &Ending::Done);
+    assert_eq!(
+        *ran_with.lock().unwrap(),
+        vec![(Some("configuration-model".to_string()), Some(Effort::Low))]
+    );
+    let [prompt] = harness.prompts(WorkKind::Triage).try_into().unwrap();
+    assert!(prompt.contains("THE CONFIGURATION'S TRIAGE"), "{prompt}");
+    assert!(!prompt.contains("THE REPOSITORY'S TRIAGE"), "{prompt}");
+    let record: Value =
+        serde_json::from_str(&replayed.read(&format!("runs/items/{}/triage-1.json", issue.0)))
+            .unwrap();
+    let layers = &record["sessions"][0]["layers"];
+    assert_eq!(layers["settings"]["model"], "configuration");
+    assert_eq!(layers["settings"]["effort"], "repository");
+    assert_eq!(layers["briefs"]["prompts/triage.md"], "configuration");
+    assert_eq!(layers["briefs"]["prompts/implement.md"], "repository");
+    assert_eq!(replayed.read("configuration/config.toml"), settings);
+    assert_eq!(
+        replayed.read("configuration/briefs/prompts/triage.md"),
+        configuration_triage
+    );
+}
+
+/// The path of each file the refusal `refused` names, and its error.
+#[track_caller]
+fn refused_files(refused: Result<Configuration, ConfigurationRefusal>) -> Vec<(String, String)> {
+    match refused {
+        Err(ConfigurationRefusal::Errors { errors, .. }) => errors
+            .into_iter()
+            .map(|file| (file.path, file.error))
+            .collect(),
+        other => panic!("not a refusal naming files: {other:?}"),
+    }
+}
+
+#[test_log::test]
+fn a_configuration_is_refused_naming_each_file_with_an_error_hidden_files_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    write_files(
+        dir.path(),
+        &[
+            ("config.toml", "model = \"opus\"\ntemperature = 1\n"),
+            ("briefs/prompts/triage.md", "Triage {{nope}}.\n"),
+            ("briefs/results/triage.schema.json", "{}\n"),
+            ("notes.md", "Mine.\n"),
+            (".notes.md", "Mine.\n"),
+            ("briefs/.DS_Store", "\0"),
+        ],
+    );
+
+    let refused = refused_files(Configuration::read(dir.path()));
+
+    let paths: Vec<&str> = refused.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "briefs/prompts/triage.md",
+            "briefs/results/triage.schema.json",
+            "config.toml",
+            "notes.md",
+        ],
+        "{refused:?}"
+    );
+    assert!(refused[0].1.contains("nope"), "{refused:?}");
+    assert!(
+        refused[1].1.contains("not a file a layer may hold"),
+        "{refused:?}"
+    );
+    assert!(refused[2].1.contains("`temperature`"), "{refused:?}");
+}
+
+#[test_log::test]
+fn a_configurations_settings_with_a_table_are_refused_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    write_files(
+        dir.path(),
+        &[("config.toml", "[stage.triage]\nmodel = \"opus\"\n")],
+    );
+
+    let refused = refused_files(Configuration::read(dir.path()));
+
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].0, "config.toml");
+    assert!(refused[0].1.contains("`stage`"), "{refused:?}");
+}
+
+#[test_log::test]
+fn a_missing_configuration_is_refused_and_an_empty_one_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let missing = Configuration::read(&dir.path().join("missing"));
+    let empty = Configuration::read(dir.path());
+
+    assert!(
+        matches!(missing, Err(ConfigurationRefusal::Unreadable { .. })),
+        "{missing:?}"
+    );
+    assert!(empty.is_ok(), "{empty:?}");
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_replay_refuses_a_configuration_with_an_error_naming_the_file_before_it_starts() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+    let configuration = work.path().join("configuration");
+    write_files(&configuration, &[("config.toml", "temperature = 1\n")]);
+
+    let ran = lw_isolated(
+        bin.path(),
+        work.path(),
+        &[
+            "replay",
+            case.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+            "--configuration",
+            configuration.to_str().unwrap(),
+        ],
+        &[],
+    )
+    .await;
+
+    assert_eq!(ran.code, Some(1), "{}", ran.stderr);
+    assert!(
+        ran.stderr.contains("cannot be used:") && ran.stderr.contains("- config.toml: "),
+        "{}",
+        ran.stderr
+    );
+    assert!(!out.exists());
+    assert!(!bin.path().join("tokens.log").exists());
 }

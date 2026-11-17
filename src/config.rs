@@ -180,6 +180,11 @@ pub enum Command {
         /// empty.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
+        /// A configuration to replay with, laid out as a repository's
+        /// `.linewright/`: its `config.toml` and the files of its `briefs/`
+        /// override every other layer, flags included.
+        #[arg(long, value_name = "CONFIG")]
+        configuration: Option<PathBuf>,
     },
     /// Judge DIR, the output of a replay of the case in the directory CASE,
     /// against the case's criteria, keeping the judgement in DIR.
@@ -1268,8 +1273,8 @@ fn set(table: &mut StageTable, setting: StageSetting, value: toml::Value) -> Res
     Ok(())
 }
 
-/// Sets `setting` in `settings` to `value`, as the repository's file sets
-/// it.
+/// Sets `setting` in `settings` to `value`, as the repository's file and
+/// a replay's configuration set it.
 pub(crate) fn set_session(
     settings: &mut Partial,
     setting: RepositorySetting,
@@ -1361,6 +1366,23 @@ impl RepoSettings {
         }
         Ok(RepoSettings::new(top, pipeline, stages))
     }
+}
+
+/// A replay's configuration's `config.toml`, which holds only `model`,
+/// `effort` and `session-timeout` (`docs/specs/benchmarks.md`,
+/// Configurations). An error names the key at fault.
+pub fn configuration_settings(file: &str) -> Result<Partial> {
+    let keys: toml::Table = file.parse().context("it does not parse")?;
+    let mut settings = Partial::default();
+    for (key, value) in keys {
+        let setting = repository_setting(
+            &key,
+            "the configuration's `config.toml`",
+            &RepositorySetting::keys(),
+        )?;
+        set_session(&mut settings, setting, value)?;
+    }
+    Ok(settings)
 }
 
 /// `[stage.NAME]` tables in `owner`'s file. An error names the table.

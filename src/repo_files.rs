@@ -64,10 +64,17 @@ pub struct RepoLayer {
     /// The briefs, each file from the repository's layer, the operator's or
     /// Linewright's own.
     pub briefs: Arc<Briefs>,
+    brief_layer: BriefLayer,
     pub unusable: Vec<Unusable>,
 }
 
 impl RepoLayer {
+    /// The repository's layer of the briefs, each file as it holds it,
+    /// those that cannot be used among them.
+    pub fn brief_layer(&self) -> &BriefLayer {
+        &self.brief_layer
+    }
+
     /// The repository's layer as it is now on `branch`, over the operator's:
     /// every file under `.linewright/`, hidden ones aside, but the
     /// automation files.
@@ -135,7 +142,7 @@ impl RepoLayer {
         let briefs = if layer.files.is_empty() && parsed.is_empty() {
             operator.briefs()
         } else {
-            let resolved = operator.with_repository(&layer);
+            let resolved = operator.with_layers(&[&layer]);
             unusable.extend(
                 parsed
                     .into_iter()
@@ -154,6 +161,7 @@ impl RepoLayer {
         RepoLayer {
             settings,
             briefs,
+            brief_layer: layer,
             unusable,
         }
     }

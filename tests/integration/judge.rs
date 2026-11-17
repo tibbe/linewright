@@ -3,7 +3,9 @@
 //! (`docs/specs/benchmarks.md`, Judging).
 
 use crate::common;
-use crate::replay::{entries, gh_answer, lw_command, lw_isolated, triage_case};
+use crate::replay::{
+    configuration, entries, gh_answer, lw_command, lw_isolated, replayed_with, triage_case, triaged,
+};
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -17,6 +19,7 @@ use linewright::case::Case;
 use linewright::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright::factory::FactoryConfig;
 use linewright::harness::SessionError;
+use linewright::reconcile::WorkKind;
 use linewright::replay::judge::{self, JudgeRecord, Judgement, Unjudged};
 use linewright::work_settings::{Effort, Partial, StageKey, StageTable};
 use serde_json::{Value, json};
@@ -698,5 +701,59 @@ async fn lw_help_lists_judge() {
             .any(|line| line.trim_start().starts_with("judge ")),
         "{}",
         ran.stdout
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_judge_of_a_replay_with_a_configuration_runs_without_it() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    let models = Arc::new(Mutex::new(vec![]));
+    let triage_models = models.clone();
+    harness.on(WorkKind::Triage, move |call| {
+        triage_models
+            .lock()
+            .unwrap()
+            .push(("triage", call.spec.model.clone()));
+        Ok(triaged())
+    });
+    let judge_models = models.clone();
+    harness.on_judge(move |call| {
+        judge_models
+            .lock()
+            .unwrap()
+            .push(("judge", call.spec.model.clone()));
+        Ok(judged_as("pass", &[]))
+    });
+    let under = tempfile::tempdir().unwrap();
+    let configuration = configuration(
+        &under.path().join("configuration"),
+        &[("config.toml", "model = \"configuration-model\"\n")],
+    );
+    let replayed = replayed_with(
+        &case,
+        under.path(),
+        harness.clone(),
+        |_| {},
+        Some(&configuration),
+    )
+    .await;
+
+    judging(&case, &replayed.out, under.path(), harness, |_| {})
+        .await
+        .unwrap();
+
+    assert_eq!(
+        *models.lock().unwrap(),
+        vec![
+            ("triage", Some("configuration-model".to_string())),
+            ("judge", None),
+        ]
+    );
+    let judgement = judgement_in(&replayed.out);
+    assert_eq!(
+        judgement["session"]["layers"]["settings"]["model"], "harness",
+        "{judgement}"
     );
 }

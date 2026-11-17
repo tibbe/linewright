@@ -510,6 +510,8 @@ pub enum TimeoutSetting {
     Stage(StageKey),
     /// The whole pipeline's `session-timeout`.
     Pipeline,
+    /// `session-timeout` in a replay's configuration.
+    Configuration,
 }
 
 impl fmt::Display for TimeoutSetting {
@@ -522,6 +524,7 @@ impl fmt::Display for TimeoutSetting {
                 write!(f, "`session-timeout` in `[stage.{}]`", stage.name())
             }
             TimeoutSetting::Pipeline => f.write_str("`session-timeout`"),
+            TimeoutSetting::Configuration => f.write_str("`session-timeout` in the configuration"),
         }
     }
 }
@@ -543,6 +546,34 @@ pub struct SessionSettings {
 }
 
 impl SessionSettings {
+    /// These with each of `model`, `effort` and `session-timeout` that `by`
+    /// sets in place of the value they hold, as the configuration's
+    /// (`docs/specs/benchmarks.md`, Configurations).
+    #[must_use]
+    pub fn overridden(self, by: &Partial) -> SessionSettings {
+        let (session_timeout, timeout_setting) = match by.session_timeout {
+            Some(timeout) => (
+                Sourced::new(timeout, Layer::Configuration),
+                TimeoutSetting::Configuration,
+            ),
+            None => (self.session_timeout, self.timeout_setting),
+        };
+        SessionSettings {
+            model: by
+                .model
+                .clone()
+                .map(|model| Sourced::new(model, Layer::Configuration))
+                .or(self.model),
+            effort: by
+                .effort
+                .map(|effort| Sourced::new(effort, Layer::Configuration))
+                .or(self.effort),
+            session_timeout,
+            timeout_setting,
+            ..self
+        }
+    }
+
     /// The model set, `None` leaving it to the harness.
     pub fn model_set(&self) -> Option<String> {
         self.model.as_ref().map(|model| model.value.clone())

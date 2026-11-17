@@ -11,7 +11,7 @@ use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, Maintenance, RepoSettings, RunKind, SessionSettings, Setting,
+    Effort, Environments, Maintenance, Partial, RepoSettings, RunKind, SessionSettings, Setting,
     SetupCommand, SetupSettings, Split, StageKey, StageSet, TimeoutSetting,
 };
 
@@ -90,6 +90,70 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
     assert_eq!(design.effort.map(|effort| effort.value), Some(Effort::Low));
     assert_eq!(design.session_timeout.value, Duration::from_mins(10));
     assert_eq!(design.timeout_setting, TimeoutSetting::Pipeline);
+}
+
+#[test_log::test]
+fn a_configuration_replaces_what_it_sets_over_a_stages_table_and_leaves_the_rest() {
+    let config = resolve(
+        &["--effort", "high"],
+        &[],
+        Some("[stage.triage]\nmodel = \"haiku\"\nsession-timeout = \"5m\"\n"),
+    )
+    .unwrap();
+    let by = Partial {
+        model: Some("opus".into()),
+        effort: None,
+        session_timeout: Some(Duration::from_hours(2)),
+    };
+
+    let overridden = session(&config).overridden(&by);
+
+    assert_eq!(
+        overridden.model,
+        Some(Sourced::new("opus".into(), Layer::Configuration))
+    );
+    assert_eq!(
+        overridden.effort,
+        Some(Sourced::new(Effort::High, Layer::Operator))
+    );
+    assert_eq!(
+        overridden.session_timeout,
+        Sourced::new(Duration::from_hours(2), Layer::Configuration)
+    );
+    assert_eq!(
+        overridden.timeout_setting.to_string(),
+        "`session-timeout` in the configuration"
+    );
+    assert_eq!(
+        overridden.sources()[&Setting::MODEL],
+        Source::Layer(Layer::Configuration)
+    );
+}
+
+#[test_log::test]
+fn a_configuration_that_sets_nothing_changes_nothing() {
+    let config = resolve(
+        &[],
+        &[],
+        Some("[stage.triage]\nmodel = \"haiku\"\nsession-timeout = \"5m\"\n"),
+    )
+    .unwrap();
+
+    let overridden = session(&config).overridden(&Partial::default());
+
+    assert_eq!(
+        overridden.model,
+        Some(Sourced::new("haiku".into(), Layer::Operator))
+    );
+    assert_eq!(overridden.effort, None);
+    assert_eq!(
+        overridden.session_timeout,
+        Sourced::new(Duration::from_mins(5), Layer::Operator)
+    );
+    assert_eq!(
+        overridden.timeout_setting,
+        TimeoutSetting::Stage(StageKey::Work(WorkKind::Triage))
+    );
 }
 
 #[test_log::test]

@@ -23,7 +23,7 @@ use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::replay::judge::{self, JudgeRecord};
-use linewright::replay::{self, Output};
+use linewright::replay::{self, Configuration, Output};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use linewright::serving::{self, OnUsageLimit, Starting, briefs};
@@ -915,8 +915,20 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         Command::Capture { id, name, criteria } => {
             return Ok(capture(&config, &id, &name, &criteria).await);
         }
-        Command::Replay { case, out } => {
-            return Ok(replay(&config, &case, &out, winding_up, log).await);
+        Command::Replay {
+            case,
+            out,
+            configuration,
+        } => {
+            return Ok(replay(
+                &config,
+                &case,
+                &out,
+                configuration.as_deref(),
+                winding_up,
+                log,
+            )
+            .await);
         }
         Command::Judge { case, dir } => {
             return Ok(judge(&config, &case, &dir, winding_up, log).await);
@@ -1002,12 +1014,26 @@ async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: &Path) 
     )
 }
 
-/// Replays the case in the directory `case` into the output `out`: 0 once
-/// its run ended, whatever its outcome, and 1 when it did not run or end.
-async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
+/// Replays the case in the directory `case` into the output `out`, with
+/// the configuration in the directory `configuration` if one is given: 0
+/// once its run ended, whatever its outcome, and 1 when it did not run or
+/// end. A configuration with an error is refused before the output is
+/// made.
+async fn replay(
+    config: &Config,
+    case: &Path,
+    out: &Path,
+    configuration: Option<&Path>,
+    winding_up: &WindingUp,
+    log: &Log,
+) -> u8 {
     let token = match session_token() {
         Ok(token) => token,
         Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let configuration = match configuration.map(Configuration::read).transpose() {
+        Ok(configuration) => configuration,
+        Err(e) => return print_answer(Err(failed(&e.into()))),
     };
     let out = match Output::make(out) {
         Ok(out) => out,
@@ -1028,7 +1054,14 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             log.begin();
             let ran = async {
                 let (harness, factory_config) = on_case(config, token, &case, winding_up).await?;
-                replay::run(&case, &out, Arc::new(harness), factory_config).await
+                replay::run(
+                    &case,
+                    &out,
+                    Arc::new(harness),
+                    factory_config,
+                    configuration.as_ref(),
+                )
+                .await
             }
             .await;
             out.finished();
