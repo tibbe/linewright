@@ -13,12 +13,16 @@ use common::*;
 use linewright::case::{self, Case, CaseName, Criteria};
 use linewright::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright::domain::Number;
+use linewright::domain::Timestamp;
 use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
+use linewright::logs::{KeptRuns, RunRecords, Which};
 use linewright::reconcile::WorkKind;
 use linewright::replay::{self, Configuration, ConfigurationRefusal, OutputRefusal};
-use linewright::runs::Ending;
+use linewright::runs::files::RunFiles;
+use linewright::runs::{Ending, Ran, RunId, State};
 use linewright::store::github::SESSION_TOKEN_VARIABLE;
+use linewright::transcript;
 use linewright::work_settings::{Effort, RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
@@ -241,6 +245,79 @@ async fn a_triage_case_is_replayed_into_its_output() {
             .contains("**Summary:** It crashes."),
         "{}",
         replayed.read("writes/0001-comment.md")
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_replays_run_reads_back_from_its_output_as_the_replay_wrote_it() {
+    let mut world = World::new().await;
+    let (issue, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Triage, |_| Ok(triaged()));
+    let under = tempfile::tempdir().unwrap();
+    let replayed = replayed(&case, under.path(), harness, |_| {}).await;
+    let id: RunId = format!("{}/triage-1", issue.0).parse().unwrap();
+
+    let mut records = RunRecords::start(
+        KeptRuns::Files(RunFiles::new(&replayed.out)),
+        &Which::Run {
+            id: id.clone(),
+            item: None,
+        },
+    )
+    .await
+    .unwrap();
+    records.read().await.unwrap();
+    let of_item = RunRecords::start(
+        KeptRuns::Files(RunFiles::new(&replayed.out)),
+        &Which::Item(issue),
+    )
+    .await
+    .unwrap();
+
+    let written: Value =
+        serde_json::from_str(&replayed.read(&format!("runs/items/{}/triage-1.json", issue.0)))
+            .unwrap();
+    assert_eq!(records.run(), &id);
+    assert_eq!(of_item.run(), &id);
+    assert!(records.ended());
+    let [written_session] = written["sessions"].as_array().unwrap().as_slice() else {
+        panic!("one session written: {written}");
+    };
+    let [session] = records.sessions() else {
+        panic!("one session read: {:?}", records.sessions());
+    };
+    let dir = replayed.out.join(written_session["dir"].as_str().unwrap());
+    assert_eq!(
+        session.output,
+        std::fs::read_to_string(dir.join(transcript::OUTPUT)).unwrap()
+    );
+    assert_eq!(
+        session.brief.as_deref(),
+        Some(
+            std::fs::read_to_string(dir.join(transcript::BRIEF))
+                .unwrap()
+                .as_str()
+        )
+    );
+    assert_eq!(
+        session.ran,
+        Some(serde_json::from_value::<Ran>(written_session.clone()).unwrap())
+    );
+    let read = RunFiles::new(&replayed.out)
+        .read(&id)
+        .unwrap()
+        .expect("the replay's run is read");
+    assert_eq!(
+        read.state,
+        State::Ended {
+            at: serde_json::from_value(written["end"]["at"].clone()).unwrap(),
+            ending: Ending::Done,
+        }
+    );
+    assert_eq!(
+        read.started_at,
+        serde_json::from_value::<Timestamp>(written["started_at"].clone()).unwrap()
     );
 }
 
