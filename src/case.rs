@@ -11,6 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::benchmarks::{ChosenSuite, Suite, SuiteName, Suites};
 use crate::domain::{Number, Timestamp};
 use crate::git::{self, CommitId};
 use crate::input::Input;
@@ -50,13 +51,25 @@ impl std::str::FromStr for CaseName {
     type Err = String;
 
     fn from_str(name: &str) -> Result<CaseName, String> {
-        let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
-        if name.is_empty() || !name.chars().all(allowed) {
-            return Err(format!(
-                "{name:?} is not a case's name: it is lowercase letters, digits and hyphens"
-            ));
-        }
-        Ok(CaseName(name.to_string()))
+        check_name(name, "a case's").map(|()| CaseName(name.to_string()))
+    }
+}
+
+/// Refuses `name` as `whose` name, such as "a case's", unless it is one or
+/// more lowercase letters, digits and hyphens.
+pub(crate) fn check_name(name: &str, whose: &str) -> Result<(), String> {
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
+    if name.is_empty() || !name.chars().all(allowed) {
+        return Err(format!(
+            "{name:?} is not {whose} name: it is lowercase letters, digits and hyphens"
+        ));
+    }
+    Ok(())
+}
+
+impl Serialize for CaseName {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
     }
 }
 
@@ -131,6 +144,20 @@ pub enum CaptureError {
     Lacks { run: RunId, part: CasePart },
     #[error("a case is already named {0}")]
     Taken(CaseName),
+    #[error("there is no suite {0}")]
+    NoSuchSuite(SuiteName),
+    #[error("a suite is already named {0}")]
+    SuiteTaken(SuiteName),
+    #[error(
+        "the suite {} holds cases of {}, and the run {run} is of {stage}",
+        suite.name,
+        suite.stage
+    )]
+    OtherStage {
+        run: RunId,
+        stage: ReplayStage,
+        suite: Suite,
+    },
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -138,8 +165,8 @@ pub enum CaptureError {
 /// How a capture that did not happen is answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
-    /// There is no such run.
-    NoSuchRun,
+    /// There is no such run, or no such suite.
+    NoSuch,
     /// The run cannot be captured, or not under the name asked.
     Refused,
     /// The capture failed.
@@ -149,11 +176,13 @@ pub enum Refusal {
 impl CaptureError {
     pub fn refusal(&self) -> Refusal {
         match self {
-            CaptureError::NoSuchRun(_) => Refusal::NoSuchRun,
+            CaptureError::NoSuchRun(_) | CaptureError::NoSuchSuite(_) => Refusal::NoSuch,
             CaptureError::NotCapturable(_)
             | CaptureError::NoInput(_)
             | CaptureError::Lacks { .. }
-            | CaptureError::Taken(_) => Refusal::Refused,
+            | CaptureError::Taken(_)
+            | CaptureError::SuiteTaken(_)
+            | CaptureError::OtherStage { .. } => Refusal::Refused,
             CaptureError::Failed(_) => Refusal::Failed,
         }
     }
@@ -163,10 +192,13 @@ impl CaptureError {
         match self {
             CaptureError::Failed(e) => format!("{e:#}"),
             CaptureError::NoSuchRun(_)
+            | CaptureError::NoSuchSuite(_)
             | CaptureError::NotCapturable(_)
             | CaptureError::NoInput(_)
             | CaptureError::Lacks { .. }
-            | CaptureError::Taken(_) => self.to_string(),
+            | CaptureError::Taken(_)
+            | CaptureError::SuiteTaken(_)
+            | CaptureError::OtherStage { .. } => self.to_string(),
         }
     }
 }
@@ -195,12 +227,11 @@ struct CaseFile<'a> {
 
 /// The stage and item of a run of `of`, when it can be captured: a triage,
 /// design or implement run.
-pub fn capturable_stage(of: &RunOf) -> Option<(WorkKind, Number)> {
+pub fn capturable_stage(of: &RunOf) -> Option<(ReplayStage, Number)> {
     match of {
-        RunOf::Work { item, stage } => match stage {
-            WorkKind::Triage | WorkKind::Design | WorkKind::Implement => Some((*stage, *item)),
-            WorkKind::Rework | WorkKind::FixCi | WorkKind::Update => None,
-        },
+        RunOf::Work { item, stage } => ReplayStage::try_from(*stage)
+            .ok()
+            .map(|stage| (stage, *item)),
         RunOf::Automation { .. } => None,
     }
 }
@@ -210,7 +241,7 @@ pub fn capturable_stage(of: &RunOf) -> Option<(WorkKind, Number)> {
 #[derive(Debug)]
 pub struct CapturableRun {
     run: RunId,
-    stage: WorkKind,
+    stage: ReplayStage,
     item: Number,
     input: WholeInput,
 }
@@ -228,6 +259,10 @@ struct WholeInput {
 impl CapturableRun {
     pub fn id(&self) -> &RunId {
         &self.run
+    }
+
+    pub fn stage(&self) -> ReplayStage {
+        self.stage
     }
 }
 
@@ -266,42 +301,86 @@ pub async fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, C
     })
 }
 
+/// The suite a capture puts its case into.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SuiteChoice {
+    /// A suite there is.
+    Named(SuiteName),
+    /// A suite made, of the run's stage, as the case is captured into it.
+    New(SuiteName),
+}
+
 /// A run that can be captured, with what it is to be captured as.
 #[derive(Debug)]
 pub struct Capturable {
     run: CapturableRun,
     name: CaseName,
-    cases: PathBuf,
+    suite: ChosenSuite,
 }
 
-/// `run`, of those `runs` keeps, to capture as the case `name` in `cases`,
-/// or why it cannot be: read without the store, so that a capture refused
-/// is refused before reaching it.
+impl Capturable {
+    /// The stage of the run, and of the suite its case goes into.
+    pub fn stage(&self) -> ReplayStage {
+        self.run.stage
+    }
+}
+
+/// `run`, of those `runs` keeps, to capture as the case `name` into the
+/// suite `choice` of `suites`, or why it cannot be: read without the store,
+/// so that a capture refused is refused before reaching it.
 pub async fn capturable(
     runs: &Runs,
-    cases: &Path,
+    suites: &Suites,
     run: &RunId,
     name: &CaseName,
+    choice: &SuiteChoice,
 ) -> Result<Capturable, CaptureError> {
     let run = capturable_run(runs, run).await?;
-    if cases.join(name.as_str()).symlink_metadata().is_ok() {
+    let suite = match choice {
+        SuiteChoice::Named(named) => ChosenSuite::Existing(
+            suites
+                .find(named)
+                .await?
+                .ok_or_else(|| CaptureError::NoSuchSuite(named.clone()))?,
+        ),
+        SuiteChoice::New(new) => {
+            if suites.find(new).await?.is_some() {
+                return Err(CaptureError::SuiteTaken(new.clone()));
+            }
+            ChosenSuite::New(Suite {
+                name: new.clone(),
+                stage: run.stage,
+            })
+        }
+    };
+    if run.stage != suite.suite().stage {
+        return Err(CaptureError::OtherStage {
+            stage: run.stage,
+            run: run.run,
+            suite: suite.suite().clone(),
+        });
+    }
+    if suites.has_case(name).await? {
         return Err(CaptureError::Taken(name.clone()));
     }
     Ok(Capturable {
         run,
         name: name.clone(),
-        cases: cases.to_path_buf(),
+        suite,
     })
 }
 
 /// Captures `capturable` as its case, with `criteria` as what a good result
-/// is, and its commits fetched from `store`, and returns the case's
-/// directory. All or nothing: the case is whole or absent, and of two
+/// is, and its commits fetched from `store`, into its suite of `suites`,
+/// making the suite when it is a new one, and returns the case's
+/// directory. All or nothing: the case's directory, its suite's record of
+/// it and a new suite are all written or none is, and of two
 /// captures under one name, one is refused as [`CaptureError::Taken`].
 pub async fn capture(
     store: &dyn Store,
     capturable: Capturable,
     criteria: &Criteria,
+    suites: &Suites,
 ) -> Result<PathBuf, CaptureError> {
     let Capturable {
         run:
@@ -312,8 +391,9 @@ pub async fn capture(
                 input,
             },
         name,
-        cases,
+        suite,
     } = capturable;
+    let cases = suites.cases_dir();
     std::fs::create_dir_all(&cases).context("creating the cases' directory")?;
     let building = tempfile::Builder::new()
         .prefix(".capturing-")
@@ -324,7 +404,7 @@ pub async fn capture(
             .with_context(|| format!("writing the case's {file}"))
     };
     let case = CaseFile {
-        stage,
+        stage: stage.kind(),
         item,
         start: input.start,
         run: &run,
@@ -333,29 +413,15 @@ pub async fn capture(
     write("case.json", &json(&case)?)?;
     write("items.json", &json(&input.items)?)?;
     write("properties.json", &json(&input.properties)?)?;
-    write("criteria.md", criteria.as_str().as_bytes())?;
+    write(CRITERIA_FILE, criteria.as_str().as_bytes())?;
     store
         .fetch_commits(&building.path().join("repository.git"), &input.heads)
         .await?;
-    let place = cases.join(name.as_str());
-    match rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        building.path(),
-        rustix::fs::CWD,
-        &place,
-        rustix::fs::RenameFlags::NOREPLACE,
-    ) {
-        Ok(()) => {
-            let _moved = building.keep();
-            Ok(place)
-        }
-        Err(e) if std::io::Error::from(e).kind() == ErrorKind::AlreadyExists => {
-            Err(CaptureError::Taken(name))
-        }
-        Err(e) => Err(anyhow::Error::from(std::io::Error::from(e))
-            .context(format!("moving the case into {}", place.display()))
-            .into()),
-    }
+    let place = suites
+        .keep_case(&suite, &name, &run, building.path())
+        .await?;
+    let _moved = building.keep();
+    Ok(place)
 }
 
 /// The stage of a case: one that can be captured.
@@ -396,6 +462,45 @@ impl ReplayStage {
             ReplayStage::Design => WorkKind::Design,
             ReplayStage::Implement => WorkKind::Implement,
         }
+    }
+
+    pub const ALL: [ReplayStage; 3] = [
+        ReplayStage::Triage,
+        ReplayStage::Design,
+        ReplayStage::Implement,
+    ];
+
+    pub fn name(self) -> &'static str {
+        self.kind().name()
+    }
+}
+
+impl std::str::FromStr for ReplayStage {
+    type Err = String;
+
+    fn from_str(name: &str) -> Result<ReplayStage, String> {
+        ReplayStage::ALL
+            .into_iter()
+            .find(|stage| stage.name() == name)
+            .ok_or_else(|| {
+                let names: Vec<&str> = ReplayStage::ALL.map(ReplayStage::name).to_vec();
+                format!(
+                    "{name:?} is not a stage of a suite: one of {}",
+                    names.join(", ")
+                )
+            })
+    }
+}
+
+impl fmt::Display for ReplayStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+impl Serialize for ReplayStage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.name())
     }
 }
 
@@ -451,16 +556,7 @@ impl Case {
                 format!("they lack the case's item {}", file.item),
             ));
         }
-        let criteria = std::fs::read(dir.join("criteria.md"))
-            .map_err(|e| refusal(CasePart::Criteria, format!("criteria.md: {e}")))?;
-        let criteria = String::from_utf8(criteria)
-            .map_err(|_| refusal(CasePart::Criteria, "criteria.md is not UTF-8".to_string()))?;
-        let criteria = Criteria::parse(&criteria).ok_or_else(|| {
-            refusal(
-                CasePart::Criteria,
-                "criteria.md holds only white space".to_string(),
-            )
-        })?;
+        let criteria = read_criteria(dir)?;
         Ok(Case {
             stage: file.stage,
             item: file.item,
@@ -517,6 +613,23 @@ impl Case {
         &self.criteria
     }
 }
+
+/// The criteria of the case in the directory `dir`, refused when they do
+/// not read or hold only white space.
+pub fn read_criteria(dir: &Path) -> Result<Criteria, CaseRefusal> {
+    let criteria = std::fs::read(dir.join(CRITERIA_FILE))
+        .map_err(|e| refusal(CasePart::Criteria, format!("{CRITERIA_FILE}: {e}")))?;
+    let criteria = String::from_utf8(criteria)
+        .map_err(|_| refusal(CasePart::Criteria, format!("{CRITERIA_FILE} is not UTF-8")))?;
+    Criteria::parse(&criteria).ok_or_else(|| {
+        refusal(
+            CasePart::Criteria,
+            format!("{CRITERIA_FILE} holds only white space"),
+        )
+    })
+}
+
+const CRITERIA_FILE: &str = "criteria.md";
 
 fn refusal(part: CasePart, why: String) -> CaseRefusal {
     CaseRefusal { part, why }
@@ -787,11 +900,17 @@ mod tests {
     fn only_a_triage_design_or_implement_run_is_captured() {
         let stage_of = |id: &str| capturable_stage(&id.parse::<RunId>().unwrap().of);
 
-        assert_eq!(stage_of("4/triage-1"), Some((WorkKind::Triage, Number(4))));
-        assert_eq!(stage_of("4/design-2"), Some((WorkKind::Design, Number(4))));
+        assert_eq!(
+            stage_of("4/triage-1"),
+            Some((ReplayStage::Triage, Number(4)))
+        );
+        assert_eq!(
+            stage_of("4/design-2"),
+            Some((ReplayStage::Design, Number(4)))
+        );
         assert_eq!(
             stage_of("4/implement-1"),
-            Some((WorkKind::Implement, Number(4)))
+            Some((ReplayStage::Implement, Number(4)))
         );
         for id in ["9/rework-1", "9/fix-ci-1", "9/update-1", "hourly/1"] {
             assert_eq!(stage_of(id), None, "{id}");

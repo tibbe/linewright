@@ -14,6 +14,7 @@ pub mod apply;
 pub mod attachments;
 pub mod automation;
 mod bash_command;
+pub mod benchmarks;
 pub mod board;
 pub mod briefs;
 mod cadence;

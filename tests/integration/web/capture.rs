@@ -10,6 +10,12 @@ const RUN_PAGE: &str = "/runs/1/implement-1";
 /// Criteria a capture is given.
 const CRITERIA: &str = "A good result ships gh.\n";
 
+/// The suite of implement cases #1's run is captured into.
+const IMPLEMENTS: &str = "implements";
+
+/// A suite of design cases.
+const DESIGNS: &str = "designs";
+
 /// What run 1 recorded of its input.
 enum Recorded {
     Nothing,
@@ -25,6 +31,8 @@ fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+        keep_suite(&pages.path(""), IMPLEMENTS, "implement").await;
+        keep_suite(&pages.path(""), DESIGNS, "design").await;
         pages
             .record(&json!({
                 "item": 1,
@@ -125,15 +133,39 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
 }
 
 /// Submits the capture form of #1's implement run, naming the case `name`
-/// with `criteria`, as a page of the web UI's own does: the status and the
-/// fragment it answers with.
+/// with `criteria`, into the suite [`IMPLEMENTS`], as a page of the web
+/// UI's own does: the status and the fragment it answers with.
 #[track_caller]
 fn submit<'a>(
     pages: &'a Pages,
     name: &'a str,
     criteria: &'a str,
 ) -> impl Future<Output = (u16, Html)> + 'a {
-    let posted = post(pages, &[("sec-fetch-site", "same-origin")], name, criteria);
+    submit_into(pages, Chosen::Suite(IMPLEMENTS), name, criteria)
+}
+
+/// The suite a capture goes into.
+#[derive(Clone, Copy)]
+enum Chosen<'a> {
+    Suite(&'a str),
+    New(&'a str),
+}
+
+/// [`submit`], into the suite `into`.
+#[track_caller]
+fn submit_into<'a>(
+    pages: &'a Pages,
+    into: Chosen<'_>,
+    name: &'a str,
+    criteria: &'a str,
+) -> impl Future<Output = (u16, Html)> + 'a {
+    let posted = post(
+        pages,
+        &[("sec-fetch-site", "same-origin")],
+        into,
+        name,
+        criteria,
+    );
     async move {
         let (status, body) = posted.await;
         (status, Html::parse_fragment(&body))
@@ -146,11 +178,18 @@ fn submit<'a>(
 fn post<'a>(
     pages: &'a Pages,
     headers: &[(&str, &str)],
+    into: Chosen<'_>,
     name: &str,
     criteria: &str,
 ) -> impl Future<Output = (u16, String)> + 'a {
     let caller = Location::caller();
+    let (suite, new_suite) = match into {
+        Chosen::Suite(suite) => (suite, ""),
+        Chosen::New(suite) => ("", suite),
+    };
     let body = form_urlencoded::Serializer::new(String::new())
+        .append_pair("suite", suite)
+        .append_pair("new-suite", new_suite)
         .append_pair("name", name)
         .append_pair("criteria", criteria)
         .finish();
@@ -190,7 +229,9 @@ fn cases(pages: &Pages) -> Vec<String> {
 
 /// What a fragment says, as a reader reads it.
 fn said(html: &Html) -> String {
-    text(html.root_element())
+    let alerts = select(html, ".alert");
+    assert_eq!(alerts.len(), 1, "not one thing said");
+    text(alerts[0])
 }
 
 #[test_log::test(tokio::test)]
@@ -203,7 +244,10 @@ async fn submitting_the_form_writes_the_case_and_says_where() {
     let dir = pages.path("cases/gadgets");
     assert_eq!(
         said(&answer),
-        format!("Captured 1/implement-1 as the case `{}`", dir.display())
+        format!(
+            "Captured 1/implement-1 as the case `{}` in the suite implements",
+            dir.display()
+        )
     );
     assert_eq!(cases(&pages), ["gadgets"]);
     assert_eq!(
@@ -276,6 +320,7 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     let (status, _) = post(
         &pages,
         &[("sec-fetch-site", "cross-site")],
+        Chosen::Suite(IMPLEMENTS),
         "gadgets",
         CRITERIA,
     )
@@ -327,4 +372,89 @@ async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
             .attr("disabled")
             .is_none()
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn the_form_offers_the_suites_of_the_runs_stage_or_a_new_one() {
+    let pages = implemented(Recorded::Whole).await;
+    keep_suite(&pages.path(""), "board", "implement").await;
+
+    let html = pages.page(RUN_PAGE).await;
+
+    let form = capture_form(&html).expect("a capture form");
+    let options: Vec<(Option<&str>, String)> = select_in(form, "select[name=suite] option")
+        .into_iter()
+        .map(|option| (option.attr("value"), text(option)))
+        .collect();
+    assert_eq!(
+        options,
+        [
+            (Some("board"), "board".to_string()),
+            (Some(IMPLEMENTS), IMPLEMENTS.to_string()),
+            (Some(""), "a new suite".to_string()),
+        ]
+    );
+    assert_eq!(select_in(form, "input[name=new-suite]").len(), 1);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_capture_into_a_new_suite_makes_it_and_says_so() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::New("fresh"), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 200, "{}", said(&answer));
+    assert_eq!(
+        said(&answer),
+        format!(
+            "Captured 1/implement-1 as the case `{}` in the new suite fresh",
+            pages.path("cases/gadgets").display()
+        )
+    );
+    let refreshed = select(&answer, "select#capture-suite[hx-swap-oob]");
+    assert_eq!(refreshed.len(), 1, "the form's suites refreshed");
+    let options: Vec<(Option<&str>, bool)> = select_in(refreshed[0], "option")
+        .into_iter()
+        .map(|option| (option.attr("value"), option.attr("selected").is_some()))
+        .collect();
+    assert_eq!(
+        options,
+        [
+            (Some("fresh"), true),
+            (Some(IMPLEMENTS), false),
+            (Some(""), false)
+        ]
+    );
+    let html = pages.page(RUN_PAGE).await;
+    let form = capture_form(&html).unwrap();
+    assert_eq!(
+        select_in(form, "select[name=suite] option[value=fresh]").len(),
+        1
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::Suite(DESIGNS), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: the suite designs holds cases of design, and the run 1/implement-1 is of \
+         implement"
+    );
+    assert_eq!(cases(&pages), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_new_suite_without_a_name_is_refused_and_writes_nothing() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(said(&answer), "Not captured: the new suite needs a name");
+    assert_eq!(cases(&pages), Vec::<String>::new());
 }

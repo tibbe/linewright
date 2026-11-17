@@ -8,8 +8,10 @@ use std::sync::Arc;
 use chrono::TimeDelta;
 
 use common::*;
+use linewright::benchmarks::Suites;
 use linewright::case::{
     self, Case, CaseItemKind, CaseName, CasePart, CasePull, CasePullState, Criteria, Merge,
+    SuiteChoice,
 };
 use linewright::clock::RunningFrom;
 use linewright::domain::{MergeMethod, Number, Scope, Windows, label};
@@ -68,15 +70,17 @@ fn design_case() -> impl Future<Output = DesignCase> {
             caller,
             "the run's ID",
         );
-        let capturable =
-            case::capturable(&runs_in(&work).await, &work.join(case::CASES), &run, &name).await;
+        let runs = runs_in(&work).await;
+        let suites = Suites::new(runs.database().clone());
+        let suite = SuiteChoice::New(ok("designs".parse(), caller, "the suite"));
+        let capturable = case::capturable(&runs, &suites, &run, &name, &suite).await;
         let capturable = ok(capturable, caller, "the run");
         let criteria = ok(
             Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),
             caller,
             "the criteria",
         );
-        let dir = case::capture(&*world.store, capturable, &criteria).await;
+        let dir = case::capture(&*world.store, capturable, &criteria, &suites).await;
         let dir = ok(dir, caller, "capturing");
         DesignCase {
             world,
