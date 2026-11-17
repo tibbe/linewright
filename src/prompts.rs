@@ -510,6 +510,13 @@ macro_rules! templates {
                 }
             }
 
+            /// The text of each file, by its path under `briefs/`, as it
+            /// is filled: a file whose text is trimmed without its trailing
+            /// white space.
+            pub fn texts(&self) -> impl Iterator<Item = (&'static str, &str)> {
+                [$(($path, self.$field.text.as_str()),)*].into_iter()
+            }
+
             /// Every template from `text`'s text for its path and its
             /// values' names, or the paths whose text does not parse, with
             /// why.
