@@ -356,6 +356,17 @@ its leaks and its replays without a judgement, with the judges' cost apart.
 flight. The commands work whether `serve` is running or not, and exit 4 for a
 suite or an experiment that does not exist.
 
+The web UI does the same from a suite's page: it lists the suite's
+experiments and launches one, with `as-is` first and each other configuration
+given a name, its `model`, `effort` and `session-timeout`, and the text of any
+file of the brief, which starts as the replays would get it without the
+configuration; only the files you change go into it. Each experiment's page
+follows it as it runs, with a chart of each configuration's mean cost against
+its pass rate, the passes of each case under each configuration, and each
+configuration's figures, which open to its cases and their replays, and from
+each replay to the transcripts of its run and of its judge. It cancels an
+open experiment too.
+
 `serve` runs the experiments' replays and judges, oldest experiment first, a
 replay's judge before the next replay, and at most `max-replays` of them at
 once (1 unless set). None starts while a run of the pipeline waits for a place
