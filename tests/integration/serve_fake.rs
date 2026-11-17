@@ -264,3 +264,26 @@ async fn serve_fake_and_the_browser_clock_it_names_tell_the_time_from_the_seeds_
 
     served.stop().await;
 }
+
+#[test_log::test(tokio::test)]
+async fn serve_fake_seeds_an_ended_experiment_with_leaks_and_replays_without_a_judgement() {
+    let served = Served::start().await;
+
+    let page = served.page("/experiments/1").await;
+
+    let shown = text(&page);
+    for said in [
+        "8 of 8 replays ended",
+        "1 leak",
+        "no judgement: its run is not done or handed back",
+        "no judgement: the judge made none",
+    ] {
+        assert!(shown.contains(said), "{said:?} is not in {shown}");
+    }
+    assert_eq!(
+        attributes(&page, "#experiment .facts a", "href"),
+        ["/suites/board"]
+    );
+
+    served.stop().await;
+}

@@ -2,15 +2,22 @@
 //! fake agent does in each stage.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU32;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use linewright::benchmarks::{SuiteName, Suites};
+use linewright::benchmarks::{
+    Experiments, JudgementFigures, ReplayFigures, SuiteName, Suites, TrialChange, TrialRef,
+};
 use linewright::case::{self, Criteria, ReplayStage, SuiteChoice};
+use linewright::cost::Usd;
 use linewright::database::Database;
 use linewright::domain::{Login, MergeMethods, Number, Timestamp, label};
 use linewright::input::{self, Wanted};
-use linewright::runs::{RunId, Runs};
+use linewright::replay::Configuration;
+use linewright::results::Verdict;
+use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
 use serde_json::{Value, json};
 
@@ -96,7 +103,6 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
         &[],
     );
     store.label_as(LINEWRIGHT, done, label::READY_FOR_AGENT)?;
-    store.close_issue_as_completed(done)?;
     let tracking = store.open_issue(
         MAINTAINER,
         "Let the board be read on a phone",
@@ -125,6 +131,16 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
 /// The issue whose runs the seed's suite holds cases of: the one closed as
 /// done.
 const CASES_ISSUE: Number = Number(3);
+
+/// Closes as done the issue the seed's cases are captured from. Its runs'
+/// input is recorded as it was before, open, which a replay needs.
+///
+/// # Errors
+///
+/// When the store refuses the write.
+pub fn close_done(store: &LocalStore) -> Result<()> {
+    store.close_issue_as_completed(CASES_ISSUE)
+}
 
 /// The suite of design cases.
 const BOARD: &str = "board";
@@ -164,7 +180,8 @@ const EMPTY_SUITE: &str = "triage-basics";
 
 /// Writes into the work directory `work_dir` the suites the web UI shows: a
 /// suite of design cases captured from #3's runs, which the seed records
-/// as ended, and an empty suite of triage. A work directory that holds the
+/// as ended, with an experiment on it that has ended, and an empty suite of
+/// triage. A work directory that holds the
 /// first of those runs already is left as it is.
 ///
 /// # Errors
@@ -206,6 +223,152 @@ pub async fn suites(store: &LocalStore, work_dir: &Path) -> Result<()> {
     }
     let empty: SuiteName = EMPTY_SUITE.parse().map_err(anyhow::Error::msg)?;
     suites.make(&empty, ReplayStage::Triage).await?;
+    experiment(&Experiments::new(runs.database().clone()), &board).await
+}
+
+/// How each trial of the seed's experiment ended, in start order: by
+/// repetition, then case, then configuration.
+const TRIALS: [SeedTrial; 8] = [
+    SeedTrial::Judged {
+        ending: Ending::Done,
+        money: 0.42,
+        seconds: 95,
+        verdict: Verdict::Pass,
+        leak: false,
+    },
+    SeedTrial::Judged {
+        ending: Ending::Done,
+        money: 0.21,
+        seconds: 61,
+        verdict: Verdict::Fail,
+        leak: true,
+    },
+    SeedTrial::Unjudged {
+        ending: Ending::Failed,
+        money: 0.05,
+        seconds: 12,
+    },
+    SeedTrial::Judged {
+        ending: Ending::HandedBack,
+        money: 0.18,
+        seconds: 48,
+        verdict: Verdict::Pass,
+        leak: false,
+    },
+    SeedTrial::Judged {
+        ending: Ending::Done,
+        money: 0.39,
+        seconds: 88,
+        verdict: Verdict::Fail,
+        leak: false,
+    },
+    SeedTrial::JudgeMadeNone {
+        money: 0.24,
+        seconds: 70,
+    },
+    SeedTrial::Judged {
+        ending: Ending::Done,
+        money: 0.47,
+        seconds: 102,
+        verdict: Verdict::Pass,
+        leak: false,
+    },
+    SeedTrial::Judged {
+        ending: Ending::Done,
+        money: 0.2,
+        seconds: 55,
+        verdict: Verdict::Pass,
+        leak: false,
+    },
+];
+
+/// How a trial of the seed's experiment ended.
+enum SeedTrial {
+    Judged {
+        ending: Ending,
+        money: f64,
+        seconds: u64,
+        verdict: Verdict,
+        leak: bool,
+    },
+    /// Its run neither done nor handed back.
+    Unjudged {
+        ending: Ending,
+        money: f64,
+        seconds: u64,
+    },
+    /// Its run done, and its judge made no judgement.
+    JudgeMadeNone { money: f64, seconds: u64 },
+}
+
+/// Launches on `board` an experiment the day before the clock starts, under
+/// `as-is` and `terse`, which sets a low effort, twice, and ends each of its
+/// trials as [`TRIALS`] says: with passes, failures, a leak and replays
+/// without a judgement.
+async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> {
+    let terse = Configuration::parse(BTreeMap::from([(
+        "config.toml".to_string(),
+        b"effort = \"low\"\n".to_vec(),
+    )]))
+    .map_err(|errors| anyhow::anyhow!("the seed's configuration: {errors:?}"))?;
+    let launched = experiments
+        .launch(
+            board,
+            vec![("terse".parse().map_err(anyhow::Error::msg)?, terse)],
+            NonZeroU32::new(2).context("two repetitions")?,
+            "2026-03-01T16:00:00Z".parse()?,
+        )
+        .await?;
+    let record = experiments
+        .show(launched.id)
+        .await?
+        .context("the seed's experiment is kept")?;
+    let usd = |money: f64| Usd::new(money).context("a cost is a number of dollars");
+    for (key, seeded) in record.trials.keys().zip(&TRIALS) {
+        let trial = TrialRef {
+            experiment: launched.id,
+            key: *key,
+        };
+        let (ending, money, seconds) = match *seeded {
+            SeedTrial::Judged {
+                ending,
+                money,
+                seconds,
+                ..
+            }
+            | SeedTrial::Unjudged {
+                ending,
+                money,
+                seconds,
+            } => (ending, money, seconds),
+            SeedTrial::JudgeMadeNone { money, seconds } => (Ending::Done, money, seconds),
+        };
+        experiments.step(&trial, TrialChange::ReplayStarts).await?;
+        experiments
+            .step(
+                &trial,
+                TrialChange::ReplayEnds(ReplayFigures {
+                    outcome: OutcomeName::Ended(ending),
+                    money: Some(usd(money)?),
+                    time: Duration::from_secs(seconds),
+                }),
+            )
+            .await?;
+        let judged = match *seeded {
+            SeedTrial::Unjudged { .. } => continue,
+            SeedTrial::Judged { verdict, leak, .. } => TrialChange::Judged(JudgementFigures {
+                correctness: verdict,
+                leak,
+                judge_money: Some(usd(0.03)?),
+            }),
+            SeedTrial::JudgeMadeNone { .. } => TrialChange::JudgeMakesNone {
+                reason: "the judge's session ended without a judgement: it timed out".into(),
+                judge_money: Some(usd(0.02)?),
+            },
+        };
+        experiments.step(&trial, TrialChange::JudgeStarts).await?;
+        experiments.step(&trial, judged).await?;
+    }
     Ok(())
 }
 
@@ -251,6 +414,7 @@ pub fn scenario() -> Scenario {
             ("triage".into(), triaging()),
             ("design".into(), designing()),
             ("implement".into(), implementing()),
+            ("judge".into(), judging()),
         ]),
         ..Scenario::default()
     }
@@ -334,6 +498,29 @@ fn implementing() -> Vec<Step> {
         "outcome": "done",
         "pr_title": "End a session's heading with its duration",
         "pr_body": "The heading now ends with how long the session took.",
+    })));
+    steps
+}
+
+fn judging() -> Vec<Step> {
+    let mut steps = session(
+        BRISK_MILLIS,
+        vec![
+            said("I'll read the replay's outcome and its writes against the criteria."),
+            called("j1", "Read", &json!({"file_path": "outcome"})),
+            returned("j1", "done"),
+        ],
+    );
+    steps.push(finished(&json!({
+        "outcome": "judged",
+        "correctness": {
+            "reasoning": "The design names each column after its stage, in one ticket.",
+            "verdict": "pass",
+        },
+        "leak": {
+            "reasoning": "No session read the issue's later comments or the merged pull request.",
+            "found": false,
+        },
     })));
     steps
 }
