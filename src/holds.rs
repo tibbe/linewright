@@ -3,13 +3,16 @@
 
 use std::cmp::Ordering;
 
+use serde::{Deserialize, Serialize};
+
 use crate::domain::Timestamp;
 use crate::reconcile::{Memory, Wait};
 use crate::repo_files::{self, FileError, Unusable};
 use crate::work_settings::RunKind;
 
 /// A hold, ordered by its rank.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Hold {
     Drain,
     UsageLimit { resets_at: Timestamp },

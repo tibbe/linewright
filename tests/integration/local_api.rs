@@ -113,6 +113,7 @@ impl Answering {
             work_dir,
             ends: ends.clone(),
             environment: serving.environment.clone(),
+            experiments: serving.experiments.clone(),
             exiting: winding_up.exiting(),
         };
         let ui = web::Ui {

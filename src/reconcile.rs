@@ -699,6 +699,16 @@ pub struct Decisions {
     pub waits: BTreeMap<Number, Vec<Wait>>,
 }
 
+impl Decisions {
+    /// Whether a run waits for a place under `max-runs`.
+    pub fn wait_for_room(&self) -> bool {
+        self.waits
+            .values()
+            .flatten()
+            .any(|wait| matches!(wait, Wait::FreeRun { .. }))
+    }
+}
+
 pub fn reconcile(
     snapshot: &Snapshot,
     live: &[LiveRun],

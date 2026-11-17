@@ -14,10 +14,11 @@ use super::{
     write_whole_new,
 };
 use crate::apply::hand_back;
+use crate::benchmarks::JudgementFigures;
 use crate::briefs::Briefs;
 use crate::case::Case;
 use crate::clock::{Clock, SystemClock};
-use crate::cost::SessionCost;
+use crate::cost::{RunCost, SessionCost, Usd};
 use crate::domain::Timestamp;
 use crate::factory::FactoryConfig;
 use crate::git;
@@ -245,6 +246,11 @@ impl JudgeRecord {
         &self.dir
     }
 
+    /// What the judge's session spends, readable once the record is gone.
+    pub fn spent(&self) -> JudgeSpent {
+        JudgeSpent(self.session.clone())
+    }
+
     /// Empties the record for the session's retry.
     fn restart(&self) -> Result<()> {
         std::fs::remove_dir_all(&self.dir)
@@ -258,6 +264,70 @@ impl Drop for JudgeRecord {
         if !self.kept {
             discard(&self.dir);
         }
+    }
+}
+
+/// What a judge's session spent, as its record reports it.
+#[derive(Clone, Debug)]
+pub struct JudgeSpent(Arc<Mutex<Option<SessionReports>>>);
+
+impl JudgeSpent {
+    /// What the session cost so far: `None` before it opened, when it gave
+    /// no figures, or once its judgement took them.
+    pub fn money(&self) -> Option<Usd> {
+        lock_set_whole(&self.0)
+            .as_ref()
+            .and_then(|session| money(&session.cost()))
+    }
+}
+
+/// What a session that cost `cost` cost in money, `None` when it gave no
+/// figures.
+fn money(cost: &SessionCost) -> Option<Usd> {
+    RunCost::of([cost]).spend.and_then(|spend| spend.all.usd)
+}
+
+/// What an experiment's results need of the judgement the output in `dir`
+/// holds, if it holds one.
+///
+/// # Errors
+///
+/// When it cannot be read, or does not read as a judgement.
+pub fn kept(dir: &Path) -> Result<Option<JudgementFigures>> {
+    #[derive(Deserialize)]
+    struct Kept {
+        correctness: Correctness,
+        leak: Leak,
+        session: KeptSession,
+    }
+    #[derive(Deserialize)]
+    struct KeptSession {
+        cost: SessionCost,
+    }
+    let path = dir.join(JUDGEMENT);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let kept: Kept =
+        serde_json::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Some(JudgementFigures {
+        correctness: kept.correctness.verdict,
+        leak: kept.leak.found(),
+        judge_money: money(&kept.session.cost),
+    }))
+}
+
+/// Removes the records of judges of `replayed` that kept no judgement, such
+/// as one a stop left behind.
+pub fn discard_unkept(replayed: &Replayed) {
+    let judges = replayed.dir.join(session::purpose_name(&Purpose::Judge));
+    match std::fs::remove_dir_all(&judges) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            warn!(dir = %judges.display(), error = %e, "removing the judges' records failed");
+        }
+        _ => {}
     }
 }
 
@@ -334,6 +404,15 @@ struct JudgeSession {
 }
 
 impl Judgement {
+    /// What an experiment's results need of it.
+    pub fn figures(&self) -> JudgementFigures {
+        JudgementFigures {
+            correctness: self.correctness.verdict,
+            leak: self.leak.found(),
+            judge_money: money(&self.session.cost),
+        }
+    }
+
     /// The verdict and whether a leak was found, one to a line.
     pub fn summary(&self) -> String {
         let leak = if self.leak.found() {
