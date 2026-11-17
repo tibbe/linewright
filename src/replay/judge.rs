@@ -26,7 +26,10 @@ use crate::harness::{Harness, NextTurn, Purpose, Reporter};
 use crate::prompts::{self, Repo};
 use crate::results::{self, Correctness, JudgeResult, Leak};
 use crate::run::RunWith;
-use crate::runs::{Ending, OutcomeName, Ran, RunId, SessionReports};
+use crate::runs::{
+    Ending, OutcomeName, Ran, Recorded, RunId, SessionEntry, SessionKept, SessionReports, Started,
+    State,
+};
 use crate::session::{
     self, Beside, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, infra,
     lock_set_whole, open_session, parse_retry,
@@ -294,29 +297,118 @@ fn money(cost: &SessionCost) -> Option<Usd> {
 ///
 /// When it cannot be read, or does not read as a judgement.
 pub fn kept(dir: &Path) -> Result<Option<JudgementFigures>> {
-    #[derive(Deserialize)]
-    struct Kept {
-        correctness: Correctness,
-        leak: Leak,
-        session: KeptSession,
-    }
-    #[derive(Deserialize)]
-    struct KeptSession {
-        cost: SessionCost,
-    }
+    Ok(read(dir)?.map(|kept| JudgementFigures {
+        correctness: kept.correctness.verdict,
+        leak: kept.leak.found(),
+        judge_money: money(&kept.session.cost),
+    }))
+}
+
+/// A judgement the output in a directory holds, as it reads.
+#[derive(Debug, Deserialize)]
+pub struct KeptJudgement {
+    pub correctness: Correctness,
+    pub leak: Leak,
+    session: KeptJudgeSession,
+}
+
+#[derive(Debug, Deserialize)]
+struct KeptJudgeSession {
+    record: PathBuf,
+    #[serde(flatten)]
+    ran: Ran,
+    cost: SessionCost,
+}
+
+/// The judgement the output in `dir` holds, if it holds one.
+///
+/// # Errors
+///
+/// When it cannot be read, or does not read as a judgement.
+pub fn read(dir: &Path) -> Result<Option<KeptJudgement>> {
     let path = dir.join(JUDGEMENT);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let kept: Kept =
-        serde_json::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
-    Ok(Some(JudgementFigures {
-        correctness: kept.correctness.verdict,
-        leak: kept.leak.found(),
-        judge_money: money(&kept.session.cost),
-    }))
+    serde_json::from_str(&text)
+        .map(Some)
+        .with_context(|| format!("reading {}", path.display()))
+}
+
+/// The judge of the output in `dir` as a run `id` of one session: ended
+/// once the output holds its judgement, and in flight while it holds none
+/// and the judge's record is there. `None` when there is neither.
+///
+/// # Errors
+///
+/// When the judgement or the judges' directory cannot be read.
+pub fn recorded(dir: &Path, id: &RunId) -> Result<Option<Recorded>> {
+    let started = Started::new(id.clone(), None).map_err(anyhow::Error::msg)?;
+    let modified = |path: &Path| -> Result<Timestamp> {
+        let at = std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .with_context(|| format!("reading {}", path.display()))?;
+        Ok(at.into())
+    };
+    if let Some(kept) = read(dir)? {
+        let record = dir.join(&kept.session.record);
+        let session = SessionEntry {
+            kept: Some(SessionKept {
+                ran: kept.session.ran,
+                cost: Some(kept.session.cost),
+            }),
+            dir: record.clone(),
+        };
+        let state = State::Ended {
+            at: modified(&dir.join(JUDGEMENT))?,
+            ending: Ending::Done,
+        };
+        return Ok(Some(Recorded::new(
+            started,
+            started_at(&record).map_or_else(|| modified(&record), Ok)?,
+            state,
+            vec![session],
+            None,
+        )));
+    }
+    let judges = dir.join(session::purpose_name(&Purpose::Judge));
+    let entries = match std::fs::read_dir(&judges) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", judges.display())),
+    };
+    let mut records = Vec::new();
+    for entry in entries {
+        let path = entry
+            .with_context(|| format!("reading {}", judges.display()))?
+            .path();
+        if path.is_dir() {
+            records.push(path);
+        }
+    }
+    records.sort();
+    let Some(record) = records.pop() else {
+        return Ok(None);
+    };
+    Ok(Some(Recorded::new(
+        started,
+        started_at(&record).map_or_else(|| modified(&record), Ok)?,
+        State::InFlight,
+        vec![record.into()],
+        None,
+    )))
+}
+
+/// When the judge whose record is in `dir` started, as the record's name
+/// gives it ([`session::new_record_dir`]), if it does.
+fn started_at(dir: &Path) -> Option<Timestamp> {
+    let name = dir.file_name()?.to_str()?;
+    let stamp = name.get(..16)?;
+    chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")
+        .ok()
+        .map(|at| at.and_utc())
 }
 
 /// Removes the records of judges of `replayed` that kept no judgement, such
