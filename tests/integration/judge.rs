@@ -5,6 +5,7 @@
 use crate::common;
 use crate::replay::{entries, gh_answer, lw_command, lw_isolated, triage_case};
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use common::*;
 use linewright::case::Case;
+use linewright::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright::factory::FactoryConfig;
 use linewright::harness::SessionError;
 use linewright::replay::judge::{self, JudgeRecord, Judgement, Unjudged};
@@ -201,6 +203,41 @@ async fn a_judge_keeps_its_judgement_in_the_output_and_a_new_one_replaces_it() {
         entries(&out),
         vec!["case", "judge", "judgement.json", "outcome"]
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_judgement_keeps_what_the_judges_session_cost_apart_from_the_replays() {
+    let under = tempfile::tempdir().unwrap();
+    let (case, out) = triage_output(under.path(), "done").await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.reports_spend(TurnSpend::OfSessionSoFar(Figures(BTreeMap::from([(
+        "claude-judge-1".to_string(),
+        Spend {
+            tokens: Some(Tokens {
+                input: 1,
+                output: 20,
+                cache_write: 300,
+                cache_read: 4000,
+            }),
+            usd: None,
+        },
+    )]))));
+    harness.on_judge(|_| Ok(judged_as("pass", &[])));
+
+    judging(&case, &out, under.path(), harness, |_| {})
+        .await
+        .unwrap();
+
+    let mut cost = judgement_in(&out)["session"]["cost"].clone();
+    let seconds = cost.as_object_mut().unwrap().remove("seconds");
+    assert!(seconds.as_ref().is_some_and(Value::is_f64), "{seconds:?}");
+    assert_eq!(
+        cost,
+        json!({"models": {"claude-judge-1": {
+            "tokens": {"input": 1, "output": 20, "cache_write": 300, "cache_read": 4000},
+        }}})
+    );
+    assert!(!out.join("cost.json").exists());
 }
 
 #[test_log::test(tokio::test)]

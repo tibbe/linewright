@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use linewright::cost::TurnSpend;
 use linewright::domain::Timestamp;
 use linewright::harness::{
     GhReach, Harness, Purpose, Reported, SessionError, SessionSpec, Turn, UsageLimit,
@@ -59,6 +60,8 @@ pub struct ScriptedHarness {
     /// The model each turn reports it runs, as the turn starts; `None`
     /// reports none.
     model: Mutex<Option<String>>,
+    /// What each turn reports it spent, as it ends.
+    spend: Mutex<Option<TurnSpend>>,
 }
 
 /// The agent of a turn held open: it writes output each time it is told
@@ -107,6 +110,12 @@ impl ScriptedHarness {
         *self.model.lock().unwrap() = Some(model.to_string());
     }
 
+    /// Each turn from now on reports it spent `spend`, where until then it
+    /// reports no figures.
+    pub fn reports_spend(&self, spend: TurnSpend) {
+        *self.spend.lock().unwrap() = Some(spend);
+    }
+
     pub fn takes(&self, time: std::time::Duration) {
         *self.turn_time.lock().unwrap() = time;
     }
@@ -153,7 +162,22 @@ impl ScriptedHarness {
             .collect()
     }
 
+    /// A turn, its start and its end reported, unless it is dropped first.
     async fn turn(
+        &self,
+        spec: &SessionSpec,
+        session: String,
+        followup: Option<&str>,
+    ) -> Result<Turn, SessionError> {
+        spec.report.report(Reported::TurnStarted);
+        let turn = self.unreported_turn(spec, session, followup).await;
+        let spend = self.spend.lock().unwrap().clone();
+        spec.report
+            .report(Reported::TurnEnded(spend.unwrap_or(TurnSpend::None)));
+        turn
+    }
+
+    async fn unreported_turn(
         &self,
         spec: &SessionSpec,
         session: String,
@@ -161,7 +185,7 @@ impl ScriptedHarness {
     ) -> Result<Turn, SessionError> {
         let model = self.model.lock().unwrap().clone();
         if let Some(model) = model {
-            spec.report.report(Reported { model });
+            spec.report.report(Reported::Model(model));
         }
         let time = std::mem::take(&mut *self.turn_time.lock().unwrap());
         if !time.is_zero() {

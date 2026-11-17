@@ -8,9 +8,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, Running, SessionEntry, Started, StartedBy,
-    State, entries, off_runtime,
+    Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, Running, SessionEntry, SessionKept,
+    Started, StartedBy, State, cost_of, entries, off_runtime,
 };
+use crate::cost::{RunCost, SessionCost};
 use crate::domain::Timestamp;
 use crate::records;
 
@@ -82,6 +83,9 @@ pub(super) enum RecordedSession {
         dir: PathBuf,
         #[serde(flatten)]
         ran: Ran,
+        /// Absent from those recorded before costs were kept.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost: Option<SessionCost>,
     },
     /// As records kept before they kept what a session ran with.
     Dir(PathBuf),
@@ -90,14 +94,33 @@ pub(super) enum RecordedSession {
 impl RecordedSession {
     /// `session`, its directory relative to `dir` where it is under it.
     pub(super) fn of(session: &SessionEntry, dir: &Path) -> RecordedSession {
-        let SessionEntry { dir: session, ran } = session;
+        let SessionEntry { dir: session, kept } = session;
         let session = session.strip_prefix(dir).unwrap_or(session).to_path_buf();
-        match ran {
-            Some(ran) => RecordedSession::Ran {
+        match kept {
+            Some(SessionKept { ran, cost }) => RecordedSession::Ran {
                 dir: session,
                 ran: ran.clone(),
+                cost: cost.clone(),
             },
             None => RecordedSession::Dir(session),
+        }
+    }
+
+    /// The session, its directory under `dir`.
+    pub(super) fn entry(&self, dir: &Path) -> SessionEntry {
+        match self {
+            RecordedSession::Ran {
+                dir: session,
+                ran,
+                cost,
+            } => SessionEntry {
+                dir: dir.join(session),
+                kept: Some(SessionKept {
+                    ran: ran.clone(),
+                    cost: cost.clone(),
+                }),
+            },
+            RecordedSession::Dir(session) => dir.join(session).into(),
         }
     }
 }
@@ -182,6 +205,25 @@ impl RunFiles {
     pub fn write(&self, recorded: &Recorded) -> Result<()> {
         let path = self.record_path(&recorded.id);
         records::save(&path, &Record::of(recorded, &self.dir), "a run's record")
+    }
+
+    /// What run `id`, kept here, cost, as [`Recorded::cost`] gives it.
+    ///
+    /// # Errors
+    ///
+    /// When its record cannot be read.
+    pub fn cost(&self, id: &RunId) -> Result<RunCost> {
+        let path = self.record_path(id);
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        let record: Record =
+            serde_json::from_str(&text).with_context(|| format!("reading {}", path.display()))?;
+        let sessions: Vec<SessionEntry> = record
+            .sessions
+            .iter()
+            .map(|session| session.entry(&self.dir))
+            .collect();
+        Ok(cost_of(&sessions))
     }
 
     /// Where the record of run `id` is kept here.

@@ -38,7 +38,7 @@ use crate::runs::{Ending, Running};
 use crate::secrets::Held;
 use crate::session::{
     Cancellation, Failure, Refused, Rejection, SessionCtx, Sessions, Workspace, converse, infra,
-    lock_set_whole, open_on_default_branch, open_session, parse_retry, record_end,
+    lock_set_whole, open_on_default_branch, open_session, parse_retry,
 };
 use crate::spec_gap::{self, FiledGaps};
 use crate::spec_glob::SpecGlob;
@@ -1356,7 +1356,7 @@ async fn pull_work(
     };
     let history = prompts::History::for_method(shell.policy.merge_method);
     let Some(pull_task) = pull_work::session_task(job, conflict.as_ref(), history) else {
-        record_end(&shell.sessions, &opened.record);
+        opened.end(&shell.sessions);
         return push_update(shell, ctx, pr, &ws.dir, &start).await;
     };
     let dir = &ws.dir;

@@ -5,6 +5,7 @@
 use std::fs::File;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::TimeDelta;
@@ -34,7 +35,15 @@ const REMOVED: &str = ".removed-";
 /// lives.
 pub struct InUse {
     source: Source,
-    built_output: Option<String>,
+    built: Option<BuildLog>,
+}
+
+/// What a build of a replay's environment printed, and how long it took.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuildLog {
+    /// Redacted.
+    pub output: String,
+    pub time: Duration,
 }
 
 impl InUse {
@@ -44,10 +53,10 @@ impl InUse {
         self.source.clone()
     }
 
-    /// The output of the build, redacted, when this replay built the
+    /// The output of the build and its time, when this replay built the
     /// environment and its setup command ran.
-    pub fn built_output(&self) -> Option<&str> {
-        self.built_output.as_deref()
+    pub fn built(&self) -> Option<&BuildLog> {
+        self.built.as_ref()
     }
 }
 
@@ -67,9 +76,9 @@ pub enum Unprepared {
 pub struct BuildFailed {
     /// Why, redacted.
     pub why: String,
-    /// The output of the build, redacted: `None` when its setup command
+    /// The output of the build and its time: `None` when its setup command
     /// never ran.
-    pub output: Option<String>,
+    pub output: Option<BuildLog>,
 }
 
 /// Whether the environment of a replay whose build started at `built`, or
@@ -108,7 +117,7 @@ pub async fn prepare(
     let Some(settings) = setup else {
         return Ok(InUse {
             source: Source::default(),
-            built_output: None,
+            built: None,
         });
     };
     let fingerprint = builder.fingerprint(&settings);
@@ -120,7 +129,7 @@ pub async fn prepare(
         .named(&builder.database)
         .await
         .map_err(Unprepared::Unavailable)?;
-    let (id, built_output) = match named {
+    let (id, built) = match named {
         Some(built) => (built.id, None),
         None => {
             let id = builds
@@ -129,9 +138,11 @@ pub async fn prepare(
                 .map_err(Unprepared::Unavailable)?;
             info!(%head, "the environment of a replay is building");
             let start = Start::Commit(head);
+            let started = Instant::now();
             let built =
                 build_locked(&builder, &builds, &lock, id, start, &settings, fingerprint).await;
-            let output = builds.output(id);
+            let time = started.elapsed();
+            let output = builds.output(id).map(|output| BuildLog { output, time });
             match built {
                 Ok(built) => (built.id, output),
                 Err(why) => return Err(BuildFailed { why, output }.into()),
@@ -142,7 +153,7 @@ pub async fn prepare(
     let build = BuildDir::held(Build::new(&builds, id, &builder.winding_up), held);
     Ok(InUse {
         source: Source::of(build),
-        built_output,
+        built,
     })
 }
 

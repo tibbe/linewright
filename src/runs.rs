@@ -15,6 +15,7 @@ use tracing::warn;
 
 use crate::automation::AutomationName;
 use crate::briefs::Briefs;
+use crate::cost::{RunCost, SessionCost, SessionSpend};
 use crate::database::Database;
 use crate::domain::{Number, Repo, Timestamp};
 use crate::harness::{Purpose, Reported, Reporter};
@@ -213,17 +214,80 @@ pub enum Ending {
     Failed,
 }
 
-/// A session of a run: where its records are, and what it ran with.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A session of a run: where its records are, and what Linewright kept of
+/// it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionEntry {
     pub dir: PathBuf,
-    /// `None` for a session recorded before Linewright kept it.
-    pub ran: Option<Ran>,
+    /// `None` for a session recorded before Linewright kept what it ran
+    /// with.
+    pub kept: Option<SessionKept>,
+}
+
+impl SessionEntry {
+    /// What it ran with, `None` for a session recorded before Linewright
+    /// kept it.
+    pub fn ran(&self) -> Option<&Ran> {
+        self.kept.as_ref().map(|kept| &kept.ran)
+    }
 }
 
 impl From<PathBuf> for SessionEntry {
     fn from(dir: PathBuf) -> SessionEntry {
-        SessionEntry { dir, ran: None }
+        SessionEntry { dir, kept: None }
+    }
+}
+
+/// What Linewright kept of a session: what it ran with, and what it cost.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionKept {
+    pub ran: Ran,
+    /// `None` for a session recorded before Linewright kept it.
+    pub cost: Option<SessionCost>,
+}
+
+/// What the reports of a session make of what it ran with and what it
+/// cost: the last model reported wins, its spend is as its turns' reports
+/// make it, and its time is the one its end reports.
+#[derive(Debug)]
+pub(crate) struct SessionReports {
+    ran: Ran,
+    spend: SessionSpend,
+    time: Option<std::time::Duration>,
+}
+
+impl SessionReports {
+    /// A session that runs with `ran`, before any report.
+    pub(crate) fn new(ran: Ran) -> SessionReports {
+        SessionReports {
+            ran,
+            spend: SessionSpend::new(),
+            time: None,
+        }
+    }
+
+    pub(crate) fn reported(&mut self, reported: Reported) {
+        match reported {
+            Reported::Model(model) => self.ran.reported_model = Some(model),
+            Reported::TurnStarted => self.spend.turn_started(),
+            Reported::TurnEnded(turn) => self.spend.turn_ended(turn),
+        }
+    }
+
+    /// The session ended, its session timeout having counted `time`.
+    pub(crate) fn ended(&mut self, time: std::time::Duration) {
+        self.time = Some(time);
+    }
+
+    pub(crate) fn ran(&self) -> &Ran {
+        &self.ran
+    }
+
+    pub(crate) fn cost(&self) -> SessionCost {
+        SessionCost {
+            time: self.time,
+            spend: self.spend.figures().cloned(),
+        }
     }
 }
 
@@ -620,11 +684,13 @@ impl Running {
         briefs: &Briefs,
     ) -> SessionRecorder {
         let dir = dir.strip_prefix(&self.dir).unwrap_or(dir);
+        let reports = SessionReports::new(Ran::new(settings, briefs));
         let index = {
             let mut record = self.kept.record.lock().unwrap();
             record.sessions.push(RecordedSession::Ran {
                 dir: dir.to_path_buf(),
-                ran: Ran::new(settings, briefs),
+                ran: reports.ran().clone(),
+                cost: Some(reports.cost()),
             });
             record.sessions.len() - 1
         };
@@ -632,6 +698,7 @@ impl Running {
         SessionRecorder {
             kept: self.kept.clone(),
             index,
+            reports: Mutex::new(reports),
         }
     }
 
@@ -671,8 +738,10 @@ impl RecordsSessions for Running {
     }
 
     async fn session(&self, dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
-        let recorder = Running::session(self, dir, settings, briefs).await;
+        let recorder = Arc::new(Running::session(self, dir, settings, briefs).await);
+        let ending = recorder.clone();
         Reporter::new(move |reported| recorder.reported(reported))
+            .ending(move |time| ending.ended(time))
     }
 }
 
@@ -728,28 +797,41 @@ impl RunRecord {
     }
 }
 
-/// Records what the harness reports of one of a run's sessions.
+/// Records what the harness reports of one of a run's sessions, and its
+/// end, as [`SessionReports`] makes them. Each change is written in a task
+/// of its own, as the record is when that task writes it.
 pub(crate) struct SessionRecorder {
     kept: RunRecord,
     /// The session's among the record's.
     index: usize,
+    reports: Mutex<SessionReports>,
 }
 
 impl SessionRecorder {
-    /// The last report wins. The record is written in a task of its own,
-    /// as it is when that task writes it.
     pub fn reported(&self, reported: Reported) {
-        if let RecordedSession::Ran { ran, .. } =
+        self.change(|reports| reports.reported(reported));
+    }
+
+    /// The session ended, its session timeout having counted `time`.
+    pub fn ended(&self, time: std::time::Duration) {
+        self.change(|reports| reports.ended(time));
+    }
+
+    fn change(&self, change: impl FnOnce(&mut SessionReports)) {
+        let mut reports = session::lock_set_whole(&self.reports);
+        change(&mut reports);
+        if let RecordedSession::Ran { ran, cost, .. } =
             &mut self.kept.record.lock().unwrap().sessions[self.index]
         {
-            ran.reported_model = Some(reported.model);
+            *ran = reports.ran().clone();
+            *cost = Some(reports.cost());
         }
         let (kept, index) = (self.kept.clone(), self.index);
         tokio::spawn(async move { kept.write_or_log(Change::Session(index)).await });
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Recorded {
     pub id: RunId,
     /// Set with `id`, from a [`Started`], so that the two agree.
@@ -792,6 +874,13 @@ impl Recorded {
             id: self.id.clone(),
             by: self.started_by,
         }
+    }
+
+    /// What the run cost: the sum of its sessions' costs, each with the
+    /// model the harness reported it ran, else the one set. A session with
+    /// no cost kept counts as one with no figures.
+    pub fn cost(&self) -> RunCost {
+        cost_of(&self.sessions)
     }
 
     /// This run, where it ran on a pull request and its record has an end.
@@ -1020,7 +1109,7 @@ impl Recorded {
     pub fn ran(&self) -> Vec<Option<Ran>> {
         self.sessions
             .iter()
-            .map(|session| session.ran.clone())
+            .map(|session| session.ran().cloned())
             .collect()
     }
 
@@ -1064,6 +1153,21 @@ pub fn render(listing: &Listing, colour: bool) -> String {
         );
     }
     text
+}
+
+/// The sum of the costs of `sessions`, as [`Recorded::cost`] gives it.
+fn cost_of(sessions: &[SessionEntry]) -> RunCost {
+    let unkept = SessionCost::default();
+    RunCost::of(sessions.iter().map(|session| {
+        (
+            session.ran().and_then(Ran::model_ran),
+            session
+                .kept
+                .as_ref()
+                .and_then(|kept| kept.cost.as_ref())
+                .unwrap_or(&unkept),
+        )
+    }))
 }
 
 /// A session's model, as the harness reported it ran or else as set, and
@@ -1254,6 +1358,7 @@ mod tests {
     use std::panic::Location;
 
     use super::*;
+    use crate::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
     use crate::work_settings::{Environments, Partial, RepoSettings, RunKind, WorkSettings};
 
     fn at(time: &str) -> Timestamp {
@@ -1446,9 +1551,7 @@ mod tests {
         running
             .session(&session, &settings, &Briefs::shipped())
             .await
-            .reported(Reported {
-                model: "claude-opus-5-5".into(),
-            });
+            .reported(Reported::Model("claude-opus-5-5".into()));
         running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
         let recorded = runs_in(work_dir.path()).await.read().await.unwrap();
 
@@ -1458,7 +1561,7 @@ mod tests {
         let [
             SessionEntry {
                 dir,
-                ran: Some(ran),
+                kept: Some(SessionKept { ran, .. }),
             },
         ] = &run.sessions[..]
         else {
@@ -1522,24 +1625,14 @@ mod tests {
             )
             .await;
 
-        recorder.reported(Reported {
-            model: "claude-opus-5-5".into(),
-        });
+        recorder.reported(Reported::Model("claude-opus-5-5".into()));
         running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
-        recorder.reported(Reported {
-            model: "claude-opus-5-6".into(),
-        });
+        recorder.reported(Reported::Model("claude-opus-5-6".into()));
         let models = |recorded: &[Recorded]| -> Vec<Option<String>> {
             recorded
                 .iter()
                 .flat_map(|run| &run.sessions)
-                .map(|session| {
-                    session
-                        .ran
-                        .as_ref()
-                        .and_then(Ran::model_ran)
-                        .map(str::to_owned)
-                })
+                .map(|session| session.ran().and_then(Ran::model_ran).map(str::to_owned))
                 .collect()
         };
         let recorded = tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -1562,6 +1655,156 @@ mod tests {
             State::Ended {
                 at: at("2026-10-15T09:01:00Z"),
                 ending: Ending::Done
+            }
+        );
+    }
+
+    /// What `opus` used in a turn: `tokens` of each kind, for `dollars`.
+    fn opus_used(tokens: u64, dollars: f64) -> Figures {
+        Figures(BTreeMap::from([(
+            "claude-opus-5-5".to_string(),
+            Spend {
+                tokens: Some(Tokens {
+                    input: tokens,
+                    output: tokens,
+                    cache_write: tokens,
+                    cache_read: tokens,
+                }),
+                usd: Usd::new(dollars),
+            },
+        )]))
+    }
+
+    /// The cost kept of each session of each run of `recorded`.
+    fn costs(recorded: &[Recorded]) -> Vec<Option<SessionCost>> {
+        recorded
+            .iter()
+            .flat_map(|run| &run.sessions)
+            .map(|session| session.kept.as_ref().and_then(|kept| kept.cost.clone()))
+            .collect()
+    }
+
+    /// The costs of the sessions of `runs`, once they read other than
+    /// `before`.
+    #[track_caller]
+    fn costs_once_changed<'a>(
+        runs: &'a Runs,
+        before: &'a [Option<SessionCost>],
+    ) -> impl Future<Output = Vec<Option<SessionCost>>> + 'a {
+        let caller = Location::caller();
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let read = costs(&runs.read().await.unwrap());
+                    if read != before {
+                        break read;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("the costs at {caller} stayed {before:?}"))
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_sessions_cost_is_kept_as_its_turns_and_its_end_are_reported() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let runs = runs_in(work_dir.path()).await;
+        let running = runs
+            .begin(work(1, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+            .await
+            .unwrap();
+        let recorder = running
+            .session(
+                &work_dir.path().join("sessions/1/triage-1"),
+                &opus_for_triage(),
+                &Briefs::shipped(),
+            )
+            .await;
+
+        let before = costs(&runs.read().await.unwrap());
+        recorder.reported(Reported::TurnStarted);
+        let mid_turn = costs_once_changed(&runs, &before).await;
+        recorder.reported(Reported::TurnEnded(TurnSpend::OfSessionSoFar(opus_used(
+            10, 1.5,
+        ))));
+        recorder.ended(std::time::Duration::from_secs(90));
+        running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
+        let recorded = runs_in(work_dir.path()).await.read().await.unwrap();
+
+        assert_eq!(
+            before,
+            [Some(SessionCost {
+                time: None,
+                spend: Some(Figures::default()),
+            })]
+        );
+        assert_eq!(mid_turn, [Some(SessionCost::default())]);
+        assert_eq!(
+            costs(&recorded),
+            [Some(SessionCost {
+                time: Some(std::time::Duration::from_secs(90)),
+                spend: Some(opus_used(10, 1.5)),
+            })]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_runs_cost_counts_a_session_recorded_before_costs_were_kept_as_one_with_no_figures() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let runs = runs_in(work_dir.path()).await;
+        let ran = |cost: Option<serde_json::Value>| {
+            let mut session = serde_json::json!({
+                "dir": "sessions/1/triage-1",
+                "model": "opus",
+                "reported_model": "claude-opus-5-5",
+                "effort": null,
+                "layers": {"settings": {}, "briefs": {}},
+            });
+            if let Some(cost) = cost {
+                session["cost"] = cost;
+            }
+            session
+        };
+        let mut record = ended(1, "triage", 1);
+        record["sessions"] = serde_json::json!([
+            ran(Some(serde_json::json!({
+                "seconds": 30.0,
+                "models": {"claude-haiku-5-5": {
+                    "tokens": {"input": 1, "output": 2, "cache_write": 3, "cache_read": 4},
+                    "usd": 0.5,
+                }},
+            }))),
+            ran(None),
+        ]);
+        keep(&runs, record).await;
+
+        let recorded = runs.read().await.unwrap();
+
+        let [run] = &recorded[..] else {
+            panic!("one run: {recorded:#?}");
+        };
+        assert_eq!(
+            run.cost(),
+            RunCost {
+                time: None,
+                models: Figures(BTreeMap::from([
+                    (
+                        "claude-haiku-5-5".into(),
+                        Spend {
+                            tokens: Some(Tokens {
+                                input: 1,
+                                output: 2,
+                                cache_write: 3,
+                                cache_read: 4,
+                            }),
+                            usd: Usd::new(0.5),
+                        }
+                    ),
+                    ("claude-opus-5-5".into(), Spend::ABSENT),
+                ])),
+                all: Spend::ABSENT,
             }
         );
     }

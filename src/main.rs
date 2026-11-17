@@ -1018,6 +1018,7 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
             let case = match Case::open(case).await {
                 Ok(case) => case,
                 Err(e) => {
+                    out.finished();
                     return print_answer(Err((
                         FAILURE,
                         format!("the case cannot be replayed: {e}"),
@@ -1030,6 +1031,7 @@ async fn replay(config: &Config, case: &Path, out: &Path, winding_up: &WindingUp
                 replay::run(&case, &out, Arc::new(harness), factory_config).await
             }
             .await;
+            out.finished();
             match ran {
                 Ok(_) => SUCCESS,
                 Err(e) => {

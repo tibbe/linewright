@@ -16,7 +16,8 @@ use crate::domain::Timestamp;
 use crate::environment;
 use crate::git;
 use crate::harness::{
-    GhReach, Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn, UsageLimit,
+    Deadline, GhReach, Harness, NextTurn, Purpose, Reporter, SessionError, SessionSpec, Turn,
+    UsageLimit,
 };
 use crate::prompts::{self, SentBack};
 use crate::reconcile::Subject;
@@ -514,13 +515,14 @@ where
     BFut: Future<Output = Result<U, Refused>>,
 {
     let conversed = conversation(sessions, ctx, spec, first, accept, begin).await;
-    record_end(sessions, &spec.record);
+    end(sessions, &spec.record, &spec.report, spec.deadline);
     conversed
 }
 
-/// Writes that the session whose record is `record` ended now, or else logs
-/// that its end is not recorded: the session has ended either way.
-pub(crate) fn record_end(sessions: &Sessions, record: &Path) {
+/// Ends the session whose record is `record` now: writes its end there, or
+/// else logs that it is not written, as the session has ended either way,
+/// and reports to `report` the time its `deadline` counted.
+fn end(sessions: &Sessions, record: &Path, report: &Reporter, deadline: Deadline) {
     if let Err(unrecorded) = append_event(record, &transcript::session_ended(sessions.clock.now()))
     {
         warn!(
@@ -528,6 +530,7 @@ pub(crate) fn record_end(sessions: &Sessions, record: &Path) {
             "the session's end is not recorded"
         );
     }
+    report.ended(deadline.counted(tokio::time::Instant::now()));
 }
 
 /// [`converse`], up to the session's end.
@@ -658,15 +661,16 @@ async fn take_turn(
         append_event(&spec.record, &transcript::usage_limit_waiting(now, until))
             .context("writing the wait for the usage limit")
             .map_err(infra)?;
-        cancellable(ctx, sessions.clock.sleep_until(until)).await?;
+        let waited = cancellable(ctx, sessions.clock.sleep_until(until)).await;
+        spec.deadline =
+            UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
+        waited?;
         append_event(
             &spec.record,
             &transcript::usage_limit_waited(sessions.clock.now()),
         )
         .context("writing the end of the wait for the usage limit")
         .map_err(infra)?;
-        spec.deadline =
-            UsageLimit::deadline_after_wait(spec.deadline, refused_at, tokio::time::Instant::now());
         info!(subject, %resets_at, "usage limit reset; resuming the session");
         next = NextTurn::Resume {
             session,
@@ -761,7 +765,7 @@ pub(crate) struct Opened<'a> {
     gh: GhReach,
     /// When the session times out, the making of its clone and its
     /// maintenance command included.
-    deadline: tokio::time::Instant,
+    deadline: Deadline,
 }
 
 /// Opens the session of `purpose`, with its record and its attachments
@@ -783,31 +787,57 @@ pub(crate) async fn open_session<'a, T>(
         .records
         .record_dir(&purpose, sessions.clock.now())
         .map_err(infra)?;
-    let opened = open_in(sessions, ctx, purpose, branch, check_out, record.clone()).await;
+    let settings = &ctx.with.settings;
+    let report = ctx
+        .records
+        .session(&record, settings, &ctx.with.briefs)
+        .await;
+    let deadline = Deadline::after(tokio::time::Instant::now(), settings.session_timeout.value);
+    let opened = open_in(
+        sessions,
+        ctx,
+        purpose,
+        branch,
+        check_out,
+        Begun {
+            record: record.clone(),
+            report: report.clone(),
+            deadline,
+        },
+    )
+    .await;
     if opened.is_err() {
-        record_end(sessions, &record);
+        end(sessions, &record, &report, deadline);
     }
     opened
 }
 
-/// [`open_session`], in its `record`.
+/// A session recorded, with its deadline set, whose clone is still to be
+/// made.
+struct Begun {
+    record: PathBuf,
+    report: Reporter,
+    deadline: Deadline,
+}
+
+/// [`open_session`], once it is [`Begun`].
 async fn open_in<'a, T>(
     sessions: &Sessions,
     ctx: SessionCtx<'a>,
     purpose: Purpose,
     branch: &str,
     check_out: impl AsyncFnOnce(&Path) -> Result<T>,
-    record: PathBuf,
+    begun: Begun,
 ) -> Result<(Opened<'a>, Workspace, T), Failure> {
+    let Begun {
+        record,
+        report,
+        deadline,
+    } = begun;
     let settings = &ctx.with.settings;
     let attachments = Dir::create(&record)
         .context("creating the attachments directory")
         .map_err(infra)?;
-    let report = ctx
-        .records
-        .session(&record, settings, &ctx.with.briefs)
-        .await;
-    let deadline = tokio::time::Instant::now() + settings.session_timeout.value;
     let started_at = sessions.clock.now();
     let started = tokio::time::Instant::now();
     append_event(&record, &transcript::clone_started(started_at))
@@ -824,7 +854,7 @@ async fn open_in<'a, T>(
     let made = tokio::select! {
         biased;
         () = ctx.cancel.cancelled() => Err(Unmade::Cancelled),
-        () = tokio::time::sleep_until(deadline) => Err(Unmade::TimedOut),
+        () = tokio::time::sleep_until(deadline.at()) => Err(Unmade::TimedOut),
         made = making => made.map_err(Unmade::Failed),
     };
     let duration = started.elapsed();
@@ -896,7 +926,7 @@ async fn run_maintenance(
     purpose: &Purpose,
     command: &MaintenanceCommand,
     record: &Path,
-    deadline: tokio::time::Instant,
+    deadline: Deadline,
     ws: &mut Workspace,
 ) -> Result<(), Failure> {
     let settings = &ctx.with.settings;
@@ -917,7 +947,7 @@ async fn run_maintenance(
             settings.effort_set(),
             &sessions.gh,
         ),
-        deadline,
+        deadline: deadline.at(),
         log: &record.join(transcript::MAINTENANCE_OUTPUT),
     };
     let (ran, leftovers) =
@@ -983,8 +1013,13 @@ impl Opened<'_> {
     /// `failure`, with the session's end written to its transcript: the
     /// session ends before its agent starts.
     pub(crate) fn ended(&self, sessions: &Sessions, failure: Failure) -> Failure {
-        record_end(sessions, &self.record);
+        self.end(sessions);
         failure
+    }
+
+    /// Ends the session before its agent starts.
+    pub(crate) fn end(&self, sessions: &Sessions) {
+        end(sessions, &self.record, &self.report, self.deadline);
     }
 
     /// The session, sent the `prompt` made for its attachments directory,

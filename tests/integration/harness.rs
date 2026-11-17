@@ -1,14 +1,17 @@
 use crate::common;
 
+use std::collections::BTreeMap;
+use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::*;
+use linewright::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright::domain::Number;
 use linewright::harness::claude::ClaudeCode;
 use linewright::harness::{
-    GhReach, Harness, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
+    Deadline, GhReach, Harness, Purpose, Reported, Reporter, SessionError, SessionSpec, UsageLimit,
 };
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
@@ -69,7 +72,7 @@ async fn timed_out_once_said(
     mut session: SessionSpec,
     said: &str,
 ) -> SessionError {
-    session.deadline = tokio::time::Instant::now() + std::time::Duration::from_hours(1);
+    session.deadline = Deadline::after(tokio::time::Instant::now(), Duration::from_hours(1));
     let record = session.record.clone();
     let turn = tokio::spawn(async move { harness.start(&session).await });
     until_said(&record, said).await;
@@ -130,7 +133,7 @@ fn triage_session(dir: &Path) -> SessionSpec {
         effort: None,
         environment: Arc::new(Given::default()),
         gh: GhReach::Direct,
-        deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(30),
+        deadline: Deadline::after(tokio::time::Instant::now(), Duration::from_secs(30)),
         report: Reporter::new(|_| {}),
     }
 }
@@ -171,12 +174,7 @@ async fn a_session_reports_the_model_its_init_event_names() {
 
     harness.start(&session).await.unwrap();
 
-    assert_eq!(
-        *reports.lock().unwrap(),
-        [Reported {
-            model: "claude-opus-5-5".into()
-        }]
-    );
+    assert_eq!(models(&reports), ["claude-opus-5-5"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -200,10 +198,215 @@ async fn a_session_that_times_out_has_reported_the_model_it_ran() {
     assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
     assert_eq!(
         *reports.lock().unwrap(),
-        [Reported {
-            model: "claude-sonnet-5-5".into()
-        }]
+        [
+            Reported::TurnStarted,
+            Reported::Model("claude-sonnet-5-5".into()),
+            Reported::TurnEnded(TurnSpend::None),
+        ]
     );
+}
+
+/// The models `reports` named, in order.
+#[track_caller]
+fn models(reports: &Mutex<Vec<Reported>>) -> Vec<String> {
+    reports
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|reported| match reported {
+            Reported::Model(model) => Some(model.clone()),
+            Reported::TurnStarted | Reported::TurnEnded(_) => None,
+        })
+        .collect()
+}
+
+/// An `init` event recorded from Claude Code 2.1.311.
+#[track_caller]
+fn recorded_init() -> Value {
+    serde_json::from_str(include_str!("fixtures/cost/init.json")).unwrap()
+}
+
+/// The `result` event recorded with [`recorded_init`], of a session that
+/// ran on Opus with subagents on Haiku.
+#[track_caller]
+fn recorded_result() -> Value {
+    serde_json::from_str(include_str!("fixtures/cost/result.json")).unwrap()
+}
+
+/// What [`recorded_result`] says each model used.
+fn recorded_figures() -> Figures {
+    Figures(BTreeMap::from([
+        (
+            "claude-haiku-5-5".to_string(),
+            Spend {
+                tokens: Some(Tokens {
+                    input: 447_386,
+                    output: 30_754,
+                    cache_write: 0,
+                    cache_read: 0,
+                }),
+                usd: Usd::new(0.150_115_600_000_000_02),
+            },
+        ),
+        (
+            "claude-opus-5-5".to_string(),
+            Spend {
+                tokens: Some(Tokens {
+                    input: 258,
+                    output: 81_950,
+                    cache_write: 315_443,
+                    cache_read: 8_174_300,
+                }),
+                usd: Usd::new(5.229_354_000_000_001),
+            },
+        ),
+    ]))
+}
+
+/// What a turn on `harness`, of a session recorded in `dir`, reported last
+/// of its spend, once it reported its start first.
+#[track_caller]
+fn turn_spend(dir: &Path, harness: ClaudeCode) -> impl Future<Output = TurnSpend> + '_ {
+    let caller = Location::caller();
+    async move {
+        let mut session = triage_session(dir);
+        let reports = reports_of(&mut session);
+        let _ = harness.start(&session).await;
+        let reports = reports.lock().unwrap();
+        assert_eq!(
+            reports.first(),
+            Some(&Reported::TurnStarted),
+            "the turn at {caller} reported {reports:?}"
+        );
+        match reports.last() {
+            Some(Reported::TurnEnded(spend)) => spend.clone(),
+            last => panic!("expected the turn's end last at {caller}, got {last:?}"),
+        }
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_on_claude_code_from_2_1_277_reports_the_sessions_figures_so_far() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &[recorded_init(), recorded_result()]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfSessionSoFar(recorded_figures()));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_on_claude_code_before_2_1_277_reports_its_own_figures() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut init = recorded_init();
+    init["claude_code_version"] = "2.1.276".into();
+    let harness = harness_streaming(dir.path(), &[init, recorded_result()]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfTurn(recorded_figures()));
+}
+
+/// The recorded `init` alone.
+fn without_a_result() -> Vec<Value> {
+    vec![recorded_init()]
+}
+
+/// The recorded `init`, and the recorded `result` as `change` changes it.
+fn with_result_changed(change: impl FnOnce(&mut Value)) -> Vec<Value> {
+    let mut result = recorded_result();
+    change(&mut result);
+    vec![recorded_init(), result]
+}
+
+/// The recorded `init` as `change` changes it, and the recorded `result`.
+fn with_init_changed(change: impl FnOnce(&mut Value)) -> Vec<Value> {
+    let mut init = recorded_init();
+    change(&mut init);
+    vec![init, recorded_result()]
+}
+
+#[rstest]
+#[case::no_result(without_a_result())]
+#[case::a_result_of_an_error_during_execution(with_result_changed(|result| {
+    result["subtype"] = "error_during_execution".into();
+    result["is_error"] = true.into();
+}))]
+#[case::a_result_without_model_usage(with_result_changed(|result| {
+    result.as_object_mut().unwrap().remove("modelUsage");
+}))]
+#[case::no_version(with_init_changed(|init| {
+    init.as_object_mut().unwrap().remove("claude_code_version");
+}))]
+#[case::a_version_that_does_not_read(with_init_changed(|init| {
+    init["claude_code_version"] = "2.x".into();
+}))]
+#[test_log::test(tokio::test)]
+async fn a_turn_reports_no_figures_on(#[case] events: Vec<Value>) {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &events);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::None);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_that_times_out_after_its_result_reports_the_figures_the_result_gave() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![
+                recorded_init(),
+                recorded_result(),
+                saying("Still running."),
+            ]),
+            Step::Hang,
+        ],
+    );
+    let mut session = triage_session(dir.path());
+    let reports = reports_of(&mut session);
+
+    let error = timed_out_once_said(harness, session, "Still running.").await;
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert_eq!(
+        reports.lock().unwrap().last(),
+        Some(&Reported::TurnEnded(TurnSpend::OfSessionSoFar(
+            recorded_figures()
+        )))
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_process_never_starts_used_no_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = harness_streaming(dir.path(), &[recorded_init(), recorded_result()]);
+    harness.container = dir.path().join("missing");
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfTurn(Figures::default()));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_model_the_harness_cannot_price_has_no_cost_and_one_missing_a_kind_no_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut result = recorded_result();
+    result["modelUsage"]["claude-haiku-5-5"]["costBasis"] = "unknown".into();
+    result["modelUsage"]["claude-opus-5-5"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cacheReadInputTokens");
+    let harness = harness_streaming(dir.path(), &[recorded_init(), result]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    let mut figures = recorded_figures();
+    figures.0.get_mut("claude-haiku-5-5").unwrap().usd = None;
+    figures.0.get_mut("claude-opus-5-5").unwrap().tokens = None;
+    assert_eq!(spend, TurnSpend::OfSessionSoFar(figures));
 }
 
 #[test_log::test(tokio::test)]
@@ -1299,8 +1502,23 @@ fn a_session_resumed_after_waiting_out_the_usage_limit_has(
     let minute = |n: u64| start + Duration::from_mins(n);
     let woke_at = minute(120);
 
-    let deadline =
-        UsageLimit::deadline_after_wait(minute(deadline_minute), minute(refused_minute), woke_at);
+    let set = Deadline::after(start, Duration::from_mins(deadline_minute));
 
-    assert_eq!(deadline - woke_at, Duration::from_mins(left_minutes));
+    let deadline = UsageLimit::deadline_after_wait(set, minute(refused_minute), woke_at);
+
+    assert_eq!(deadline.at() - woke_at, Duration::from_mins(left_minutes));
+}
+
+#[test_log::test]
+fn the_time_a_session_timeout_counts_leaves_out_the_waits_for_the_usage_limit() {
+    let start = tokio::time::Instant::now();
+    let minute = |n: u64| start + Duration::from_mins(n);
+    let set = Deadline::after(start, Duration::from_mins(60));
+
+    let deadline = UsageLimit::deadline_after_wait(set, minute(20), minute(120));
+
+    assert_eq!(
+        [set.counted(minute(10)), deadline.counted(minute(130))],
+        [Duration::from_mins(10), Duration::from_mins(30)]
+    );
 }

@@ -10,22 +10,26 @@ pub use journal::Journal;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
+use serde::Serialize;
 use tracing::{error, info};
 
 use crate::case::Case;
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
+use crate::cost::RunCost;
 use crate::ending::Signal;
-use crate::environment::{self, Source, replays};
+use crate::environment::replays::{self, BuildLog};
+use crate::environment::{self, Source};
 use crate::factory::FactoryConfig;
 use crate::harness::{GhReach, Harness};
 use crate::repo_files::{RepoLayer, holding};
 use crate::run::{self, Shell, ShellParts};
 use crate::runs::files::RunFiles;
-use crate::runs::{Begin, Ending, OutcomeName, Unended};
+use crate::runs::{Begin, Ending, OutcomeName, RunId, Unended};
 use crate::serving::Signals;
 use crate::session::{Cancellation, Sessions};
 use crate::store::local::LocalStore;
@@ -45,6 +49,10 @@ const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
 const CASE: &str = "case";
 const BUILD_LOG: &str = "build.log";
+/// Beside [`BUILD_LOG`]: how long the build took, in seconds.
+const BUILD_SECONDS: &str = "build-seconds";
+/// The time of the replay and what its run cost.
+const COST: &str = "cost.json";
 const COMMITS: &str = "commits.git";
 
 /// The link to the attachment `name` from the writes, its path from them.
@@ -56,9 +64,30 @@ fn attachment_link(name: &str) -> String {
 #[derive(Clone, Debug)]
 pub struct Output {
     dir: PathBuf,
+    /// When the replay started.
+    started: Instant,
+    written: Arc<Mutex<Parts>>,
+}
+
+/// What the output holds that later writes depend on.
+#[derive(Debug, Default)]
+struct Parts {
     /// The ending written as the outcome, once it is: no outcome replaces
     /// it.
-    ended: Arc<Mutex<Option<Ending>>>,
+    ended: Option<Ending>,
+    /// The replay's run, once it began.
+    run: Option<RunId>,
+    /// Whether the cost is written: it is written once, as the replay ends.
+    cost_written: bool,
+}
+
+/// The cost of a replay, as its output keeps it (`docs/specs/benchmarks.md`,
+/// The output of a replay).
+#[derive(Serialize)]
+struct ReplayCost {
+    seconds: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run: Option<RunCost>,
 }
 
 /// Why a directory cannot take a replay's output.
@@ -83,7 +112,8 @@ impl Output {
     pub fn make(dir: &Path) -> Result<Output, OutputRefusal> {
         Ok(Output {
             dir: make_empty_dir(dir)?,
-            ended: Arc::default(),
+            started: Instant::now(),
+            written: Arc::default(),
         })
     }
 
@@ -92,16 +122,48 @@ impl Output {
     }
 
     /// Writes `interrupted` as the outcome unless the run's ending is
-    /// written, and gives the status the replay exits with for `signal`:
-    /// its own, or 0 once the run ended.
+    /// written, and the cost unless it is written, and gives the status the
+    /// replay exits with for `signal`: its own, or 0 once the run ended.
     pub fn signalled(&self, signal: Signal) -> i32 {
-        match self.interrupted() {
+        let status = match self.interrupted() {
             Ok(false) => 0,
             Ok(true) => signal.exit_status(),
             Err(e) => {
                 error!(error = format!("{e:#}"), "writing the outcome failed");
                 signal.exit_status()
             }
+        };
+        self.finished();
+        status
+    }
+
+    /// Writes the cost, as the replay ends now, unless it is written: the
+    /// time since the output was made, and what the replay's run cost, if
+    /// it began. It logs what it cannot write: the cost without the run's
+    /// when the run's record cannot be read, and nothing when the file
+    /// cannot be written.
+    pub fn finished(&self) {
+        let mut written = self.lock_written();
+        if written.cost_written {
+            return;
+        }
+        let seconds = self.started.elapsed().as_secs_f64();
+        let run = written
+            .run
+            .as_ref()
+            .and_then(|id| match RunFiles::new(&self.dir).cost(id) {
+                Ok(cost) => Some(cost),
+                Err(e) => {
+                    error!(error = format!("{e:#}"), "reading what the run cost failed");
+                    None
+                }
+            });
+        let text = serde_json::to_string_pretty(&ReplayCost { seconds, run })
+            .map_err(anyhow::Error::from)
+            .and_then(|text| self.write(COST, &format!("{text}\n")));
+        match text {
+            Ok(()) => written.cost_written = true,
+            Err(e) => error!(error = format!("{e:#}"), "writing the cost failed"),
         }
     }
 
@@ -112,28 +174,30 @@ impl Output {
     ///
     /// When the file cannot be written.
     pub fn interrupted(&self) -> Result<bool> {
-        let ended = self.lock_ended();
-        if ended.is_some() {
+        let written = self.lock_written();
+        if written.ended.is_some() {
             return Ok(false);
         }
         write_outcome(&self.dir, OutcomeName::Unended(Unended::Interrupted))?;
         Ok(true)
     }
 
-    fn in_flight(&self) -> Result<()> {
-        let _ended = self.lock_ended();
+    /// Writes `in-flight` as the outcome of `run`, which has begun.
+    fn in_flight(&self, run: &RunId) -> Result<()> {
+        let mut written = self.lock_written();
+        written.run = Some(run.clone());
         write_outcome(&self.dir, OutcomeName::Unended(Unended::InFlight))
     }
 
     fn ended(&self, ending: Ending) -> Result<()> {
-        let mut ended = self.lock_ended();
+        let mut written = self.lock_written();
         write_outcome(&self.dir, OutcomeName::Ended(ending))?;
-        *ended = Some(ending);
+        written.ended = Some(ending);
         Ok(())
     }
 
-    fn lock_ended(&self) -> MutexGuard<'_, Option<Ending>> {
-        self.ended
+    fn lock_written(&self) -> MutexGuard<'_, Parts> {
+        self.written
             .lock()
             .expect("the output's lock is not poisoned")
     }
@@ -143,6 +207,17 @@ impl Output {
     fn write(&self, name: &str, text: &str) -> Result<()> {
         write_part(&self.dir, name, text)
     }
+}
+
+/// Writes the output of `build` and its time into `dir`, as the parts
+/// [`BUILD_LOG`] and [`BUILD_SECONDS`].
+fn write_build(dir: &Path, build: &BuildLog) -> Result<()> {
+    write_part(dir, BUILD_LOG, &build.output)?;
+    write_part(
+        dir,
+        BUILD_SECONDS,
+        &format!("{}\n", build.time.as_secs_f64()),
+    )
 }
 
 /// The directory `dir`, made when it is missing, as an absolute path.
@@ -191,7 +266,8 @@ fn write_whole(path: &Path, partial: &Path, text: &str) -> Result<()> {
 /// Runs the stage of `case` on its item with `config` and `harness`, with
 /// the case in place of GitHub, and keeps what it did in `out`: the version
 /// and the ID of the case's run first, `in-flight` as the outcome once the
-/// run begins, and its ending once it ends. Its sessions' `gh` cannot read the case's repository on GitHub
+/// run begins, its ending once it ends, and the cost once it returns,
+/// however it does. Its sessions' `gh` cannot read the case's repository on GitHub
 /// (`docs/specs/benchmarks.md`, The repository on GitHub). `config`'s work
 /// directory is that of the case's repository. The run's clones are kept in
 /// a directory of this replay's own under it, removed through `config`'s
@@ -206,6 +282,18 @@ fn write_whole(path: &Path, partial: &Path, text: &str) -> Result<()> {
 /// `gh` cannot be started, or the run cannot be begun: then the run does not
 /// run. Once the run ended, only when its ending cannot be written.
 pub async fn run(
+    case: &Case,
+    out: &Output,
+    harness: Arc<dyn Harness>,
+    config: FactoryConfig,
+) -> Result<Ending> {
+    let ran = run_unfinished(case, out, harness, config).await;
+    out.finished();
+    ran
+}
+
+/// [`run`], but for writing the cost.
+async fn run_unfinished(
     case: &Case,
     out: &Output,
     harness: Arc<dyn Harness>,
@@ -271,7 +359,7 @@ async fn run_in(
         harness.clone(),
         &replay_dir.join("store"),
         &out.path().join(COMMITS),
-        |output| out.write(BUILD_LOG, output),
+        |build| write_build(out.path(), build),
     )
     .await?;
     let store: Arc<dyn Store> = Arc::new(Journal::new(setting.store.clone(), out.path()));
@@ -318,7 +406,7 @@ async fn run_in(
             now,
         )
         .await?;
-    out.in_flight()?;
+    out.in_flight(running.id())?;
     info!(run = %running.id(), case = %case.run(), "replaying");
     let ctx = run::Ctx {
         with: shell.run_with(&setting.repo, RunKind::Stage(kind)),
@@ -357,8 +445,8 @@ impl Setting {
     /// `harness`: seeds the model of GitHub at `root`, its repository at
     /// `repository`, refuses a file on the case's default branch that would
     /// hold `kind`, prepares the environment, handing the output of its
-    /// build to `build_log` when this built it, and starts the gate of the
-    /// sessions' `gh`.
+    /// build and its time to `build_log` when this built it, and starts the
+    /// gate of the sessions' `gh`.
     ///
     /// # Errors
     ///
@@ -372,7 +460,7 @@ impl Setting {
         harness: Arc<dyn Harness>,
         root: &Path,
         repository: &Path,
-        build_log: impl Fn(&str) -> Result<()>,
+        build_log: impl Fn(&BuildLog) -> Result<()>,
     ) -> Result<Setting> {
         let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(case.start()));
         let seeded = LocalStore::from_case(root, repository, case, clock.clone())
@@ -426,14 +514,14 @@ impl Setting {
         .await;
         let environment = match prepared {
             Ok(in_use) => {
-                if let Some(output) = in_use.built_output() {
-                    build_log(output)?;
+                if let Some(build) = in_use.built() {
+                    build_log(build)?;
                 }
                 in_use.source()
             }
             Err(replays::Unprepared::Failed(failed)) => {
-                if let Some(output) = &failed.output {
-                    build_log(output)?;
+                if let Some(build) = &failed.output {
+                    build_log(build)?;
                 }
                 return Err(failed.into());
             }

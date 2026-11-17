@@ -204,7 +204,7 @@ async fn the_maintenance_commands_time_counts_against_its_sessions_timeout() {
     world.harness.on(WorkKind::Triage, {
         let left = left.clone();
         move |call| {
-            *left.lock().unwrap() = Some(call.spec.deadline - tokio::time::Instant::now());
+            *left.lock().unwrap() = Some(call.spec.deadline.at() - tokio::time::Instant::now());
             Ok(json!({
                 "outcome": "ready-for-agent",
                 "category": "bug",

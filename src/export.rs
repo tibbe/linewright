@@ -181,7 +181,7 @@ impl Snapshot {
             snapshot.copy_into(dir)?;
             recorded.sessions.push(SessionEntry {
                 dir: dir.join(&snapshot.in_output),
-                ran: snapshot.session.ran,
+                kept: snapshot.session.kept,
             });
         }
         RunFiles::new(dir).write(&recorded)?;
