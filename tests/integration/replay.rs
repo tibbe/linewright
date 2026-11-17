@@ -118,7 +118,15 @@ pub(crate) fn replayed_with<'a>(
         let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
-        let ended = Box::pin(replay::run(&case, &output, harness, config, configuration)).await;
+        let ended = Box::pin(replay::run(
+            &case,
+            &output,
+            harness,
+            config,
+            configuration,
+            &replay::Under::command(),
+        ))
+        .await;
         winding_up.wait().await;
         Replayed { out, ended }
     }

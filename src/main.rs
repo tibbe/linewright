@@ -23,7 +23,7 @@ use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
 use linewright::replay::judge::{self, JudgeRecord};
-use linewright::replay::{self, Configuration, Output};
+use linewright::replay::{self, Configuration, Output, Under};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use linewright::serving::{self, OnUsageLimit, Starting, briefs};
@@ -1054,13 +1054,14 @@ async fn replay(
             log.begin();
             let ran = async {
                 let (harness, factory_config) = on_case(config, token, &case, winding_up).await?;
-                replay::run(
+                Box::pin(replay::run(
                     &case,
                     &out,
                     Arc::new(harness),
                     factory_config,
                     configuration.as_ref(),
-                )
+                    &Under::command(),
+                ))
                 .await
             }
             .await;
@@ -1141,7 +1142,15 @@ async fn judge(config: &Config, case: &Path, dir: &Path, winding_up: &WindingUp,
             let (harness, factory_config) = on_case(config, token, &case, winding_up)
                 .await
                 .map_err(judge::Unjudged::Failed)?;
-            judge::run(&case, &replayed, record, Arc::new(harness), factory_config).await
+            judge::run(
+                &case,
+                &replayed,
+                record,
+                Arc::new(harness),
+                factory_config,
+                &Under::command(),
+            )
+            .await
         }),
         |signal| {
             judge::discard(&record_dir);

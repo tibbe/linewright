@@ -20,6 +20,7 @@ use linewright::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright::factory::FactoryConfig;
 use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
+use linewright::replay::Under;
 use linewright::replay::judge::{self, JudgeRecord, Judgement, Unjudged};
 use linewright::work_settings::{Effort, Partial, StageKey, StageTable};
 use serde_json::{Value, json};
@@ -91,7 +92,7 @@ fn judging<'a>(
         let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
-        let judged = judge::run(&case, &replayed, record, harness, config).await;
+        let judged = judge::run(&case, &replayed, record, harness, config, &Under::command()).await;
         let kept = judged.map(|judgement: Judgement| {
             let summary = judgement.summary();
             judge::keep(&replayed, judgement)

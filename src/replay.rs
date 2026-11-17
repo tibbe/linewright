@@ -18,6 +18,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
 use serde::Serialize;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info};
 
 use crate::case::{Case, CaseItemKind};
@@ -29,7 +30,7 @@ use crate::ending::Signal;
 use crate::environment::replays::{self, BuildLog};
 use crate::environment::{self, Source};
 use crate::factory::FactoryConfig;
-use crate::harness::{GhReach, Harness};
+use crate::harness::{GhReach, Harness, UsageLimit};
 use crate::repo_files::{RepoLayer, holding};
 use crate::run::{self, Shell, ShellParts};
 use crate::runs::files::RunFiles;
@@ -60,6 +61,34 @@ const BUILD_SECONDS: &str = "build-seconds";
 /// The time of the replay and what its run cost.
 const COST: &str = "cost.json";
 const COMMITS: &str = "commits.git";
+
+/// What a replay or a judge runs under: what cancels its run, and what a
+/// session refused for the usage limit does.
+pub struct Under {
+    pub cancel: Cancellation,
+    pub usage_limit: OnUsageLimit,
+}
+
+impl Under {
+    /// A cancellation that nothing else holds, and sessions that end at the
+    /// usage limit.
+    pub fn command() -> Under {
+        Under {
+            cancel: Cancellation::default(),
+            usage_limit: OnUsageLimit::End,
+        }
+    }
+}
+
+/// What a session refused for the usage limit does.
+#[derive(Clone)]
+pub enum OnUsageLimit {
+    /// It ends, and its run with it.
+    End,
+    /// It reports the limit to the receiver of this sender, waits until the
+    /// limit resets, and goes on.
+    WaitOut(UnboundedSender<UsageLimit>),
+}
 
 /// The link to the attachment `name` from the writes, its path from them.
 fn attachment_link(name: &str) -> String {
@@ -279,7 +308,8 @@ fn write_whole(path: &Path, partial: &Path, text: impl AsRef<[u8]>) -> Result<()
 /// directory is that of the case's repository. The run's clones are kept in
 /// a directory of this replay's own under it, removed through `config`'s
 /// winding up once the run ends, or by a later replay when a signal ends
-/// this one first.
+/// this one first. `under` cancels the run, and says what its sessions do
+/// at the usage limit.
 ///
 /// # Errors
 ///
@@ -294,8 +324,9 @@ pub async fn run(
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
     configuration: Option<&Configuration>,
+    under: &Under,
 ) -> Result<Ending> {
-    let ran = run_unfinished(case, out, harness, config, configuration).await;
+    let ran = run_unfinished(case, out, harness, config, configuration, under).await;
     out.finished();
     ran
 }
@@ -307,6 +338,7 @@ async fn run_unfinished(
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
     configuration: Option<&Configuration>,
+    under: &Under,
 ) -> Result<Ending> {
     out.write(VERSION, &format!("{COMMAND} {VERSION_AND_COMMIT}\n"))?;
     out.write(CASE, &format!("{}\n", case.run()))?;
@@ -316,32 +348,32 @@ async fn run_unfinished(
             .context("keeping a copy of the configuration")?;
     }
     let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
-    in_own_dir(
-        &work_dir,
-        winding_up,
-        "replay",
-        async |replay_dir, clones_winding_up| {
-            let ending = run_in(
-                case,
-                out,
-                harness,
-                config,
-                configuration,
-                replay_dir,
-                clones_winding_up,
-            )
-            .await?;
-            out.ended(ending)?;
-            Ok(ending)
-        },
-    )
+    in_own_dir(&work_dir, winding_up, "replay", async |own| {
+        let ending = run_in(case, out, harness, config, configuration, under, own).await?;
+        out.ended(ending)?;
+        Ok(ending)
+    })
     .await?
 }
 
+/// A directory of a replay's or a judge's own, among the replays', and what
+/// winds up the clones made in it.
+#[derive(Clone, Copy)]
+struct OwnDir<'a> {
+    path: &'a Path,
+    clones_winding_up: &'a WindingUp,
+}
+
+impl OwnDir<'_> {
+    /// The clones made in it.
+    fn clones(self) -> Clones {
+        Clones::new(self.path, self.clones_winding_up.clone())
+    }
+}
+
 /// Runs `work` in a new directory of its own, named `prefix`, among the
-/// replays' under `work_dir`, with what winds up the clones it makes there,
-/// and removes the directory through `winding_up` once those are wound up.
-/// The directories of earlier ones that a signal ended are removed
+/// replays' under `work_dir`, and removes the directory through `winding_up`
+/// once the clones made in it are wound up. The directories of earlier ones that a signal ended are removed
 /// meanwhile.
 ///
 /// # Errors
@@ -351,7 +383,7 @@ async fn in_own_dir<T>(
     work_dir: &Path,
     winding_up: WindingUp,
     prefix: &str,
-    work: impl AsyncFnOnce(&Path, &WindingUp) -> T,
+    work: impl AsyncFnOnce(OwnDir<'_>) -> T,
 ) -> Result<T> {
     let replays = Clones::new(&work_dir.join("replays"), winding_up);
     replays.sweep();
@@ -360,7 +392,11 @@ async fn in_own_dir<T>(
         .await
         .with_context(|| format!("creating the {prefix}'s own directory"))?;
     let clones_winding_up = WindingUp::default();
-    let done = work(own.path(), &clones_winding_up).await;
+    let done = work(OwnDir {
+        path: own.path(),
+        clones_winding_up: &clones_winding_up,
+    })
+    .await;
     clones_winding_up.wait().await;
     drop(own);
     Ok(done)
@@ -372,8 +408,8 @@ async fn run_in(
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
     configuration: Option<&Configuration>,
-    replay_dir: &Path,
-    clones_winding_up: &WindingUp,
+    under: &Under,
+    own: OwnDir<'_>,
 ) -> Result<Ending> {
     let kind = case.stage().kind();
     let setting = Setting::prepare(
@@ -381,7 +417,7 @@ async fn run_in(
         &RunKind::Stage(kind),
         &config,
         harness.clone(),
-        &replay_dir.join("store"),
+        &own.path.join("store"),
         &out.path().join(COMMITS),
         |build| write_build(out.path(), build),
     )
@@ -395,7 +431,8 @@ async fn run_in(
             store,
             harness,
             &config,
-            Clones::new(replay_dir, clones_winding_up.clone()),
+            own.clones(),
+            &under.usage_limit,
         ),
         spec_glob: config.spec_glob,
         spec_lookback: config.spec_lookback,
@@ -453,7 +490,7 @@ async fn run_in(
         with,
         as_of: now,
         reworked: None,
-        cancel: Cancellation::default(),
+        cancel: under.cancel.clone(),
         run: running,
     };
     let ended = run::run(Arc::new(shell), work, Arc::new(snapshot), ctx).await;
@@ -587,8 +624,7 @@ impl Setting {
 
     /// The parts the sessions run on `case` in this setting share, with
     /// `config` and `harness`: they fetch from and clone `store`, make their
-    /// clones in `clones`, and end at the usage limit rather than wait it
-    /// out.
+    /// clones in `clones`, and do at the usage limit what `usage_limit` says.
     pub(crate) fn sessions(
         &self,
         case: &Case,
@@ -596,8 +632,12 @@ impl Setting {
         harness: Arc<dyn Harness>,
         config: &FactoryConfig,
         clones: Clones,
+        usage_limit: &OnUsageLimit,
     ) -> Sessions {
-        let (report_refusal, _refusals) = tokio::sync::mpsc::unbounded_channel();
+        let (report_refusal, waits_out_usage_limit) = match usage_limit {
+            OnUsageLimit::End => (tokio::sync::mpsc::unbounded_channel().0, false),
+            OnUsageLimit::WaitOut(report_refusal) => (report_refusal.clone(), true),
+        };
         Sessions {
             store,
             harness,
@@ -610,7 +650,7 @@ impl Setting {
             environment: self.environment.clone(),
             gh: self.gh(),
             result_retries: config.result_retries,
-            waits_out_usage_limit: false,
+            waits_out_usage_limit,
             report_refusal,
         }
     }
