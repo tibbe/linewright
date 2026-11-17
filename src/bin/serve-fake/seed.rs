@@ -1,10 +1,16 @@
 //! What `serve-fake` starts from: the repository, its issues, and what the
 //! fake agent does in each stage.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
-use anyhow::Result;
-use linewright::domain::{Login, MergeMethods, Timestamp, label};
+use anyhow::{Context, Result};
+use linewright::benchmarks::{SuiteName, Suites};
+use linewright::case::{self, Criteria, ReplayStage, SuiteChoice};
+use linewright::database::Database;
+use linewright::domain::{Login, MergeMethods, Number, Timestamp, label};
+use linewright::input::{self, Wanted};
+use linewright::runs::{RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
 use serde_json::{Value, json};
 
@@ -113,6 +119,128 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
     store.unassign_as(MAINTAINER, taken_back, LINEWRIGHT)?;
     store.unlabel_as(taken_back, label::READY_FOR_AGENT)?;
     store.label_as(MAINTAINER, taken_back, label::READY_FOR_HUMAN)?;
+    Ok(())
+}
+
+/// The issue whose runs the seed's suite holds cases of: the one closed as
+/// done.
+const CASES_ISSUE: Number = Number(3);
+
+/// The suite of design cases.
+const BOARD: &str = "board";
+
+/// A case of [`BOARD`], and the design run of [`CASES_ISSUE`] it is
+/// captured from.
+struct SeedCase {
+    name: &'static str,
+    /// The run's number.
+    n: u32,
+    /// When the run started, the day before the clock starts.
+    started_at: &'static str,
+    /// How the run ended, twenty minutes after it started.
+    ending: &'static str,
+    criteria: &'static str,
+}
+
+const BOARD_CASES: [SeedCase; 2] = [
+    SeedCase {
+        name: "columns-first-try",
+        n: 1,
+        started_at: "2026-03-01T10:00:00Z",
+        ending: "handed-back",
+        criteria: "A good design names each column of the board after its stage.\n\nIt keeps the names short enough for a narrow column.\n",
+    },
+    SeedCase {
+        name: "columns-named",
+        n: 2,
+        started_at: "2026-03-01T14:00:00Z",
+        ending: "done",
+        criteria: "A good design cuts the work into one ticket, with a test that reads the names off the board.\n",
+    },
+];
+
+/// A suite with no cases yet.
+const EMPTY_SUITE: &str = "triage-basics";
+
+/// Writes into the work directory `work_dir` the suites the web UI shows: a
+/// suite of design cases captured from #3's runs, which the seed records
+/// as ended, and an empty suite of triage. A work directory that holds the
+/// first of those runs already is left as it is.
+///
+/// # Errors
+///
+/// When the database, the store or a capture fails.
+pub async fn suites(store: &LocalStore, work_dir: &Path) -> Result<()> {
+    let db = Database::open(work_dir).await?;
+    let runs = Runs::new(db.clone());
+    let suites = Suites::new(db);
+    let first = run_of(&BOARD_CASES[0])?;
+    if runs.try_read_run(&first).await?.is_some() {
+        return Ok(());
+    }
+    let wanted = Wanted {
+        items: BTreeSet::from([CASES_ISSUE]),
+        branches: vec![DEFAULT_BRANCH.into()],
+    };
+    for case in &BOARD_CASES {
+        let start: Timestamp = case.started_at.parse()?;
+        let input = input::record(store, &wanted, start).await?;
+        record_run(work_dir, case, start, &serde_json::to_string(&input)?).await?;
+    }
+    let board: SuiteName = BOARD.parse().map_err(anyhow::Error::msg)?;
+    suites.make(&board, ReplayStage::Design).await?;
+    for case in &BOARD_CASES {
+        let capturable = case::capturable(
+            &runs,
+            &suites,
+            &run_of(case)?,
+            &case.name.parse().map_err(anyhow::Error::msg)?,
+            &SuiteChoice::Named(board.clone()),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!(e.why()))?;
+        let criteria = Criteria::parse(case.criteria).context("the seed's criteria are blank")?;
+        case::capture(store, capturable, &criteria, &suites)
+            .await
+            .map_err(|e| anyhow::anyhow!(e.why()))?;
+    }
+    let empty: SuiteName = EMPTY_SUITE.parse().map_err(anyhow::Error::msg)?;
+    suites.make(&empty, ReplayStage::Triage).await?;
+    Ok(())
+}
+
+/// The ID of the run `case` is captured from.
+fn run_of(case: &SeedCase) -> Result<RunId> {
+    format!("{}/design-{}", CASES_ISSUE.0, case.n)
+        .parse()
+        .map_err(anyhow::Error::msg)
+}
+
+/// Records the run `case` is captured from, started at `start`, with
+/// `input`, in the database of `work_dir` as a run keeps it.
+async fn record_run(work_dir: &Path, case: &SeedCase, start: Timestamp, input: &str) -> Result<()> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(work_dir.join("linewright.db"))
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await?;
+    let text = |at: Timestamp| at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    let row: i64 = sqlx::query_scalar(
+        "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
+         VALUES ('item', ?, 'design', ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(i64::try_from(CASES_ISSUE.0)?)
+    .bind(case.n)
+    .bind(text(start))
+    .bind(text(start + chrono::TimeDelta::minutes(20)))
+    .bind(case.ending)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query("INSERT INTO run_inputs (run, input) VALUES (?, ?)")
+        .bind(row)
+        .bind(input)
+        .execute(&pool)
+        .await?;
+    pool.close().await;
     Ok(())
 }
 
