@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -5,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::domain::Number;
+use crate::replay::judge;
 use crate::runs::files::RunFiles;
 use crate::runs::{self, Recorded, RunId, Runs, Started, State};
 use crate::transcript::{
@@ -127,11 +129,13 @@ fn no_run_among_none(which: &Which) -> NoSuchRun {
     }
 }
 
-/// Where runs are kept: in the database, or as files under a directory.
+/// Where runs are kept: in the database, as files under a directory, or,
+/// for the judge of a replay, in the replay's output in that directory.
 #[derive(Clone)]
 pub enum KeptRuns {
     Database(Runs),
     Files(RunFiles),
+    Judge(PathBuf),
 }
 
 impl KeptRuns {
@@ -141,6 +145,7 @@ impl KeptRuns {
         match self {
             KeptRuns::Database(runs) => runs.try_read_run(id).await,
             KeptRuns::Files(files) => files.read(id),
+            KeptRuns::Judge(output) => judge::recorded(output, id),
         }
     }
 
@@ -149,8 +154,9 @@ impl KeptRuns {
     async fn read_run(&self, id: &RunId) -> Option<Recorded> {
         match self {
             KeptRuns::Database(runs) => runs.read_run(id).await,
-            KeptRuns::Files(files) => files
-                .read(id)
+            KeptRuns::Files(_) | KeptRuns::Judge(_) => self
+                .try_read_run(id)
+                .await
                 .inspect_err(
                     |e| warn!(run = %id, error = format!("{e:#}"), "ignoring a run's record"),
                 )
@@ -164,6 +170,7 @@ impl KeptRuns {
         match (self, which) {
             (KeptRuns::Database(runs), Which::Item(_)) => runs.read().await,
             (KeptRuns::Files(files), Which::Item(item)) => files.read_of_item(*item),
+            (KeptRuns::Judge(_), Which::Item(_)) => Ok(vec![]),
             (_, Which::Run { id, .. }) => Ok(self
                 .try_read_run(id)
                 .await

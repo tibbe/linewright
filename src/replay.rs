@@ -305,6 +305,32 @@ pub(crate) fn write_outcome(dir: &Path, outcome: OutcomeName) -> Result<()> {
     write_part(dir, OUTCOME, &format!("{name}\n"))
 }
 
+/// Whether the output in `dir` has begun: its `case` part names the run
+/// whose case it replays.
+pub fn began(dir: &Path) -> bool {
+    dir.join(CASE).is_file()
+}
+
+/// The run whose case the output in `dir` replays, as its `case` part
+/// names it; `None` before the replay wrote it.
+///
+/// # Errors
+///
+/// When the part cannot be read, or names no run.
+pub fn case_run(dir: &Path) -> Result<Option<RunId>> {
+    let path = dir.join(CASE);
+    match std::fs::read_to_string(&path) {
+        Ok(text) => text
+            .trim_end()
+            .parse()
+            .map(Some)
+            .map_err(anyhow::Error::msg)
+            .with_context(|| format!("reading {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
 /// Replaces the part `name` in the output's directory `dir` with one
 /// holding `text`, so that a reader sees the one or the other whole.
 fn write_part(dir: &Path, name: &str, text: &str) -> Result<()> {
