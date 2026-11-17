@@ -1097,6 +1097,13 @@ async fn a_signal_ends_lw_replay_at_once_leaving_its_output_interrupted() {
         std::fs::read_to_string(out.join("outcome")).unwrap(),
         "in-flight\n"
     );
+    let run: RunId = format!("{}/triage-1", issue.0).parse().unwrap();
+    eventually(|| {
+        RunFiles::new(&out)
+            .cost(&run)
+            .is_ok_and(|cost| cost.spend.is_none())
+    })
+    .await;
 
     let pid = replay.id().unwrap().to_string();
     let sent = std::process::Command::new("kill")
