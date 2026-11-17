@@ -108,8 +108,9 @@ GitHub.
 - **From the command line.** The command is `lw replay CASE --out DIR`. CASE
   is the directory of the case, and DIR is the directory of the output. The
   command needs both.
-- **Startup.** At startup, a replay makes only the checks of its
-  configuration ([Startup](repository.md#startup)). For a replay, each of
+- **Startup.** At startup, a replay makes only the checks of its settings
+  and of the operator's layer of the brief
+  ([Startup](repository.md#startup)). For a replay, each of
   Linewright's labels is present.
 - **The environment.** A replay builds its environment from the head of the
   case's default branch. A later replay from the same head uses that
@@ -141,6 +142,28 @@ GitHub.
 - **The exit status of the command.** The command exits as the monitoring
   commands do ([Output](monitoring.md#output)). It succeeds when the run
   ended, whatever the outcome of the run.
+
+## Configurations
+
+A configuration is what a replay changes: files of the brief and settings of
+the sessions of its run. A configuration overrides every other layer, flags
+included. Each file or setting that it does not hold comes from the other
+layers.
+
+- **From the command line.** `--configuration CONFIG` gives `lw replay` a
+  configuration. CONFIG has the same layout as a repository's `.linewright/`:
+  the settings in `config.toml` and the files of the brief in `briefs/`.
+- **Files of the brief.** A configuration can hold each file that a layer of
+  the brief can hold ([Briefs](operation.md#briefs)).
+- **Settings.** `config.toml` holds only `model`, `effort` and
+  `session-timeout`, with no tables. A setting in it overrides that setting
+  in every stage table.
+- **The judge.** A configuration applies to the sessions of the run, not to
+  the session of a judge.
+- **An error.** Each file that Linewright refuses in a layer of the brief,
+  each other file in CONFIG and each other key in `config.toml` is an error,
+  hidden files aside. Linewright refuses a configuration with an error before
+  the replay starts. The refusal names the file and the error.
 
 ## The repository on GitHub
 
@@ -175,6 +198,7 @@ as plain files.
 | cost       | the time of the replay from its start to its end, with the build, and the cost of its run, if it has a run ([Cost](runs.md#cost)) |
 | Linewright | the version of Linewright that ran the replay                                                                            |
 | case       | the ID of the run from which the case of the replay was captured |
+| configuration | a copy of the configuration of the replay, if it had one ([Configurations](#configurations)) |
 | judgement  | the judgement of the replay, if a judge made one ([Judging](#judging)) |
 
 - **Where.** Linewright makes the directory of the output if there is none,
@@ -262,6 +286,8 @@ The judge is an agent in a session of its own.
   repository.
 - Replaying a case from the web UI.
 - Replaying a case several times, or several cases, with one command.
+- A configuration that changes the setup, the maintenance command or the
+  variables of a session.
 - Judging a replay against anything other than the criteria of the case.
 - Combining the judgements of several judges on one replay.
 - Checking a judgement against the judgement of a person.
