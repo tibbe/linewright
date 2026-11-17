@@ -498,6 +498,30 @@ impl Experiments {
         .await
     }
 
+    /// Each suite's latest experiment, with when it was launched, by the
+    /// suite's name: none for a suite with no experiment.
+    pub async fn latest(&self) -> Result<BTreeMap<SuiteName, (ExperimentId, Timestamp)>> {
+        let rows: Vec<(String, i64, String)> = sqlx::query_as(
+            "SELECT suite, id, launched_at FROM experiments
+             WHERE id IN (SELECT MAX(id) FROM experiments GROUP BY suite)",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .context(READING)?;
+        rows.into_iter()
+            .map(|(suite, id, launched_at)| {
+                Ok((
+                    parsed(&suite)?,
+                    (
+                        ExperimentId::from_row(id)?,
+                        database::parse_time(&launched_at)?,
+                    ),
+                ))
+            })
+            .collect::<Result<_>>()
+            .context(READING)
+    }
+
     /// The experiments that are open, oldest first, each with its trials in
     /// start order.
     pub async fn open(&self) -> Result<Vec<ExperimentRecord>> {

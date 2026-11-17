@@ -1,21 +1,14 @@
+use super::experiments::launched;
 use super::*;
 
 use std::panic::Location;
 
 use serde_json::json;
 
-/// The rows of the table on `html`, each its cells' text.
-fn rows(html: &Html, table: &str) -> Vec<Vec<String>> {
-    select(html, &format!("{table} tbody tr"))
-        .into_iter()
-        .map(|row| select_in(row, "th, td").into_iter().map(text).collect())
-        .collect()
-}
-
 /// The pages of #1, `Ship gh`, with the implement suite `board`, holding
 /// the cases `columns`, captured from `1/implement-1` and of two lines of
 /// criteria, and `lanes`, and the empty triage suite `triage-basics`.
-async fn with_suites() -> Pages {
+pub(super) async fn with_suites() -> Pages {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
     let work_dir = pages.path("");
     keep_suite(&work_dir, "board", "implement").await;
@@ -485,4 +478,30 @@ async fn the_suite_pages_stream_sends_the_runs_to_capture_as_they_change() {
         .map(|option| option.attr("value"))
         .collect();
     assert_eq!(offered, [Some("1/implement-3"), Some("1/implement-2")]);
+}
+
+#[test_log::test(tokio::test)]
+async fn the_suites_page_shows_each_suites_last_experiment_linking_to_it() {
+    let pages = with_suites().await;
+    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
+
+    let html = pages.page("/suites").await;
+
+    assert_eq!(
+        rows(&html, "#suites"),
+        [
+            [
+                "board",
+                "implement",
+                "2",
+                "experiment 2, launched 2026-11-17 12:00:00 UTC"
+            ],
+            ["triage-basics", "triage", "0", ""],
+        ]
+    );
+    assert_eq!(
+        hrefs(select(&html, "#suites tbody td a")),
+        ["/experiments/2"]
+    );
 }

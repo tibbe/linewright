@@ -6,7 +6,10 @@ mod answers;
 mod experiments;
 pub mod results;
 
-pub use answers::{ExperimentAnswer, ExperimentSummary, Shown, WaitingFor, render_experiment};
+pub use answers::{
+    ExperimentAnswer, ExperimentSummary, Shown, WaitingFor, dollars, duration, mean, percent,
+    render_experiment, without,
+};
 pub use experiments::{
     CancelRefusal, ConfigurationName, EXPERIMENTS, ExperimentId, ExperimentRecord, ExperimentState,
     Experiments, JudgementFigures, LaunchRefusal, NoJudgement, Repetitions, ReplayFigures,

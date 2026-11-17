@@ -4,6 +4,7 @@ mod automations;
 mod board;
 mod capture;
 mod environment;
+mod experiments;
 mod frame;
 mod item;
 mod run;
@@ -413,6 +414,14 @@ fn cases(pages: &Pages) -> Vec<String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
         Err(e) => panic!("reading the cases: {e}"),
     }
+}
+
+/// The rows of the table `table` on `html`, each its cells' text.
+fn rows(html: &Html, table: &str) -> Vec<Vec<String>> {
+    select(html, &format!("{table} tbody tr"))
+        .into_iter()
+        .map(|row| select_in(row, "th, td").into_iter().map(text).collect())
+        .collect()
 }
 
 fn select<'a>(html: &'a Html, selector: &str) -> Vec<ElementRef<'a>> {

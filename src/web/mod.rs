@@ -5,9 +5,11 @@ mod automations_page;
 mod board_page;
 mod capture;
 mod cards;
+mod experiment_page;
 mod facts;
 mod html;
 mod item_page;
+mod launch;
 mod names;
 mod run_page;
 mod runs_page;
@@ -43,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
-use crate::benchmarks::{SuiteName, Suites};
+use crate::benchmarks::{ExperimentId, Experiments, SuiteName, Suites};
 use crate::domain::{Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
@@ -124,7 +126,22 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(suite_page::suite_page).post(suite_page::add_case),
         )
         .route("/suites/{name}/remove-case", post(suite_page::remove_case))
+        .route("/suites/{name}/launch", post(launch::launch))
         .route("/events/suites/{name}", get(suite_page::suite_events))
+        .route("/experiments/{id}", get(experiment_page::experiment_page))
+        .route(
+            "/events/experiments/{id}",
+            get(experiment_page::experiment_events),
+        )
+        .route("/experiments/{id}/cancel", post(experiment_page::cancel))
+        .route(
+            "/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
+            get(experiment_page::replay_page),
+        )
+        .route(
+            "/events/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
+            get(experiment_page::replay_events),
+        )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
         .route(
@@ -531,6 +548,16 @@ fn run_path(id: &RunId) -> String {
 /// The suites of `serve`'s work directory.
 fn suites(sources: &Sources) -> Suites {
     Suites::new(sources.runs.database().clone())
+}
+
+/// The experiments of `serve`'s work directory.
+fn experiments(sources: &Sources) -> Experiments {
+    Experiments::new(sources.runs.database().clone())
+}
+
+/// The path of experiment `id`'s page.
+fn experiment_path(id: ExperimentId) -> String {
+    format!("/experiments/{id}")
 }
 
 /// The path of suite `name`'s page.
