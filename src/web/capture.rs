@@ -2,6 +2,8 @@
 //! The run page, Capturing): the page's form, and the `POST` on the run's
 //! path that captures it.
 
+use std::fmt::Write as _;
+
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -12,38 +14,54 @@ use tracing::{info, warn};
 use super::html::{self, Html};
 use super::run_path;
 use crate::api::Sources;
-use crate::case::{self, CRITERIA_REQUIRED, CaptureError, CaseName, Criteria, Refusal};
+use crate::benchmarks::{SuiteName, Suites};
+use crate::case::{
+    self, CRITERIA_REQUIRED, CaptureError, CaseName, Criteria, Refusal, ReplayStage, SuiteChoice,
+};
 use crate::runs::RunId;
 
 /// The run page's offer to capture its run as a case.
 pub(super) struct Offer {
     run: RunId,
+    /// The suites of the run's stage, by name.
+    suites: Vec<SuiteName>,
 }
 
 impl Offer {
     /// The offer for run `id`, if it can be captured. A run whose records
     /// do not read is logged and offers none.
     pub(super) async fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
-        match case::capturable_run(&sources.runs, id).await {
-            Ok(run) => Some(Offer {
-                run: run.id().clone(),
-            }),
+        let run = match case::capturable_run(&sources.runs, id).await {
+            Ok(run) => run,
             Err(e) => {
                 if e.refusal() == Refusal::Failed {
                     warn!(run = %id, error = e.why(), "reading whether a run can be captured failed");
                 }
-                None
+                return None;
             }
-        }
+        };
+        let suites = match suites_of(&suites(sources), run.stage()).await {
+            Ok(suites) => suites,
+            Err(e) => {
+                warn!(run = %id, error = format!("{e:#}"), "reading the suites failed");
+                return None;
+            }
+        };
+        Some(Offer {
+            run: run.id().clone(),
+            suites,
+        })
     }
 
-    /// The form, its name filled in with the suggested one, and where it
-    /// says what came of a capture.
+    /// The form, its suite the first of the run's stage or else a new one,
+    /// its name filled in with the suggested one, and where it says what
+    /// came of a capture.
     pub(super) fn html(&self, sources: &Sources) -> Html {
         let path = html::escape(&run_path(&self.run));
         let name = html::escape(CaseName::suggested(&self.run).as_str());
         html::built(format!(
-            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Capture as a case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="[a-z0-9\-]+" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
+            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Capture as a case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="select select-sm w-full"><span class="label">suite</span>{select}</label><label class="new-suite-name input input-sm w-full"><span class="label">new suite</span><input name="new-suite" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="[a-z0-9\-]+" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
+            select = suite_select(&self.suites, None, ""),
             ready = Offer::ready_html(sources),
         ))
     }
@@ -72,11 +90,57 @@ impl Offer {
 
 const READY: &str = "capture-ready";
 
+const NEW_SUITE_UNNAMED: &str = "the new suite needs a name";
+
 const NOT_POLLED: &str = "the capture can't run before Linewright's first poll";
+
+/// The suites of `serve`'s work directory.
+fn suites(sources: &Sources) -> Suites {
+    Suites::new(sources.runs.database().clone())
+}
+
+/// The names of the suites of `stage`.
+async fn suites_of(suites: &Suites, stage: ReplayStage) -> anyhow::Result<Vec<SuiteName>> {
+    Ok(suites
+        .list()
+        .await?
+        .into_iter()
+        .filter(|listed| listed.suite.stage == stage)
+        .map(|listed| listed.suite.name)
+        .collect())
+}
+
+/// The form's choice of a suite: each of `suites`, with `selected` chosen,
+/// or else the first, then a new one; with `attributes` added.
+fn suite_select(suites: &[SuiteName], selected: Option<&SuiteName>, attributes: &str) -> String {
+    let mut options = String::new();
+    for suite in suites {
+        let chosen = if Some(suite) == selected {
+            " selected"
+        } else {
+            ""
+        };
+        let suite = html::escape(suite.as_str());
+        let _ = write!(
+            options,
+            r#"<option value="{suite}"{chosen}>{suite}</option>"#
+        );
+    }
+    format!(
+        r#"<select id="{SUITE_SELECT}" name="suite"{attributes}>{options}<option class="new-suite" value="">a new suite</option></select>"#
+    )
+}
+
+const SUITE_SELECT: &str = "capture-suite";
 
 /// What the form sends.
 #[derive(Deserialize)]
 struct CaptureForm {
+    /// Empty for a new suite.
+    #[serde(default)]
+    suite: String,
+    #[serde(default, rename = "new-suite")]
+    new_suite: String,
     name: String,
     #[serde(default)]
     criteria: String,
@@ -114,6 +178,15 @@ pub(super) async fn capture(
                 .into_response();
         }
     };
+    let choice = match (form.suite.as_str(), form.new_suite.as_str()) {
+        ("", "") => Err(NEW_SUITE_UNNAMED.to_string()),
+        ("", new) => new.parse().map(SuiteChoice::New),
+        (named, _) => named.parse().map(SuiteChoice::Named),
+    };
+    let choice = match choice {
+        Ok(choice) => choice,
+        Err(error) => return said_not(StatusCode::UNPROCESSABLE_ENTITY, &error),
+    };
     let name: CaseName = match form.name.parse() {
         Ok(name) => name,
         Err(error) => return said_not(StatusCode::UNPROCESSABLE_ENTITY, &error),
@@ -124,21 +197,37 @@ pub(super) async fn capture(
     let Some(served) = sources.served.borrow().clone() else {
         return said_not(StatusCode::SERVICE_UNAVAILABLE, NOT_POLLED);
     };
-    let work_dir = sources.work_dir.resolve();
-    let captured =
-        match case::capturable(&sources.runs, &work_dir.join(case::CASES), &run, &name).await {
-            Ok(capturable) => case::capture(served.store(), capturable, &criteria).await,
-            Err(e) => Err(e),
-        };
+    let suites = suites(&sources);
+    let captured = match case::capturable(&sources.runs, &suites, &run, &name, &choice).await {
+        Ok(capturable) => {
+            let stage = capturable.stage();
+            case::capture(served.store(), capturable, &criteria, &suites)
+                .await
+                .map(|dir| (dir, stage))
+        }
+        Err(e) => Err(e),
+    };
     match captured {
-        Ok(dir) => {
-            info!(run = %run, case = %dir.display(), "captured a run as a case");
+        Ok((dir, stage)) => {
+            let (suite, new) = match &choice {
+                SuiteChoice::Named(suite) => (suite, ""),
+                SuiteChoice::New(suite) => (suite, "new "),
+            };
+            info!(run = %run, case = %dir.display(), suite = %suite, "captured a run as a case");
             let said = format!(
-                "Captured {} as the case <code>{}</code>",
+                "Captured {} as the case <code>{}</code> in the {new}suite {}",
                 html::escape(&run.to_string()),
                 html::escape(&dir.display().to_string()),
+                html::escape(suite.as_str()),
             );
-            (StatusCode::OK, alert("alert-success", &said)).into_response()
+            let mut answer = alert("alert-success", &said).0;
+            match suites_of(&suites, stage).await {
+                Ok(names) => {
+                    answer.push_str(&suite_select(&names, Some(suite), r#" hx-swap-oob="true""#));
+                }
+                Err(e) => warn!(error = format!("{e:#}"), "reading the suites failed"),
+            }
+            (StatusCode::OK, axum::response::Html(answer)).into_response()
         }
         Err(e) => {
             let why = served.redaction().apply(&e.why());
@@ -151,7 +240,7 @@ pub(super) async fn capture(
 /// The status a capture that did not happen for `e` is answered with.
 fn status_of(e: &CaptureError) -> StatusCode {
     match e.refusal() {
-        Refusal::NoSuchRun => StatusCode::NOT_FOUND,
+        Refusal::NoSuch => StatusCode::NOT_FOUND,
         Refusal::Refused => StatusCode::UNPROCESSABLE_ENTITY,
         Refusal::Failed => StatusCode::INTERNAL_SERVER_ERROR,
     }

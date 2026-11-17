@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use common::*;
-use linewright::case::{self, Case, CaseName, Criteria};
+use linewright::benchmarks::Suites;
+use linewright::case::{self, Case, CaseName, Criteria, SuiteChoice};
 use linewright::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright::domain::Number;
 use linewright::domain::Timestamp;
@@ -67,17 +68,15 @@ async fn case_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
     let id = run
         .parse()
         .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
-    let capturable = case::capturable(
-        &runs_in(&work).await,
-        &work.join(case::CASES),
-        &id,
-        &CaseName::suggested(&id),
-    )
-    .await
-    .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
+    let runs = runs_in(&work).await;
+    let suites = Suites::new(runs.database().clone());
+    let suite = SuiteChoice::New(CaseName::suggested(&id).as_str().parse().unwrap());
+    let capturable = case::capturable(&runs, &suites, &id, &CaseName::suggested(&id), &suite)
+        .await
+        .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
     let criteria = Criteria::parse("It triages the issue.\n")
         .unwrap_or_else(|| panic!("blank criteria at {caller}"));
-    case::capture(&*world.store, capturable, &criteria)
+    case::capture(&*world.store, capturable, &criteria, &suites)
         .await
         .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"))
 }

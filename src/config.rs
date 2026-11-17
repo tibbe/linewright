@@ -7,7 +7,8 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::case::CaseName;
+use crate::benchmarks::SuiteName;
+use crate::case::{CaseName, ReplayStage};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
@@ -161,16 +162,22 @@ pub enum Command {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Capture run ID, such as 43/implement-2, as the case NAME in `cases/`
-    /// under the work directory.
+    /// Capture run ID, such as 43/implement-2, as the case NAME of the suite
+    /// SUITE, in `cases/` under the work directory.
     Capture {
         id: RunId,
         /// Lowercase letters, digits and hyphens.
         name: CaseName,
+        /// The suite the case goes into: one of the run's stage.
+        #[arg(long)]
+        suite: SuiteName,
         /// What a good result is, as `criteria.md` in the case: refused
         /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
         criteria: PathBuf,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Run the stage of the case in the directory CASE on it again, with the
     /// case in place of GitHub, writing what the run did to DIR.
@@ -189,6 +196,46 @@ pub enum Command {
     /// Judge DIR, the output of a replay of the case in the directory CASE,
     /// against the case's criteria, keeping the judgement in DIR.
     Judge { case: PathBuf, dir: PathBuf },
+    /// List the suites, each with its stage and how many cases it holds.
+    Suites {
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the suite NAME: its cases with their criteria. `suite add` makes
+    /// a suite, and `suite remove-case` removes a case.
+    #[command(args_conflicts_with_subcommands = true)]
+    Suite {
+        #[command(subcommand)]
+        command: Option<SuiteCommand>,
+        #[arg(value_name = "NAME", required = true)]
+        name: Option<SuiteName>,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SuiteCommand {
+    /// Make the suite NAME, of the stage STAGE: triage, design or implement.
+    Add {
+        /// Lowercase letters, digits and hyphens.
+        name: SuiteName,
+        stage: ReplayStage,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove the case CASE from the suite NAME, and with it the case's
+    /// directory.
+    RemoveCase {
+        name: SuiteName,
+        case: CaseName,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

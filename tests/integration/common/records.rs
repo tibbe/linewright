@@ -308,3 +308,62 @@ pub fn session_events(
             .collect()
     }
 }
+
+/// Keeps the suite `name` of `stage` in the database of `work_dir`.
+#[track_caller]
+pub fn keep_suite(work_dir: &Path, name: &str, stage: &str) -> impl Future<Output = ()> + use<> {
+    let caller = Location::caller();
+    let pool = back_door(work_dir);
+    let (name, stage) = (name.to_string(), stage.to_string());
+    async move {
+        let pool = pool.await;
+        sqlx::query("INSERT INTO suites (name, stage) VALUES (?, ?)")
+            .bind(name)
+            .bind(stage)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("keeping a suite at {caller}: {e}"));
+        pool.close().await;
+    }
+}
+
+/// Keeps the case `name` of the suite `suite`, captured from `run`, in the
+/// database of `work_dir`, without its directory.
+#[track_caller]
+pub fn keep_case_row(
+    work_dir: &Path,
+    suite: &str,
+    name: &str,
+    run: &str,
+) -> impl Future<Output = ()> + use<> {
+    let caller = Location::caller();
+    let pool = back_door(work_dir);
+    let (suite, name, run) = (suite.to_string(), name.to_string(), run.to_string());
+    async move {
+        let pool = pool.await;
+        sqlx::query("INSERT INTO cases (name, suite, run) VALUES (?, ?, ?)")
+            .bind(name)
+            .bind(suite)
+            .bind(run)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("keeping a case at {caller}: {e}"));
+        pool.close().await;
+    }
+}
+
+/// Keeps the case `name` of the suite `suite`, captured from `run`, in the
+/// database of `work_dir`, with its directory holding `criteria`.
+#[track_caller]
+pub fn keep_case(
+    work_dir: &Path,
+    suite: &str,
+    name: &str,
+    run: &str,
+    criteria: &str,
+) -> impl Future<Output = ()> + use<> {
+    let dir = work_dir.join("cases").join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("criteria.md"), criteria).unwrap();
+    keep_case_row(work_dir, suite, name, run)
+}

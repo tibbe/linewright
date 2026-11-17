@@ -17,12 +17,13 @@ changes with it, is a change to the spec (`docs/specs/runs.md`, "Contract").
 
 A triage, design or implement run that went badly is worth keeping as a case,
 to try a change to its stage's brief against (`docs/specs/benchmarks.md`). Find
-the run's ID with `lw runs N`, such as `43/implement-2`, and capture it under a
-name of lowercase letters, digits and hyphens, with what a good result would
-have been:
+the run's ID with `lw runs N`, such as `43/implement-2`, and capture it into a
+suite of its stage, under a name of lowercase letters, digits and hyphens, with
+what a good result would have been:
 
 ```sh
-lw capture 43/implement-2 43-implement-2 --criteria good-result.md
+lw suite add implements implement
+lw capture 43/implement-2 43-implement-2 --suite implements --criteria good-result.md
 ```
 
 It works whether `serve` is running or not, with the token `serve` uses: the
@@ -40,5 +41,10 @@ criteria.md      the criteria, which a case needs
 A case is a plain directory: copy it to where you tune the briefs, and edit its
 `criteria.md` as you like. Only a run that recorded its whole input at its start
 can be captured: a run recorded before Linewright recorded the repository's
-properties is refused. A name a case already has is refused too. A capture that
-fails, such as for a commit GitHub no longer has, writes nothing.
+properties is refused. A name a case already has is refused too, and so is a
+suite of another stage. A capture that fails, such as for a commit GitHub no
+longer has, writes nothing.
+
+`lw suites` lists the suites, `lw suite NAME` shows a suite's cases with their
+criteria, and `lw suite remove-case NAME CASE` removes a case, its directory
+with it. A case captured before suites is in none.

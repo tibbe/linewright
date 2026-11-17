@@ -6,11 +6,15 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::case::{self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal};
+use linewright::benchmarks::{self, RemoveError, SuiteAnswer, SuiteName, Suites, SuitesAnswer};
+use linewright::case::{
+    self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal, ReplayStage,
+    SuiteChoice,
+};
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
     AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
-    ResolveError, Settings, Since,
+    ResolveError, Settings, Since, SuiteCommand,
 };
 use linewright::database::Database;
 use linewright::domain::{Number, Timestamp};
@@ -912,9 +916,40 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             factory.settle().await;
             prepared
         }
-        Command::Capture { id, name, criteria } => {
-            return Ok(capture(&config, &id, &name, &criteria).await);
+        Command::Capture {
+            id,
+            name,
+            suite,
+            criteria,
+            json,
+        } => {
+            let capture = Capture {
+                id,
+                name,
+                suite,
+                criteria,
+            };
+            return Ok(capture.run(&config, json).await);
         }
+        Command::Suites { json } => return Ok(list_suites(&config, json).await),
+        Command::Suite {
+            command: None,
+            name: Some(name),
+            json,
+        } => return Ok(show_suite(&config, &name, json).await),
+        Command::Suite {
+            command: None,
+            name: None,
+            ..
+        } => unreachable!("clap requires a suite's name or a command"),
+        Command::Suite {
+            command: Some(SuiteCommand::Add { name, stage, json }),
+            ..
+        } => return Ok(make_suite(&config, &name, stage, json).await),
+        Command::Suite {
+            command: Some(SuiteCommand::RemoveCase { name, case, json }),
+            ..
+        } => return Ok(remove_case(&config, &name, &case, json).await),
         Command::Replay {
             case,
             out,
@@ -967,51 +1002,212 @@ async fn export(config: &Config, id: &RunId, dir: &Path) -> u8 {
     )
 }
 
-/// Captures run `id` as the case `name`, with the criteria in the file
-/// `criteria`, refusing before connecting to GitHub what it can.
-async fn capture(config: &Config, id: &RunId, name: &CaseName, criteria: &Path) -> u8 {
-    let refusal = |e: CaptureError| match e.refusal() {
-        Refusal::NoSuchRun => refused(&RequestError::NotFound(e.why())),
-        Refusal::Refused | Refusal::Failed => (FAILURE, e.why()),
-    };
-    let work_dir = match config.repo_work_dir() {
-        Ok(work_dir) => work_dir.resolve(),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let runs = match existing_runs(&work_dir).await {
-        Ok(Some(runs)) => runs,
-        Ok(None) => return print_answer(Err(refusal(CaptureError::NoSuchRun(id.clone())))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let cases = work_dir.join(case::CASES);
-    let capturable = match case::capturable(&runs, &cases, id, name).await {
-        Ok(capturable) => capturable,
-        Err(e) => return print_answer(Err(refusal(e))),
-    };
-    let criteria = match std::fs::read_to_string(criteria) {
-        Ok(criteria) => criteria,
-        Err(e) => {
-            let e = anyhow::Error::from(e).context("reading the criteria");
-            return print_answer(Err(failed(&e)));
+/// The suites of the work directory's database, with or without `serve`:
+/// none when there is no database.
+async fn existing_suites(config: &Config) -> Result<Option<Suites>> {
+    let work_dir = config.repo_work_dir()?.resolve();
+    Ok(Database::open_existing(&work_dir).await?.map(Suites::new))
+}
+
+/// The suites of the work directory's database, made when there is none.
+async fn made_suites(config: &Config) -> Result<Suites> {
+    let work_dir = config.repo_work_dir()?.resolve();
+    Ok(Suites::new(Database::open(&work_dir).await?))
+}
+
+fn no_such_suite(name: &SuiteName) -> (u8, String) {
+    refused(&RequestError::NotFound(format!("there is no suite {name}")))
+}
+
+/// `answer` as JSON, or as `render` gives it as text.
+fn answer_text<T: serde::Serialize>(
+    answer: &T,
+    json: bool,
+    render: impl Fn(&T) -> String,
+) -> String {
+    if json {
+        format!(
+            "{}\n",
+            serde_json::to_string(answer).expect("the answers serialize")
+        )
+    } else {
+        render(answer)
+    }
+}
+
+async fn list_suites(config: &Config, json: bool) -> u8 {
+    let listed = async {
+        match existing_suites(config).await? {
+            Some(suites) => suites.list().await,
+            None => Ok(vec![]),
         }
     };
-    let Some(criteria) = Criteria::parse(&criteria) else {
-        return print_answer(Err((FAILURE, CRITERIA_REQUIRED.to_string())));
+    print_answer(
+        listed
+            .await
+            .map(|suites| answer_text(&SuitesAnswer { suites }, json, benchmarks::render_suites))
+            .map_err(|e| failed(&e)),
+    )
+}
+
+async fn show_suite(config: &Config, name: &SuiteName, json: bool) -> u8 {
+    let shown = async {
+        match existing_suites(config).await? {
+            Some(suites) => suites.show(name).await,
+            None => Ok(None),
+        }
     };
-    let github = match token() {
-        Ok(token) => connect(config, token).await,
-        Err(e) => Err(e),
-    };
-    let github = match github {
-        Ok(github) => github,
+    print_answer(match shown.await {
+        Ok(Some(shown)) => Ok(answer_text(
+            &SuiteAnswer::from(&shown),
+            json,
+            benchmarks::render_suite,
+        )),
+        Ok(None) => Err(no_such_suite(name)),
+        Err(e) => Err(failed(&e)),
+    })
+}
+
+async fn make_suite(config: &Config, name: &SuiteName, stage: ReplayStage, json: bool) -> u8 {
+    let suites = match made_suites(config).await {
+        Ok(suites) => suites,
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
-        case::capture(&github, capturable, &criteria)
+        suites
+            .make(name, stage)
             .await
-            .map(|dir| format!("Captured {id} as the case {}\n", dir.display()))
-            .map_err(refusal),
+            .map(|suite| {
+                answer_text(&suite, json, |suite| {
+                    format!("Made the suite {}, of {}\n", suite.name, suite.stage)
+                })
+            })
+            .map_err(|e| (FAILURE, format!("{e:#}"))),
     )
+}
+
+/// What `suite remove-case` answers.
+#[derive(serde::Serialize)]
+struct Removed<'a> {
+    suite: &'a SuiteName,
+    case: &'a CaseName,
+}
+
+async fn remove_case(config: &Config, name: &SuiteName, case: &CaseName, json: bool) -> u8 {
+    let suites = match existing_suites(config).await {
+        Ok(Some(suites)) => suites,
+        Ok(None) => return print_answer(Err(no_such_suite(name))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        suites
+            .remove_case(name, case)
+            .await
+            .map(|()| {
+                answer_text(&Removed { suite: name, case }, json, |removed| {
+                    format!(
+                        "Removed the case {} from the suite {}\n",
+                        removed.case, removed.suite
+                    )
+                })
+            })
+            .map_err(|e| match e {
+                RemoveError::NoSuchSuite(_) | RemoveError::NoSuchCase { .. } => {
+                    refused(&RequestError::NotFound(e.to_string()))
+                }
+                RemoveError::Failed(e) => failed(&e),
+            }),
+    )
+}
+
+/// What `capture` is asked to capture.
+struct Capture {
+    id: RunId,
+    name: CaseName,
+    suite: SuiteName,
+    /// The file that holds the criteria.
+    criteria: PathBuf,
+}
+
+/// What `capture` answers.
+#[derive(serde::Serialize)]
+struct Captured<'a> {
+    run: &'a RunId,
+    case: &'a CaseName,
+    suite: &'a SuiteName,
+    dir: &'a Path,
+}
+
+impl Capture {
+    /// Captures run `id` as the case `name` of the suite `suite`, with the
+    /// criteria in the file `criteria`, refusing before connecting to
+    /// GitHub what it can.
+    async fn run(&self, config: &Config, json: bool) -> u8 {
+        let Capture {
+            id,
+            name,
+            suite,
+            criteria,
+        } = self;
+        let refusal = |e: CaptureError| match e.refusal() {
+            Refusal::NoSuch => refused(&RequestError::NotFound(e.why())),
+            Refusal::Refused | Refusal::Failed => (FAILURE, e.why()),
+        };
+        let work_dir = match config.repo_work_dir() {
+            Ok(work_dir) => work_dir.resolve(),
+            Err(e) => return print_answer(Err(failed(&e))),
+        };
+        let runs = match existing_runs(&work_dir).await {
+            Ok(Some(runs)) => runs,
+            Ok(None) => return print_answer(Err(refusal(CaptureError::NoSuchRun(id.clone())))),
+            Err(e) => return print_answer(Err(failed(&e))),
+        };
+        let suites = Suites::new(runs.database().clone());
+        let choice = SuiteChoice::Named(suite.clone());
+        let capturable = match case::capturable(&runs, &suites, id, name, &choice).await {
+            Ok(capturable) => capturable,
+            Err(e) => return print_answer(Err(refusal(e))),
+        };
+        let criteria = match std::fs::read_to_string(criteria) {
+            Ok(criteria) => criteria,
+            Err(e) => {
+                let e = anyhow::Error::from(e).context("reading the criteria");
+                return print_answer(Err(failed(&e)));
+            }
+        };
+        let Some(criteria) = Criteria::parse(&criteria) else {
+            return print_answer(Err((FAILURE, CRITERIA_REQUIRED.to_string())));
+        };
+        let github = match token() {
+            Ok(token) => connect(config, token).await,
+            Err(e) => Err(e),
+        };
+        let github = match github {
+            Ok(github) => github,
+            Err(e) => return print_answer(Err(failed(&e))),
+        };
+        print_answer(
+            case::capture(&github, capturable, &criteria, &suites)
+                .await
+                .map(|dir| {
+                    let captured = Captured {
+                        run: id,
+                        case: name,
+                        suite,
+                        dir: &dir,
+                    };
+                    answer_text(&captured, json, |captured| {
+                        format!(
+                            "Captured {} as the case {} in the suite {}\n",
+                            captured.run,
+                            captured.dir.display(),
+                            captured.suite
+                        )
+                    })
+                })
+                .map_err(refusal),
+        )
+    }
 }
 
 /// Replays the case in the directory `case` into the output `out`, with

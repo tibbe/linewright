@@ -38,6 +38,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(BOOKKEEPING_TABLES),
     Migration::Sql(SESSION_COSTS),
     Migration::Sql(PUSHED_BRANCHES_TABLES),
+    Migration::Sql(SUITES_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -129,6 +130,19 @@ const PUSHED_BRANCHES_TABLES: &str = "CREATE TABLE pushed_branches (
     CREATE TABLE adopted (
         record TEXT PRIMARY KEY CHECK (record IN ('pushed-branches'))
     ) STRICT;";
+
+/// The suites, and the case each holds by name, whose directory is in
+/// `cases/`.
+const SUITES_TABLES: &str = "CREATE TABLE suites (
+        name TEXT PRIMARY KEY,
+        stage TEXT NOT NULL CHECK (stage IN ('triage', 'design', 'implement'))
+    ) STRICT;
+    CREATE TABLE cases (
+        name TEXT PRIMARY KEY,
+        suite TEXT NOT NULL REFERENCES suites (name),
+        run TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX cases_of_suites ON cases (suite);";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

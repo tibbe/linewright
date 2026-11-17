@@ -72,6 +72,7 @@ mod session_end;
 mod startup;
 mod status;
 mod store;
+mod suites;
 mod transcript;
 mod update_push;
 mod usage_limit;

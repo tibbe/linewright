@@ -186,3 +186,11 @@
     @apply text-muted;
   }
 }
+
+/* In the utilities layer, as daisyUI's `.input` that it hides is
+   (https://daisyui.com/docs/install/standalone/). */
+@layer utilities {
+  form.capture:not(:has(option.new-suite:checked)) .new-suite-name {
+    @apply hidden;
+  }
+}

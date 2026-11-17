@@ -288,11 +288,11 @@ sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `lw replay CASE --out DIR` runs a case's stage again
 ([Capturing a case](tuning-briefs.md#capturing-a-case)), and `lw judge CASE DIR`
 then judges what it made against the case's criteria. A capture needs its
-criteria, as `lw capture ID NAME --criteria FILE`, since they are what the
-judge judges by. The judge is an agent in a session of its own: it reads the
-replay's sessions and writes, and its clone has the branch the replay pushed
-checked out, or the default branch when it pushed none. It also looks for a
-leak: a session that learned how the work turned out, such as from the merged
+criteria, as `lw capture ID NAME --suite SUITE --criteria FILE`, since they are
+what the judge judges by. The judge is an agent in a session of its own: it
+reads the replay's sessions and writes, and its clone has the branch the replay
+pushed checked out, or the default branch when it pushed none. It also looks for
+a leak: a session that learned how the work turned out, such as from the merged
 pull request, whose replay says nothing about the stage.
 
 ```sh
