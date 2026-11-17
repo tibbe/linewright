@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
-use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -15,6 +14,7 @@ use crate::api::{Publish, Served};
 use crate::apply;
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::briefs::OperatorBriefs;
+use crate::cadence::Cadence;
 use crate::clock::Clock;
 use crate::clones::Clones;
 use crate::database::Database;
@@ -362,8 +362,13 @@ impl Factory {
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
         self.reap_before_reading().await;
+        let now = self.shell.sessions.clock.now();
+        self.poll(now).await
+    }
+
+    /// Polls as started at `now`, once the runs that ended are reaped.
+    async fn poll(&mut self, now: Timestamp) -> Result<Vec<Action>> {
         let shell = &self.shell;
-        let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
         self.adopt_pushed_branches(now)
             .await
@@ -454,8 +459,11 @@ impl Factory {
     }
 
     /// A refresh never races a poll: one still running when the poll falls
-    /// due finishes first. Only polls count among the polls failed: a
-    /// refresh that fails leaves the next poll to catch up.
+    /// due finishes first. A poll that is due goes before the deliveries,
+    /// runs ended and builds waiting, and takes in the runs and the build
+    /// that ended as it starts; a stop, a drain and a rebuild asked for go
+    /// before it. Only polls count among the polls failed: a refresh that
+    /// fails leaves the next poll to catch up.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
@@ -468,9 +476,13 @@ impl Factory {
         let draining = ends.draining();
         let mut failed = None;
         let mut asked = publish.environment.asked.lock().await;
+        let mut cadence = Cadence::new(poll_interval);
         while !stopping.is_cancelled() {
             pending.take();
-            let poll = match self.cycle().await {
+            let started = clock.now();
+            let next_poll = cadence.start(started);
+            self.reap_before_reading().await;
+            let poll = match self.poll(started).await {
                 Ok(_) => Poll::Succeeded,
                 Err(e) => {
                     let error = self
@@ -487,13 +499,11 @@ impl Factory {
                 }
             };
             failed = FailedPolls::after(failed, poll);
-            let next_poll = Instant::now() + poll_interval;
-            let next_poll_at = self.shell.sessions.clock.now() + poll_interval;
             publish.polling.send_replace(Some(Polling {
-                next: next_poll_at,
+                next: next_poll,
                 failed: failed.clone(),
             }));
-            publish.served.send_replace(self.served(next_poll_at));
+            publish.served.send_replace(self.served(next_poll));
             publish.environment.tally(self.environment.tally());
             loop {
                 if self.memory.drained(self.runs.len()) {
@@ -502,27 +512,20 @@ impl Factory {
                     return ServeEnd::Drained;
                 }
                 tokio::select! {
-                    () = tokio::time::sleep_until(next_poll) => break,
+                    biased;
                     () = stopping.cancelled() => break,
                     () = draining.cancelled(), if self.memory.drain.is_none() => {
                         self.note_drain();
                     }
                     () = ends.deadline_passed(clock.as_ref()) => {}
-                    subjects = pending.next() => {
-                        if let Err(e) = self.refresh(subjects).await {
-                            error!(
-                                error = format!("{e:#}"),
-                                "acting on deliveries failed; the next poll catches up"
-                            );
-                        }
+                    Some(reply) = asked.recv() => {
+                        let _ = reply.send(self.environment.rebuild());
                     }
+                    () = cadence.due() => break,
                     Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
                         self.finished(result).await;
                     }
                     Some(limit) = self.refusals.recv() => self.refused(limit),
-                    Some(reply) = asked.recv() => {
-                        let _ = reply.send(self.environment.rebuild());
-                    }
                     end = self.environment.next_build_end(), if self.environment.is_building() => {
                         self.environment.ended(end);
                         let subjects: [webhook::Subject; 0] = [];
@@ -533,8 +536,16 @@ impl Factory {
                             );
                         }
                     }
+                    subjects = pending.next() => {
+                        if let Err(e) = self.refresh(subjects).await {
+                            error!(
+                                error = format!("{e:#}"),
+                                "acting on deliveries failed; the next poll catches up"
+                            );
+                        }
+                    }
                 }
-                publish.served.send_replace(self.served(next_poll_at));
+                publish.served.send_replace(self.served(next_poll));
                 publish.environment.tally(self.environment.tally());
             }
         }
@@ -880,6 +891,7 @@ impl Factory {
         while let Ok(limit) = self.refusals.try_recv() {
             self.refused(limit);
         }
+        self.environment.take_ended().await;
     }
 
     fn take_shown_comments(&mut self, snapshot: &Snapshot, now: Timestamp) {

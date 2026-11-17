@@ -169,6 +169,42 @@ async fn a_run_waits_for_the_first_build_then_its_clone_starts_from_the_environm
 }
 
 #[test_log::test(tokio::test)]
+async fn a_build_that_ends_while_each_poll_overruns_the_interval_is_taken_in() {
+    let marks = Marks::new();
+    let world = World::new().await;
+    let gate = marks.path("go");
+    set_up_with(
+        &world,
+        &format!(
+            "while [ ! -e '{}' ]; do sleep 0.05; done; mkdir -p node_modules && touch node_modules/x",
+            gate.display()
+        ),
+    )
+    .await;
+    let (sessions, mut started) = tokio::sync::mpsc::unbounded_channel();
+    world.harness.on(WorkKind::Implement, move |_| {
+        let _ = sessions.send(());
+        failed_session("looked")
+    });
+    open_ticket(&world, "Do the thing");
+    let World {
+        factory,
+        harness: _harness,
+        store: _store,
+        dir: _dir,
+        ..
+    } = world;
+    let mut serving = Serving::start(factory, Duration::ZERO, Pending::default());
+    serving.served.wait_for(Option::is_some).await.unwrap();
+
+    std::fs::write(&gate, "").unwrap();
+    let session = tokio::time::timeout(Duration::from_secs(20), started.recv()).await;
+
+    assert!(session.is_ok(), "no session started once the build ended");
+    serving.stop().await;
+}
+
+#[test_log::test(tokio::test)]
 async fn without_a_setup_command_a_sessions_clone_is_a_plain_clone_of_its_branch() {
     let mut world = World::new().await;
     commit(&world, &[(".gitignore", "node_modules/\n")]).await;
