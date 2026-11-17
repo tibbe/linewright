@@ -139,20 +139,31 @@ attachments it refers to.
 - **Kinds.** Linewright attaches images and videos, which it tells by the
   file's extension, whatever its letter case: `.png`, `.jpg`, `.jpeg`, `.gif`,
   `.webp`, `.svg`, `.mp4`, `.mov` and `.webm`.
-- **References.** The Markdown refers to an attachment by its absolute path
-  in the directory, in a reference: the destination of a Markdown image or
-  link, or an HTML `img`'s `src`. Any other mention of a path is left as
-  written.
+- **References.** A reference is the destination of a Markdown image or
+  link, or an HTML `img`'s `src`. A reference refers to an attachment when it
+  is a file URL, with the scheme `file` in any letter case, or an absolute
+  path, which starts with one `/`. Linewright leaves every other reference,
+  and every mention outside a reference, as written.
+- **Reading a reference.** Linewright reads a reference with the parser of
+  the [URL Standard](https://url.spec.whatwg.org/#concept-url-parser), with
+  `file:///` as the base. The path of the attachment is the URL's path,
+  percent-decoded. A Markdown destination is read as CommonMark reads it, so
+  a space between its angle brackets is a space in the path.
 - **Refused.** The result goes back to its session ([Ending](#ending)) when
-  a reference names a path in the directory that is not a regular file,
-  such as a missing file or a symlink, or a file of a kind Linewright does
-  not attach, or an absolute path to a file outside the directory, or when
-  GitHub refuses an attachment over the file itself, such as for its size.
-- **Posting.** Linewright uploads each attachment the result's posted
-  Markdown refers to as a GitHub attachment, once however many references it
-  has, and puts its URL in place of each path. A video embedded alone in its
-  paragraph becomes its bare URL; embedded anywhere else, it becomes a link to
-  it.
+  a reference to an attachment fails one of these tests:
+  - An HTML `src` is a
+    [valid URL string](https://url.spec.whatwg.org/#valid-url-string), such
+    as one with no space in it.
+  - The URL has no host, no query and no fragment. The parser reads
+    `localhost` as no host.
+  - The path is a regular file in the directory, not a missing file or a
+    symlink, of a kind that Linewright attaches.
+  - GitHub takes the file. GitHub can refuse a file, such as for its size.
+- **Posting.** Linewright uploads each attachment that the posted Markdown
+  refers to as a GitHub attachment. It uploads the attachment once, however
+  many references it has. It puts the GitHub URL in place of each file URL.
+  A video embedded alone in its paragraph becomes its bare URL; embedded
+  anywhere else, it becomes a link to it.
 - **Uploads first.** Applying a result uploads its attachments before any
   other write it makes, the push included.
 - **Unused uploads.** An attachment uploaded for a result that is not then
