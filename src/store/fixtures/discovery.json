@@ -1,0 +1,71 @@
+{
+    "data": {
+        "repository": {
+            "__typename": "Repository",
+            "labeled": {
+                "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMS0xN1QwNjo1NDozOFrPAAAAAX_OeaE="
+                },
+                "nodes": [
+                    {
+                        "__typename": "Issue",
+                        "number": 1302
+                    },
+                    {
+                        "__typename": "Issue",
+                        "number": 1315
+                    },
+                    {
+                        "__typename": "Issue",
+                        "number": 1316
+                    },
+                    {
+                        "__typename": "Issue",
+                        "number": 1317
+                    }
+                ]
+            },
+            "assigned": {
+                "pageInfo": {
+                    "hasNextPage": false,
+                    "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMS0xN1QwNjo1NDozOFrPAAAAAX_OeaE="
+                },
+                "nodes": [
+                    {
+                        "__typename": "Issue",
+                        "number": 1315
+                    },
+                    {
+                        "__typename": "Issue",
+                        "number": 1317
+                    }
+                ]
+            }
+        },
+        "involved": {
+            "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": "Y3Vyc29yOjQ="
+            },
+            "nodes": [
+                {
+                    "__typename": "Issue",
+                    "number": 1317
+                },
+                {
+                    "__typename": "Issue",
+                    "number": 1316
+                },
+                {
+                    "__typename": "Issue",
+                    "number": 1315
+                },
+                {
+                    "__typename": "Issue",
+                    "number": 1302
+                }
+            ]
+        }
+    }
+}
