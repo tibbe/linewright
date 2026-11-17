@@ -1063,7 +1063,12 @@ fn cancel_reason(run: &LiveRun, snapshot: &Snapshot, policy: &Policy) -> Option<
         }
         Subject::Issue(number) => {
             let Some(issue) = snapshot.issue(number) else {
-                return Some(format!("{number} was closed"));
+                let closed = snapshot.closed.iter().any(|item| item.number == number);
+                return Some(if closed {
+                    format!("{number} was closed")
+                } else {
+                    format!("{number} is closed or left alone")
+                });
             };
             cancels(run.kind, issue, &policy.linewright).map(|cancel| match cancel {
                 Cancel::Closed => format!("{number} was closed"),

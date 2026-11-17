@@ -1,5 +1,5 @@
 use crate::common;
-use common::{LINEWRIGHT, REQUIRED, closed_by, policy, snapshot_of, sub_issue};
+use common::{LINEWRIGHT, REQUIRED, closed_by, closed_item, policy, snapshot_of, sub_issue};
 
 use chrono::{DateTime, TimeDelta, Utc};
 use linewright::automation::{Automation, LastScheduledRuns};
@@ -1220,6 +1220,39 @@ fn a_run_is_cancelled_when_its_issue_stops_qualifying() {
     assert_eq!(
         cancelled,
         [1, 2, 3, 5].map(|n| Subject::Issue(Number(n))).to_vec()
+    );
+}
+
+#[test_log::test]
+fn an_issues_run_is_cancelled_saying_it_was_closed_only_when_the_snapshot_holds_it_closed() {
+    let mut world = snapshot_of(vec![]);
+    world.closed = vec![closed_item(&claimed(ticket(3)), "2026-10-01T09:05:00Z")];
+    let runs = [3, 7].map(|n| live(n, WorkKind::Implement));
+
+    let cancelled: Vec<(Subject, String)> = reconcile(
+        &world,
+        &runs,
+        &Memory::default(),
+        &Automations::default(),
+        t(10),
+        &policy(),
+        &[],
+    )
+    .into_iter()
+    .filter_map(|a| {
+        if let Action::Cancel { subject, reason } = a {
+            Some((subject, reason))
+        } else {
+            None
+        }
+    })
+    .collect();
+
+    assert_eq!(
+        cancelled,
+        [(3, "#3 was closed"), (7, "#7 is closed or left alone")]
+            .map(|(n, reason)| (Subject::Issue(Number(n)), reason.to_string()))
+            .to_vec()
     );
 }
 
