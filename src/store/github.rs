@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use base64::Engine;
+use futures_util::future::try_join_all;
 use reqwest::{Method, StatusCode};
 use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Serialize};
@@ -55,6 +56,112 @@ pub struct GitHub {
     /// The openings read, by number: who opened an item, and what for,
     /// never changes.
     openings: Arc<std::sync::Mutex<BTreeMap<Number, Opening>>>,
+    sending: Arc<Sending>,
+    pushes_kept: Arc<PushesKept>,
+}
+
+/// The most requests in flight at once. GitHub takes at most 100 and asks
+/// clients to keep fewer
+/// (<https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits>).
+const IN_FLIGHT: usize = 16;
+
+/// How a store's requests are sent ([`waiting_out_rate_limits`]): at most
+/// [`IN_FLIGHT`] at once, and none while a rate limit GitHub gave one of
+/// them is in force, since GitHub may ban an integration that keeps sending
+/// then
+/// (<https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit>).
+struct Sending {
+    in_flight: tokio::sync::Semaphore,
+    limited_until: std::sync::Mutex<Option<tokio::time::Instant>>,
+}
+
+impl Default for Sending {
+    fn default() -> Self {
+        Sending {
+            in_flight: tokio::sync::Semaphore::new(IN_FLIGHT),
+            limited_until: std::sync::Mutex::default(),
+        }
+    }
+}
+
+impl Sending {
+    /// Holds back every request for `wait` from now, or longer when a
+    /// limit given before lasts longer.
+    fn limit_for(&self, wait: std::time::Duration) {
+        let until = tokio::time::Instant::now() + wait;
+        let mut limited = self
+            .limited_until
+            .lock()
+            .expect("the rate limit is readable");
+        *limited = Some(limited.map_or(until, |before| before.max(until)));
+    }
+
+    /// Once the rate limits given so far are waited out.
+    async fn limits_waited_out(&self) {
+        let until = *self
+            .limited_until
+            .lock()
+            .expect("the rate limit is readable");
+        if let Some(until) = until {
+            tokio::time::sleep_until(until).await;
+        }
+    }
+}
+
+/// The pushes read of each branch, at the head they were read at: a
+/// branch whose head has not moved has had no push since.
+#[derive(Default)]
+struct PushesKept(std::sync::Mutex<BTreeMap<String, PushesRead>>);
+
+struct PushesRead {
+    head: String,
+    pushes: Vec<Push>,
+}
+
+impl PushesKept {
+    fn kept(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, PushesRead>> {
+        self.0.lock().expect("the pushes kept are readable")
+    }
+
+    /// The pushes kept of `branch`, if they were read at `head`.
+    fn at(&self, branch: &str, head: &str) -> Option<Vec<Push>> {
+        self.kept()
+            .get(branch)
+            .filter(|read| read.head == head)
+            .map(|read| read.pushes.clone())
+    }
+
+    fn keep(&self, branch: &str, head: &str, pushes: Vec<Push>) {
+        self.kept().insert(
+            branch.to_string(),
+            PushesRead {
+                head: head.to_string(),
+                pushes,
+            },
+        );
+    }
+
+    /// Forgets the pushes of every branch but `branches`.
+    fn keep_only(&self, branches: &BTreeSet<&str>) {
+        self.kept()
+            .retain(|branch, _| branches.contains(branch.as_str()));
+    }
+}
+
+/// The rules of each branch, read at most once for all the pull requests
+/// read with it, unless the read fails.
+#[derive(Default)]
+struct RulesRead(std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::OnceCell<Arc<BranchRules>>>>>);
+
+impl RulesRead {
+    fn of(&self, branch: &str) -> Arc<tokio::sync::OnceCell<Arc<BranchRules>>> {
+        self.0
+            .lock()
+            .expect("the rules read are readable")
+            .entry(branch.to_string())
+            .or_default()
+            .clone()
+    }
 }
 
 macro_rules! closes_field {
@@ -237,17 +344,27 @@ impl Answer {
     }
 }
 
-/// The answer to `request`, which `send` makes, made again once each rate
-/// limit is waited out, at most [`rate_limit::RETRIES`] times: a rate limit
-/// still in force after them fails it.
-async fn waiting_out_rate_limits<F, Fut>(request: &str, mut send: F) -> Result<Answer>
+/// The answer to `request`, which `send` makes as `sending` lets it, made
+/// again once each rate limit is waited out, at most
+/// [`rate_limit::RETRIES`] times: a rate limit still in force after them
+/// fails it. A rate limit holds back every request of `sending` until it is
+/// waited out.
+async fn waiting_out_rate_limits<F, Fut>(
+    request: &str,
+    sending: &Sending,
+    mut send: F,
+) -> Result<Answer>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<Answer>>,
 {
     let mut retries = 0;
     loop {
-        let answer = send().await?;
+        sending.limits_waited_out().await;
+        let answer = {
+            let _in_flight = sending.in_flight.acquire().await?;
+            send().await?
+        };
         let wait = rate_limit::wait(
             answer.status,
             &answer.headers,
@@ -259,7 +376,7 @@ where
             None => return Ok(answer),
             Some(wait) if retries < rate_limit::RETRIES => {
                 tracing::warn!(request, wait = %humantime::format_duration(wait), "rate limited");
-                tokio::time::sleep(wait).await;
+                sending.limit_for(wait);
                 retries += 1;
             }
             Some(_) => {
@@ -563,6 +680,8 @@ impl GitHub {
             },
             repository_id: Arc::default(),
             openings: Arc::default(),
+            sending: Arc::default(),
+            pushes_kept: Arc::default(),
         };
         github.viewer = github
             .rest(Method::GET, "/user", None)
@@ -621,7 +740,7 @@ impl GitHub {
     /// The answer to the request, with each rate limit waited out.
     async fn answer(&self, method: &Method, path: &str, body: Option<&Value>) -> Result<Answer> {
         let request = format!("{method} {path}");
-        waiting_out_rate_limits(&request, || async {
+        waiting_out_rate_limits(&request, &self.sending, || async {
             Answer::read(self.send(method.clone(), path, body.cloned()).await?).await
         })
         .await
@@ -973,19 +1092,6 @@ impl GitHub {
         Ok(found)
     }
 
-    /// The pull requests of `numbers` that GitHub has, read in full, ten to
-    /// a query ([`pulls_query`]).
-    async fn pulls_numbered(&self, numbers: &BTreeSet<Number>) -> Result<Vec<Pull>> {
-        let mut pulls = vec![];
-        for pr in self
-            .batched::<GqlPull>(numbers, PULLS_A_QUERY, pulls_query)
-            .await?
-        {
-            pulls.push(self.pull_view(pr).await?);
-        }
-        Ok(pulls)
-    }
-
     /// The issues closed since `since` that Linewright may manage, and the
     /// spec changes' issues among them, from the closed issues updated since
     /// then that involve Linewright, found by a search
@@ -1037,17 +1143,17 @@ impl GitHub {
         query: impl Fn(&[Number]) -> String,
     ) -> Result<Vec<T>> {
         let numbers: Vec<Number> = numbers.iter().copied().collect();
-        let mut items = vec![];
-        for batch in numbers.chunks(size) {
+        let batches = try_join_all(numbers.chunks(size).map(|batch| async {
             let response = self
                 .graphql_response(
                     &query(batch),
                     json!({"owner": self.owner, "name": self.name}),
                 )
                 .await?;
-            items.extend(found_of_numbered(response)?);
-        }
-        Ok(items)
+            found_of_numbered(response)
+        }))
+        .await?;
+        Ok(batches.into_iter().flatten().collect())
     }
 
     /// The issues or pull requests, as `kind` says, of `numbers` that GitHub
@@ -1163,15 +1269,29 @@ impl GitHub {
         held: &BTreeSet<Number>,
     ) -> Result<(Vec<TicketBranch>, BTreeSet<TicketBranchName>)> {
         let NamedRefs { pushed, gone } = self.named_refs(names).await?;
+        let unheld: BTreeSet<Number> = pushed
+            .iter()
+            .map(|(name, _)| name.issue())
+            .filter(|issue| !held.contains(issue))
+            .collect();
+        let read: BTreeMap<Number, Issue> = self
+            .numbered::<GqlIssue>(ItemKind::Issue, &unheld, ISSUE_FIELDS)
+            .await?
+            .into_iter()
+            .map(|issue| {
+                let issue = issue.into_issue(&self.linewright());
+                (issue.number, issue)
+            })
+            .collect();
         let mut branches = vec![];
         for (name, open_pull_from_branch) in pushed {
             let issue = if held.contains(&name.issue()) {
                 BranchIssue::Held
             } else {
-                let Some(read) = self.gql_issue(name.issue()).await? else {
+                let Some(issue) = read.get(&name.issue()) else {
                     continue;
                 };
-                BranchIssue::Read(Box::new(read.into_issue(&self.linewright())))
+                BranchIssue::Read(Box::new(issue.clone()))
             };
             branches.push(TicketBranch {
                 name,
@@ -1186,11 +1306,15 @@ impl GitHub {
     /// request.
     async fn named_refs(&self, names: &BTreeSet<TicketBranchName>) -> Result<NamedRefs> {
         let names: Vec<&TicketBranchName> = names.iter().collect();
-        let mut read = NamedRefs::default();
-        for batch in names.chunks(REFS_A_REQUEST) {
+        let answers = try_join_all(names.chunks(REFS_A_REQUEST).map(|batch| async move {
             let (query, variables) = named_refs_query(&self.owner, &self.name, batch);
             let data: RepoData<BTreeMap<String, Option<GqlRef>>> =
                 self.graphql(&query, variables).await?;
+            anyhow::Ok((batch, data))
+        }))
+        .await?;
+        let mut read = NamedRefs::default();
+        for (batch, data) in answers {
             for (i, name) in batch.iter().enumerate() {
                 match data.repository.get(&format!("b{i}")) {
                     Some(Some(branch)) => read.pushed.extend(branch.pushed(&self.viewer.login)),
@@ -1294,17 +1418,18 @@ impl GitHub {
                 )
                 .await?;
             let page = data.repository.pull_requests;
-            let mut older = false;
-            for pr in page.nodes {
-                if pr.updated_at < windows.read_since() {
-                    older = true;
-                    continue;
-                }
-                if let Some(pr) = self.merged_view(pr, base, windows).await? {
-                    merged.push(pr);
-                }
-            }
-            if older || !page.page_info.has_next_page {
+            let (within, older): (Vec<_>, Vec<_>) = page
+                .nodes
+                .into_iter()
+                .partition(|pr| pr.updated_at >= windows.read_since());
+            let read = try_join_all(
+                within
+                    .into_iter()
+                    .map(|pr| self.merged_view(pr, base, windows)),
+            )
+            .await?;
+            merged.extend(read.into_iter().flatten());
+            if !older.is_empty() || !page.page_info.has_next_page {
                 return Ok(merged);
             }
             cursor = json!(page.page_info.end_cursor);
@@ -1333,18 +1458,28 @@ impl GitHub {
         Ok(pr.into_merged(merged_at, files))
     }
 
-    /// Oldest first
-    /// (<https://docs.github.com/en/rest/repos/repos#list-repository-activities>).
-    async fn pushes(&self, branch: &str) -> Result<Vec<Push>> {
+    /// The pushes to `branch`, at `head`, oldest first, read from its
+    /// activity
+    /// (<https://docs.github.com/en/rest/repos/repos#list-repository-activities>)
+    /// unless they were read at `head` already. They are kept once the
+    /// activity's newest entry is at `head`.
+    async fn pushes(&self, branch: &str, head: &str) -> Result<Vec<Push>> {
         #[derive(Deserialize)]
         struct Activity {
+            after: Option<String>,
             timestamp: Timestamp,
             #[serde(rename = "activity_type")]
             kind: String,
             actor: Option<RestUser>,
         }
+        if let Some(pushes) = self.pushes_kept.at(branch, head) {
+            return Ok(pushes);
+        }
         let path = self.repo_path(&format!("/activity?ref=refs/heads/{branch}&per_page=30"));
         let activity: Vec<Activity> = self.rest(Method::GET, &path, None).await?;
+        let at_head = activity
+            .first()
+            .is_some_and(|newest| newest.after.as_deref() == Some(head));
         let mut pushes: Vec<Push> = activity
             .into_iter()
             .filter(|a| matches!(a.kind.as_str(), "push" | "force_push" | "branch_creation"))
@@ -1356,6 +1491,9 @@ impl GitHub {
             })
             .collect();
         pushes.reverse();
+        if at_head {
+            self.pushes_kept.keep(branch, head, pushes.clone());
+        }
         Ok(pushes)
     }
 
@@ -1463,18 +1601,25 @@ impl GitHub {
         Ok(data.map(|d| d.repository.issue))
     }
 
-    async fn pull_view(&self, pr: GqlPull) -> Result<Pull> {
-        let pushes = if pr.pushes_readable() {
-            self.pushes(&pr.head_ref_name).await?
-        } else {
-            vec![]
+    /// `pr`, with its pushes and, when it is blocked, the rules of the
+    /// branch it merges into, read once in `rules`.
+    async fn pull_view(&self, pr: GqlPull, rules: &RulesRead) -> Result<Pull> {
+        let pushes = async {
+            if pr.pushes_readable() {
+                self.pushes(&pr.head_ref_name, &pr.head_ref_oid).await
+            } else {
+                Ok(vec![])
+            }
         };
-        let rules = if pr.merge_state_status == "BLOCKED" {
-            self.branch_rules(&pr.base_ref_name).await
-        } else {
-            BranchRules::default()
+        let branch_rules = async {
+            if pr.merge_state_status == "BLOCKED" {
+                Ok(self.branch_rules(&pr.base_ref_name, rules).await)
+            } else {
+                Ok(Arc::default())
+            }
         };
-        Ok(pr.into_pull(pushes, &rules))
+        let (pushes, branch_rules) = tokio::try_join!(pushes, branch_rules)?;
+        Ok(pr.into_pull(pushes, &branch_rules))
     }
 
     /// The rules GitHub applies to `branch`
@@ -1506,17 +1651,26 @@ impl GitHub {
     }
 
     /// What the rulesets on `branch` require: nothing when GitHub does not
-    /// give them.
-    async fn branch_rules(&self, branch: &str) -> BranchRules {
-        match self.rules(branch).await {
-            Ok(rules) => BranchRules::from_rules(&rules.unwrap_or_default()),
+    /// give them. They are read unless `rules` holds them.
+    async fn branch_rules(&self, branch: &str, rules: &RulesRead) -> Arc<BranchRules> {
+        let cell = rules.of(branch);
+        let read = cell
+            .get_or_try_init(|| async {
+                let given = self.rules(branch).await?;
+                anyhow::Ok(Arc::new(BranchRules::from_rules(
+                    &given.unwrap_or_default(),
+                )))
+            })
+            .await;
+        match read {
+            Ok(read) => read.clone(),
             Err(e) => {
                 tracing::warn!(
                     branch,
                     error = format!("{e:#}"),
                     "reading the branch's rules"
                 );
-                BranchRules::default()
+                Arc::default()
             }
         }
     }
@@ -3700,53 +3854,81 @@ impl Store for GitHub {
     }
 
     async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot> {
-        let settings_branch: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
-        let default_branch = settings_branch["default_branch"]
-            .as_str()
-            .context("the repository has a default branch")?
-            .to_string();
         let linewright = self.linewright();
-        let mut issue_numbers = BTreeSet::new();
-        let mut pull_numbers = BTreeSet::new();
-        for item in self
-            .discovered()
-            .await?
-            .into_iter()
-            .chain(scope.items.iter().copied())
-        {
-            match item {
-                Item::Issue(number) => issue_numbers.insert(number),
-                Item::Pull(number) => pull_numbers.insert(number),
+        let rules = RulesRead::default();
+        let open_issues = async {
+            let mut issue_numbers = BTreeSet::new();
+            let mut pull_numbers = BTreeSet::new();
+            for item in self
+                .discovered()
+                .await?
+                .into_iter()
+                .chain(scope.items.iter().copied())
+            {
+                match item {
+                    Item::Issue(number) => issue_numbers.insert(number),
+                    Item::Pull(number) => pull_numbers.insert(number),
+                };
+            }
+            let open: Vec<Issue> = self
+                .numbered::<GqlIssue>(ItemKind::Issue, &issue_numbers, ISSUE_FIELDS)
+                .await?
+                .into_iter()
+                .map(|issue| issue.into_issue(&linewright))
+                .filter(|issue| issue.open)
+                .collect();
+            let held = open_issues_held(open, &linewright);
+            pull_numbers.extend(held.closing_pulls.iter().copied());
+            anyhow::Ok((held, pull_numbers))
+        };
+        let default_branch = async {
+            let repository: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
+            let default_branch = repository["default_branch"]
+                .as_str()
+                .context("the repository has a default branch")?;
+            anyhow::Ok(default_branch.to_string())
+        };
+        let ((held, pull_numbers), default_branch) = tokio::try_join!(open_issues, default_branch)?;
+        let held_numbers = held.issues.iter().map(|issue| issue.number).collect();
+        let open_pulls_then_closed = async {
+            let open_pulls = self
+                .batched::<GqlPull>(&pull_numbers, PULLS_A_QUERY, pulls_query)
+                .await?;
+            let closed_issues = async {
+                let closed_since = self.closed_since(windows.read_since()).await?;
+                let closed = self.closed_issues_numbered(&closed_since.managed).await?;
+                anyhow::Ok((closed_since.spec_change_issues, closed))
             };
-        }
-        let open_issues: Vec<Issue> = self
-            .numbered::<GqlIssue>(ItemKind::Issue, &issue_numbers, ISSUE_FIELDS)
-            .await?
-            .into_iter()
-            .map(|issue| issue.into_issue(&linewright))
-            .filter(|issue| issue.open)
-            .collect();
+            tokio::try_join!(
+                try_join_all(open_pulls.into_iter().map(|pr| self.pull_view(pr, &rules))),
+                closed_issues,
+                self.closed_pulls(windows.read_since()),
+                self.merged_within(&default_branch, windows),
+            )
+        };
+        let (
+            (pulls_read, (closed_spec_change_issues, closed_issues), closed_pulls, merged),
+            (ticket_branches, gone_branches),
+        ) = tokio::try_join!(
+            open_pulls_then_closed,
+            self.ticket_branches(&scope.branches, &held_numbers),
+        )?;
+        self.pushes_kept
+            .keep_only(&pulls_read.iter().map(|p| p.head_ref.as_str()).collect());
         let OpenIssues {
             issues,
             mut spec_change_issues,
-            closing_pulls,
+            closing_pulls: _,
             closed_by_linewright,
-        } = open_issues_held(open_issues, &linewright);
-        pull_numbers.extend(closing_pulls);
-        let pulls_read = self.pulls_numbered(&pull_numbers).await?;
+        } = held;
         let (pulls, peoples_pulls) = pulls_held(pulls_read, &closed_by_linewright, &linewright);
-        let closed_since = self.closed_since(windows.read_since()).await?;
-        spec_change_issues.extend(closed_since.spec_change_issues);
+        spec_change_issues.extend(closed_spec_change_issues);
         spec_change_issues.sort_by_key(|issue| issue.number);
         spec_change_issues.dedup_by_key(|issue| issue.number);
-        let closed_issues = self.closed_issues_numbered(&closed_since.managed).await?;
-        let closed_pulls = self.closed_pulls(windows.read_since()).await?;
-        let held = issues.iter().map(|issue| issue.number).collect();
-        let (ticket_branches, gone_branches) = self.ticket_branches(&scope.branches, &held).await?;
         let mut snapshot = Snapshot {
             ticket_branches,
             gone_branches,
-            merged: self.merged_within(&default_branch, windows).await?,
+            merged,
             spec_change_issues,
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
             openings: vec![],
@@ -3769,8 +3951,11 @@ impl Store for GitHub {
 
     async fn pull(&self, number: Number) -> Result<Pull> {
         let pr = self.gql_pull(number).await?;
-        self.pull_view(pr.with_context(|| format!("there is no pull request {number}"))?)
-            .await
+        self.pull_view(
+            pr.with_context(|| format!("there is no pull request {number}"))?,
+            &RulesRead::default(),
+        )
+        .await
     }
 
     async fn any_item(&self, number: Number) -> Result<Option<AnyItem>> {
@@ -3797,7 +3982,9 @@ impl Store for GitHub {
             return Ok(None);
         };
         if pr.state != "MERGED" {
-            return Ok(Some(AnyItem::Pull(Box::new(self.pull_view(pr).await?))));
+            return Ok(Some(AnyItem::Pull(Box::new(
+                self.pull_view(pr, &RulesRead::default()).await?,
+            ))));
         }
         let merged = self
             .gql_merged(number)
@@ -3837,7 +4024,7 @@ impl Store for GitHub {
         if !held {
             return Ok(None);
         }
-        Ok(Some(self.pull_view(pr).await?))
+        Ok(Some(self.pull_view(pr, &RulesRead::default()).await?))
     }
 
     async fn peoples_pull(&self, number: Number) -> Result<PeoplesPullRead> {
@@ -4180,7 +4367,7 @@ impl Store for GitHub {
             .await
             .with_context(|| format!("reading {}", file.display()))?;
         let request = format!("POST {ATTACHMENTS}");
-        let answer = waiting_out_rate_limits(&request, || async {
+        let answer = waiting_out_rate_limits(&request, &self.sending, || async {
             let upload = self.attach_request(repository_id, name, content_type, bytes.clone());
             Answer::read(upload.send().await.with_context(|| request.clone())?).await
         })
@@ -5833,13 +6020,16 @@ mod tests {
 
     /// A pull request as `PullFields` reads it, made from #543 of
     /// `fixtures/pull-check-run-concluded-in-progress.json` as
-    /// [`issue_json`] makes an issue, in `state`.
+    /// [`issue_json`] makes an issue, in `state`, from the branch
+    /// `NUMBER-work` at [`FORCE_PUSHED_HEAD`].
     fn pull_json(number: u64, author: &str, assignees: &[&str], state: &str) -> Value {
         let mut pull: Value = serde_json::from_str(include_str!(
             "fixtures/pull-check-run-concluded-in-progress.json"
         ))
         .unwrap();
         pull["number"] = json!(number);
+        pull["headRefName"] = json!(format!("{number}-work"));
+        pull["headRefOid"] = json!(FORCE_PUSHED_HEAD);
         pull["state"] = json!(state);
         if state == "CLOSED" {
             pull["closedAt"] = json!("2026-11-01T04:00:00Z");
@@ -5878,11 +6068,19 @@ mod tests {
     }
 
     /// A repository that a fake GitHub serves: its issues and pull requests
-    /// as `IssueFields` and `PullFields` read them.
-    #[derive(Clone, Default)]
+    /// as `IssueFields` and `PullFields` read them, and the names of its
+    /// branches, each with its head committed by `tibbe-bot`. It answers a
+    /// discovery `per_page` items to a page, each request `delay` after it
+    /// arrives, and refuses the first `rules_refused` reads of `main`'s
+    /// rules.
+    #[derive(Clone)]
     struct FakeRepository {
         issues: Vec<Value>,
         pulls: Vec<Value>,
+        branches: BTreeSet<String>,
+        per_page: usize,
+        delay: std::time::Duration,
+        rules_refused: usize,
     }
 
     impl FakeRepository {
@@ -5907,11 +6105,11 @@ mod tests {
         /// issues and pull requests that `involves:` its login finds, its
         /// author's, assignee's or commenter's
         /// (<https://docs.github.com/en/search-github/searching-on-github/searching-issues-and-pull-requests#search-by-a-user-thats-involved-in-an-issue-or-pull-request>),
-        /// two to a page.
+        /// `per_page` to a page.
         fn discovered(&self, query: &str, variables: &Value) -> Value {
             let page = |found: Vec<Value>, cursor: &Value| {
                 let start: usize = cursor.as_str().map_or(0, |c| c.parse().unwrap());
-                let end = (start + 2).min(found.len());
+                let end = (start + self.per_page).min(found.len());
                 json!({
                     "pageInfo": {"hasNextPage": end < found.len(), "endCursor": end.to_string()},
                     "nodes": found[start..end],
@@ -6028,6 +6226,49 @@ mod tests {
             Some(json!({"repository": repository}))
         }
 
+        /// The answer to a read of branches by name ([`named_refs_query`]):
+        /// each of its branches as `fixtures/refs-named.json` reads
+        /// `301-cutting-tickets`, under its own name and committed by
+        /// `tibbe-bot`, and null for any other.
+        fn refs(&self, variables: &Value) -> Value {
+            let recorded: Value =
+                serde_json::from_str(include_str!("fixtures/refs-named.json")).unwrap();
+            let refs: serde_json::Map<String, Value> = variables
+                .as_object()
+                .unwrap()
+                .iter()
+                .filter(|(variable, _)| !["owner", "name"].contains(&variable.as_str()))
+                .map(|(alias, qualified)| {
+                    let name = qualified.as_str().unwrap().strip_prefix("refs/heads/");
+                    let name = name.unwrap();
+                    let mut answer = Value::Null;
+                    if self.branches.contains(name) {
+                        answer = recorded["data"]["repository"]["b0"].clone();
+                        answer["name"] = json!(name);
+                        answer["target"]["committer"]["user"]["login"] = json!("tibbe-bot");
+                    }
+                    (alias.clone(), answer)
+                })
+                .collect();
+            json!({"repository": refs})
+        }
+
+        /// The answer to a read of a branch's activity: that of
+        /// `fixtures/activity-force-pushed.json` before its branch was
+        /// deleted, created and then force-pushed to
+        /// [`FORCE_PUSHED_HEAD`]. The fixture is what GitHub answered on
+        /// 2026-11-17 for the activity of
+        /// <https://github.com/tibbe/linewright>'s branch
+        /// `1313-give-a-poll-s-snapshot-the-scope-it-read`.
+        fn activity() -> Value {
+            let recorded: Vec<Value> =
+                serde_json::from_str(include_str!("fixtures/activity-force-pushed.json")).unwrap();
+            recorded
+                .into_iter()
+                .filter(|a| a["activity_type"] != "branch_deletion")
+                .collect()
+        }
+
         /// The answer to a request, as GitHub's: besides the items it holds,
         /// the closed issues of `fixtures/managed-facts-closed.json` to a
         /// search of closed issues, and `fixtures/merged-pull.json`, #477, as
@@ -6042,7 +6283,9 @@ mod tests {
             merged["updatedAt"] = json!("2026-10-29T22:00:00Z");
             let closed: Value =
                 serde_json::from_str(include_str!("fixtures/managed-facts-closed.json")).unwrap();
-            let data = if query.contains("involved: search(")
+            let data = if query.contains("ref(qualifiedName: ") {
+                self.refs(&request["variables"])
+            } else if query.contains("involved: search(")
                 || query.contains("labeled: issues(")
                 || query.contains("assigned: issues(")
             {
@@ -6064,37 +6307,80 @@ mod tests {
         }
     }
 
-    /// A GitHub store, as tibbe-bot, on tibbe/linewright, served by a fake
-    /// GitHub holding `repository`, with the log of the requests it is sent:
-    /// for each, its method and path, and a GraphQL request's body.
-    async fn serving_fake(
-        repository: FakeRepository,
-    ) -> (GitHub, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
-        let log: Arc<std::sync::Mutex<Vec<(String, Value)>>> = Arc::default();
-        let logged = log.clone();
+    /// The head `fixtures/activity-force-pushed.json` was force-pushed to.
+    const FORCE_PUSHED_HEAD: &str = "3cc0a4093f900c861b510b38a264c2f16fe209b5";
+
+    /// What a fake GitHub was sent: for each request, its method and path,
+    /// and a GraphQL request's body; and the most requests it answered at
+    /// once.
+    #[derive(Default)]
+    struct Sent {
+        requests: std::sync::Mutex<Vec<(String, Value)>>,
+        in_flight: std::sync::atomic::AtomicUsize,
+        most_in_flight: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Sent {
+        fn requests(&self) -> std::sync::MutexGuard<'_, Vec<(String, Value)>> {
+            self.requests.lock().unwrap()
+        }
+
+        /// How many of the requests asked for the path `path`.
+        fn asked(&self, path: &str) -> usize {
+            self.requests()
+                .iter()
+                .filter(|(sent, _)| sent.split(['?', ' ']).nth(1) == Some(path))
+                .count()
+        }
+    }
+
+    /// The address of a fake GitHub holding `repository`, which tells
+    /// `sent` what it was sent.
+    async fn serving_repository(repository: FakeRepository, sent: Arc<Sent>) -> String {
+        use std::sync::atomic::Ordering;
+        let repository = Arc::new(repository);
         let app = axum::Router::new().fallback(
             move |method: axum::http::Method, uri: axum::http::Uri, body: String| {
                 let repository = repository.clone();
-                let logging = logged.clone();
+                let sent = sent.clone();
                 async move {
                     let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-                    logging
-                        .lock()
-                        .unwrap()
+                    sent.requests()
                         .push((format!("{method} {uri}"), request.clone()));
-                    match uri.path() {
+                    let now = sent.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    sent.most_in_flight.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(repository.delay).await;
+                    sent.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    let rules = "/repos/tibbe/linewright/rules/branches/main";
+                    let answer = match uri.path() {
                         "/graphql" => repository.answer(&request).to_string(),
                         "/repos/tibbe/linewright" => json!({"default_branch": "main"}).to_string(),
+                        "/repos/tibbe/linewright/activity" => {
+                            FakeRepository::activity().to_string()
+                        }
+                        path if path == rules && sent.asked(rules) <= repository.rules_refused => {
+                            let refusal =
+                                json!({"message": "Resource not accessible by integration"});
+                            return (axum::http::StatusCode::FORBIDDEN, refusal.to_string());
+                        }
                         _ => "[]".to_string(),
-                    }
+                    };
+                    (axum::http::StatusCode::OK, answer)
                 }
             },
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{address}")
+    }
+
+    /// A GitHub store, as tibbe-bot, on tibbe/linewright, served by a fake
+    /// GitHub holding `repository`, with what it was sent.
+    async fn serving_fake(repository: FakeRepository) -> (GitHub, Arc<Sent>) {
+        let sent = Arc::<Sent>::default();
         let github = GitHub {
-            api: format!("http://{address}"),
+            api: serving_repository(repository, sent.clone()).await,
             owner: "tibbe".into(),
             name: "linewright".into(),
             viewer: Viewer {
@@ -6102,7 +6388,7 @@ mod tests {
             },
             ..github("token")
         };
-        (github, log)
+        (github, sent)
     }
 
     /// Whether `request` lists every open issue or pull request of the
@@ -6170,8 +6456,12 @@ mod tests {
                 pull_json(12, "tibbe", &[], "OPEN"),
                 pull_json(13, bot, &[], "CLOSED"),
             ],
+            branches: BTreeSet::new(),
+            per_page: 2,
+            delay: std::time::Duration::ZERO,
+            rules_refused: 0,
         };
-        let (github, log) = serving_fake(repository).await;
+        let (github, sent) = serving_fake(repository).await;
         let scope = Scope {
             items: [Item::Issue(Number(5)), Item::Pull(Number(13))].into(),
             branches: BTreeSet::new(),
@@ -6199,7 +6489,7 @@ mod tests {
         assert_eq!(closed, [731]);
         let merged: Vec<u64> = snapshot.merged.iter().map(|p| p.number.0).collect();
         assert_eq!(merged, [477]);
-        let log = log.lock().unwrap();
+        let log = sent.requests();
         let listing: Vec<_> = log.iter().filter(|r| lists_every_open_item(r)).collect();
         assert!(listing.is_empty(), "listed every open item: {listing:#?}");
         let closed_searches: Vec<&str> = log
@@ -6252,6 +6542,186 @@ mod tests {
             requests += 1;
         }
         assert_eq!(requests, 1);
+    }
+
+    /// A repository holding Linewright's work at the bound of
+    /// `docs/specs/sources_of_work.md`, Polling, Reaction time: 100 items
+    /// and 100 branches. A person labeled the open issues #1 to #50
+    /// `ready-for-agent`; Linewright opened the pull requests #101 to #150,
+    /// each blocked from merging into `main`, and pushed the branch `N-work`
+    /// for each issue `N` of #1 to #100, of which #51 to #100 are closed.
+    fn linewrights_work_at_the_bound(delay: std::time::Duration) -> (FakeRepository, Scope) {
+        let bot = "tibbe-bot";
+        let pulls = (101..=150)
+            .map(|n| {
+                let mut pull = pull_json(n, bot, &[bot], "OPEN");
+                pull["mergeStateStatus"] = json!("BLOCKED");
+                pull
+            })
+            .collect();
+        let branches: BTreeSet<String> = (1..=100).map(|n| format!("{n}-work")).collect();
+        let scope = Scope {
+            items: BTreeSet::new(),
+            branches: branches
+                .iter()
+                .map(|b| TicketBranchName::parse(b).unwrap())
+                .collect(),
+        };
+        let repository = FakeRepository {
+            issues: (1..=100)
+                .map(|n| {
+                    let mut issue =
+                        issue_json(n, "tibbe", &[("ready-for-agent", "tibbe")], &[], &[]);
+                    if n > 50 {
+                        issue["state"] = json!("CLOSED");
+                    }
+                    issue
+                })
+                .collect(),
+            pulls,
+            branches,
+            per_page: 100,
+            delay,
+            rules_refused: 0,
+        };
+        (repository, scope)
+    }
+
+    /// `docs/specs/sources_of_work.md`, Polling, Reaction time: at 100 items
+    /// and branches, with GitHub answering each request within 1 s, a
+    /// snapshot takes at most about 10 s, which is 10 rounds of requests,
+    /// sent at most 16 at once. The default branch's rules are read once.
+    #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 4))]
+    async fn a_snapshot_at_a_hundred_items_and_branches_takes_at_most_about_ten_rounds_of_requests_sixteen_at_once()
+     {
+        let round = std::time::Duration::from_millis(200);
+        let (repository, scope) = linewrights_work_at_the_bound(round);
+        let (github, sent) = serving_fake(repository).await;
+
+        let started = std::time::Instant::now();
+        let snapshot = github
+            .snapshot(opened("2026-10-29T21:00:00Z"), &scope)
+            .await
+            .unwrap();
+        let took = started.elapsed();
+
+        assert_eq!(snapshot.issues.len(), 50);
+        assert_eq!(snapshot.pulls.len(), 50);
+        assert_eq!(snapshot.ticket_branches.len(), 100);
+        assert!(
+            took <= 10 * round,
+            "took {took:?}, {} rounds",
+            took.as_secs_f64() / round.as_secs_f64()
+        );
+        let most = sent
+            .most_in_flight
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert!(most <= 16, "{most} requests in flight at once");
+        assert_eq!(sent.asked("/repos/tibbe/linewright/rules/branches/main"), 1);
+    }
+
+    /// A failed read of a branch's rules is not kept for the other pull
+    /// requests of the snapshot: the next one reads them again.
+    #[test_log::test(tokio::test)]
+    async fn a_failed_read_of_a_branchs_rules_is_read_again_for_the_next_pull_request() {
+        let (mut repository, scope) = linewrights_work_at_the_bound(std::time::Duration::ZERO);
+        repository.rules_refused = 1;
+        let (github, sent) = serving_fake(repository).await;
+
+        github
+            .snapshot(opened("2026-10-29T21:00:00Z"), &scope)
+            .await
+            .unwrap();
+
+        assert_eq!(sent.asked("/repos/tibbe/linewright/rules/branches/main"), 2);
+    }
+
+    /// A snapshot reads the closed and merged items once it has read the
+    /// open ones, the open pull requests last among them, so an item that closes while it reads is read closed
+    /// rather than neither open nor closed.
+    #[test_log::test(tokio::test)]
+    async fn a_snapshot_reads_the_closed_and_merged_items_once_it_has_read_the_open_ones() {
+        let (repository, scope) = linewrights_work_at_the_bound(std::time::Duration::ZERO);
+        let (github, sent) = serving_fake(repository).await;
+
+        github
+            .snapshot(opened("2026-10-29T21:00:00Z"), &scope)
+            .await
+            .unwrap();
+
+        let log = sent.requests();
+        let query = |(_, request): &(String, Value)| {
+            request["query"].as_str().unwrap_or_default().to_string()
+        };
+        let reads_open_pulls = |request: &(String, Value)| {
+            let query = query(request);
+            query.contains(": pullRequest(number: ") && query.contains("mergeStateStatus")
+        };
+        let reads_closed = |request: &(String, Value)| {
+            let searched = request.1["variables"]["query"].as_str().unwrap_or_default();
+            let query = query(request);
+            searched.contains("is:closed")
+                || query.contains("states: [CLOSED]")
+                || query.contains("states: [MERGED]")
+        };
+        let last_open = log.iter().rposition(reads_open_pulls).unwrap();
+        let first_closed = log.iter().position(reads_closed).unwrap();
+        assert!(
+            last_open < first_closed,
+            "read open items at {last_open}, closed at {first_closed}: {log:#?}"
+        );
+    }
+
+    /// A pull request's pushes are kept by branch and head: a second poll
+    /// with no head moved reads no pushes, and holds those the first read,
+    /// oldest first.
+    #[test_log::test(tokio::test)]
+    async fn a_second_poll_with_no_head_moved_reads_no_pushes() {
+        let (repository, scope) = linewrights_work_at_the_bound(std::time::Duration::ZERO);
+        let (github, sent) = serving_fake(repository).await;
+        let windows = opened("2026-10-29T21:00:00Z");
+        github.snapshot(windows, &scope).await.unwrap();
+        let first = sent.asked("/repos/tibbe/linewright/activity");
+
+        let snapshot = github.snapshot(windows, &scope).await.unwrap();
+
+        assert_eq!(first, 50);
+        assert_eq!(sent.asked("/repos/tibbe/linewright/activity"), 50);
+        let bot = Login::new("tibbe-bot");
+        assert_eq!(
+            snapshot.pulls[0].pushes,
+            [
+                Push {
+                    by: bot.clone(),
+                    at: at("2026-11-17T08:05:05Z"),
+                },
+                Push {
+                    by: bot,
+                    at: at("2026-11-17T08:11:56Z"),
+                },
+            ]
+        );
+    }
+
+    /// A pull request's pushes are read again when its head moves, and
+    /// while the newest entry of its activity is not at its head.
+    #[test_log::test(tokio::test)]
+    async fn a_pull_requests_pushes_are_read_again_when_its_head_moves_or_its_activity_lags_behind_it()
+     {
+        let (mut repository, scope) = linewrights_work_at_the_bound(std::time::Duration::ZERO);
+        let (github, sent) = serving_fake(repository.clone()).await;
+        let windows = opened("2026-10-29T21:00:00Z");
+        github.snapshot(windows, &scope).await.unwrap();
+        repository.pulls[0]["headRefOid"] = json!("a2b01b737fa17e9845c52d03004c216438a32724");
+        let moved = GitHub {
+            api: serving_repository(repository, sent.clone()).await,
+            ..github.clone()
+        };
+
+        moved.snapshot(windows, &scope).await.unwrap();
+        moved.snapshot(windows, &scope).await.unwrap();
+
+        assert_eq!(sent.asked("/repos/tibbe/linewright/activity"), 50 + 1 + 1);
     }
 
     /// `fixtures/closed-issue-worked.json` is `ClosedIssueFields` as GitHub
@@ -6841,6 +7311,8 @@ mod tests {
             },
             repository_id: Arc::default(),
             openings: Arc::default(),
+            sending: Arc::default(),
+            pushes_kept: Arc::default(),
         }
     }
 
@@ -6959,7 +7431,7 @@ mod tests {
         .into_iter();
         let mut sent = 0;
 
-        let answered = waiting_out_rate_limits(UPLOAD, || {
+        let answered = waiting_out_rate_limits(UPLOAD, &Sending::default(), || {
             sent += 1;
             std::future::ready(Ok(answers.next().expect("an answer left")))
         })
@@ -6972,6 +7444,50 @@ mod tests {
         );
         assert_eq!(sent, 2);
         assert!(start.elapsed() >= std::time::Duration::from_secs(120));
+    }
+
+    /// A rate limit GitHub gives one request holds back the requests sent
+    /// after it until it is waited out, as GitHub asks
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api#exceeding-the-rate-limit>).
+    #[test_log::test(tokio::test(start_paused = true))]
+    async fn a_rate_limit_holds_back_the_requests_sent_after_it_until_it_is_waited_out() {
+        let start = tokio::time::Instant::now();
+        let sending = Sending::default();
+        let mut answers = vec![
+            answer(
+                429,
+                &[("retry-after", "120")],
+                include_str!("fixtures/attachment-rate-limited.json"),
+            ),
+            answer(201, &[], include_str!("fixtures/attachment-uploaded.json")),
+        ]
+        .into_iter();
+        let limited = waiting_out_rate_limits(UPLOAD, &sending, || {
+            std::future::ready(Ok(answers.next().expect("an answer left")))
+        });
+        let mut sent_at = None;
+        let after = async {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            waiting_out_rate_limits(UPLOAD, &sending, || {
+                sent_at = Some(start.elapsed());
+                std::future::ready(Ok(answer(
+                    201,
+                    &[],
+                    include_str!("fixtures/attachment-uploaded.json"),
+                )))
+            })
+            .await
+        };
+
+        let (limited, after) = tokio::join!(limited, after);
+
+        limited.unwrap();
+        after.unwrap();
+        let sent_at = sent_at.unwrap();
+        assert!(
+            sent_at >= std::time::Duration::from_secs(120),
+            "{sent_at:?}"
+        );
     }
 }
 
@@ -7026,6 +7542,8 @@ mod retry_tests {
             },
             repository_id: Arc::default(),
             openings: Arc::default(),
+            sending: Arc::default(),
+            pushes_kept: Arc::default(),
         }
     }
 
@@ -7520,6 +8038,8 @@ mod recording_tests {
             },
             repository_id: Arc::default(),
             openings: Arc::default(),
+            sending: Arc::default(),
+            pushes_kept: Arc::default(),
         }
     }
 
@@ -7660,9 +8180,9 @@ mod recording_tests {
     async fn a_branch_has_no_rules_when_github_refuses_them_for_the_plan() {
         let github = serving_recorded_with_rules(Some(rules_refused_by_plan())).await;
 
-        let rules = github.branch_rules("main").await;
+        let rules = github.branch_rules("main", &RulesRead::default()).await;
 
-        assert_eq!(rules, BranchRules::default());
+        assert_eq!(*rules, BranchRules::default());
     }
 
     #[test_log::test(tokio::test)]

@@ -82,7 +82,7 @@ clap = { version = "4", features = ["derive"] }
 croner = "4"
 dirs = "7"
 form_urlencoded = "1"
-futures-util = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 globset = "0.4"
 hex = "0.4"
 hmac = "0.13"
