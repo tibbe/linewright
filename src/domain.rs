@@ -1671,6 +1671,10 @@ pub struct Snapshot {
     pub merged: Vec<MergedPull>,
     #[serde(default)]
     pub ticket_branches: Vec<TicketBranch>,
+    /// Those of the branches the snapshot was asked for
+    /// ([`Scope::branches`]) that the repository does not have.
+    #[serde(default)]
+    pub gone_branches: BTreeSet<TicketBranchName>,
     /// The issues closed within the Done window that Linewright manages
     /// ([`ClosedItem::candidate`]), every closed ticket of a tracking issue
     /// it holds and Linewright's pull requests closed without merging that

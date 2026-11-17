@@ -4,9 +4,11 @@ use std::panic::Location;
 use crate::common;
 
 use common::*;
+use linewright::clock::Clock as _;
 use linewright::database::Database;
-use linewright::domain::{Item, TicketBranchName, Timestamp};
+use linewright::domain::{Item, Number, TicketBranchName, Timestamp};
 use linewright::pushed_branches::PushedBranches;
+use linewright::store::Store as _;
 
 #[track_caller]
 fn branch(name: &str) -> TicketBranchName {
@@ -37,16 +39,14 @@ fn empty_record() -> impl Future<Output = (PushedBranches, tempfile::TempDir)> {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_read_forgets_the_branches_it_did_not_find_but_keeps_one_pushed_after_it_began() {
+async fn a_read_forgets_the_branches_it_found_gone_but_keeps_one_pushed_after_it_began() {
     let (pushed, _dir) = empty_record().await;
-    pushed
-        .record(&branch("7-found"), at("2026-10-01T10:00:00Z"))
-        .await
-        .unwrap();
-    pushed
-        .record(&branch("8-deleted"), at("2026-10-01T10:00:00Z"))
-        .await
-        .unwrap();
+    for name in ["7-found", "8-deleted", "10-recorded-unread"] {
+        pushed
+            .record(&branch(name), at("2026-10-01T10:00:00Z"))
+            .await
+            .unwrap();
+    }
     pushed
         .record(
             &branch("9-pushed-during-the-read"),
@@ -56,18 +56,21 @@ async fn a_read_forgets_the_branches_it_did_not_find_but_keeps_one_pushed_after_
         .unwrap();
 
     pushed
-        .forget_gone(&names(&["7-found"]), at("2026-10-01T10:00:01Z"))
+        .forget_gone(
+            &names(&["8-deleted", "9-pushed-during-the-read"]),
+            at("2026-10-01T10:00:01Z"),
+        )
         .await
         .unwrap();
 
     assert_eq!(
         pushed.names().await.unwrap(),
-        names(&["7-found", "9-pushed-during-the-read"])
+        names(&["10-recorded-unread", "7-found", "9-pushed-during-the-read"])
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn a_branch_pushed_again_after_a_read_began_is_kept_though_the_read_did_not_find_it() {
+async fn a_branch_pushed_again_after_a_read_began_is_kept_though_the_read_found_it_gone() {
     let (pushed, _dir) = empty_record().await;
     pushed
         .record(&branch("7-deleted-then-pushed"), at("2026-10-01T10:00:00Z"))
@@ -79,7 +82,10 @@ async fn a_branch_pushed_again_after_a_read_began_is_kept_though_the_read_did_no
         .unwrap();
 
     pushed
-        .forget_gone(&BTreeSet::new(), at("2026-10-01T10:00:01Z"))
+        .forget_gone(
+            &names(&["7-deleted-then-pushed"]),
+            at("2026-10-01T10:00:01Z"),
+        )
         .await
         .unwrap();
 
@@ -143,7 +149,7 @@ async fn an_adopted_branch_counts_as_recorded_when_the_listing_began() {
         .unwrap();
 
     pushed
-        .forget_gone(&BTreeSet::new(), at("2026-10-01T10:00:01Z"))
+        .forget_gone(&names(&["8-listed"]), at("2026-10-01T10:00:01Z"))
         .await
         .unwrap();
 
@@ -194,5 +200,131 @@ async fn a_poll_is_given_the_issue_linewright_opened_since_the_last() {
         scope.items.contains(&Item::Issue(opened)),
         "{:?}",
         scope.items
+    );
+}
+
+/// The record of `world`'s factory.
+async fn world_record(world: &World) -> PushedBranches {
+    PushedBranches::new(
+        Database::open(&world.dir.path().join("work"))
+            .await
+            .unwrap(),
+    )
+}
+
+/// A branch for `ticket` whose head Linewright committed, pushed without
+/// Linewright recording it, as before the record began or before the push
+/// path records it.
+async fn branch_pushed_unrecorded(world: &World, ticket: Number, slug: &str) -> String {
+    let branch = format!("{}-{slug}", ticket.0);
+    world
+        .store
+        .commit(LINEWRIGHT, &branch, &[("work.txt", "work\n")], "Work")
+        .await
+        .unwrap();
+    branch
+}
+
+/// `docs/specs/sources_of_work.md`, Polling: what a poll reads grows with
+/// the branches Linewright pushed, so every branch is listed only once, to
+/// adopt those pushed before the record began.
+#[test_log::test(tokio::test)]
+async fn polls_after_the_first_read_the_recorded_branches_without_listing_every_branch() {
+    let mut world = World::new().await;
+    let ticket = open_designed_gadgets(&world);
+    let branch = branch_pushed_unrecorded(&world, ticket, "earlier").await;
+
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(world.store.branch_listings(), 1);
+    let scope = world.store.last_scope().unwrap();
+    assert_eq!(
+        scope
+            .branches
+            .iter()
+            .map(linewright::domain::TicketBranchName::as_str)
+            .collect::<Vec<_>>(),
+        [branch.as_str()]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn the_branch_of_a_ticket_closed_without_a_pull_request_is_deleted_when_adopted() {
+    let mut world = World::new().await;
+    let ticket = open_designed_gadgets(&world);
+    world.store.assign(ticket).await.unwrap();
+    let branch = branch_pushed_unrecorded(&world, ticket, "earlier").await;
+    world.store.close_issue_as_completed(ticket).unwrap();
+
+    world.poll().await;
+
+    let listed = world.store.ticket_branches_pushed().await.unwrap();
+    assert!(listed.iter().all(|b| b.as_str() != branch), "{listed:?}");
+    assert_eq!(
+        world_record(&world).await.names().await.unwrap(),
+        names(&[])
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn the_branch_of_a_ticket_closed_without_a_pull_request_is_deleted_when_recorded_at_its_push()
+{
+    let mut world = World::new().await;
+    world.poll().await;
+    let ticket = open_designed_gadgets(&world);
+    world.store.assign(ticket).await.unwrap();
+    let branch = branch_pushed_unrecorded(&world, ticket, "pushed").await;
+    let record = world_record(&world).await;
+    record
+        .record(&self::branch(&branch), world.clock.now())
+        .await
+        .unwrap();
+    world.store.close_issue_as_completed(ticket).unwrap();
+
+    world.poll().await;
+
+    let listed = world.store.ticket_branches_pushed().await.unwrap();
+    assert!(listed.iter().all(|b| b.as_str() != branch), "{listed:?}");
+    assert_eq!(record.names().await.unwrap(), names(&[]));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_branch_a_person_deleted_is_forgotten_at_the_next_poll() {
+    let mut world = World::new().await;
+    let ticket = open_designed_gadgets(&world);
+    let branch = branch_pushed_unrecorded(&world, ticket, "earlier").await;
+    world.poll().await;
+    let record = world_record(&world).await;
+    assert_eq!(record.names().await.unwrap(), names(&[&branch]));
+    world.clock.advance(chrono::TimeDelta::minutes(1));
+
+    world.store.delete_branch(&branch).await.unwrap();
+    world.poll().await;
+
+    assert_eq!(record.names().await.unwrap(), names(&[]));
+}
+
+/// The factory forgets a branch a poll found gone only when it was recorded
+/// before the poll began.
+#[test_log::test(tokio::test)]
+async fn a_branch_recorded_once_a_poll_began_is_kept_though_the_poll_found_it_gone() {
+    let mut world = World::new().await;
+    world.poll().await;
+    let record = world_record(&world).await;
+    let poll_began = world.clock.now();
+
+    record
+        .record(
+            &branch("7-pushed-during-the-poll"),
+            poll_began + chrono::TimeDelta::seconds(30),
+        )
+        .await
+        .unwrap();
+    world.poll().await;
+
+    assert_eq!(
+        record.names().await.unwrap(),
+        names(&["7-pushed-during-the-poll"])
     );
 }

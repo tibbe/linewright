@@ -1087,11 +1087,17 @@ impl GitHub {
         }
     }
 
-    /// The branches Linewright pushed for a ticket, each with its issue: held,
-    /// when `held` holds its number, or else as read.
-    async fn ticket_branches(&self, held: &BTreeSet<Number>) -> Result<Vec<TicketBranch>> {
+    /// Those of `names` that the repository has and Linewright pushed, each
+    /// with its issue: held, when `held` holds its number, or else as read.
+    /// Also those of `names` the repository does not have.
+    async fn ticket_branches(
+        &self,
+        names: &BTreeSet<TicketBranchName>,
+        held: &BTreeSet<Number>,
+    ) -> Result<(Vec<TicketBranch>, BTreeSet<TicketBranchName>)> {
+        let NamedRefs { pushed, gone } = self.named_refs(names).await?;
         let mut branches = vec![];
-        for (name, open_pull_from_branch) in self.pushed_refs().await? {
+        for (name, open_pull_from_branch) in pushed {
             let issue = if held.contains(&name.issue()) {
                 BranchIssue::Held
             } else {
@@ -1106,7 +1112,29 @@ impl GitHub {
                 open_pull_from_branch,
             });
         }
-        Ok(branches)
+        Ok((branches, gone))
+    }
+
+    /// The branches `names` names, read by name [`REFS_A_REQUEST`] to a
+    /// request.
+    async fn named_refs(&self, names: &BTreeSet<TicketBranchName>) -> Result<NamedRefs> {
+        let names: Vec<&TicketBranchName> = names.iter().collect();
+        let mut read = NamedRefs::default();
+        for batch in names.chunks(REFS_A_REQUEST) {
+            let (query, variables) = named_refs_query(&self.owner, &self.name, batch);
+            let data: RepoData<BTreeMap<String, Option<GqlRef>>> =
+                self.graphql(&query, variables).await?;
+            for (i, name) in batch.iter().enumerate() {
+                match data.repository.get(&format!("b{i}")) {
+                    Some(Some(branch)) => read.pushed.extend(branch.pushed(&self.viewer.login)),
+                    Some(None) => {
+                        read.gone.insert((*name).clone());
+                    }
+                    None => bail!("GitHub did not answer for the branch {}", name.as_str()),
+                }
+            }
+        }
+        Ok(read)
     }
 
     /// Each branch of the repository Linewright pushed for a ticket, with
@@ -1117,31 +1145,33 @@ impl GitHub {
         struct Refs {
             refs: Page<GqlRef>,
         }
-        let query = "query($owner: String!, $name: String!, $cursor: String) {
-              repository(owner: $owner, name: $name) {
-                refs(refPrefix: \"refs/heads/\", first: 100, after: $cursor) {
-                  pageInfo { hasNextPage endCursor }
-                  nodes {
-                    name
-                    target { ... on Commit { committer { user { login } } } }
-                    associatedPullRequests(states: [OPEN], first: 1) { totalCount }
-                  }
-                }
-              }
-            }";
+        let query = format!(
+            "query($owner: String!, $name: String!, $cursor: String) {{
+              repository(owner: $owner, name: $name) {{
+                refs(refPrefix: \"refs/heads/\", first: {REFS_A_REQUEST}, after: $cursor) {{
+                  pageInfo {{ hasNextPage endCursor }}
+                  nodes {{ ...{} }}
+                }}
+              }}
+            }}
+            {}",
+            REF_FIELDS.name, REF_FIELDS.text
+        );
         let mut pushed = vec![];
         let mut cursor = Value::Null;
         loop {
             let data: RepoData<Refs> = self
                 .graphql(
-                    query,
+                    &query,
                     json!({"owner": self.owner, "name": self.name, "cursor": cursor}),
                 )
                 .await?;
             let page = data.repository.refs;
-            pushed.extend(page.nodes.iter().filter_map(|branch| {
-                Some((branch.pushed_for(&self.viewer.login)?, branch.open_pull()))
-            }));
+            pushed.extend(
+                page.nodes
+                    .iter()
+                    .filter_map(|branch| branch.pushed(&self.viewer.login)),
+            );
             if !page.page_info.has_next_page {
                 return Ok(pushed);
             }
@@ -1698,14 +1728,14 @@ struct Count {
 }
 
 impl GqlRef {
-    fn pushed_for(&self, linewright: &str) -> Option<TicketBranchName> {
+    /// The ticket it is the branch of, with whether a pull request is open
+    /// from it, when `linewright` pushed it: it is named for a ticket and
+    /// `linewright` committed its head.
+    fn pushed(&self, linewright: &str) -> Option<(TicketBranchName, bool)> {
         let name = TicketBranchName::parse(&self.name)?;
         let committer = self.target.as_ref()?.committer.as_ref()?.user.as_ref()?;
-        (committer.login == linewright).then_some(name)
-    }
-
-    fn open_pull(&self) -> bool {
-        self.associated_pull_requests.total_count > 0
+        let open_pull = self.associated_pull_requests.total_count > 0;
+        (committer.login == linewright).then_some((name, open_pull))
     }
 }
 
@@ -2268,6 +2298,64 @@ fn numbered_query(kind: ItemKind, numbers: &[Number], fields: Fragment) -> Strin
         }}
         {text}"
     )
+}
+
+/// The branches GitHub reads in one request, by name or a page of a
+/// listing: a page holds at most 100
+/// (<https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api#node-limit>).
+const REFS_A_REQUEST: usize = 100;
+
+/// What tells whether Linewright pushed a branch for a ticket
+/// ([`GqlRef::pushed`]).
+const REF_FIELDS: Fragment = Fragment {
+    name: "RefFields",
+    text: "fragment RefFields on Ref {
+  name
+  target { ... on Commit { committer { user { login } } } }
+  associatedPullRequests(states: [OPEN], first: 1) { totalCount }
+}",
+};
+
+/// The branches of `names` read by name ([`GitHub::named_refs`]).
+#[derive(Default)]
+struct NamedRefs {
+    /// Those the repository has and Linewright pushed, with whether a pull
+    /// request is open from each.
+    pushed: Vec<(TicketBranchName, bool)>,
+    /// Those the repository does not have.
+    gone: BTreeSet<TicketBranchName>,
+}
+
+/// The query, with its variables, reading `branches` of the repository
+/// `owner`/`name` by name: the branch `branches[i]` under the alias `bi`
+/// and in the variable `$bi`
+/// (<https://docs.github.com/en/graphql/reference/objects#repository>, `ref`).
+/// A branch the repository does not have reads as null.
+fn named_refs_query(owner: &str, name: &str, branches: &[&TicketBranchName]) -> (String, Value) {
+    let mut parameters = String::new();
+    let mut refs = String::new();
+    let mut variables = serde_json::Map::new();
+    variables.insert("owner".into(), json!(owner));
+    variables.insert("name".into(), json!(name));
+    for (i, branch) in branches.iter().enumerate() {
+        parameters.push_str(&format!(", $b{i}: String!"));
+        refs.push_str(&format!(
+            "b{i}: ref(qualifiedName: $b{i}) {{ ...{} }} ",
+            REF_FIELDS.name
+        ));
+        variables.insert(
+            format!("b{i}"),
+            json!(format!("refs/heads/{}", branch.as_str())),
+        );
+    }
+    let query = format!(
+        "query($owner: String!, $name: String!{parameters}) {{
+          repository(owner: $owner, name: $name) {{ {refs}}}
+        }}
+        {}",
+        REF_FIELDS.text
+    );
+    (query, Value::Object(variables))
 }
 
 /// The items `response` to a [`numbered_query`] holds. GitHub resolves a
@@ -3479,7 +3567,7 @@ impl Store for GitHub {
             .await
     }
 
-    async fn snapshot(&self, windows: Windows, _scope: &Scope) -> Result<Snapshot> {
+    async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot> {
         let settings_branch: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
         let default_branch = settings_branch["default_branch"]
             .as_str()
@@ -3519,8 +3607,10 @@ impl Store for GitHub {
             .await?;
         let closed_pulls = self.closed_pulls(windows.read_since()).await?;
         let held = issues.iter().map(|issue| issue.number).collect();
+        let (ticket_branches, gone_branches) = self.ticket_branches(&scope.branches, &held).await?;
         let mut snapshot = Snapshot {
-            ticket_branches: self.ticket_branches(&held).await?,
+            ticket_branches,
+            gone_branches,
             merged: self.merged_within(&default_branch, windows).await?,
             spec_change_issues: index.spec_change_issues(),
             closed: closed_within(closed_issues.into_iter().chain(closed_pulls), windows),
@@ -5576,11 +5666,123 @@ mod tests {
             };
             answer.to_string()
         }
+        serving_graphql(answer).await
+    }
+
+    /// The address of a server answering GraphQL at `/graphql` with what
+    /// `answer` gives for each request's body.
+    async fn serving_graphql<A, F>(answer: A) -> String
+    where
+        A: Fn(String) -> F + Clone + Send + Sync + 'static,
+        F: Future<Output = String> + Send + 'static,
+    {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let app = axum::Router::new().route("/graphql", axum::routing::post(answer));
+        let app = axum::Router::new().route(
+            "/graphql",
+            axum::routing::post(move |request: String| answer(request)),
+        );
         tokio::spawn(async move { axum::serve(listener, app).await });
         format!("http://{address}")
+    }
+
+    /// The address of a server answering reads of branches by name
+    /// ([`named_refs_query`]) as GitHub answered one for
+    /// <https://github.com/tibbe/linewright> on 2026-11-17,
+    /// `fixtures/refs-named.json`: a branch named `*-gone` as its branch
+    /// `1314-no-such-branch`, which it does not have, and any other as its
+    /// branch `301-cutting-tickets`, which `tibbe` committed the head of with
+    /// no pull request open, under the name asked. Each query asked is sent
+    /// to `asked`.
+    async fn serving_refs(asked: tokio::sync::mpsc::UnboundedSender<String>) -> String {
+        serving_graphql(move |request: String| {
+            let asked = asked.clone();
+            async move {
+                let recorded: Value =
+                    serde_json::from_str(include_str!("fixtures/refs-named.json")).unwrap();
+                let request: Value = serde_json::from_str(&request).unwrap();
+                asked
+                    .send(request["query"].as_str().unwrap().into())
+                    .unwrap();
+                let refs: serde_json::Map<String, Value> = request["variables"]
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .filter(|(variable, _)| !["owner", "name"].contains(&variable.as_str()))
+                    .map(|(alias, qualified)| {
+                        let name = qualified.as_str().unwrap().strip_prefix("refs/heads/");
+                        let name = name.unwrap();
+                        let mut answer = if name.ends_with("-gone") {
+                            recorded["data"]["repository"]["b1"].clone()
+                        } else {
+                            recorded["data"]["repository"]["b0"].clone()
+                        };
+                        if !answer.is_null() {
+                            answer["name"] = json!(name);
+                        }
+                        (alias.clone(), answer)
+                    })
+                    .collect();
+                json!({"data": {"repository": refs}}).to_string()
+            }
+        })
+        .await
+    }
+
+    fn github_serving_refs(api: String, linewright: &str) -> GitHub {
+        GitHub {
+            api,
+            viewer: Viewer {
+                login: linewright.into(),
+            },
+            ..github("token")
+        }
+    }
+
+    /// `docs/specs/sources_of_work.md`, Polling: what a poll reads grows with
+    /// the branches Linewright pushed, not with the repository's others.
+    #[test_log::test(tokio::test)]
+    async fn ticket_branches_are_read_by_name_a_hundred_to_a_request_without_listing_every_branch()
+    {
+        let (ask, mut asked) = tokio::sync::mpsc::unbounded_channel();
+        let github = github_serving_refs(serving_refs(ask).await, "tibbe");
+        let pushed: BTreeSet<TicketBranchName> = (1..=247)
+            .map(|n| TicketBranchName::parse(&format!("{n}-pushed")).unwrap())
+            .collect();
+        let gone: BTreeSet<TicketBranchName> = (300..303)
+            .map(|n| TicketBranchName::parse(&format!("{n}-gone")).unwrap())
+            .collect();
+        let names = pushed.iter().chain(&gone).cloned().collect();
+        let held = pushed.iter().map(TicketBranchName::issue).collect();
+
+        let (branches, read_gone) = github.ticket_branches(&names, &held).await.unwrap();
+
+        let mut queries = vec![];
+        while let Ok(query) = asked.try_recv() {
+            queries.push(query);
+        }
+        assert_eq!(queries.len(), 3);
+        assert!(queries.iter().all(|query| !query.contains("refs(")));
+        let read: BTreeSet<TicketBranchName> =
+            branches.iter().map(|branch| branch.name.clone()).collect();
+        assert_eq!(read, pushed);
+        assert!(branches.iter().all(|branch| !branch.open_pull_from_branch));
+        assert_eq!(read_gone, gone);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_branch_whose_head_linewright_did_not_commit_is_neither_its_ticket_branch_nor_gone() {
+        let (ask, _asked) = tokio::sync::mpsc::unbounded_channel();
+        let github = github_serving_refs(serving_refs(ask).await, "tibbe-bot");
+        let names = [TicketBranchName::parse("301-cutting-tickets").unwrap()].into();
+
+        let (branches, gone) = github
+            .ticket_branches(&names, &numbers(&[301]))
+            .await
+            .unwrap();
+
+        assert_eq!(branches, []);
+        assert_eq!(gone, BTreeSet::new());
     }
 
     /// A refresh reads items one by one between polls, so the issues a poll

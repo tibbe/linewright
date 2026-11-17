@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use chrono::TimeDelta;
@@ -202,6 +202,7 @@ pub fn view(issues: Vec<Issue>, pulls: Vec<Pull>) -> View {
             peoples_pulls: vec![],
             merged: vec![],
             ticket_branches: vec![],
+            gone_branches: BTreeSet::new(),
             closed: vec![],
             spec_change_issues: vec![],
             openings: vec![],
