@@ -768,6 +768,13 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
 }
 
 #[test_log::test]
+fn max_replays_is_read_from_the_file() {
+    let config = resolve(&["--repo", "acme/widgets"], &[], Some("max-replays = 3\n")).unwrap();
+
+    assert_eq!(config.max_replays, 3);
+}
+
+#[test_log::test]
 fn the_done_window_is_read_from_the_file_apart_from_the_spec_lookback() {
     let file = "repo = \"acme/widgets\"\ndone-window = \"30d\"\n";
 
@@ -785,6 +792,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
     assert_eq!(config.done_window, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
+    assert_eq!(config.max_replays, 1);
     assert_eq!(
         session(&config).session_timeout,
         Sourced::new(Duration::from_hours(6), Layer::Linewright)

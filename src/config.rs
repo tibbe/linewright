@@ -419,6 +419,10 @@ pub struct Settings {
     /// The ceiling on runs in flight [default: 4]
     #[arg(long, global = true)]
     pub max_runs: Option<String>,
+    /// The ceiling on replays and judges of experiments in flight
+    /// [default: 1]
+    #[arg(long, global = true)]
+    pub max_replays: Option<String>,
     /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
@@ -521,6 +525,7 @@ pub struct Config {
     pub spec_lookback: TimeDelta,
     pub done_window: TimeDelta,
     pub max_runs: usize,
+    pub max_replays: usize,
     pub work_dir: PathBuf,
     /// `model`, `effort`, `session-timeout`, `maintenance` and the stages'
     /// tables, and where `session-env` and `session-pass-env` came from.
@@ -551,6 +556,7 @@ impl Settings {
             ("spec-lookback", &self.spec_lookback),
             ("done-window", &self.done_window),
             ("max-runs", &self.max_runs),
+            ("max-replays", &self.max_replays),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("effort", &self.effort),
@@ -643,7 +649,7 @@ const SETUP_TIMEOUT: &str = "setup.timeout";
 /// The operator's settings, each with its form. A setting whose name holds
 /// a dot is a key of the table named before the dot
 /// (`docs/specs/operation.md`, Configuration, A table of settings).
-const SETTINGS: [(&str, Form); 29] = [
+const SETTINGS: [(&str, Form); 30] = [
     ("repo", VALUE),
     ("poll-interval", VALUE),
     ("webhook-address", VALUE),
@@ -653,6 +659,7 @@ const SETTINGS: [(&str, Form); 29] = [
     ("spec-lookback", VALUE),
     ("done-window", VALUE),
     ("max-runs", VALUE),
+    ("max-replays", VALUE),
     ("work-dir", VALUE),
     stage_entry(StageSetting::Repository(RepositorySetting::Model)),
     stage_entry(StageSetting::Repository(RepositorySetting::Effort)),
@@ -1219,6 +1226,7 @@ impl Config {
             spec_lookback: delta("spec-lookback", "7d")?,
             done_window: delta("done-window", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
+            max_replays: number("max-replays", "1")? as usize,
             work_dir,
             work,
             briefs: get("briefs").map(PathBuf::from),
