@@ -300,6 +300,15 @@ lw replay cases/43-implement-2 --out out/43-1
 lw judge cases/43-implement-2 out/43-1
 ```
 
+To try a change, give `lw replay` a configuration with
+`--configuration CONFIG`: a directory laid out as `.linewright/`, whose
+`config.toml` sets only `model`, `effort` and `session-timeout`, with no
+tables, and whose `briefs/` holds files of the brief. Each of them overrides
+every other layer, flags and stage tables included, and the rest comes from
+those layers. Linewright refuses a configuration with an error before the
+replay starts, and keeps a copy of it in the output's `configuration/`. The
+judge does not take it.
+
 `lw judge` runs as `lw replay` does: it needs no `repo`, the case's repository
 on GitHub is kept from its `gh`, and its session takes its settings from
 `[stage.judge]` ([Stage settings](#stage-settings)). It judges only a replay
