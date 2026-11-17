@@ -61,6 +61,10 @@ request that is reviewed, green and ready for a person.
 - **Tuned against real work.** A run of a stage can be captured as a case
   holding what it was given, so that the stage is run on it again with its
   briefs or settings changed.
+- **The maintainer in the web UI, the operator on the command line.** A
+  maintainer works with Linewright in GitHub and the web UI. The operator runs
+  Linewright from the command line, where an agent can also do what a person
+  does in the web UI.
 
 A maintainer merges a pull request that adds invoices to the spec. Linewright
 implements the change, has agents review the work and delivers it as pull
