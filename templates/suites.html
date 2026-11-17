@@ -1,0 +1,35 @@
+{%- extends "layout.html" -%}
+{%- block main -%}
+<h1>Suites</h1>
+<form class="make-suite mb-4 flex max-w-xl flex-wrap items-center gap-2" method="post" action="/suites" hx-post="/suites" hx-target="#make-said" hx-swap="innerHTML">
+<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="name" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<label class="select select-sm w-auto"><span class="label">stage</span><select name="stage">
+{%- for stage in crate::case::ReplayStage::ALL %}
+<option value="{{ stage }}">{{ stage }}</option>
+{%- endfor %}
+</select></label>
+<button class="btn btn-sm btn-primary" type="submit">Make a suite</button>
+</form>
+<div id="make-said" class="mb-4 max-w-xl" role="status"></div>
+{% block suites -%}
+<section id="suites">
+{%- if suites.is_empty() %}
+<p>no suites</p>
+{%- else %}
+<table class="table">
+<thead><tr><th>Suite</th><th>Stage</th><th>Cases</th><th>Last experiment</th></tr></thead>
+<tbody>
+{%- for row in suites %}
+<tr>
+<th><a class="link link-hover" href="{{ row.href }}">{{ row.name }}</a></th>
+<td>{{ row.stage }}</td>
+<td>{{ row.cases }}</td>
+<td></td>
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</section>
+{%- endblock %}
+{%- endblock -%}

@@ -863,3 +863,64 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
 
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
 }
+
+/// `docs/specs/design_system.md`, The suite page: Adding a case.
+#[test_log::test(tokio::test)]
+async fn choosing_a_run_to_capture_fills_in_its_suggested_name_unless_one_was_typed() {
+    let page = r#"
+var capture = element("FORM", {});
+var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
+run.options = [["1/implement-2", "1-implement-2"], ["1/implement-1", "1-implement-1"]].map(
+  ([value, name]) => Object.assign(element("OPTION", { "data-name": name }), { value }),
+);
+var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "1-implement-2" });
+capture.elements = [run, name];
+function choose(index) { run.selectedIndex = index; fire("change", event(run)); return name.value; }
+"#;
+    let asked = r#"
+const steps = [];
+steps.push(choose(1));
+name.value = "mine";
+steps.push(choose(0));
+name.value = "";
+steps.push(choose(0));
+steps.join("\n")
+"#;
+
+    let names = with_filters(page, asked).await;
+
+    assert_eq!(names, ["1-implement-1", "mine", "1-implement-2"]);
+}
+
+/// `docs/specs/design_system.md`, The suite page: Adding a case.
+#[test_log::test(tokio::test)]
+async fn the_run_chosen_to_capture_stays_chosen_when_an_update_brings_new_runs() {
+    let page = r#"
+var capture = element("FORM", {});
+var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
+function offer(values) {
+  run.options = values.map((value) => Object.assign(element("OPTION", { "data-name": value }), { value }));
+  run.selectedIndex = 0;
+}
+offer(["1/implement-2", "1/implement-1"]);
+var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "" });
+capture.elements = [run, name];
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) => (selector === "select[name=run]" ? [run] : others(selector));
+const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
+const chosen = () => run.options[run.selectedIndex].value;
+"#;
+    let asked = r#"
+const steps = [];
+run.selectedIndex = 1; fire("change", event(run));
+offer(["1/implement-3", "1/implement-2", "1/implement-1"]); message();
+steps.push(chosen());
+offer(["1/implement-3", "1/implement-2"]); message();
+steps.push(chosen());
+steps.join("\n")
+"#;
+
+    let chosen = with_filters(page, asked).await;
+
+    assert_eq!(chosen, ["1/implement-1", "1/implement-3"]);
+}

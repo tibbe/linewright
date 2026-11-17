@@ -153,85 +153,40 @@ enum Chosen<'a> {
 
 /// [`submit`], into the suite `into`.
 #[track_caller]
-fn submit_into<'a>(
-    pages: &'a Pages,
+fn submit_into(
+    pages: &Pages,
     into: Chosen<'_>,
-    name: &'a str,
-    criteria: &'a str,
-) -> impl Future<Output = (u16, Html)> + 'a {
-    let posted = post(
-        pages,
-        &[("sec-fetch-site", "same-origin")],
-        into,
-        name,
-        criteria,
-    );
-    async move {
-        let (status, body) = posted.await;
-        (status, Html::parse_fragment(&body))
-    }
+    name: &str,
+    criteria: &str,
+) -> impl Future<Output = (u16, Html)> + use<> {
+    post_capture(pages, &[SAME_ORIGIN], into, name, criteria)
 }
 
 /// Posts the capture form of #1's implement run with `headers` besides its
 /// `Host`.
 #[track_caller]
-fn post<'a>(
-    pages: &'a Pages,
+fn post_capture(
+    pages: &Pages,
     headers: &[(&str, &str)],
     into: Chosen<'_>,
     name: &str,
     criteria: &str,
-) -> impl Future<Output = (u16, String)> + 'a {
-    let caller = Location::caller();
+) -> impl Future<Output = (u16, Html)> + use<> {
     let (suite, new_suite) = match into {
         Chosen::Suite(suite) => (suite, ""),
         Chosen::New(suite) => ("", suite),
     };
-    let body = form_urlencoded::Serializer::new(String::new())
-        .append_pair("suite", suite)
-        .append_pair("new-suite", new_suite)
-        .append_pair("name", name)
-        .append_pair("criteria", criteria)
-        .finish();
-    let mut request = axum::http::Request::builder()
-        .method(hyper::Method::POST)
-        .uri(RUN_PAGE)
-        .header("Host", "localhost:8080")
-        .header("Content-Type", "application/x-www-form-urlencoded");
-    for (header, value) in headers {
-        request = request.header(*header, *value);
-    }
-    let request = request
-        .body(Body::from(body))
-        .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
-    let router = pages.router.clone();
-    async move {
-        let Ok(response) = router.oneshot(request).await;
-        status_and_body(response).await
-    }
-}
-
-/// The cases under `pages`' work directory, by name.
-#[track_caller]
-fn cases(pages: &Pages) -> Vec<String> {
-    match std::fs::read_dir(pages.path("cases")) {
-        Ok(entries) => {
-            let mut names: Vec<String> = entries
-                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
-                .collect();
-            names.sort();
-            names
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-        Err(e) => panic!("reading the cases: {e}"),
-    }
-}
-
-/// What a fragment says, as a reader reads it.
-fn said(html: &Html) -> String {
-    let alerts = select(html, ".alert");
-    assert_eq!(alerts.len(), 1, "not one thing said");
-    text(alerts[0])
+    post(
+        pages,
+        RUN_PAGE,
+        headers,
+        &[
+            ("suite", suite),
+            ("new-suite", new_suite),
+            ("name", name),
+            ("criteria", criteria),
+        ],
+    )
 }
 
 #[test_log::test(tokio::test)]
@@ -317,9 +272,9 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
 async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, _) = post(
+    let (status, _) = post_capture(
         &pages,
-        &[("sec-fetch-site", "cross-site")],
+        &[CROSS_SITE],
         Chosen::Suite(IMPLEMENTS),
         "gadgets",
         CRITERIA,
