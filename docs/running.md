@@ -352,9 +352,17 @@ configuration's results: its pass rate and passes for each case, of the replays
 with a judgement and no leak, the mean and total of its replays' cost and time,
 its leaks and its replays without a judgement, with the judges' cost apart.
 `lw suite NAME` lists the suite's experiments, latest first, and
-`lw experiment cancel ID` cancels one. `serve` does not run experiments yet: an
-open experiment waits for it. The commands work whether `serve` is running or
-not, and exit 4 for a suite or an experiment that does not exist.
+`lw experiment cancel ID` cancels one, stopping its replays and judges in
+flight. The commands work whether `serve` is running or not, and exit 4 for a
+suite or an experiment that does not exist.
+
+`serve` runs the experiments' replays and judges, oldest experiment first, a
+replay's judge before the next replay, and at most `max-replays` of them at
+once (1 unless set). None starts while a run of the pipeline waits for a place
+under `max-runs`, and the holds, the usage limit and a drain hold them as they
+hold runs. An open experiment waits while no `serve` runs, and a replay or
+judge that a stop interrupted starts again once `serve` does, a replay into a
+new output.
 
 ## Monitoring
 
