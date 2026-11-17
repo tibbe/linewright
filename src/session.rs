@@ -91,7 +91,7 @@ pub(crate) enum Failure {
 /// begun applying its result applies all of it, unless none of it was applied
 /// and it goes back to its session.
 #[derive(Clone, Default)]
-pub(crate) struct Cancellation(Arc<Cancel>);
+pub struct Cancellation(Arc<Cancel>);
 
 #[derive(Default)]
 struct Cancel {

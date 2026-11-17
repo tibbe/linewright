@@ -9,12 +9,13 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-use super::{CASE, COMMITS, OUTCOME, Setting, WRITES, in_own_dir, write_build, write_whole};
+use super::{
+    CASE, COMMITS, OUTCOME, OwnDir, Setting, Under, WRITES, in_own_dir, write_build, write_whole,
+};
 use crate::apply::hand_back;
 use crate::briefs::Briefs;
 use crate::case::Case;
 use crate::clock::{Clock, SystemClock};
-use crate::clones::Clones;
 use crate::cost::SessionCost;
 use crate::domain::Timestamp;
 use crate::factory::FactoryConfig;
@@ -28,7 +29,6 @@ use crate::session::{
     self, Beside, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, infra,
     lock_set_whole, open_session, parse_retry,
 };
-use crate::winding_up::WindingUp;
 use crate::work_settings::{RunKind, SessionSettings};
 use crate::{COMMAND, VERSION_AND_COMMIT};
 
@@ -396,7 +396,8 @@ impl From<Failure> for Unjudged {
 /// session recorded in `record`. Its clone has the branch the replay
 /// pushed last checked out, from the output's commits, or the case's
 /// default branch when it pushed none. A session that fails on its
-/// infrastructure is retried once, as a stage's is.
+/// infrastructure is retried once, as a stage's is. `under` cancels the
+/// judge's session, and says what it does at the usage limit.
 ///
 /// # Errors
 ///
@@ -409,11 +410,12 @@ pub async fn run(
     record: JudgeRecord,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
+    under: &Under,
 ) -> Result<Judgement, Unjudged> {
     let redaction = config.secrets.redaction().clone();
     let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
-    let judged = in_own_dir(&work_dir, winding_up, "judge", async |own_dir, clones| {
-        judge_in(case, replayed, &record, harness, &config, own_dir, clones).await
+    let judged = in_own_dir(&work_dir, winding_up, "judge", async |own| {
+        judge_in(case, replayed, &record, harness, &config, under, own).await
     })
     .await
     .map_err(Unjudged::Failed)
@@ -443,25 +445,24 @@ pub async fn run(
     })
 }
 
-/// [`run`], in the judge's own directory `own_dir`, whose clones
-/// `clones_winding_up` winds up.
+/// [`run`], in the judge's own directory `own`.
 async fn judge_in(
     case: &Case,
     replayed: &Replayed,
     record: &JudgeRecord,
     harness: Arc<dyn Harness>,
     config: &FactoryConfig,
-    own_dir: &Path,
-    clones_winding_up: &WindingUp,
+    under: &Under,
+    own: OwnDir<'_>,
 ) -> Result<(Correctness, Leak), Unjudged> {
-    let repository = own_dir.join(COMMITS);
+    let repository = own.path.join(COMMITS);
     let built = Mutex::new(None);
     let prepared = Setting::prepare(
         case,
         &RunKind::Judge,
         config,
         harness.clone(),
-        &own_dir.join("store"),
+        &own.path.join("store"),
         &repository,
         |build| {
             *lock_set_whole(&built) = Some(build.clone());
@@ -499,7 +500,8 @@ async fn judge_in(
         setting.store.clone(),
         harness,
         config,
-        Clones::new(own_dir, clones_winding_up.clone()),
+        own.clones(),
+        &under.usage_limit,
     );
     let with = RunWith {
         briefs: setting.repo.briefs.clone(),
@@ -509,7 +511,17 @@ async fn judge_in(
     };
     let mut retries = 0;
     let result = loop {
-        match session(case, replayed, record, config, &sessions, &with).await {
+        match session(
+            case,
+            replayed,
+            record,
+            config,
+            &sessions,
+            &with,
+            &under.cancel,
+        )
+        .await
+        {
             Err(Failure::Infrastructure { error, .. })
                 if hand_back::retries_infrastructure_failure(retries) =>
             {
@@ -532,8 +544,8 @@ async fn judge_in(
 }
 
 /// The judge's session in `sessions`, recorded in `record`, on what the
-/// replay left: sent the filled `briefs/prompts/judge.md`, until its result is
-/// accepted.
+/// replay left, cancelled by `cancel`: sent the filled
+/// `briefs/prompts/judge.md`, until its result is accepted.
 async fn session(
     case: &Case,
     replayed: &Replayed,
@@ -541,11 +553,11 @@ async fn session(
     config: &FactoryConfig,
     sessions: &Sessions,
     with: &RunWith,
+    cancel: &Cancellation,
 ) -> Result<JudgeResult, Failure> {
-    let cancel = Cancellation::default();
     let ctx = SessionCtx {
         with,
-        cancel: &cancel,
+        cancel,
         records: record,
     };
     let branch = replayed
