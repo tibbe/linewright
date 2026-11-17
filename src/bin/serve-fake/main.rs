@@ -59,6 +59,7 @@ async fn serve() -> Result<()> {
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
     seed::suites(&store, &config.work_dir.join(seed::REPO)).await?;
+    seed::close_done(&store)?;
     let winding_up = WindingUp::default();
     let url = format!("http://127.0.0.1:{port}/");
     serving::serve(
@@ -134,8 +135,11 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
         repo = seed::REPO,
         work = work.display(),
     );
-    for stage in WorkKind::ALL {
-        let name = stage.name();
+    for name in WorkKind::ALL
+        .map(WorkKind::name)
+        .into_iter()
+        .chain(["judge"])
+    {
         write!(
             text,
             "\n[stage.{name}]\nsession-env = {{ {variable} = \"{name}\" }}\n",
