@@ -1,6 +1,5 @@
 use crate::common;
 
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
@@ -104,55 +103,6 @@ async fn lw_experiment_launch_keeps_a_copy_of_each_case_and_configuration() {
         std::fs::read_to_string(kept.join("configurations/short/config.toml")).unwrap(),
         "model = \"haiku\"\n"
     );
-}
-
-/// Sets when the experiment `id` of `work_dir` was launched, through the
-/// back door, so that what shows it is known.
-#[track_caller]
-fn launched_at(work_dir: &Path, id: i64, at: &str) -> impl Future<Output = ()> + use<> {
-    let caller = Location::caller();
-    let pool = back_door(work_dir);
-    let at = at.to_string();
-    async move {
-        let pool = pool.await;
-        sqlx::query("UPDATE experiments SET launched_at = ? WHERE id = ?")
-            .bind(at)
-            .bind(id)
-            .execute(&pool)
-            .await
-            .unwrap_or_else(|e| panic!("setting the launch at {caller}: {e}"));
-        pool.close().await;
-    }
-}
-
-/// Sets the trial `(repetition, case, configuration)` of the experiment
-/// `id` of `work_dir` to the columns `set`, through the back door, as a
-/// run of it under `serve` would leave it.
-#[track_caller]
-fn trial(
-    work_dir: &Path,
-    id: i64,
-    (repetition, case, configuration): (i64, i64, i64),
-    set: &'static str,
-) -> impl Future<Output = ()> + use<> {
-    let caller = Location::caller();
-    let pool = back_door(work_dir);
-    async move {
-        let pool = pool.await;
-        let statement = format!(
-            "UPDATE trials SET {set} WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?"
-        );
-        let updated = sqlx::query(sqlx::AssertSqlSafe(statement))
-            .bind(id)
-            .bind(repetition)
-            .bind(case)
-            .bind(configuration)
-            .execute(&pool)
-            .await
-            .unwrap_or_else(|e| panic!("setting the trial at {caller}: {e}"));
-        assert_eq!(updated.rows_affected(), 1, "the trial set at {caller}");
-        pool.close().await;
-    }
 }
 
 #[test_log::test(tokio::test)]

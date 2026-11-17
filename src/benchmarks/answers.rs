@@ -71,20 +71,21 @@ impl Shown {
         }
     }
 
-    fn words(&self) -> String {
+    /// The state in words, with what a waiting experiment waits for.
+    pub fn phrase(&self) -> Phrase {
         match self {
             Shown::Running => "running".into(),
-            Shown::Waiting(WaitingFor::Serve) => "waiting for serve".into(),
-            Shown::Waiting(WaitingFor::Pipeline) => {
-                "waiting for the pipeline: a run waits for a place under max-runs".into()
-            }
-            Shown::Waiting(WaitingFor::FreeReplay {
-                in_flight,
-                max_replays,
-            }) => format!("waiting for a free replay: {in_flight} of {max_replays} in flight"),
-            Shown::Waiting(WaitingFor::Hold(hold)) => {
-                format!("waiting for {}", describe_wait(&Wait::from(hold.clone())))
-            }
+            Shown::Waiting(waiting_for) => Phrase::from("waiting for ").then(match waiting_for {
+                WaitingFor::Serve => "serve".into(),
+                WaitingFor::Pipeline => {
+                    "the pipeline: a run waits for a place under max-runs".into()
+                }
+                WaitingFor::FreeReplay {
+                    in_flight,
+                    max_replays,
+                } => format!("a free replay: {in_flight} of {max_replays} in flight").into(),
+                WaitingFor::Hold(hold) => describe_wait(&Wait::from(hold.clone())),
+            }),
             Shown::Ended => "ended".into(),
             Shown::Cancelled => "cancelled".into(),
         }
@@ -261,7 +262,7 @@ pub fn render_experiment(answer: &ExperimentAnswer) -> String {
         answer.suite,
         answer.stage,
         Phrase::default().time(answer.launched_at),
-        answer.shown.words(),
+        answer.shown.phrase(),
         answer.repetitions,
         results.ended,
         results.all,
@@ -349,7 +350,7 @@ fn describe_trial(trial: &TrialAnswer) -> String {
 
 /// `figure`'s mean and total in the units `unit` gives, and how many
 /// replays have no `what`.
-fn mean(figure: &Mean, unit: fn(f64) -> String, what: &str) -> String {
+pub fn mean(figure: &Mean, unit: fn(f64) -> String, what: &str) -> String {
     let mut text = match figure.mean {
         Some(each) => format!("mean {}, total {}", unit(each), unit(figure.total)),
         None => "none".into(),
@@ -359,18 +360,18 @@ fn mean(figure: &Mean, unit: fn(f64) -> String, what: &str) -> String {
 }
 
 /// Adds to `text` how many have no `what`, if any.
-fn without(text: &mut String, none: usize, what: &str) {
+pub fn without(text: &mut String, none: usize, what: &str) {
     if none > 0 {
         let _ = write!(text, ", {none} without {what}");
     }
 }
 
-fn dollars(amount: f64) -> String {
+pub fn dollars(amount: f64) -> String {
     format!("${amount:.2}")
 }
 
 /// A share as a percentage, or `none` when there is nothing to count.
-fn percent(share: Option<f64>) -> String {
+pub fn percent(share: Option<f64>) -> String {
     share.map_or_else(|| "none".into(), |share| format!("{:.0}%", share * 100.0))
 }
 
@@ -379,7 +380,7 @@ fn percent(share: Option<f64>) -> String {
     clippy::cast_sign_loss,
     reason = "a replay's time is a non-negative number of seconds far below u64::MAX"
 )]
-fn duration(seconds: f64) -> String {
+pub fn duration(seconds: f64) -> String {
     Phrase::default()
         .duration(seconds.round() as u64, None)
         .to_string()
@@ -429,7 +430,7 @@ pub(super) fn render_summary(summary: &ExperimentSummary) -> String {
     format!(
         "experiment {}: {}, launched {}, pass rates {}\n",
         summary.id,
-        summary.shown.words(),
+        summary.shown.phrase(),
         Phrase::default().time(summary.launched_at),
         rates.join(", ")
     )

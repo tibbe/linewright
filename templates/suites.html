@@ -24,7 +24,7 @@
 <th><a class="link link-hover" href="{{ row.href }}">{{ row.name }}</a></th>
 <td>{{ row.stage }}</td>
 <td>{{ row.cases }}</td>
-<td></td>
+<td>{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.said }}</a>{% endif %}</td>
 </tr>
 {%- endfor %}
 </tbody>

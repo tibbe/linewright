@@ -65,7 +65,8 @@ impl Patch {
 
 /// A run's transcript as the page shows it, built up from its changes.
 struct RunView {
-    run: RunId,
+    /// What its heading names: the run's ID, or what stands for it.
+    name: String,
     /// What the run is of, as the Item column of a list of runs names it
     /// (`docs/specs/design_system.md`, The run page, Heading).
     item: Html,
@@ -145,9 +146,9 @@ enum Kind<'a> {
 }
 
 impl RunView {
-    fn new(run: RunId, item: Html, verbose: bool) -> RunView {
+    fn new(name: String, item: Html, verbose: bool) -> RunView {
         RunView {
-            run,
+            name,
             item,
             verbose,
             sessions_started: None,
@@ -213,7 +214,7 @@ impl RunView {
         let by_hand = if self.by_hand { ", by hand" } else { "" };
         format!(
             r#"<hgroup id="run"><h1>{}{by_hand}{none}</h1><p class="text-muted">{}</p></hgroup>"#,
-            html::escape(&self.run.to_string()),
+            html::escape(&self.name),
             self.item,
         )
     }
@@ -1010,7 +1011,7 @@ pub(super) struct RunQuery {
 }
 
 impl RunQuery {
-    fn verbose(&self) -> bool {
+    pub(super) fn verbose(&self) -> bool {
         self.verbose.is_some()
     }
 }
@@ -1020,12 +1021,41 @@ impl RunQuery {
 struct RunPage {
     page: Page,
     frame: Frame,
+    /// What the page says of the transcript above it, empty on a run's
+    /// own page.
+    context: Html,
     verbose: bool,
     /// The page with the switch the other way.
     switched: String,
     /// The offer to capture the run, empty for one that cannot be.
     capture: Html,
     transcript: String,
+}
+
+/// A run whose transcript a page shows: where it is kept, which it is,
+/// what its heading names in place of its ID, if anything, and what it is
+/// of, as its heading says under that.
+#[derive(Clone)]
+pub(super) struct Transcribed {
+    pub(super) kept: KeptRuns,
+    pub(super) which: Which,
+    pub(super) name: Option<String>,
+    pub(super) of: Html,
+}
+
+impl Transcribed {
+    /// Run `id` of `serve`'s runs.
+    fn run(sources: &Sources, id: &RunId) -> Transcribed {
+        Transcribed {
+            kept: KeptRuns::Database(sources.runs.clone()),
+            which: Which::Run {
+                id: id.clone(),
+                item: None,
+            },
+            name: None,
+            of: item_line(sources, id),
+        }
+    }
 }
 
 /// Why a run cannot be shown, and the status the page answers with.
@@ -1068,23 +1098,24 @@ struct PageFollower {
 }
 
 impl FollowedRun {
-    /// Following the run `id` from its start, giving what comes after the
-    /// change made at `after`, if one is given.
+    /// Following the run `transcribed` names from its start, giving what
+    /// comes after the change made at `after`, if one is given.
     async fn start(
-        sources: &Sources,
-        id: &RunId,
+        transcribed: &Transcribed,
         verbose: bool,
         after: Option<Made>,
     ) -> Result<FollowedRun, LogsError> {
-        let which = Which::Run {
-            id: id.clone(),
-            item: None,
-        };
+        let records = RunRecords::start(transcribed.kept.clone(), &transcribed.which).await?;
+        let name = transcribed
+            .name
+            .clone()
+            .unwrap_or_else(|| records.run().to_string());
+        let view = RunView::new(name, transcribed.of.clone(), verbose);
         Ok(FollowedRun {
-            records: RunRecords::start(KeptRuns::Database(sources.runs.clone()), &which).await?,
+            records,
             page: PageFollower {
                 feed: Feed::default(),
-                view: RunView::new(id.clone(), item_line(sources, id), verbose),
+                view,
                 numbering: Numbering::new(after.map(After::Line)),
             },
         })
@@ -1177,19 +1208,18 @@ fn item_line(sources: &Sources, id: &RunId) -> Html {
 /// The transcript as its records hold it now, and while the run is in
 /// flight where its page's stream follows it from.
 async fn read(
-    sources: &Sources,
-    id: RunId,
+    transcribed: &Transcribed,
     verbose: bool,
 ) -> Result<(String, Option<Follow>), RunError> {
     let FollowedRun {
         mut records,
         mut page,
-    } = FollowedRun::start(sources, &id, verbose, None).await?;
+    } = FollowedRun::start(transcribed, verbose, None).await?;
     records.read().await.map_err(LogsError::Other)?;
     let made = page.made(&records);
     let follow = (!records.ended()).then(|| match made.last() {
         Some((last, _)) => Follow::After(EventId {
-            run: id,
+            run: records.run().clone(),
             made: *last,
         }),
         None => Follow::Start,
@@ -1197,7 +1227,9 @@ async fn read(
     Ok((page.view.html(&page.feed), follow))
 }
 
-fn page_path(id: &RunId, prefix: &str, verbose: bool, follow: Option<&Follow>) -> String {
+/// The page at `path`, its stream's with `prefix`, in the view `verbose`
+/// says, following from `follow` if given.
+fn page_path(path: &str, prefix: &str, verbose: bool, follow: Option<&Follow>) -> String {
     let mut query = form_urlencoded::Serializer::new(String::new());
     if verbose {
         query.append_pair("verbose", "");
@@ -1205,39 +1237,40 @@ fn page_path(id: &RunId, prefix: &str, verbose: bool, follow: Option<&Follow>) -
     if let Some(follow) = follow {
         query.append_pair("follow", &follow.to_string());
     }
-    with_query(&format!("{prefix}{}", run_path(id)), &query.finish())
+    with_query(&format!("{prefix}{path}"), &query.finish())
 }
 
-pub(super) async fn run_page(
-    State(sources): State<Sources>,
-    Path(id): Path<String>,
-    Query(query): Query<RunQuery>,
+/// The page of the transcript `transcribed` names, at `path`, titled
+/// `title`, with `context` above it and `capture` by its heading; or,
+/// where it cannot be shown, why, standing in for it.
+pub(super) async fn transcript_page(
+    sources: &Sources,
+    path: &str,
+    title: String,
+    context: Html,
+    transcribed: Result<Transcribed, (StatusCode, String)>,
+    verbose: bool,
+    capture: Html,
 ) -> Response {
-    let verbose = query.verbose();
-    let title = format!("{id} · {}", sources.work_dir.repo);
-    let frame = Frame::of(&sources).await;
-    let shown = match run_id(&id) {
-        Ok(run) => read(&sources, run.clone(), verbose)
-            .await
-            .map(|(transcript, follow)| (run, transcript, follow)),
-        Err(e) => Err(e),
+    let frame = Frame::of(sources).await;
+    let shown = match transcribed {
+        Ok(transcribed) => read(&transcribed, verbose).await,
+        Err((status, error)) => Err(RunError { status, error }),
     };
     match shown {
-        Ok((run, transcript, follow)) => RunPage {
-            page: Page::new(title, page_path(&run, "/events", verbose, follow.as_ref())),
+        Ok((transcript, follow)) => RunPage {
+            page: Page::new(title, page_path(path, "/events", verbose, follow.as_ref())),
             frame,
+            context,
             verbose,
-            switched: page_path(&run, "", !verbose, None),
-            capture: Offer::of(&sources, &run)
-                .await
-                .map(|offer| offer.html(&sources))
-                .unwrap_or_default(),
+            switched: page_path(path, "", !verbose, None),
+            capture,
             transcript,
         }
         .into_response(),
         Err(RunError { status, error }) => {
             let page = ErrorPage {
-                page: Page::new(title, format!("/events/runs/{id}")),
+                page: Page::new(title, format!("/events{path}")),
                 frame,
                 region: "transcript",
                 error,
@@ -1245,6 +1278,40 @@ pub(super) async fn run_page(
             (status, page).into_response()
         }
     }
+}
+
+pub(super) async fn run_page(
+    State(sources): State<Sources>,
+    Path(id): Path<String>,
+    Query(query): Query<RunQuery>,
+) -> Response {
+    let title = format!("{id} · {}", sources.work_dir.repo);
+    let (path, transcribed, capture) = match run_id(&id) {
+        Ok(run) => {
+            let capture = Offer::of(&sources, &run)
+                .await
+                .map(|offer| offer.html(&sources))
+                .unwrap_or_default();
+            (
+                run_path(&run),
+                Ok(Transcribed::run(&sources, &run)),
+                capture,
+            )
+        }
+        Err(RunError { status, error }) => {
+            (format!("/runs/{id}"), Err((status, error)), Html::default())
+        }
+    };
+    transcript_page(
+        &sources,
+        &path,
+        title,
+        Html::default(),
+        transcribed,
+        query.verbose(),
+        capture,
+    )
+    .await
 }
 
 const LAST_EVENT_ID: &str = "last-event-id";
@@ -1259,6 +1326,35 @@ pub(super) async fn run_events(
     Query(query): Query<RunQuery>,
     headers: HeaderMap,
 ) -> Response {
+    let run = run_id(&id).ok();
+    let transcribed = run.as_ref().map(|run| Transcribed::run(&sources, run));
+    let offered = match &run {
+        Some(run) => Offer::of(&sources, run).await.is_some(),
+        None => false,
+    };
+    transcript_events(
+        sources,
+        stopping,
+        transcribed.as_ref(),
+        &query,
+        &headers,
+        offered,
+    )
+    .await
+}
+
+/// The regions of the page of the transcript `transcribed` names: the
+/// frame's, with `offered` whether a capture can run yet, and while the
+/// run is in flight the transcript's lines after those the page showed,
+/// or after the `Last-Event-ID` a reconnecting reader gives.
+pub(super) async fn transcript_events(
+    sources: Sources,
+    stopping: CancellationToken,
+    transcribed: Option<&Transcribed>,
+    query: &RunQuery,
+    headers: &HeaderMap,
+    offered: bool,
+) -> Response {
     let resumed = headers
         .get(LAST_EVENT_ID)
         .and_then(|last| last.to_str().ok())
@@ -1267,33 +1363,34 @@ pub(super) async fn run_events(
         .follow
         .as_ref()
         .map(|follow| resumed.unwrap_or_else(|| follow.clone()));
-    let transcript = match (run_id(&id), follow) {
-        (Ok(run), Some(follow)) => {
-            let after = match follow {
+    let transcript = match (transcribed, follow) {
+        (Some(transcribed), Some(follow)) => {
+            let after = match &follow {
                 Follow::Start => None,
-                Follow::After(last) if last.run == run => Some(last.made),
-                Follow::After(last) => {
-                    return RunError {
-                        status: StatusCode::BAD_REQUEST,
-                        error: format!("{last} is not an event of {run}"),
-                    }
-                    .into_response();
-                }
+                Follow::After(last) => Some(last.made),
             };
-            match FollowedRun::start(&sources, &run, query.verbose(), after).await {
-                Ok(followed) => Some(followed),
+            match FollowedRun::start(transcribed, query.verbose(), after).await {
+                Ok(followed) => match follow {
+                    Follow::After(last) if &last.run != followed.records.run() => {
+                        return RunError {
+                            status: StatusCode::BAD_REQUEST,
+                            error: format!("{last} is not an event of {}", followed.records.run()),
+                        }
+                        .into_response();
+                    }
+                    Follow::Start | Follow::After(_) => Some(followed),
+                },
                 Err(e) => {
                     let e = RunError::from(e);
-                    error!(run = %run, error = e.error, "following a transcript for its page failed");
+                    error!(
+                        error = e.error,
+                        "following a transcript for its page failed"
+                    );
                     return e.into_response();
                 }
             }
         }
         _ => None,
-    };
-    let offered = match run_id(&id) {
-        Ok(run) => Offer::of(&sources, &run).await.is_some(),
-        Err(_) => false,
     };
     let stream = RunStream {
         sent: Sent::default(),

@@ -12,12 +12,16 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use super::html;
+use super::html::{self, Html};
 use super::write::{Refused, Write, alert};
-use super::{ErrorPage, Frame, Page, events, frame_regions, render, suite_path, suites};
+use super::{
+    ErrorPage, Frame, Page, events, experiment_path, experiments, frame_regions, render,
+    suite_path, suites,
+};
 use crate::api::Sources;
-use crate::benchmarks::{MakeError, SuiteListed, SuiteName};
+use crate::benchmarks::{ExperimentId, MakeError, SuiteListed, SuiteName};
 use crate::case::ReplayStage;
+use crate::domain::Timestamp;
 
 /// A suite's row.
 struct Row {
@@ -25,15 +29,28 @@ struct Row {
     stage: ReplayStage,
     cases: usize,
     href: String,
+    /// Its latest experiment, if it has one.
+    last: Option<LastExperiment>,
 }
 
-impl From<SuiteListed> for Row {
-    fn from(listed: SuiteListed) -> Row {
+/// A suite's latest experiment.
+struct LastExperiment {
+    href: String,
+    /// What links to it: its ID and when it was launched.
+    said: Html,
+}
+
+impl Row {
+    fn of(listed: SuiteListed, last: Option<(ExperimentId, Timestamp)>) -> Row {
         Row {
             href: suite_path(&listed.suite.name),
             name: listed.suite.name,
             stage: listed.suite.stage,
             cases: listed.cases,
+            last: last.map(|(id, at)| LastExperiment {
+                href: experiment_path(id),
+                said: html::escape(&format!("experiment {id}, launched ")).then(&html::time(at)),
+            }),
         }
     }
 }
@@ -55,7 +72,14 @@ struct SuitesRegion<'a> {
 /// The suites' rows, by name.
 async fn listed(sources: &Sources) -> anyhow::Result<Vec<Row>> {
     let listed = suites(sources).list().await?;
-    Ok(listed.into_iter().map(Row::from).collect())
+    let mut latest = experiments(sources).latest().await?;
+    Ok(listed
+        .into_iter()
+        .map(|listed| {
+            let last = latest.remove(&listed.suite.name);
+            Row::of(listed, last)
+        })
+        .collect())
 }
 
 pub(super) async fn suites_page(State(sources): State<Sources>) -> Response {

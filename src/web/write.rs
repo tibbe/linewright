@@ -1,6 +1,7 @@
-//! The web UI's writes: capturing a run, making a suite and removing a case
-//! from one. Each is refused unless its request came from the web UI's own
-//! pages, and answered with what the page says of it.
+//! The web UI's writes: capturing a run, making a suite, removing a case
+//! from one, and launching and cancelling an experiment. Each is refused
+//! unless its request came from the web UI's own pages, and answered with
+//! what the page says of it.
 
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -14,6 +15,8 @@ pub(super) enum Write {
     Capture,
     MakeSuite,
     RemoveCase,
+    Launch,
+    Cancel,
 }
 
 impl Write {
@@ -23,6 +26,8 @@ impl Write {
             Write::Capture => "Not captured",
             Write::MakeSuite => "Not made",
             Write::RemoveCase => "Not removed",
+            Write::Launch => "Not launched",
+            Write::Cancel => "Not cancelled",
         }
     }
 
@@ -32,6 +37,8 @@ impl Write {
             Write::Capture => "a capture",
             Write::MakeSuite => "a new suite",
             Write::RemoveCase => "a case's removal",
+            Write::Launch => "a launch",
+            Write::Cancel => "a cancel",
         }
     }
 

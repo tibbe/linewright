@@ -5,8 +5,8 @@
  * entry while the reader is there, keeps each fold as the reader opened or
  * closed it through updates, keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
- * run chosen and keeps that run chosen through updates, and shows the page's
- * tooltip.
+ * run chosen and keeps that run chosen through updates, builds a launch's
+ * configurations and counts its replays, and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -316,6 +316,89 @@
       if (at !== -1) select.selectedIndex = at;
     }
   }
+
+  /**
+   * The launch form's configurations (docs/specs/design_system.md, The suite
+   * page, Launching): each added from the page's template, numbered for its
+   * fields' names, and each file of the brief it changes starting as the
+   * replays would have it without the configuration.
+   */
+  let configurations = 0;
+
+  /** The texts of the files of the brief, by path, as the form starts them. */
+  const briefTexts = () => JSON.parse(document.getElementById("brief-texts")?.textContent || "{}");
+
+  /** `n` and the noun for one or for many. */
+  const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  /** Says how many replays the launch `form` makes. */
+  function countReplays(form) {
+    const cases = Number(form.getAttribute("data-cases")) || 0;
+    const configured = form.querySelectorAll("fieldset.configuration").length;
+    const typed = form.elements.repetitions.value.trim();
+    const repetitions = /^[0-9]+$/.test(typed) ? Math.max(1, Number(typed)) : 1;
+    form.querySelector(".replay-count").textContent =
+      `${counted(cases * configured * repetitions, "replay", "replays")}: ` +
+      `${counted(cases, "case", "cases")}, ` +
+      `${counted(configured, "configuration", "configurations")}, ` +
+      `${counted(repetitions, "repetition", "repetitions")}`;
+  }
+
+  document.addEventListener("input", (event) => {
+    const form = event.target?.closest?.("form.launch");
+    if (form && event.target.name === "repetitions") countReplays(form);
+  });
+
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("button");
+    const form = button?.closest("form.launch");
+    if (!form) return;
+    if (button.classList.contains("add-configuration")) {
+      const template = document.getElementById("configuration-template");
+      configurations += 1;
+      const n = String(configurations);
+      const fieldset = template.content.firstElementChild.cloneNode(true);
+      fieldset.dataset.n = n;
+      for (const field of fieldset.querySelectorAll("[name]")) {
+        field.name = field.name.replace("__N__", n);
+      }
+      form.querySelector(".configurations").append(fieldset);
+      fieldset.querySelector("input")?.focus();
+      countReplays(form);
+    } else if (button.classList.contains("remove-configuration")) {
+      button.closest("fieldset.configuration").remove();
+      countReplays(form);
+    } else if (button.classList.contains("add-file")) {
+      const fieldset = button.closest("fieldset.configuration");
+      const path = fieldset.querySelector("select.brief-file").value;
+      if (!path) return;
+      const name = `c${fieldset.dataset.n}.briefs/${path}`;
+      const files = fieldset.querySelector(".files");
+      const given = Array.from(files.querySelectorAll("textarea")).find((area) => area.name === name);
+      if (given) {
+        given.focus();
+        return;
+      }
+      const label = document.createElement("label");
+      label.className = "flex flex-col gap-1";
+      const caption = document.createElement("span");
+      caption.className = "text-muted text-sm";
+      caption.textContent = path;
+      const area = document.createElement("textarea");
+      area.className = "textarea textarea-sm w-full font-mono";
+      area.name = name;
+      area.rows = 12;
+      const text = briefTexts()[path] ?? "";
+      area.value = text;
+      const started = document.createElement("input");
+      started.type = "hidden";
+      started.name = `c${fieldset.dataset.n}.started/${path}`;
+      started.value = text;
+      label.append(caption, area, started);
+      files.append(label);
+      area.focus();
+    }
+  });
 
   /**
    * The page's one tooltip, which shows the tip of one trigger at a time: an

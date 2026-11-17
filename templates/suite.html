@@ -1,4 +1,5 @@
 {%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
 {%- block main -%}
 <h1>Suite {{ suite.name }}</h1>
 <p class="text-muted mb-4">cases of {{ suite.stage }}</p>
@@ -54,4 +55,58 @@
 </form>
 <div id="capture-said" class="mt-2 max-w-xl" role="status"></div>
 </section>
+{% block experiments -%}
+<section id="experiments" class="mt-6 mb-6">
+<h2>Experiments</h2>
+{%- if experiments.is_empty() %}
+<p>no experiments</p>
+{%- else %}
+<table class="table">
+<thead><tr><th>Experiment</th><th>Launched</th><th>State</th><th>Pass rates</th></tr></thead>
+<tbody>
+{%- for experiment in experiments %}
+<tr>
+<th><a class="link link-hover" href="{{ experiment.href }}">experiment {{ experiment.id }}</a></th>
+<td>{{ experiment.launched }}</td>
+<td>{% call ui::status(experiment.tone, experiment.state) %}{% endcall %}</td>
+<td>{{ experiment.pass_rates }}</td>
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</section>
+{%- endblock %}
+{%- if let Some(launch) = launch %}
+<section id="launch" class="mt-6">
+<h2>Launching an experiment</h2>
+<form class="launch flex max-w-3xl flex-col gap-3" method="post" action="{{ path }}/launch" hx-post="{{ path }}/launch" hx-target="#launch-said" hx-swap="innerHTML" data-cases="{{ launch.cases }}">
+<label class="input input-sm w-fit"><span class="label">repetitions</span><input class="w-20" type="number" name="repetitions" value="1" min="1" required></label>
+<fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-muted text-sm">It holds nothing: the stage as it is.</p></fieldset>
+<div class="configurations flex flex-col gap-3"></div>
+<div><button class="add-configuration btn btn-sm" type="button">Add a configuration</button></div>
+<p class="replay-count" aria-live="polite">{{ launch.count }}</p>
+<div><button class="btn btn-sm btn-primary" type="submit">Launch</button></div>
+</form>
+<div id="launch-said" class="mt-2 max-w-xl" role="status"></div>
+<template id="configuration-template">
+<fieldset class="configuration fieldset rounded-box border border-base-300 p-3">
+<legend class="fieldset-legend">a configuration</legend>
+<div class="flex flex-wrap gap-2">
+<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="c__N__.name" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<label class="input input-sm w-auto"><span class="label">model</span><input class="w-40" name="c__N__.model" placeholder="as it is" autocomplete="off"></label>
+<label class="select select-sm w-auto"><span class="label">effort</span><select name="c__N__.effort"><option value="">as it is</option>
+{%- for effort in launch.efforts %}<option value="{{ effort }}">{{ effort }}</option>{% endfor -%}
+</select></label>
+<label class="input input-sm w-auto"><span class="label">session-timeout</span><input class="w-24" name="c__N__.session-timeout" placeholder="as it is" autocomplete="off"></label>
+</div>
+<div class="flex flex-wrap items-center gap-2"><label class="select select-sm w-auto"><span class="label">file of the brief</span><select class="brief-file" aria-label="file of the brief">
+{%- for path in launch.paths %}<option value="{{ path }}">{{ path }}</option>{% endfor -%}
+</select></label><button class="add-file btn btn-sm" type="button">Change it</button><button class="remove-configuration btn btn-sm btn-ghost text-error" type="button">Remove the configuration</button></div>
+<div class="files flex flex-col gap-2"></div>
+</fieldset>
+</template>
+<script type="application/json" id="brief-texts">{{ launch.texts }}</script>
+</section>
+{%- endif %}
 {%- endblock -%}

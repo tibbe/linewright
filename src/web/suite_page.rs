@@ -14,12 +14,21 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::capture::{CaseFields, Offer, capture_run};
+use super::experiment_page::{shown_of, state_status};
 use super::html::{self, Html};
+use super::launch;
 use super::write::{Refused, Write, alert};
-use super::{ErrorPage, Frame, Page, events, frame_regions, render, run_path, suite_path, suites};
+use super::{
+    ErrorPage, Frame, Page, events, experiment_path, frame_regions, render, run_path, suite_path,
+    suites,
+};
 use crate::api::Sources;
-use crate::benchmarks::{CaseEntry, RemoveError, Suite, SuiteName, SuiteShown};
+use crate::benchmarks::results;
+use crate::benchmarks::{
+    CaseEntry, ExperimentId, ExperimentRecord, RemoveError, Suite, SuiteName, SuiteShown, percent,
+};
 use crate::case::{self, CaseName, Refusal, ReplayStage, SuiteChoice};
+use crate::phrase::Tone;
 use crate::runs::{Recorded, RunId};
 
 /// A case's row.
@@ -63,6 +72,78 @@ impl From<CaseEntry> for CaseRow {
     }
 }
 
+/// An experiment's row.
+struct ExperimentRow {
+    id: ExperimentId,
+    href: String,
+    launched: Html,
+    tone: Tone,
+    state: &'static str,
+    /// Each configuration's pass rate, in the experiment's order.
+    pass_rates: String,
+}
+
+impl ExperimentRow {
+    fn of(sources: &Sources, record: &ExperimentRecord) -> ExperimentRow {
+        let (tone, state) = state_status(&shown_of(sources, record));
+        let pass_rates: Vec<String> = results::results(record)
+            .configurations
+            .iter()
+            .map(|configuration| {
+                format!(
+                    "{} {}",
+                    configuration.name,
+                    percent(configuration.pass_rate)
+                )
+            })
+            .collect();
+        ExperimentRow {
+            id: record.id,
+            href: experiment_path(record.id),
+            launched: html::time(record.launched_at),
+            tone,
+            state,
+            pass_rates: pass_rates.join(", "),
+        }
+    }
+}
+
+/// The page's offer to launch an experiment on a suite with cases.
+struct LaunchOffer {
+    cases: usize,
+    /// How many replays the form makes as it starts.
+    count: String,
+    /// The paths under `briefs/` of the files a configuration may give.
+    paths: Vec<String>,
+    /// Their texts as the form starts them, for its script.
+    texts: Html,
+    efforts: [&'static str; 5],
+}
+
+impl LaunchOffer {
+    /// The offer for a suite with `cases` cases, if it has any.
+    fn of(sources: &Sources, cases: usize) -> Option<LaunchOffer> {
+        (cases > 0).then(|| {
+            let texts = launch::starting_texts(sources);
+            LaunchOffer {
+                cases,
+                count: launch::replay_count(cases, 1, 1),
+                paths: texts.keys().cloned().collect(),
+                texts: launch::texts_json(&texts),
+                efforts: launch::efforts(),
+            }
+        })
+    }
+}
+
+/// A suite as its page shows it.
+struct Shown {
+    suite: Suite,
+    cases: Vec<CaseRow>,
+    /// Latest first.
+    experiments: Vec<ExperimentRow>,
+}
+
 /// A run the form offers to capture.
 struct RunChoice {
     id: RunId,
@@ -78,6 +159,8 @@ struct SuitePage {
     suite: Suite,
     path: String,
     cases: Vec<CaseRow>,
+    experiments: Vec<ExperimentRow>,
+    launch: Option<LaunchOffer>,
     /// The runs of the suite's stage that can be captured, latest first.
     runs: Vec<RunChoice>,
     ready: Html,
@@ -88,6 +171,12 @@ struct SuitePage {
 struct CasesRegion<'a> {
     path: &'a str,
     cases: &'a [CaseRow],
+}
+
+#[derive(Template)]
+#[template(path = "suite.html", block = "experiments")]
+struct ExperimentsRegion<'a> {
+    experiments: &'a [ExperimentRow],
 }
 
 #[derive(Template)]
@@ -108,13 +197,22 @@ fn no_such(name: &str) -> String {
     format!("there is no suite {name}")
 }
 
-/// Suite `name` with its cases, by name.
-async fn shown(sources: &Sources, name: &str) -> Result<(Suite, Vec<CaseRow>), Unshown> {
+/// Suite `name` with its cases, by name, and its experiments.
+async fn shown(sources: &Sources, name: &str) -> Result<Shown, Unshown> {
     let parsed: SuiteName = name.parse().map_err(|_| Unshown::NoSuch(no_such(name)))?;
     match suites(sources).show(&parsed).await {
-        Ok(Some(SuiteShown { suite, cases, .. })) => {
-            Ok((suite, cases.into_iter().map(CaseRow::from).collect()))
-        }
+        Ok(Some(SuiteShown {
+            suite,
+            cases,
+            experiments,
+        })) => Ok(Shown {
+            suite,
+            cases: cases.into_iter().map(CaseRow::from).collect(),
+            experiments: experiments
+                .iter()
+                .map(|record| ExperimentRow::of(sources, record))
+                .collect(),
+        }),
         Ok(None) => Err(Unshown::NoSuch(no_such(name))),
         Err(e) => Err(Unshown::Failed(e)),
     }
@@ -163,15 +261,21 @@ pub(super) async fn suite_page(
     let title = format!("{name} · {}", sources.work_dir.repo);
     let frame = Frame::of(&sources).await;
     match shown(&sources, &name).await {
-        Ok((suite, cases)) => {
+        Ok(Shown {
+            suite,
+            cases,
+            experiments,
+        }) => {
             let path = suite_path(&suite.name);
             SuitePage {
                 page: Page::new(title, format!("/events{path}")),
                 frame,
                 runs: runs_of(&sources, suite.stage).await,
+                launch: LaunchOffer::of(&sources, cases.len()),
                 path,
                 suite,
                 cases,
+                experiments,
                 ready: Offer::ready_html(&sources),
             }
             .into_response()
@@ -208,12 +312,23 @@ pub(super) async fn suite_events(
         let name = name.clone();
         async move {
             let mut regions = frame_regions(&Frame::of(&sources).await);
-            if let Ok((suite, cases)) = shown(&sources, &name).await {
+            if let Ok(Shown {
+                suite,
+                cases,
+                experiments,
+            }) = shown(&sources, &name).await
+            {
                 regions.push((
                     "cases",
                     render(&CasesRegion {
                         path: &suite_path(&suite.name),
                         cases: &cases,
+                    }),
+                ));
+                regions.push((
+                    "experiments",
+                    render(&ExperimentsRegion {
+                        experiments: &experiments,
                     }),
                 ));
                 let runs = runs_of(&sources, suite.stage).await;
