@@ -12,7 +12,7 @@ use linewright::case::{
     self, Case, CaseItemKind, CaseName, CasePart, CasePull, CasePullState, Criteria, Merge,
 };
 use linewright::clock::RunningFrom;
-use linewright::domain::{MergeMethod, Number, Windows, label};
+use linewright::domain::{MergeMethod, Number, Scope, Windows, label};
 use linewright::git::CommitId;
 use linewright::input;
 use linewright::reconcile::Work;
@@ -172,7 +172,7 @@ async fn the_snapshot_of_the_seeded_store_holds_the_cases_item_linked_as_in_the_
     let store = seeded(world.dir.path(), &case).await;
 
     let windows = Windows::at(case.start(), TimeDelta::days(7), TimeDelta::days(7));
-    let snapshot = store.snapshot(windows).await.unwrap();
+    let snapshot = store.snapshot(windows, &Scope::default()).await.unwrap();
 
     let issue = snapshot
         .issue(ticket)

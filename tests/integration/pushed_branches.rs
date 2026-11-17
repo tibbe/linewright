@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::panic::Location;
 
+use crate::common;
+
+use common::*;
 use linewright::database::Database;
-use linewright::domain::{TicketBranchName, Timestamp};
+use linewright::domain::{Item, TicketBranchName, Timestamp};
 use linewright::pushed_branches::PushedBranches;
 
 #[track_caller]
@@ -145,4 +148,51 @@ async fn an_adopted_branch_counts_as_recorded_when_the_listing_began() {
         .unwrap();
 
     assert_eq!(pushed.names().await.unwrap(), BTreeSet::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_poll_after_a_restart_is_given_the_tickets_branch_linewright_pushed_before() {
+    let mut world = World::new().await;
+    world.implement_a_ticket().await;
+
+    world.restart(|_| {}).await;
+    world.poll().await;
+
+    let scope = world.store.last_scope().expect("a snapshot was taken");
+    assert_eq!(scope.branches, names(&["1-do-the-thing"]));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_poll_is_given_the_items_its_kept_snapshot_holds() {
+    let mut world = World::new().await;
+    let (ticket, pr) = world.implement_a_ticket().await;
+    world.poll().await;
+
+    world.poll().await;
+
+    let scope = world.store.last_scope().expect("a snapshot was taken");
+    assert_eq!(scope.items, [Item::Issue(ticket), Item::Pull(pr)].into());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_poll_is_given_the_issue_linewright_opened_since_the_last() {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    merge_spec_change(&world).await;
+    world.poll().await;
+    let opened = world
+        .store
+        .issues()
+        .last()
+        .expect("an issue was opened")
+        .number;
+
+    world.factory.cycle().await.unwrap();
+
+    let scope = world.store.last_scope().expect("a snapshot was taken");
+    assert!(
+        scope.items.contains(&Item::Issue(opened)),
+        "{:?}",
+        scope.items
+    );
 }

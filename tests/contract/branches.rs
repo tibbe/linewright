@@ -1,6 +1,9 @@
 //! Branches, as Linewright clones, pushes and deletes them.
 
-use anyhow::{Result, bail, ensure};
+use std::collections::BTreeSet;
+
+use anyhow::{Context as _, Result, bail, ensure};
+use linewright::domain::{Scope, TicketBranchName};
 use linewright::git;
 use linewright::store::{NewIssue, PushMode};
 
@@ -292,7 +295,17 @@ async fn only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_t
 
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let scope = Scope {
+                items: BTreeSet::new(),
+                branches: [&linewrights_branch, &persons_branch]
+                    .into_iter()
+                    .map(|name| {
+                        TicketBranchName::parse(name)
+                            .with_context(|| format!("{name} names no ticket's branch"))
+                    })
+                    .collect::<Result<_>>()?,
+            };
+            let snapshot = sandbox.store().snapshot(recent(), &scope).await?;
             let listed: Vec<&str> = snapshot
                 .ticket_branches
                 .iter()

@@ -3,7 +3,7 @@
 use anyhow::{Result, bail, ensure};
 use linewright::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
-    Number, Opening, SpecChangeIssue, SubIssue, SubIssueState, Windows,
+    Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Windows,
 };
 use linewright::store::{AnyItem, IssueRead, NewIssue};
 use linewright::tracking;
@@ -143,7 +143,10 @@ async fn a_snapshot_holds_an_issue_linewright_opened(sandbox: Sandbox) -> Result
     let read = held(&sandbox, number).await?;
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             match snapshot.issues.iter().find(|issue| issue.number == number) {
                 Some(issue) => equal("the issue", issue, &read),
                 None => bail!("the snapshot does not hold {number}"),
@@ -404,7 +407,10 @@ async fn a_snapshot_holds_an_issue_closed_within_its_windows(sandbox: Sandbox) -
     };
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             ensure!(
                 snapshot.issues.iter().all(|issue| issue.number != number),
                 "the snapshot holds {number} open"
@@ -438,7 +444,10 @@ async fn a_snapshot_holds_a_spec_changes_issue_closed(sandbox: Sandbox) -> Resul
 
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             let expected = SpecChangeIssue {
                 number,
                 spec_change,
@@ -512,7 +521,10 @@ async fn a_snapshot_holds_who_opened_a_held_tickets_parent_it_does_not_hold(
     );
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(after_the_close).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(after_the_close, &Scope::default())
+                .await?;
             let held = snapshot.issue(ticket);
             equal(
                 "the ticket's parent",

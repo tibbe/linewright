@@ -4,6 +4,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use linewright::domain::{
     Assignment, ClosedKind, IssueCloseReason, Mergeability, Number, Pull, PullState, Rebaseability,
+    Scope,
 };
 use linewright::store::{AnyItem, IssueRead, NewPull, PeoplesPullRead, PushMode};
 
@@ -123,7 +124,10 @@ async fn a_snapshot_holds_an_open_pull_request_of_linewrights(sandbox: Sandbox) 
     sandbox
         .eventually(async || {
             let read = sandbox.store().pull(pr).await?;
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             ensure!(
                 snapshot.peoples_pulls.iter().all(|p| p.number != pr),
                 "the snapshot holds {pr} among the people's"
@@ -206,7 +210,10 @@ async fn a_snapshot_holds_linewrights_pull_request_closed_unmerged_as_closing_it
     let linewright = sandbox.store().identity().await?.login;
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             ensure!(
                 snapshot.closed.iter().any(|item| item.number == issue),
                 "the snapshot does not hold {issue} closed"
@@ -328,7 +335,10 @@ async fn a_pull_request_read_again_lists_its_assignments_as_a_snapshot_does(
                 &changes,
                 &vec![(true, by.0, by.1), (false, by.0, by.1), (true, by.0, by.1)],
             )?;
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             match snapshot.pull(pr) {
                 Some(pull) => equal("the pull request", &worked_out(pull), &worked_out(&read)),
                 None => bail!("the snapshot does not hold {pr}"),
@@ -352,7 +362,10 @@ async fn a_snapshot_holds_who_a_review_is_requested_of_and_who_is_assigned_open_
     let linewright = sandbox.store().identity().await?.login;
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             let pull = snapshot
                 .pull(pr)
                 .with_context(|| format!("the snapshot does not hold {pr}"))?;
@@ -367,7 +380,10 @@ async fn a_snapshot_holds_who_a_review_is_requested_of_and_who_is_assigned_open_
     sandbox.store().close_pull(pr).await?;
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             let closed = snapshot
                 .closed
                 .iter()

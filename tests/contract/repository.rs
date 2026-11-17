@@ -1,7 +1,7 @@
 //! Who Linewright is, and the repository's settings.
 
 use anyhow::{Context, Result, ensure};
-use linewright::domain::MergeMethod;
+use linewright::domain::{MergeMethod, Scope};
 use linewright::store::Property;
 use serde_json::json;
 
@@ -33,7 +33,10 @@ async fn the_settings_name_the_repository_and_the_default_branch_a_snapshot_has(
     sandbox: Sandbox,
 ) -> Result<()> {
     let settings = sandbox.store().settings().await?;
-    let snapshot = sandbox.store().snapshot(recent()).await?;
+    let snapshot = sandbox
+        .store()
+        .snapshot(recent(), &Scope::default())
+        .await?;
 
     equal("the repository", &settings.repo, sandbox.repo())?;
     equal(

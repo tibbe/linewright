@@ -19,8 +19,8 @@ use crate::clock::Clock;
 use crate::clones::Clones;
 use crate::database::Database;
 use crate::domain::{
-    IssueCloseReason, Item, MergeMethod, Number, PullHeldRead, PullRead, Snapshot, SpecChangeIssue,
-    Timestamp, Windows, label,
+    IssueCloseReason, Item, MergeMethod, Number, PullHeldRead, PullRead, Scope, Snapshot,
+    SpecChangeIssue, Timestamp, Windows, label,
 };
 use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
@@ -171,6 +171,7 @@ pub struct Factory {
     /// The items Linewright's actions and runs changed since the kept
     /// snapshot last read them.
     written: BTreeSet<Item>,
+    pushed_branches: PushedBranches,
     /// Whether the first poll since startup has labeled the old tracking
     /// issues ([`Snapshot::unlabeled_tracking_issues`]).
     labeled_old_tracking_issues: bool,
@@ -311,7 +312,7 @@ impl Factory {
             operator_briefs: config.briefs,
             settings,
             work_dir: config.work_dir,
-            pushed_branches: Some(pushed_branches),
+            pushed_branches: Some(pushed_branches.clone()),
         });
         Ok(Factory {
             shell: Arc::new(shell),
@@ -333,6 +334,7 @@ impl Factory {
             environment,
             kept: None,
             written: BTreeSet::new(),
+            pushed_branches,
             labeled_old_tracking_issues: false,
         })
     }
@@ -363,10 +365,11 @@ impl Factory {
         let shell = &self.shell;
         let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
+        let scope = self.scope().await?;
         let mut snapshot = shell
             .sessions
             .store
-            .snapshot(windows)
+            .snapshot(windows, &scope)
             .await
             .context("taking a snapshot")?;
         if !self.labeled_old_tracking_issues {
@@ -583,6 +586,23 @@ impl Factory {
             automations: self.automation_files.clone(),
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             unusable: kept.repo.unusable.clone(),
+        })
+    }
+
+    /// What Linewright knows of its work for a poll to read: the items of
+    /// the kept snapshot, those written to since and those with a run in
+    /// flight, and the ticket branches it recorded pushing.
+    async fn scope(&self) -> Result<Scope> {
+        let kept = self.kept.as_ref().map(|kept| kept.snapshot.items());
+        let live = self.live_runs().into_iter().map(|run| run.subject.into());
+        Ok(Scope {
+            items: kept
+                .into_iter()
+                .flatten()
+                .chain(self.written.iter().copied())
+                .chain(live)
+                .collect(),
+            branches: self.pushed_branches.names().await?,
         })
     }
 
@@ -910,14 +930,7 @@ impl Factory {
         self.memory
             .ended_runs
             .extend(ended.as_ref().and_then(Recorded::ended_on_pull));
-        match run.subject {
-            Subject::Issue(issue) => {
-                self.written.insert(Item::Issue(issue));
-            }
-            Subject::Pull(pr) => {
-                self.written.insert(Item::Pull(pr));
-            }
-        }
+        self.written.insert(run.subject.into());
     }
 
     /// Opens the issue that takes up the spec change `pr`, then, if

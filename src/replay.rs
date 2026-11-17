@@ -8,6 +8,7 @@ pub mod judge;
 pub use gh_gate::{Gate, GhConfigDir, Upstream};
 pub use journal::Journal;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
@@ -17,10 +18,11 @@ use chrono::TimeDelta;
 use serde::Serialize;
 use tracing::{error, info};
 
-use crate::case::Case;
+use crate::case::{Case, CaseItemKind};
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
 use crate::cost::RunCost;
+use crate::domain::{Item, Scope};
 use crate::ending::Signal;
 use crate::environment::replays::{self, BuildLog};
 use crate::environment::{self, Source};
@@ -390,13 +392,24 @@ async fn run_in(
         pushed_branches: None,
     });
     let now = clock.now();
+    let issue = case.item();
+    let scope = Scope {
+        items: case
+            .items()
+            .iter()
+            .map(|item| match item.kind {
+                CaseItemKind::Issue(_) => Item::Issue(item.number),
+                CaseItemKind::Pull(_) => Item::Pull(item.number),
+            })
+            .collect(),
+        branches: BTreeSet::new(),
+    };
     let snapshot = shell
         .sessions
         .store
-        .snapshot(shell.policy.windows(now))
+        .snapshot(shell.policy.windows(now), &scope)
         .await
         .context("taking a snapshot of the case")?;
-    let issue = case.item();
     let work = case.stage().work(issue);
     let running = RunFiles::new(out.path())
         .begin(

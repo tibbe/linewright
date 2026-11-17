@@ -4,12 +4,16 @@ use common::*;
 use linewright::clock::Clock;
 use linewright::domain::{
     Assignment, CheckState, IssueCloseReason, Login, Mergeability, Number, Pull, Requirement,
-    ReviewState, Timestamp, Windows,
+    ReviewState, Scope, Timestamp, Windows,
 };
 use linewright::store::Store;
 
 async fn snapshot_pull(world: &World, pr: Number) -> Pull {
-    let snapshot = world.store.snapshot(Windows::EVER).await.unwrap();
+    let snapshot = world
+        .store
+        .snapshot(Windows::EVER, &Scope::default())
+        .await
+        .unwrap();
     snapshot.pull(pr).expect("the snapshot holds it").clone()
 }
 
@@ -110,7 +114,11 @@ async fn a_commit_keeps_files_whose_paths_need_quoting_in_git() {
 /// When the snapshot says GitHub last updated the issue #`number`, open or
 /// closed.
 async fn updated_at(world: &World, number: Number) -> Timestamp {
-    let snapshot = world.store.snapshot(Windows::EVER).await.unwrap();
+    let snapshot = world
+        .store
+        .snapshot(Windows::EVER, &Scope::default())
+        .await
+        .unwrap();
     snapshot.updated_at(number).expect("the snapshot holds it")
 }
 
