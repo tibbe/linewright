@@ -124,6 +124,14 @@ The event in which a session of a replay learns how the work that the replay
 repeats turned out.
 _Avoid_: contamination, cheating, reward hacking
 
+**Suite**:
+A named set of cases of one stage.
+_Avoid_: dataset, benchmark, task set, collection
+
+**Experiment**:
+A comparison of configurations of a stage on the cases of a suite.
+_Avoid_: benchmark run, job, eval, study
+
 **Outcome**:
 How a run ended, such as done or handed back, or that it has not ended yet.
 _Avoid_: result, status, state, exit

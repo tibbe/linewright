@@ -42,9 +42,10 @@ The command is `lw`.
 | `logs N`              | show a run's transcript (see [Monitoring](monitoring.md))                |
 | `export ID DIR`       | write run ID as plain files (see [Monitoring](monitoring.md))            |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
-| `capture ID NAME`     | capture run ID as a case (see [Benchmarks](benchmarks.md))               |
+| `capture ID NAME`     | capture run ID as a case in a suite (see [Benchmarks](benchmarks.md))    |
 | `replay CASE`         | run a case's stage on it again (see [Benchmarks](benchmarks.md))         |
 | `judge CASE DIR`      | judge the output of a replay (see [Benchmarks](benchmarks.md))           |
+| `suites`, `suite`, `experiment` | work with suites and experiments (see [Benchmarks](benchmarks.md#suites-and-experiments-on-the-command-line)) |
 
 - **The version.** `--version` names the version and the commit it was
   built from.
@@ -115,6 +116,7 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `spec-lookback`                              | 7d                                          |
 | `done-window`                                | 7d                                          |
 | `max-runs`                                   | 4                                           |
+| `max-replays`                                | 1                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
 | `model`                                      | the harness's choice                        |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |

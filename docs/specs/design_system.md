@@ -179,6 +179,9 @@ page.
 | runs        | `/runs`        | every run ([Lists of runs](#lists-of-runs))                 |
 | run         | `/runs/ID`     | run ID's transcripts ([The run page](#the-run-page))         |
 | automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
+| suites      | `/suites`      | the suites ([The suites page](#the-suites-page))            |
+| suite       | `/suites/NAME` | suite NAME's cases and experiments ([The suite page](#the-suite-page)) |
+| experiment  | `/experiments/ID` | experiment ID's progress and results ([The experiment page](#the-experiment-page)) |
 | server      | `/server`      | the facts about Linewright itself ([The server page](#the-server-page)) |
 
 ### Serving
@@ -198,7 +201,7 @@ when `ui-address` is empty.
 | Part       | Holds                                                                                   |
 | ---------- | --------------------------------------------------------------------------------------- |
 | repository | the avatar of the GitHub account that owns it, beside its name, linking to it on GitHub |
-| links      | the board, the runs, the automations and the server pages                               |
+| links      | the board, the runs, the automations, the suites and the server pages                   |
 
 ### Holds and problems
 
@@ -424,9 +427,12 @@ under its session's heading.
   until the reader scrolls up, and then offers to jump to the latest entry.
 - **Capturing.** A run that can be captured
   ([Capturing](benchmarks.md#capturing)) offers, by its heading, to capture
-  it as a case. It asks for the case's name, filled in with the run ID's
-  letters and digits joined by hyphens, such as `43-implement-2`, and for its
-  criteria, then says where the case was written, or why it was not.
+  it as a case. The capture asks for these, then says where the case was
+  written, or why it was not:
+  - the suite: one of the suites of the run's stage, or a new one;
+  - the case's name, filled in with the run ID's letters and digits joined
+    by hyphens, such as `43-implement-2`;
+  - the criteria.
 
 ### The automations page
 
@@ -439,6 +445,65 @@ row per automation.
 | schedule | when it runs, in words                                                  |
 | last run | its last run, with its outcome, linking to the run; or, before its first, when Linewright first saw it |
 | next run | when it runs next                                                       |
+
+### The suites page
+
+The suites page shows a row per suite, and offers to make a suite. To make a
+suite, it asks for the suite's name and stage
+([Suites](benchmarks.md#suites)).
+
+| Column          | Holds                                                        |
+| --------------- | ------------------------------------------------------------ |
+| Suite           | the suite's name, linking to the suite page                  |
+| Stage           | the suite's stage                                            |
+| Cases           | how many cases it holds                                      |
+| Last experiment | its latest experiment and when it was launched, linking to it |
+
+### The suite page
+
+The suite page shows suite NAME's cases, then its experiments, latest first.
+
+- **Cases.** A row per case: its name, the run it was captured from, linking
+  to the run page, and the first line of its criteria, which opens on click
+  to the whole criteria. Each row offers to remove the case.
+- **Adding a case.** The page offers to capture a run of the suite's stage,
+  as the run page does. The maintainer chooses the run from a list of the runs
+  of that stage.
+- **Experiments.** A row per experiment: when it was launched, its state and
+  the pass rate of each configuration, linking to the experiment page.
+- **Launching.** The page offers to launch an experiment on a suite with
+  cases. The launch asks for the configurations and the repetitions
+  ([Experiments](benchmarks.md#experiments)), and shows how many replays they
+  make.
+- **A configuration.** `as-is` comes first and holds nothing. Each other
+  configuration has a name. It can set `model`, `effort` and
+  `session-timeout`, and give the text of any file of the brief. The text of a
+  file starts as the text that the replays would use without the
+  configuration.
+
+### The experiment page
+
+The experiment page shows experiment ID's heading, then its results
+([Results](benchmarks.md#results)).
+
+- **Heading.** The suite, linking to the suite page, when the experiment was
+  launched, its state, and how many of its replays have ended of all its
+  replays. A waiting experiment says what it waits for, such as "waiting for
+  the usage limit, until 14:30".
+- **State.** Shown with the icon and the colour of the status with the same
+  meaning ([Status](#status)): running as in flight, waiting as paused,
+  ended as done and cancelled as cancelled.
+- **The chart.** A point for each configuration. The horizontal axis is the
+  mean cost of a replay, and the vertical axis is the pass rate.
+- **The grid.** A row for each case and a column for each configuration. A
+  cell shows the passes of the case under the configuration, such as "2 of
+  3". A cell also shows its leaks and its replays without a judgement, if it
+  has any.
+- **The table.** A row for each configuration, with its figures. Each row
+  opens on click to the configuration's cases. Each case opens on click to
+  its replays. A replay shows its state, its judgement with the reasoning of
+  the judge, its cost and its time. It opens on click to the transcripts of
+  its run and of its judge, shown as the run page shows a run's.
 
 ### The server page
 
@@ -458,6 +523,7 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 | the drain, since when, and its deadline if set                  | while one is under way |
 | the environment and its builds, as `environment` shows them ([Monitoring](monitoring.md)) | with a setup command |
 | the runs in flight out of `max-runs`                            | always                 |
+| the replays and judges of experiments in flight out of `max-replays` | while there are any |
 | the time of the last webhook delivery accepted                  | with webhooks on       |
 | the webhook deliveries refused since `serve` started            | with webhooks on       |
 
@@ -466,5 +532,6 @@ The server page shows the facts about Linewright itself ([Facts](#facts)).
 - A login of Linewright's own for the web UI.
 - A layout of the board for narrow screens.
 - A status of a lane's own: its cards carry theirs.
-- Acting from the UI on `serve` or on the work, but for capturing a run.
+- Acting from the UI on `serve` or on the work, but for capturing a run and
+  for suites and experiments.
 - A link of its own to each transcript entry.

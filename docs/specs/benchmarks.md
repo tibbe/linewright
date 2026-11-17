@@ -1,49 +1,54 @@
 # Benchmarks
 
-A benchmark measures a stage against work it has already done. A run of the
-stage is captured as a case, which holds what the run was given as it stood
-when the run started, so that the stage can be run on it again. A judge then
-says whether what the stage made meets what the capturer said a good result
-is.
+How well a stage works depends on its brief, its settings and its model. A
+change to one of them can help some work and harm other work, and it can
+change what the work costs. Benchmarks let a maintainer try a change on work
+that the stage has already done, before the change reaches new work, and see
+whether it helps and what it costs.
 
 For example, a maintainer finds that the design of #812 cut the work badly.
-They capture its design run as a case from the run's page and write what a
-good design would have done. They then replay the case with each change they
-make to the brief of the design stage.
+They capture the run as a case, with what a good design would have done. They
+then try a change to the brief of the design stage, and see whether it fixes
+#812 without harm to their other design cases, and what it costs.
 
 ## User Stories
 
-1. As an operator, I want to capture a run of a stage from its page, so that I
+1. As a maintainer, I want to capture a run of a stage from its page, so that I
    can run that stage on the same input again.
-2. As an operator, I want a case to hold only what its run was given and
+2. As a maintainer, I want a case to hold only what its run was given and
    nothing from after it started, so that the stage run on it again has
    nothing that shows how the work turned out.
-3. As an operator, I want a case to stay usable as Linewright changes, so that
+3. As a maintainer, I want a case to stay usable as Linewright changes, so that
    cases captured long ago still measure the stage as it is today.
-4. As an operator, I want to say what a good result is as I capture a case, so
+4. As a maintainer, I want to say what a good result is as I capture a case, so
    that results can be judged against it.
-5. As an operator, I want to copy a case to another machine, so that I run it
-   where I tune the briefs.
-6. As an agent, I want to capture a case from the command line, so that I can
+5. As an agent, I want to capture a case from the command line, so that I can
    build cases without a browser.
-7. As an operator, I want to run a case's stage again with a setting or its
+6. As a maintainer, I want to run a case's stage again with a setting or its
    brief changed, so that I see what the change does to real work.
-8. As an operator, I want Linewright to write nothing to GitHub in a replay,
+7. As a maintainer, I want Linewright to write nothing to GitHub in a replay,
    so that I can try a change without touching the repository.
-9. As an agent, I want a replay's output as plain files, so that I can read
+8. As an agent, I want a replay's output as plain files, so that I can read
    it, judge it and change the briefs.
-10. As an operator, I want the `gh` of a replay's session kept from the case's
+9. As a maintainer, I want the `gh` of a replay's session kept from the case's
     repository on GitHub, so that the session cannot read how the work turned
     out.
-11. As an operator, I want a judge to say whether the output of a replay
+10. As a maintainer, I want a judge to say whether the output of a replay
     meets the criteria of the case, so that I know whether a change helped
     and do not read every output.
-12. As an operator, I want the judge to tell me when a session learned how
+11. As a maintainer, I want the judge to tell me when a session learned how
     the work turned out, so that I do not trust that replay.
-13. As an operator, I want to run the judge on a replay again, so that I can
-    change the judge and not replay the case.
-14. As an operator, I want a replay to say what it cost, so that I can compare
+12. As a maintainer, I want a replay to say what it cost, so that I can compare
     two changes by their cost and not only by their results.
+13. As a maintainer, I want to keep cases of a stage together in a suite, so
+    that I can run them together.
+14. As a maintainer, I want to run a suite under several configurations in
+    the web UI and see their results side by side, so that I can tell which
+    change helps across real work.
+15. As a maintainer, I want to run each case more than once, so that a lucky
+    or unlucky replay does not decide.
+16. As an operator, I want experiments to let the runs of the pipeline go
+    first, so that benchmarking does not keep the factory waiting.
 
 ## Cases
 
@@ -69,9 +74,8 @@ what a good result is.
   change to how Linewright reads them then leaves the case usable.
 - **The repository.** A bare git repository in the case.
 - **The criteria.** Criteria that hold only white space are no criteria.
-- **A directory.** A case is a directory holding all of it, so that it is
-  copied, moved or removed as a directory, and its criteria are edited as a
-  file in it.
+- **A directory.** A case is a directory holding all of it, with its
+  criteria as a file in it.
 
 ## Recording a run's input
 
@@ -87,17 +91,33 @@ case of it, whatever its outcome.
 
 - **Where.** In `cases/` under the work directory, in a directory named for the
   case.
+- **Into a suite.** A capture puts the case into a suite of the run's stage
+  ([Suites](#suites)).
 - **From the web UI.** The run page
-  ([The run page](design_system.md#the-run-page)).
-- **From the command line.** `lw capture ID NAME --criteria FILE`. It works
-  whether or not `serve` is running, and exits as the monitoring commands do
-  ([Output](monitoring.md#output)).
+  ([The run page](design_system.md#the-run-page)) and the suite page
+  ([The suite page](design_system.md#the-suite-page)).
+- **From the command line.** `lw capture ID NAME --suite SUITE --criteria
+  FILE`. It works whether or not `serve` is running, and exits as the
+  monitoring commands do ([Output](monitoring.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
 - **The name.** Given by the capturer: lowercase letters, digits and hyphens.
   A name a case already has is refused.
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
+
+## Suites
+
+A suite is a named set of cases of one stage. A maintainer makes a suite in
+the web UI, captures runs of its stage into it and runs experiments on it.
+
+- **The name.** Lowercase letters, digits and hyphens. A name that a suite
+  already has is refused.
+- **The stage.** Triage, design or implement, given as the suite is made.
+- **One suite for each case.** A case belongs to the suite it was captured
+  into. A run captured into two suites gives two cases, each with its own
+  criteria.
+- **Removing a case.** Removing a case from its suite removes the case.
 
 ## Replaying
 
@@ -234,11 +254,10 @@ The judge is an agent in a session of its own.
 - **What the judge reads.** Each session of the judge reads the replay from a
   copy that Linewright makes for that session, in a directory apart from the
   output. The copy holds the outcome, the sessions' records, the writes and the
-  attachments that the writes refer to, each at its path in the output. It
-  holds nothing else of the output, so that the judge does not get an earlier
-  judgement. Linewright removes the copy as it removes the clone of the
-  session ([Stages](runs.md#stages)). A change that the judge makes to the
-  copy does not change the output.
+  attachments that the writes refer to, each at its path in the output. It holds
+  nothing else of the output. Linewright removes the copy as it removes the
+  clone of the session ([Stages](runs.md#stages)). A change that the judge makes
+  to the copy does not change the output.
 - **The prompt.** Linewright sends the judge the prompt `prompts/judge.md`
   ([Briefs](operation.md#briefs)), with these placeholders filled:
 
@@ -265,13 +284,97 @@ The judge is an agent in a session of its own.
   | session     | the record of the session of the judge                                                                                     |
   | Linewright  | the version of Linewright that ran the judge                                                                               |
 
-- **Judging again.** A new judgement replaces the earlier judgement.
+- **An output with a judgement.** Linewright refuses to judge an output that
+  holds a judgement.
 - **A judge that makes no judgement.** The judge makes no judgement if it
   gives up, if a signal ends the command, or if its session ends without a
-  result that Linewright accepts. The command then says why, keeps nothing of
-  that judge, and leaves the earlier judgement in place.
+  result that Linewright accepts. The command then says why, and keeps nothing
+  of that judge.
 - **The exit status of the command.** The command succeeds when the judge
   made a judgement, whatever the judgement.
+
+## Experiments
+
+An experiment replays each case of a suite under each of its configurations,
+and judges each replay. Its repetitions are how many times it replays each
+case under each configuration.
+
+- **From the web UI.** The suite page launches an experiment. The experiment
+  page follows the experiment and shows its results
+  ([The experiment page](design_system.md#the-experiment-page)).
+- **The configurations.** The first configuration is `as-is`, which holds
+  nothing ([Configurations](#configurations)). The maintainer adds the others,
+  each with a name that no other configuration of the experiment has.
+- **Repetitions.** One or more. The default is 1.
+- **At its launch.** The experiment keeps the cases of the suite with their
+  criteria, the configurations and the repetitions. A later change to the
+  suite or to a case does not change the experiment. Linewright refuses a
+  launch on a suite with no cases, or with a configuration with an error.
+- **Under `serve`.** `serve` runs the replays and the judges of an
+  experiment, each as `lw replay` and `lw judge` do. The holds, the usage
+  limit and stopping apply to each replay and judge as to a run of `serve`
+  ([Holds](runs.md#holds), [Usage limit](runs.md#usage-limit),
+  [Stopping](operation.md#stopping)). An experiment that `serve` does not run
+  waits.
+- **Order.** The replays start one repetition at a time. In a repetition, they
+  start case by case, and for each case, configuration by configuration. Thus
+  all the configurations have replays of the same cases when an experiment
+  stops early.
+- **Replays at once.** At most `max-replays` replays and judges of experiments
+  run at once. None starts while a run of the pipeline waits for a place
+  under `max-runs`.
+- **A replay without a judgement.** A replay has no judgement when its run is
+  not done or handed back, or when its judge makes no judgement. The
+  experiment shows the reason. Linewright does not replay it again.
+- **After a restart.** Once `serve` runs, the experiment starts again each
+  replay and each judge that the restart interrupted, a replay into a new
+  output.
+- **The output.** The outputs of the replays of experiment ID are in
+  `experiments/ID/` under the work directory, one directory for each
+  configuration, case and repetition
+  ([The output of a replay](#the-output-of-a-replay)).
+
+| State     | Event                                      | Next      | Effect                                  |
+| --------- | ------------------------------------------ | --------- | --------------------------------------- |
+| running   | a hold holds its next replay or judge      | waiting   | the experiment shows what it waits for  |
+| waiting   | the hold ends                              | running   | the next replay or judge starts         |
+| running   | its last replay or judge ends              | ended     | its results are complete                |
+| running   | the maintainer cancels it                  | cancelled | its replays and judges in flight stop   |
+| waiting   | the maintainer cancels it                  | cancelled | none                                    |
+
+### Results
+
+The results of an experiment give these figures for each configuration.
+
+| Figure    | For a configuration                                                                                       |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| pass rate | of its replays with a judgement and no leak, the share whose correctness is `pass`                         |
+| passes    | for each case, how many of its replays of that case pass, of those with a judgement and no leak            |
+| cost      | the mean and the total of the cost of its replays that have a cost ([Cost](runs.md#cost)), and how many have none |
+| time      | the mean and the total of the time of its replays                                                         |
+| leaks     | how many of its replays have a judgement with a leak                                                      |
+| unjudged  | how many of its replays have no judgement                                                                 |
+
+- **No replays to count.** A pass rate, or a mean, with no replays to count
+  is absent.
+- **The judges.** The cost of the judges, from the records of their sessions,
+  is a figure of the experiment, apart from the configurations.
+
+## Suites and experiments on the command line
+
+The commands work whether or not `serve` is running, and exit as the
+monitoring commands do ([Output](monitoring.md#output)). A suite, a case or an
+experiment that does not exist is as an item or run that does not exist.
+
+| Command                                                                     | What it does                                                    |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `lw suites`                                                                 | list the suites                                                 |
+| `lw suite add NAME STAGE`                                                   | make a suite                                                    |
+| `lw suite NAME`                                                             | show a suite: its cases with their criteria, and its experiments |
+| `lw suite remove-case NAME CASE`                                            | remove a case from a suite                                      |
+| `lw experiment launch SUITE [--configuration NAME=DIR]... [--repetitions N]` | launch an experiment, with `as-is` and a configuration for each DIR ([Configurations](#configurations)) |
+| `lw experiment ID`                                                          | show an experiment: its state, its replays and its results      |
+| `lw experiment cancel ID`                                                   | cancel an experiment                                            |
 
 ## Out of scope
 
@@ -284,12 +387,15 @@ The judge is an agent in a session of its own.
   repository on GitHub, such as a fork or a search result.
 - Refusing a request that holds only the ID that GitHub gives the case's
   repository.
-- Replaying a case from the web UI.
-- Replaying a case several times, or several cases, with one command.
 - A configuration that changes the setup, the maintenance command or the
   variables of a session.
 - Judging a replay against anything other than the criteria of the case.
 - Combining the judgements of several judges on one replay.
 - Checking a judgement against the judgement of a person.
-- Preventing a judge from reading the earlier judgement outside its copy, such
-  as in the directory of the output.
+- Removing a suite or an experiment.
+- Recommending a configuration.
+- Saying whether a difference between configurations is more than chance.
+- Copying the files or settings of a configuration into the repository or
+  into the operator's settings.
+- Adding to a suite a case that no suite holds.
+- Copying a case or a suite to another Linewright.
