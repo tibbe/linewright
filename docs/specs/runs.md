@@ -205,7 +205,8 @@ sessions.
   zero. For example, the harness gives no figures for a session that crashed,
   and no cost for a model that it cannot price. A sum with an absent part is
   absent, and the other sums stay. A session without figures makes every sum
-  of its run absent, because it can have used any model.
+  of tokens and of money of its run absent, because it can have used any
+  model.
 
 ## Ending
 
