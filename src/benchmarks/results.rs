@@ -50,6 +50,12 @@ pub struct CasePasses {
     pub pass: usize,
     /// Of those with a judgement and no leak.
     pub of: usize,
+    /// How many of them have a judgement with a leak.
+    #[serde(skip)]
+    pub leaks: usize,
+    /// How many of them have no judgement.
+    #[serde(skip)]
+    pub unjudged: usize,
 }
 
 /// A figure's mean and total over the replays that have it, and how many
@@ -83,6 +89,8 @@ pub fn results(record: &ExperimentRecord) -> Results {
                     case: case.clone(),
                     pass: 0,
                     of: 0,
+                    leaks: 0,
+                    unjudged: 0,
                 })
                 .collect(),
             ..Tally::default()
@@ -97,29 +105,35 @@ pub fn results(record: &ExperimentRecord) -> Results {
         let Some(tally) = configurations.get_mut(key.configuration) else {
             continue;
         };
+        let Some(passes) = tally.passes.get_mut(key.case) else {
+            continue;
+        };
         match end {
             TrialEnd::Judged { replay, judgement } => {
-                tally.replay(Some(replay));
                 judges.add(judgement.judge_money.map(f64::from));
                 if judgement.leak {
+                    passes.leaks += 1;
                     tally.leaks += 1;
-                } else if let Some(passes) = tally.passes.get_mut(key.case) {
+                } else {
                     passes.of += 1;
                     if judgement.correctness == Verdict::Pass {
                         passes.pass += 1;
                     }
                 }
+                tally.replay(Some(replay));
             }
             TrialEnd::Unjudged { replay, why } => {
-                tally.replay(Some(replay));
+                passes.unjudged += 1;
                 tally.unjudged += 1;
                 if let NoJudgement::Judge { judge_money, .. } = why {
                     judges.add(judge_money.map(f64::from));
                 }
+                tally.replay(Some(replay));
             }
             TrialEnd::Cancelled => {
-                tally.replay(None);
+                passes.unjudged += 1;
                 tally.unjudged += 1;
+                tally.replay(None);
             }
         }
     }
@@ -304,11 +318,17 @@ mod tests {
     }
 
     #[track_caller]
-    fn passes(case: &str, pass: usize, of: usize) -> CasePasses {
+    fn passes(
+        case: &str,
+        (pass, of): (usize, usize),
+        (leaks, unjudged): (usize, usize),
+    ) -> CasePasses {
         CasePasses {
             case: case.parse().unwrap(),
             pass,
             of,
+            leaks,
+            unjudged,
         }
     }
 
@@ -347,10 +367,42 @@ mod tests {
 
         let as_is = &results.configurations[0];
         approx(as_is.pass_rate, 0.5);
-        assert_eq!(as_is.passes, [passes("lanes", 1, 2)]);
+        assert_eq!(as_is.passes, [passes("lanes", (1, 2), (1, 0))]);
         assert_eq!(as_is.leaks, 1);
         assert_eq!(as_is.unjudged, 0);
         assert_eq!((results.ended, results.all), (3, 3));
+    }
+
+    #[test_log::test]
+    fn each_case_counts_its_own_leaks_and_replays_without_a_judgement() {
+        let record = experiment(
+            &["columns", "lanes"],
+            &[],
+            2,
+            vec![
+                (
+                    key(1, 0, 0),
+                    judged(replay(None, 10), Verdict::Pass, true, None),
+                ),
+                (key(1, 1, 0), TrialState::Ended(TrialEnd::Cancelled)),
+                (
+                    key(2, 1, 0),
+                    TrialState::Ended(TrialEnd::Unjudged {
+                        replay: replay(None, 10),
+                        why: NoJudgement::Outcome,
+                    }),
+                ),
+            ],
+        );
+
+        let as_is = &results(&record).configurations[0];
+
+        let counted: Vec<(usize, usize)> = as_is
+            .passes
+            .iter()
+            .map(|passes| (passes.leaks, passes.unjudged))
+            .collect();
+        assert_eq!(counted, [(1, 0), (0, 2)]);
     }
 
     #[test_log::test]
@@ -389,7 +441,10 @@ mod tests {
         approx(as_is.pass_rate, 1.0);
         assert_eq!(
             as_is.passes,
-            [passes("columns", 1, 1), passes("lanes", 0, 0)]
+            [
+                passes("columns", (1, 1), (0, 0)),
+                passes("lanes", (0, 0), (0, 1))
+            ]
         );
         assert_eq!(as_is.unjudged, 1);
     }
@@ -421,7 +476,7 @@ mod tests {
         let short = &results.configurations[1];
         assert_eq!(short.name.as_str(), "short");
         assert_eq!(short.pass_rate, None);
-        assert_eq!(short.passes, [passes("lanes", 0, 0)]);
+        assert_eq!(short.passes, [passes("lanes", (0, 0), (0, 1))]);
         assert_eq!(short.cost.mean, None);
         assert_eq!(short.cost.none, 1);
         assert_eq!(short.time.mean, None);
