@@ -101,7 +101,8 @@ Every setting is a key in the operator's TOML config file (`--config`, default
 `linewright.toml` in the working directory); some are also keys in the
 repository's file ([The repository's file](#the-repositorys-file)). Each place a
 setting is set is a layer, highest first: flag, environment variable, the
-repository's file, the operator's file, default.
+repository's file, the operator's file, default. In a replay, a configuration
+overrides them all ([Configurations](benchmarks.md#configurations)).
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
@@ -215,7 +216,8 @@ on its default branch, the same TOML as the operator's file.
 A session's brief comes in three layers, each a directory laid out as
 Linewright's own `briefs/`: the repository's `.linewright/briefs/`, the
 operator's `briefs` directory and Linewright's own. Each file is taken from the
-first layer that has it.
+first layer that has it. In a replay, a configuration overrides the three
+([Configurations](benchmarks.md#configurations)).
 
 - **What a layer may hold.** A layer may hold any file of Linewright's own
   briefs, but for the result schemas in `results/`
