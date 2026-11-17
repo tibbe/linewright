@@ -1,15 +1,20 @@
 //! The attachments a session's result refers to in the Markdown Linewright
 //! posts (`docs/specs/runs.md`, "Attachments"): finding the references,
-//! judging their paths, refusing secrets and rewriting each path to its
-//! URL.
+//! reading them as URLs, judging their paths, refusing secrets and
+//! rewriting each reference to its URL.
 
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::ops::Range;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 
+use percent_encoding::percent_decode_str;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+use url::Url;
 
 use crate::secrets::Secrets;
 
@@ -36,28 +41,31 @@ impl Dir {
     }
 }
 
-/// Why a result's references can't be posted, each naming the path as the
-/// Markdown writes it.
+/// Why a result's references can't be posted, each naming the reference as
+/// its syntax reads it: a Markdown destination as `CommonMark` reads it, an
+/// HTML `src` as written.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Refusal {
     /// A reference to no file Linewright can attach.
     Reference(BadReference),
     /// A referenced file holding the secret of `variable`.
-    Secret { variable: String, path: PathBuf },
+    Secret { variable: String, reference: String },
 }
 
 /// A reference to no file Linewright can attach.
 #[derive(Debug, PartialEq, Eq)]
 pub enum BadReference {
+    /// An HTML `src` that is not a valid URL string, or a URL with a host,
+    /// a query or a fragment.
+    InvalidUrl { reference: String },
     /// A path in the directory that is not a regular file reached through
     /// real directories: missing, a symlink, or behind a symlinked
     /// directory.
-    NotAFile { path: PathBuf },
-    /// An absolute path outside the directory where something other than a
-    /// directory exists.
-    Outside { path: PathBuf },
+    NotAFile { reference: String },
+    /// A path outside the directory.
+    Outside { reference: String },
     /// A regular file in the directory of a kind Linewright doesn't attach.
-    Kind { path: PathBuf },
+    Kind { reference: String },
 }
 
 impl From<BadReference> for Refusal {
@@ -72,6 +80,7 @@ pub struct File {
     path: PathBuf,
     name: String,
     content_type: &'static str,
+    media: Media,
 }
 
 impl File {
@@ -130,50 +139,49 @@ impl Resolved {
     }
 }
 
-/// Finds the references in `markdown`, the texts a result posts, and judges
-/// each: a path in `dir` must be a regular file of a kind Linewright
-/// attaches ([`attachable`]) holding none of `secrets`, and an absolute path
-/// outside it must not name a file. Other references are left as written.
-/// It reads the files only to look for secrets.
+/// Finds the references in `markdown`, the texts a result posts, reads each
+/// that refers to an attachment as a URL, and judges its path: a regular
+/// file in `dir` of a kind Linewright attaches ([`attachable`]) holding
+/// none of `secrets`. Other references are left as written. It reads the
+/// files only to look for secrets.
 pub fn resolve(dir: &Dir, markdown: &[&str], secrets: &Secrets) -> Result<Resolved, Refusal> {
     let mut files: Vec<File> = Vec::new();
     let mut splices = Vec::new();
     for text in markdown {
-        let mut attached: Vec<(Found, File)> = Vec::new();
+        let mut attached: Vec<(String, Change, File)> = Vec::new();
         for found in find(text) {
-            if let Some(file) = judge(dir.path(), &found.written, entry)? {
-                attached.push((found, file));
-            }
+            let Read::Attachment(path) = read(&found.reference, found.syntax)? else {
+                continue;
+            };
+            let file = judge(dir.path(), &path, &found.reference, entry)?;
+            let change = found.changes.of(&file);
+            attached.push((found.reference, change, file));
         }
         let replaced_whole: Vec<Range<usize>> = attached
             .iter()
-            .filter_map(|(found, _)| match &found.change {
+            .filter_map(|(_, change, _)| match change {
                 Change::Whole(range) => Some(range.clone()),
                 Change::Parts(_) => None,
             })
             .collect();
-        attached.retain(|(found, _)| {
-            !replaced_whole
-                .iter()
-                .any(|whole| found.change.lies_within(whole))
-        });
+        attached
+            .retain(|(_, change, _)| !replaced_whole.iter().any(|whole| change.lies_within(whole)));
         let mut text_splices = Vec::new();
-        for (found, file) in attached {
+        for (reference, change, file) in attached {
             if !files.contains(&file) {
                 let bytes = fs::read(&file.path).map_err(|_| BadReference::NotAFile {
-                    path: PathBuf::from(&found.written),
+                    reference: reference.clone(),
                 })?;
                 if let Some(variable) = secrets.held_in(&bytes) {
                     return Err(Refusal::Secret {
                         variable: variable.to_string(),
-                        path: PathBuf::from(&found.written),
+                        reference,
                     });
                 }
                 files.push(file.clone());
             }
             text_splices.extend(
-                found
-                    .change
+                change
                     .into_splices()
                     .into_iter()
                     .map(|splice| (splice, file.path.clone())),
@@ -182,6 +190,86 @@ pub fn resolve(dir: &Dir, markdown: &[&str], secrets: &Secrets) -> Result<Resolv
         splices.push(text_splices);
     }
     Ok(Resolved { files, splices })
+}
+
+/// The syntax a reference is written in, which decides how strictly it is
+/// read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Syntax {
+    /// A Markdown destination, as `CommonMark` reads it.
+    Markdown,
+    /// An HTML `src`, which must be a valid URL string.
+    Html,
+}
+
+/// What a reference refers to.
+#[derive(Debug, PartialEq, Eq)]
+enum Read {
+    /// The attachment at this absolute path, lexically normal.
+    Attachment(PathBuf),
+    /// Something other than an attachment: the reference is left as
+    /// written.
+    Other,
+}
+
+/// What `reference`, written in `syntax`, refers to (`docs/specs/runs.md`,
+/// "References" and "Reading a reference"): an attachment when it is a file
+/// URL or an absolute path, read with the URL Standard's parser against
+/// `file:///`, its path the URL's path percent-decoded.
+fn read(reference: &str, syntax: Syntax) -> Result<Read, BadReference> {
+    let is_file_url = reference
+        .get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"));
+    let is_absolute_path = reference.starts_with('/') && !reference.starts_with("//");
+    if !is_file_url && !is_absolute_path {
+        return Ok(Read::Other);
+    }
+    let invalid = || BadReference::InvalidUrl {
+        reference: reference.to_string(),
+    };
+    let base = Url::parse("file:///").expect("`file:///` is a URL");
+    let violated = Cell::new(false);
+    let violation = |_| violated.set(true);
+    let url = Url::options()
+        .base_url(Some(&base))
+        .syntax_violation_callback(Some(&violation))
+        .parse(reference)
+        .map_err(|_| invalid())?;
+    let valid_url_string = !violated.get() && !has_dot_segment(reference);
+    if syntax == Syntax::Html && !valid_url_string {
+        return Err(invalid());
+    }
+    let has_host = url.host_str().is_some_and(|host| !host.is_empty());
+    if has_host || url.query().is_some() || url.fragment().is_some() {
+        return Err(invalid());
+    }
+    let path: Vec<u8> = percent_decode_str(url.path()).collect();
+    let names_a_directory = path.ends_with(b"/");
+    if names_a_directory {
+        return Err(BadReference::NotAFile {
+            reference: reference.to_string(),
+        });
+    }
+    Ok(Read::Attachment(lexically_normal(Path::new(
+        OsStr::from_bytes(&path),
+    ))))
+}
+
+/// Whether a segment of `reference`'s path is `.` or `..`, in any
+/// percent-encoded spelling such as `%2e`, which no
+/// [valid URL string](https://url.spec.whatwg.org/#valid-url-string) has.
+/// The parser reports no
+/// [violation](https://docs.rs/url/2.5.8/url/enum.SyntaxViolation.html) for
+/// them.
+fn has_dot_segment(reference: &str) -> bool {
+    let path = reference
+        .split(['?', '#'])
+        .next()
+        .expect("a split yields at least one part");
+    path.split('/').any(|segment| {
+        let decoded: Vec<u8> = percent_decode_str(segment).collect();
+        decoded == b"." || decoded == b".."
+    })
 }
 
 /// What the file system holds at a path, not following a symlink there.
@@ -204,22 +292,19 @@ fn entry(path: &Path) -> Entry {
     }
 }
 
-/// The file in `dir` that `written`, a reference's destination, names, or
-/// `None` when it names no attachment and is left as written, `entry`
-/// telling what the file system holds at a path.
+/// The file in `dir` at `path`, an attachment's lexically normal absolute
+/// path, `entry` telling what the file system holds at a path. A refusal
+/// names `reference`, the reference `path` was read from.
 fn judge(
     dir: &Path,
-    written: &str,
+    path: &Path,
+    reference: &str,
     entry: impl Fn(&Path) -> Entry,
-) -> Result<Option<File>, BadReference> {
-    let path = lexically_normal(Path::new(written));
+) -> Result<File, BadReference> {
     let Ok(rest) = path.strip_prefix(dir) else {
-        return match entry(&path) {
-            Entry::Nothing | Entry::Directory => Ok(None),
-            Entry::File | Entry::Other => Err(BadReference::Outside {
-                path: PathBuf::from(written),
-            }),
-        };
+        return Err(BadReference::Outside {
+            reference: reference.to_string(),
+        });
     };
     let components: Vec<Component> = rest.components().collect();
     let mut at = dir.to_path_buf();
@@ -234,20 +319,21 @@ fn judge(
             break;
         }
         if wanted == Entry::File {
-            let Some(kind) = kind(&path) else {
+            let Some(kind) = kind(path) else {
                 return Err(BadReference::Kind {
-                    path: PathBuf::from(written),
+                    reference: reference.to_string(),
                 });
             };
-            return Ok(Some(File {
+            return Ok(File {
                 name: component.as_os_str().to_string_lossy().into_owned(),
                 content_type: kind.content_type,
-                path,
-            }));
+                media: kind.media,
+                path: path.to_path_buf(),
+            });
         }
     }
     Err(BadReference::NotAFile {
-        path: PathBuf::from(written),
+        reference: reference.to_string(),
     })
 }
 
@@ -363,21 +449,43 @@ fn kind(path: &Path) -> Option<Kind> {
         .find(|kind| kind.extension.eq_ignore_ascii_case(extension))
 }
 
-/// Whether `written` names a video.
-fn is_video(written: &str) -> bool {
-    kind(Path::new(written)).is_some_and(|kind| kind.media == Media::Video)
-}
-
-/// A reference to an absolute path, found in one text.
+/// A reference found in one text.
 #[derive(Debug)]
 struct Found {
-    /// Its destination, as the parser reads it.
-    written: String,
-    change: Change,
+    /// A Markdown destination as `CommonMark` reads it, or an HTML `src` as
+    /// written.
+    reference: String,
+    syntax: Syntax,
+    changes: Changes,
+}
+
+/// What putting a reference's URL in changes, for each kind of file it can
+/// turn out to name.
+#[derive(Debug)]
+struct Changes {
+    image: Change,
+    video: Change,
+}
+
+impl Changes {
+    /// The same change whatever the file.
+    fn any(change: Change) -> Changes {
+        Changes {
+            image: change.clone(),
+            video: change,
+        }
+    }
+
+    fn of(self, file: &File) -> Change {
+        match file.media {
+            Media::Image => self.image,
+            Media::Video => self.video,
+        }
+    }
 }
 
 /// What putting a reference's URL in changes.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Change {
     /// The range a video alone in its paragraph is, replaced whole by the
     /// URL.
@@ -443,22 +551,22 @@ struct Open<'a> {
     children_end: usize,
 }
 
-/// The references to absolute paths in `text`: the destinations of its
-/// Markdown images, links and reference definitions, and the `src` of its
-/// HTML `img`s.
+/// The references in `text`: the destinations of its Markdown images,
+/// links (autolinks included) and reference definitions, and the `src` of
+/// its HTML `img`s.
 fn find(text: &str) -> Vec<Found> {
     let parser = Parser::new_ext(text, options()).into_offset_iter();
     let mut found: Vec<Found> = parser
         .reference_definitions()
         .iter()
-        .filter(|(_, definition)| definition.dest.starts_with('/'))
         .filter_map(|(_, definition)| {
             Some(Found {
-                written: definition.dest.to_string(),
-                change: Change::Parts(vec![Splice {
+                reference: definition.dest.to_string(),
+                syntax: Syntax::Markdown,
+                changes: Changes::any(Change::Parts(vec![Splice {
                     range: definition_destination(text, definition.span.clone())?,
                     with: With::Url,
-                }]),
+                }])),
             })
         })
         .collect();
@@ -504,29 +612,29 @@ fn find(text: &str) -> Vec<Found> {
     found
 }
 
-/// The reference to `written` that the embed at `range` makes, `parent`
-/// being the tag it is in: `plain` when it is not a video, the whole range
-/// when it is a video alone in its paragraph, else `as_link`.
+/// The changes the embed at `range` makes, `parent` being the tag it is
+/// in: `plain` for an image, and for a video the whole range when it is
+/// alone in its paragraph, else `as_link`.
 fn embed(
     text: &str,
-    written: String,
     range: Range<usize>,
     parent: Option<&Open>,
     plain: Vec<Splice>,
-    as_link: impl FnOnce() -> Vec<Splice>,
-) -> Found {
-    let change = if !is_video(&written) {
-        Change::Parts(plain)
-    } else if alone(text, &range, parent) {
+    as_link: Vec<Splice>,
+) -> Changes {
+    let video = if alone(text, &range, parent) {
         Change::Whole(range)
     } else {
-        Change::Parts(as_link())
+        Change::Parts(as_link)
     };
-    Found { written, change }
+    Changes {
+        image: Change::Parts(plain),
+        video,
+    }
 }
 
-/// The reference a closed image or link makes, if it is to an absolute
-/// path, `parent` being the tag it is in.
+/// The reference a closed image or link makes, `parent` being the tag it is
+/// in.
 fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Found> {
     let (Tag::Image {
         link_type,
@@ -541,9 +649,6 @@ fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Fo
     else {
         return None;
     };
-    if !dest_url.starts_with('/') {
-        return None;
-    }
     let range = closed.range.clone();
     let image = matches!(closed.tag, Tag::Image { .. });
     let text_start = range.start + if image { 2 } else { 1 };
@@ -557,46 +662,48 @@ fn link_reference(text: &str, closed: &Open, parent: Option<&Open>) -> Option<Fo
                 with: With::Url,
             });
         }
+        // An autolink's destination is all between its `<` and `>`
+        // (https://spec.commonmark.org/0.31.2/#autolinks).
+        LinkType::Autolink => splices.push(Splice {
+            range: range.start + 1..range.end - 1,
+            with: With::Url,
+        }),
         LinkType::Reference | LinkType::Collapsed | LinkType::Shortcut => {}
         // A reference to no definition is plain text
-        // (https://spec.commonmark.org/0.31.2/#reference-link), and an
-        // autolink is never a path (https://spec.commonmark.org/0.31.2/#autolinks).
+        // (https://spec.commonmark.org/0.31.2/#reference-link).
         LinkType::ReferenceUnknown
         | LinkType::CollapsedUnknown
         | LinkType::ShortcutUnknown
-        | LinkType::Autolink
         | LinkType::Email
         | LinkType::WikiLink { .. } => return None,
     }
-    let written = dest_url.to_string();
+    let reference = dest_url.to_string();
     // Only an embedded video plays: https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/attaching-files
     if !image {
         return Some(Found {
-            written,
-            change: Change::Parts(splices),
+            reference,
+            syntax: Syntax::Markdown,
+            changes: Changes::any(Change::Parts(splices)),
         });
     }
-    let link_start = range.start;
-    let as_link = {
-        let splices = splices.clone();
-        move || {
-            let mut splices = splices;
-            splices.push(Splice {
-                range: link_start..link_start + 1,
-                with: With::Delete,
-            });
-            let shows_no_text = text_end == text_start
-                && matches!(link_type, LinkType::Inline | LinkType::Reference);
-            if shows_no_text {
-                splices.push(Splice {
-                    range: text_start..text_start,
-                    with: With::Url,
-                });
-            }
-            splices
-        }
-    };
-    Some(embed(text, written, range, parent, splices, as_link))
+    let mut as_link = splices.clone();
+    as_link.push(Splice {
+        range: range.start..range.start + 1,
+        with: With::Delete,
+    });
+    let shows_no_text =
+        text_end == text_start && matches!(link_type, LinkType::Inline | LinkType::Reference);
+    if shows_no_text {
+        as_link.push(Splice {
+            range: text_start..text_start,
+            with: With::Url,
+        });
+    }
+    Some(Found {
+        reference,
+        syntax: Syntax::Markdown,
+        changes: embed(text, range, parent, splices, as_link),
+    })
 }
 
 /// Whether `range` is all its paragraph or HTML block holds, `parent`
@@ -695,8 +802,7 @@ fn destination(text: &str, from: usize) -> Option<Range<usize>> {
     (i > start).then_some(start..i)
 }
 
-/// The references the HTML `img` tags at `range` make to absolute paths,
-/// `parent` being the tag the HTML is in. HTML comments are skipped.
+/// The references the HTML `img` tags at `range` make, `parent` being the tag the HTML is in. HTML comments are skipped.
 fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found> {
     let bytes = text.as_bytes();
     let mut found = Vec::new();
@@ -727,10 +833,7 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
         let Some(src) = tag.src else {
             continue;
         };
-        let written = text[src.clone()].to_string();
-        if !written.starts_with('/') {
-            continue;
-        }
+        let reference = text[src.clone()].to_string();
         let plain = vec![Splice {
             range: src,
             with: With::Url,
@@ -739,16 +842,15 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
             .alt
             .map(|alt| text[alt].to_string())
             .filter(|alt| !alt.is_empty());
-        let as_link = {
-            let tag_range = tag_range.clone();
-            || {
-                vec![Splice {
-                    range: tag_range,
-                    with: With::Anchor(non_empty_alt),
-                }]
-            }
-        };
-        found.push(embed(text, written, tag_range, parent, plain, as_link));
+        let as_link = vec![Splice {
+            range: tag_range.clone(),
+            with: With::Anchor(non_empty_alt),
+        }];
+        found.push(Found {
+            reference,
+            syntax: Syntax::Html,
+            changes: embed(text, tag_range, parent, plain, as_link),
+        });
     }
     found
 }

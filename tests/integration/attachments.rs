@@ -46,6 +46,19 @@ impl Record {
         self.dir.path().display().to_string()
     }
 
+    /// The attachments directory as a file URL, such as
+    /// `file:///tmp/x/Application%20Support/attachments`.
+    #[track_caller]
+    fn file_url(&self) -> String {
+        let path = self.path();
+        assert!(
+            path.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"/._- ".contains(&byte)),
+            "{path} needs more than its spaces percent-encoded"
+        );
+        format!("file://{}", path.replace(' ', "%20"))
+    }
+
     /// Writes `bytes` to `name` in the attachments directory.
     fn put(&self, name: &str, bytes: &[u8]) -> PathBuf {
         let path = self.dir.path().join(name);
@@ -56,6 +69,17 @@ impl Record {
 
     fn resolve(&self, markdown: &str) -> Result<Resolved, Refusal> {
         attachments::resolve(&self.dir, &[markdown], &Secrets::default())
+    }
+
+    /// The path of each file `markdown` refers to.
+    #[track_caller]
+    fn attached(&self, markdown: &str) -> Vec<PathBuf> {
+        self.resolve(markdown)
+            .unwrap()
+            .files()
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect()
     }
 
     /// `markdown` with each attachment's path replaced by the URL
@@ -87,6 +111,153 @@ fn an_image_s_path_becomes_its_url() {
             "The page before:\n\n![The old page]({dir}/before.png)\n"
         )),
         "The page before:\n\n![The old page](https://github.com/user-attachments/assets/before.png)\n"
+    );
+}
+
+#[test_log::test]
+fn a_file_url_becomes_its_url() {
+    let record = Record::spaced();
+    record.put("before.png", b"png");
+    let dir = record.file_url();
+    assert!(dir.contains("%20"));
+    assert_eq!(
+        record.rewritten(&format!(
+            "![Before]({dir}/before.png) and <img src=\"{dir}/before.png\">\n"
+        )),
+        "![Before](https://github.com/user-attachments/assets/before.png) and \
+         <img src=\"https://github.com/user-attachments/assets/before.png\">\n"
+    );
+}
+
+#[test_log::test]
+fn a_file_url_s_scheme_is_read_in_any_letter_case_and_localhost_is_no_host() {
+    let record = Record::new();
+    let shot = record.put("shot.png", b"png");
+    let dir = record.path();
+    let files = record.attached(&format!(
+        "![a](FILE://{dir}/shot.png) ![b](File://localhost{dir}/shot.png) \
+         <img src=\"FILE://{dir}/shot.png\"> <img src=\"file://LOCALHOST{dir}/shot.png\">"
+    ));
+    assert_eq!(files, [shot]);
+}
+
+#[test_log::test]
+fn a_reference_s_path_is_percent_decoded() {
+    let record = Record::new();
+    let spaced = record.put("a b.png", b"png");
+    let nested = record.put("sub/c.png", b"png");
+    let dir = record.path();
+    let files = record.attached(&format!(
+        "![a](file://{dir}/a%20b.png) <img src=\"{dir}/a%20b.png\"> ![c]({dir}/sub%2Fc.png)"
+    ));
+    assert_eq!(files, [spaced, nested]);
+}
+
+#[test_log::test]
+fn a_file_url_with_a_host_a_query_or_a_fragment_is_refused() {
+    let record = Record::new();
+    record.put("shot.png", b"png");
+    let dir = record.path();
+    for reference in [
+        format!("file://example.com{dir}/shot.png"),
+        format!("file://{dir}/shot.png?"),
+        format!("{dir}/shot.png?size=2"),
+        format!("file://{dir}/shot.png#"),
+        format!("{dir}/shot.png#top"),
+    ] {
+        for markdown in [
+            format!("![x](<{reference}>)"),
+            format!("<img src=\"{reference}\">"),
+        ] {
+            assert_eq!(
+                record.resolve(&markdown).unwrap_err(),
+                Refusal::Reference(BadReference::InvalidUrl {
+                    reference: reference.clone()
+                })
+            );
+        }
+    }
+}
+
+#[test_log::test]
+fn an_html_src_that_is_not_a_valid_url_string_is_refused() {
+    let record = Record::spaced();
+    record.put("shot.png", b"png");
+    record.put("sub/shot.png", b"png");
+    let dir = record.path();
+    for reference in [
+        format!("{dir}/shot.png"),
+        format!("file:{dir}/shot.png"),
+        format!("{dir}/sub/./shot.png"),
+        format!("{dir}/sub/%2e%2E/shot.png"),
+        format!("{dir}/sub/.%2e/shot.png"),
+        format!("{dir}\\shot.png"),
+        format!("{dir}/%zz.png"),
+    ] {
+        assert_eq!(
+            record
+                .resolve(&format!("<img src=\"{reference}\">"))
+                .unwrap_err(),
+            Refusal::Reference(BadReference::InvalidUrl { reference })
+        );
+    }
+}
+
+#[test_log::test]
+fn a_markdown_destination_need_not_be_a_valid_url_string() {
+    let record = Record::spaced();
+    let shot = record.put("shot.png", b"png");
+    let dir = record.path();
+    let files = record.attached(&format!(
+        "![a](<{dir}/shot.png>) ![b](<file:{dir}/shot.png>) ![c](<{dir}/sub/%2e%2e/shot.png>)"
+    ));
+    assert_eq!(files, [shot]);
+}
+
+#[test_log::test]
+fn an_autolink_s_file_url_becomes_its_url() {
+    let record = Record::new();
+    record.put("demo.mp4", b"mp4");
+    let dir = record.path();
+    assert_eq!(
+        record.rewritten(&format!("The demo: <file://{dir}/demo.mp4>\n")),
+        "The demo: <https://github.com/user-attachments/assets/demo.mp4>\n"
+    );
+}
+
+#[test_log::test]
+fn a_reference_that_is_neither_a_file_url_nor_an_absolute_path_is_left_as_written() {
+    let record = Record::new();
+    record.put("shot.png", b"png");
+    let dir = record.path();
+    let markdown = format!(
+        "![a](shot.png) [b](//example.com{dir}/shot.png) <https://example.com{dir}/shot.png> \
+         <img src=\"<{dir}/shot.png>\"> <img src=\"//example.com{dir}/shot.png\"> \
+         [c](../issues/3)\n"
+    );
+    assert_eq!(record.rewritten(&markdown), markdown);
+}
+
+#[test_log::test]
+fn a_path_ending_in_a_slash_is_not_a_file() {
+    let record = Record::new();
+    record.put("shot.png", b"png");
+    let dir = record.file_url();
+    let reference = format!("{dir}/shot.png/");
+    assert_eq!(
+        record.resolve(&format!("![x]({reference})")).unwrap_err(),
+        Refusal::Reference(BadReference::NotAFile { reference })
+    );
+}
+
+#[test_log::test]
+fn a_video_is_told_by_its_decoded_path() {
+    let record = Record::new();
+    record.put("demo.mp4", b"mp4");
+    let dir = record.file_url();
+    assert_eq!(
+        record.rewritten(&format!("The demo:\n\n![The demo]({dir}/demo.%6dp4)\n")),
+        "The demo:\n\nhttps://github.com/user-attachments/assets/demo.mp4\n"
     );
 }
 
@@ -141,13 +312,7 @@ fn a_bracketed_path_with_a_space_becomes_its_url() {
          See [the shot](<{dir}/home_before.png> \"Shot\") and [again][shot].\n\n\
          [shot]: <{dir}/home_before.png>\n"
     );
-    let files: Vec<PathBuf> = record
-        .resolve(&markdown)
-        .unwrap()
-        .files()
-        .iter()
-        .map(|file| file.path().to_path_buf())
-        .collect();
+    let files = record.attached(&markdown);
     assert_eq!(files, [shot]);
     assert_eq!(
         record.rewritten(&markdown),
@@ -187,7 +352,7 @@ fn a_path_in_code_or_plain_text_is_left_as_written() {
 #[test_log::test]
 fn markdown_with_no_references_comes_back_byte_identical() {
     let record = Record::new();
-    let markdown = "# Done\r\n\r\n* one  \n* [GitHub](https://github.com) and [#3](/owner/repo/issues/3)\n\
+    let markdown = "# Done\r\n\r\n* one  \n* [GitHub](https://github.com) and [#3](../issues/3)\n\
                     | a | b |\n|---|---|\n| ![x](x.png) | <img src=\"rel.png\"> |\n\n\
                     [^1]: A footnote &amp; more\t\n";
     assert_eq!(record.rewritten(markdown), markdown);
@@ -332,7 +497,7 @@ fn a_missing_file_is_refused() {
     assert_eq!(
         refusal,
         Refusal::Reference(BadReference::NotAFile {
-            path: format!("{dir}/missing.png").into()
+            reference: format!("{dir}/missing.png")
         })
     );
 }
@@ -348,7 +513,7 @@ fn a_file_of_a_kind_linewright_does_not_attach_is_refused() {
     assert_eq!(
         refusal,
         Refusal::Reference(BadReference::Kind {
-            path: format!("{dir}/tree.txt").into()
+            reference: format!("{dir}/tree.txt")
         })
     );
 }
@@ -371,7 +536,7 @@ fn a_missing_file_of_a_kind_linewright_does_not_attach_is_not_a_file() {
             .resolve(&format!("[notes]({dir}/notes.txt)"))
             .unwrap_err(),
         Refusal::Reference(BadReference::NotAFile {
-            path: format!("{dir}/notes.txt").into()
+            reference: format!("{dir}/notes.txt")
         })
     );
 }
@@ -386,7 +551,7 @@ fn a_file_of_a_kind_linewright_does_not_attach_is_refused_for_its_kind_before_it
         attachments::resolve(&record.dir, &[&format!("[env]({dir}/env.txt)")], &secrets)
             .unwrap_err(),
         Refusal::Reference(BadReference::Kind {
-            path: format!("{dir}/env.txt").into()
+            reference: format!("{dir}/env.txt")
         })
     );
 }
@@ -402,7 +567,7 @@ fn a_symlink_is_refused() {
             .resolve(&format!("![x]({dir}/link.png)"))
             .unwrap_err(),
         Refusal::Reference(BadReference::NotAFile {
-            path: format!("{dir}/link.png").into()
+            reference: format!("{dir}/link.png")
         })
     );
 }
@@ -422,7 +587,7 @@ fn a_file_behind_a_symlinked_directory_is_refused() {
             .resolve(&format!("<img src=\"{dir}/linked/shot.png\">"))
             .unwrap_err(),
         Refusal::Reference(BadReference::NotAFile {
-            path: format!("{dir}/linked/shot.png").into()
+            reference: format!("{dir}/linked/shot.png")
         })
     );
 }
@@ -438,7 +603,7 @@ fn a_dot_dot_escape_from_the_directory_is_refused() {
     assert_eq!(
         refusal,
         Refusal::Reference(BadReference::Outside {
-            path: format!("{dir}/../notes.txt").into()
+            reference: format!("{dir}/../notes.txt")
         })
     );
 }
@@ -453,20 +618,21 @@ fn a_file_outside_the_directory_is_refused() {
         record
             .resolve(&format!("![x]({})", file.display()))
             .unwrap_err(),
-        Refusal::Reference(BadReference::Outside { path: file })
+        Refusal::Reference(BadReference::Outside {
+            reference: file.display().to_string()
+        })
     );
 }
 
 #[test_log::test]
-fn an_absolute_path_outside_the_directory_naming_no_file_is_left_as_written() {
+fn an_absolute_path_outside_the_directory_naming_no_file_is_refused() {
     let record = Record::new();
     let elsewhere = tempfile::tempdir().unwrap();
-    let markdown = format!(
-        "[#3](/owner/repo/issues/3), [the dir]({}) and [gone]({}/gone.png)",
-        elsewhere.path().display(),
-        elsewhere.path().display()
+    let gone = format!("{}/gone.png", elsewhere.path().display());
+    assert_eq!(
+        record.resolve(&format!("[gone]({gone})")).unwrap_err(),
+        Refusal::Reference(BadReference::Outside { reference: gone })
     );
-    assert_eq!(record.rewritten(&markdown), markdown);
 }
 
 #[test_log::test]
@@ -483,7 +649,7 @@ fn a_secret_in_a_binary_file_is_refused() {
         refusal,
         Refusal::Secret {
             variable: "GITHUB_TOKEN".to_string(),
-            path: format!("{dir}/shot.png").into()
+            reference: format!("{dir}/shot.png")
         }
     );
 }

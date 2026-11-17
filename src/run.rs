@@ -610,12 +610,15 @@ async fn post_attachments(
     };
     let resolved = match resolved {
         Ok(resolved) => resolved,
-        Err(Refusal::Secret { variable, path }) => {
+        Err(Refusal::Secret {
+            variable,
+            reference,
+        }) => {
             return sent_back(prompts::loose_ends(
                 templates,
                 &LooseEnd::AttachmentSecret {
                     variable: &variable,
-                    file: &path,
+                    reference: &reference,
                 },
             ));
         }

@@ -183,9 +183,23 @@ fn a_reply_to_a_thread_the_pull_request_lacks_is_sent_back() {
 }
 
 #[test_log::test]
+fn a_reference_that_is_not_a_file_url_linewright_can_attach_is_sent_back() {
+    let reference = BadReference::InvalidUrl {
+        reference: "/record/attachments/a b.png".into(),
+    };
+    assert_eq!(
+        result_error(&SentBack::Reference(&reference)),
+        could_not_be_used(&marker(
+            "parts/attachment-invalid-url.md",
+            &[("file", "/record/attachments/a b.png")]
+        ))
+    );
+}
+
+#[test_log::test]
 fn a_reference_that_is_not_a_regular_file_is_sent_back() {
     let reference = BadReference::NotAFile {
-        path: "/record/attachments/missing.png".into(),
+        reference: "/record/attachments/missing.png".into(),
     };
     assert_eq!(
         result_error(&SentBack::Reference(&reference)),
@@ -199,7 +213,7 @@ fn a_reference_that_is_not_a_regular_file_is_sent_back() {
 #[test_log::test]
 fn a_reference_outside_the_directory_is_sent_back() {
     let reference = BadReference::Outside {
-        path: "/record/attachments/../notes.txt".into(),
+        reference: "/record/attachments/../notes.txt".into(),
     };
     assert_eq!(
         result_error(&SentBack::Reference(&reference)),
@@ -213,7 +227,7 @@ fn a_reference_outside_the_directory_is_sent_back() {
 #[test_log::test]
 fn a_reference_to_a_kind_linewright_does_not_attach_is_sent_back_with_the_kinds() {
     let reference = BadReference::Kind {
-        path: "/record/attachments/tree.txt".into(),
+        reference: "/record/attachments/tree.txt".into(),
     };
     assert_eq!(
         result_error(&SentBack::Reference(&reference)),
@@ -286,7 +300,7 @@ fn the_follow_up_for_an_attachment_holding_a_secret_names_its_variable_and_the_f
     assert_eq!(
         loose_ends(&LooseEnd::AttachmentSecret {
             variable: "NPM_TOKEN",
-            file: Path::new("/record/attachments/log.txt"),
+            reference: "/record/attachments/log.txt",
         }),
         not_finished(&marker(
             "parts/attachment-secret.md",
