@@ -103,6 +103,16 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
         let ticket = store.open_issue(LINEWRIGHT, title, "", &[label::NEEDS_INFO]);
         store.add_sub_issue_as(LINEWRIGHT, tracking, ticket)?;
     }
+    let taken_back = store.open_issue(
+        REPORTER,
+        "Keep the board's filter across reloads",
+        "The board forgets who I narrowed it to.",
+        &[label::READY_FOR_AGENT],
+    );
+    store.assign_as(LINEWRIGHT, taken_back, LINEWRIGHT)?;
+    store.unassign_as(MAINTAINER, taken_back, LINEWRIGHT)?;
+    store.unlabel_as(taken_back, label::READY_FOR_AGENT)?;
+    store.label_as(MAINTAINER, taken_back, label::READY_FOR_HUMAN)?;
     Ok(())
 }
 
