@@ -17,10 +17,11 @@ use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
 use sha2::Digest;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+use crate::benchmarks::{ExperimentId, Experiments, Shown};
 use crate::board::{self, Board};
 use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
@@ -28,6 +29,7 @@ use crate::drain::{Asked, Exiting, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::environment::shown::{self as environment_shown, Followed, FollowingBuild};
 use crate::environment::{self, BuildId, BuildTally, RebuildTaken, Tallied};
+use crate::experiments::runner::ExperimentsShown;
 use crate::explain;
 use crate::host::HostName;
 use crate::item_facts::{self, ItemFacts};
@@ -221,30 +223,106 @@ pub struct Publish {
     pub served: watch::Sender<Option<Served>>,
     pub polling: watch::Sender<Option<Polling>>,
     pub environment: EnvironmentPublish,
+    pub experiments: ExperimentsPublish,
+}
+
+/// The local API's links to what `serve` publishes.
+pub struct Links {
+    pub served: watch::Receiver<Option<Served>>,
+    pub polling: watch::Receiver<Option<Polling>>,
+    pub environment: EnvironmentLink,
+    pub experiments: ExperimentsLink,
 }
 
 impl Publish {
-    /// The senders, and the receivers of `served` and `polling`, and the
-    /// local API's link to the environment.
-    pub fn new() -> (
-        Publish,
-        watch::Receiver<Option<Served>>,
-        watch::Receiver<Option<Polling>>,
-        EnvironmentLink,
-    ) {
+    /// The senders, and the local API's links to them.
+    pub fn new() -> (Publish, Links) {
         let (served, served_from) = watch::channel(None);
         let (polling, polling_from) = watch::channel(None);
-        let (environment, link) = EnvironmentPublish::new();
+        let (environment, environment_link) = EnvironmentPublish::new();
+        let (experiments, experiments_link) = ExperimentsPublish::new();
         (
             Publish {
                 served,
                 polling,
                 environment,
+                experiments,
             },
-            served_from,
-            polling_from,
-            link,
+            Links {
+                served: served_from,
+                polling: polling_from,
+                environment: environment_link,
+                experiments: experiments_link,
+            },
         )
+    }
+}
+
+/// `serve`'s end of [`ExperimentsLink`].
+pub struct ExperimentsPublish {
+    shown: watch::Sender<ExperimentsShown>,
+    changed: Arc<Notify>,
+}
+
+impl ExperimentsPublish {
+    fn new() -> (ExperimentsPublish, ExperimentsLink) {
+        let (shown, shown_from) = watch::channel(ExperimentsShown::default());
+        let changed = Arc::new(Notify::new());
+        (
+            ExperimentsPublish {
+                shown,
+                changed: changed.clone(),
+            },
+            ExperimentsLink {
+                shown: shown_from,
+                changed,
+            },
+        )
+    }
+
+    /// Publishes `shown`, if it changed.
+    pub fn shown(&self, shown: ExperimentsShown) {
+        self.shown.send_if_modified(|published| {
+            let changed = *published != shown;
+            if changed {
+                *published = shown;
+            }
+            changed
+        });
+    }
+
+    /// Waits until an experiment is said to have changed since this was
+    /// last waited for.
+    pub async fn changed(&self) {
+        self.changed.notified().await;
+    }
+}
+
+/// How the local API tells `serve` that an experiment changed, and learns
+/// how `serve` shows the experiments.
+#[derive(Clone)]
+pub struct ExperimentsLink {
+    shown: watch::Receiver<ExperimentsShown>,
+    changed: Arc<Notify>,
+}
+
+impl ExperimentsLink {
+    /// How `serve` shows the experiments, as it last published.
+    pub fn shown(&self) -> ExperimentsShown {
+        self.shown.borrow().clone()
+    }
+
+    /// Tells `serve` that an experiment changed, such as one launched or
+    /// cancelled, so that it acts on it before its next poll.
+    pub fn changed(&self) {
+        self.changed.notify_one();
+    }
+}
+
+/// Linked to no `serve`: it shows no experiment.
+impl Default for ExperimentsLink {
+    fn default() -> ExperimentsLink {
+        ExperimentsPublish::new().1
     }
 }
 
@@ -316,6 +394,7 @@ pub struct Sources {
     /// What a drain asked for goes through.
     pub ends: Ends,
     pub environment: EnvironmentLink,
+    pub experiments: ExperimentsLink,
     /// What `serve` waits for before it exits.
     pub exiting: watch::Receiver<Vec<Remaining>>,
 }
@@ -333,6 +412,8 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/follow", get(follow_environment))
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
+        .route("/experiments/changed", post(take_experiments_changed))
+        .route("/experiments/{id}", get(answer_experiment))
         .route("/drain", post(take_drain))
         .route("/stop", get(answer_stop))
         .route("/exiting", get(answer_exiting));
@@ -622,6 +703,42 @@ async fn answer_rebuild(
             "`serve` stopped before the build ended",
         ),
     }
+}
+
+/// Tells `serve` that an experiment changed, such as one launched or
+/// cancelled, so that it acts on it before its next poll.
+async fn take_experiments_changed(State(sources): State<Sources>) -> Response {
+    sources.experiments.changed();
+    json_response(StatusCode::OK, &serde_json::json!({}))
+}
+
+/// How the experiment `id` shows: as `serve` shows it while it is open.
+async fn answer_experiment(
+    State(sources): State<Sources>,
+    Resource(id): Resource<String>,
+) -> Response {
+    let Ok(id) = id.parse::<ExperimentId>() else {
+        return no_such_experiment(&id);
+    };
+    let experiments = Experiments::new(sources.runs.database().clone());
+    match experiments.show(id).await {
+        Ok(Some(record)) => {
+            let served = sources.experiments.shown().experiments.get(&id).cloned();
+            json_response(StatusCode::OK, &Shown::of(record.state, served))
+        }
+        Ok(None) => no_such_experiment(&id),
+        Err(e) => {
+            error!(error = format!("{e:#}"), "reading an experiment failed");
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
+        }
+    }
+}
+
+fn no_such_experiment(id: &impl std::fmt::Display) -> Response {
+    error_response(
+        StatusCode::NOT_FOUND,
+        &format!("there is no experiment {id}"),
+    )
 }
 
 async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) -> Response {

@@ -4,14 +4,17 @@
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::case::{CaseName, ReplayStage};
 use crate::cost::Usd;
 use crate::domain::Timestamp;
+use crate::holds::Hold;
 use crate::phrase::Phrase;
+use crate::reconcile::Wait;
 use crate::results::Verdict;
 use crate::runs::OutcomeName;
+use crate::status::describe_wait;
 
 use super::experiments::outcome_name;
 use super::results::{self, Mean, Results};
@@ -22,19 +25,30 @@ use super::{
 
 /// An experiment's state as it is shown: an open experiment runs or waits,
 /// as `serve` alone knows, and waits for `serve` where it does not answer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "state", content = "waiting_for")]
 pub enum Shown {
+    Running,
     Waiting(WaitingFor),
     Ended,
     Cancelled,
 }
 
 /// What a waiting experiment waits for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum WaitingFor {
+    /// No `serve` runs it.
     Serve,
+    /// A run of the pipeline waits for a place under `max-runs`.
+    Pipeline,
+    /// Replays and judges of experiments take every place under
+    /// `max-replays`.
+    FreeReplay {
+        in_flight: usize,
+        max_replays: usize,
+    },
+    Hold(Hold),
 }
 
 impl Shown {
@@ -48,11 +62,31 @@ impl Shown {
         }
     }
 
-    fn words(self) -> &'static str {
+    /// The state of the experiment kept as `state`, given how `serve` shows
+    /// it, if it does: what is kept wins once the experiment is not open.
+    pub fn of(state: ExperimentState, served: Option<Shown>) -> Shown {
+        match (state, served) {
+            (ExperimentState::Open, Some(shown)) => shown,
+            (state, _) => Shown::without_serve(state),
+        }
+    }
+
+    fn words(&self) -> String {
         match self {
-            Shown::Waiting(WaitingFor::Serve) => "waiting for serve",
-            Shown::Ended => "ended",
-            Shown::Cancelled => "cancelled",
+            Shown::Running => "running".into(),
+            Shown::Waiting(WaitingFor::Serve) => "waiting for serve".into(),
+            Shown::Waiting(WaitingFor::Pipeline) => {
+                "waiting for the pipeline: a run waits for a place under max-runs".into()
+            }
+            Shown::Waiting(WaitingFor::FreeReplay {
+                in_flight,
+                max_replays,
+            }) => format!("waiting for a free replay: {in_flight} of {max_replays} in flight"),
+            Shown::Waiting(WaitingFor::Hold(hold)) => {
+                format!("waiting for {}", describe_wait(&Wait::from(hold.clone())))
+            }
+            Shown::Ended => "ended".into(),
+            Shown::Cancelled => "cancelled".into(),
         }
     }
 }
@@ -528,6 +562,66 @@ mod tests {
              replay short/lanes/1: no judgement: the judge made none: it gave up, run done, cost $0.20, took 20s, judge's cost $0.01\n\
              replay as-is/rows/1: no judgement: cancelled\n\
              replay short/rows/1: replaying\n"
+        );
+    }
+
+    #[test_log::test]
+    fn an_experiment_says_what_it_waits_for() {
+        let record = ExperimentRecord {
+            id: "3".parse().unwrap(),
+            suite: Suite {
+                name: "board".parse().unwrap(),
+                stage: ReplayStage::Design,
+            },
+            launched_at: "2026-11-17T12:00:00Z".parse().unwrap(),
+            repetitions: NonZeroU32::MIN,
+            state: ExperimentState::Open,
+            cases: vec!["columns".parse().unwrap()],
+            configurations: vec!["as-is".parse().unwrap()],
+            trials: BTreeMap::from([(key(0, 0), TrialState::Pending)]),
+        };
+        let line = |shown| render_summary(&ExperimentSummary::new(&record, shown));
+
+        assert_eq!(
+            [
+                Shown::Running,
+                Shown::Waiting(WaitingFor::Serve),
+                Shown::Waiting(WaitingFor::Pipeline),
+                Shown::Waiting(WaitingFor::FreeReplay {
+                    in_flight: 1,
+                    max_replays: 1
+                }),
+                Shown::Waiting(WaitingFor::Hold(Hold::UsageLimit {
+                    resets_at: "2026-11-17T14:30:00Z".parse().unwrap()
+                })),
+            ]
+            .map(line),
+            [
+                "experiment 3: running, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "experiment 3: waiting for serve, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "experiment 3: waiting for the pipeline: a run waits for a place under max-runs, \
+                 launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "experiment 3: waiting for a free replay: 1 of 1 in flight, \
+                 launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "experiment 3: waiting for the usage limit, until 2026-11-17 14:30:00 UTC, \
+                 launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+            ]
+        );
+    }
+
+    #[test_log::test]
+    fn an_experiment_not_open_shows_as_it_is_kept_whatever_serve_last_showed() {
+        assert_eq!(
+            Shown::of(ExperimentState::Cancelled, Some(Shown::Running)),
+            Shown::Cancelled
+        );
+        assert_eq!(
+            Shown::of(ExperimentState::Open, Some(Shown::Running)),
+            Shown::Running
+        );
+        assert_eq!(
+            Shown::of(ExperimentState::Open, None),
+            Shown::Waiting(WaitingFor::Serve)
         );
     }
 }

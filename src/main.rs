@@ -7,8 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::benchmarks::{
-    self, CancelRefusal, ConfigurationName, ExperimentAnswer, ExperimentId, Experiments,
-    LaunchRefusal, RemoveError, Repetitions, Shown, SuiteAnswer, SuiteName, Suites, SuitesAnswer,
+    self, CancelRefusal, ConfigurationName, ExperimentAnswer, ExperimentId, ExperimentRecord,
+    ExperimentState, Experiments, LaunchRefusal, RemoveError, Repetitions, Shown, SuiteAnswer,
+    SuiteName, Suites, SuitesAnswer,
 };
 use linewright::case::{
     self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal, ReplayStage,
@@ -1088,15 +1089,51 @@ async fn show_suite(config: &Config, name: &SuiteName, json: bool) -> u8 {
             None => Ok(None),
         }
     };
-    print_answer(match shown.await {
-        Ok(Some(shown)) => Ok(answer_text(
-            &SuiteAnswer::from(&shown),
-            json,
-            benchmarks::render_suite,
-        )),
-        Ok(None) => Err(no_such_suite(name)),
-        Err(e) => Err(failed(&e)),
+    let shown = match shown.await {
+        Ok(Some(shown)) => shown,
+        Ok(None) => return print_answer(Err(no_such_suite(name))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let mut states = Vec::with_capacity(shown.experiments.len());
+    for record in &shown.experiments {
+        match experiment_shown(config, record).await {
+            Ok(state) => states.push(state),
+            Err(refused) => return print_answer(Err(refused)),
+        }
+    }
+    let answer = SuiteAnswer::new(&shown, states);
+    print_answer(Ok(answer_text(&answer, json, benchmarks::render_suite)))
+}
+
+/// How the experiment `record` shows: an open one as `serve` shows it, and
+/// as waiting for `serve` when it does not run.
+async fn experiment_shown(
+    config: &Config,
+    record: &ExperimentRecord,
+) -> Result<Shown, (u8, String)> {
+    if record.state != ExperimentState::Open {
+        return Ok(Shown::without_serve(record.state));
+    }
+    let resource = format!("/api/experiments/{}", record.id);
+    let answer = ask_or_read(config, &resource, "an experiment's state", async |_| {
+        Ok::<_, Unanswered>(Shown::without_serve(record.state))
     })
+    .await?;
+    Ok(answer.value().clone())
+}
+
+/// Tells `serve`, if it runs, that an experiment changed, so that it acts
+/// on it before its next poll.
+async fn nudge_serve(config: &Config) {
+    let Ok(work_dir) = config.repo_work_dir() else {
+        return;
+    };
+    match api::post_answer(&socket_dir(), &work_dir.repo, "/api/experiments/changed").await {
+        Ok(_) | Err(RequestError::NotServing { .. }) => {}
+        Err(e) => complain(format!(
+            "`serve` was not told of the change, and takes it up at its next poll: {e:#}"
+        )),
+    }
 }
 
 async fn make_suite(config: &Config, name: &SuiteName, stage: ReplayStage, json: bool) -> u8 {
@@ -1205,10 +1242,14 @@ async fn launch_experiment(
             Err(e) => return print_answer(Err((FAILURE, e.to_string()))),
         }
     }
+    let launched = Experiments::new(db)
+        .launch(suite, read_configurations, repetitions, SystemClock.now())
+        .await;
+    if launched.is_ok() {
+        nudge_serve(config).await;
+    }
     print_answer(
-        Experiments::new(db)
-            .launch(suite, read_configurations, repetitions, SystemClock.now())
-            .await
+        launched
             .map(|launched| {
                 let answer = LaunchedAnswer {
                     id: launched.id,
@@ -1232,7 +1273,8 @@ async fn launch_experiment(
     )
 }
 
-/// Shows the experiment `id`: an open one waits for `serve`.
+/// Shows the experiment `id`: an open one as `serve` shows it, or as
+/// waiting for `serve` when it does not run.
 async fn show_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
     let shown = async {
         match existing_experiments(config).await? {
@@ -1240,15 +1282,18 @@ async fn show_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
             None => Ok(None),
         }
     };
-    print_answer(match shown.await {
-        Ok(Some(record)) => Ok(answer_text(
-            &ExperimentAnswer::new(&record, Shown::without_serve(record.state)),
+    let record = match shown.await {
+        Ok(Some(record)) => record,
+        Ok(None) => return print_answer(Err(no_such_experiment(id))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(experiment_shown(config, &record).await.map(|state| {
+        answer_text(
+            &ExperimentAnswer::new(&record, state),
             json,
             benchmarks::render_experiment,
-        )),
-        Ok(None) => Err(no_such_experiment(id)),
-        Err(e) => Err(failed(&e)),
-    })
+        )
+    }))
 }
 
 /// What `experiment cancel` answers.
@@ -1263,10 +1308,12 @@ async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 
         Ok(None) => return print_answer(Err(no_such_experiment(id))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
+    let cancelling = experiments.cancel(id).await;
+    if cancelling.is_ok() {
+        nudge_serve(config).await;
+    }
     print_answer(
-        experiments
-            .cancel(id)
-            .await
+        cancelling
             .map(|()| {
                 answer_text(&Cancelled { id }, json, |cancelled| {
                     format!("Cancelled experiment {}\n", cancelled.id)

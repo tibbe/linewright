@@ -560,19 +560,65 @@ impl Experiments {
         Ok(())
     }
 
+    /// The state the experiment `id` is kept in, if there is one.
+    pub async fn state(&self, id: ExperimentId) -> Result<Option<ExperimentState>> {
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT state FROM experiments WHERE id = ?")
+                .bind(id.0)
+                .fetch_optional(self.db.pool())
+                .await
+                .context(READING)?;
+        state.as_deref().map(ExperimentState::parse).transpose()
+    }
+
     /// Turns each trial a stop left replaying back into pending, and each
-    /// left judging back into replayed, so that they start again.
+    /// left judging back into replayed, so that they start again. Of an
+    /// experiment no longer open, such as one cancelled as it stopped, they
+    /// end as cancelled instead.
     pub async fn interrupted(&self) -> Result<()> {
-        sqlx::query(
-            "UPDATE trials SET state = CASE state
-                 WHEN 'replaying' THEN 'pending'
-                 WHEN 'judging' THEN 'replayed'
-             END
-             WHERE state IN ('replaying', 'judging')",
-        )
-        .execute(self.db.pool())
-        .await
-        .context("starting again the trials a stop interrupted")?;
+        let interrupting = async {
+            let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
+            sqlx::query(
+                "UPDATE trials SET state = CASE state
+                     WHEN 'replaying' THEN 'pending'
+                     WHEN 'judging' THEN 'replayed'
+                 END
+                 WHERE state IN ('replaying', 'judging')
+                     AND experiment IN (SELECT id FROM experiments WHERE state = 'open')",
+            )
+            .execute(&mut *tx)
+            .await?;
+            let left = sqlx::query(
+                "SELECT trials.* FROM trials JOIN experiments ON experiments.id = trials.experiment
+                 WHERE trials.state IN ('replaying', 'judging') AND experiments.state != 'open'",
+            )
+            .fetch_all(&mut *tx)
+            .await?;
+            for row in &left {
+                let experiment = ExperimentId::from_row(row.try_get("experiment")?)?;
+                let (key, state) = decode(row)?;
+                write_trial(
+                    &mut tx,
+                    experiment,
+                    &key,
+                    &state.changed(TrialChange::Cancelled)?,
+                )
+                .await?;
+            }
+            tx.commit().await?;
+            anyhow::Ok(())
+        };
+        interrupting
+            .await
+            .context("starting again the trials a stop interrupted")
+    }
+
+    /// Records that the experiment `id` ended, if it is open and none of its
+    /// trials is left to end.
+    pub async fn end(&self, id: ExperimentId) -> Result<()> {
+        let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
+        end_if_done(&mut tx, id).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -603,42 +649,61 @@ impl Experiments {
             .await?
             .context("there is no such trial")?;
             let (_, state) = decode(&row)?;
-            let columns = Columns::of(&state.changed(change)?);
-            sqlx::query(
-                "UPDATE trials SET state = ?, outcome = ?, money = ?, seconds = ?,
-                     correctness = ?, leak = ?, judge_money = ?, unjudged = ?, reason = ?
-                 WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?",
-            )
-            .bind(columns.state)
-            .bind(columns.outcome)
-            .bind(columns.money)
-            .bind(columns.seconds)
-            .bind(columns.correctness)
-            .bind(columns.leak)
-            .bind(columns.judge_money)
-            .bind(columns.unjudged)
-            .bind(columns.reason)
-            .bind(experiment.0)
-            .bind(key.repetition.get())
-            .bind(seq(key.case))
-            .bind(seq(key.configuration))
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE experiments SET state = 'ended'
-                 WHERE id = ? AND state = 'open' AND NOT EXISTS (
-                     SELECT 1 FROM trials
-                     WHERE experiment = ? AND state NOT IN ('judged', 'unjudged'))",
-            )
-            .bind(experiment.0)
-            .bind(experiment.0)
-            .execute(&mut *tx)
-            .await?;
+            write_trial(&mut tx, *experiment, key, &state.changed(change)?).await?;
+            end_if_done(&mut tx, *experiment).await?;
             tx.commit().await?;
             anyhow::Ok(())
         };
         stepped.await.context(stepping)
     }
+}
+
+/// Writes `state` as the state of the trial `key` of `experiment`.
+async fn write_trial(
+    conn: &mut SqliteConnection,
+    experiment: ExperimentId,
+    key: &TrialKey,
+    state: &TrialState,
+) -> Result<()> {
+    let columns = Columns::of(state);
+    sqlx::query(
+        "UPDATE trials SET state = ?, outcome = ?, money = ?, seconds = ?,
+             correctness = ?, leak = ?, judge_money = ?, unjudged = ?, reason = ?
+         WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?",
+    )
+    .bind(columns.state)
+    .bind(columns.outcome)
+    .bind(columns.money)
+    .bind(columns.seconds)
+    .bind(columns.correctness)
+    .bind(columns.leak)
+    .bind(columns.judge_money)
+    .bind(columns.unjudged)
+    .bind(columns.reason)
+    .bind(experiment.0)
+    .bind(key.repetition.get())
+    .bind(seq(key.case))
+    .bind(seq(key.configuration))
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Records that the experiment `id` ended, if it is open and none of its
+/// trials is left to end.
+async fn end_if_done(conn: &mut SqliteConnection, id: ExperimentId) -> Result<()> {
+    sqlx::query(
+        "UPDATE experiments SET state = 'ended'
+         WHERE id = ? AND state = 'open' AND NOT EXISTS (
+             SELECT 1 FROM trials
+             WHERE experiment = ? AND state NOT IN ('judged', 'unjudged'))",
+    )
+    .bind(id.0)
+    .bind(id.0)
+    .execute(&mut *conn)
+    .await
+    .with_context(|| format!("recording that experiment {id} ended"))?;
+    Ok(())
 }
 
 impl TrialState {
@@ -1377,6 +1442,41 @@ mod tests {
             TrialState::Replayed {
                 replay: replay(Ending::Done)
             }
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_trials_a_stop_interrupted_of_a_cancelled_experiment_end_cancelled() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (experiments, id) = launched(work_dir.path()).await;
+        steps(&experiments, trial(id, 0), vec![TrialChange::ReplayStarts]).await;
+        steps(
+            &experiments,
+            trial(id, 1),
+            vec![
+                TrialChange::ReplayStarts,
+                TrialChange::ReplayEnds(replay(Ending::Done)),
+                TrialChange::JudgeStarts,
+            ],
+        )
+        .await;
+        experiments.cancel(id).await.unwrap();
+
+        experiments.interrupted().await.unwrap();
+
+        assert_eq!(
+            state_of(&experiments, trial(id, 0)).await,
+            (
+                ExperimentState::Cancelled,
+                TrialState::Ended(TrialEnd::Cancelled)
+            )
+        );
+        assert_eq!(
+            state_of(&experiments, trial(id, 1)).await.1,
+            TrialState::Ended(TrialEnd::Unjudged {
+                replay: replay(Ending::Done),
+                why: NoJudgement::Cancelled
+            })
         );
     }
 

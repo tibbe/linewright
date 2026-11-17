@@ -4269,6 +4269,24 @@ fn work_beyond_the_ceiling_waits_for_a_free_run_with_the_runs_in_flight_counted(
 }
 
 #[test_log::test]
+fn the_decisions_say_a_run_waits_for_room_only_beyond_the_ceiling() {
+    let decide_with = |tickets: Vec<u64>| {
+        decisions(
+            &snapshot_of(tickets.into_iter().map(|n| claimed(ticket(n))).collect()),
+            &[live(9, WorkKind::Implement)],
+            &Memory::default(),
+            &Automations::default(),
+            t(10),
+            &policy(),
+            &[],
+        )
+    };
+
+    assert!(decide_with(vec![1, 2, 3, 4]).wait_for_room());
+    assert!(!decide_with(vec![1, 2, 3]).wait_for_room());
+}
+
+#[test_log::test]
 fn under_the_usage_limit_work_waits_for_its_reset() {
     let world = snapshot_of(vec![claimed(ticket(1))]);
     let mut memory = Memory::default();

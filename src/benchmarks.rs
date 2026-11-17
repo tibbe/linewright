@@ -458,8 +458,10 @@ pub enum CriteriaAnswer {
     Unreadable(String),
 }
 
-impl From<&SuiteShown> for SuiteAnswer {
-    fn from(shown: &SuiteShown) -> SuiteAnswer {
+impl SuiteAnswer {
+    /// `shown`, its experiments in the states `states`, one for each in
+    /// order.
+    pub fn new(shown: &SuiteShown, states: Vec<Shown>) -> SuiteAnswer {
         SuiteAnswer {
             suite: shown.suite.clone(),
             cases: shown
@@ -477,7 +479,8 @@ impl From<&SuiteShown> for SuiteAnswer {
             experiments: shown
                 .experiments
                 .iter()
-                .map(|record| ExperimentSummary::new(record, Shown::without_serve(record.state)))
+                .zip(states)
+                .map(|(record, state)| ExperimentSummary::new(record, state))
                 .collect(),
         }
     }

@@ -181,6 +181,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         spec_lookback: TimeDelta::days(7),
         done_window: TimeDelta::days(7),
         max_runs: 4,
+        max_replays: 1,
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
@@ -194,6 +195,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
             ..WorkSettings::default()
         },
         environments: Environments::default(),
+        replay_environments: Environments::default(),
         merge_method: None,
         auto_merge: false,
         require_label: None,
@@ -774,6 +776,7 @@ pub struct Serving {
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
     pub polling: tokio::sync::watch::Receiver<Option<Polling>>,
     pub environment: linewright::api::EnvironmentLink,
+    pub experiments: linewright::api::ExperimentsLink,
 }
 
 impl Serving {
@@ -784,7 +787,7 @@ impl Serving {
     ) -> Serving {
         let stopping = factory.stopping();
         let draining = factory.draining();
-        let (publish, served, polling, environment) = Publish::new();
+        let (publish, links) = Publish::new();
         let handle = tokio::spawn(async move {
             let end = factory.serve(poll_interval, &pending, &publish).await;
             factory.stop().await;
@@ -794,9 +797,10 @@ impl Serving {
             stopping,
             draining,
             handle,
-            served,
-            polling,
-            environment,
+            served: links.served,
+            polling: links.polling,
+            environment: links.environment,
+            experiments: links.experiments,
         }
     }
 

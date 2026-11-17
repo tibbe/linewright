@@ -27,7 +27,7 @@ use crate::variable_names::VariableNames;
 use crate::web;
 use crate::webhook::{Listener, Pending};
 use crate::winding_up::WindingUp;
-use crate::work_settings::Environments;
+use crate::work_settings::{Environments, Split};
 
 /// Serves `config`'s repository: claims its local API in `socket_dir`,
 /// listens for webhooks and serves the web UI where `config` says, and only
@@ -65,20 +65,21 @@ where
         Some(webhooks) => Some(Listener::bind(webhooks, pending.clone(), clock.clone()).await?),
         None => None,
     };
-    let (publish, served, polling, environment) = Publish::new();
+    let (publish, links) = Publish::new();
     let sources = Sources {
         serving: status::Serving {
             since,
             max_runs: config.max_runs,
         },
-        served,
-        polling,
+        served: links.served,
+        polling: links.polling,
         deliveries: listener.as_ref().map(Listener::tally),
         clock,
         work_dir,
         runs: Runs::new(database.clone()),
         ends: ends.clone(),
-        environment,
+        environment: links.environment,
+        experiments: links.experiments,
         exiting: winding_up.exiting(),
     };
     let ui = match &config.ui {
@@ -177,6 +178,7 @@ pub struct Starting {
     briefs: OperatorBriefs,
     sessions: SessionCredentials,
     environments: Environments,
+    replay_environments: Environments,
 }
 
 impl Starting {
@@ -223,12 +225,14 @@ impl Starting {
         require_tool(program).await?;
         let sessions = SessionCredentials::new(token()?, &config.secrets)?;
         let environments = environments(config, gh_through_gate);
+        let replay_environments = split_environments(config, true).environments;
         Ok(Starting {
             program: program.into(),
             bash,
             briefs,
             sessions,
             environments,
+            replay_environments,
         })
     }
 
@@ -260,6 +264,7 @@ impl Starting {
             spec_lookback: config.spec_lookback,
             done_window: config.done_window,
             max_runs: config.max_runs,
+            max_replays: config.max_replays,
             ci_grace: config.ci_grace,
             ci_timeout: config.ci_timeout,
             ci_attempts: config.ci_attempts,
@@ -267,6 +272,7 @@ impl Starting {
             bash: self.bash,
             work: config.work.clone(),
             environments: self.environments,
+            replay_environments: self.replay_environments,
             merge_method: config.merge_method,
             auto_merge: config.auto_merge,
             require_label: config.require_label.clone(),
@@ -312,16 +318,22 @@ impl SessionCredentials {
     }
 }
 
+/// What sessions are given of Linewright's environment, and what they are
+/// not, their `gh` reaching GitHub through a gate when `gh_through_gate`.
+fn split_environments(config: &Config, gh_through_gate: bool) -> Split {
+    config.work.environments(
+        &config.session_env,
+        std::env::vars_os(),
+        &ClaudeCode::variables_set_for_sessions(gh_through_gate),
+    )
+}
+
 /// What sessions are given of Linewright's environment. Logs the names of
 /// the variables they are not given and, of those, the ones each
 /// `[stage.NAME]` table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
 fn environments(config: &Config, gh_through_gate: bool) -> Environments {
-    let split = config.work.environments(
-        &config.session_env,
-        std::env::vars_os(),
-        &ClaudeCode::variables_set_for_sessions(gh_through_gate),
-    );
+    let split = split_environments(config, gh_through_gate);
     info!(
         variables = split.withheld.join(" "),
         "agent sessions are not given these variables of Linewright's environment; \

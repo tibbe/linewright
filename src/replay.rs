@@ -24,7 +24,7 @@ use tracing::{error, info, warn};
 use crate::case::{Case, CaseItemKind};
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
-use crate::cost::RunCost;
+use crate::cost::{RunCost, Usd};
 use crate::domain::{Item, Scope};
 use crate::ending::Signal;
 use crate::environment::replays::{self, BuildLog};
@@ -114,6 +114,17 @@ struct Parts {
     run: Option<RunId>,
     /// Whether the cost is written: it is written once, as the replay ends.
     cost_written: bool,
+    /// What the replay spent, once it ended.
+    spent: Option<Spent>,
+}
+
+/// What a replay spent: its time, and what its run cost.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spent {
+    pub time: std::time::Duration,
+    /// `None` when its run has no cost (`docs/specs/runs.md`, Cost), or did
+    /// not begin.
+    pub money: Option<Usd>,
 }
 
 /// The cost of a replay, as its output keeps it (`docs/specs/benchmarks.md`,
@@ -182,7 +193,8 @@ impl Output {
         if written.cost_written {
             return;
         }
-        let seconds = self.started.elapsed().as_secs_f64();
+        let time = self.started.elapsed();
+        let seconds = time.as_secs_f64();
         let run = written
             .run
             .as_ref()
@@ -193,6 +205,13 @@ impl Output {
                     None
                 }
             });
+        written.spent = Some(Spent {
+            time,
+            money: run
+                .as_ref()
+                .and_then(|run| run.spend.as_ref())
+                .and_then(|spend| spend.all.usd),
+        });
         let text = serde_json::to_string_pretty(&ReplayCost { seconds, run })
             .map_err(anyhow::Error::from)
             .and_then(|text| self.write(COST, &format!("{text}\n")));
@@ -200,6 +219,11 @@ impl Output {
             Ok(()) => written.cost_written = true,
             Err(e) => error!(error = format!("{e:#}"), "writing the cost failed"),
         }
+    }
+
+    /// What the replay spent, once [`Output::finished`] says it ended.
+    pub fn spent(&self) -> Option<Spent> {
+        self.lock_written().spent
     }
 
     /// Writes `interrupted` as the outcome unless the run's ending is
