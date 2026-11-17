@@ -36,6 +36,7 @@ static MIGRATIONS: &[Migration] = &[
     RELEASES_TABLE,
     Migration::Sql(RUNS_TABLES),
     Migration::Sql(BOOKKEEPING_TABLES),
+    Migration::Sql(SESSION_COSTS),
 ];
 
 /// The table of the release that made each schema version.
@@ -114,6 +115,9 @@ const BOOKKEEPING_TABLES: &str = "CREATE TABLE kept (
             AND (build IS NULL) = (fingerprint IS NULL)
         )
     ) STRICT;";
+
+/// What each session cost, `NULL` for one recorded before costs were kept.
+const SESSION_COSTS: &str = "ALTER TABLE sessions ADD COLUMN cost TEXT";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

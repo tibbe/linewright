@@ -11,6 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use super::{GhReach, Harness, Reported, SessionError, SessionSpec, Turn, UsageLimit};
 use crate::child;
 use crate::clock::Clock;
+use crate::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use crate::domain::Timestamp;
 use crate::redaction::Redaction;
 use crate::session_env::Given;
@@ -162,6 +163,91 @@ struct ResultEvent {
     terminal_reason: Option<String>,
     #[serde(default)]
     api_error_status: Option<serde_json::Value>,
+    #[serde(default, rename = "modelUsage")]
+    model_usage: Option<serde_json::Value>,
+}
+
+/// The first version of Claude Code whose `result` gives the session's
+/// figures so far, the turns it resumed included, rather than its own
+/// process's: <https://code.claude.com/docs/en/agent-sdk/cost-tracking>,
+/// <https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md>.
+const SESSION_FIGURES_FROM: Version = Version(2, 1, 277);
+
+/// A `result` whose figures may be zeroed:
+/// <https://code.claude.com/docs/en/agent-sdk/cost-tracking>.
+const ZEROED_FIGURES: &str = "error_during_execution";
+
+/// A model's `costBasis` when Claude Code could not price it:
+/// <https://code.claude.com/docs/en/agent-sdk/cost-tracking>.
+const UNPRICED: &str = "unknown";
+
+/// A version of Claude Code, as its `init` event names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Version(u64, u64, u64);
+
+impl std::str::FromStr for Version {
+    type Err = ();
+
+    fn from_str(named: &str) -> Result<Version, ()> {
+        let mut parts = named.split('.').map(|part| part.parse().map_err(|_| ()));
+        let version = Version(
+            parts.next().ok_or(())??,
+            parts.next().ok_or(())??,
+            parts.next().ok_or(())??,
+        );
+        match parts.next() {
+            None => Ok(version),
+            Some(_) => Err(()),
+        }
+    }
+}
+
+/// What the harness of `version` says of a turn's spend in its last
+/// `result`: <https://code.claude.com/docs/en/agent-sdk/cost-tracking>.
+fn turn_spend(version: Option<Version>, result: Option<&ResultEvent>) -> TurnSpend {
+    let Some(result) = result.filter(|result| result.subtype != ZEROED_FIGURES) else {
+        return TurnSpend::None;
+    };
+    let Some(usage) = result
+        .model_usage
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+    else {
+        return TurnSpend::None;
+    };
+    let Some(version) = version else {
+        return TurnSpend::None;
+    };
+    let figures = Figures(
+        usage
+            .iter()
+            .map(|(model, used)| (model.clone(), model_spend(used)))
+            .collect(),
+    );
+    if version >= SESSION_FIGURES_FROM {
+        TurnSpend::OfSessionSoFar(figures)
+    } else {
+        TurnSpend::OfTurn(figures)
+    }
+}
+
+/// What a model used, as a `result`'s `modelUsage` gives it.
+fn model_spend(used: &serde_json::Value) -> Spend {
+    let count = |kind: &str| used[kind].as_u64();
+    let tokens = (|| {
+        Some(Tokens {
+            input: count("inputTokens")?,
+            output: count("outputTokens")?,
+            cache_write: count("cacheCreationInputTokens")?,
+            cache_read: count("cacheReadInputTokens")?,
+        })
+    })();
+    let usd = if used["costBasis"] == UNPRICED {
+        None
+    } else {
+        used["costUSD"].as_f64().and_then(Usd::new)
+    };
+    Spend { tokens, usd }
 }
 
 /// Claude Code streams it as it refuses the session, and as the limit nears.
@@ -353,16 +439,18 @@ impl ClaudeCode {
     /// A turn of `session`, with all it keeps and answers redacted. The
     /// output it keeps is redacted line by line, and the turn or error it
     /// answers once more: a result is text of its own, such as JSON, that
-    /// can hold a secret escaped once more than its line does.
+    /// can hold a secret escaped once more than its line does. Its start
+    /// and its end, with its spend, are reported as they come.
     async fn turn(
         &self,
         spec: &SessionSpec,
         session: Session<'_>,
         prompt: &str,
     ) -> Result<Turn, SessionError> {
-        self.unredacted_turn(spec, session, prompt)
-            .await
-            .map(|turn| turn.redacted(&self.redaction))
+        spec.report.report(Reported::TurnStarted);
+        let (turn, spend) = self.unredacted_turn(spec, session, prompt).await;
+        spec.report.report(Reported::TurnEnded(spend));
+        turn.map(|turn| turn.redacted(&self.redaction))
             .map_err(|error| error.redacted(&self.redaction))
     }
 
@@ -371,7 +459,7 @@ impl ClaudeCode {
         spec: &SessionSpec,
         session: Session<'_>,
         prompt: &str,
-    ) -> Result<Turn, SessionError> {
+    ) -> (Result<Turn, SessionError>, TurnSpend) {
         let clone = std::fs::canonicalize(&spec.dir).unwrap_or_else(|_| spec.dir.clone());
         let mut command = child::contained(&self.container, &self.program);
         command
@@ -399,14 +487,18 @@ impl ClaudeCode {
         if let Some(effort) = spec.effort {
             command.args(["--effort", effort.name()]);
         }
-        let mut child = command
-            .spawn()
-            .await
-            .map_err(|e| SessionError::Infrastructure(format!("starting {}: {e}", self.program)))?;
+        let mut child = match command.spawn().await {
+            Ok(child) => child,
+            Err(e) => {
+                let error = SessionError::Infrastructure(format!("starting {}: {e}", self.program));
+                return (Err(error), TurnSpend::OfTurn(Figures::default()));
+            }
+        };
         let mut stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let mut stderr = child.stderr.take().expect("stderr is piped");
         let log = Mutex::new(Log::default());
+        let spend = Mutex::new(TurnSpend::None);
         let feed = async {
             let _ = stdin.write_all(prompt.as_bytes()).await;
             drop(stdin);
@@ -426,6 +518,7 @@ impl ClaudeCode {
             let mut lines = BufReader::new(stdout).lines();
             let mut result = None;
             let mut refusal = None;
+            let mut version = None;
             while let Ok(Some(line)) = lines.next_line().await {
                 let line = self.redaction.apply(&line);
                 if let Some(file) = output.as_mut() {
@@ -436,15 +529,19 @@ impl ClaudeCode {
                 };
                 match event["type"].as_str() {
                     // <https://code.claude.com/docs/en/agent-sdk/typescript#sdksystemmessage>
-                    Some("system")
-                        if event["subtype"] == "init"
-                            && let Some(model) = event["model"].as_str() =>
-                    {
-                        spec.report.report(Reported {
-                            model: model.to_string(),
-                        });
+                    Some("system") if event["subtype"] == "init" => {
+                        if let Some(model) = event["model"].as_str() {
+                            spec.report.report(Reported::Model(model.to_string()));
+                        }
+                        version = event["claude_code_version"]
+                            .as_str()
+                            .and_then(|named| named.parse::<Version>().ok());
                     }
-                    Some("result") => result = serde_json::from_value::<ResultEvent>(event).ok(),
+                    Some("result") => {
+                        result = serde_json::from_value::<ResultEvent>(event).ok();
+                        *spend.lock().expect("the spend's lock is not poisoned") =
+                            turn_spend(version, result.as_ref());
+                    }
                     Some("rate_limit_event") => {
                         let event = serde_json::from_value::<RateLimitEvent>(event).ok();
                         refusal = event.and_then(|e| e.refusal()).or(refusal);
@@ -473,7 +570,7 @@ impl ClaudeCode {
             log.lock().expect("the log's lock is not poisoned").errors =
                 self.redaction.apply(&errors);
         };
-        let outcome = tokio::time::timeout_at(spec.deadline, async {
+        let outcome = tokio::time::timeout_at(spec.deadline.at(), async {
             let ((result, refusal), (), ()) = tokio::join!(read_stdout, read_stderr, feed);
             (result, refusal, child.wait().await)
         })
@@ -487,13 +584,17 @@ impl ClaudeCode {
         .await;
         let log = log.into_inner().expect("the log's lock is not poisoned");
         let _ = tokio::fs::write(spec.record.join("stderr.log"), &log.errors).await;
+        let spend = spend
+            .into_inner()
+            .expect("the spend's lock is not poisoned");
         let Ok((result, refusal, status)) = outcome else {
             child.end().await;
-            return Err(SessionError::TimedOut {
+            let timed_out = SessionError::TimedOut {
                 log_tail: log.tail(),
-            });
+            };
+            return (Err(timed_out), spend);
         };
-        match result {
+        let turn = match result {
             Some(ResultEvent {
                 is_error: false,
                 result: Some(message),
@@ -531,7 +632,8 @@ impl ClaudeCode {
                 },
                 log_tail: log.tail(),
             }),
-        }
+        };
+        (turn, spend)
     }
 }
 

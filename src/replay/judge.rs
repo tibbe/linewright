@@ -9,12 +9,13 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-use super::{BUILD_LOG, CASE, COMMITS, OUTCOME, Setting, WRITES, in_own_dir, write_whole};
+use super::{CASE, COMMITS, OUTCOME, Setting, WRITES, in_own_dir, write_build, write_whole};
 use crate::apply::hand_back;
 use crate::briefs::Briefs;
 use crate::case::Case;
 use crate::clock::{Clock, SystemClock};
 use crate::clones::Clones;
+use crate::cost::SessionCost;
 use crate::domain::Timestamp;
 use crate::factory::FactoryConfig;
 use crate::git;
@@ -22,7 +23,7 @@ use crate::harness::{Harness, NextTurn, Purpose, Reporter};
 use crate::prompts::{self, Repo};
 use crate::results::{self, Correctness, JudgeResult, Leak};
 use crate::run::RunWith;
-use crate::runs::{Ending, OutcomeName, Ran, RunId};
+use crate::runs::{Ending, OutcomeName, Ran, RunId, SessionReports};
 use crate::session::{
     self, Beside, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, infra,
     lock_set_whole, open_session, parse_retry,
@@ -193,15 +194,16 @@ async fn holds(repository: &Path, branch: &str) -> bool {
 }
 
 /// The record of a judge's session: its directory under the output's
-/// `judge/`, and what the session ran with once it is opened. It is removed
-/// when dropped, unless the judgement that names it is kept.
+/// `judge/`, and what the session ran with and what it cost once it is
+/// opened. It is removed when dropped, unless the judgement that names it
+/// is kept.
 #[derive(Debug)]
 pub struct JudgeRecord {
     /// Absolute.
     dir: PathBuf,
     /// Relative to the output.
     relative: PathBuf,
-    ran: Arc<Mutex<Option<Ran>>>,
+    session: Arc<Mutex<Option<SessionReports>>>,
     kept: bool,
 }
 
@@ -221,7 +223,7 @@ impl JudgeRecord {
         Ok(JudgeRecord {
             dir,
             relative,
-            ran: Arc::default(),
+            session: Arc::default(),
             kept: false,
         })
     }
@@ -271,7 +273,8 @@ pub fn discard(dir: &Path) {
 }
 
 /// The judge's one session is recorded in the record's directory, and what
-/// it ran with is kept for its judgement.
+/// it ran with and what it cost are kept for its judgement, as the run's
+/// record keeps a session's.
 #[async_trait::async_trait]
 impl RecordsSessions for JudgeRecord {
     fn record_dir(&self, _purpose: &Purpose, _now: Timestamp) -> Result<PathBuf> {
@@ -279,11 +282,16 @@ impl RecordsSessions for JudgeRecord {
     }
 
     async fn session(&self, _dir: &Path, settings: &SessionSettings, briefs: &Briefs) -> Reporter {
-        *lock_set_whole(&self.ran) = Some(Ran::new(settings, briefs));
-        let ran = self.ran.clone();
-        Reporter::new(move |reported| {
-            if let Some(ran) = lock_set_whole(&ran).as_mut() {
-                ran.reported_model = Some(reported.model);
+        *lock_set_whole(&self.session) = Some(SessionReports::new(Ran::new(settings, briefs)));
+        let (reported, ended) = (self.session.clone(), self.session.clone());
+        Reporter::new(move |report| {
+            if let Some(session) = lock_set_whole(&reported).as_mut() {
+                session.reported(report);
+            }
+        })
+        .ending(move |time| {
+            if let Some(session) = lock_set_whole(&ended).as_mut() {
+                session.ended(time);
             }
         })
     }
@@ -302,13 +310,14 @@ pub struct Judgement {
     record: JudgeRecord,
 }
 
-/// The judge's session: where its record is, relative to the output, and
-/// what it ran with.
+/// The judge's session: where its record is, relative to the output, what
+/// it ran with and what it cost.
 #[derive(Debug, Serialize)]
 struct JudgeSession {
     record: PathBuf,
     #[serde(flatten)]
     ran: Ran,
+    cost: SessionCost,
 }
 
 impl Judgement {
@@ -418,7 +427,7 @@ pub async fn run(
         }
     })?;
     let (correctness, leak) = judged;
-    let ran = lock_set_whole(&record.ran)
+    let session = lock_set_whole(&record.session)
         .take()
         .ok_or_else(|| Unjudged::Failed(anyhow!("the judge's session is not recorded")))?;
     Ok(Judgement {
@@ -426,7 +435,8 @@ pub async fn run(
         leak,
         session: JudgeSession {
             record: record.relative.clone(),
-            ran,
+            ran: session.ran().clone(),
+            cost: session.cost(),
         },
         linewright: format!("{COMMAND} {VERSION_AND_COMMIT}"),
         record,
@@ -453,8 +463,8 @@ async fn judge_in(
         harness.clone(),
         &own_dir.join("store"),
         &repository,
-        |output| {
-            *lock_set_whole(&built) = Some(output.to_string());
+        |build| {
+            *lock_set_whole(&built) = Some(build.clone());
             Ok(())
         },
     )
@@ -462,16 +472,19 @@ async fn judge_in(
     let built = lock_set_whole(&built).take();
     let setting = match (prepared, built) {
         (Ok(setting), built) => {
-            if let Some(output) = built {
-                std::fs::write(record.dir().join(BUILD_LOG), output)
+            if let Some(build) = built {
+                write_build(record.dir(), &build)
                     .context("writing the build's output")
                     .map_err(Unjudged::Failed)?;
             }
             setting
         }
         (Err(e), built) => {
-            if let Some(output) = built {
-                error!(output, "the build of the judge's environment");
+            if let Some(build) = built {
+                error!(
+                    output = build.output,
+                    "the build of the judge's environment"
+                );
             }
             return Err(Unjudged::Failed(e));
         }

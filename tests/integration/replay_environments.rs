@@ -218,8 +218,8 @@ async fn two_replays_of_the_same_head_and_setup_build_once_the_second_waiting_fo
     assert_eq!(marks.builds(), 1);
     assert_eq!(installed(&first).await.as_deref(), Some("v1 hi\n"));
     assert_eq!(installed(&second).await.as_deref(), Some("v1 hi\n"));
-    assert!(first.built_output().is_some());
-    assert_eq!(second.built_output(), None);
+    assert!(first.built().is_some());
+    assert_eq!(second.built(), None);
 }
 
 #[test_log::test(tokio::test)]
@@ -315,7 +315,10 @@ async fn a_failed_build_gives_its_output_and_a_later_replay_builds_anew() {
     let Err(Unprepared::Failed(BuildFailed { why, output })) = failed else {
         panic!("the build did not fail");
     };
-    assert_eq!(output.as_deref(), Some("npm ERR! missing lockfile\n"));
+    assert_eq!(
+        output.map(|log| log.output).as_deref(),
+        Some("npm ERR! missing lockfile\n")
+    );
     assert!(
         why.starts_with("the setup command exited with status 3;"),
         "{why}"

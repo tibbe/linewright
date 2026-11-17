@@ -1101,7 +1101,7 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
             *given.lock().unwrap() = Some((
                 call.spec.model.clone(),
                 call.spec.effort,
-                call.spec.deadline - tokio::time::Instant::now(),
+                call.spec.deadline.at() - tokio::time::Instant::now(),
             ));
             Err(linewright::harness::SessionError::TimedOut {
                 log_tail: String::new(),

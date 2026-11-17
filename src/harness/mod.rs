@@ -3,11 +3,13 @@ pub mod claude;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::AutomationName;
+use crate::cost::TurnSpend;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
@@ -67,29 +69,90 @@ pub struct SessionSpec {
     pub environment: Arc<Given>,
     pub gh: GhReach,
     /// When the session times out, across all its turns.
-    pub deadline: tokio::time::Instant,
+    pub deadline: Deadline,
     /// Told what the harness reports of the session as each turn runs, so
     /// that a turn that never returns has still told it.
     pub report: Reporter,
 }
 
-/// What the harness reports a session ran with.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Reported {
-    pub model: String,
+/// What the harness reports of a session as it runs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Reported {
+    /// The model the session runs on.
+    Model(String),
+    /// A turn began.
+    TurnStarted,
+    /// A turn's process ended, whatever the outcome, a timeout included. A
+    /// cancelled turn reports no end.
+    TurnEnded(TurnSpend),
 }
 
-/// Where the harness's reports of a session go.
+/// Where the reports of a session go: the harness's as each turn runs, and
+/// the session's end.
 #[derive(Clone)]
-pub struct Reporter(Arc<dyn Fn(Reported) + Send + Sync>);
+pub struct Reporter {
+    report: Arc<dyn Fn(Reported) + Send + Sync>,
+    end: Arc<dyn Fn(Duration) + Send + Sync>,
+}
 
 impl Reporter {
+    /// Takes the harness's reports to `report`, and the session's end
+    /// nowhere.
     pub fn new(report: impl Fn(Reported) + Send + Sync + 'static) -> Reporter {
-        Reporter(Arc::new(report))
+        Reporter {
+            report: Arc::new(report),
+            end: Arc::new(|_| {}),
+        }
+    }
+
+    /// Takes the session's end, once it is reported, to `end`.
+    #[must_use]
+    pub fn ending(self, end: impl Fn(Duration) + Send + Sync + 'static) -> Reporter {
+        Reporter {
+            end: Arc::new(end),
+            ..self
+        }
     }
 
     pub fn report(&self, reported: Reported) {
-        (self.0)(reported);
+        (self.report)(reported);
+    }
+
+    /// The session ended, the session timeout having counted `time`. Reported
+    /// once.
+    pub fn ended(&self, time: Duration) {
+        (self.end)(time);
+    }
+}
+
+/// When a session times out, and the timeout it was set from: the session
+/// timeout counts from the session's start, less the waits for the usage
+/// limit (docs/specs/runs.md, "Limits").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deadline {
+    at: tokio::time::Instant,
+    timeout: Duration,
+}
+
+impl Deadline {
+    /// The deadline of a session that starts at `start` with `timeout`.
+    pub fn after(start: tokio::time::Instant, timeout: Duration) -> Deadline {
+        Deadline {
+            at: start + timeout,
+            timeout,
+        }
+    }
+
+    pub fn at(self) -> tokio::time::Instant {
+        self.at
+    }
+
+    /// What the session timeout has counted by `now`.
+    pub fn counted(self, now: tokio::time::Instant) -> Duration {
+        match self.at.checked_duration_since(now) {
+            Some(left) => self.timeout.saturating_sub(left),
+            None => self.timeout.saturating_add(now - self.at),
+        }
     }
 }
 
@@ -138,11 +201,14 @@ impl UsageLimit {
     /// `deadline`: it has the time it had left (docs/specs/runs.md, "Usage
     /// limit", The refused session).
     pub fn deadline_after_wait(
-        deadline: tokio::time::Instant,
+        deadline: Deadline,
         refused_at: tokio::time::Instant,
         woke_at: tokio::time::Instant,
-    ) -> tokio::time::Instant {
-        woke_at + deadline.saturating_duration_since(refused_at)
+    ) -> Deadline {
+        Deadline {
+            at: woke_at + deadline.at.saturating_duration_since(refused_at),
+            ..deadline
+        }
     }
 }
 

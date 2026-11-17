@@ -12,7 +12,8 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{Row as _, SqliteConnection, SqliteExecutor, SqlitePool};
 
 use super::files::{End, Record, RecordedSession};
-use super::{Ran, Recorded, RunId, RunOf, SessionEntry, Started, State};
+use super::{Ran, Recorded, RunId, RunOf, SessionEntry, SessionKept, Started, State};
+use crate::cost::SessionCost;
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Number;
 use crate::input::Input;
@@ -202,21 +203,27 @@ async fn write_session(
     record: &Record,
     index: usize,
 ) -> Result<()> {
-    let (dir, ran) = match &record.sessions[index] {
-        RecordedSession::Ran { dir, ran } => (dir, Some(serde_json::to_string(ran)?)),
-        RecordedSession::Dir(dir) => (dir, None),
+    let (dir, ran, cost) = match &record.sessions[index] {
+        RecordedSession::Ran { dir, ran, cost } => (
+            dir,
+            Some(serde_json::to_string(ran)?),
+            cost.as_ref().map(serde_json::to_string).transpose()?,
+        ),
+        RecordedSession::Dir(dir) => (dir, None, None),
     };
     let dir = dir
         .to_str()
         .with_context(|| format!("the session's directory {} is not UTF-8", dir.display()))?;
     sqlx::query(
-        "INSERT INTO sessions (run, seq, dir, ran) VALUES (?, ?, ?, ?)
-        ON CONFLICT (run, seq) DO UPDATE SET dir = excluded.dir, ran = excluded.ran",
+        "INSERT INTO sessions (run, seq, dir, ran, cost) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (run, seq) DO UPDATE
+            SET dir = excluded.dir, ran = excluded.ran, cost = excluded.cost",
     )
     .bind(row)
     .bind(i64::try_from(index)?)
     .bind(dir)
     .bind(ran)
+    .bind(cost)
     .execute(conn)
     .await
     .context("recording a session")?;
@@ -249,7 +256,7 @@ pub(super) async fn read_all(
         .await
         .context("reading the runs")?;
     let mut sessions: BTreeMap<i64, Vec<SessionEntry>> = BTreeMap::new();
-    for row in sqlx::query("SELECT run, dir, ran FROM sessions ORDER BY run, seq")
+    for row in sqlx::query("SELECT run, dir, ran, cost FROM sessions ORDER BY run, seq")
         .fetch_all(pool)
         .await
         .context("reading the runs' sessions")?
@@ -285,7 +292,7 @@ pub(super) async fn read_one(
     else {
         return Ok(None);
     };
-    let sessions = sqlx::query("SELECT dir, ran FROM sessions WHERE run = ? ORDER BY seq")
+    let sessions = sqlx::query("SELECT dir, ran, cost FROM sessions WHERE run = ? ORDER BY seq")
         .bind(row.try_get::<i64, _>("id")?)
         .fetch_all(&mut *tx)
         .await
@@ -368,7 +375,13 @@ fn session(row: &SqliteRow, work_dir: &Path) -> Result<SessionEntry> {
         .map(serde_json::from_str::<Ran>)
         .transpose()
         .with_context(|| format!("reading what the session in {} ran with", dir.display()))?;
-    Ok(SessionEntry { dir, ran })
+    let cost = row
+        .try_get::<Option<&str>, _>("cost")?
+        .map(serde_json::from_str::<SessionCost>)
+        .transpose()
+        .with_context(|| format!("reading what the session in {} cost", dir.display()))?;
+    let kept = ran.map(|ran| SessionKept { ran, cost });
+    Ok(SessionEntry { dir, kept })
 }
 
 /// The text a unit variant of an enum serializes as.

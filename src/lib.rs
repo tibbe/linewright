@@ -22,6 +22,7 @@ pub mod clock;
 mod clones;
 pub mod config;
 pub mod contain;
+pub mod cost;
 pub mod database;
 pub mod domain;
 pub mod drain;

@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::Number;
-use crate::runs::{self, Recorded, RunId, Runs, SessionEntry, Started, State};
+use crate::runs::{self, Recorded, RunId, Runs, Started, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
 };
@@ -149,11 +149,11 @@ pub async fn answer(runs: Option<&Runs>, which: &Which) -> Result<Transcript, Lo
     let mut records = run
         .sessions
         .iter()
-        .map(|SessionEntry { dir, ran }| {
-            let record = SessionRecord::read(dir)
-                .with_context(|| format!("reading the session in {}", dir.display()))?;
+        .map(|session| {
+            let record = SessionRecord::read(&session.dir)
+                .with_context(|| format!("reading the session in {}", session.dir.display()))?;
             Ok(SessionRecord {
-                ran: ran.clone(),
+                ran: session.ran().cloned(),
                 ..record
             })
         })
@@ -268,16 +268,16 @@ impl RunRecords {
             .await
             .with_context(|| format!("reading the record of {}", self.run.id()))?;
         self.ended = recorded.state != State::InFlight;
-        for (i, SessionEntry { dir, ran }) in recorded.sessions.iter().enumerate() {
+        for (i, session) in recorded.sessions.iter().enumerate() {
             if i == self.sessions.len() {
                 self.sessions.push(SessionRecord {
-                    ran: ran.clone(),
+                    ran: session.ran().cloned(),
                     ..SessionRecord::default()
                 });
             }
             self.sessions[i]
-                .read_more(dir)
-                .with_context(|| format!("reading the session in {}", dir.display()))?;
+                .read_more(&session.dir)
+                .with_context(|| format!("reading the session in {}", session.dir.display()))?;
         }
         Ok(())
     }

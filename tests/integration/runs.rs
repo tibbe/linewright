@@ -10,7 +10,7 @@ use linewright::layer::{Layer, Source};
 use linewright::reconcile::{EndedRun, WorkKind};
 use linewright::runs::{
     self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, SessionEntry,
-    Started, StartedBy, State,
+    SessionKept, Started, StartedBy, State,
 };
 use linewright::session_env::SetEnv;
 use linewright::work_settings::{Effort, Partial, Setting, StageKey, StageTable};
@@ -601,7 +601,7 @@ fn a_session_ran_the_model_the_harness_reported_or_else_the_one_set() {
 fn session(n: usize, ran: Option<Ran>) -> SessionEntry {
     SessionEntry {
         dir: format!("sessions/1/triage-1/{n}").into(),
-        ran,
+        kept: ran.map(|ran| SessionKept { ran, cost: None }),
     }
 }
 
@@ -851,7 +851,7 @@ async fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it(
         recorded,
         [rework_of_5(vec![SessionEntry {
             dir: base.path().join(REPO).join("sessions/5/rework-1"),
-            ran: None,
+            kept: None,
         }])]
     );
 }
@@ -867,7 +867,13 @@ fn ran_as_read(sessions: &serde_json::Value) -> impl Future<Output = Ran> + use<
         let [run] = &recorded[..] else {
             panic!("one run at {caller}: {recorded:#?}");
         };
-        let [SessionEntry { ran: Some(ran), .. }] = &run.sessions[..] else {
+        let [
+            SessionEntry {
+                kept: Some(SessionKept { ran, .. }),
+                ..
+            },
+        ] = &run.sessions[..]
+        else {
             panic!("one session with what it ran with at {caller}: {run:#?}");
         };
         ran.clone()

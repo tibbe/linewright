@@ -4,12 +4,14 @@
 
 use crate::common;
 
+use std::collections::BTreeMap;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use common::*;
 use linewright::case::{self, Case, CaseName, Criteria};
+use linewright::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright::domain::Number;
 use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
@@ -222,6 +224,93 @@ async fn a_triage_case_is_replayed_into_its_output() {
     );
 }
 
+/// Asserts that `part` is a number of seconds on a line of its own.
+#[track_caller]
+fn assert_seconds(part: &str) {
+    let seconds = part.strip_suffix('\n').map(str::parse::<f64>);
+    assert!(
+        matches!(seconds, Some(Ok(seconds)) if seconds >= 0.0),
+        "{part:?} is not a number of seconds"
+    );
+}
+
+/// The cost a replay's output keeps, its time checked and left out.
+#[track_caller]
+fn cost_without_time(replayed: &Replayed) -> Value {
+    let mut cost: Value = serde_json::from_str(&replayed.read("cost.json")).unwrap();
+    let seconds = cost.as_object_mut().unwrap().remove("seconds");
+    assert!(
+        seconds
+            .as_ref()
+            .and_then(Value::as_f64)
+            .is_some_and(|s| s >= 0.0),
+        "the replay's time: {seconds:?}"
+    );
+    cost
+}
+
+#[test_log::test(tokio::test)]
+async fn a_replay_keeps_its_time_and_what_its_run_cost() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Triage, |_| Ok(triaged()));
+    harness.reports_model("claude-opus-5-5");
+    harness.reports_spend(TurnSpend::OfSessionSoFar(Figures(BTreeMap::from([(
+        "claude-opus-5-5".to_string(),
+        Spend {
+            tokens: Some(Tokens {
+                input: 10,
+                output: 200,
+                cache_write: 3000,
+                cache_read: 40000,
+            }),
+            usd: Usd::new(1.25),
+        },
+    )]))));
+    let under = tempfile::tempdir().unwrap();
+
+    let replayed = replayed(&case, under.path(), harness, |_| {}).await;
+
+    assert_eq!(replayed.ended.as_ref().unwrap(), &Ending::Done);
+    let mut cost = cost_without_time(&replayed);
+    let run_seconds = cost["run"].as_object_mut().unwrap().remove("seconds");
+    assert!(
+        run_seconds.as_ref().and_then(Value::as_f64).is_some(),
+        "the run's time: {run_seconds:?}"
+    );
+    let spent = json!({
+        "tokens": {"input": 10, "output": 200, "cache_write": 3000, "cache_read": 40000},
+        "usd": 1.25,
+    });
+    assert_eq!(
+        cost,
+        json!({"run": {"models": {"claude-opus-5-5": spent}, "all": spent}})
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_replay_whose_build_fails_keeps_the_builds_output_and_time_and_its_own_time() {
+    let mut world = World::new().await;
+    let (_, case) = triage_case(&mut world).await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on(WorkKind::Triage, |_| Ok(triaged()));
+    let under = tempfile::tempdir().unwrap();
+
+    let replayed = replayed(&case, under.path(), harness.clone(), |config| {
+        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+            SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
+        ));
+    })
+    .await;
+
+    assert!(replayed.ended.is_err(), "{:?}", replayed.ended);
+    assert_eq!(replayed.read("build.log"), "the build broke\n");
+    assert_seconds(&replayed.read("build-seconds"));
+    assert_eq!(cost_without_time(&replayed), json!({}));
+    assert_eq!(harness.prompts(WorkKind::Triage).len(), 0);
+}
+
 #[test_log::test(tokio::test)]
 async fn a_design_case_is_replayed_numbering_its_tickets_above_the_cases_items() {
     let mut world = World::new().await;
@@ -278,6 +367,7 @@ async fn an_implement_case_is_replayed_pushing_its_branch_into_the_output() {
         "{}",
         replayed.read("build.log")
     );
+    assert_seconds(&replayed.read("build-seconds"));
     let pushed: Vec<String> = replayed
         .writes_of("push")
         .into_iter()
@@ -932,6 +1022,10 @@ async fn a_signal_ends_lw_replay_at_once_leaving_its_output_interrupted() {
         out.join(format!("runs/items/{}/triage-1.json", issue.0))
             .is_file()
     );
+    let cost: Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("cost.json")).unwrap()).unwrap();
+    assert!(cost["seconds"].is_f64(), "{cost}");
+    assert_eq!(cost["run"], json!({"models": {}, "all": {}}));
 }
 
 #[test_log::test(tokio::test)]
