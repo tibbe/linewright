@@ -49,6 +49,7 @@ mod pipeline;
 mod posted_attachments;
 mod pull_records;
 mod push_protection;
+mod pushed_branches;
 mod rate_limit;
 mod reconcile;
 mod recording;

@@ -1593,7 +1593,7 @@ pub fn last_unassignment(events: &[IssueEvent], assignee: &Login) -> Option<Even
 
 /// The name of a branch a run on a ticket could have pushed: one
 /// [`Issue::branch`] gives under any title the issue has had.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct TicketBranchName {
     name: String,

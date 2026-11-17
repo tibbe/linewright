@@ -20,7 +20,7 @@ use crate::automation::Automation;
 use crate::briefs::{Briefs, OperatorBriefs};
 use crate::domain::{
     Issue, IssueCloseReason, Item, Login, MergedPull, Number, Pull, Snapshot, StatusLabel,
-    Timestamp, Windows, label,
+    TicketBranchName, Timestamp, Windows, label,
 };
 use crate::git::{self, CommitId, WorkState};
 use crate::harness::{NextTurn, Purpose, Turn, UsageLimit};
@@ -28,6 +28,7 @@ use crate::input;
 use crate::prompts::{
     self, DesignOf, LooseEnd, Repo, SentBack, SpecChangeAndDiff, Ticket, TicketRead,
 };
+use crate::pushed_branches::PushedBranches;
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
 use crate::repo_files::RepoLayer;
 use crate::results::{
@@ -57,6 +58,9 @@ pub(crate) struct Shell {
     pub operator_briefs: OperatorBriefs,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
+    /// Where the ticket branches its runs push are recorded: nowhere in a
+    /// replay, whose pushes go to a store of its own.
+    pub pushed_branches: Option<PushedBranches>,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
     _by_new: (),
 }
@@ -81,6 +85,7 @@ pub(crate) struct ShellParts {
     pub operator_briefs: OperatorBriefs,
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
+    pub pushed_branches: Option<PushedBranches>,
 }
 
 /// The label each issue and pull request Linewright files carries, if the
@@ -130,6 +135,7 @@ impl Shell {
             operator_briefs: parts.operator_briefs,
             settings: parts.settings,
             work_dir: parts.work_dir,
+            pushed_branches: parts.pushed_branches,
             _by_new: (),
         }
     }
@@ -219,7 +225,8 @@ enum Pushed {
     Failed(anyhow::Error),
 }
 
-/// Pushes `commit` of the clone in `dir` to `branch`.
+/// Pushes `commit` of the clone in `dir` to `branch`, and records `branch`
+/// once it is pushed, if it is a ticket's.
 async fn push(
     shell: &Shell,
     dir: &Path,
@@ -228,12 +235,29 @@ async fn push(
     mode: PushMode,
 ) -> Pushed {
     match shell.sessions.store.push(dir, commit, branch, mode).await {
-        Ok(()) => Pushed::Done,
+        Ok(()) => {
+            record_pushed(shell, branch).await;
+            Pushed::Done
+        }
         Err(PushError::PushProtection { secrets }) => {
             Pushed::Protected(secrets.redacted(shell.sessions.secrets.redaction()))
         }
         Err(PushError::MissingPermission { reason }) => Pushed::Refused(reason),
         Err(PushError::Failed(e)) => Pushed::Failed(e),
+    }
+}
+
+/// Records that Linewright pushed `branch`, if it is a ticket's and pushes
+/// are recorded. A failure is logged: the push stands, and the branch is
+/// left out of the record.
+async fn record_pushed(shell: &Shell, branch: &str) {
+    let (Some(pushed), Some(name)) = (&shell.pushed_branches, TicketBranchName::parse(branch))
+    else {
+        return;
+    };
+    if let Err(e) = pushed.record(&name, shell.sessions.clock.now()).await {
+        let error = shell.sessions.secrets.redaction().apply(&format!("{e:#}"));
+        warn!(branch, error, "recording the pushed branch failed");
     }
 }
 
