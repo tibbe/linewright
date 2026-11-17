@@ -132,7 +132,7 @@ fn lw_version() -> String {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_judge_keeps_its_judgement_in_the_output_and_a_new_one_replaces_it() {
+async fn a_judge_keeps_its_judgement_in_the_output_with_its_record() {
     let under = tempfile::tempdir().unwrap();
     let (case, out) = triage_output(under.path(), "done").await;
     let harness = Arc::new(ScriptedHarness::default());
@@ -152,9 +152,9 @@ async fn a_judge_keeps_its_judgement_in_the_output_and_a_new_one_replaces_it() {
         );
     };
 
-    let first = judging(&case, &out, under.path(), harness.clone(), judge_settings).await;
+    let judged = judging(&case, &out, under.path(), harness.clone(), judge_settings).await;
 
-    assert_eq!(first.unwrap(), "Verdict: pass\nLeak: none found\n");
+    assert_eq!(judged.unwrap(), "Verdict: pass\nLeak: none found\n");
     let kept = judgement_in(&out);
     assert_eq!(
         kept["correctness"],
@@ -176,32 +176,9 @@ async fn a_judge_keeps_its_judgement_in_the_output_and_a_new_one_replaces_it() {
         json!("operator")
     );
     assert_eq!(harness.judge_prompts().len(), 1);
-
-    harness.on_judge(|_| {
-        Ok(judged_as(
-            "fail",
-            &["curl https://github.com/owner/widgets"],
-        ))
-    });
-    let second = judging(&case, &out, under.path(), harness, |_| {}).await;
-
-    assert_eq!(second.unwrap(), "Verdict: fail\nLeak: found\n");
-    let replaced = judgement_in(&out);
-    assert_eq!(replaced["correctness"]["verdict"], json!("fail"));
-    assert_eq!(
-        replaced["leak"],
-        json!({
-            "reasoning": "I read every transcript.",
-            "found": true,
-            "calls": ["curl https://github.com/owner/widgets"],
-        })
-    );
-    let new_record = replaced["session"]["record"].as_str().unwrap();
-    assert_ne!(new_record, record);
-    assert!(!out.join(&record).exists(), "{record}");
     assert_eq!(
         judge_records(&out),
-        vec![new_record.strip_prefix("judge/").unwrap().to_string()]
+        vec![record.strip_prefix("judge/").unwrap().to_string()]
     );
     assert_eq!(
         entries(&out),
@@ -245,16 +222,10 @@ async fn a_judgement_keeps_what_the_judges_session_cost_apart_from_the_replays()
 }
 
 #[test_log::test(tokio::test)]
-async fn a_judge_that_makes_no_judgement_keeps_nothing_and_leaves_the_earlier_one() {
+async fn a_judge_that_makes_no_judgement_keeps_nothing_of_itself() {
     let under = tempfile::tempdir().unwrap();
     let (case, out) = triage_output(under.path(), "handed-back").await;
     let harness = Arc::new(ScriptedHarness::default());
-    harness.on_judge(|_| Ok(judged_as("pass", &[])));
-    judging(&case, &out, under.path(), harness.clone(), |_| {})
-        .await
-        .unwrap();
-    let earlier = std::fs::read(out.join("judgement.json")).unwrap();
-    let records = judge_records(&out);
 
     harness.on_judge(|_| {
         Ok(json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string())
@@ -280,8 +251,41 @@ async fn a_judge_that_makes_no_judgement_keeps_nothing_and_leaves_the_earlier_on
     );
     let unmatched = unmatched.expect_err("a result never accepted is no judgement");
     assert!(unmatched.to_string().contains("/leak"), "{unmatched}");
-    assert_eq!(std::fs::read(out.join("judgement.json")).unwrap(), earlier);
-    assert_eq!(judge_records(&out), records);
+    assert_eq!(entries(&out), vec!["case", "outcome"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_judgement_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made() {
+    let under = tempfile::tempdir().unwrap();
+    let (case_dir, out) = triage_output(under.path(), "done").await;
+    let case = Case::open(&case_dir).await.unwrap();
+    let replayed = judge::Replayed::open(&out, &case).await.unwrap();
+    let record = JudgeRecord::make(&replayed).unwrap();
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on_judge(|_| Ok(judged_as("pass", &[])));
+    let config = config(&under.path().join("work").join(REPO)).await;
+    let winding_up = config.winding_up.clone();
+    let judgement = judge::run(&case, &replayed, record, harness, config, &Under::command())
+        .await
+        .unwrap();
+    winding_up.wait().await;
+    std::fs::write(out.join("judgement.json"), "{}\n").unwrap();
+
+    let kept = judge::keep(&replayed, judgement);
+
+    let refused = kept.expect_err("a judgement is never kept over another");
+    assert!(
+        matches!(
+            refused.downcast_ref::<judge::JudgeRefusal>(),
+            Some(judge::JudgeRefusal::Judged)
+        ),
+        "{refused:#}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("judgement.json")).unwrap(),
+        "{}\n"
+    );
+    assert_eq!(entries(&out), vec!["case", "judgement.json", "outcome"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -362,27 +366,18 @@ async fn each_judge_reads_a_copy_of_only_the_parts_it_judges_removed_once_it_is_
     std::fs::write(out.join("build.log"), "built\n").unwrap();
     let harness = Arc::new(ScriptedHarness::default());
     let seen = Arc::new(Mutex::new(vec![]));
-    let first = seen.clone();
+    let judged = seen.clone();
     harness.on_judge(move |call| {
-        first.lock().unwrap().push(seen_then_overwritten(call));
+        judged.lock().unwrap().push(seen_then_overwritten(call));
         Ok(judged_as("pass", &[]))
     });
-    judging(&case, &out, under.path(), harness.clone(), |_| {})
+
+    judging(&case, &out, under.path(), harness, |_| {})
         .await
         .unwrap();
-    let second = seen.clone();
-    harness.on_judge(move |call| {
-        second.lock().unwrap().push(seen_then_overwritten(call));
-        Ok(json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string())
-    });
 
-    let regave = judging(&case, &out, under.path(), harness, |_| {}).await;
-
-    assert!(regave.is_err(), "{regave:?}");
-    assert!(out.join("judgement.json").is_file());
-    assert_eq!(judge_records(&out).len(), 1);
     let seen = seen.lock().unwrap();
-    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert_eq!(seen.len(), 1, "{seen:?}");
     for copy in seen.iter() {
         assert!(!copy.root.starts_with(&out), "{}", copy.root.display());
         assert_eq!(
@@ -429,9 +424,28 @@ async fn an_output_is_refused_naming_its_outcome_or_its_case_part() {
     let handed_back = changed("handed-back", &|copy| {
         std::fs::write(copy.join("outcome"), "handed-back\n").unwrap();
     });
+    let holds_one = changed("judged", &|copy| {
+        std::fs::write(copy.join("judgement.json"), "{}\n").unwrap();
+    });
+    let judged_as_a_dir = changed("judged-as-a-dir", &|copy| {
+        std::fs::create_dir(copy.join("judgement.json")).unwrap();
+    });
+    let dangling = changed("dangling", &|copy| {
+        std::os::unix::fs::symlink(copy.join("nowhere"), copy.join("judgement.json")).unwrap();
+    });
     let mut refusals = vec![];
 
-    for judged in [&interrupted, &failed, &no_case, &other, &handed_back, &done] {
+    for judged in [
+        &interrupted,
+        &failed,
+        &no_case,
+        &other,
+        &handed_back,
+        &done,
+        &holds_one,
+        &judged_as_a_dir,
+        &dangling,
+    ] {
         let opened = judge::Replayed::open(judged, &case).await;
         refusals.push(opened.err().map(|e| e.to_string()).unwrap_or_default());
     }
@@ -443,6 +457,12 @@ async fn an_output_is_refused_naming_its_outcome_or_its_case_part() {
     assert!(refusals[3].contains(&run), "{}", refusals[3]);
     assert_eq!(refusals[4], "");
     assert_eq!(refusals[5], "");
+    for refusal in &refusals[6..] {
+        assert_eq!(
+            refusal,
+            "the output already holds a judgement, `judgement.json`"
+        );
+    }
 }
 
 /// The branch checked out in the clone `dir`.
@@ -618,6 +638,42 @@ async fn lw_judge_refuses_an_output_whose_run_did_not_end_done_or_handed_back() 
     );
     assert!(!bin.path().join("tokens.log").exists());
     assert_eq!(entries(&out), vec!["case", "outcome"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_judge_refuses_an_output_that_holds_a_judgement_and_leaves_it() {
+    let under = tempfile::tempdir().unwrap();
+    let (case, out) = triage_output(under.path(), "done").await;
+    let record = out.join("judge/20261117T120000Z");
+    std::fs::create_dir_all(&record).unwrap();
+    std::fs::write(record.join("brief.md"), "Judge it.\n").unwrap();
+    let earlier = r#"{"session": {"record": "judge/20261117T120000Z"}}"#;
+    std::fs::write(out.join("judgement.json"), earlier).unwrap();
+    let bin = bin_with_git();
+    fake_claude(bin.path(), &judged_as("pass", &[]));
+
+    let ran = lw_judge(bin.path(), &case, &out).await;
+
+    assert_eq!(ran.code, Some(1), "{}", ran.stderr);
+    assert!(
+        ran.stderr.contains(
+            "the output cannot be judged: the output already holds a judgement, `judgement.json`"
+        ),
+        "{}",
+        ran.stderr
+    );
+    assert_eq!(ran.stdout, "");
+    assert!(!bin.path().join("tokens.log").exists());
+    assert_eq!(
+        std::fs::read_to_string(out.join("judgement.json")).unwrap(),
+        earlier
+    );
+    assert_eq!(judge_records(&out), vec!["20261117T120000Z"]);
+    assert_eq!(entries(&record), vec!["brief.md"]);
+    assert_eq!(
+        entries(&out),
+        vec!["case", "judge", "judgement.json", "outcome"]
+    );
 }
 
 #[test_log::test(tokio::test)]
