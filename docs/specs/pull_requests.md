@@ -11,21 +11,21 @@ to review again; the maintainer approves and merges.
 
 ## User Stories
 
-1. As an operator, I want the PR to be a draft until CI passes, so that I am
+1. As a maintainer, I want the PR to be a draft until CI passes, so that I am
    only asked to review green PRs.
-2. As an operator, I want CI failures fixed by the agent, so that red CI costs
+2. As a maintainer, I want CI failures fixed by the agent, so that red CI costs
    me nothing.
-3. As an operator, I want my review comments addressed and answered where I
+3. As a maintainer, I want my review comments addressed and answered where I
    wrote them, so that review is a conversation with the branch.
-4. As an operator, I want a PR's commits kept a coherent series where my
+4. As a maintainer, I want a PR's commits kept a coherent series where my
    repository merges them as they are, so that merging needs no round of
    cleaning up its history.
-5. As an operator, I want branches kept mergeable by my repository's merge
+5. As a maintainer, I want branches kept mergeable by my repository's merge
    method and brought up to date with the default branch only when merging
    needs it, so that my review is not disturbed and CI does not rerun for
    nothing.
-6. As an operator, I want to merge myself, so that nothing lands without me.
-7. As an operator, I want closing a PR to mean rejection, so that the factory
+6. As a maintainer, I want to merge myself, so that nothing lands without me.
+7. As a maintainer, I want closing a PR to mean rejection, so that the factory
    does not redo what I refused.
 8. As an operator, I want to let Linewright merge its own green PRs, except
    those my repository requires a person to review, so that only the changes I
