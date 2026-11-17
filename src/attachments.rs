@@ -571,6 +571,7 @@ fn find(text: &str) -> Vec<Found> {
         })
         .collect();
     let mut open: Vec<Open> = Vec::new();
+    let mut html_block = Html::default();
     for (event, range) in parser {
         let end = range.end;
         match event {
@@ -588,17 +589,24 @@ fn find(text: &str) -> Vec<Found> {
             }
             Event::End(TagEnd::HtmlBlock) => {
                 let closed = open.pop().expect("an end follows its start");
-                found.extend(img_tags(text, closed.range.clone(), Some(&closed)));
+                let html = std::mem::take(&mut html_block);
+                found.extend(img_tags(text, &html, Some(&closed)));
             }
             Event::End(_) => {
                 open.pop();
             }
-            Event::InlineHtml(_) => found.extend(img_tags(text, range, open.last())),
+            Event::Html(_) => html_block.push_line(text, range),
+            Event::InlineHtml(html) => {
+                found.extend(img_tags(
+                    text,
+                    &Html::inline(text, &html, range),
+                    open.last(),
+                ));
+            }
             Event::Text(_)
             | Event::Code(_)
             | Event::InlineMath(_)
             | Event::DisplayMath(_)
-            | Event::Html(_)
             | Event::FootnoteReference(_)
             | Event::SoftBreak
             | Event::HardBreak
@@ -802,16 +810,101 @@ fn destination(text: &str, from: usize) -> Option<Range<usize>> {
     (i > start).then_some(start..i)
 }
 
-/// The references the HTML `img` tags at `range` make, `parent` being the tag the HTML is in. HTML comments are skipped.
-fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found> {
+/// HTML as the parser reads it, without the markers of the containers it
+/// is in, such as a block quote's `>` at the start of each line, and where
+/// each of its lines is in the source.
+#[derive(Default)]
+struct Html {
+    text: String,
+    lines: Vec<LineStart>,
+}
+
+/// Where a line of [`Html`] starts, in its text and in the source.
+#[derive(Clone, Copy)]
+struct LineStart {
+    in_text: usize,
+    in_source: usize,
+}
+
+impl Html {
+    /// Inline HTML that the parser reads as `read`, at `range` in `source`.
+    /// Each line of `read` after the first is the end of its line in the
+    /// source, the markers before it taken out. When `read` is not that,
+    /// it is the source as written.
+    fn inline(source: &str, read: &str, range: Range<usize>) -> Html {
+        let written = &source[range.clone()];
+        let mut html = Html {
+            text: read.to_string(),
+            lines: Vec::new(),
+        };
+        let mut at = LineStart {
+            in_text: 0,
+            in_source: range.start,
+        };
+        for (read_line, written_line) in read
+            .split_inclusive('\n')
+            .zip(written.split_inclusive('\n'))
+        {
+            if !written_line.ends_with(read_line) {
+                return Html {
+                    text: written.to_string(),
+                    lines: vec![LineStart {
+                        in_text: 0,
+                        in_source: range.start,
+                    }],
+                };
+            }
+            let markers = written_line.len() - read_line.len();
+            html.lines.push(LineStart {
+                in_text: at.in_text,
+                in_source: at.in_source + markers,
+            });
+            at = LineStart {
+                in_text: at.in_text + read_line.len(),
+                in_source: at.in_source + written_line.len(),
+            };
+        }
+        html
+    }
+
+    /// Adds a line of an HTML block, at `range` in `source`.
+    fn push_line(&mut self, source: &str, range: Range<usize>) {
+        self.lines.push(LineStart {
+            in_text: self.text.len(),
+            in_source: range.start,
+        });
+        self.text.push_str(&source[range]);
+    }
+
+    /// Where `range`, in `text`, is in the source.
+    fn to_source(&self, range: Range<usize>) -> Range<usize> {
+        let at = |offset: usize| {
+            let line = self.lines.partition_point(|line| line.in_text <= offset) - 1;
+            let start = self.lines[line];
+            start.in_source + offset - start.in_text
+        };
+        let start = at(range.start);
+        let end = if range.is_empty() {
+            start
+        } else {
+            at(range.end - 1) + 1
+        };
+        start..end
+    }
+}
+
+/// The references the HTML `img` tags in `html` make, in `source`, `parent`
+/// being the tag the HTML is in. HTML comments are skipped.
+fn img_tags(source: &str, html: &Html, parent: Option<&Open>) -> Vec<Found> {
+    let text = html.text.as_str();
     let bytes = text.as_bytes();
     let mut found = Vec::new();
-    let mut i = range.start;
-    while i < range.end {
-        if text[i..range.end].starts_with("<!--") {
-            i = text[i + 4..range.end]
+    let mut i = 0;
+    while i < text.len() {
+        if bytes[i..].starts_with(b"<!--") {
+            i = text[i + 4..]
                 .find("-->")
-                .map_or(range.end, |at| i + 4 + at + 3);
+                .map_or(text.len(), |at| i + 4 + at + 3);
             continue;
         }
         let is_img = bytes[i] == b'<'
@@ -825,22 +918,22 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
             i += 1;
             continue;
         }
-        let Some(tag) = img_tag(text, i, range.end) else {
+        let Some(tag) = img_tag(text, i, text.len()) else {
             break;
         };
-        let tag_range = i..tag.end;
+        let tag_range = html.to_source(i..tag.end);
         i = tag.end;
         let Some(src) = tag.src else {
             continue;
         };
         let reference = text[src.clone()].to_string();
         let plain = vec![Splice {
-            range: src,
+            range: html.to_source(src),
             with: With::Url,
         }];
         let non_empty_alt = tag
             .alt
-            .map(|alt| text[alt].to_string())
+            .map(|alt| source[html.to_source(alt)].to_string())
             .filter(|alt| !alt.is_empty());
         let as_link = vec![Splice {
             range: tag_range.clone(),
@@ -849,7 +942,7 @@ fn img_tags(text: &str, range: Range<usize>, parent: Option<&Open>) -> Vec<Found
         found.push(Found {
             reference,
             syntax: Syntax::Html,
-            changes: embed(text, tag_range, parent, plain, as_link),
+            changes: embed(source, tag_range, parent, plain, as_link),
         });
     }
     found
