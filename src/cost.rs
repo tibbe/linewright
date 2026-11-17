@@ -86,12 +86,6 @@ impl Spend {
         usd: Some(Usd::ZERO),
     };
 
-    /// Both figures absent.
-    pub const ABSENT: Spend = Spend {
-        tokens: None,
-        usd: None,
-    };
-
     /// The sum of the two, each figure absent where either's is.
     #[must_use]
     pub fn plus(self, other: Spend) -> Spend {
@@ -197,8 +191,16 @@ pub struct SessionCost {
     pub spend: Option<Figures>,
 }
 
+/// A run's sums of tokens and money.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RunSpend {
+    pub models: Figures,
+    /// All the models'.
+    pub all: Spend,
+}
+
 /// The cost of a run: the sum of its sessions'.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RunCost {
     /// `None` when a session's is.
     #[serde(
@@ -208,45 +210,36 @@ pub struct RunCost {
         with = "seconds"
     )]
     pub time: Option<Duration>,
-    pub models: Figures,
-    /// All the models'.
-    pub all: Spend,
+    /// `None` when a session gave no figures.
+    #[serde(flatten)]
+    pub spend: Option<RunSpend>,
 }
 
 impl RunCost {
-    /// The sum of `sessions`, each with the model it ran on if known. A
-    /// session with no figures is an absent part of `all` and of its own
-    /// model's sum. No sessions: no time and no tokens.
-    pub fn of<'a>(
-        sessions: impl IntoIterator<Item = (Option<&'a str>, &'a SessionCost)>,
-    ) -> RunCost {
+    /// The sum of `sessions`. No sessions: no time and no tokens.
+    pub fn of<'a>(sessions: impl IntoIterator<Item = &'a SessionCost>) -> RunCost {
         let mut cost = RunCost {
             time: Some(Duration::ZERO),
-            models: Figures::default(),
-            all: Spend::ZERO,
+            spend: Some(RunSpend {
+                models: Figures::default(),
+                all: Spend::ZERO,
+            }),
         };
-        let mut absent_models = vec![];
-        for (ran_on, session) in sessions {
+        for session in sessions {
             cost.time = cost
                 .time
                 .zip(session.time)
                 .and_then(|(a, b)| a.checked_add(b));
-            match &session.spend {
-                Some(figures) => {
-                    cost.models = cost.models.plus(figures);
-                    cost.all = figures
+            cost.spend = cost
+                .spend
+                .zip(session.spend.as_ref())
+                .map(|(run, figures)| RunSpend {
+                    models: run.models.plus(figures),
+                    all: figures
                         .0
                         .values()
-                        .fold(cost.all, |all, &spend| all.plus(spend));
-                }
-                None => {
-                    cost.all = Spend::ABSENT;
-                    absent_models.extend(ran_on.map(str::to_string));
-                }
-            }
-        }
-        for model in absent_models {
-            cost.models.0.insert(model, Spend::ABSENT);
+                        .fold(run.all, |all, &spend| all.plus(spend)),
+                });
         }
         cost
     }
@@ -437,17 +430,19 @@ mod tests {
             Some(figures(&[("opus", spent(tokens(1, 20, 0, 6000), 0.5))])),
         );
 
-        let cost = RunCost::of([(Some("opus"), &first), (Some("opus"), &second)]);
+        let cost = RunCost::of([&first, &second]);
 
         assert_eq!(
             cost,
             RunCost {
                 time: Some(Duration::from_secs(90)),
-                models: Figures(BTreeMap::from([
-                    ("haiku".into(), spent(tokens(300, 30, 0, 0), 0.25)),
-                    ("opus".into(), spent(tokens(11, 120, 1000, 11000), 2.0)),
-                ])),
-                all: spent(tokens(311, 150, 1000, 11000), 2.25),
+                spend: Some(RunSpend {
+                    models: Figures(BTreeMap::from([
+                        ("haiku".into(), spent(tokens(300, 30, 0, 0), 0.25)),
+                        ("opus".into(), spent(tokens(11, 120, 1000, 11000), 2.0)),
+                    ])),
+                    all: spent(tokens(311, 150, 1000, 11000), 2.25),
+                }),
             }
         );
     }
@@ -458,35 +453,75 @@ mod tests {
             RunCost::of([]),
             RunCost {
                 time: Some(Duration::ZERO),
-                models: Figures::default(),
-                all: spent(tokens(0, 0, 0, 0), 0.0),
+                spend: Some(RunSpend {
+                    models: Figures::default(),
+                    all: spent(tokens(0, 0, 0, 0), 0.0),
+                }),
             }
         );
     }
 
     #[test_log::test]
-    fn a_crashed_session_leaves_absent_all_the_models_sum_and_its_own_models() {
+    fn a_crashed_session_leaves_absent_every_sum_of_tokens_and_money_but_not_the_time() {
         let crashed = session(Some(10), None);
         let other = session(
             Some(20),
-            Some(figures(&[
-                ("opus", spent(tokens(1, 2, 3, 4), 1.0)),
-                ("haiku", spent(tokens(5, 6, 7, 8), 0.5)),
-            ])),
+            Some(figures(&[("haiku", spent(tokens(5, 6, 7, 8), 0.5))])),
         );
 
-        let cost = RunCost::of([(Some("opus"), &crashed), (Some("opus"), &other)]);
+        let cost = RunCost::of([&crashed, &other]);
 
         assert_eq!(
             cost,
             RunCost {
                 time: Some(Duration::from_secs(30)),
-                models: Figures(BTreeMap::from([
-                    ("haiku".into(), spent(tokens(5, 6, 7, 8), 0.5)),
-                    ("opus".into(), Spend::ABSENT),
-                ])),
-                all: Spend::ABSENT,
+                spend: None,
             }
+        );
+    }
+
+    #[test_log::test]
+    fn a_run_with_a_crashed_session_is_kept_with_its_time_alone() {
+        let cost = RunCost::of([&session(Some(10), None)]);
+
+        assert_eq!(
+            serde_json::to_value(cost).unwrap(),
+            json!({"seconds": 10.0})
+        );
+    }
+
+    #[test_log::test]
+    fn a_run_whose_sessions_gave_figures_is_kept_with_its_sums() {
+        let cost = RunCost::of([&session(
+            Some(10),
+            Some(figures(&[(
+                "local",
+                Spend {
+                    tokens: Some(tokens(1, 2, 3, 4)),
+                    usd: None,
+                },
+            )])),
+        )]);
+
+        let local = json!({"tokens": {"input": 1, "output": 2, "cache_write": 3, "cache_read": 4}});
+        assert_eq!(
+            serde_json::to_value(cost).unwrap(),
+            json!({"seconds": 10.0, "models": {"local": local}, "all": local})
+        );
+    }
+
+    #[test_log::test]
+    fn a_run_without_a_session_is_kept_with_no_models_and_nothing_spent() {
+        assert_eq!(
+            serde_json::to_value(RunCost::of([])).unwrap(),
+            json!({
+                "seconds": 0.0,
+                "models": {},
+                "all": {
+                    "tokens": {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0},
+                    "usd": 0.0,
+                },
+            })
         );
     }
 
@@ -506,26 +541,28 @@ mod tests {
             ])),
         );
 
-        let cost = RunCost::of([(Some("opus"), &one)]);
+        let cost = RunCost::of([&one]);
 
         assert_eq!(
             cost,
             RunCost {
                 time: Some(Duration::from_secs(10)),
-                models: Figures(BTreeMap::from([
-                    (
-                        "local".into(),
-                        Spend {
-                            tokens: Some(tokens(1, 2, 3, 4)),
-                            usd: None,
-                        }
-                    ),
-                    ("opus".into(), spent(tokens(10, 20, 30, 40), 1.0)),
-                ])),
-                all: Spend {
-                    tokens: Some(tokens(11, 22, 33, 44)),
-                    usd: None,
-                },
+                spend: Some(RunSpend {
+                    models: Figures(BTreeMap::from([
+                        (
+                            "local".into(),
+                            Spend {
+                                tokens: Some(tokens(1, 2, 3, 4)),
+                                usd: None,
+                            }
+                        ),
+                        ("opus".into(), spent(tokens(10, 20, 30, 40), 1.0)),
+                    ])),
+                    all: Spend {
+                        tokens: Some(tokens(11, 22, 33, 44)),
+                        usd: None,
+                    },
+                }),
             }
         );
     }
@@ -535,7 +572,7 @@ mod tests {
         let ended = session(Some(10), Some(Figures::default()));
         let unended = session(None, Some(Figures::default()));
 
-        assert_eq!(RunCost::of([(None, &ended), (None, &unended)]).time, None);
+        assert_eq!(RunCost::of([&ended, &unended]).time, None);
     }
 
     #[test_log::test]

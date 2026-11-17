@@ -876,9 +876,8 @@ impl Recorded {
         }
     }
 
-    /// What the run cost: the sum of its sessions' costs, each with the
-    /// model the harness reported it ran, else the one set. A session with
-    /// no cost kept counts as one with no figures.
+    /// What the run cost: the sum of its sessions' costs. A session with no
+    /// cost kept counts as one with no figures.
     pub fn cost(&self) -> RunCost {
         cost_of(&self.sessions)
     }
@@ -1159,14 +1158,11 @@ pub fn render(listing: &Listing, colour: bool) -> String {
 fn cost_of(sessions: &[SessionEntry]) -> RunCost {
     let unkept = SessionCost::default();
     RunCost::of(sessions.iter().map(|session| {
-        (
-            session.ran().and_then(Ran::model_ran),
-            session
-                .kept
-                .as_ref()
-                .and_then(|kept| kept.cost.as_ref())
-                .unwrap_or(&unkept),
-        )
+        session
+            .kept
+            .as_ref()
+            .and_then(|kept| kept.cost.as_ref())
+            .unwrap_or(&unkept)
     }))
 }
 
@@ -1789,22 +1785,7 @@ mod tests {
             run.cost(),
             RunCost {
                 time: None,
-                models: Figures(BTreeMap::from([
-                    (
-                        "claude-haiku-5-5".into(),
-                        Spend {
-                            tokens: Some(Tokens {
-                                input: 1,
-                                output: 2,
-                                cache_write: 3,
-                                cache_read: 4,
-                            }),
-                            usd: Usd::new(0.5),
-                        }
-                    ),
-                    ("claude-opus-5-5".into(), Spend::ABSENT),
-                ])),
-                all: Spend::ABSENT,
+                spend: None,
             }
         );
     }
