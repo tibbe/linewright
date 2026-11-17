@@ -235,4 +235,21 @@ module pipeline {
             and optionsOn(world, I) == Set(opt("clear stalled", I, "")))
     .then(does("clear stalled", I, "")).then(finishes)
     .expect(not(items.get(I).stalled) and mayNowStart(I, "design"))
+
+  /// #1325: a claim let go before any outcome leaves no work of Linewright's
+  /// on the issue, so a person's pull request that closes it is not Linewright's
+  /// to manage.
+  run issue1325ClaimTest = setupFor(NEEDS_TRIAGE, true, false, false, false, false, 3)
+    .then(does("claim", I, "")).then(personUnassignsLinewright(I))
+    .then(personRemovesStatusLabel(I)).then(personOpensPr(Q))
+    .expect(stateOfI == "in review" and not(managed(world, I)))
+  /// #1325: a label applied as the outcome of a run keeps the issue worked
+  /// once a person replaces it.
+  run issue1325OutcomeTest = setupFor(NEEDS_TRIAGE, true, false, false, false, false, 3)
+    .then(does("claim", I, "")).then(does("start run", I, "triage"))
+    .then(does("end run", I, "ready-for-human")).then(5.reps(_ => finishes))
+    .then(does("let go", I, "")).then(5.reps(_ => finishes))
+    .expect(items.get(I).status == READY_FOR_HUMAN and not(items.get(I).lw))
+    .then(personRemovesStatusLabel(I)).then(personOpensPr(Q))
+    .expect(stateOfI == "in review" and managed(world, I))
 }
