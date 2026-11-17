@@ -42,6 +42,8 @@ make to the brief of the design stage.
     the work turned out, so that I do not trust that replay.
 13. As an operator, I want to run the judge on a replay again, so that I can
     change the judge and not replay the case.
+14. As an operator, I want a replay to say what it cost, so that I can compare
+    two changes by their cost and not only by their results.
 
 ## Cases
 
@@ -169,7 +171,8 @@ as plain files.
 | sessions   | the record of each session that Linewright keeps of a run ([Ending](runs.md#ending)), as files                           |
 | writes     | each write that Linewright would have made to GitHub, in order, such as a comment, a label, a ticket or the pull request |
 | commits    | the branch that Linewright would have pushed, if the run pushes one, in a git repository                                 |
-| build      | the output of the build of the environment, if the replay built it                                                       |
+| build      | the output and the time of the build of the environment, if the replay built it                                          |
+| cost       | the time of the replay from its start to its end, with the build, and the cost of its run, if it has a run ([Cost](runs.md#cost)) |
 | Linewright | the version of Linewright that ran the replay                                                                            |
 | case       | the ID of the run from which the case of the replay was captured |
 | judgement  | the judgement of the replay, if a judge made one ([Judging](#judging)) |

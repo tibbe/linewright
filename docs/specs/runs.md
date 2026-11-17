@@ -24,6 +24,8 @@ hands #43 back at once, saying which permission to grant.
 6. As a maintainer, I want an agent's comments and pull requests to show the
    screenshots and videos it made, so that I see what a change does without
    running it.
+7. As an operator, I want to know what each session of a run cost, so that I
+   see where the time and the tokens go.
 
 ## Stages
 
@@ -171,6 +173,28 @@ runs.
   not retried: it hands its item back, and the comment says the work may need
   cutting smaller or a longer timeout.
 
+## Cost
+
+The cost of a session is how long it ran, the tokens it used for each model,
+and what those tokens cost. The cost of a run is the sum of the costs of its
+sessions.
+
+- **Time.** The time of a session is the time that the session timeout counts
+  ([Limits](#limits)).
+- **Tokens.** Linewright counts four kinds of tokens: input, output,
+  cache-write and cache-read tokens.
+- **Money.** The cost of the tokens is the estimate in US dollars that the
+  harness gives. The operator can pay a different amount, for example under a
+  subscription.
+- **Follow-ups and subagents.** The cost of a session includes its follow-ups
+  and its subagents. Linewright counts each request to the model one time.
+- **Run totals.** For a run, Linewright adds up the tokens and their cost for
+  each model and for all the models. A run without a session used no tokens.
+- **Missing figures.** A figure that the harness does not give is absent, not
+  zero. For example, the harness gives no figures for a session that crashed,
+  and no cost for a model that it cannot price. A sum with an absent part is
+  absent, and the other sums stay.
+
 ## Ending
 
 A run ends in one of these outcomes, each with its name in JSON.
@@ -222,7 +246,7 @@ A run ends in one of these outcomes, each with its name in JSON.
 - **Restarts.** A restart leaves the runs in flight interrupted.
 - **Kept.** Runs are kept across restarts, with their outcomes and their
   sessions' transcripts and attachments directories, and with each session's
-  model and effort, as the
+  cost ([Cost](#cost)) and its model and effort, as the
   harness reports it ran them or else as they were set, and where each of its
   settings and brief files came from: the repository, the operator or
   Linewright's own, or, for a model or effort none set, the harness.
@@ -273,3 +297,5 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
   it, such as a container its maintenance command started.
 - A bound on how long a plain clone of a branch takes, which the network sets.
 - Removing old runs, with their transcripts and attachments.
+- Showing what a run cost, in the web UI or in the output of `runs` and `logs`.
+- Pricing tokens at prices other than the harness's own.
