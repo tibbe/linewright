@@ -848,8 +848,10 @@ module linewright {
     else x
 
   /// R ## Managed items "Worked": "GitHub shows Linewright opening the item,
-  /// claiming it, applying a label to it or opening a pull request that closes
-  /// it. A comment alone is not working it." R ## Writes "Its own writes":
+  /// applying a label to it as a run on it ends, or opening a pull request
+  /// that closes it." Of the labels Linewright applies, only `needs-triage`
+  /// is never applied as a run ends: it answers a reply (R ## Working an
+  /// item). R ## Writes "Its own writes":
   /// "Linewright tells its own writes from a person's by their author." Here
   /// they carry its name.
   pure def applyWrite(w: World, wt: Write, born: int): int -> Item = {
@@ -859,7 +861,7 @@ module linewright {
     val made = { ...ABSENT, exists: true, byLw: true, born: born, required: w.requireLabel, worked: true }
     if (wt.op == "comment") its
     else if (wt.op == "add label")
-      its.set(i, { ...addStatus(x, wt.arg), worked: true, letGo: false,
+      its.set(i, { ...addStatus(x, wt.arg), worked: x.worked or wt.arg != NEEDS_TRIAGE, letGo: false,
                    reply: if (wt.arg == NEEDS_INFO) false else x.reply })
     else if (wt.op == "remove label") its.set(i, { ...removeStatus(x, wt.arg), letGo: false })
     else if (wt.op == "add designed")
@@ -868,7 +870,7 @@ module linewright {
     else if (wt.op == "add stalled") its.set(i, { ...x, stalled: true, worked: true })
     else if (wt.op == "remove stalled") its.set(i, { ...x, stalled: false })
     else if (wt.op == "assign")
-      its.set(i, { ...x, lw: true, byHand: false, worked: true, letGo: false })
+      its.set(i, { ...x, lw: true, byHand: false, letGo: false })
     else if (wt.op == "unassign")
       its.set(i, { ...x, lw: false, byHand: false, unassignedSince: true,
                    letGo: wt.arg == "hand back" })

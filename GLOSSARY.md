@@ -217,7 +217,8 @@ reviews it.
 
 **Worked**:
 Of an item: Linewright has done work on it that GitHub shows as its own, such
-as opening, claiming or labeling it.
+as opening it, labeling it as a run ends or opening a pull request that closes
+it.
 
 **Managed**:
 Of an item: one Linewright counts as its work, whether to come, under way or

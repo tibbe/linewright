@@ -231,9 +231,8 @@ A person steers an item through GitHub, and Linewright follows.
 Linewright manages an item it has worked or that asks for its work, while the
 item has a state ([State](#state)).
 
-- **Worked.** GitHub shows Linewright opening the item, claiming it, applying
-  a label to it or opening a pull request that closes it. A comment alone is
-  not working it.
+- **Worked.** GitHub shows Linewright opening the item, applying a label to
+  it as a run on it ends, or opening a pull request that closes it.
 - **Asking for its work.** An open item Linewright is assigned to, or one
   marked for Linewright whose status label asks for its work.
 
