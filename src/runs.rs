@@ -1816,6 +1816,40 @@ mod tests {
         );
     }
 
+    #[test_log::test(tokio::test)]
+    async fn a_run_kept_as_files_reads_in_flight_while_it_runs_ended_once_it_ends_and_interrupted_if_it_stopped_without_an_end()
+     {
+        let out = tempfile::tempdir().unwrap();
+        let files = RunFiles::new(out.path());
+        let ended: RunId = "1/triage-1".parse().unwrap();
+        let stopped: RunId = "2/triage-1".parse().unwrap();
+        let state = |id| files.read(id).unwrap().map(|run| run.state);
+        assert_eq!(state(&ended), None);
+
+        let running = files
+            .begin(work(1, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+            .await
+            .unwrap();
+        let in_flight = state(&ended);
+        running.end(at("2026-10-15T09:05:00Z"), Ending::Done).await;
+        drop(
+            files
+                .begin(work(2, WorkKind::Triage), at("2026-10-15T09:00:00Z"))
+                .await
+                .unwrap(),
+        );
+
+        assert_eq!(in_flight, Some(State::InFlight));
+        assert_eq!(
+            state(&ended),
+            Some(State::Ended {
+                at: at("2026-10-15T09:05:00Z"),
+                ending: Ending::Done,
+            })
+        );
+        assert_eq!(state(&stopped), Some(State::Interrupted));
+    }
+
     #[test_log::test]
     fn a_run_written_as_files_is_its_record_at_its_place_and_one_with_no_end_is_written_with_none()
     {

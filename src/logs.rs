@@ -2,8 +2,10 @@ use std::time::Duration;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::domain::Number;
+use crate::runs::files::RunFiles;
 use crate::runs::{self, Recorded, RunId, Runs, Started, State};
 use crate::transcript::{
     self, After, FollowedLine, Follower, InFlight, ReadTo, SessionRecord, Transcript, Verbosity,
@@ -125,19 +127,58 @@ fn no_run_among_none(which: &Which) -> NoSuchRun {
     }
 }
 
+/// Where runs are kept: in the database, or as files under a directory.
+#[derive(Clone)]
+pub enum KeptRuns {
+    Database(Runs),
+    Files(RunFiles),
+}
+
+impl KeptRuns {
+    /// Run `id`, or `None` if it has no record; a record that does not read
+    /// fails.
+    async fn try_read_run(&self, id: &RunId) -> anyhow::Result<Option<Recorded>> {
+        match self {
+            KeptRuns::Database(runs) => runs.try_read_run(id).await,
+            KeptRuns::Files(files) => files.read(id),
+        }
+    }
+
+    /// As [`KeptRuns::try_read_run`], with a record that does not read
+    /// logged and taken as none.
+    async fn read_run(&self, id: &RunId) -> Option<Recorded> {
+        match self {
+            KeptRuns::Database(runs) => runs.read_run(id).await,
+            KeptRuns::Files(files) => files
+                .read(id)
+                .inspect_err(
+                    |e| warn!(run = %id, error = format!("{e:#}"), "ignoring a run's record"),
+                )
+                .ok()
+                .flatten(),
+        }
+    }
+
+    /// The runs among which `which` is picked.
+    async fn read_for(&self, which: &Which) -> anyhow::Result<Vec<Recorded>> {
+        match (self, which) {
+            (KeptRuns::Database(runs), Which::Item(_)) => runs.read().await,
+            (KeptRuns::Files(files), Which::Item(item)) => files.read_of_item(*item),
+            (_, Which::Run { id, .. }) => Ok(self
+                .try_read_run(id)
+                .await
+                .with_context(|| format!("reading the record of {id}"))?
+                .into_iter()
+                .collect()),
+        }
+    }
+}
+
 /// The run `which` names. A run named by its ID whose record does not read
 /// is an error, not a run that is missing. Its record is read once, so a
 /// record that stops reading in between is never taken as missing.
-async fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
-    let recorded = match which {
-        Which::Run { id, .. } => runs
-            .try_read_run(id)
-            .await
-            .with_context(|| format!("reading the record of {id}"))?
-            .into_iter()
-            .collect(),
-        Which::Item(_) => runs.read().await?,
-    };
+async fn pick_from(kept: &KeptRuns, which: &Which) -> Result<Recorded, LogsError> {
+    let recorded = kept.read_for(which).await?;
     Ok(pick(&recorded, which)?)
 }
 
@@ -145,7 +186,7 @@ async fn pick_from(runs: &Runs, which: &Which) -> Result<Recorded, LogsError> {
 /// is no database.
 pub async fn answer(runs: Option<&Runs>, which: &Which) -> Result<Transcript, LogsError> {
     let runs = runs.ok_or_else(|| no_run_among_none(which))?;
-    let run = pick_from(runs, which).await?;
+    let run = pick_from(&KeptRuns::Database(runs.clone()), which).await?;
     let mut records = run
         .sessions
         .iter()
@@ -231,20 +272,18 @@ const FOLLOW_EVERY: Duration = Duration::from_millis(100);
 
 /// A run's records, read as they grow.
 pub struct RunRecords {
-    runs: Runs,
+    kept: KeptRuns,
     run: Started,
     sessions: Vec<SessionRecord>,
     ended: bool,
 }
 
 impl RunRecords {
-    /// The records of the run `which` names of `runs`, or of none where
-    /// there is no database.
-    pub async fn start(runs: Option<&Runs>, which: &Which) -> Result<RunRecords, LogsError> {
-        let runs = runs.ok_or_else(|| no_run_among_none(which))?;
-        let run = pick_from(runs, which).await?.started();
+    /// The records of the run `which` names of the runs `kept`.
+    pub async fn start(kept: KeptRuns, which: &Which) -> Result<RunRecords, LogsError> {
+        let run = pick_from(&kept, which).await?.started();
         Ok(RunRecords {
-            runs: runs.clone(),
+            kept,
             run,
             sessions: vec![],
             ended: false,
@@ -263,7 +302,7 @@ impl RunRecords {
     /// each of its sessions' records, with what it ran with.
     pub async fn read(&mut self) -> anyhow::Result<()> {
         let recorded = self
-            .runs
+            .kept
             .read_run(self.run.id())
             .await
             .with_context(|| format!("reading the record of {}", self.run.id()))?;
@@ -326,7 +365,8 @@ impl Following {
         verbosity: Verbosity,
         after: Option<After>,
     ) -> Result<Following, LogsError> {
-        let records = RunRecords::start(runs, which).await?;
+        let runs = runs.ok_or_else(|| no_run_among_none(which))?;
+        let records = RunRecords::start(KeptRuns::Database(runs.clone()), which).await?;
         let follower = Follower::new(records.started().clone(), verbosity, after);
         Ok(Following { records, follower })
     }

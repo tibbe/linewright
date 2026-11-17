@@ -27,7 +27,7 @@ use super::{
 };
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
-use crate::logs::{LogsError, RunRecords, Which};
+use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
 use crate::phrase::Tone;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
@@ -1081,7 +1081,7 @@ impl FollowedRun {
             item: None,
         };
         Ok(FollowedRun {
-            records: RunRecords::start(Some(&sources.runs), &which).await?,
+            records: RunRecords::start(KeptRuns::Database(sources.runs.clone()), &which).await?,
             page: PageFollower {
                 feed: Feed::default(),
                 view: RunView::new(id.clone(), item_line(sources, id), verbose),

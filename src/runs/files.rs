@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     Begin, Ending, Keeping, Ran, Recorded, RunId, RunOf, Running, SessionEntry, SessionKept,
-    Started, StartedBy, State, cost_of, entries, off_runtime,
+    Started, StartedBy, State, cost_of, entries, is_locked, off_runtime,
 };
 use crate::cost::{RunCost, SessionCost};
-use crate::domain::Timestamp;
+use crate::domain::{Number, Timestamp};
 use crate::records;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,6 +49,29 @@ impl Record {
             sessions: vec![],
             answered_until: None,
         }
+    }
+
+    /// The run this record keeps, each session's directory under `dir`: in
+    /// flight when it has no end and `in_flight`, and interrupted when it
+    /// has none and not.
+    fn recorded(self, dir: &Path, in_flight: bool) -> Result<Recorded> {
+        let state = match self.end {
+            Some(End { at, ending }) => State::Ended { at, ending },
+            None if in_flight => State::InFlight,
+            None => State::Interrupted,
+        };
+        let sessions = self
+            .sessions
+            .iter()
+            .map(|session| session.entry(dir))
+            .collect();
+        Ok(Recorded::new(
+            Started::new(self.id(), self.started_by).map_err(anyhow::Error::msg)?,
+            self.started_at,
+            state,
+            sessions,
+            self.answered_until,
+        ))
     }
 
     /// The record of `recorded`, each session's directory relative to `dir`
@@ -150,9 +173,13 @@ impl RunFiles {
         self.dir.join("runs")
     }
 
+    fn item_dir(&self, item: Number) -> PathBuf {
+        self.runs_dir().join("items").join(item.0.to_string())
+    }
+
     fn dir_of(&self, of: &RunOf) -> PathBuf {
         match of {
-            RunOf::Work { item, .. } => self.runs_dir().join("items").join(item.0.to_string()),
+            RunOf::Work { item, .. } => self.item_dir(*item),
             RunOf::Automation { automation } => self
                 .runs_dir()
                 .join(AUTOMATIONS)
@@ -207,6 +234,55 @@ impl RunFiles {
         records::save(&path, &Record::of(recorded, &self.dir), "a run's record")
     }
 
+    /// Run `id`, kept here, or `None` when it has no record here. A run
+    /// with no end reads as in flight if its lock was held as its record was
+    /// read, and as interrupted if not: a run writes its end before it lets
+    /// go of its lock.
+    ///
+    /// # Errors
+    ///
+    /// When its record cannot be read.
+    pub fn read(&self, id: &RunId) -> Result<Option<Recorded>> {
+        self.read_at(&self.record_path(id))
+    }
+
+    /// The runs of `item` kept here, as [`RunFiles::read`] reads each.
+    ///
+    /// # Errors
+    ///
+    /// When the runs' directory or a record cannot be read.
+    pub(crate) fn read_of_item(&self, item: Number) -> Result<Vec<Recorded>> {
+        let records = entries(&self.item_dir(item))?.into_iter().filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        });
+        let mut recorded = vec![];
+        for path in records {
+            recorded.extend(self.read_at(&path)?);
+        }
+        Ok(recorded)
+    }
+
+    /// The run whose record is at `path`, as [`RunFiles::read`] reads it.
+    /// It never holds the run's lock while the run takes it.
+    fn read_at(&self, path: &Path) -> Result<Option<Recorded>> {
+        if !path
+            .try_exists()
+            .with_context(|| format!("reading {}", path.display()))?
+        {
+            return Ok(None);
+        }
+        let lock = path.with_extension("lock");
+        let held_before = is_locked(&lock);
+        let Some(record) = read_record(path)? else {
+            return Ok(None);
+        };
+        record
+            .recorded(&self.dir, held_before || is_locked(&lock))
+            .map(Some)
+            .with_context(|| format!("reading {}", path.display()))
+    }
+
     /// What run `id`, kept here, cost, as [`Recorded::cost`] gives it.
     ///
     /// # Errors
@@ -233,6 +309,18 @@ impl RunFiles {
 }
 
 const AUTOMATIONS: &str = "automations";
+
+/// The record at `path`, or `None` when there is none.
+fn read_record(path: &Path) -> Result<Option<Record>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .with_context(|| format!("reading {}", path.display()))
+}
 
 fn record_file(id: &RunId) -> String {
     format!("{}{}.json", file_prefix(&id.of), id.n)
