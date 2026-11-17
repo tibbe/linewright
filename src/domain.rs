@@ -218,6 +218,18 @@ pub mod label {
         label(STALLED, "Handed back in a stall"),
     ];
 
+    /// Whether Linewright applied the label `name` as a run on an item
+    /// ended, when it applied it, which makes the item worked
+    /// (`docs/specs/repository.md`, Managed items): as
+    /// [`super::StatusLabel::applied_as_run_ends`] tells of a status label,
+    /// and always for any other label.
+    pub fn applied_as_run_ends(name: &str) -> bool {
+        super::StatusLabel::ALL
+            .into_iter()
+            .find(|status| status.label() == name)
+            .is_none_or(super::StatusLabel::applied_as_run_ends)
+    }
+
     /// A label in the repository, named as the repository spells it.
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct RepoLabel {
@@ -311,6 +323,18 @@ impl StatusLabel {
             StatusLabel::NeedsInfo => label::NEEDS_INFO,
             StatusLabel::ReadyForAgent => label::READY_FOR_AGENT,
             StatusLabel::ReadyForHuman => label::READY_FOR_HUMAN,
+        }
+    }
+
+    /// Whether Linewright applies it as a run on an item ends: all but
+    /// `needs-triage`, which it applies when a reply comes
+    /// (`docs/specs/repository.md`, Working an item).
+    pub fn applied_as_run_ends(self) -> bool {
+        match self {
+            StatusLabel::NeedsTriage => false,
+            StatusLabel::NeedsInfo | StatusLabel::ReadyForAgent | StatusLabel::ReadyForHuman => {
+                true
+            }
         }
     }
 
@@ -1237,7 +1261,7 @@ pub enum PullHeld {
 
 impl PullSigns<'_> {
     /// Whether `linewright` worked it, as [`Issue::worked_by`] tells: it
-    /// opened it, assigned itself to it or labeled it.
+    /// opened it, or labeled it as a run on it ended.
     pub fn worked_by(&self, linewright: &Login) -> bool {
         WorkSigns {
             author: Some(self.author),
@@ -1512,23 +1536,22 @@ impl WorkSigns<'_> {
     /// items):
     ///
     /// - it opened it;
-    /// - it assigned itself to it once: it claimed it;
-    /// - it applied a label to it;
+    /// - it applied a label to it as a run on it ended, as
+    ///   [`label::applied_as_run_ends`] tells;
     /// - it opened a pull request closing it.
     ///
-    /// A comment alone is not working it, and being assigned alone asks for
-    /// its work.
+    /// A comment alone is not working it, nor is an assignment, whoever made
+    /// it: being assigned asks for its work instead.
     fn worked_by(&self, linewright: &Login) -> bool {
         self.author == Some(linewright)
             || self.events.iter().any(|event| match event {
-                IssueEvent::Labeled { by, .. } => by.as_ref() == Some(linewright),
-                IssueEvent::Assignment(Assignment::Assigned {
-                    assignee, actor, ..
-                }) => assignee == linewright && actor == linewright,
+                IssueEvent::Labeled {
+                    label: name, by, ..
+                } => by.as_ref() == Some(linewright) && label::applied_as_run_ends(name),
                 IssueEvent::Unlabeled { .. }
                 | IssueEvent::Commented { .. }
                 | IssueEvent::Reopened { .. }
-                | IssueEvent::Assignment(Assignment::Unassigned { .. }) => false,
+                | IssueEvent::Assignment(_) => false,
             })
             || self.closed_by.iter().any(|pr| pr.author == *linewright)
     }

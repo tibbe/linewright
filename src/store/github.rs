@@ -6429,16 +6429,17 @@ mod tests {
     /// knows, and no request it makes lists every open issue or pull request.
     /// Among the open issues, a person labeled #1 `ready-for-agent` and
     /// assigned Linewright to #2; #3 and #6 carry only a person's labels,
-    /// and Linewright only commented on #4. Linewright labeled #5, whose
-    /// label a person has since replaced: no filter finds it, and Linewright
-    /// knows it. #900 is Linewright's tracking issue. Of the pull requests,
-    /// #10 is Linewright's, a person assigned Linewright to their #11, #12 is
-    /// a person's alone and Linewright's #13, which it knows, is closed.
+    /// and Linewright only commented on #4. Linewright labeled #5 as a run
+    /// on it ended, and a person has since replaced the label: no filter
+    /// finds it, and Linewright knows it. #900 is Linewright's tracking
+    /// issue. Of the pull requests, #10 is Linewright's, a person assigned
+    /// Linewright to their #11, #12 is a person's alone and Linewright's #13,
+    /// which it knows, is closed.
     #[test_log::test(tokio::test)]
     async fn a_snapshot_holds_the_managed_items_found_by_linewrights_filters_without_listing_every_open_item()
      {
         let bot = "tibbe-bot";
-        let mut known = issue_json(5, "tibbe", &[("needs-triage", bot)], &[], &[]);
+        let mut known = issue_json(5, "tibbe", &[("needs-info", bot)], &[], &[]);
         known["labels"]["nodes"] = json!([{"name": "question"}]);
         let repository = FakeRepository {
             issues: vec![

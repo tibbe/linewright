@@ -1,7 +1,8 @@
 use crate::common;
 
 use common::{
-    NOW, assigning_linewright, at, labeled_by_linewright, ticket, unassigning_linewright, view,
+    NOW, assigning_linewright, at, labeled_by_linewright, linewright_labeling,
+    linewright_letting_go, relabeled, ticket, unassigning_linewright, view,
 };
 use linewright::board::{
     Board, Card, CardLine, CardStatus, Column, Elapsed, Ended, Held, LaneHead, Running, Stop, board,
@@ -165,16 +166,18 @@ fn with_closed(mut view: View, closed: Vec<ClosedItem>) -> View {
     view
 }
 
-/// What a ticket Linewright claimed holds of how it was worked.
-fn claimed() -> WorkFacts {
+/// What a ticket Linewright cut and claimed holds of how it was worked.
+fn cut_and_claimed() -> WorkFacts {
     WorkFacts {
+        author: Some(Login::new("factory")),
         assignees: vec![Login::new("factory")],
         events: vec![assigning_linewright("2026-09-20T10:00:00Z")],
         ..WorkFacts::default()
     }
 }
 
-/// Ticket #`number`, which Linewright claimed, closed at `closed_at`.
+/// Ticket #`number`, which Linewright cut and claimed, closed at
+/// `closed_at`.
 fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedItem {
     ClosedItem {
         number: Number(number),
@@ -187,7 +190,7 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
                 filed: None,
                 sub_issues: vec![],
                 labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
-                work: claimed(),
+                work: cut_and_claimed(),
             },
             merged_by: merged_by.map(Number),
             reason: None,
@@ -836,7 +839,7 @@ fn lanes_are_in_number_order_with_a_tracking_issues_tickets_closed_of_total() {
             filed: None,
             sub_issues: vec![],
             labels: vec![label::DESIGNED.into()],
-            work: claimed(),
+            work: cut_and_claimed(),
         },
         merged_by: Some(Number(40)),
         reason: None,
@@ -990,7 +993,7 @@ fn closed_ticket(number: u64, tracking: u64, closed_at: &str) -> ClosedItem {
             filed: None,
             sub_issues: vec![],
             labels: vec![label::DESIGNED.into()],
-            work: claimed(),
+            work: cut_and_claimed(),
         },
         merged_by: Some(Number(number + 100)),
         reason: None,
@@ -1980,11 +1983,23 @@ fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewrigh
     let handed_back = Issue {
         events: vec![
             assigning_linewright("2026-10-01T10:00:00Z"),
-            unassigning_linewright("2026-10-01T10:30:00Z"),
+            linewright_labeling(label::READY_FOR_HUMAN, "2026-10-01T10:20:00Z"),
+            linewright_letting_go("2026-10-01T10:20:00Z"),
+            IssueEvent::Unlabeled {
+                label: label::READY_FOR_HUMAN.into(),
+                at: at("2026-10-01T10:30:00Z"),
+            },
         ],
         ..ticket(2, "Handed back")
     };
-    let mut view = view(vec![unmarked, handed_back], vec![]);
+    let taken_back = Issue {
+        events: vec![
+            assigning_linewright("2026-10-01T10:00:00Z"),
+            unassigning_linewright("2026-10-01T10:30:00Z"),
+        ],
+        ..ticket(3, "Taken back from a claim")
+    };
+    let mut view = view(vec![unmarked, handed_back, taken_back], vec![]);
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Ready, 2)]);
@@ -2335,12 +2350,26 @@ fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_
 }
 
 #[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_unassigned_from_is_in_done()
+fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_unassigned_from_is_not_on_the_board()
  {
-    let handed_back = WorkFacts {
+    let taken_back = WorkFacts {
         events: vec![
             assigning_linewright("2026-09-29T10:00:00Z"),
             unassigning_linewright("2026-09-29T11:00:00Z"),
+        ],
+        ..WorkFacts::default()
+    };
+
+    assert_eq!(placed_requiring_label(taken_back), []);
+}
+
+#[test_log::test]
+fn with_a_required_label_a_closed_issue_without_it_linewright_handed_back_is_in_done() {
+    let handed_back = WorkFacts {
+        events: vec![
+            assigning_linewright("2026-09-29T10:00:00Z"),
+            linewright_labeling(label::READY_FOR_HUMAN, "2026-09-29T10:30:00Z"),
+            linewright_letting_go("2026-09-29T10:30:00Z"),
         ],
         ..WorkFacts::default()
     };
@@ -2766,7 +2795,11 @@ fn a_triage_card_says_what_a_ready_card_would() {
         )
     };
     let unmarked = requiring_label(view(
-        vec![labeled_by_linewright(triage(ticket(4, "Unmarked")))],
+        vec![relabeled(
+            ticket(4, "Unmarked"),
+            label::NEEDS_INFO,
+            label::NEEDS_TRIAGE,
+        )],
         vec![],
     ));
 
