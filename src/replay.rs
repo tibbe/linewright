@@ -1,10 +1,12 @@
 //! Running a case's stage on the case, in place of GitHub
 //! (`docs/specs/benchmarks.md`, Replaying).
 
+mod configuration;
 mod gh_gate;
 mod journal;
 pub mod judge;
 
+pub use configuration::{Configuration, ConfigurationRefusal};
 pub use gh_gate::{Gate, GhConfigDir, Upstream};
 pub use journal::Journal;
 
@@ -50,6 +52,8 @@ const WRITES: &str = "writes";
 const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
 const CASE: &str = "case";
+/// The directory of the output that keeps a copy of the configuration.
+const CONFIGURATION: &str = "configuration";
 const BUILD_LOG: &str = "build.log";
 /// Beside [`BUILD_LOG`]: how long the build took, in seconds.
 const BUILD_SECONDS: &str = "build-seconds";
@@ -257,7 +261,7 @@ fn write_part(dir: &Path, name: &str, text: &str) -> Result<()> {
 /// Replaces the file at `path` with one holding `text`, written first at
 /// `partial` in the same directory, so that a reader sees the one or the
 /// other whole. A failed write leaves no file at `partial`.
-fn write_whole(path: &Path, partial: &Path, text: &str) -> Result<()> {
+fn write_whole(path: &Path, partial: &Path, text: impl AsRef<[u8]>) -> Result<()> {
     let written = std::fs::write(partial, text).and_then(|()| std::fs::rename(partial, path));
     if written.is_err() {
         let _ = std::fs::remove_file(partial);
@@ -265,9 +269,10 @@ fn write_whole(path: &Path, partial: &Path, text: &str) -> Result<()> {
     written.with_context(|| format!("writing {}", path.display()))
 }
 
-/// Runs the stage of `case` on its item with `config` and `harness`, with
-/// the case in place of GitHub, and keeps what it did in `out`: the version
-/// and the ID of the case's run first, `in-flight` as the outcome once the
+/// Runs the stage of `case` on its item with `config` and `harness`, its
+/// sessions with `configuration` over every other layer, with the case in
+/// place of GitHub, and keeps what it did in `out`: the version, the ID
+/// of the case's run and a copy of `configuration` first, `in-flight` as the outcome once the
 /// run begins, its ending once it ends, and the cost once it returns,
 /// however it does. Its sessions' `gh` cannot read the case's repository on GitHub
 /// (`docs/specs/benchmarks.md`, The repository on GitHub). `config`'s work
@@ -288,8 +293,9 @@ pub async fn run(
     out: &Output,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
+    configuration: Option<&Configuration>,
 ) -> Result<Ending> {
-    let ran = run_unfinished(case, out, harness, config).await;
+    let ran = run_unfinished(case, out, harness, config, configuration).await;
     out.finished();
     ran
 }
@@ -300,16 +306,31 @@ async fn run_unfinished(
     out: &Output,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
+    configuration: Option<&Configuration>,
 ) -> Result<Ending> {
     out.write(VERSION, &format!("{COMMAND} {VERSION_AND_COMMIT}\n"))?;
     out.write(CASE, &format!("{}\n", case.run()))?;
+    if let Some(configuration) = configuration {
+        configuration
+            .keep(&out.path().join(CONFIGURATION))
+            .context("keeping a copy of the configuration")?;
+    }
     let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
     in_own_dir(
         &work_dir,
         winding_up,
         "replay",
         async |replay_dir, clones_winding_up| {
-            let ending = run_in(case, out, harness, config, replay_dir, clones_winding_up).await?;
+            let ending = run_in(
+                case,
+                out,
+                harness,
+                config,
+                configuration,
+                replay_dir,
+                clones_winding_up,
+            )
+            .await?;
             out.ended(ending)?;
             Ok(ending)
         },
@@ -350,6 +371,7 @@ async fn run_in(
     out: &Output,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
+    configuration: Option<&Configuration>,
     replay_dir: &Path,
     clones_winding_up: &WindingUp,
 ) -> Result<Ending> {
@@ -422,8 +444,13 @@ async fn run_in(
         .await?;
     out.in_flight(running.id())?;
     info!(run = %running.id(), case = %case.run(), "replaying");
+    let with = shell.run_with(&setting.repo, RunKind::Stage(kind));
+    let with = match configuration {
+        Some(configuration) => configuration.over(with, &setting.repo, &shell.operator_briefs),
+        None => with,
+    };
     let ctx = run::Ctx {
-        with: shell.run_with(&setting.repo, RunKind::Stage(kind)),
+        with,
         as_of: now,
         reworked: None,
         cancel: Cancellation::default(),

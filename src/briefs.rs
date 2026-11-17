@@ -304,7 +304,7 @@ impl OperatorBriefs {
     pub fn read_over(own: OwnTemplates, dir: Option<&Path>) -> Result<OperatorBriefs> {
         let mut files = Vec::new();
         if let Some(dir) = dir {
-            for path in files_under(dir)? {
+            for path in files_under(dir, "briefs directory")? {
                 let file = dir.join(&path);
                 let bytes = std::fs::read(&file)
                     .with_context(|| format!("reading the brief file {}", file.display()))?;
@@ -339,10 +339,12 @@ impl OperatorBriefs {
         &self.layer
     }
 
-    /// The briefs of `repository`'s layer over the operator's and
+    /// The briefs of `above`, highest first, over the operator's layer and
     /// Linewright's own.
-    pub fn with_repository(&self, repository: &BriefLayer) -> Resolved {
-        Briefs::resolve(&self.own, &[repository, &self.layer])
+    pub fn with_layers(&self, above: &[&BriefLayer]) -> Resolved {
+        let mut layers = above.to_vec();
+        layers.push(&self.layer);
+        Briefs::resolve(&self.own, &layers)
     }
 
     /// The briefs of a run with no layer above the operator's.
@@ -353,16 +355,16 @@ impl OperatorBriefs {
 
 /// The path under `dir` of every file in it and its subdirectories, in
 /// order, with `/` between the parts, leaving out hidden entries and what
-/// is under them.
-fn files_under(dir: &Path) -> Result<Vec<String>> {
+/// is under them. An error names the directory it cannot read as the
+/// `kind`, such as `briefs directory`.
+pub(crate) fn files_under(dir: &Path, kind: &str) -> Result<Vec<String>> {
     let mut files = Vec::new();
     let mut dirs = vec![(dir.to_path_buf(), String::new())];
     while let Some((at, prefix)) = dirs.pop() {
         let entries = std::fs::read_dir(&at)
-            .with_context(|| format!("reading the briefs directory {}", at.display()))?;
+            .with_context(|| format!("reading the {kind} {}", at.display()))?;
         for entry in entries {
-            let entry =
-                entry.with_context(|| format!("reading the briefs directory {}", at.display()))?;
+            let entry = entry.with_context(|| format!("reading the {kind} {}", at.display()))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if is_hidden(&name) {
                 continue;
