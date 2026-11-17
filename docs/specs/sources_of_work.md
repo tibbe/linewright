@@ -54,5 +54,24 @@ Automations are a source of work too; see [Automations](automations.md).
 
 ## Polling
 
-Linewright polls, at an interval (default 60 s), and with webhooks on also
-reacts to GitHub's deliveries as they arrive; see [Webhooks](webhooks.md).
+Linewright polls GitHub at an interval (`poll-interval`). With webhooks on, it
+also reacts to GitHub's deliveries as they arrive; see
+[Webhooks](webhooks.md).
+
+- **The interval.** A poll starts one interval after the previous poll
+  started.
+- **One poll at a time.** When a poll takes longer than the interval, the next
+  poll starts as soon as it ends.
+- **What a poll reads.** What a poll reads from GitHub grows with Linewright's
+  work. It does not grow with the rest of the repository.
+- **Linewright's work.** The open items Linewright manages
+  ([Managed items](repository.md#managed-items)), the items it is assigned to
+  and the branches it pushed. Also the items closed or merged within
+  `done-window` or `spec-lookback`.
+- **Reaction time.** Without webhooks, Linewright starts to do what a change
+  asks of it at most one interval and 10 s after the change. A change that
+  waits, such as for a run to end or for a hold, counts from the end of its
+  wait. This bound holds when Linewright's work is at most 100 items and
+  branches, and GitHub answers each request within 1 s.
+- **Beyond these conditions.** With more work, or with slower answers from
+  GitHub, the 10 s grows in proportion to them.

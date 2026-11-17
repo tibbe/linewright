@@ -40,7 +40,8 @@ Setting the webhook secret turns webhooks on.
 
 ## Deliveries
 
-A delivery names what changed, and Linewright acts on that alone.
+A delivery names what changed. Linewright acts on that and on its own
+writes, and on nothing else.
 
 - **Acting on a delivery.** Linewright reads the issue or pull request again
   from GitHub and does what a poll would do with it, without a poll of
@@ -48,6 +49,9 @@ A delivery names what changed, and Linewright acts on that alone.
   Linewright opened. What it acts on is what it read, never the delivery's
   own account of the change, so a delivery that arrives late, twice or out
   of order changes nothing a poll would not.
+- **What Linewright wrote.** When Linewright acts on a delivery, it also
+  reads again the items it wrote to since it last read them. It acts on them
+  as on what the delivery names.
 - **Events.** The webhook sends the events about what a poll reads, and only
   those: issues, pull requests, their comments and reviews, CI and pushes.
   Linewright accepts any other event and ignores it.

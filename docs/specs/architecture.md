@@ -24,7 +24,8 @@ lives in the store and nowhere else.
 - **The store is an interface; GitHub is the production store.**
 - **Reconciling.** Each poll takes a snapshot of the store and reconciles it
   with the runs in flight. Between polls the snapshot is kept, and a webhook
-  delivery reads the items it names into it again and reconciles.
+  delivery reads the items it names, and those Linewright wrote to, into it
+  again and reconciles.
 - **Machine state is in the store**: an item's state is derived from it,
   and from Linewright's run while one is in flight on the item
   ([State](repository.md#state)).
