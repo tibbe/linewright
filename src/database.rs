@@ -39,6 +39,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(SESSION_COSTS),
     Migration::Sql(PUSHED_BRANCHES_TABLES),
     Migration::Sql(SUITES_TABLES),
+    Migration::Sql(EXPERIMENTS_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -143,6 +144,66 @@ const SUITES_TABLES: &str = "CREATE TABLE suites (
         run TEXT NOT NULL
     ) STRICT;
     CREATE INDEX cases_of_suites ON cases (suite);";
+
+/// The experiments, each with the cases and configurations it was launched
+/// with, in order, and its trials, whose copies and outputs are in
+/// `experiments/`. A trial's row holds the figures of its replay and its
+/// judge once its state has them, and only then: a trial cancelled before
+/// its replay ended has none.
+const EXPERIMENTS_TABLES: &str = "CREATE TABLE experiments (
+        id INTEGER PRIMARY KEY CHECK (id > 0),
+        suite TEXT NOT NULL REFERENCES suites (name),
+        launched_at TEXT NOT NULL,
+        repetitions INTEGER NOT NULL CHECK (repetitions > 0),
+        state TEXT NOT NULL CHECK (state IN ('open', 'ended', 'cancelled'))
+    ) STRICT;
+    CREATE INDEX experiments_of_suites ON experiments (suite);
+    CREATE TABLE experiment_cases (
+        experiment INTEGER NOT NULL REFERENCES experiments (id),
+        seq INTEGER NOT NULL CHECK (seq >= 0),
+        name TEXT NOT NULL,
+        PRIMARY KEY (experiment, seq),
+        UNIQUE (experiment, name)
+    ) STRICT;
+    CREATE TABLE experiment_configurations (
+        experiment INTEGER NOT NULL REFERENCES experiments (id),
+        seq INTEGER NOT NULL CHECK (seq >= 0),
+        name TEXT NOT NULL,
+        PRIMARY KEY (experiment, seq),
+        UNIQUE (experiment, name),
+        CHECK ((seq = 0) = (name = 'as-is'))
+    ) STRICT;
+    CREATE TABLE trials (
+        experiment INTEGER NOT NULL REFERENCES experiments (id),
+        repetition INTEGER NOT NULL CHECK (repetition > 0),
+        case_seq INTEGER NOT NULL,
+        configuration_seq INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN
+            ('pending', 'replaying', 'replayed', 'judging', 'judged', 'unjudged')),
+        outcome TEXT CHECK (outcome IN ('done', 'handed-back', 'cancelled', 'usage-limit',
+            'failed', 'in-flight', 'interrupted')),
+        money REAL CHECK (money >= 0),
+        seconds REAL CHECK (seconds >= 0),
+        correctness TEXT CHECK (correctness IN ('pass', 'fail')),
+        leak INTEGER CHECK (leak IN (0, 1)),
+        judge_money REAL CHECK (judge_money >= 0),
+        unjudged TEXT CHECK (unjudged IN ('outcome', 'judge', 'cancelled')),
+        reason TEXT,
+        PRIMARY KEY (experiment, repetition, case_seq, configuration_seq),
+        FOREIGN KEY (experiment, case_seq) REFERENCES experiment_cases (experiment, seq),
+        FOREIGN KEY (experiment, configuration_seq)
+            REFERENCES experiment_configurations (experiment, seq),
+        CHECK ((outcome IS NULL) = (seconds IS NULL)),
+        CHECK (money IS NULL OR outcome IS NOT NULL),
+        CHECK (state NOT IN ('pending', 'replaying') OR outcome IS NULL),
+        CHECK (state NOT IN ('replayed', 'judging', 'judged') OR outcome IS NOT NULL),
+        CHECK ((correctness IS NOT NULL) = (state = 'judged')),
+        CHECK ((leak IS NOT NULL) = (state = 'judged')),
+        CHECK (judge_money IS NULL OR state = 'judged' OR unjudged IS 'judge'),
+        CHECK ((unjudged IS NOT NULL) = (state = 'unjudged')),
+        CHECK (unjudged IS NOT 'outcome' AND unjudged IS NOT 'judge' OR outcome IS NOT NULL),
+        CHECK ((reason IS NOT NULL) = (unjudged IS 'judge'))
+    ) STRICT;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

@@ -125,7 +125,8 @@ async fn lw_suite_shows_its_cases_with_their_criteria() {
         text.stdout,
         "suite: board\nstage: implement\n\
          case columns: captured from 3/implement-2\n  Names them.\n\
-         case lanes: captured from 4/implement-1\n  Stacks them.\n\n  On a phone.\n"
+         case lanes: captured from 4/implement-1\n  Stacks them.\n\n  On a phone.\n\
+         experiments: none\n"
     );
     assert_eq!(json.code, Some(0), "{}", json.stderr);
     assert_eq!(
@@ -137,6 +138,7 @@ async fn lw_suite_shows_its_cases_with_their_criteria() {
                 {"name": "columns", "run": "3/implement-2", "criteria": "Names them.\n"},
                 {"name": "lanes", "run": "4/implement-1", "criteria": "Stacks them.\n\nOn a phone.\n"},
             ],
+            "experiments": [],
         })
     );
 }
@@ -156,7 +158,8 @@ async fn lw_suite_says_when_a_cases_criteria_do_not_read() {
         text.stdout,
         "suite: board\nstage: implement\n\
          case lanes: captured from 4/implement-1\n  \
-         the criteria do not read: criteria.md holds only white space\n"
+         the criteria do not read: criteria.md holds only white space\n\
+         experiments: none\n"
     );
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap()["cases"][0],
@@ -177,7 +180,10 @@ async fn lw_suite_of_a_suite_with_no_cases_says_so() {
     let output = lw_in(work_dir.path(), &["suite", "board"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "suite: board\nstage: triage\ncases: none\n");
+    assert_eq!(
+        output.stdout,
+        "suite: board\nstage: triage\ncases: none\nexperiments: none\n"
+    );
 }
 
 #[test_log::test(tokio::test)]

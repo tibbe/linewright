@@ -25,6 +25,7 @@ mod ending;
 mod environment;
 mod environment_lifecycle;
 mod environment_shown;
+mod experiments;
 mod explain;
 mod export;
 mod fix_brief;
