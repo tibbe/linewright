@@ -26,6 +26,7 @@ use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
 use crate::harness::{GhReach, Harness, UsageLimit};
 use crate::pull_records::PullRecords;
+use crate::pushed_branches::PushedBranches;
 use crate::reconcile::{
     Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Subject, Work,
     held_back_by_drain, reconcile, requirements_note,
@@ -277,6 +278,7 @@ impl Factory {
             },
         )
         .await?;
+        let pushed_branches = PushedBranches::new(config.database.clone());
         let clones = Clones::new(&config.work_dir, config.winding_up.clone());
         clones.sweep();
         let shell = Shell::new(ShellParts {
@@ -309,6 +311,7 @@ impl Factory {
             operator_briefs: config.briefs,
             settings,
             work_dir: config.work_dir,
+            pushed_branches: Some(pushed_branches),
         });
         Ok(Factory {
             shell: Arc::new(shell),

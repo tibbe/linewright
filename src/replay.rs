@@ -387,6 +387,7 @@ async fn run_in(
         operator_briefs: config.briefs,
         settings,
         work_dir: config.work_dir,
+        pushed_branches: None,
     });
     let now = clock.now();
     let snapshot = shell

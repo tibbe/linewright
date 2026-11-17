@@ -37,6 +37,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(RUNS_TABLES),
     Migration::Sql(BOOKKEEPING_TABLES),
     Migration::Sql(SESSION_COSTS),
+    Migration::Sql(PUSHED_BRANCHES_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -118,6 +119,16 @@ const BOOKKEEPING_TABLES: &str = "CREATE TABLE kept (
 
 /// What each session cost, `NULL` for one recorded before costs were kept.
 const SESSION_COSTS: &str = "ALTER TABLE sessions ADD COLUMN cost TEXT";
+
+/// The ticket branches Linewright pushed, and whether those it pushed before
+/// it kept this record are adopted into it.
+const PUSHED_BRANCHES_TABLES: &str = "CREATE TABLE pushed_branches (
+        name TEXT PRIMARY KEY,
+        recorded_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE adopted (
+        record TEXT PRIMARY KEY CHECK (record IN ('pushed-branches'))
+    ) STRICT;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,
