@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::benchmarks::SuiteName;
+use crate::benchmarks::{ConfigurationName, ExperimentId, Repetitions, SuiteName};
 use crate::case::{CaseName, ReplayStage};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
@@ -214,6 +214,57 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show the experiment ID: its state, its replays and its results.
+    /// `experiment launch` launches one, and `experiment cancel` cancels
+    /// one.
+    #[command(args_conflicts_with_subcommands = true)]
+    Experiment {
+        #[command(subcommand)]
+        command: Option<ExperimentCommand>,
+        #[arg(value_name = "ID", required = true)]
+        id: Option<ExperimentId>,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ExperimentCommand {
+    /// Launch an experiment on the cases of the suite SUITE, under `as-is`
+    /// and each configuration given.
+    Launch {
+        suite: SuiteName,
+        /// A configuration named NAME, laid out in the directory DIR as a
+        /// repository's `.linewright/`: its `config.toml` and the files of
+        /// its `briefs/`.
+        #[arg(long = "configuration", value_name = "NAME=DIR", value_parser = parse_configuration)]
+        configurations: Vec<(ConfigurationName, PathBuf)>,
+        /// How many times to replay each case under each configuration.
+        #[arg(long, value_name = "N", default_value = "1")]
+        repetitions: Repetitions,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cancel the experiment ID.
+    Cancel {
+        id: ExperimentId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// A configuration given as `NAME=DIR`.
+fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), String> {
+    let (name, dir) = value
+        .split_once('=')
+        .ok_or_else(|| format!("{value:?} is not NAME=DIR"))?;
+    if dir.is_empty() {
+        return Err(format!("{value:?} names no directory"));
+    }
+    Ok((name.parse()?, PathBuf::from(dir)))
 }
 
 #[derive(Subcommand, Debug)]

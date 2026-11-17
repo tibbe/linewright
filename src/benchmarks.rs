@@ -1,6 +1,17 @@
-//! Suites and the cases they hold, kept in the database
-//! (`docs/specs/benchmarks.md`, Suites): every write to them, each in one
-//! transaction.
+//! Suites, the cases they hold and the experiments on them, kept in the
+//! database (`docs/specs/benchmarks.md`, "Suites" and "Experiments"): every
+//! write to them, each in one transaction.
+
+mod answers;
+mod experiments;
+pub mod results;
+
+pub use answers::{ExperimentAnswer, ExperimentSummary, Shown, WaitingFor, render_experiment};
+pub use experiments::{
+    CancelRefusal, ConfigurationName, EXPERIMENTS, ExperimentId, ExperimentRecord, ExperimentState,
+    Experiments, JudgementFigures, LaunchRefusal, NoJudgement, Repetitions, ReplayFigures,
+    TrialChange, TrialEnd, TrialKey, TrialRef, TrialState,
+};
 
 use std::fmt;
 use std::fmt::Write as _;
@@ -75,11 +86,12 @@ pub struct SuiteListed {
     pub cases: usize,
 }
 
-/// A suite, with its cases by name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A suite, with its cases by name and its experiments, latest first.
+#[derive(Clone, Debug, PartialEq)]
 pub struct SuiteShown {
     pub suite: Suite,
     pub cases: Vec<CaseEntry>,
+    pub experiments: Vec<ExperimentRecord>,
 }
 
 /// A case of a suite.
@@ -189,7 +201,8 @@ impl Suites {
     }
 
     /// The suite `name` with its cases, by name, each with its criteria as
-    /// its directory holds them now; `None` when there is no such suite.
+    /// its directory holds them now, and its experiments, latest first;
+    /// `None` when there is no such suite.
     pub async fn show(&self, name: &SuiteName) -> Result<Option<SuiteShown>> {
         let Some(suite) = self.find(name).await? else {
             return Ok(None);
@@ -214,7 +227,12 @@ impl Suites {
             })
             .collect::<Result<_>>()
             .context(READING)?;
-        Ok(Some(SuiteShown { suite, cases }))
+        let experiments = Experiments::new(self.db.clone()).of_suite(name).await?;
+        Ok(Some(SuiteShown {
+            suite,
+            cases,
+            experiments,
+        }))
     }
 
     /// Removes the case `case` from the suite `suite`, and with it the
@@ -419,6 +437,7 @@ pub struct SuiteAnswer {
     #[serde(flatten)]
     pub suite: Suite,
     pub cases: Vec<CaseAnswer>,
+    pub experiments: Vec<ExperimentSummary>,
 }
 
 /// A case as `suite NAME` answers it: its criteria, or why they do not
@@ -455,12 +474,18 @@ impl From<&SuiteShown> for SuiteAnswer {
                     },
                 })
                 .collect(),
+            experiments: shown
+                .experiments
+                .iter()
+                .map(|record| ExperimentSummary::new(record, Shown::without_serve(record.state)))
+                .collect(),
         }
     }
 }
 
 /// A suite as `suite NAME` prints it: its facts, then each case with its
-/// run, and its criteria indented under it.
+/// run, and its criteria indented under it, then each experiment, latest
+/// first.
 pub fn render_suite(answer: &SuiteAnswer) -> String {
     let mut text = format!(
         "suite: {}\nstage: {}\n",
@@ -482,6 +507,12 @@ pub fn render_suite(answer: &SuiteAnswer) -> String {
                 let _ = writeln!(text, "  the criteria do not read: {why}");
             }
         }
+    }
+    if answer.experiments.is_empty() {
+        text.push_str("experiments: none\n");
+    }
+    for experiment in &answer.experiments {
+        text.push_str(&answers::render_summary(experiment));
     }
     text
 }

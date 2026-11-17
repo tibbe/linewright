@@ -6,15 +6,18 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
-use linewright::benchmarks::{self, RemoveError, SuiteAnswer, SuiteName, Suites, SuitesAnswer};
+use linewright::benchmarks::{
+    self, CancelRefusal, ConfigurationName, ExperimentAnswer, ExperimentId, Experiments,
+    LaunchRefusal, RemoveError, Repetitions, Shown, SuiteAnswer, SuiteName, Suites, SuitesAnswer,
+};
 use linewright::case::{
     self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal, ReplayStage,
     SuiteChoice,
 };
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
-    AutomationCommand, Cli, Command, Config, EnvironmentCommand, Invocation, LogFormat,
-    ResolveError, Settings, Since, SuiteCommand,
+    AutomationCommand, Cli, Command, Config, EnvironmentCommand, ExperimentCommand, Invocation,
+    LogFormat, ResolveError, Settings, Since, SuiteCommand,
 };
 use linewright::database::Database;
 use linewright::domain::{Number, Timestamp};
@@ -950,6 +953,34 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             command: Some(SuiteCommand::RemoveCase { name, case, json }),
             ..
         } => return Ok(remove_case(&config, &name, &case, json).await),
+        Command::Experiment {
+            command: None,
+            id: Some(id),
+            json,
+        } => return Ok(show_experiment(&config, id, json).await),
+        Command::Experiment {
+            command: None,
+            id: None,
+            ..
+        } => unreachable!("clap requires an experiment's ID or a command"),
+        Command::Experiment {
+            command:
+                Some(ExperimentCommand::Launch {
+                    suite,
+                    configurations,
+                    repetitions,
+                    json,
+                }),
+            ..
+        } => {
+            return Ok(
+                launch_experiment(&config, &suite, &configurations, repetitions, json).await,
+            );
+        }
+        Command::Experiment {
+            command: Some(ExperimentCommand::Cancel { id, json }),
+            ..
+        } => return Ok(cancel_experiment(&config, id, json).await),
         Command::Replay {
             case,
             out,
@@ -1116,6 +1147,135 @@ async fn remove_case(config: &Config, name: &SuiteName, case: &CaseName, json: b
                     refused(&RequestError::NotFound(e.to_string()))
                 }
                 RemoveError::Failed(e) => failed(&e),
+            }),
+    )
+}
+
+/// The experiments of the work directory's database, with or without
+/// `serve`: none when there is no database.
+async fn existing_experiments(config: &Config) -> Result<Option<Experiments>> {
+    let work_dir = config.repo_work_dir()?.resolve();
+    Ok(Database::open_existing(&work_dir)
+        .await?
+        .map(Experiments::new))
+}
+
+fn no_such_experiment(id: ExperimentId) -> (u8, String) {
+    refused(&RequestError::NotFound(format!(
+        "there is no experiment {id}"
+    )))
+}
+
+/// What `experiment launch` answers.
+#[derive(serde::Serialize)]
+struct LaunchedAnswer<'a> {
+    id: ExperimentId,
+    suite: &'a SuiteName,
+    replays: usize,
+}
+
+/// Launches an experiment on the suite `suite` under `as-is` and the
+/// configurations in the directories `configurations`, refusing a suite that
+/// does not exist and then a configuration with an error before anything is
+/// written.
+async fn launch_experiment(
+    config: &Config,
+    suite: &SuiteName,
+    configurations: &[(ConfigurationName, PathBuf)],
+    repetitions: Repetitions,
+    json: bool,
+) -> u8 {
+    let database = async {
+        let work_dir = config.repo_work_dir()?.resolve();
+        let Some(db) = Database::open_existing(&work_dir).await? else {
+            return Ok(None);
+        };
+        let found = Suites::new(db.clone()).find(suite).await?;
+        anyhow::Ok(found.map(|_| db))
+    };
+    let db = match database.await {
+        Ok(Some(db)) => db,
+        Ok(None) => return print_answer(Err(no_such_suite(suite))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let mut read_configurations = Vec::with_capacity(configurations.len());
+    for (name, dir) in configurations {
+        match Configuration::read(dir) {
+            Ok(configuration) => read_configurations.push((name.clone(), configuration)),
+            Err(e) => return print_answer(Err((FAILURE, e.to_string()))),
+        }
+    }
+    print_answer(
+        Experiments::new(db)
+            .launch(suite, read_configurations, repetitions, SystemClock.now())
+            .await
+            .map(|launched| {
+                let answer = LaunchedAnswer {
+                    id: launched.id,
+                    suite,
+                    replays: launched.replays,
+                };
+                answer_text(&answer, json, |answer| {
+                    format!(
+                        "Launched experiment {} on the suite {}: {} replays\n",
+                        answer.id, answer.suite, answer.replays
+                    )
+                })
+            })
+            .map_err(|e| match e {
+                LaunchRefusal::NoSuchSuite(_) => refused(&RequestError::NotFound(e.to_string())),
+                LaunchRefusal::NoCases(_) | LaunchRefusal::DuplicateConfiguration(_) => {
+                    (FAILURE, e.to_string())
+                }
+                LaunchRefusal::Failed(e) => failed(&e),
+            }),
+    )
+}
+
+/// Shows the experiment `id`: an open one waits for `serve`.
+async fn show_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
+    let shown = async {
+        match existing_experiments(config).await? {
+            Some(experiments) => experiments.show(id).await,
+            None => Ok(None),
+        }
+    };
+    print_answer(match shown.await {
+        Ok(Some(record)) => Ok(answer_text(
+            &ExperimentAnswer::new(&record, Shown::without_serve(record.state)),
+            json,
+            benchmarks::render_experiment,
+        )),
+        Ok(None) => Err(no_such_experiment(id)),
+        Err(e) => Err(failed(&e)),
+    })
+}
+
+/// What `experiment cancel` answers.
+#[derive(serde::Serialize)]
+struct Cancelled {
+    id: ExperimentId,
+}
+
+async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
+    let experiments = match existing_experiments(config).await {
+        Ok(Some(experiments)) => experiments,
+        Ok(None) => return print_answer(Err(no_such_experiment(id))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        experiments
+            .cancel(id)
+            .await
+            .map(|()| {
+                answer_text(&Cancelled { id }, json, |cancelled| {
+                    format!("Cancelled experiment {}\n", cancelled.id)
+                })
+            })
+            .map_err(|e| match e {
+                CancelRefusal::NoSuchExperiment(_) => no_such_experiment(id),
+                CancelRefusal::NotOpen { .. } => (FAILURE, e.to_string()),
+                CancelRefusal::Failed(e) => failed(&e),
             }),
     )
 }

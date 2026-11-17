@@ -957,16 +957,17 @@ struct RunAnswer {
     sessions: Option<Vec<Option<Ran>>>,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+/// A run's outcome by its name in JSON (`docs/specs/runs.md`, Ending).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(crate) enum OutcomeName {
+pub enum OutcomeName {
     Ended(Ending),
     Unended(Unended),
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub(crate) enum Unended {
+pub enum Unended {
     InFlight,
     Interrupted,
 }
