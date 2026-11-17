@@ -19,7 +19,7 @@ use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::case::{Case, CaseItemKind};
 use crate::clock::{Clock, RunningFrom, SystemClock};
@@ -296,6 +296,22 @@ fn write_whole(path: &Path, partial: &Path, text: impl AsRef<[u8]>) -> Result<()
         let _ = std::fs::remove_file(partial);
     }
     written.with_context(|| format!("writing {}", path.display()))
+}
+
+/// Writes a file at `path` holding `text`, written first at `partial` in the
+/// same directory, so that a reader sees it whole or not at all, and never
+/// over a file already at `path`. No file is left at `partial`.
+///
+/// # Errors
+///
+/// When the file cannot be written, of kind
+/// [`std::io::ErrorKind::AlreadyExists`] when one is already at `path`.
+fn write_whole_new(path: &Path, partial: &Path, text: impl AsRef<[u8]>) -> std::io::Result<()> {
+    let written = std::fs::write(partial, text).and_then(|()| std::fs::hard_link(partial, path));
+    if let Err(e) = std::fs::remove_file(partial) {
+        warn!(partial = %partial.display(), error = %e, "removing a partial write failed");
+    }
+    written
 }
 
 /// Runs the stage of `case` on its item with `config` and `harness`, its

@@ -2,7 +2,7 @@
 //! session of the judge's own (`docs/specs/benchmarks.md`, Judging).
 
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
 use super::{
-    CASE, COMMITS, OUTCOME, OwnDir, Setting, Under, WRITES, in_own_dir, write_build, write_whole,
+    CASE, COMMITS, OUTCOME, OwnDir, Setting, Under, WRITES, in_own_dir, write_build,
+    write_whole_new,
 };
 use crate::apply::hand_back;
 use crate::briefs::Briefs;
@@ -73,6 +74,8 @@ pub enum JudgeRefusal {
     OtherRun { named: String, case: RunId },
     #[error("the output's `{part}` part cannot be read: {error}")]
     Unreadable { part: &'static str, error: String },
+    #[error("the output already holds a judgement, `{JUDGEMENT}`")]
+    Judged,
 }
 
 impl Replayed {
@@ -82,7 +85,7 @@ impl Replayed {
     ///
     /// When the output's outcome is missing or other than done or handed
     /// back, its `case` part is missing or names a run other than `case`'s,
-    /// or a part cannot be read.
+    /// it holds a judgement, or a part cannot be read.
     pub async fn open(dir: &Path, case: &Case) -> Result<Replayed, JudgeRefusal> {
         let dir = std::path::absolute(dir).map_err(JudgeRefusal::Unusable)?;
         let ended = read_part(&dir, OUTCOME)?.ok_or(JudgeRefusal::NoOutcome)?;
@@ -97,6 +100,16 @@ impl Replayed {
                 named,
                 case: case.run().clone(),
             });
+        }
+        match std::fs::symlink_metadata(dir.join(JUDGEMENT)) {
+            Ok(_) => return Err(JudgeRefusal::Judged),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(JudgeRefusal::Unreadable {
+                    part: JUDGEMENT,
+                    error: e.to_string(),
+                });
+            }
         }
         let unreadable = |error: anyhow::Error| JudgeRefusal::Unreadable {
             part: WRITES,
@@ -626,29 +639,15 @@ async fn fetch_pushed(repository: &Path, commits: &Path, branch: &str) -> Result
     Ok(())
 }
 
-/// A judgement as `judgement.json` holds it, as far as keeping a new one
-/// reads it.
-#[derive(Deserialize)]
-struct Kept {
-    session: KeptSession,
-}
-
-#[derive(Deserialize)]
-struct KeptSession {
-    record: PathBuf,
-}
-
-/// Keeps `judgement` in `replayed`'s output in place of the earlier
-/// judgement, if any, so that a reader sees the one or the other whole, and
-/// then removes the record of the earlier judge's session.
+/// Keeps `judgement` in `replayed`'s output, so that a reader sees it
+/// whole or not at all. It never replaces a judgement the output holds.
 ///
 /// # Errors
 ///
-/// When the judgement cannot be written: the earlier one is kept then, and
-/// nothing of `judgement`.
+/// When the judgement cannot be written, or the output came to hold one
+/// since it was opened, as [`JudgeRefusal::Judged`]: nothing of `judgement`
+/// is kept then.
 pub fn keep(replayed: &Replayed, mut judgement: Judgement) -> Result<()> {
-    let path = replayed.dir.join(JUDGEMENT);
-    let earlier = earlier_record(&path);
     let mut text = serde_json::to_string_pretty(&judgement)?;
     text.push('\n');
     let own = judgement
@@ -658,28 +657,17 @@ pub fn keep(replayed: &Replayed, mut judgement: Judgement) -> Result<()> {
         .context("the judge's record has a name")?
         .to_string_lossy()
         .into_owned();
-    write_whole(
+    let path = replayed.dir.join(JUDGEMENT);
+    match write_whole_new(
         &path,
         &replayed.dir.join(format!(".{JUDGEMENT}-{own}")),
-        &text,
-    )?;
-    judgement.record.kept = true;
-    if let Some(earlier) = earlier
-        && earlier != judgement.session.record
-    {
-        discard(&replayed.dir.join(earlier));
-    }
-    Ok(())
-}
-
-/// The record that the judgement at `path` names, relative to the output,
-/// if there is one and it is a judge's record under `judge/`.
-fn earlier_record(path: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let record = serde_json::from_str::<Kept>(&text).ok()?.session.record;
-    let judges = session::purpose_name(&Purpose::Judge);
-    match record.components().collect::<Vec<_>>().as_slice() {
-        [Component::Normal(dir), Component::Normal(_)] if *dir == judges.as_str() => Some(record),
-        _ => None,
+        text,
+    ) {
+        Ok(()) => {
+            judgement.record.kept = true;
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(JudgeRefusal::Judged.into()),
+        Err(e) => Err(anyhow::Error::from(e).context(format!("writing {}", path.display()))),
     }
 }
