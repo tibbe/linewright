@@ -1025,7 +1025,7 @@ async fn a_signal_ends_lw_replay_at_once_leaving_its_output_interrupted() {
     let cost: Value =
         serde_json::from_str(&std::fs::read_to_string(out.join("cost.json")).unwrap()).unwrap();
     assert!(cost["seconds"].is_f64(), "{cost}");
-    assert_eq!(cost["run"], json!({"models": {}, "all": {}}));
+    assert_eq!(cost["run"], json!({}));
 }
 
 #[test_log::test(tokio::test)]
