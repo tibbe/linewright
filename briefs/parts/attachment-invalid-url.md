@@ -1,0 +1,1 @@
+`{{file}}` is not a file URL that Linewright can attach: write `file://` followed by the absolute path, with no host, query or fragment, and percent-encode each character a URL cannot hold, such as a space as `%20`

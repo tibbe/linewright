@@ -582,6 +582,7 @@ templates! {
     result_thread: Thread = "parts/result-thread.md", PULL_WORK, Trimmed;
     attachment_not_a_file: AttachmentFile = "parts/attachment-not-a-file.md", ATTACHING, Trimmed;
     attachment_outside: AttachmentFile = "parts/attachment-outside.md", ATTACHING, Trimmed;
+    attachment_invalid_url: AttachmentFile = "parts/attachment-invalid-url.md", ATTACHING, Trimmed;
     attachment_kind: AttachmentKind = "parts/attachment-kind.md", ATTACHING, Trimmed;
     rebase_in_progress: NoValues = "parts/rebase-in-progress.md", BRANCH_WORK, Trimmed;
     merge_in_progress: NoValues = "parts/merge-in-progress.md", BRANCH_WORK, Trimmed;
