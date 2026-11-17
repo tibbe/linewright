@@ -46,5 +46,7 @@ suite of another stage. A capture that fails, such as for a commit GitHub no
 longer has, writes nothing.
 
 `lw suites` lists the suites, `lw suite NAME` shows a suite's cases with their
-criteria, and `lw suite remove-case NAME CASE` removes a case, its directory
-with it. A case captured before suites is in none.
+criteria and its experiments, and `lw suite remove-case NAME CASE` removes a
+case, its directory with it. A case captured before suites is in none. An
+experiment compares configurations on a suite's cases
+([Experiments](running.md#experiments)).

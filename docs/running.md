@@ -328,6 +328,34 @@ A judge that gives up, fails, ends without a result Linewright accepts or is
 stopped keeps nothing. The command exits 0 when the judge made a judgement,
 whatever it is, and 1 when it made none or refused the output.
 
+## Experiments
+
+An experiment replays each case of a suite under several configurations, and
+judges each replay. `lw experiment launch SUITE` launches one under `as-is`,
+which changes nothing, and a configuration for each
+`--configuration NAME=DIR`, laid out as `lw replay` takes it, with
+`--repetitions N` replays of each case under each configuration, 1 by default:
+
+```sh
+lw experiment launch implements --configuration short-brief=tries/short --repetitions 3
+```
+
+The launch keeps a copy of each case of the suite and of each configuration
+under `experiments/ID/` in the work directory, so a later change to the suite, a
+case's criteria or a configuration's directory leaves the experiment as it was.
+It refuses a suite with no cases, a configuration with an error and two
+configurations with one name, `as-is` among them, and then writes nothing. The
+replays' outputs are to go in `experiments/ID/CONFIG/CASE/REP`.
+
+`lw experiment ID` shows an experiment's state, each replay, and each
+configuration's results: its pass rate and passes for each case, of the replays
+with a judgement and no leak, the mean and total of its replays' cost and time,
+its leaks and its replays without a judgement, with the judges' cost apart.
+`lw suite NAME` lists the suite's experiments, latest first, and
+`lw experiment cancel ID` cancels one. `serve` does not run experiments yet: an
+open experiment waits for it. The commands work whether `serve` is running or
+not, and exit 4 for a suite or an experiment that does not exist.
+
 ## Monitoring
 
 `lw status` shows what the running `serve` is doing and what holds it back.
