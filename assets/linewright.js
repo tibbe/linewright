@@ -4,7 +4,9 @@
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
  * entry while the reader is there, keeps each fold as the reader opened or
  * closed it through updates, keeps the options of the page's filters up and
- * applies the filters as they are chosen, and shows the page's tooltip.
+ * applies the filters as they are chosen, fills in a capture's name for the
+ * run chosen and keeps that run chosen through updates, and shows the page's
+ * tooltip.
  */
 (() => {
   "use strict";
@@ -174,6 +176,7 @@
   function swapped(entries) {
     fillOptions();
     keepFolds();
+    keepRun();
     tick();
     refreshTip();
     if (!latest || !entries) return;
@@ -280,6 +283,39 @@
   // A form with more than one field to type in submits on no Enter:
   // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission
   applyOn("keydown", (event) => event.key === "Enter" && event.target.tagName === "INPUT");
+
+  /** The run the reader chose to capture, if they chose one. */
+  let chosenRun = null;
+
+  /**
+   * Fills a capture's name with the name suggested for the run chosen
+   * (docs/specs/design_system.md, The suite page), unless the name holds one
+   * the reader typed: one suggested for none of the runs.
+   */
+  document.addEventListener("change", (event) => {
+    const select = event.target;
+    if (select?.tagName !== "SELECT" || select.name !== "run" || !select.form) return;
+    const name = Array.from(select.form.elements).find((field) => field.name === "name");
+    const suggested = (option) => option.getAttribute("data-name");
+    const chosen = select.options[select.selectedIndex];
+    if (!chosen) return;
+    chosenRun = chosen.value;
+    if (!name) return;
+    if (name.value === "" || Array.from(select.options, suggested).includes(name.value)) {
+      name.value = suggested(chosen) ?? name.value;
+    }
+  });
+
+  /**
+   * Chooses again the run the reader chose to capture, while an update
+   * still offers it.
+   */
+  function keepRun() {
+    for (const select of document.querySelectorAll("select[name=run]")) {
+      const at = Array.from(select.options).findIndex((option) => option.value === chosenRun);
+      if (at !== -1) select.selectedIndex = at;
+    }
+  }
 
   /**
    * The page's one tooltip, which shows the tip of one trigger at a time: an

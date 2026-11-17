@@ -13,6 +13,9 @@ mod run_page;
 mod runs_page;
 mod runs_table;
 mod server_page;
+mod suite_page;
+mod suites_page;
+mod write;
 
 use automations_page::{Automations, LastRun};
 use html::Html;
@@ -32,7 +35,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Router};
 use rust_embed::Embed;
 use sha2::Digest as _;
@@ -40,6 +43,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
+use crate::benchmarks::{SuiteName, Suites};
 use crate::domain::{Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
@@ -110,6 +114,17 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             "/events/automations",
             get(automations_page::automations_events),
         )
+        .route(
+            "/suites",
+            get(suites_page::suites_page).post(suites_page::make_suite),
+        )
+        .route("/events/suites", get(suites_page::suites_events))
+        .route(
+            "/suites/{name}",
+            get(suite_page::suite_page).post(suite_page::add_case),
+        )
+        .route("/suites/{name}/remove-case", post(suite_page::remove_case))
+        .route("/events/suites/{name}", get(suite_page::suite_events))
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
         .route(
@@ -272,6 +287,7 @@ enum NavIcon {
     Board,
     Runs,
     Automations,
+    Suites,
     Server,
 }
 
@@ -510,6 +526,16 @@ fn samples() -> tokio::time::Interval {
 /// The path of run `id`'s page.
 fn run_path(id: &RunId) -> String {
     format!("/runs/{id}")
+}
+
+/// The suites of `serve`'s work directory.
+fn suites(sources: &Sources) -> Suites {
+    Suites::new(sources.runs.database().clone())
+}
+
+/// The path of suite `name`'s page.
+fn suite_path(name: &SuiteName) -> String {
+    format!("/suites/{name}")
 }
 
 /// `path` with `query`, if there is one.

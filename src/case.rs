@@ -310,6 +310,15 @@ pub enum SuiteChoice {
     New(SuiteName),
 }
 
+impl SuiteChoice {
+    /// The suite's name.
+    pub fn suite(&self) -> &SuiteName {
+        match self {
+            SuiteChoice::Named(suite) | SuiteChoice::New(suite) => suite,
+        }
+    }
+}
+
 /// A run that can be captured, with what it is to be captured as.
 #[derive(Debug)]
 pub struct Capturable {

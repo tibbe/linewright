@@ -1,0 +1,57 @@
+{%- extends "layout.html" -%}
+{%- block main -%}
+<h1>Suite {{ suite.name }}</h1>
+<p class="text-muted mb-4">cases of {{ suite.stage }}</p>
+<div id="suite-said" class="mb-3 max-w-xl" role="status"></div>
+{% block cases -%}
+<section id="cases" class="mb-6">
+<h2>Cases</h2>
+{%- if cases.is_empty() %}
+<p>no cases</p>
+{%- else %}
+<table class="table">
+<thead><tr><th>Case</th><th>Run</th><th>Criteria</th><th><span class="sr-only">Remove</span></th></tr></thead>
+<tbody>
+{%- for case in cases %}
+<tr>
+<th>{{ case.name }}</th>
+<td><a class="link link-hover" href="{{ case.run_href }}">{{ case.run }}</a></td>
+<td>
+{%- match case.criteria -%}
+{%- when CriteriaShown::Read { first_line, text } -%}
+<details id="criteria-{{ case.name }}" class="criteria"><summary class="cursor-pointer">{{ first_line }}</summary><pre class="mt-2 font-sans whitespace-pre-wrap">{{ text }}</pre></details>
+{%- when CriteriaShown::Unreadable(why) -%}
+<span class="text-error">the criteria do not read: {{ why }}</span>
+{%- endmatch -%}
+</td>
+<td><form class="remove-case" method="post" action="{{ path }}/remove-case" hx-post="{{ path }}/remove-case" hx-target="#suite-said" hx-swap="innerHTML" hx-confirm="Remove the case {{ case.name }} and its directory?"><input type="hidden" name="case" value="{{ case.name }}"><button class="btn btn-xs btn-ghost text-error" type="submit">Remove</button></form></td>
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</section>
+{%- endblock %}
+<section id="add-case">
+<h2>Adding a case</h2>
+<form class="capture flex max-w-xl flex-col gap-2" method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#capture-said" hx-swap="innerHTML">
+{% block runs -%}
+<div id="capture-runs">
+{%- if runs.is_empty() %}
+<p class="text-muted">no runs of {{ suite.stage }} to capture</p>
+{%- else %}
+<label class="select select-sm w-full"><span class="label">run</span><select name="run">
+{%- for run in runs %}
+<option value="{{ run.id }}" data-name="{{ run.name }}">{{ run.id }}</option>
+{%- endfor %}
+</select></label>
+{%- endif %}
+</div>
+{%- endblock %}
+<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>
+{{ ready|safe }}
+</form>
+<div id="capture-said" class="mt-2 max-w-xl" role="status"></div>
+</section>
+{%- endblock -%}

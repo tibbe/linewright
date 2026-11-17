@@ -10,6 +10,7 @@ mod run;
 mod runs;
 mod script;
 mod serving;
+mod suites;
 
 use std::time::Duration;
 
@@ -345,6 +346,69 @@ trait Routed {
         let (status, body) = self.get(path).await;
         assert_eq!(status, 200, "{body}");
         Html::parse_document(&body)
+    }
+}
+
+/// A web UI's own page's request.
+const SAME_ORIGIN: (&str, &str) = ("sec-fetch-site", "same-origin");
+
+/// Another site's request.
+const CROSS_SITE: (&str, &str) = ("sec-fetch-site", "cross-site");
+
+/// Posts the form `fields` to `path` with `headers` besides its `Host`, as
+/// a browser does: the status and the fragment it answers with.
+#[track_caller]
+fn post<W: Routed>(
+    web: &W,
+    path: &str,
+    headers: &[(&str, &str)],
+    fields: &[(&str, &str)],
+) -> impl Future<Output = (u16, Html)> + use<W> {
+    let caller = std::panic::Location::caller();
+    let mut form = form_urlencoded::Serializer::new(String::new());
+    for (name, value) in fields {
+        form.append_pair(name, value);
+    }
+    let mut request = axum::http::Request::builder()
+        .method(hyper::Method::POST)
+        .uri(path)
+        .header("Host", "localhost:8080")
+        .header("Content-Type", "application/x-www-form-urlencoded");
+    for (header, value) in headers {
+        request = request.header(*header, *value);
+    }
+    let request = request
+        .body(Body::from(form.finish()))
+        .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
+    let router = web.router().clone();
+    async move {
+        let Ok(response) = router.oneshot(request).await;
+        let (status, body) = status_and_body(response).await;
+        (status, Html::parse_fragment(&body))
+    }
+}
+
+/// What a fragment says, as a reader reads it.
+#[track_caller]
+fn said(html: &Html) -> String {
+    let alerts = select(html, ".alert");
+    assert_eq!(alerts.len(), 1, "not one thing said");
+    text(alerts[0])
+}
+
+/// The cases under `pages`' work directory, by name.
+#[track_caller]
+fn cases(pages: &Pages) -> Vec<String> {
+    match std::fs::read_dir(pages.path("cases")) {
+        Ok(entries) => {
+            let mut names: Vec<String> = entries
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .collect();
+            names.sort();
+            names
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(e) => panic!("reading the cases: {e}"),
     }
 }
 
