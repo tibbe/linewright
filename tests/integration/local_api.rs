@@ -923,7 +923,7 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
         .await
         .stdout;
     agent.writes(&turn.the_rest);
-    follow.shows(" 2:59  {\"outcome\"").await;
+    follow.shows("3:00  {\"outcome\"").await;
     drop(agent);
     let (code, shown, _) = follow.exits().await;
     let (_, json, _) = json.exits().await;
@@ -931,23 +931,23 @@ async fn logs_follow_shows_the_transcript_so_far_then_each_entry_as_the_agent_pr
     assert_eq!(
         so_far,
         "run: 1/triage-1\n\
-         session 1: started 2026-10-13 10:09:08 UTC\n \
+         session 1: started 2026-10-13 10:09:07 UTC\n \
          0:00  clone → 0s\n \
-         0:03  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
+         0:04  Bash(ls; cat Dockerfile; ls deploy; cat deploy/Dockerfile 2>/dev/null; grep -n -i \"im…) → exit 0, 19 lines\n"
     );
     assert_eq!(
         before_its_result,
         format!(
-            "{so_far} 0:04  thought, 1s\n 0:14  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running\n"
+            "{so_far} 0:05  thought, 1s\n 0:15  Bash(which podman buildah nerdctl hadolint; ls /var/run/docker.sock 2>&1) → running\n"
         )
     );
     assert_eq!(code, Some(0));
     assert_eq!(shown.lines().count(), 21, "{shown}");
     assert!(
-        shown.contains("\n 2:16  Agent(Standards review) → done, 2 tool uses, 16s\n"),
+        shown.contains("\n 2:17  Agent(Standards review) → done, 2 tool uses, 16s\n"),
         "{shown}"
     );
-    assert!(shown.ends_with("\n 2:59  worked for 2m 59s\n"), "{shown}");
+    assert!(shown.ends_with("\n 3:00  worked for 2m 59s\n"), "{shown}");
     let kinds: Vec<serde_json::Value> = json_objects(&json)
         .into_iter()
         .map(|line| line["type"].clone())
@@ -1073,7 +1073,7 @@ async fn the_api_streams_a_transcript_as_events_that_a_reader_resumes_by_event_i
             event(
                 Some("1/triage-1:1.0.2"),
                 "line",
-                r#"{"type":"session","session":1,"started_at":"2026-10-13T10:09:08Z"}"#
+                r#"{"type":"session","session":1,"started_at":"2026-10-13T10:09:07Z"}"#
             ),
         ]
     );

@@ -431,6 +431,14 @@ impl Environment {
         }
     }
 
+    /// Takes in how the build in progress ended, if it has.
+    pub async fn take_ended(&mut self) {
+        if self.building.as_ref().is_some_and(JoinHandle::is_finished) {
+            let end = self.next_build_end().await;
+            self.ended(end);
+        }
+    }
+
     /// Takes in how the build in progress ended.
     pub fn ended(&mut self, BuildEnd(ended): BuildEnd) {
         self.building = None;

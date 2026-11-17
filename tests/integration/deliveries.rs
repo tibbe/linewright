@@ -6,7 +6,8 @@ use std::time::Duration;
 use chrono::TimeDelta;
 
 use common::*;
-use linewright::domain::{Login, Number, Snapshot};
+use linewright::domain::{Item, Login, Number, Snapshot};
+use linewright::status::{Polls, View};
 use linewright::store::local::LocalStore;
 use linewright::webhook::{Listener, Pending};
 use serde_json::json;
@@ -56,10 +57,20 @@ impl Served {
         assert!(status.is_success(), "{event}: {status}");
     }
 
+    /// The view `serve` holds now.
+    fn view(&self) -> View {
+        let served = self.serving.served.borrow();
+        served.as_ref().expect("served").view()
+    }
+
     /// The snapshot `serve` holds now.
     fn snapshot(&self) -> Arc<Snapshot> {
-        let served = self.serving.served.borrow();
-        served.as_ref().expect("served").view().snapshot
+        self.view().snapshot
+    }
+
+    /// The last poll and the next, as `serve` holds them now.
+    fn polls(&self) -> Polls {
+        self.view().polls
     }
 
     async fn stop(self) {
@@ -156,6 +167,33 @@ async fn polls_go_on_at_the_poll_interval_while_deliveries_arrive() {
     .await;
 
     assert!(polling.is_ok(), "polls stopped while deliveries arrived");
+    served.stop().await;
+}
+
+#[test_log::test(tokio::test)]
+async fn a_delivery_handled_between_polls_does_not_move_the_next_poll() {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Leave it", "Later.", &["ready-for-human"]);
+    let mut served = serve(world, NEVER).await;
+    let before = served.polls();
+    let read_at = |view: &View| view.read_at.get(&Item::Issue(issue)).copied();
+    let unread = read_at(&served.view());
+
+    served.deliver("issues", about_issue(issue)).await;
+    let refreshed = served.serving.served.wait_for(|served| {
+        served
+            .as_ref()
+            .is_some_and(|served| read_at(&served.view()) != unread)
+    });
+    let refreshed = tokio::time::timeout(Duration::from_secs(10), refreshed)
+        .await
+        .is_ok();
+    assert!(refreshed, "the delivery was not acted on");
+
+    assert_eq!(served.polls().next, before.last + NEVER);
+    assert_eq!(served.store.snapshots_taken(), 1);
     served.stop().await;
 }
 

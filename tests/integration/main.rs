@@ -46,6 +46,7 @@ mod managed_items;
 mod party;
 mod phrase;
 mod pipeline;
+mod polling;
 mod posted_attachments;
 mod pull_records;
 mod push_protection;
