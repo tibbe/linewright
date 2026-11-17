@@ -204,6 +204,34 @@ fn an_html_src_that_is_not_a_valid_url_string_is_refused() {
 }
 
 #[test_log::test]
+fn a_video_html_img_spanning_blockquote_lines_becomes_a_link_keeping_the_quote() {
+    let record = Record::new();
+    record.put("demo.mp4", b"mp4");
+    let dir = record.file_url();
+    assert_eq!(
+        record.rewritten(&format!(
+            "> <div>\n> Watch <img alt=\"the\n> demo\" src=\"{dir}/demo.mp4\">\n> </div>\n"
+        )),
+        "> <div>\n> Watch <a href=\"https://github.com/user-attachments/assets/demo.mp4\">the\n\
+         > demo</a>\n> </div>\n"
+    );
+}
+
+#[test_log::test]
+fn html_with_text_beyond_ascii_is_read() {
+    let record = Record::new();
+    record.put("café.png", b"png");
+    let dir = record.path();
+    assert_eq!(
+        record.rewritten(&format!(
+            "<div>Café</div>\n\n<span title=\"é\">a</span> <img alt=\"é\" src=\"{dir}/caf%C3%A9.png\">\n"
+        )),
+        "<div>Café</div>\n\n<span title=\"é\">a</span> \
+         <img alt=\"é\" src=\"https://github.com/user-attachments/assets/café.png\">\n"
+    );
+}
+
+#[test_log::test]
 fn a_markdown_destination_need_not_be_a_valid_url_string() {
     let record = Record::spaced();
     let shot = record.put("shot.png", b"png");
@@ -258,6 +286,23 @@ fn a_video_is_told_by_its_decoded_path() {
     assert_eq!(
         record.rewritten(&format!("The demo:\n\n![The demo]({dir}/demo.%6dp4)\n")),
         "The demo:\n\nhttps://github.com/user-attachments/assets/demo.mp4\n"
+    );
+}
+
+#[test_log::test]
+fn an_html_img_spanning_blockquote_lines_has_its_src_rewritten() {
+    let record = Record::new();
+    record.put("shot.png", b"png");
+    let dir = record.file_url();
+    assert_eq!(
+        record.rewritten(&format!(
+            "> See <img alt=\"The shot\"\n> src=\"{dir}/shot.png\"> here.\n\n\
+             > <p>\n> <img alt=\"Again\"\n> src=\"{dir}/shot.png\">\n> </p>\n"
+        )),
+        "> See <img alt=\"The shot\"\n\
+         > src=\"https://github.com/user-attachments/assets/shot.png\"> here.\n\n\
+         > <p>\n> <img alt=\"Again\"\n\
+         > src=\"https://github.com/user-attachments/assets/shot.png\">\n> </p>\n"
     );
 }
 
