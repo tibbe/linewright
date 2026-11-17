@@ -105,6 +105,11 @@ _Avoid_: task, test case, sample, example, problem
 The running of a case's stage on the case, with the case in place of GitHub.
 _Avoid_: trial, attempt, epoch, rollout
 
+**Configuration**:
+What a replay changes: files of the brief and settings of the sessions of its
+run, as a layer above every other.
+_Avoid_: variant, arm, candidate, setup
+
 **Judge**:
 The agent that judges the output of a replay against the criteria of its case.
 _Avoid_: scorer, grader, evaluator, reviewer
@@ -234,7 +239,7 @@ _Avoid_: quiet mode, freeze, gate
 **Layer**:
 One of the ranked places a setting or a file of a brief can be set, such as a
 flag or the repository's file, each the repository's, the operator's or
-Linewright's own.
+Linewright's own, or, in a replay, its configuration.
 _Avoid_: scope, level, tier, source, overlay, override, drop-in
 
 **Drain**:
