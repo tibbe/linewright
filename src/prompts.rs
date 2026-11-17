@@ -1174,8 +1174,12 @@ pub enum LooseEnd<'a> {
     HeldSecret(&'a Held),
     /// GitHub's push protection refuses its push, finding the secrets.
     PushedSecret(&'a FoundSecrets),
-    /// The attachment `file` it refers to holds the secret of `variable`.
-    AttachmentSecret { variable: &'a str, file: &'a Path },
+    /// The attachment that `reference`, as its syntax reads it, refers to
+    /// holds the secret of `variable`.
+    AttachmentSecret {
+        variable: &'a str,
+        reference: &'a str,
+    },
 }
 
 /// What a session is sent back with when its result can't be used, for
@@ -1274,14 +1278,21 @@ fn contract_error(templates: &Templates, error: &ContractError) -> String {
 
 fn bad_reference(templates: &Templates, reference: &BadReference) -> String {
     match reference {
-        BadReference::NotAFile { path } => templates.attachment_not_a_file.fill(&AttachmentFile {
-            file: path.display().to_string(),
+        BadReference::InvalidUrl { reference } => {
+            templates.attachment_invalid_url.fill(&AttachmentFile {
+                file: reference.clone(),
+            })
+        }
+        BadReference::NotAFile { reference } => {
+            templates.attachment_not_a_file.fill(&AttachmentFile {
+                file: reference.clone(),
+            })
+        }
+        BadReference::Outside { reference } => templates.attachment_outside.fill(&AttachmentFile {
+            file: reference.clone(),
         }),
-        BadReference::Outside { path } => templates.attachment_outside.fill(&AttachmentFile {
-            file: path.display().to_string(),
-        }),
-        BadReference::Kind { path } => templates.attachment_kind.fill(&AttachmentKind {
-            file: path.display().to_string(),
+        BadReference::Kind { reference } => templates.attachment_kind.fill(&AttachmentKind {
+            file: reference.clone(),
             kinds: extensions(crate::attachments::attachable()),
         }),
     }
@@ -1348,12 +1359,13 @@ pub fn loose_ends(templates: &Templates, problem: &LooseEnd) -> String {
         LooseEnd::PushedSecret(secrets) => templates.pushed_secret.fill(&PushedSecret {
             secrets: pushed_secrets(templates, secrets),
         }),
-        LooseEnd::AttachmentSecret { variable, file } => {
-            templates.attachment_secret.fill(&AttachmentSecret {
-                variable: (*variable).into(),
-                file: file.display().to_string(),
-            })
-        }
+        LooseEnd::AttachmentSecret {
+            variable,
+            reference,
+        } => templates.attachment_secret.fill(&AttachmentSecret {
+            variable: (*variable).into(),
+            file: (*reference).into(),
+        }),
     };
     templates.loose_ends.fill(&LooseEnds { problem })
 }
