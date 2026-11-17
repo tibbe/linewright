@@ -516,9 +516,9 @@ pub trait Store: Send + Sync {
     /// closed items `windows` holds, every closed ticket of a tracking issue
     /// it holds ([`Snapshot::unheld_closed_tickets`]), Linewright's pull
     /// requests closed without merging that close one
-    /// ([`Snapshot::unheld_closing_pulls`]) and every branch Linewright
-    /// pushed for a ticket. What it holds is found among what `scope` names
-    /// too.
+    /// ([`Snapshot::unheld_closing_pulls`]) and those of `scope`'s branches
+    /// that the repository has and Linewright pushed for a ticket. The items
+    /// it holds are found among those `scope` names too.
     async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot>;
     /// Every branch of the repository Linewright pushed for a ticket, found
     /// by listing them all.

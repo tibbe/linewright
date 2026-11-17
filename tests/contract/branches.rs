@@ -18,6 +18,7 @@ contracts![
     a_push_with_a_stale_lease_is_refused_and_leaves_the_branch,
     a_deleted_branch_is_gone,
     only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_tickets,
+    a_snapshot_reads_only_the_branches_asked_for_and_names_those_the_repository_lacks,
 ];
 
 async fn a_clone_is_of_the_branch_asked_with_the_settings_given(sandbox: Sandbox) -> Result<()> {
@@ -317,6 +318,61 @@ async fn only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_t
                 &listed,
                 &vec![linewrights_branch.as_str()],
             )
+        })
+        .await
+}
+
+async fn a_snapshot_reads_only_the_branches_asked_for_and_names_those_the_repository_lacks(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let issue = sandbox
+        .store()
+        .create_issue(NewIssue {
+            title: sandbox.unique("scoped-branch"),
+            body: "Opened for branches named for it.".into(),
+            labels: vec![],
+        })
+        .await?;
+    sandbox.made_issue(issue);
+    let asked = format!("{}-{}", issue.0, sandbox.unique("asked"));
+    let unasked = format!("{}-{}", issue.0, sandbox.unique("unasked"));
+    let missing = format!("{}-{}", issue.0, sandbox.unique("missing"));
+    for branch in [&asked, &unasked] {
+        let clone = sandbox.clone_default_branch().await?;
+        commit(
+            &clone,
+            &[NewCommit {
+                message: "Add a file",
+                files: &[("ticket.txt", b"ticket\n")],
+            }],
+        )
+        .await?;
+        sandbox.made_branch(branch);
+        sandbox.push(&clone, branch, PushMode::Replace).await?;
+    }
+    let name = |name: &str| {
+        TicketBranchName::parse(name).with_context(|| format!("{name} names no ticket's branch"))
+    };
+    let scope = Scope {
+        items: BTreeSet::new(),
+        branches: [name(&asked)?, name(&missing)?].into(),
+    };
+
+    sandbox
+        .eventually(async || {
+            let snapshot = sandbox.store().snapshot(recent(), &scope).await?;
+            let read: Vec<&str> = snapshot
+                .ticket_branches
+                .iter()
+                .map(|branch| branch.name.as_str())
+                .collect();
+            equal("the ticket branches", &read, &vec![asked.as_str()])?;
+            let gone: Vec<&str> = snapshot
+                .gone_branches
+                .iter()
+                .map(TicketBranchName::as_str)
+                .collect();
+            equal("the branches gone", &gone, &vec![missing.as_str()])
         })
         .await
 }

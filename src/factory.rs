@@ -365,6 +365,9 @@ impl Factory {
         let shell = &self.shell;
         let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
+        self.adopt_pushed_branches(now)
+            .await
+            .context("taking a snapshot")?;
         let scope = self.scope().await?;
         let mut snapshot = shell
             .sessions
@@ -372,6 +375,9 @@ impl Factory {
             .snapshot(windows, &scope)
             .await
             .context("taking a snapshot")?;
+        self.pushed_branches
+            .forget_gone(&snapshot.gone_branches, now)
+            .await?;
         if !self.labeled_old_tracking_issues {
             label_old_tracking_issues(&mut snapshot, shell, windows).await?;
             self.labeled_old_tracking_issues = true;
@@ -587,6 +593,20 @@ impl Factory {
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             unusable: kept.repo.unusable.clone(),
         })
+    }
+
+    /// Records the ticket branches Linewright pushed before it recorded its
+    /// pushes, found by listing every branch at `now`, unless they were
+    /// adopted already: every branch is listed once, whatever the polls and
+    /// restarts.
+    async fn adopt_pushed_branches(&self, now: Timestamp) -> Result<()> {
+        if self.pushed_branches.adopted().await? {
+            return Ok(());
+        }
+        let listed = self.shell.sessions.store.ticket_branches_pushed().await?;
+        self.pushed_branches
+            .adopt(&listed.into_iter().collect(), now)
+            .await
     }
 
     /// What Linewright knows of its work for a poll to read: the items of
@@ -1122,6 +1142,7 @@ impl Factory {
                     "deleting the branch of a closed ticket"
                 );
                 store.delete_branch(branch.as_str()).await?;
+                self.pushed_branches.forget(branch).await?;
                 change_kept_snapshot(&mut self.kept, |latest| {
                     latest.ticket_branches.retain(|b| b.name != *branch);
                 });

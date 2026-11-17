@@ -63,12 +63,13 @@ impl PushedBranches {
         Ok(())
     }
 
-    /// Forgets each branch a read that began at `read_started` did not find
-    /// among those it `found`, unless it was recorded at or after that: a
-    /// branch pushed during the read may be one the read missed.
+    /// Forgets each branch of `gone`, which a read that began at
+    /// `read_started` found the repository does not have, unless it was
+    /// recorded at or after that: a branch pushed during the read may be one
+    /// the read missed.
     pub async fn forget_gone(
         &self,
-        found: &BTreeSet<TicketBranchName>,
+        gone: &BTreeSet<TicketBranchName>,
         read_started: Timestamp,
     ) -> Result<()> {
         let mut tx = self
@@ -77,16 +78,10 @@ impl PushedBranches {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .context(FORGETTING)?;
-        let before: Vec<String> =
-            sqlx::query_scalar("SELECT name FROM pushed_branches WHERE recorded_at < ?")
+        for branch in gone {
+            sqlx::query("DELETE FROM pushed_branches WHERE name = ? AND recorded_at < ?")
+                .bind(branch.as_str())
                 .bind(time_text(read_started))
-                .fetch_all(&mut *tx)
-                .await
-                .context(FORGETTING)?;
-        let found: BTreeSet<&str> = found.iter().map(TicketBranchName::as_str).collect();
-        for name in before.iter().filter(|name| !found.contains(name.as_str())) {
-            sqlx::query("DELETE FROM pushed_branches WHERE name = ?")
-                .bind(name)
                 .execute(&mut *tx)
                 .await
                 .context(FORGETTING)?;
