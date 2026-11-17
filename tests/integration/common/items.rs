@@ -123,6 +123,15 @@ pub fn assigning_linewright(when: &str) -> IssueEvent {
     })
 }
 
+/// Linewright applying `label` to an item at `when`, as a run on it ends.
+pub fn linewright_labeling(label: &str, when: &str) -> IssueEvent {
+    IssueEvent::Labeled {
+        label: label.into(),
+        by: Some(Login::new("factory")),
+        at: at(when),
+    }
+}
+
 /// Linewright unassigning itself from an item at `when`, as a hand-back
 /// does.
 pub fn linewright_letting_go(when: &str) -> IssueEvent {

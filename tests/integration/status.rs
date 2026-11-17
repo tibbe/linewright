@@ -4,7 +4,8 @@ use chrono::TimeDelta;
 
 use common::{
     assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
-    labeled_by_linewright, limited_until, linewright_letting_go, relabeled, sub_issue, ticket,
+    labeled_by_linewright, limited_until, linewright_labeling, linewright_letting_go, relabeled,
+    sub_issue, ticket,
 };
 use linewright::automation::{AutomationFiles, LastScheduledRuns, Unparsed};
 use linewright::domain::*;
@@ -1177,6 +1178,7 @@ fn an_issue_without_the_required_label_that_linewright_has_worked_is_managed() {
         labels: vec!["ready-for-agent".into(), label::STALLED.into()],
         events: vec![
             assigning_linewright("2026-10-01T10:00:00Z"),
+            linewright_labeling(label::STALLED, "2026-10-01T11:00:00Z"),
             linewright_letting_go("2026-10-01T11:00:00Z"),
         ],
         ..ready_issue()

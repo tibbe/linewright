@@ -41,8 +41,37 @@ fn persons_issue() -> Issue {
     }
 }
 
+/// [`persons_issue`], which Linewright claimed and labeled ready-for-human
+/// as its run ended, letting go of it, and a person then removed the label.
+fn handed_back_and_taken_back() -> Issue {
+    Issue {
+        events: vec![
+            assigning_linewright("2026-10-01T09:20:00Z"),
+            labeling(label::READY_FOR_HUMAN, LINEWRIGHT),
+            linewright_letting_go("2026-10-01T09:40:00Z"),
+            IssueEvent::Unlabeled {
+                label: label::READY_FOR_HUMAN.into(),
+                at: at("2026-10-01T09:50:00Z"),
+            },
+        ],
+        ..persons_issue()
+    }
+}
+
+/// [`persons_issue`], which Linewright claimed before any run on it ended,
+/// and a person then unassigned it.
+fn claimed_and_taken_back() -> Issue {
+    Issue {
+        events: vec![
+            assigning_linewright("2026-10-01T09:40:00Z"),
+            unassigning_linewright("2026-10-01T09:55:00Z"),
+        ],
+        ..persons_issue()
+    }
+}
+
 #[test_log::test]
-fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_pull_request_closing_it()
+fn an_issue_is_worked_once_linewright_opened_it_labeled_it_as_a_run_ended_or_opened_a_pull_request_closing_it()
  {
     let cases = [
         (
@@ -74,21 +103,26 @@ fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_p
             false,
         ),
         (
-            "labeled and claimed by Linewright, both since removed by a person",
+            "labeled ready-for-human by Linewright and let go, the label since removed by a person",
+            handed_back_and_taken_back(),
+            vec![],
+            true,
+        ),
+        (
+            "claimed by Linewright, then unassigned by a person",
+            claimed_and_taken_back(),
+            vec![],
+            false,
+        ),
+        (
+            "labeled needs-triage by Linewright only",
             Issue {
-                events: vec![
-                    labeling("ready-for-human", LINEWRIGHT),
-                    assigning_linewright("2026-10-01T09:40:00Z"),
-                    IssueEvent::Unlabeled {
-                        label: "ready-for-human".into(),
-                        at: at("2026-10-01T09:50:00Z"),
-                    },
-                    unassigning_linewright("2026-10-01T09:55:00Z"),
-                ],
+                labels: vec![label::NEEDS_TRIAGE.into()],
+                events: vec![labeling(label::NEEDS_TRIAGE, LINEWRIGHT)],
                 ..persons_issue()
             },
             vec![],
-            true,
+            false,
         ),
         (
             "labeled by a person",
@@ -143,6 +177,23 @@ fn an_issue_is_worked_once_linewright_opened_claimed_or_labeled_it_or_opened_a_p
 }
 
 #[test_log::test]
+fn an_issue_a_person_took_back_from_a_claim_is_not_managed_but_one_labeled_as_a_run_ended_still_is()
+{
+    let managed = |issue: Issue| {
+        let closing = issue.closed_by.clone();
+        issue.candidate(&linewright(), &closing, Marking::Marked)
+    };
+
+    assert!(!managed(claimed_and_taken_back()));
+    assert!(!managed(closed_by(claimed_and_taken_back(), 20, "alice")));
+    assert!(managed(closed_by(
+        handed_back_and_taken_back(),
+        20,
+        "alice"
+    )));
+}
+
+#[test_log::test]
 fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_worked() {
     let closed = |issue: Issue| closed_item(&issue, "2026-10-01T11:00:00Z");
     let cases = [
@@ -171,6 +222,11 @@ fn a_closed_issue_is_worked_as_an_open_one_is_and_a_closed_pull_request_held_is_
                 events: vec![assigning_linewright("2026-10-01T09:40:00Z")],
                 ..persons_issue()
             }),
+            false,
+        ),
+        (
+            "an issue Linewright labeled as a run ended",
+            closed(handed_back_and_taken_back()),
             true,
         ),
         ("an issue left alone", closed(persons_issue()), false),
@@ -235,6 +291,39 @@ fn a_pull_request_is_held_as_linewrights_when_it_opened_it_and_as_a_persons_whil
             Pull {
                 assignments: vec![
                     assigning_linewright_by_hand("2026-10-01T09:40:00Z"),
+                    Assignment::Unassigned {
+                        assignee: linewright(),
+                        actor: Login::new("maintainer"),
+                        at: at("2026-10-01T09:50:00Z"),
+                    },
+                ],
+                ..persons(&[])
+            },
+            None,
+            false,
+        ),
+        (
+            "a person's Linewright assigned itself to",
+            Pull {
+                assignments: vec![Assignment::Assigned {
+                    assignee: linewright(),
+                    actor: linewright(),
+                    at: at("2026-10-01T09:40:00Z"),
+                }],
+                ..persons(&[LINEWRIGHT])
+            },
+            Some(PullHeld::Peoples),
+            false,
+        ),
+        (
+            "a person's Linewright assigned itself to, then was unassigned from",
+            Pull {
+                assignments: vec![
+                    Assignment::Assigned {
+                        assignee: linewright(),
+                        actor: linewright(),
+                        at: at("2026-10-01T09:40:00Z"),
+                    },
                     Assignment::Unassigned {
                         assignee: linewright(),
                         actor: Login::new("maintainer"),

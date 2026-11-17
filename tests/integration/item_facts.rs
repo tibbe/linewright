@@ -216,7 +216,8 @@ fn a_pull_request_shown_on_the_card_of_the_issue_it_closes_has_the_card_it_would
     assert_eq!(facts.pull_requests, []);
 }
 
-/// Ticket #`number` of #20, which Linewright claimed, closed at `closed_at`.
+/// Ticket #`number` of #20, which Linewright cut and claimed, closed at
+/// `closed_at`.
 fn closed_ticket(number: u64, closed_at: &str) -> ClosedItem {
     ClosedItem {
         number: Number(number),
@@ -233,6 +234,7 @@ fn closed_ticket(number: u64, closed_at: &str) -> ClosedItem {
                 sub_issues: vec![],
                 labels: vec!["ready-for-agent".into(), label::DESIGNED.into()],
                 work: WorkFacts {
+                    author: Some(Login::new("factory")),
                     assignees: vec![Login::new("factory")],
                     events: vec![common::assigning_linewright("2026-09-28T10:00:00Z")],
                     ..WorkFacts::default()
