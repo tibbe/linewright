@@ -313,8 +313,9 @@ judge does not take it.
 on GitHub is kept from its `gh`, and its session takes its settings from
 `[stage.judge]` ([Stage settings](#stage-settings)). It judges only a replay
 whose run ended done or handed back, and refuses an output replayed from
-another case. It prints the verdict and whether it found a leak, and keeps the
-judgement in the output:
+another case or one that already holds a judgement, which it leaves as it is,
+with its judge's record. It prints the verdict and whether it found a leak, and
+keeps the judgement in the output:
 
 ```text
 judgement.json  the verdict (pass or fail), whether a leak was found and the
@@ -323,10 +324,8 @@ judgement.json  the verdict (pass or fail), whether a leak was found and the
 judge/          the record of the judge's session, which judgement.json names
 ```
 
-Judging again replaces the judgement and removes the earlier judge's record,
-so a judge can be tuned without replaying. A judge that gives up, fails, ends
-without a result Linewright accepts or is stopped keeps nothing, and the
-earlier judgement stays. The command exits 0 when the judge made a judgement,
+A judge that gives up, fails, ends without a result Linewright accepts or is
+stopped keeps nothing. The command exits 0 when the judge made a judgement,
 whatever it is, and 1 when it made none or refused the output.
 
 ## Monitoring
