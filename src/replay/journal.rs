@@ -10,8 +10,8 @@ use tokio::sync::Mutex;
 
 use super::{ATTACHMENTS, WRITES, attachment_link};
 use crate::domain::{
-    CheckFailure, IssueCloseReason, Login, MergeMethod, MergedPull, Number, Pull, Snapshot,
-    Windows, label,
+    CheckFailure, IssueCloseReason, Login, MergeMethod, MergedPull, Number, Pull, Scope, Snapshot,
+    TicketBranchName, Windows, label,
 };
 use crate::git::CommitId;
 use crate::store::{
@@ -245,8 +245,12 @@ impl Store for Journal {
         self.inner.label_exists(name).await
     }
 
-    async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
-        self.inner.snapshot(windows).await
+    async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot> {
+        self.inner.snapshot(windows, scope).await
+    }
+
+    async fn ticket_branches_pushed(&self) -> Result<Vec<TicketBranchName>> {
+        self.inner.ticket_branches_pushed().await
     }
 
     async fn issue(&self, number: Number) -> Result<IssueRead> {

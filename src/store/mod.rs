@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{
     CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
-    MergeMethods, MergedPull, Number, Opening, Pull, Repo, Snapshot, Windows, label,
+    MergeMethods, MergedPull, Number, Opening, Pull, Repo, Scope, Snapshot, TicketBranchName,
+    Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::git::CommitId;
@@ -516,8 +517,12 @@ pub trait Store: Send + Sync {
     /// it holds ([`Snapshot::unheld_closed_tickets`]), Linewright's pull
     /// requests closed without merging that close one
     /// ([`Snapshot::unheld_closing_pulls`]) and every branch Linewright
-    /// pushed for a ticket.
-    async fn snapshot(&self, windows: Windows) -> Result<Snapshot>;
+    /// pushed for a ticket. What it holds is found among what `scope` names
+    /// too.
+    async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot>;
+    /// Every branch of the repository Linewright pushed for a ticket, found
+    /// by listing them all.
+    async fn ticket_branches_pushed(&self) -> Result<Vec<TicketBranchName>>;
     /// The issue as a snapshot taken now sees it, but a closed one whenever
     /// it closed: whether a snapshot holds it closed depends on the rest it
     /// holds ([`Snapshot::keeps_closed`]).

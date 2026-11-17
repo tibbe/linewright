@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use common::*;
 use linewright::domain::{
-    Assignment, IssueCloseReason, IssueEvent, Login, MergeMethod, PullState, ReviewState, Windows,
-    label,
+    Assignment, IssueCloseReason, IssueEvent, Login, MergeMethod, PullState, ReviewState, Scope,
+    Windows, label,
 };
 use linewright::git::CommitId;
 use linewright::replay::Journal;
@@ -436,7 +436,10 @@ async fn reads_are_answered_by_the_store_and_leave_no_entry() {
 
     let read = journal.issue(issue).await.unwrap();
     let any = journal.any_item(issue).await.unwrap();
-    let snapshot = journal.snapshot(Windows::EVER).await.unwrap();
+    let snapshot = journal
+        .snapshot(Windows::EVER, &Scope::default())
+        .await
+        .unwrap();
     let labels = journal.labels().await.unwrap();
     let settings = journal.settings().await.unwrap();
     let properties = journal.record_properties().await.unwrap();
@@ -445,7 +448,13 @@ async fn reads_are_answered_by_the_store_and_leave_no_entry() {
 
     assert_eq!(read, Store::issue(&**store, issue).await.unwrap());
     assert_eq!(any, store.any_item(issue).await.unwrap());
-    assert_eq!(snapshot, store.snapshot(Windows::EVER).await.unwrap());
+    assert_eq!(
+        snapshot,
+        store
+            .snapshot(Windows::EVER, &Scope::default())
+            .await
+            .unwrap()
+    );
     assert_eq!(labels, store.labels().await.unwrap());
     assert_eq!(settings, store.settings().await.unwrap());
     assert_eq!(properties, store.record_properties().await.unwrap());

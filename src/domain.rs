@@ -1860,6 +1860,17 @@ impl ClosedItem {
     }
 }
 
+/// What Linewright knows of its work that a snapshot reads beyond what it
+/// finds itself (`docs/specs/sources_of_work.md`, Polling).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Scope {
+    /// The items Linewright knows: those the snapshot it kept holds, those it
+    /// wrote to since and those with a run in flight.
+    pub items: BTreeSet<Item>,
+    /// The ticket branches Linewright recorded pushing.
+    pub branches: BTreeSet<TicketBranchName>,
+}
+
 /// The windows a snapshot reads back over (`docs/specs/operation.md`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Windows {
@@ -2161,6 +2172,14 @@ pub struct IssueTaken {
 }
 
 impl Snapshot {
+    /// Its issues, and its pull requests, Linewright's and the people's.
+    pub fn items(&self) -> impl Iterator<Item = Item> + '_ {
+        let issues = self.issues.iter().map(|issue| Item::Issue(issue.number));
+        let pulls =
+            (self.pulls.iter().chain(&self.peoples_pulls)).map(|pull| Item::Pull(pull.number));
+        issues.chain(pulls)
+    }
+
     pub fn issue(&self, number: Number) -> Option<&Issue> {
         self.issues.iter().find(|i| i.number == number)
     }

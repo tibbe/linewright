@@ -23,7 +23,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueEvent, JobLog, Labeling, Linked,
     Login, ManagedFacts, MergeMethod, Mergeability, MergedPull, Number, Opened, Opening, Parent,
     Pull, PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review,
-    ReviewDecision, ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
+    ReviewDecision, ReviewState, Scope, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
     TicketBranch, TicketBranchName, Timestamp, Windows, WorkFacts, closed_within, label,
 };
 use crate::git;
@@ -1090,6 +1090,29 @@ impl GitHub {
     /// The branches Linewright pushed for a ticket, each with its issue: held,
     /// when `held` holds its number, or else as read.
     async fn ticket_branches(&self, held: &BTreeSet<Number>) -> Result<Vec<TicketBranch>> {
+        let mut branches = vec![];
+        for (name, open_pull_from_branch) in self.pushed_refs().await? {
+            let issue = if held.contains(&name.issue()) {
+                BranchIssue::Held
+            } else {
+                let Some(read) = self.gql_issue(name.issue()).await? else {
+                    continue;
+                };
+                BranchIssue::Read(Box::new(read.into_issue(&self.linewright())))
+            };
+            branches.push(TicketBranch {
+                name,
+                issue,
+                open_pull_from_branch,
+            });
+        }
+        Ok(branches)
+    }
+
+    /// Each branch of the repository Linewright pushed for a ticket, with
+    /// whether a pull request is open from it, found by listing every
+    /// branch.
+    async fn pushed_refs(&self) -> Result<Vec<(TicketBranchName, bool)>> {
         #[derive(Deserialize)]
         struct Refs {
             refs: Page<GqlRef>,
@@ -1106,7 +1129,7 @@ impl GitHub {
                 }
               }
             }";
-        let mut branches = vec![];
+        let mut pushed = vec![];
         let mut cursor = Value::Null;
         loop {
             let data: RepoData<Refs> = self
@@ -1116,26 +1139,11 @@ impl GitHub {
                 )
                 .await?;
             let page = data.repository.refs;
-            for branch in page.nodes {
-                let Some(name) = branch.pushed_for(&self.viewer.login) else {
-                    continue;
-                };
-                let issue = if held.contains(&name.issue()) {
-                    BranchIssue::Held
-                } else {
-                    let Some(read) = self.gql_issue(name.issue()).await? else {
-                        continue;
-                    };
-                    BranchIssue::Read(Box::new(read.into_issue(&self.linewright())))
-                };
-                branches.push(TicketBranch {
-                    open_pull_from_branch: branch.open_pull(),
-                    name,
-                    issue,
-                });
-            }
+            pushed.extend(page.nodes.iter().filter_map(|branch| {
+                Some((branch.pushed_for(&self.viewer.login)?, branch.open_pull()))
+            }));
             if !page.page_info.has_next_page {
-                return Ok(branches);
+                return Ok(pushed);
             }
             cursor = json!(page.page_info.end_cursor);
         }
@@ -3471,7 +3479,7 @@ impl Store for GitHub {
             .await
     }
 
-    async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
+    async fn snapshot(&self, windows: Windows, _scope: &Scope) -> Result<Snapshot> {
         let settings_branch: Value = self.rest(Method::GET, &self.repo_path(""), None).await?;
         let default_branch = settings_branch["default_branch"]
             .as_str()
@@ -3635,6 +3643,15 @@ impl Store for GitHub {
             None
         };
         Ok(PeoplesPullRead { closes, pull })
+    }
+
+    async fn ticket_branches_pushed(&self) -> Result<Vec<TicketBranchName>> {
+        Ok(self
+            .pushed_refs()
+            .await?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect())
     }
 
     async fn issue(&self, number: Number) -> Result<IssueRead> {

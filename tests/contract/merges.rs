@@ -3,7 +3,7 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use linewright::domain::{
-    ClosedKind, MergeMethod, Mergeability, Number, Opening, PullState, Windows,
+    ClosedKind, MergeMethod, Mergeability, Number, Opening, PullState, Scope, Windows,
 };
 use linewright::store::{AnyItem, NewIssue, PushMode};
 use linewright::{git, tracking};
@@ -583,7 +583,10 @@ async fn a_snapshot_holds_an_issue_a_merge_closed_with_the_pull_request_that_clo
 
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             let closed = snapshot
                 .closed
                 .iter()
@@ -623,7 +626,10 @@ async fn a_merged_pull_request_is_read_with_who_a_review_is_requested_of(
 
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(recent()).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
             let merged = snapshot
                 .merged_pull(pr)
                 .with_context(|| format!("the snapshot does not hold {pr} merged"))?;
@@ -673,7 +679,10 @@ async fn a_spec_change_merged_before_the_windows_is_held_as_who_opened_it_while_
     );
     sandbox
         .eventually(async || {
-            let snapshot = sandbox.store().snapshot(after_the_merge).await?;
+            let snapshot = sandbox
+                .store()
+                .snapshot(after_the_merge, &Scope::default())
+                .await?;
             ensure!(
                 snapshot.issue(issue).is_some(),
                 "the snapshot does not hold {issue}"

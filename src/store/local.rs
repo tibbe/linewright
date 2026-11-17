@@ -21,7 +21,7 @@ use crate::domain::{
     ClosingPull, Comment, Filed, Issue, IssueCloseReason, IssueClosing, IssueEvent, Labeling,
     Linked, Login, MergeMethod, MergeMethods, Mergeability, MergedPull, Number, Opened, Opening,
     Parent, Pull, PullHeld, PullSigns, PullState, Push, Rebaseability, Repo, Requirement, Review,
-    ReviewDecision, ReviewState, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
+    ReviewDecision, ReviewState, Scope, Snapshot, SpecChangeIssue, SubIssue, SubIssueState, Thread,
     TicketBranch, TicketBranchName, Timestamp, Windows, closed_within, closing_references, label,
     pull_events,
 };
@@ -68,6 +68,8 @@ struct State {
     issues: BTreeMap<Number, IssueRecord>,
     pulls: BTreeMap<Number, PullRecord>,
     snapshots_taken: usize,
+    /// The scope the last snapshot taken was given.
+    last_scope: Option<Scope>,
     items_read: usize,
     unreadable: Option<String>,
     /// Fails the reads of single items, but not snapshots.
@@ -376,6 +378,7 @@ impl LocalStore {
                 issues: BTreeMap::new(),
                 pulls: BTreeMap::new(),
                 snapshots_taken: 0,
+                last_scope: None,
                 items_read: 0,
                 unreadable: None,
                 items_unreadable: None,
@@ -1009,6 +1012,11 @@ impl LocalStore {
         self.state().snapshots_taken
     }
 
+    /// The scope the last snapshot taken was given.
+    pub fn last_scope(&self) -> Option<Scope> {
+        self.state().last_scope.clone()
+    }
+
     pub fn items_read(&self) -> usize {
         self.state().items_read
     }
@@ -1089,6 +1097,32 @@ impl LocalStore {
 
     /// A snapshot of the local store holds every issue.
     async fn ticket_branches(&self) -> Result<Vec<TicketBranch>> {
+        let pushed = self.pushed_refs().await?;
+        let state = self.state();
+        Ok(pushed
+            .into_iter()
+            .filter_map(|branch| {
+                let record = state.issues.get(&branch.issue())?;
+                let open_pull_from_branch = state
+                    .pulls
+                    .values()
+                    .any(|p| p.is_open() && p.head_ref == branch.as_str());
+                Some(TicketBranch {
+                    name: branch,
+                    issue: if record.is_open() {
+                        BranchIssue::Held
+                    } else {
+                        BranchIssue::Read(Box::new(state.issue_view(record)))
+                    },
+                    open_pull_from_branch,
+                })
+            })
+            .collect())
+    }
+
+    /// Each branch Linewright pushed for a ticket: named for one, its head
+    /// committed by Linewright.
+    async fn pushed_refs(&self) -> Result<Vec<TicketBranchName>> {
         let heads = git::git(
             &self.repository(),
             &[
@@ -1104,23 +1138,7 @@ impl LocalStore {
             .filter_map(|line| {
                 let (name, committer) = line.split_once('\t')?;
                 let branch = TicketBranchName::parse(name)?;
-                let record = state.issues.get(&branch.issue())?;
-                if committer != state.linewright.as_str() {
-                    return None;
-                }
-                let open_pull_from_branch = state
-                    .pulls
-                    .values()
-                    .any(|p| p.is_open() && p.head_ref == name);
-                Some(TicketBranch {
-                    name: branch,
-                    issue: if record.is_open() {
-                        BranchIssue::Held
-                    } else {
-                        BranchIssue::Read(Box::new(state.issue_view(record)))
-                    },
-                    open_pull_from_branch,
-                })
+                (committer == state.linewright.as_str()).then_some(branch)
             })
             .collect())
     }
@@ -2253,11 +2271,12 @@ impl Store for LocalStore {
         Ok(self.state().label(name).is_some())
     }
 
-    async fn snapshot(&self, windows: Windows) -> Result<Snapshot> {
+    async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot> {
         self.readable()?;
         let (default_branch, issues, closed, spec_change_issues, linewright, pulls) = {
             let mut state = self.state();
             state.snapshots_taken += 1;
+            state.last_scope = Some(scope.clone());
             let issues: Vec<Issue> = state
                 .issues
                 .values()
@@ -2349,6 +2368,11 @@ impl Store for LocalStore {
         })
         .await?;
         Ok(snapshot)
+    }
+
+    async fn ticket_branches_pushed(&self) -> Result<Vec<TicketBranchName>> {
+        self.readable()?;
+        self.pushed_refs().await
     }
 
     async fn issue(&self, number: Number) -> Result<IssueRead> {

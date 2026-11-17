@@ -72,6 +72,15 @@ pub enum Subject {
     Pull(Number),
 }
 
+impl From<Subject> for Item {
+    fn from(subject: Subject) -> Item {
+        match subject {
+            Subject::Issue(issue) => Item::Issue(issue),
+            Subject::Pull(pr) => Item::Pull(pr),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Work {
     Triage {
