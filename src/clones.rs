@@ -266,7 +266,7 @@ pub struct CloneDir {
     lock: Option<Lock>,
     /// What runs, off the runtime's threads, before the directory is
     /// removed.
-    before_removal: Option<Box<dyn FnOnce() + Send>>,
+    before_removal: Option<Box<dyn FnOnce() + Send + Sync>>,
     winding_up: WindingUp,
 }
 
@@ -286,7 +286,7 @@ impl CloneDir {
 
     /// Has `before_removal` run, off the runtime's threads, before the
     /// directory is removed, after any given earlier.
-    pub fn then_remove(&mut self, before_removal: impl FnOnce() + Send + 'static) {
+    pub fn then_remove(&mut self, before_removal: impl FnOnce() + Send + Sync + 'static) {
         let earlier = self.before_removal.take();
         self.before_removal = Some(Box::new(move || {
             if let Some(earlier) = earlier {
