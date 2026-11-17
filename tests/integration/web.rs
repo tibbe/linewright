@@ -235,6 +235,7 @@ impl Pages {
             view,
             store.clone(),
             linewright::redaction::Redaction::default(),
+            std::sync::Arc::new(linewright::briefs::Briefs::shipped()),
         ));
         let (served, served_receiver) = tokio::sync::watch::channel(served);
         let (_, polling) = tokio::sync::watch::channel(Some(polling));
@@ -267,6 +268,7 @@ impl Pages {
             view,
             self.store.clone(),
             linewright::redaction::Redaction::default(),
+            std::sync::Arc::new(linewright::briefs::Briefs::shipped()),
         );
         self.served.send_replace(Some(served));
     }

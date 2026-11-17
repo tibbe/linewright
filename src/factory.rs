@@ -646,6 +646,7 @@ impl Factory {
             self.view(next_poll)?,
             self.shell.sessions.store.clone(),
             self.shell.sessions.secrets.redaction().clone(),
+            self.kept.as_ref()?.repo.briefs.clone(),
         ))
     }
 

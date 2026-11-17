@@ -279,6 +279,21 @@ impl Briefs {
         &self.layers
     }
 
+    /// The text of each file a layer may hold, by its path under
+    /// `briefs/`, as the sessions it is sent to get it.
+    pub fn texts(&self) -> BTreeMap<String, String> {
+        let templates = self
+            .templates
+            .texts()
+            .map(|(path, text)| (path.to_string(), text.to_string()));
+        let plugin = self
+            .plugin
+            .iter()
+            .filter(|(path, _)| !is_hidden(path))
+            .map(|(path, text)| (format!("{PLUGIN_DIR}{path}"), text.clone()));
+        templates.chain(plugin).collect()
+    }
+
     /// Writes the plugin's files to `dir`.
     pub fn write_plugin(&self, dir: &Path) -> std::io::Result<()> {
         for (path, text) in &self.plugin {

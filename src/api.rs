@@ -23,6 +23,7 @@ use tracing::{error, info};
 
 use crate::benchmarks::{ExperimentId, Experiments, Shown};
 use crate::board::{self, Board};
+use crate::briefs::Briefs;
 use crate::clock::Clock;
 use crate::domain::{Number, Snapshot, Timestamp};
 use crate::drain::{Asked, Exiting, Stop, Taken, Was};
@@ -184,17 +185,31 @@ pub struct Served {
     view: View,
     store: Arc<dyn Store>,
     redaction: Redaction,
+    briefs: Arc<Briefs>,
 }
 
 impl Served {
-    /// `view`, with the store it was read from and the redaction of
-    /// Linewright's secrets.
-    pub fn new(view: View, store: Arc<dyn Store>, redaction: Redaction) -> Served {
+    /// `view`, with the store it was read from, the redaction of
+    /// Linewright's secrets and the briefs a run of a stage gets from the
+    /// repository's files as last read.
+    pub fn new(
+        view: View,
+        store: Arc<dyn Store>,
+        redaction: Redaction,
+        briefs: Arc<Briefs>,
+    ) -> Served {
         Served {
             view,
             store,
             redaction,
+            briefs,
         }
+    }
+
+    /// The briefs of the repository's layer as last read, over the
+    /// operator's and Linewright's own.
+    pub fn briefs(&self) -> &Briefs {
+        &self.briefs
     }
 
     pub fn store(&self) -> &dyn Store {
