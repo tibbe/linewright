@@ -24,8 +24,8 @@
 <td>{{ row.schedule }}</td>
 <td>
 {%- match row.last_run -%}
-{%- when LastRunShown::Run { id, href, tone, word, about } -%}
-<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(tone, word) %}{% endcall %}
+{%- when LastRunShown::Run { id, href, status, word, about } -%}
+<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(status, word) %}{% endcall %}
 {%- when LastRunShown::NoneYet(phrase) -%}
 {{ phrase|safe }}
 {%- endmatch -%}

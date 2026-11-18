@@ -7,7 +7,7 @@ use crate::board::{
     Card, CardLine, CardStatus, Elapsed, Held, LaneHead, LaneHeading, Running, Stop,
 };
 use crate::holds::Hold;
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::reconcile::WorkKind;
 
 /// A card's line, the one place a page names items by their number alone
@@ -69,13 +69,14 @@ pub(super) fn lane_head(heading: &LaneHeading, repo: &str) -> Html {
     }
 }
 
-/// The tone `status` shows in (`docs/specs/web/design_system.md`, Status).
-pub(super) fn tone(status: CardStatus) -> Tone {
-    match status {
-        CardStatus::Failed => Tone::Failure,
-        CardStatus::WaitingForAPerson => Tone::Pending,
-        CardStatus::InFlight => Tone::InProgress,
-        CardStatus::PausedOrQueued => Tone::Paused,
+/// The status a card status shows as (`docs/specs/board.md`, Cards, Card
+/// status).
+pub(super) fn status(card: CardStatus) -> Status {
+    match card {
+        CardStatus::Failed => Status::Failed,
+        CardStatus::WaitingForAPerson => Status::Waiting,
+        CardStatus::InFlight => Status::InFlight,
+        CardStatus::PausedOrQueued => Status::Paused,
     }
 }
 

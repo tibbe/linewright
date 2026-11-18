@@ -21,7 +21,7 @@ use crate::domain::{Number, Repo, Timestamp};
 use crate::harness::{Purpose, Reported, Reporter};
 use crate::input::Input;
 use crate::layer::{Layer, Source};
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::reconcile::{EndedRun, WorkKind};
 use crate::records;
 use crate::session::{self, RecordsSessions};
@@ -1224,16 +1224,17 @@ impl Outcome {
         )
     }
 
-    pub(crate) fn tone(self) -> Tone {
+    /// The status it shows as (`docs/specs/runs.md`, Ending).
+    pub(crate) fn status(self) -> Status {
         match self {
             Outcome::Ended { ending, .. } => match ending {
-                Ending::Done => Tone::Success,
-                Ending::Failed => Tone::Failure,
-                Ending::HandedBack => Tone::Pending,
-                Ending::Cancelled | Ending::UsageLimit => Tone::Cancelled,
+                Ending::Done => Status::Done,
+                Ending::Failed => Status::Failed,
+                Ending::HandedBack => Status::Waiting,
+                Ending::Cancelled | Ending::UsageLimit => Status::Cancelled,
             },
-            Outcome::InFlight { .. } => Tone::InProgress,
-            Outcome::Interrupted => Tone::Cancelled,
+            Outcome::InFlight { .. } => Status::InFlight,
+            Outcome::Interrupted => Status::Cancelled,
         }
     }
 }

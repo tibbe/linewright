@@ -50,7 +50,7 @@ use crate::domain::{Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::repo_files::FileError;
 use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
@@ -410,20 +410,20 @@ impl Hold {
         }
     }
 
-    /// Its tone (`docs/specs/web/design_system.md`, Status): a usage limit
-    /// shows neutral, the tone it shares with a cancelled run.
-    fn tone(&self) -> Tone {
+    /// Its status (`docs/specs/web/design_system.md`, Status): a usage limit
+    /// shows neutral, the status it shares with a cancelled run.
+    fn status(&self) -> Status {
         match self {
-            Hold::UsageLimit { .. } => Tone::Cancelled,
-            Hold::Drain(_) => Tone::InProgress,
-            Hold::WebhooksRefused { .. } => Tone::Pending,
-            Hold::Environment(Attention::FirstBuilding(_)) => Tone::InProgress,
-            Hold::Environment(Attention::NoneYet) => Tone::Pending,
-            Hold::Environment(Attention::LatestFailed(_)) => Tone::Failure,
+            Hold::UsageLimit { .. } => Status::Cancelled,
+            Hold::Drain(_) => Status::InFlight,
+            Hold::WebhooksRefused { .. } => Status::Waiting,
+            Hold::Environment(Attention::FirstBuilding(_)) => Status::InFlight,
+            Hold::Environment(Attention::NoneYet) => Status::Waiting,
+            Hold::Environment(Attention::LatestFailed(_)) => Status::Failed,
             Hold::PollsFailed(_)
             | Hold::UnparsedAutomation(_)
             | Hold::UnusableFile(_)
-            | Hold::AutomationFailed { .. } => Tone::Failure,
+            | Hold::AutomationFailed { .. } => Status::Failed,
         }
     }
 
@@ -501,7 +501,7 @@ impl Frame {
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
-                alert: hold.tone().alert(),
+                alert: hold.status().alert(),
                 phrase: html::phrase(&hold.phrase(), &names),
                 href: hold.href(),
             })
