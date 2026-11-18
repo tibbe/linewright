@@ -14,6 +14,15 @@ RUN npm ci --no-audit --no-fund \
         const got = require("playwright/package.json").version; \
         if (got !== want) throw new Error(`playwright ${got}, @playwright/cli wants ${want}`);'
 
+FROM debian:trixie-slim AS check-tools
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl npm \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,source=scripts/install,target=/src/scripts/install \
+    --mount=type=bind,source=quint/package.json,target=/src/quint/package.json \
+    --mount=type=bind,source=quint/package-lock.json,target=/src/quint/package-lock.json \
+    PREFIX=/opt/check-tools /src/scripts/install
+
 FROM runtime
 USER root
 RUN apt-get update \
@@ -45,7 +54,7 @@ rm /tmp/sccache.tar.gz
 EOF
 COPY --chmod=755 deploy/sccache /usr/local/bin/sccache
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH \
+    PATH=/usr/local/cargo/bin:/opt/check-tools/bin:$PATH \
     RUSTC_WRAPPER=sccache SCCACHE_DIR=/var/cache/sccache
 ENV LINEWRIGHT_SESSION_PASS_ENV=RUSTUP_HOME,CARGO_HOME,RUSTC_WRAPPER,SCCACHE_DIR,PLAYWRIGHT_BROWSERS_PATH,NODE_PATH
 RUN install -d -o linewright -g "$(id -g linewright)" \
@@ -59,5 +68,6 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init.sh https://sh.rustu
         --profile minimal --default-toolchain none \
     && rm /tmp/rustup-init.sh \
     && cd /tmp/toolchain && rustup toolchain install
+COPY --link --from=check-tools /opt/check-tools /opt/check-tools
 COPY linewright.toml ./
 COPY --link --from=base /usr/local/bin/lw /usr/local/bin/lw

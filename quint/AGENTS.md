@@ -30,7 +30,5 @@ The model's files are their own documentation:
 - `package.json`, `package-lock.json`: the pinned Quint.
 
 `scripts/check --help` lists the ways to check the model. To run Quint by hand,
-use the tools `scripts/check` installed under
-`${XDG_CACHE_HOME:-$HOME/.cache}/linewright` (`QUINT_HOME` at `quint-home`
-there, its Java 21 first on the `PATH`), from a scratch directory: Apalache
-writes its output where it runs.
+run the `quint` that `scripts/install` installs, from a scratch directory:
+Apalache writes its output where it runs.
