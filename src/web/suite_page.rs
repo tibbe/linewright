@@ -1,4 +1,4 @@
-//! The suite page (`docs/specs/design_system.md`, The suite page): suite
+//! The suite page (`docs/specs/benchmarks.md`, Suite): suite
 //! NAME's cases, each offering to remove it, and the form that captures a
 //! run of the suite's stage into it.
 

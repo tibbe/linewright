@@ -1,5 +1,5 @@
 //! What is shown of the environment and its builds, by `environment`,
-//! `status` and the server page (`docs/specs/monitoring.md`, environment).
+//! `status` and the server page (`docs/specs/sessions.md`, `lw environment`).
 
 use std::fmt::Write as _;
 use std::io::{Read as _, Seek as _, SeekFrom};
@@ -17,8 +17,8 @@ use crate::status::{Fact, Paint};
 use crate::transcript::lines::maintenance_account;
 use crate::transcript::{self, Course, Lasted, MaintenanceEnded};
 
-/// The environment as `status` shows it (`docs/specs/monitoring.md`,
-/// status).
+/// The environment as `status` shows it (`docs/specs/operation.md`, `lw
+/// status`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentShown {
     /// `None` while there is no environment yet.
@@ -38,8 +38,7 @@ pub struct BuiltShown {
     pub at: Timestamp,
 }
 
-/// Why the environment asks for attention (`docs/specs/design_system.md`,
-/// Holds and problems).
+/// Why the environment asks for attention (`docs/specs/navigation.md`, Chrome).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Attention {
     /// Its latest build failed, at this time.
@@ -81,7 +80,7 @@ pub struct EnvironmentBuilds {
 }
 
 /// A build, as the maintenance command's object is in `logs --json`, with
-/// the commit it built from (`docs/specs/monitoring.md`, environment).
+/// the commit it built from (`docs/specs/sessions.md`, `lw environment`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BuildShown {
     pub build: BuildId,
@@ -310,7 +309,7 @@ pub(crate) fn account(build: &BuildShown) -> Account {
 
 /// How far `build`'s command has run, and how long it ran, as a
 /// transcript's maintenance command's are told
-/// (`docs/specs/design_system.md`, Transcripts, Running).
+/// (`docs/specs/runs.md`, Transcripts, Running).
 pub(crate) fn course(build: &BuildShown) -> (Course<&MaintenanceEnded>, Lasted) {
     match &build.record.line.ended {
         Some(ended) => (
@@ -504,7 +503,7 @@ mod tests {
             .collect()
     }
 
-    /// `docs/specs/monitoring.md`, environment.
+    /// `docs/specs/sessions.md`, `lw environment`.
     #[test_log::test]
     fn the_latest_build_shows_then_the_latest_that_failed_when_it_succeeded_then_the_one_in_progress()
      {

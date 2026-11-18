@@ -469,7 +469,7 @@ fn a_lane() -> linewright::status::View {
     )
 }
 
-/// `docs/specs/design_system.md`, The item page: a tracking issue's State is
+/// `docs/specs/board.md`, Item: a tracking issue's State is
 /// "Tracking", with no status of its lane's own (Out of scope).
 #[test_log::test(tokio::test)]
 async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
@@ -482,7 +482,7 @@ async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     assert!(select_in(value, "svg").is_empty(), "{}", value.html());
 }
 
-/// `docs/specs/design_system.md`, The item page, Related items: a tracking
+/// `docs/specs/board.md`, Item, Related items: a tracking
 /// issue is shown as its lane head is, with no card status's icon.
 #[test_log::test(tokio::test)]
 async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {

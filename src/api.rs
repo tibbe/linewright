@@ -1114,9 +1114,9 @@ pub(crate) async fn item_answer(
     Ok(answer)
 }
 
-/// The item page's facts about #`number` (`docs/specs/design_system.md`,
-/// The item page), from what [`item_answer`] answers, with the board of the
-/// view it answered from, and that view's snapshot.
+/// The item page's facts about #`number` (`docs/specs/board.md`, Item), from
+/// what [`item_answer`] answers, with the board of the view it answered from,
+/// and that view's snapshot.
 pub(crate) async fn item_facts(
     sources: &Sources,
     number: Number,
@@ -1203,7 +1203,7 @@ pub enum RequestError {
 
 impl RequestError {
     /// The exit status of a command `serve` refused this way
-    /// (`docs/specs/monitoring.md`, Errors).
+    /// (`docs/specs/operation.md`, Output).
     pub fn exit_code(&self) -> u8 {
         match self {
             RequestError::NotServing { .. } => 3,

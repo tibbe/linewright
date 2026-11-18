@@ -93,7 +93,7 @@ impl Drop for Routed {
     }
 }
 
-/// `docs/specs/monitoring.md`, Commands: the local API answers under
+/// `docs/specs/operation.md`, Monitoring commands: the local API answers under
 /// `/api/`, and serves none of the web UI.
 #[test_log::test(tokio::test)]
 async fn the_api_answers_under_api_and_nothing_else() {
@@ -172,8 +172,8 @@ fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o777
 }
 
-/// `docs/specs/monitoring.md`, Commands: only the user `serve` runs as can
-/// open its socket.
+/// `docs/specs/operation.md`, Monitoring commands: only the user `serve` runs
+/// as can open its socket.
 #[test_log::test(tokio::test)]
 async fn a_claim_lets_only_its_user_open_the_socket() {
     let runtime_dir = tempfile::tempdir().unwrap();
@@ -320,7 +320,7 @@ fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not
     assert!(api::check(StatusCode::OK, &Bytes::from("{}")).is_ok());
 }
 
-/// `docs/specs/monitoring.md`, Errors: 3 with no `serve` running, 4 for no
+/// `docs/specs/operation.md`, Output: 3 with no `serve` running, 4 for no
 /// such item or run, and 1 for any other error.
 #[test_log::test]
 fn each_refusal_exits_with_its_own_status() {

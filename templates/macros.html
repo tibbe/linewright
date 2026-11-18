@@ -70,8 +70,7 @@
 </select></label>
 {%- endmacro -%}
 
-{#- The classes of a board card's look (`docs/specs/web/design_system.md`,
-    Board). -#}
+{#- The classes of a board card's look (`docs/specs/web/board.md`, Board). -#}
 {%- macro card_look() -%}
 card card-sm border border-base-300 bg-card shadow-sm
 {%- endmacro -%}
@@ -123,8 +122,8 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- endmacro -%}
 
 {#- What a run is of, as the Item column of a list of runs names it
-    (`docs/specs/design_system.md`, Lists of runs). An automation, being no
-    name, is cut on its own in a cut name's holder. -#}
+    (`docs/specs/runs.md`, Runs). An automation, being no name, is cut on its
+    own in a cut name's holder. -#}
 {%- macro item_cell(item) -%}
 {%- match item -%}
 {%- when crate::web::runs_table::ItemCell::Item(item) -%}
@@ -134,11 +133,10 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- endmatch -%}
 {%- endmacro -%}
 
-{#- A list of runs (`docs/specs/design_system.md`, Lists of runs) in the
-    page's scroll box, its heads pinned (`docs/specs/web/design_system.md`,
-    Tables). A title is on one line, cut as a name is, and whole in the page's tooltip
-    while it is cut, as a board card's is. A cut list's last row spans the
-    table. -#}
+{#- A list of runs (`docs/specs/runs.md`, Runs) in the page's scroll box,
+    its heads pinned (`docs/specs/web/design_system.md`, Tables). A title is
+    on one line, cut as a name is, and whole in the page's tooltip while it
+    is cut, as a board card's is. A cut list's last row spans the table. -#}
 {%- macro runs(shown) -%}
 {%- match shown %}
 {%- when crate::web::runs_table::RunsShown::Table(table) %}

@@ -1,5 +1,5 @@
 //! Exporting a run, through the system: `lw export ID DIR` writes it as the
-//! output of a replay gives its run (`docs/specs/monitoring.md`, export).
+//! output of a replay gives its run (`docs/specs/runs.md`, `lw export`).
 
 use crate::common;
 use crate::replay::triage_case;

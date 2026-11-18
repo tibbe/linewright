@@ -1,6 +1,6 @@
-//! A session's end in its transcript (`docs/specs/design_system.md`,
-//! Transcripts, Running): Linewright records it once the session's work
-//! stops, however it ends.
+//! A session's end in its transcript (`docs/specs/runs.md`, Transcripts,
+//! Running): Linewright records it once the session's work stops, however it
+//! ends.
 
 use crate::common;
 

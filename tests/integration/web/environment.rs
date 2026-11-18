@@ -1,6 +1,6 @@
 //! The environment on the server page, and the hold while there is none or
-//! its latest build failed (`docs/specs/design_system.md`, The server page,
-//! and Holds and problems).
+//! its latest build failed (`docs/specs/operation.md`, Server, and
+//! `docs/specs/navigation.md`, Chrome).
 
 use super::frame::{holds, server_facts};
 use super::*;

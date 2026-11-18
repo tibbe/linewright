@@ -1,4 +1,4 @@
-//! How a page names items (`docs/specs/design_system.md`, Navigation): by
+//! How a page names items (`docs/specs/board.md`, Naming items): by
 //! number, and by title where Linewright knows it.
 
 use super::html::{self, Html};

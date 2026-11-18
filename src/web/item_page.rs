@@ -1,4 +1,4 @@
-//! The item page (`docs/specs/design_system.md`, The item page): #N's
+//! The item page (`docs/specs/board.md`, Item): #N's
 //! heading, its facts in the board's terms and its runs.
 
 use askama::Template;
@@ -49,7 +49,7 @@ impl ItemShown {
 }
 
 /// `facts` in the order the item page's table gives them, each while it is
-/// shown (`docs/specs/design_system.md`, The item page), with the items its
+/// shown (`docs/specs/board.md`, Item), with the items its
 /// phrases name as `names` names them.
 fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
     let repo = names.repo();
@@ -92,7 +92,7 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
 }
 
 /// The State fact's line: the item's state in the States words
-/// (`docs/specs/design_system.md`, States), then the card's line with its
+/// (`docs/specs/board.md`, States), then the card's line with its
 /// card status; for a tracking issue, its state, then when its lane
 /// finished, if it did; for an item Linewright leaves, its state, where it
 /// has one, then "Left alone" and why.
@@ -213,7 +213,7 @@ fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
 }
 
 /// How many of an item's runs its page lists, the latest
-/// (`docs/specs/design_system.md`, Lists of runs).
+/// (`docs/specs/board.md`, Item, Runs).
 const RUNS_SHOWN: usize = 10;
 
 /// #`number`'s latest runs, from their records, whether or not Linewright

@@ -1,4 +1,4 @@
-//! The board (`docs/specs/design_system.md`, The board): the managed items
+//! The board (`docs/specs/board.md`, Board): the managed items
 //! as cards, in a lane per piece of work and a column per stage.
 
 use askama::Template;
@@ -18,9 +18,8 @@ use crate::board::{Board, Card, Column, Lane};
 use crate::domain::Login;
 use crate::phrase::Status;
 
-/// The Person filter as the page's address carries it, an empty or blank
-/// one leaving the board unnarrowed (`docs/specs/design_system.md`,
-/// Filtering by person).
+/// The Person filter as the page's address carries it, an empty or blank one
+/// leaving the board unnarrowed (`docs/specs/board.md`, Filtering by person).
 #[derive(Deserialize)]
 pub(super) struct FilterQuery {
     #[serde(default)]
@@ -36,8 +35,8 @@ impl FilterQuery {
 
 /// The board as the page shows it: the whole board's tab title, its lanes
 /// narrowed to `person`, if set, and the people to choose from, the whole
-/// board's and `person`, each once, by login (`docs/specs/design_system.md`,
-/// The people).
+/// board's and `person`, each once, by login (`docs/specs/board.md`, Filtering
+/// by person, The people).
 struct BoardPageShown {
     title: String,
     board: BoardShown,
@@ -62,7 +61,7 @@ impl BoardPageShown {
     }
 }
 
-/// The board (`docs/specs/design_system.md`, The board), ready for the page.
+/// The board (`docs/specs/board.md`, Board), ready for the page.
 struct BoardShown {
     columns: [&'static str; Column::ALL.len()],
     /// The lanes not finished, in the board's order.
@@ -85,7 +84,7 @@ struct CellShown {
     cards: Vec<CardShown>,
 }
 
-/// A card (`docs/specs/design_system.md`, Cards).
+/// A card (`docs/specs/board.md`, Cards).
 struct CardShown {
     heading: Html,
     /// Whether it carries the pull request icon.

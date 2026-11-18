@@ -1,4 +1,4 @@
-//! The board (`docs/specs/design_system.md`, The board, Cards): every managed
+//! The board (`docs/specs/board.md`, Board, Cards): every managed
 //! item as a card in a column, in a lane per piece of work, from a view and
 //! the time alone.
 
@@ -81,7 +81,7 @@ impl Board {
     /// It with only the cards `person` is party to, and the lanes left with
     /// a card, each lane's head, finished state and place, and the count of
     /// cards in Needs a person, as they are on it
-    /// (`docs/specs/design_system.md`, Filtering by person).
+    /// (`docs/specs/board.md`, Filtering by person).
     #[must_use]
     pub fn narrowed(&self, person: &Login) -> Board {
         Board {
@@ -127,9 +127,9 @@ pub struct Lane {
     place: Place,
 }
 
-/// A lane's place on the board (`docs/specs/design_system.md`, The board,
-/// Order of lanes): the unfinished first, latest changed first, then the
-/// finished, latest finished first, then by number.
+/// A lane's place on the board (`docs/specs/board.md`, Lanes, Order of lanes):
+/// the unfinished first, latest changed first, then the finished, latest
+/// finished first, then by number.
 type Place = (bool, Reverse<Timestamp>, Number);
 
 impl Lane {
@@ -140,7 +140,7 @@ impl Lane {
     /// When it finished, once every card is in Done and its tracking issue,
     /// if it has one, is done: when the last of its cards entered Done or
     /// its tracking issue became done, whichever is later
-    /// (`docs/specs/design_system.md`, The board, Finished lanes).
+    /// (`docs/specs/board.md`, Lanes, Finished lanes).
     pub fn finished(&self) -> Option<Timestamp> {
         self.finished
     }
@@ -215,8 +215,8 @@ impl Gathering {
             .max()
     }
 
-    /// When any of its cards last changed (`docs/specs/design_system.md`,
-    /// The board, A lane's last change).
+    /// When any of its cards last changed (`docs/specs/board.md`, Lanes, A
+    /// lane's last change).
     fn last_change(&self) -> Timestamp {
         self.columns
             .iter()
@@ -256,13 +256,13 @@ pub enum LaneHead {
     Item { number: Number, title: String },
 }
 
-/// What a lane's head shows (`docs/specs/design_system.md`, The board,
-/// Lanes and Finished lanes).
+/// What a lane's head shows (`docs/specs/board.md`, Lanes, A lane and
+/// Finished lanes).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneHeading {
     pub head: LaneHead,
-    /// When it finished, if it did (`docs/specs/design_system.md`, The
-    /// board, Finished lanes).
+    /// When it finished, if it did (`docs/specs/board.md`, Lanes, Finished
+    /// lanes).
     pub finished: Option<Timestamp>,
 }
 
@@ -283,16 +283,14 @@ pub struct Card {
     /// What its column does not say; `None` shows the title alone, or
     /// nothing but when it entered its column where it says so.
     pub line: Option<CardLine>,
-    /// When it last entered its column (`docs/specs/design_system.md`,
-    /// Cards, When), which its line ends with: set in Triage, Needs a person
-    /// and Ready alone.
+    /// When it last entered its column (`docs/specs/board.md`, Cards, When),
+    /// which its line ends with: set in Triage, Needs a person and Ready alone.
     pub entered: Option<Timestamp>,
     /// When it last changed.
     changed: Timestamp,
-    /// The people it matches (`docs/specs/design_system.md`, Filtering by
-    /// person): those party to its item
-    /// ([`party::parties`]) and, for a ticket on the board, to its tracking
-    /// issue ([`party::party_to`]).
+    /// The people it matches (`docs/specs/board.md`, Filtering by person):
+    /// those party to its item ([`party::parties`]) and, for a ticket on the
+    /// board, to its tracking issue ([`party::party_to`]).
     pub people: BTreeSet<Login>,
 }
 
@@ -303,14 +301,14 @@ impl Card {
     }
 }
 
-/// The line under a card's title (`docs/specs/design_system.md`, Cards):
+/// The line under a card's title (`docs/specs/board.md`, Cards):
 /// what sets the item apart from the rest of its column, or what a person
 /// acts on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CardLine {
     /// Handed back in a stall (`GLOSSARY.md`, **Stall**).
     Stalled,
-    /// The people asked (`docs/specs/design_system.md`, Cards).
+    /// The people asked (`docs/specs/board.md`, Cards).
     Asked(Vec<Login>),
     HandedBack,
     DecisionNeeded,
@@ -341,7 +339,7 @@ pub enum CardLine {
 }
 
 impl CardLine {
-    /// Its card status (`docs/specs/design_system.md`, Cards, Card status),
+    /// Its card status (`docs/specs/board.md`, Cards, Card status),
     /// none where the table gives none.
     pub fn status(&self) -> Option<CardStatus> {
         match self {
@@ -371,14 +369,14 @@ pub enum Held {
 }
 
 impl Held {
-    /// Its card status (`docs/specs/design_system.md`, Cards, Card status).
+    /// Its card status (`docs/specs/board.md`, Cards, Card status).
     pub fn status(&self) -> CardStatus {
         CardStatus::PausedOrQueued
     }
 }
 
 /// How pressing what a card's line reports is (`GLOSSARY.md`, **Card
-/// status**; `docs/specs/design_system.md`, Cards), most pressing first, so
+/// status**; `docs/specs/board.md`, Cards), most pressing first, so
 /// that the least is the most pressing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum CardStatus {
@@ -442,7 +440,7 @@ pub enum Stop {
 
 impl Stop {
     /// Its card status, as the table of what stops a merge gives it
-    /// (`docs/specs/design_system.md`, Cards).
+    /// (`docs/specs/board.md`, Cards).
     pub fn status(&self) -> Option<CardStatus> {
         match self {
             Stop::Stalled | Stop::ChecksFailed | Stop::Conflicts => Some(CardStatus::Failed),
@@ -533,7 +531,7 @@ fn card_among(managed: &Managed, all: &[Managed], seen: &Seen) -> Option<(Column
     Some((column, card))
 }
 
-/// The board at `now` (`docs/specs/design_system.md`, The board). A pull
+/// The board at `now` (`docs/specs/board.md`, Board). A pull
 /// request shows on the card of each issue it closes that has a card, and
 /// has a card of its own otherwise. Each open tracking issue, and each
 /// managed one, heads the lane of its tickets. A lane with no cards, or that finished
@@ -935,11 +933,11 @@ impl Tracker {
     }
 }
 
-/// When anything last happened to `items`, a card's item and its pull
-/// requests (`docs/specs/design_system.md`, The board, A lane's last
-/// change): on GitHub, as it last updated them and every pull request
-/// closing them, and as those merged or closed, and in Linewright, as its
-/// runs on them started and ended. A run in flight is happening `now`.
+/// When anything last happened to `items`, a card's item and its pull requests
+/// (`docs/specs/board.md`, Lanes, A lane's last change): on GitHub, as it last
+/// updated them and every pull request closing them, and as those merged or
+/// closed, and in Linewright, as its runs on them started and ended. A run in
+/// flight is happening `now`.
 fn last_change(seen: &Seen, items: &[Number]) -> Timestamp {
     let Seen {
         view,

@@ -290,7 +290,7 @@ fn each_state_has_its_words_and_its_name_in_json() {
     }
 }
 
-/// `docs/specs/design_system.md`, The board: a card is in its state's
+/// `docs/specs/board.md`, Board: a card is in its state's
 /// column, and a tracking issue has no card.
 #[test_log::test]
 fn each_state_s_card_is_in_the_column_the_board_gives_it() {

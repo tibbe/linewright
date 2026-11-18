@@ -1,4 +1,4 @@
-//! A run's transcripts (`docs/specs/design_system.md`, Transcripts): its
+//! A run's transcripts (`docs/specs/runs.md`, Transcripts): its
 //! sessions' records, read into what they say and followed as they grow,
 //! for each place to lay out its own way.
 
@@ -51,8 +51,8 @@ pub struct MaintenanceRecord {
 pub use crate::bash_command::Status as MaintenanceStatus;
 
 impl MaintenanceStatus {
-    /// Whether the command failed (`docs/specs/design_system.md`,
-    /// Transcripts, Maintenance): a cancelled one did not.
+    /// Whether the command failed (`docs/specs/runs.md`, Transcripts,
+    /// Maintenance): a cancelled one did not.
     pub fn failed(self) -> bool {
         !matches!(
             self,
@@ -71,7 +71,7 @@ impl MaintenanceStatus {
 }
 
 /// A session's maintenance command, its first entry
-/// (`docs/specs/design_system.md`, Transcripts, Maintenance).
+/// (`docs/specs/runs.md`, Transcripts, Maintenance).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Maintenance {
     /// Redacted.
@@ -110,8 +110,8 @@ impl Maintenance {
     }
 }
 
-/// How far an entry that runs has run (`docs/specs/design_system.md`,
-/// Transcripts, Running).
+/// How far an entry that runs has run (`docs/specs/runs.md`, Transcripts,
+/// Running).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Course<T> {
@@ -177,8 +177,8 @@ pub(crate) const RUNNING: &str = "running";
 /// The account of an entry its session ended first.
 pub(crate) const INTERRUPTED: &str = "interrupted";
 
-/// How long an entry that runs ran (`docs/specs/design_system.md`,
-/// Transcripts, Running), each where the times it is told from are known.
+/// How long an entry that runs ran (`docs/specs/runs.md`, Transcripts,
+/// Running), each where the times it is told from are known.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Lasted {
     /// It still runs, since `since`.
@@ -237,7 +237,7 @@ pub struct MaintenanceEnded {
 
 impl MaintenanceEnded {
     /// Whether its output shows from the start: in `full`, or when it
-    /// failed (`docs/specs/design_system.md`, Transcripts, Maintenance).
+    /// failed (`docs/specs/runs.md`, Transcripts, Maintenance).
     pub(crate) fn output_shown(&self, full: bool) -> bool {
         full || self.status.failed()
     }
@@ -297,7 +297,7 @@ fn says_maintenance_ended(line: &str) -> bool {
 }
 
 /// The making of a session's clone, its first entry
-/// (`docs/specs/design_system.md`, Transcripts, The clone).
+/// (`docs/specs/runs.md`, Transcripts, The clone).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionClone {
     /// When it started being made.
@@ -637,10 +637,9 @@ impl Session {
             },
         })
     }
-    /// How long its `turn`th turn, from 0, took, once it has ended: from
-    /// its start to the latest time of its entries or, where its session
-    /// ended first, to that end (`docs/specs/design_system.md`,
-    /// Transcripts, A turn's length).
+    /// How long its `turn`th turn, from 0, took, once it has ended: from its
+    /// start to the latest time of its entries or, where its session ended
+    /// first, to that end (`docs/specs/runs.md`, Transcripts, A turn's length).
     pub fn worked_for(&self, n: usize) -> Option<Lasted> {
         let turn = &self.turns[n];
         let to = match turn.end {
@@ -664,7 +663,7 @@ impl Session {
 
     /// How long its last turn has gone on so far, leaving out its waits for
     /// the usage limit to reset, while it goes on and when it started is
-    /// known (`docs/specs/design_system.md`, The run page, Working).
+    /// known (`docs/specs/runs.md`, Run, Working).
     pub fn turn_so_far(&self) -> Option<SessionLasted> {
         let turn = self
             .turns
@@ -675,7 +674,7 @@ impl Session {
 
     /// How long it has run so far, leaving out its waits for the usage
     /// limit to reset, unless when it started is not known
-    /// (`docs/specs/design_system.md`, The run page, A session's heading).
+    /// (`docs/specs/runs.md`, Run, A session's heading).
     pub fn lasted_so_far(&self) -> Option<SessionLasted> {
         self.started_at.map(|start| self.lasted_from(start))
     }
@@ -850,7 +849,7 @@ pub enum What {
 }
 
 /// Where the agent thought before what it did next
-/// (`docs/specs/design_system.md`, Transcripts, Thinking).
+/// (`docs/specs/runs.md`, Transcripts, Thinking).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Thought {
     pub held: Held,

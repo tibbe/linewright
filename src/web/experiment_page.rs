@@ -1,7 +1,7 @@
-//! The experiment page (`docs/specs/design_system.md`, The experiment
-//! page): experiment ID's heading, then its results as a chart, a grid and
-//! a table whose replays open to the transcripts of their runs and their
-//! judges; and the cancelling of an open experiment.
+//! The experiment page (`docs/specs/benchmarks.md`, Experiment): experiment
+//! ID's heading, then its results as a chart, a grid and a table whose replays
+//! open to the transcripts of their runs and their judges; and the cancelling
+//! of an open experiment.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -40,9 +40,8 @@ use crate::results::{Leak, Verdict};
 use crate::runs::RunId;
 use crate::runs::files::RunFiles;
 
-/// The status and the word an experiment's state shows with: that of the
-/// status with the same meaning (`docs/specs/design_system.md`, The
-/// experiment page, State).
+/// The status and the word an experiment's state shows with: that of the status
+/// with the same meaning (`docs/specs/benchmarks.md`, Experiment, State).
 pub(super) fn state_status(shown: &Shown) -> (Status, &'static str) {
     match shown {
         Shown::Running => (Status::InFlight, "running"),
@@ -157,7 +156,7 @@ struct ExperimentView {
 }
 
 /// The chart: a point for each configuration at its mean cost and its pass
-/// rate (`docs/specs/design_system.md`, The experiment page, The chart).
+/// rate (`docs/specs/benchmarks.md`, Experiment, The chart).
 struct Chart {
     svg: Html,
     /// The configurations it has no point for, lacking either figure.

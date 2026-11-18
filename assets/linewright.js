@@ -144,9 +144,9 @@
 
   /**
    * Fills each select with `data-options` from the element whose id it names
-   * (docs/specs/design_system.md, The people): its first, unset option, then
-   * the element's options in their order, with whichever is chosen still
-   * chosen, its own option kept in its place where the element lacks it.
+   * (docs/specs/board.md, Filtering by person, The people): its first, unset
+   * option, then the element's options in their order, with whichever is chosen
+   * still chosen, its own option kept in its place where the element lacks it.
    * Setting a select's options or value fires no `change`:
    * https://html.spec.whatwg.org/multipage/form-elements.html#send-select-update-notifications
    */
@@ -289,7 +289,7 @@
 
   /**
    * Fills a capture's name with the name suggested for the run chosen
-   * (docs/specs/design_system.md, The suite page), unless the name holds one
+   * (docs/specs/benchmarks.md, Suite), unless the name holds one
    * the reader typed: one suggested for none of the runs.
    */
   document.addEventListener("change", (event) => {
@@ -318,10 +318,10 @@
   }
 
   /**
-   * The launch form's configurations (docs/specs/design_system.md, The suite
-   * page, Launching): each added from the page's template, numbered for its
-   * fields' names, and each file of the brief it changes starting as the
-   * replays would have it without the configuration.
+   * The launch form's configurations (docs/specs/benchmarks.md, Suite,
+   * Launching): each added from the page's template, numbered for its fields'
+   * names, and each file of the brief it changes starting as the replays would
+   * have it without the configuration.
    */
   let configurations = 0;
 

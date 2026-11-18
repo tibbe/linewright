@@ -1,5 +1,5 @@
 //! Who is party to an item (`GLOSSARY.md`, **Party**;
-//! `docs/specs/design_system.md`, Filtering by person).
+//! `docs/specs/board.md`, Filtering by person).
 
 use std::collections::BTreeSet;
 

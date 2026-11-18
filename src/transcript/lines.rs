@@ -1,4 +1,4 @@
-//! The CLI's layout of a transcript (`docs/specs/monitoring.md`, logs): its
+//! The CLI's layout of a transcript (`docs/specs/runs.md`, `lw logs`): its
 //! lines, as text and as JSON.
 
 use std::fmt::Write as _;
@@ -179,7 +179,7 @@ pub(crate) enum ThoughtInFull {
 }
 
 /// How long a thought or a turn went on, where that is known, and whether
-/// what it is of was cut short (`docs/specs/design_system.md`, Transcripts,
+/// what it is of was cut short (`docs/specs/runs.md`, Transcripts,
 /// Cut short).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Span {
@@ -267,7 +267,7 @@ pub(crate) struct CloneLine {
 
 /// A clone line as JSON: both null while the clone is being made or once it
 /// was interrupted, and the error null when it was made
-/// (`docs/specs/monitoring.md`, logs, The clone).
+/// (`docs/specs/runs.md`, `lw logs`, The clone).
 #[derive(Serialize, Deserialize)]
 struct CloneFields {
     duration_seconds: Option<f64>,
@@ -330,7 +330,7 @@ pub(crate) struct SessionMaintenanceLine {
 }
 
 /// A maintenance line as JSON: what it holds once the command has ended is null
-/// until then, and once it was interrupted (`docs/specs/monitoring.md`, logs,
+/// until then, and once it was interrupted (`docs/specs/runs.md`, `lw logs`,
 /// Running in JSON).
 #[derive(Serialize, Deserialize)]
 struct MaintenanceFields {
@@ -465,7 +465,7 @@ impl ToolLine {
 
 /// A tool line as JSON: `error`, and in full `result`, `content` and
 /// `details`, are null while the call runs, and `content` and `details`
-/// also when it returned none (`docs/specs/monitoring.md`, logs, Running in
+/// also when it returned none (`docs/specs/runs.md`, `lw logs`, Running in
 /// JSON). A compact line has none of the keys only a line in full has.
 #[derive(Serialize, Deserialize)]
 struct ToolFields {
@@ -1150,7 +1150,7 @@ pub fn json_lines(transcript: &Transcript, verbosity: Verbosity) -> String {
 /// `line` as `logs --json` gives it, ending in a newline, following the
 /// agent's own JSON output: none of a turn's "worked for" line, and of a
 /// thought only its text, in full, where its record holds any
-/// (`docs/specs/monitoring.md`, logs, The transcripts).
+/// (`docs/specs/runs.md`, `lw logs`, The transcripts).
 pub fn json_line(line: &Line) -> Option<String> {
     let json = match line {
         Line::Entry(stamped) => match &stamped.what {

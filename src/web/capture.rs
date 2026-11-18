@@ -1,6 +1,6 @@
-//! Capturing a run as a case from its page (`docs/specs/design_system.md`,
-//! The run page, Capturing): the page's form, and the `POST` on the run's
-//! path that captures it.
+//! Capturing a run as a case from its page (`docs/specs/runs.md`, Run,
+//! Capturing): the page's form, and the `POST` on the run's path that captures
+//! it.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;

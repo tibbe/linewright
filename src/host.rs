@@ -34,7 +34,7 @@ impl HostName {
     }
 
     /// `localhost` or a loopback address
-    /// (`docs/specs/monitoring.md`, Commands).
+    /// (`docs/specs/operation.md`, Monitoring commands).
     pub fn is_local(&self) -> bool {
         self.0 == "localhost" || self.ip().is_some_and(|address| address.is_loopback())
     }
@@ -49,7 +49,7 @@ impl HostName {
 }
 
 /// The names the web UI answers besides the local ones and IP addresses:
-/// the `ui-hosts` setting (`docs/specs/design_system.md`, Serving).
+/// the `ui-hosts` setting (`docs/specs/operation.md`, Serving the UI).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UiHosts(Vec<HostName>);
 

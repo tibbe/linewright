@@ -1,7 +1,7 @@
 use linewright::host::HostName;
 
-/// `docs/specs/monitoring.md`, Commands: a local `Host` is `localhost` or a
-/// loopback address, ignoring case, port and a trailing dot.
+/// `docs/specs/operation.md`, Monitoring commands: a local `Host` is
+/// `localhost` or a loopback address, ignoring case, port and a trailing dot.
 #[test_log::test]
 fn a_host_is_local_if_it_names_localhost_or_a_loopback_address() {
     let local = [

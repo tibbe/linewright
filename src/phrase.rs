@@ -222,8 +222,8 @@ fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
 mod tests {
     use super::*;
 
-    /// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
-    /// text, cancelled `neutral`.
+    /// `docs/specs/web/design_system.md`, Status: paused is Muted text,
+    /// cancelled `neutral`.
     #[test_log::test]
     fn each_status_has_the_colour_of_the_states_it_shows() {
         let statuses = [

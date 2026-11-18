@@ -1,6 +1,6 @@
 //! Showing and rebuilding the environment: `environment`, `environment
-//! rebuild`, `status` and the server page (`docs/specs/monitoring.md`,
-//! environment, and `docs/specs/sessions.md`, Building).
+//! rebuild`, `status` and the server page (`docs/specs/sessions.md`, `lw
+//! environment`, and `docs/specs/sessions.md`, Building).
 
 use crate::common;
 use crate::environment::set_up_with;

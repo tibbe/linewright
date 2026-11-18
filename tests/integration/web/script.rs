@@ -809,7 +809,8 @@ async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
     );
 }
 
-/// `docs/specs/design_system.md`, The people, and Filters: Kept.
+/// `docs/specs/board.md`, Filtering by person, The people, and
+/// `docs/specs/design_system.md`, Filters, Kept.
 #[test_log::test(tokio::test)]
 async fn a_select_takes_its_sources_options_after_a_message_and_keeps_its_choice() {
     let page = r#"
@@ -864,7 +865,7 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
 }
 
-/// `docs/specs/design_system.md`, The suite page: Adding a case.
+/// `docs/specs/benchmarks.md`, Suite: Adding a case.
 #[test_log::test(tokio::test)]
 async fn choosing_a_run_to_capture_fills_in_its_suggested_name_unless_one_was_typed() {
     let page = r#"
@@ -892,7 +893,7 @@ steps.join("\n")
     assert_eq!(names, ["1-implement-1", "mine", "1-implement-2"]);
 }
 
-/// `docs/specs/design_system.md`, The suite page: Adding a case.
+/// `docs/specs/benchmarks.md`, Suite: Adding a case.
 #[test_log::test(tokio::test)]
 async fn the_run_chosen_to_capture_stays_chosen_when_an_update_brings_new_runs() {
     let page = r#"

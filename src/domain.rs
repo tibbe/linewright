@@ -1206,7 +1206,7 @@ impl Pull {
     }
 
     /// Whether GitHub requires a review before it merges, such as a code
-    /// owner's, that it has not had (`docs/specs/design_system.md`, Cards).
+    /// owner's, that it has not had (`docs/specs/board.md`, Cards).
     /// GitHub decides no review when its rules require a code owner's review
     /// but no approvals, so its blocked merge says so too.
     pub fn review_required(&self) -> bool {
@@ -1751,7 +1751,7 @@ pub enum Opened<'a> {
 }
 
 /// The items an item `author` opened was opened for, when `author` is
-/// `linewright` (`docs/specs/design_system.md`, Filtering by person): a
+/// `linewright` (`docs/specs/board.md`, Filtering by person): a
 /// spec gap, the item whose work found it; a spec change's issue or a
 /// tracking issue filed for one, the spec change; a ticket, its parent; a
 /// pull request, the issues it closes. None for an item a person opened, or
@@ -2596,8 +2596,7 @@ impl Snapshot {
     /// `item` among the closed ones: closed within the Done window, or,
     /// whenever it closed, a ticket of a tracking issue it holds or a pull
     /// request of Linewright's closing one, as an unfinished lane keeps
-    /// every ticket it closed (`docs/specs/design_system.md`, The board,
-    /// Finished lanes).
+    /// every ticket it closed (`docs/specs/board.md`, Lanes, Finished lanes).
     pub fn keeps_closed(&self, item: &ClosedItem, windows: Windows, linewright: &Login) -> bool {
         let held_ticket = |number: Number| {
             self.held_tickets(linewright)
