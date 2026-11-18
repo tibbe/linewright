@@ -171,6 +171,24 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     assert_eq!(cases(&pages), ["columns", "lanes"]);
 }
 
+/// `docs/specs/design_system.md`, Screen states, Nothing there.
+#[test_log::test(tokio::test)]
+async fn the_page_of_no_suite_says_there_is_none() {
+    let pages = with_suites().await;
+
+    let (no_suite, no_suite_body) = pages.get("/suites/nothing").await;
+    let (no_name, no_name_body) = pages.get("/suites/Not%20a%20name").await;
+
+    for (status, body, shown) in [
+        (no_suite, no_suite_body, "No such suite nothing"),
+        (no_name, no_name_body, "No such suite Not a name"),
+    ] {
+        assert_eq!(status, 404);
+        let html = Html::parse_document(&body);
+        assert_eq!(text(select(&html, "main #cases")[0]), shown);
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn a_suite_that_does_not_exist_answers_404() {
     let pages = with_suites().await;

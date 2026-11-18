@@ -23,7 +23,8 @@ use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::ItemCell;
 use super::{
-    ErrorPage, Frame, Page, Sent, frame_regions, render, run_path, samples, unanswered, with_query,
+    ErrorPage, Frame, Missing, Page, Sent, frame_regions, nothing_there, render, run_path, samples,
+    unanswered, with_query,
 };
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
@@ -1042,6 +1043,9 @@ pub(super) struct Transcribed {
     pub(super) which: Which,
     pub(super) name: Option<String>,
     pub(super) of: Html,
+    /// What its page names as missing where its run does not exist, if it
+    /// is that page's own run.
+    pub(super) missing: Option<Missing>,
 }
 
 impl Transcribed {
@@ -1055,34 +1059,45 @@ impl Transcribed {
             },
             name: None,
             of: item_line(sources, id),
+            missing: Some(Missing::Run(id.to_string())),
         }
     }
 }
 
-/// Why a run cannot be shown, and the status the page answers with.
-struct RunError {
-    status: StatusCode,
-    error: String,
+/// Why a run cannot be shown.
+enum RunError {
+    /// There is no such run, as the error says.
+    NoSuchRun(String),
+    /// Any other reason, and the status the page answers with.
+    Other { status: StatusCode, error: String },
+}
+
+impl RunError {
+    /// The status the page answers with, and what it says.
+    fn answer(self) -> (StatusCode, String) {
+        match self {
+            RunError::NoSuchRun(error) => (StatusCode::NOT_FOUND, error),
+            RunError::Other { status, error } => (status, error),
+        }
+    }
 }
 
 impl From<LogsError> for RunError {
     fn from(e: LogsError) -> RunError {
-        let (status, error) = unanswered(e);
-        RunError { status, error }
+        match e {
+            LogsError::NoSuchRun(no_such) => RunError::NoSuchRun(no_such.to_string()),
+            e @ LogsError::Other(_) => {
+                let (status, error) = unanswered(e);
+                RunError::Other { status, error }
+            }
+        }
     }
 }
 
 impl IntoResponse for RunError {
     fn into_response(self) -> Response {
-        (self.status, self.error).into_response()
+        self.answer().into_response()
     }
-}
-
-fn run_id(id: &str) -> Result<RunId, RunError> {
-    id.parse().map_err(|error| RunError {
-        status: StatusCode::NOT_FOUND,
-        error,
-    })
 }
 
 /// A run's transcript followed for its page.
@@ -1255,8 +1270,14 @@ pub(super) async fn transcript_page(
 ) -> Response {
     let frame = Frame::of(sources).await;
     let shown = match transcribed {
-        Ok(transcribed) => read(&transcribed, verbose).await,
-        Err((status, error)) => Err(RunError { status, error }),
+        Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.missing) {
+            (Err(RunError::NoSuchRun(_)), Some(missing)) => {
+                let page = Page::new(title, format!("/events{path}"));
+                return nothing_there(page, frame, "transcript", missing);
+            }
+            (shown, _) => shown,
+        },
+        Err((status, error)) => Err(RunError::Other { status, error }),
     };
     match shown {
         Ok((transcript, follow)) => RunPage {
@@ -1269,7 +1290,8 @@ pub(super) async fn transcript_page(
             transcript,
         }
         .into_response(),
-        Err(RunError { status, error }) => {
+        Err(e) => {
+            let (status, error) = e.answer();
             let page = ErrorPage {
                 page: Page::new(title, format!("/events{path}")),
                 frame,
@@ -1287,28 +1309,21 @@ pub(super) async fn run_page(
     Query(query): Query<RunQuery>,
 ) -> Response {
     let title = format!("{id} · {}", sources.work_dir.repo);
-    let (path, transcribed, capture) = match run_id(&id) {
-        Ok(run) => {
-            let capture = Offer::of(&sources, &run)
-                .await
-                .map(|offer| offer.html(&sources))
-                .unwrap_or_default();
-            (
-                run_path(&run),
-                Ok(Transcribed::run(&sources, &run)),
-                capture,
-            )
-        }
-        Err(RunError { status, error }) => {
-            (format!("/runs/{id}"), Err((status, error)), Html::default())
-        }
+    let Ok(run) = id.parse::<RunId>() else {
+        let page = Page::new(title, format!("/events/runs/{id}"));
+        let frame = Frame::of(&sources).await;
+        return nothing_there(page, frame, "transcript", Missing::Run(id));
     };
+    let capture = Offer::of(&sources, &run)
+        .await
+        .map(|offer| offer.html(&sources))
+        .unwrap_or_default();
     transcript_page(
         &sources,
-        &path,
+        &run_path(&run),
         title,
         Html::default(),
-        transcribed,
+        Ok(Transcribed::run(&sources, &run)),
         query.verbose(),
         capture,
     )
@@ -1327,7 +1342,7 @@ pub(super) async fn run_events(
     Query(query): Query<RunQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let run = run_id(&id).ok();
+    let run = id.parse::<RunId>().ok();
     let transcribed = run.as_ref().map(|run| Transcribed::run(&sources, run));
     let offered = match &run {
         Some(run) => Offer::of(&sources, run).await.is_some(),
@@ -1373,7 +1388,7 @@ pub(super) async fn transcript_events(
             match FollowedRun::start(transcribed, query.verbose(), after).await {
                 Ok(followed) => match follow {
                     Follow::After(last) if &last.run != followed.records.run() => {
-                        return RunError {
+                        return RunError::Other {
                             status: StatusCode::BAD_REQUEST,
                             error: format!("{last} is not an event of {}", followed.records.run()),
                         }
@@ -1382,12 +1397,9 @@ pub(super) async fn transcript_events(
                     Follow::Start | Follow::After(_) => Some(followed),
                 },
                 Err(e) => {
-                    let e = RunError::from(e);
-                    error!(
-                        error = e.error,
-                        "following a transcript for its page failed"
-                    );
-                    return e.into_response();
+                    let (status, error) = RunError::from(e).answer();
+                    error!(error, "following a transcript for its page failed");
+                    return (status, error).into_response();
                 }
             }
         }

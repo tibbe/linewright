@@ -128,6 +128,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     );
 }
 
+/// `docs/specs/design_system.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn the_item_page_of_no_item_says_there_is_none() {
     let pages = Pages::of(for_the_maintainer()).await;
@@ -137,11 +138,11 @@ async fn the_item_page_of_no_item_says_there_is_none() {
     assert_eq!(status, 404);
     let html = Html::parse_document(&body);
     assert_eq!(
-        select(&html, "main p")
+        select(&html, "main #item")
             .into_iter()
             .map(text)
             .collect::<Vec<_>>(),
-        ["there is no issue or pull request #99"]
+        ["No such item #99"]
     );
     assert_eq!(select(&html, ".drawer-side nav").len(), 1);
 }

@@ -23,7 +23,8 @@ use super::names::Names;
 use super::run_page::{RunQuery, Transcribed, transcript_events, transcript_page};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Frame, Page, events, experiment_path, experiments, frame_regions, render, suite_path,
+    ErrorPage, Frame, Missing, Page, events, experiment_path, experiments, frame_regions,
+    nothing_there, render, suite_path,
 };
 use crate::api::Sources;
 use crate::benchmarks::results::{self, CasePasses, ConfigurationResults, Results};
@@ -522,7 +523,7 @@ struct ExperimentRegion<'a> {
 /// Why there is no experiment page: no such experiment, or one that does
 /// not read.
 enum Unshown {
-    NoSuch(String),
+    NoSuch,
     Failed(anyhow::Error),
 }
 
@@ -533,10 +534,10 @@ fn no_such(id: &str) -> String {
 
 /// Experiment `id`, by its ID as a path gives it.
 async fn record_of(sources: &Sources, id: &str) -> Result<ExperimentRecord, Unshown> {
-    let parsed: ExperimentId = id.parse().map_err(|_| Unshown::NoSuch(no_such(id)))?;
+    let parsed: ExperimentId = id.parse().map_err(|_| Unshown::NoSuch)?;
     match experiments(sources).show(parsed).await {
         Ok(Some(record)) => Ok(record),
-        Ok(None) => Err(Unshown::NoSuch(no_such(id))),
+        Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
     }
 }
@@ -546,7 +547,7 @@ impl Unshown {
     /// failure to read experiment `id`.
     fn answer(self, id: &str) -> (StatusCode, String) {
         match self {
-            Unshown::NoSuch(error) => (StatusCode::NOT_FOUND, error),
+            Unshown::NoSuch => (StatusCode::NOT_FOUND, no_such(id)),
             Unshown::Failed(e) => {
                 let error = format!("{e:#}");
                 warn!(experiment = id, error, "reading an experiment failed");
@@ -574,9 +575,13 @@ pub(super) async fn experiment_page(
             .into_response()
         }
         Err(unshown) => {
+            let page = Page::new(title, format!("/events/experiments/{id}"));
+            if let Unshown::NoSuch = unshown {
+                return nothing_there(page, frame, "experiment", Missing::Experiment(id));
+            }
             let (status, error) = unshown.answer(&id);
             let page = ErrorPage {
-                page: Page::new(title, format!("/events/experiments/{id}")),
+                page,
                 frame,
                 region: "experiment",
                 error,
@@ -704,11 +709,13 @@ impl ReplayAt {
     }
 }
 
-/// The replay `path` names, and where its transcript is read from; or
-/// else the status and what the page says of there being none.
-async fn transcribed(
+/// The replay `path` names, of its experiment `record`, and where its
+/// transcript is read from; or else the status and what the page says of
+/// there being none.
+fn transcribed(
     sources: &Sources,
     path: &ReplayPath,
+    record: &ExperimentRecord,
 ) -> Result<(ReplayAt, Transcribed), (StatusCode, String)> {
     let replay = format!("{}/{}/{}", path.configuration, path.case, path.repetition);
     let none = || {
@@ -717,9 +724,6 @@ async fn transcribed(
             format!("experiment {} has no replay {replay}", path.id),
         )
     };
-    let record = record_of(sources, &path.id)
-        .await
-        .map_err(|unshown| unshown.answer(&path.id))?;
     let configuration = record
         .configurations
         .iter()
@@ -765,6 +769,7 @@ async fn transcribed(
             which: Which::Item(item),
             name: None,
             of: html::escape(&format!("the run of replay {}", at.name())),
+            missing: None,
         },
         Of::Judge => Transcribed {
             kept: KeptRuns::Judge(output),
@@ -774,6 +779,7 @@ async fn transcribed(
             },
             name: Some("judge".into()),
             of: html::escape(&format!("the judge of replay {}", at.name())),
+            missing: None,
         },
     };
     Ok((at, transcribed))
@@ -808,10 +814,19 @@ pub(super) async fn replay_page(
         "Replay {}/{}/{} of experiment {} · {}",
         path.configuration, path.case, path.repetition, path.id, sources.work_dir.repo
     );
-    let (context, transcribed) = match transcribed(&sources, &path).await {
-        Ok((at, transcribed)) => (context(&at), Ok(transcribed)),
-        Err(e) => (Html::default(), Err(e)),
+    let record = match record_of(&sources, &path.id).await {
+        Err(Unshown::NoSuch) => {
+            let page = Page::new(title, format!("/events{}", uri.path()));
+            let frame = Frame::of(&sources).await;
+            return nothing_there(page, frame, "transcript", Missing::Experiment(path.id));
+        }
+        record => record.map_err(|unshown| unshown.answer(&path.id)),
     };
+    let (context, transcribed) =
+        match record.and_then(|record| transcribed(&sources, &path, &record)) {
+            Ok((at, transcribed)) => (context(&at), Ok(transcribed)),
+            Err(e) => (Html::default(), Err(e)),
+        };
     transcript_page(
         &sources,
         uri.path(),
@@ -832,7 +847,10 @@ pub(super) async fn replay_events(
     Query(query): Query<RunQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let transcribed = transcribed(&sources, &path).await.ok().map(|(_, t)| t);
+    let transcribed = match record_of(&sources, &path.id).await {
+        Ok(record) => transcribed(&sources, &path, &record).ok().map(|(_, t)| t),
+        Err(_) => None,
+    };
     transcript_events(
         sources,
         stopping,

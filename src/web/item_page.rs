@@ -13,7 +13,7 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::RunsShown;
-use super::{ErrorPage, Frame, Page, events, frame_regions, render};
+use super::{ErrorPage, Frame, Missing, Page, events, frame_regions, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
 use crate::domain::{Number, Snapshot};
@@ -285,6 +285,9 @@ fn names<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Names<'a> 
 }
 
 fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
+    if let Unexplained::NoSuchItem(number) = e {
+        return nothing_there(page, frame, "item", Missing::Item(*number));
+    }
     let page = ErrorPage {
         page,
         frame,
