@@ -19,8 +19,8 @@ use super::html::{self, Html};
 use super::launch;
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Frame, Page, events, experiment_path, frame_regions, render, run_path, suite_path,
-    suites,
+    ErrorPage, Frame, Missing, Page, events, experiment_path, frame_regions, nothing_there, render,
+    run_path, suite_path, suites,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -188,7 +188,7 @@ struct RunsRegion<'a> {
 
 /// Why there is no suite page: no such suite, or one that does not read.
 enum Unshown {
-    NoSuch(String),
+    NoSuch,
     Failed(anyhow::Error),
 }
 
@@ -199,7 +199,7 @@ fn no_such(name: &str) -> String {
 
 /// Suite `name` with its cases, by name, and its experiments.
 async fn shown(sources: &Sources, name: &str) -> Result<Shown, Unshown> {
-    let parsed: SuiteName = name.parse().map_err(|_| Unshown::NoSuch(no_such(name)))?;
+    let parsed: SuiteName = name.parse().map_err(|_| Unshown::NoSuch)?;
     match suites(sources).show(&parsed).await {
         Ok(Some(SuiteShown {
             suite,
@@ -213,7 +213,7 @@ async fn shown(sources: &Sources, name: &str) -> Result<Shown, Unshown> {
                 .map(|record| ExperimentRow::of(sources, record))
                 .collect(),
         }),
-        Ok(None) => Err(Unshown::NoSuch(no_such(name))),
+        Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
     }
 }
@@ -281,21 +281,21 @@ pub(super) async fn suite_page(
             .into_response()
         }
         Err(unshown) => {
-            let (status, error) = match unshown {
-                Unshown::NoSuch(error) => (StatusCode::NOT_FOUND, error),
+            let page = Page::new(title, format!("/events/suites/{name}"));
+            match unshown {
+                Unshown::NoSuch => nothing_there(page, frame, "cases", Missing::Suite(name)),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
                     warn!(suite = name, error, "reading a suite failed");
-                    (StatusCode::INTERNAL_SERVER_ERROR, error)
+                    let page = ErrorPage {
+                        page,
+                        frame,
+                        region: "cases",
+                        error,
+                    };
+                    (StatusCode::INTERNAL_SERVER_ERROR, page).into_response()
                 }
-            };
-            let page = ErrorPage {
-                page: Page::new(title, "/events/suites".into()),
-                frame,
-                region: "cases",
-                error,
-            };
-            (status, page).into_response()
+            }
         }
     }
 }

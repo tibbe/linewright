@@ -46,7 +46,7 @@ use tracing::{info, warn};
 
 use crate::api::{self, Sources, Unanswered};
 use crate::benchmarks::{ExperimentId, Experiments, SuiteName, Suites};
-use crate::domain::{Repo, Snapshot, Timestamp};
+use crate::domain::{Number, Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
@@ -529,6 +529,51 @@ struct ErrorPage {
     /// The id of the page's region the error stands in for.
     region: &'static str,
     error: String,
+}
+
+/// What a link named that does not exist, as the screens name it
+/// (`docs/specs/design_system.md`, Screen states, Nothing there). A run,
+/// suite or experiment is named as the path gave it, whether or not it
+/// parses.
+#[derive(Clone)]
+enum Missing {
+    Item(Number),
+    Run(String),
+    Suite(String),
+    Experiment(String),
+}
+
+impl std::fmt::Display for Missing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Missing::Item(number) => write!(f, "No such item {number}"),
+            Missing::Run(id) => write!(f, "No such run {id}"),
+            Missing::Suite(name) => write!(f, "No such suite {name}"),
+            Missing::Experiment(id) => write!(f, "No such experiment {id}"),
+        }
+    }
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "nothing_there.html")]
+struct NothingThere {
+    page: Page,
+    frame: Frame,
+    /// The id of the page's region it stands in for.
+    region: &'static str,
+    missing: Missing,
+}
+
+/// The screen of `missing`, standing in for the page's `region`, answered
+/// with 404.
+fn nothing_there(page: Page, frame: Frame, region: &'static str, missing: Missing) -> Response {
+    let page = NothingThere {
+        page,
+        frame,
+        region,
+        missing,
+    };
+    (StatusCode::NOT_FOUND, page).into_response()
 }
 
 /// How often a stream looks for what changed.

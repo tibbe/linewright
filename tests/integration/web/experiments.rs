@@ -442,6 +442,31 @@ async fn a_replay_with_no_output_or_judge_answers_404() {
     assert_eq!([pending, no_judge, no_case, no_experiment], [404; 4]);
 }
 
+/// `docs/specs/design_system.md`, Screen states, Nothing there.
+#[test_log::test(tokio::test)]
+async fn the_page_of_no_experiment_says_there_is_none() {
+    let pages = with_experiment().await;
+
+    let (no_experiment, no_experiment_body) = pages.get("/experiments/9").await;
+    let (no_id, no_id_body) = pages.get("/experiments/first").await;
+    let (replay, replay_body) = pages.get("/experiments/9/as-is/columns/1/run").await;
+
+    for (status, body, region, shown) in [
+        (
+            no_experiment,
+            no_experiment_body,
+            "experiment",
+            "No such experiment 9",
+        ),
+        (no_id, no_id_body, "experiment", "No such experiment first"),
+        (replay, replay_body, "transcript", "No such experiment 9"),
+    ] {
+        assert_eq!(status, 404);
+        let html = Html::parse_document(&body);
+        assert_eq!(text(select(&html, &format!("main #{region}"))[0]), shown);
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn the_experiment_pages_stream_sends_the_experiment_as_it_changes() {
     let pages = with_experiment().await;
