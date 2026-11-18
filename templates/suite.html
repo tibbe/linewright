@@ -79,7 +79,7 @@
 <span class="text-error">the criteria do not read: {{ why }}</span>
 {%- endmatch -%}
 </td>
-<td><form class="remove-case" method="post" action="{{ path }}/remove-case" hx-post="{{ path }}/remove-case" hx-target="#suite-said" hx-swap="innerHTML" hx-confirm="Remove the case {{ case.name }} and its directory?"><input type="hidden" name="case" value="{{ case.name }}"><button class="btn btn-xs btn-ghost text-error" type="submit">Remove</button></form></td>
+<td>{% call ui::confirm(case.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}</td>
 </tr>
 {%- endfor %}
 </tbody>

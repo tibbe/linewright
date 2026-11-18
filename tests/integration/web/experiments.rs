@@ -219,8 +219,17 @@ async fn the_experiment_pages_heading_shows_its_suite_its_launch_its_state_and_i
 async fn the_experiment_page_offers_to_cancel_an_open_experiment_and_cancelling_ends_it() {
     let pages = with_experiment().await;
     let html = pages.page("/experiments/1").await;
-    let form = select(&html, "form.cancel-experiment");
-    assert_eq!(form[0].attr("hx-post"), Some("/experiments/1/cancel"));
+    assert_eq!(
+        confirmations(&html),
+        [Confirmation {
+            asking: "Cancel the experiment".into(),
+            question: "Cancel experiment 1? This stops its running replays and judges.".into(),
+            turn_down: "Keep running".into(),
+            action: "/experiments/1/cancel".into(),
+            fields: vec![],
+        }]
+    );
+    assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
 
     let (status, answer) = post(&pages, "/experiments/1/cancel", &[SAME_ORIGIN], &[]).await;
     let (again, refused) = post(&pages, "/experiments/1/cancel", &[SAME_ORIGIN], &[]).await;
@@ -237,7 +246,7 @@ async fn the_experiment_page_offers_to_cancel_an_open_experiment_and_cancelling_
         "{}",
         cancelled.html()
     );
-    assert_eq!(select(&cancelled, "form.cancel-experiment").len(), 0);
+    assert_eq!(confirmations(&cancelled), []);
 }
 
 #[test_log::test(tokio::test)]

@@ -17,6 +17,7 @@ use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
@@ -146,8 +147,9 @@ struct ExperimentView {
     waiting: Option<Html>,
     ended: usize,
     all: usize,
-    /// Whether it is open, and so offers to be cancelled.
-    open: bool,
+    /// Its cancelling, while it is open (`docs/specs/benchmarks.md`,
+    /// Experiment, Cancelling).
+    cancel: Option<Confirmation>,
     path: String,
     chart: Chart,
     grid: Grid,
@@ -241,7 +243,18 @@ impl ExperimentView {
                 .then(|| html::phrase(&shown.phrase(), &names)),
             ended: results.ended,
             all: results.all,
-            open: record.state == ExperimentState::Open,
+            cancel: (record.state == ExperimentState::Open).then(|| Confirmation {
+                id: "cancel-experiment".into(),
+                label: "Cancel the experiment",
+                question: format!(
+                    "Cancel experiment {}? This stops its running replays and judges.",
+                    record.id
+                ),
+                turn_down: TurnDown::KeepRunning,
+                action: format!("{path}/cancel"),
+                fields: vec![],
+                said: "experiment-said",
+            }),
             path,
             chart: chart(&results),
             grid: grid(record, &results),

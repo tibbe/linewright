@@ -54,7 +54,8 @@ fn evaluated(sources: &[&str]) -> String {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_update_neither_opens_nor_closes_a_fold_and_morphs_every_other_attribute() {
+async fn an_update_neither_opens_nor_closes_a_fold_or_a_confirmation_and_morphs_every_other_attribute()
+ {
     let script = served_script().await;
 
     // Each hook as htmx calls it in a morph:
@@ -70,6 +71,7 @@ const morphed = (tagName, attrName, newValue) =>
   ["DETAILS", "open", null],
   ["DETAILS", "class", "lane"],
   ["DIALOG", "open", ""],
+  ["DIALOG", "open", null],
   ["SECTION", "open", null],
 ].map(([tag, attr, value]) => `${tag} ${attr}=${value}: ${morphed(tag, attr, value)}`)
  .join("\n")
@@ -82,10 +84,39 @@ const morphed = (tagName, attrName, newValue) =>
             "DETAILS open=: false",
             "DETAILS open=null: false",
             "DETAILS class=lane: true",
-            "DIALOG open=: true",
+            "DIALOG open=: false",
+            "DIALOG open=null: false",
             "SECTION open=null: true",
         ]
     );
+}
+
+/// `docs/specs/design_system.md`, Confirming.
+#[test_log::test(tokio::test)]
+async fn going_ahead_closes_the_confirmation_and_turning_it_down_is_left_to_the_browser() {
+    let script = served_script().await;
+
+    // A form in a dialog as the browser gives it to a `submit` listener:
+    // https://html.spec.whatwg.org/multipage/forms.html#dom-fs-method
+    let asked = r#"
+var submitted = [];
+document.addEventListener = (type, listener) => { if (type === "submit") submitted.push(listener); };
+"#;
+    let submit = r#"
+const dialog = () => ({ open: true, close() { this.open = false; } });
+const ahead = dialog();
+const down = dialog();
+const form = (method, within) => ({ method, closest: (selector) => (selector === "dialog" ? within : null) });
+for (const listener of submitted) {
+  listener({ target: form("post", ahead) });
+  listener({ target: form("dialog", down) });
+  listener({ target: form("get", null) });
+}
+`ahead: ${ahead.open}, down: ${down.open}`
+"#;
+    let answer = evaluated(&[BROWSER, asked, &script, submit]);
+
+    assert_eq!(answer, "ahead: false, down: true");
 }
 
 /// Stand-ins for the page's `#tip` and its triggers, and for the events the

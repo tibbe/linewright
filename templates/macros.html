@@ -70,6 +70,25 @@
 </select></label>
 {%- endmacro -%}
 
+{#- A confirmation (`docs/specs/design_system.md`, Confirming): the button
+    that asks, drawn with the classes `asking`, and the daisyUI `modal` it
+    opens with no request. Focus starts on turning it down, the least
+    destructive answer. -#}
+{%- macro confirm(confirmation, asking = "btn btn-sm") -%}
+<button class="{{ asking }}" type="button" command="show-modal" commandfor="{{ confirmation.id }}">{{ confirmation.label }}</button>
+<dialog id="{{ confirmation.id }}" class="modal" aria-labelledby="{{ confirmation.id }}_question">
+<div class="modal-box">
+<p id="{{ confirmation.id }}_question">{{ confirmation.question }}</p>
+<div class="modal-action">
+<form method="dialog"><button class="btn btn-sm" autofocus>{{ confirmation.turn_down.label() }}</button></form>
+<form method="post" action="{{ confirmation.action }}" hx-post="{{ confirmation.action }}" hx-target="#{{ confirmation.said }}" hx-swap="innerHTML">
+{%- for (name, value) in confirmation.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor -%}
+<button class="btn btn-sm btn-error" type="submit">{{ confirmation.label }}</button></form>
+</div>
+</div>
+</dialog>
+{%- endmacro -%}
+
 {#- The classes of a board card's look (`docs/specs/web/board.md`, Board). -#}
 {%- macro card_look() -%}
 card card-sm border border-base-300 bg-card shadow-sm
