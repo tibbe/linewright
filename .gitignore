@@ -5,3 +5,4 @@
 CLAUDE.local.md
 __pycache__/
 *.py[cod]
+.DS_Store
