@@ -407,6 +407,57 @@ async fn record_run(work_dir: &Path, case: &SeedCase, start: Timestamp, input: &
     Ok(())
 }
 
+/// The design run of [`CASES_ISSUE`] whose session ended while its Bash
+/// call ran, so that its transcript shows the call interrupted.
+const INTERRUPTED_RUN: u32 = 3;
+
+/// Records in the database of `work_dir` the run [`INTERRUPTED_RUN`],
+/// started the day before the clock starts, and writes its session's
+/// output: a Bash call that never returned.
+///
+/// # Errors
+///
+/// When the database or the session's output cannot be written.
+pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
+    let dir = format!("sessions/issue-{}/20260301T180000Z-design", CASES_ISSUE.0);
+    let call = json!({
+        "type": "assistant",
+        "timestamp": "2026-03-01T18:00:20Z",
+        "message": {"content": [
+            {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "cargo test board"}},
+        ]},
+    });
+    let started = json!({
+        "type": "system", "subtype": "init", "model": "claude-opus-5-5",
+        "timestamp": "2026-03-01T18:00:00Z",
+    });
+    std::fs::create_dir_all(work_dir.join(&dir))?;
+    std::fs::write(
+        work_dir.join(&dir).join("output.jsonl"),
+        format!("{started}\n{call}\n"),
+    )?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(work_dir.join("linewright.db"))
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await?;
+    let row: i64 = sqlx::query_scalar(
+        "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
+         VALUES ('item', ?, 'design', ?, '2026-03-01T18:00:00Z', '2026-03-01T18:05:00Z', 'failed')
+         RETURNING id",
+    )
+    .bind(i64::try_from(CASES_ISSUE.0)?)
+    .bind(INTERRUPTED_RUN)
+    .fetch_one(&pool)
+    .await?;
+    sqlx::query("INSERT INTO sessions (run, seq, dir) VALUES (?, 0, ?)")
+        .bind(row)
+        .bind(dir)
+        .execute(&pool)
+        .await?;
+    pool.close().await;
+    Ok(())
+}
+
 /// What the fake agent does in each stage.
 pub fn scenario() -> Scenario {
     Scenario {
