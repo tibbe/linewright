@@ -57,7 +57,7 @@ impl ExperimentId {
 }
 
 /// A configuration's name in an experiment: one or more lowercase letters,
-/// digits and hyphens.
+/// digits and hyphens, starting with a letter or a digit.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConfigurationName(String);
 

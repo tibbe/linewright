@@ -66,6 +66,8 @@ async fn the_suites_page_with_no_suites_says_so_and_offers_to_make_one() {
         .filter_map(|option| option.attr("value"))
         .collect();
     assert_eq!(stages, ["triage", "design", "implement"]);
+    let name = select_in(form[0], "input[name=name]");
+    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
 }
 
 #[test_log::test(tokio::test)]
@@ -126,7 +128,7 @@ async fn a_suite_whose_name_or_stage_does_not_parse_is_refused() {
     assert_eq!(name_status, 422);
     assert_eq!(
         said(&name),
-        "Not made: \"Board\" is not a suite's name: it is lowercase letters, digits and hyphens"
+        "Not made: \"Board\" is not a suite's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
     );
     assert_eq!(stage_status, 422);
     assert_eq!(
@@ -369,6 +371,7 @@ async fn the_suite_page_offers_to_capture_a_run_of_its_stage_that_can_be_capture
     assert_eq!(runs, [(Some("1/implement-2"), Some("1-implement-2"))]);
     let name = select_in(form[0], "input[name=name]");
     assert_eq!(name[0].attr("value"), Some("1-implement-2"));
+    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
     assert_eq!(select_in(form[0], "select[name=suite]").len(), 0);
     assert_eq!(select_in(form[0], "textarea[name=criteria]").len(), 1);
 }

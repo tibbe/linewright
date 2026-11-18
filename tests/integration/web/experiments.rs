@@ -517,6 +517,8 @@ async fn the_suite_page_offers_to_launch_an_experiment_as_is_first_and_counts_it
             "c__N__.session-timeout"
         ]
     );
+    let name = select_in(template[0], "input[name='c__N__.name']");
+    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
     let texts: std::collections::BTreeMap<String, String> =
         serde_json::from_str(&select(&html, "script#brief-texts")[0].inner_html()).unwrap();
     assert_eq!(texts["prompts/implement.md"], IMPLEMENT);

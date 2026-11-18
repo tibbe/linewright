@@ -101,6 +101,7 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
     assert_eq!(form.attr("hx-post"), Some(RUN_PAGE));
     let name = select_in(form, "input[name=name]");
     assert_eq!(name[0].attr("value"), Some("1-implement-1"));
+    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
     let criteria = select_in(form, "textarea[name=criteria]");
     assert_eq!(criteria.len(), 1);
     assert!(criteria[0].attr("required").is_some());
@@ -248,7 +249,7 @@ async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: \"../Gadgets\" is not a case's name: it is lowercase letters, digits and hyphens"
+        "Not captured: \"../Gadgets\" is not a case's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
     );
     assert_eq!(cases(&pages), Vec::<String>::new());
 }
@@ -349,7 +350,8 @@ async fn the_form_offers_the_suites_of_the_runs_stage_or_a_new_one() {
             (Some(""), "a new suite".to_string()),
         ]
     );
-    assert_eq!(select_in(form, "input[name=new-suite]").len(), 1);
+    let new_suite = select_in(form, "input[name=new-suite]");
+    assert_eq!(new_suite[0].attr("pattern"), Some(NAME_PATTERN));
 }
 
 #[test_log::test(tokio::test)]

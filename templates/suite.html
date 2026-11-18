@@ -49,7 +49,7 @@
 {%- endif %}
 </div>
 {%- endblock %}
-<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
 <textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>
 {{ ready|safe }}
 </form>
@@ -93,7 +93,7 @@
 <fieldset class="configuration fieldset rounded-box border border-base-300 p-3">
 <legend class="fieldset-legend">a configuration</legend>
 <div class="flex flex-wrap gap-2">
-<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="c__N__.name" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="c__N__.name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
 <label class="input input-sm w-auto"><span class="label">model</span><input class="w-40" name="c__N__.model" placeholder="as it is" autocomplete="off"></label>
 <label class="select select-sm w-auto"><span class="label">effort</span><select name="c__N__.effort"><option value="">as it is</option>
 {%- for effort in launch.efforts %}<option value="{{ effort }}">{{ effort }}</option>{% endfor -%}

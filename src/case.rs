@@ -26,7 +26,8 @@ pub use item::{CaseItem, CaseItemKind, CasePull, CasePullState, IssueState, Merg
 /// The directory, under the work directory, that holds the cases.
 pub const CASES: &str = "cases";
 
-/// A case's name: one or more lowercase letters, digits and hyphens.
+/// A case's name: one or more lowercase letters, digits and hyphens,
+/// starting with a letter or a digit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaseName(String);
 
@@ -55,13 +56,21 @@ impl std::str::FromStr for CaseName {
     }
 }
 
+/// The form of a name that [`check_name`] accepts, as the `pattern` of an
+/// HTML input, so that a web form refuses the names the server would.
+pub(crate) const NAME_PATTERN: &str = r"[a-z0-9][a-z0-9\-]*";
+
 /// Refuses `name` as `whose` name, such as "a case's", unless it is one or
-/// more lowercase letters, digits and hyphens.
+/// more lowercase letters, digits and hyphens, starting with a letter or a
+/// digit.
 pub(crate) fn check_name(name: &str, whose: &str) -> Result<(), String> {
-    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
-    if name.is_empty() || !name.chars().all(allowed) {
+    let letter_or_digit = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let mut chars = name.chars();
+    if !chars.next().is_some_and(letter_or_digit) || !chars.all(|c| letter_or_digit(c) || c == '-')
+    {
         return Err(format!(
-            "{name:?} is not {whose} name: it is lowercase letters, digits and hyphens"
+            "{name:?} is not {whose} name: it is lowercase letters, digits and hyphens, \
+             starting with a letter or a digit"
         ));
     }
     Ok(())
@@ -870,11 +879,13 @@ fn json(value: &impl Serialize) -> anyhow::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use boa_engine::{Context, Source};
+
     use super::*;
 
     #[test_log::test]
-    fn a_name_is_lowercase_letters_digits_and_hyphens() {
-        for name in ["gadgets", "43-implement-2", "-", "7"] {
+    fn a_name_is_lowercase_letters_digits_and_hyphens_starting_with_a_letter_or_a_digit() {
+        for name in ["gadgets", "43-implement-2", "7", "gadgets-"] {
             assert_eq!(
                 name.parse::<CaseName>().map(|n| n.to_string()),
                 Ok(name.into())
@@ -882,6 +893,8 @@ mod tests {
         }
         for name in [
             "",
+            "-",
+            "-gadgets",
             "Gadgets",
             "gadgets_1",
             "gadgets 1",
@@ -889,6 +902,41 @@ mod tests {
             "gädgets",
         ] {
             assert!(name.parse::<CaseName>().is_err(), "{name:?}");
+        }
+    }
+
+    #[test_log::test]
+    fn the_names_pattern_matches_the_names_accepted() {
+        let mut js = Context::default();
+        let browser_matches = |context: &mut Context, name: &str| {
+            let source = format!(
+                "new RegExp({pattern:?}, 'v').test({name:?})",
+                pattern = format!("^(?:{NAME_PATTERN})$"),
+            );
+            context
+                .eval(Source::from_bytes(&source))
+                .unwrap()
+                .as_boolean()
+                .unwrap()
+        };
+        for name in [
+            "gadgets",
+            "43-implement-2",
+            "7",
+            "gadgets-",
+            "",
+            "-",
+            "-gadgets",
+            "Gadgets",
+            "gadgets_1",
+            "gadgets 1",
+            "gädgets",
+        ] {
+            assert_eq!(
+                browser_matches(&mut js, name),
+                check_name(name, "a case's").is_ok(),
+                "{name:?}"
+            );
         }
     }
 
