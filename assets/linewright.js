@@ -2,8 +2,9 @@
  * The web UI's script (docs/specs/design_system.md): it says since when the
  * page lost `serve`, shows times and durations in the page's language and the
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
- * entry while the reader is there, keeps each fold as the reader opened or
- * closed it through updates, keeps the options of the page's filters up and
+ * entry while the reader is there, keeps each fold and confirmation as the
+ * reader opened or closed it through updates, closes a confirmation as it
+ * goes ahead, keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, builds a launch's
  * configurations and counts its replays, and shows the page's tooltip.
@@ -15,7 +16,10 @@
   // https://four.htmx.org/docs/extension-authoring-guide#event-hooks
   htmx.registerExtension("linewright-folds", {
     htmx_before_morph_attr: (element, detail) =>
-      !(element.tagName === "DETAILS" && detail.attrName === "open"),
+      !(
+        (element.tagName === "DETAILS" || element.tagName === "DIALOG") &&
+        detail.attrName === "open"
+      ),
   });
 
   const lang = document.documentElement.lang;
@@ -133,6 +137,17 @@
     },
     true,
   );
+
+  /**
+   * Closes a confirmation as the reader goes ahead
+   * (docs/specs/design_system.md, Confirming), so that it sends its request
+   * once.
+   */
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (form.method === "dialog") return;
+    form.closest?.("dialog")?.close();
+  });
 
   /** Opens or closes each fold the reader toggled, as they left it. */
   function keepFolds() {

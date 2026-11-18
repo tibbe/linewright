@@ -4,14 +4,16 @@
 <div id="experiment-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
 {% block experiment -%}
 <section id="experiment">
+<header class="mb-4">
 <hgroup class="mb-4">
 <h1>Experiment {{ experiment.id }}</h1>
 <p class="facts flex flex-wrap items-center gap-x-3 gap-y-1"><span>of the suite <a class="link" href="{{ experiment.suite_href }}">{{ experiment.suite }}</a>, launched {{ experiment.launched }}</span> {% call ui::status(experiment.status, experiment.state) %}{% endcall %}
 {%- if let Some(waiting) = experiment.waiting %} <span class="phrase">{{ waiting }}</span>{% endif %} <span>{{ experiment.ended }} of {{ experiment.all }} replays ended</span></p>
 </hgroup>
-{%- if experiment.open %}
-<form class="cancel-experiment mb-4" method="post" action="{{ experiment.path }}/cancel" hx-post="{{ experiment.path }}/cancel" hx-target="#experiment-said" hx-swap="innerHTML" hx-confirm="Cancel experiment {{ experiment.id }}? Its replays and judges in flight stop."><button class="btn btn-sm" type="submit">Cancel the experiment</button></form>
+{%- if let Some(cancel) = experiment.cancel %}
+{% call ui::confirm(cancel) %}{% endcall %}
 {%- endif %}
+</header>
 <section id="chart" class="mb-6">
 <h2>Chart</h2>
 <figure>

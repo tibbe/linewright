@@ -107,7 +107,41 @@ async fn the_suite_page_opens_adding_a_case_and_running_from_under_its_heading_a
         .collect();
     assert_eq!(
         order,
-        ["heading", "disclosure", "disclosure", "cases", "experiments"]
+        [
+            "heading",
+            "disclosure",
+            "disclosure",
+            "cases",
+            "experiments"
+        ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_case_named_as_another_cases_question_has_a_confirmation_of_its_own() {
+    let pages = with_suites().await;
+    keep_case(
+        &pages.path(""),
+        "board",
+        "lanes-question",
+        "1/implement-1",
+        "Asks.\n",
+    )
+    .await;
+
+    let html = pages.page("/suites/board").await;
+
+    let questions: Vec<String> = confirmations(&html)
+        .into_iter()
+        .map(|confirmation| confirmation.question)
+        .collect();
+    assert_eq!(
+        questions,
+        [
+            "Remove the case columns and its directory?",
+            "Remove the case lanes and its directory?",
+            "Remove the case lanes-question and its directory?",
+        ]
     );
 }
 
@@ -286,11 +320,25 @@ async fn the_suite_page_shows_each_case_with_its_run_and_the_first_line_of_its_c
         select_in(criteria, "pre")[0].text().collect::<String>(),
         "Names the columns.\nAnd orders them.\n"
     );
-    let removes: Vec<Option<&str>> = select(&html, "#cases form.remove-case input[name=case]")
-        .into_iter()
-        .map(|input| input.attr("value"))
-        .collect();
-    assert_eq!(removes, [Some("columns"), Some("lanes")]);
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Cases, and Remove case;
+/// `docs/specs/design_system.md`, Confirming.
+#[test_log::test(tokio::test)]
+async fn each_case_is_removed_after_a_confirmation_naming_it() {
+    let pages = with_suites().await;
+
+    let html = pages.page("/suites/board").await;
+
+    let removal = |case: &str| Confirmation {
+        asking: "Remove".into(),
+        question: format!("Remove the case {case} and its directory?"),
+        turn_down: "Cancel".into(),
+        action: "/suites/board/remove-case".into(),
+        fields: vec![("case".into(), case.into())],
+    };
+    assert_eq!(confirmations(&html), [removal("columns"), removal("lanes")]);
+    assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
 }
 
 /// `docs/specs/design_system.md`, Screen states, Empty.
@@ -302,7 +350,10 @@ async fn a_suite_with_no_cases_experiments_or_runs_of_its_stage_says_so() {
 
     assert_eq!(text(select(&html, "#cases p")[0]), "No cases");
     assert_eq!(text(select(&html, "#experiments p")[0]), "No experiments");
-    assert_eq!(text(select(&html, "#capture-runs p")[0]), "No runs of triage");
+    assert_eq!(
+        text(select(&html, "#capture-runs p")[0]),
+        "No runs of triage"
+    );
 }
 
 #[test_log::test(tokio::test)]

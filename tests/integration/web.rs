@@ -464,6 +464,65 @@ fn disclosures(html: &Html, forms: &[&str]) -> Vec<(String, bool, String)> {
     disclosures
 }
 
+/// A confirmation (`docs/specs/design_system.md`, Confirming) as a reader
+/// meets it: the label of the button that asks, the question, the label of
+/// the button that turns it down, and where going ahead posts and what.
+#[derive(Debug, PartialEq, Eq)]
+struct Confirmation {
+    asking: String,
+    question: String,
+    turn_down: String,
+    action: String,
+    fields: Vec<(String, String)>,
+}
+
+/// Each confirmation in `main`, by the button that asks, checking that the
+/// button opens its dialog as a modal with no request, that the dialog is
+/// named by its question, that focus starts on turning it down, and that the
+/// button that goes ahead has the asking button's label.
+#[track_caller]
+fn confirmations(html: &Html) -> Vec<Confirmation> {
+    let mut confirmations = vec![];
+    for asking in select(html, "main button[command=show-modal]") {
+        assert_eq!(asking.attr("type"), Some("button"), "{}", asking.html());
+        let id = asking.attr("commandfor").expect("the dialog it opens");
+        let dialogs = select(html, &format!("[id='{id}']"));
+        assert_eq!(dialogs.len(), 1, "one element {id}");
+        let dialog = dialogs[0];
+        assert_eq!(dialog.value().name(), "dialog", "{}", dialog.html());
+        assert!(has_classes(dialog, &["modal"]), "{}", dialog.html());
+        let question = dialog.attr("aria-labelledby").expect("its question");
+        let questions = select(html, &format!("[id='{question}']"));
+        assert_eq!(questions.len(), 1, "one element {question}");
+        let turn_down = select_in(dialog, "form[method=dialog] button");
+        assert_eq!(turn_down.len(), 1, "{}", dialog.html());
+        assert!(turn_down[0].attr("autofocus").is_some());
+        let ahead = select_in(dialog, "form[hx-post]");
+        assert_eq!(ahead.len(), 1, "{}", dialog.html());
+        let action = ahead[0].attr("hx-post").unwrap().to_string();
+        assert_eq!(ahead[0].attr("action"), Some(action.as_str()));
+        let submit = select_in(ahead[0], "button[type=submit]");
+        assert_eq!(submit.len(), 1, "{}", dialog.html());
+        let asking = text(asking);
+        assert_eq!(text(submit[0]), asking);
+        let mut fields = vec![];
+        for input in select_in(ahead[0], "input[type=hidden]") {
+            fields.push((
+                input.attr("name").unwrap().to_string(),
+                input.attr("value").unwrap().to_string(),
+            ));
+        }
+        confirmations.push(Confirmation {
+            asking,
+            question: text(questions[0]),
+            turn_down: text(turn_down[0]),
+            action,
+            fields,
+        });
+    }
+    confirmations
+}
+
 /// Where each of `links` goes.
 fn hrefs(links: Vec<ElementRef>) -> Vec<String> {
     links

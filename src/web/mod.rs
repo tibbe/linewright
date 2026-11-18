@@ -5,6 +5,7 @@ mod automations_page;
 mod board_page;
 mod capture;
 mod cards;
+mod confirmation;
 mod experiment_page;
 mod facts;
 mod html;

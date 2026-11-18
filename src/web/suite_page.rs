@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::capture::{CaseFields, Offer, capture_run};
+use super::confirmation::{Confirmation, TurnDown};
 use super::experiment_page::{shown_of, state_status};
 use super::html::{self, Html};
 use super::launch;
@@ -37,6 +38,7 @@ struct CaseRow {
     run: RunId,
     run_href: String,
     criteria: CriteriaShown,
+    remove: Confirmation,
 }
 
 /// A case's criteria, as its row shows them.
@@ -50,9 +52,20 @@ enum CriteriaShown {
     Unreadable(String),
 }
 
-impl From<CaseEntry> for CaseRow {
-    fn from(case: CaseEntry) -> CaseRow {
+impl CaseRow {
+    /// The row of `case`, of the suite at `path`, removed after a
+    /// confirmation (`docs/specs/benchmarks.md`, Remove case).
+    fn of(case: CaseEntry, path: &str) -> CaseRow {
         CaseRow {
+            remove: Confirmation {
+                id: format!("remove-{}", case.name),
+                label: "Remove",
+                question: format!("Remove the case {} and its directory?", case.name),
+                turn_down: TurnDown::Cancel,
+                action: format!("{path}/remove-case"),
+                fields: vec![("case", case.name.to_string())],
+                said: "suite-said",
+            },
             run_href: run_path(&case.run),
             name: case.name,
             run: case.run,
@@ -169,7 +182,6 @@ struct SuitePage {
 #[derive(Template)]
 #[template(path = "suite.html", block = "cases")]
 struct CasesRegion<'a> {
-    path: &'a str,
     cases: &'a [CaseRow],
 }
 
@@ -206,8 +218,14 @@ async fn shown(sources: &Sources, name: &str) -> Result<Shown, Unshown> {
             cases,
             experiments,
         })) => Ok(Shown {
+            cases: {
+                let path = suite_path(&suite.name);
+                cases
+                    .into_iter()
+                    .map(|case| CaseRow::of(case, &path))
+                    .collect()
+            },
             suite,
-            cases: cases.into_iter().map(CaseRow::from).collect(),
             experiments: experiments
                 .iter()
                 .map(|record| ExperimentRow::of(sources, record))
@@ -318,13 +336,7 @@ pub(super) async fn suite_events(
                 experiments,
             }) = shown(&sources, &name).await
             {
-                regions.push((
-                    "cases",
-                    render(&CasesRegion {
-                        path: &suite_path(&suite.name),
-                        cases: &cases,
-                    }),
-                ));
+                regions.push(("cases", render(&CasesRegion { cases: &cases })));
                 regions.push((
                     "experiments",
                     render(&ExperimentsRegion {
