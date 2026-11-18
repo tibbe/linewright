@@ -7,7 +7,7 @@ from collections import namedtuple
 
 SPEC_FILES = sorted(glob.glob("docs/specs/**/*.md", recursive=True)) + ["GLOSSARY.md"]
 MODEL_FILES = sorted(glob.glob("quint/*.qnt"))
-STATES_TABLE = ("docs/specs/design_system.md", "## States")
+STATES_TABLE = ("docs/specs/board.md", "## States")
 COMMENT = re.compile(r"\s*(?:///?|/\*\*|\*(?!/))\s?(.*)")
 QUOTE = re.compile(r'"([^"]+)"')
 ELLIPSIS = re.compile(r"\s*(?:\.\.\.|…)\s*")

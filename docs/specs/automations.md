@@ -20,6 +20,9 @@ test. The pipeline then works those issues like any other.
    one is a reviewed change, versioned with the code.
 4. As an operator, I want to run an automation by hand, so that I can try its
    instructions without waiting for its schedule.
+5. As a maintainer, I want to see each automation's last and next run, and
+   each automation file that does not parse, so that I know my automations
+   run.
 
 ## The automation file
 
@@ -98,6 +101,24 @@ filled besides those of every prompt ([Contract](runs.md#contract)).
 
 The session ends with a result that matches
 [`briefs/results/automation.schema.json`](../../briefs/results/automation.schema.json).
+
+## Screens
+
+| Screen      | Reached from                                                                                                                                         | Purpose                                         |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Automations | the navigation ([Chrome](navigation.md#chrome)), an automation's name where a screen names its run, and the notice of an automation file that does not parse | see each automation, its last run and its next |
+
+### Automations
+
+- **Layout.** Each
+  automation file that does not parse, then a row per automation.
+
+| Part     | Holds                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------ |
+| name     | the automation's name                                                                                  |
+| schedule | when it runs, in words                                                                                 |
+| last run | its last run, with its outcome, linking to its Run; or, before its first, when Linewright first saw it |
+| next run | when it runs next                                                                                      |
 
 ## Out of scope
 

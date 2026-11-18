@@ -1,7 +1,6 @@
-# Linewright on the web: design system
+# Web design system
 
-Linewright on the web follows daisyUI, with its components unchanged and
-two themes of its own.
+The web UI follows daisyUI, with two themes of its own.
 
 ## Colour scheme
 
@@ -25,47 +24,44 @@ two themes of its own.
 
 ## Status
 
-| Outcome, card status, check or ending       | Colour     |
-| ------------------------------------------- | ---------- |
-| done, merged, green                         | `success`  |
-| failed, CI failing                          | `error`    |
-| waiting for a person or for something, handed back | `warning` |
-| in flight, running                          | `info`     |
-| paused or queued                            | Muted text |
-| cancelled, interrupted, usage limit, closed | `neutral`  |
+| Status    | Colour     |
+| --------- | ---------- |
+| done      | `success`  |
+| failed    | `error`    |
+| waiting   | `warning`  |
+| in flight | `info`     |
+| paused    | Muted text |
+| cancelled | `neutral`  |
 
 ## Navigation
 
-- **Navigation** is a sidebar at the left. Where the page does not fit
-  beside it, it is a rail of the links' icons and labels; narrower still, a
-  menu behind a button.
-- **In the rail**, the repository's name is in a daisyUI `tooltip`.
-- **A hold or a problem** is a daisyUI alert across the top of the page.
+- **A screen** is a page, at the address below. Its link is its address.
+- **A screen's title** is the page's `<title>`, which the browser shows on
+  its tab.
+- **A screen that shows over another**, such as a confirmation, is a daisyUI
+  `modal`.
+
+| Screen      | Address           |
+| ----------- | ----------------- |
+| Board       | `/`               |
+| Item        | `/items/N`        |
+| Runs        | `/runs`           |
+| Run         | `/runs/ID`        |
+| Automations | `/automations`    |
+| Suites      | `/suites`         |
+| Suite       | `/suites/NAME`    |
+| Experiment  | `/experiments/ID` |
+| Server      | `/server`         |
 
 ## Layout
 
 - **Text cut to fit** is shown whole in a daisyUI `tooltip`.
 - **A name cut to fit** has its link to GitHub at the end of its last line.
-- **On a lane or a card**, no daisyUI component that draws in `base-100`,
-  `base-200` or `base-300`, such as a button, an input or an alert.
-
-## Board
-
-- The columns share the board's width, each at least 200px, and all six fit
-  beside the navigation rail from 1440px wide.
-- **A lane** is a box in the Lane colour with a hairline Border and daisyUI's
-  box radius, and its head is a bar in the same colour.
-- **A card** is a daisyUI `card` in the Card colour, with a hairline Border
-  and a small shadow. A card that shows a card status has a left edge
-  in its colour and its icon before its line. A card in Done is faded.
 
 ## Filters
 
 - **The filters** are a row of small daisyUI `input`s and `select`s, each
   with its label inside it as daisyUI's `label`, at the left.
-- **On the runs page**, Item and Since are `input`s and Stage is a
-  `select`.
-- **On the board**, Person is a `select`.
 
 ## Facts
 
@@ -75,16 +71,3 @@ two themes of its own.
 ## Tables
 
 - **A table** is a daisyUI `table`, its column heads pinned.
-- **"By hand"** is a daisyUI `badge`.
-
-## Transcripts
-
-- **Lines.** Every entry's line starts with a column for a chevron, which an
-  entry that opens shows, pointing right while closed and down while open, and
-  the others leave empty. A session's settings and brief files open with the
-  same chevron.
-- **Indents.** An entry's text, on every line it takes, and what the entry
-  opens to start where its first line's text does.
-- **Durations** are at the right edge of their line, and a session's at the
-  right of its heading.
-- **Hover.** An entry's line is in the Lane colour on hover.

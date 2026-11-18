@@ -4,12 +4,12 @@
  *
  * Each definition is named after the spec's own term and cites the clause it
  * encodes, quoting it: R = repository.md, D = design.md, P =
- * pull_requests.md, T = triage.md, S = sources_of_work.md, U = runs.md, DS =
- * design_system.md, M = monitoring.md. A reading the spec leaves open is an
- * assumption, A1 to A16, listed below.
+ * pull_requests.md, T = triage.md, S = sources_of_work.md, U = runs.md, B =
+ * board.md. A reading the spec leaves open is an assumption, A1 to A16,
+ * listed below.
  *
  * Encoded in full: R ## State, R ## Working an item, R ## Managed items, R ##
- * Writes, P ## Working a pull request, DS ## States. Their tables are read by
+ * Writes, P ## Working a pull request, B ## States. Their tables are read by
  * the spec-table directives (`scripts/fix model-tables` generates what each
  * encodes; scripts/model_tables.py describes them) and every other sentence of
  * theirs is quoted where the model encodes it.
@@ -1337,11 +1337,11 @@ module linewright {
   def mayNowStart(i: int, stage: str): bool = options.contains(opt("start run", i, stage))
 
   // ===========================================================================
-  // The board (DS ## States, ### The board, ### Cards)
+  // The board (B ## States, ### Board, #### Cards)
   // ===========================================================================
 
-  /// DS ## States: "An item's state is shown in these words."
-  // spec-table DS "## States" map
+  /// B ## States: "An item's state is shown in these words."
+  // spec-table B "## States" map
   pure val WORDS: str -> str =
     Map(
       "needs-triage" -> "Waiting for triage",
@@ -1360,7 +1360,7 @@ module linewright {
     )
   // spec-table end
 
-  /// M ## explain "State in JSON": "its name under State, in kebab-case".
+  /// B ## `lw explain` "State in JSON": "its name under State, in kebab-case".
   pure val JSON: str -> str = Map(
     NEEDS_TRIAGE -> "needs-triage", "being triaged" -> "being-triaged",
     NEEDS_INFO -> "needs-info", READY_FOR_HUMAN -> "ready-for-human",
@@ -1370,10 +1370,10 @@ module linewright {
     "merged" -> "merged", "closed" -> "closed",
   )
 
-  /// DS ### The board: "The board shows the managed items as cards in six
-  /// columns, in this order, each card in the column of its item's state."
-  /// (column, an issue's states, a pull request's states).
-  // spec-table DS "### The board" board
+  /// B ### Board: "The board is six columns side by side." "Each card is in
+  /// its lane and in the column of its item's state." "The columns below, in
+  /// this order." (column, an issue's states, a pull request's states).
+  // spec-table B "### Board" board
   pure val COLUMNS: List[(str, Set[str], Set[str])] =
     [
       ("Triage", Set("needs-triage"), Set()),
@@ -1391,10 +1391,10 @@ module linewright {
   pure def column(state: str, pr: bool): str =
     columnsOf(state, pr).fold("", (acc, c) => c)
 
-  /// DS ### The board: "A tracking issue has no card." "One card per piece of
-  /// work": "a pull request, and a run on it, show on the card of each issue
-  /// it closes that has one, and a pull request that closes no issue with a
-  /// card has its own."
+  /// B ### Board: "A tracking issue has no card." "One card per piece of
+  /// work": "A pull request, and a run on it, show on the card of each issue
+  /// that it closes and that has a card." "A pull request that closes no
+  /// issue with a card has its own card."
   pure def placement(w: World, i: int): str =
     if (ISSUES.contains(i))
       if (issueState(w, i) == "tracking") "heads a lane" else "card"
@@ -1403,13 +1403,13 @@ module linewright {
     else "card"
   pure def hasOwnCard(w: World, i: int): bool = managed(w, i) and placement(w, i) == "card"
 
-  /// DS ### Cards: "A card is the item's number and title and, under them, at
+  /// B #### Cards: "A card is the item's number and title and, under them, at
   /// most one line that says what its column does not: what sets the item
   /// apart from the rest of its column, what a person acts on, or since when
   /// it has sat." The line of a card in column `col`: "Where more than one row
   /// of a column holds, the line is the first." Holds (U ## Holds), max-runs
   /// and checks are not modelled: their rows never hold.
-  // spec-table DS "### Cards" lines column=col
+  // spec-table B "#### Cards" lines column=col
   pure def cardLineIn(w: World, i: int, col: str): str =
     // Triage | "blocked by #12" | an open issue blocks it | 
     if (col == "Triage" and when_an_open_issue_blocks_it(w, i)) "blocked by #12"
@@ -1467,9 +1467,9 @@ module linewright {
   // spec-table end
   pure def cardLine(w: World, i: int): str = cardLineIn(w, i, column(stateOf(w, i), PRS.contains(i)))
 
-  /// DS ### Cards: "What stops a pull request merging, in the order the line
+  /// B #### Cards: "What stops a pull request merging, in the order the line
   /// picks from".
-  // spec-table DS "### Cards" 2 lines
+  // spec-table B "#### Cards" 2 lines
   pure def stopsItMerging(w: World, p: int): str =
     // "stalled" | it holds linewright:stalled | failed
     if (when_it_holds_linewright_stalled(w, p)) "stalled"

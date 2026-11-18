@@ -179,10 +179,26 @@ old, or on request, and a build replaces it only by succeeding.
   or a `config.toml` Linewright cannot use
   ([Linewright's files](repository.md#linewrights-files)), is refused, saying
   why, and is not kept for later. Its output and exit statuses are the
-  monitoring commands' ([Monitoring](monitoring.md)): it succeeds when what
+  monitoring commands' ([Output](operation.md#output)): it succeeds when what
   it asked for was done, a build that succeeded or, with `--no-wait`, a
   request `serve` took, and fails otherwise, such as when the build failed or
   there is no setup command.
+
+### `lw environment`
+
+`environment` shows the environment as `status` does
+([`lw status`](operation.md#lw-status)), then the output of its latest build.
+If that build succeeded, it also shows the output of the latest build that
+failed.
+
+- **A build.** Each build shows its command, when it started, its exit
+  status, how long it ran and its output, as a transcript shows its
+  maintenance command ([Transcripts](runs.md#transcripts)).
+- **`--follow`.** It shows a build in progress so far, then follows it, and
+  ends when the build ends.
+- **`--json`.** Each build is an object as the maintenance command's is in
+  `logs --json`, with the commit it built from.
+- **No setup command.** `environment` says there is none.
 
 ## Isolation
 

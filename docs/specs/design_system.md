@@ -2,41 +2,50 @@
 
 ## Liveness
 
-- A page shows `serve`'s state as it changes, without the reader reloading
-  it.
-- A page that loses `serve` keeps what it last showed, says since when, and
-  reconnects on its own.
+- A screen shows `serve`'s state as it changes, without the reader opening
+  it again.
 - What the reader opened or closed stays so through updates, until they
-  open the page again.
+  open the screen again.
 
 ## Words
 
-- A page states what is so, not what to do about it; how to work with
-  Linewright is the user guide's.
+- **What is so.** A screen states what is so, not what to do about it; how to
+  work with Linewright is the user guide's.
+- **Voice.** A sentence on a screen is in the active voice: it names who or
+  what acts, such as "This stops its running replays and judges."
+- **Buttons.** A button's label is a verb, or "New" for one that makes
+  something, with what it acts on where its
+  place on the screen does not show that, such as "Remove" on a case's row or
+  "Cancel the experiment".
 
-## Navigation
+## Screen states
 
-- Every page has the same navigation.
-- A hold on Linewright's work, such as a usage limit, or a problem no item
-  shows, is shown on every page while it lasts, linking to the page that
-  tells more.
-- Every item or pull request named on a page is named by its number, and
-  its title where Linewright knows it, except in a card's line, which names
-  it by its number alone, and links to its page and to GitHub.
+- **Empty.** A list with nothing in it shows "No" and what it lists in its
+  place, such as "No runs" or "No suites", unless its screen shows it only
+  while it holds something.
+- **Lost.** A screen that loses `serve` keeps what it last showed, shows
+  "Lost `serve` 5 minutes ago; reconnecting.", with the time as a past time
+  ([Time](#time)), and reconnects on its own.
+- **Nothing there.** A link can name an item, run, suite or experiment that
+  does not exist. The screen it opens shows "No such" and the name, as the
+  screens give it, such as "No such run 43/rework-9" or "No such item #812".
+- **Loading.** A screen shows once it has all that it holds; it has no
+  loading state.
 
 ## Filters
 
-- **Where.** A page's filters sit together above what they narrow, each
+- **Where.** A screen's filters sit together above what they narrow, each
   labelled with what it filters on.
 - **Applying.** A filter applies as soon as it is chosen from a list, and
   one typed in when the reader presses Enter.
 - **Unset.** An unset filter narrows nothing: a list reads "All" and what it
   lists, such as "All stages", and a field to type in is empty.
-- **Narrowing.** What the filters leave out is gone from the page and from
-  its counts, but for a count the page says holds however it is filtered.
-- **The address.** A page's address carries its filters, so a reload or a
-  link keeps them. A link to the page, such as in the navigation, carries
-  none unless it says.
+- **Narrowing.** What the filters leave out is gone from the screen and from
+  its counts, but for a count the screen says holds however it is filtered.
+- **Links.** A screen's link carries its filters: a reader who opens the
+  screen again, or follows its link, gets the same filters. A link to the
+  screen from elsewhere, such as from the navigation, carries none unless it
+  says.
 - **Kept.** An update never changes a filter.
 - **Opened and closed.** Changing a filter leaves what the reader opened or
   closed as it was.
@@ -59,36 +68,10 @@
 
 ## Status
 
-- An outcome, a card status, a check's result and how an item in Done ended
-  each have an icon and a colour, shared by those that mean the same, and
-  are never told by colour alone.
-
-## States
-
-An item's state ([State](repository.md#state)) is shown in these words.
-
-| State             | Shown as               |
-| ----------------- | ---------------------- |
-| `needs-triage`    | Waiting for triage     |
-| being triaged     | Being triaged          |
-| `needs-info`      | Waiting for an answer  |
-| `ready-for-human` | Waiting for a decision |
-| `ready-for-agent` | Waiting for Linewright |
-| being designed    | Being designed         |
-| being implemented | Being implemented      |
-| in review         | In review              |
-| tracking          | Tracking               |
-| done              | Done                   |
-| open              | Open                   |
-| merged            | Merged                 |
-| closed            | Closed                 |
-
-## Board
-
-- As the reader scrolls, the column heads stay at the top, with the head of
-  the lane they are in under them.
-- A lane is a surface sunk into the page, and its cards are raised on it.
-- A card's title is on at most two lines.
+- **Statuses.** A status is one of done, failed, waiting, in flight, paused
+  and cancelled. Each area says which status each of its states shows as.
+- **Shown.** A status shows as its icon and its colour, never by colour
+  alone.
 
 ## Tables
 
@@ -97,61 +80,32 @@ An item's state ([State](repository.md#state)) is shown in these words.
 
 ## Facts
 
-- A page's facts about one thing are a list of labels, each with its value
+- A screen's facts about one thing are a list of labels, each with its value
   beside it.
 - A label is words alone, with no icon or colour. A status among the facts
   is in the value: its icon and its words in its colour, with nothing behind
   them.
 
-## Transcripts
+## Confirming
 
-- **Where it shows.** How a transcript is laid out is each place's own,
-  [The run page](#the-run-page)'s and [`logs`](monitoring.md#logs)'s, and each
-  may show more than the rules below.
-- **Sessions and turns.** A run's transcripts show in the order of its
-  sessions, each as the agent itself shows it where the rules below leave a
-  choice, marking each turn after the first with the follow-up that started
-  it.
-- **Entries.** The agent's messages show in full. Each tool call shows on one
-  line: the tool, its main argument and a short account of its result, such
-  as the lines read, the exit status or, for a sub-agent, the count of its
-  tool calls and how long it ran. A sub-agent's work shows indented under the
-  call that started it.
-- **Thinking.** Where the agent thought before what it did next, an entry
-  saying "thought" shows how long it thought: from the last thing that
-  happened before it, such as its prompt being sent, a tool call returning
-  or, for a sub-agent's first thinking, the call that started the sub-agent,
-  to the end of its thinking.
-- **A turn's length.** Each turn ends with an entry saying "worked for" and
-  how long the turn took, from its prompt to its last entry.
-- **Cut short.** A "thought" entry its turn ends first, as when the session
-  ends or the harness refuses it for the usage limit, and a "worked for" entry
-  its session ends first, show `interrupted`, with how long each went on up
-  to that end, or none where that end is not known.
-- **The clone.** The making of a session's clone
-  ([Stages](runs.md#stages)) is an entry: a line with how long it took, then,
-  when it failed, the error.
-- **Maintenance.** The maintenance command is an entry
-  ([Maintenance](runs.md#maintenance)): a line with the command, its exit status
-  and how long it ran, then its output, which shows as a tool call's full
-  result does, and always when the command failed. An empty one shows
-  nothing.
-- **Running.** A tool call, the clone and the maintenance command are entries
-  that run: each shows `running` in place of its account until it ends, and
-  one its session ends first shows `interrupted`.
-- **In full.** A transcript in full shows everything it holds, including the
-  agent's thinking, each tool's full input and result, and the brief and
-  follow-ups.
-- **Followed.** A followed transcript shows each entry as it happens. An entry
-  that runs shows once it starts, and again with its account, at the time,
-  once it ends: a tool call when it returns or ends in the background.
+- **What asks first.** An action that stops work or removes what Linewright
+  cannot bring back asks first, in a confirmation: a question that names
+  what it acts on and says what follows.
+- **Where.** A confirmation shows over the screen it was asked from, and has
+  no link of its own.
+- **The answer.** The reader confirms, and the action goes ahead, or turns
+  it down, and nothing changes.
+- **Its buttons.** The button that goes ahead has the label of the button
+  that asked. The other says "Cancel", or "Keep running" where the action
+  cancels.
 
 ## Layout
 
-- Content wider than the page scrolls sideways on its own, not the page with
-  it.
-- What a page shows on hover it also shows on keyboard focus, over the
-  page, until the pointer leaves it or focus moves. Text cut to fit is shown
+- The UI is laid out for someone scanning a screen.
+- Content wider than the screen scrolls sideways on its own, not the screen
+  with it.
+- What a screen shows on hover it also shows on keyboard focus, over the
+  screen, until the pointer leaves it or focus moves. Text cut to fit is shown
   whole this way.
 - Only a name's title is cut to fit; its number and its link to GitHub
   always show.
@@ -165,374 +119,3 @@ An item's state ([State](repository.md#state)) is shown in these words.
 ## Colour scheme
 
 - Light or dark follows the reader's preference.
-
-## The web UI
-
-`serve` serves a web UI for the maintainers, where they follow Linewright
-and its work ([Monitoring](monitoring.md)), laid out for someone scanning a
-page.
-
-| Page        | Path           | Shows                                                       |
-| ----------- | -------------- | ----------------------------------------------------------- |
-| board       | `/`            | the managed items as cards ([The board](#the-board))        |
-| item        | `/items/N`     | where #N stands, what it waits for, the items it relates to and its runs ([The item page](#the-item-page)) |
-| runs        | `/runs`        | every run ([Lists of runs](#lists-of-runs))                 |
-| run         | `/runs/ID`     | run ID's transcripts ([The run page](#the-run-page))         |
-| automations | `/automations` | the automations ([The automations page](#the-automations-page)) |
-| suites      | `/suites`      | the suites ([The suites page](#the-suites-page))            |
-| suite       | `/suites/NAME` | suite NAME's cases and experiments ([The suite page](#the-suite-page)) |
-| experiment  | `/experiments/ID` | experiment ID's progress and results ([The experiment page](#the-experiment-page)) |
-| server      | `/server`      | the facts about Linewright itself ([The server page](#the-server-page)) |
-
-### Serving
-
-`serve` serves the web UI on `ui-address`, a host and port, and serves none
-when `ui-address` is empty.
-
-- **Access.** Whoever reaches the port; who reaches it is the operator's to
-  restrict, such as with an authenticating proxy in front.
-- **Requests answered.** Only those whose `Host` is local
-  ([Commands](monitoring.md#commands)), an IP address or one of
-  `ui-hosts`, each compared ignoring case, port and a trailing dot. The
-  others get 421 Misdirected Request.
-
-### Navigation
-
-| Part       | Holds                                                                                   |
-| ---------- | --------------------------------------------------------------------------------------- |
-| repository | the avatar of the GitHub account that owns it, beside its name, linking to it on GitHub |
-| links      | the board, the runs, the automations, the suites and the server pages                   |
-
-### Holds and problems
-
-| Hold or problem                          | Links to         |
-| ---------------------------------------- | ---------------- |
-| a usage limit in force                   | the server page  |
-| a drain under way                        | the server page  |
-| a webhook delivery refused since the last one accepted | the server page |
-| a poll that failed since the last that succeeded | the server page |
-| an automation file that does not parse   | the automations page |
-| a file of the repository's Linewright cannot use | the server page |
-| with a setup command, no environment yet, or its latest build failed | the server page |
-| an automation whose last run failed      | that run         |
-
-### The board
-
-The board shows the managed items
-([Managed items](repository.md#managed-items)) as cards in six columns, in
-this order, each card in the column of its item's state
-([State](repository.md#state)). A tracking issue has no card.
-
-| Column         | An issue's states                     | A pull request's states |
-| -------------- | ------------------------------------- | ----------------------- |
-| Triage         | `needs-triage`                        |                         |
-| Needs a person | `needs-info`, `ready-for-human`       |                         |
-| Ready          | `ready-for-agent`                     |                         |
-| Working        | being triaged, being designed, being implemented |              |
-| In review      | in review                             | open                    |
-| Done           | done                                  | merged, closed          |
-
-- **One card per piece of work.** The card is the issue; a pull request, and
-  a run on it, show on the card of each issue it closes that has one, and a
-  pull request that closes no issue with a card has its own.
-- **Lanes.** A lane per piece of work: where the work was cut, headed by its
-  tracking issue's number and title and its tickets closed of total, with
-  its managed tickets as its cards; otherwise headed by the item's number and
-  title, with the item as its one card.
-- **Finished lanes.** A lane is finished once its cards are all in Done and,
-  where it has a tracking issue, that issue is done. It shows as its head
-  alone, with when it finished: when the last of its cards entered Done or
-  its tracking issue became done. It opens on click. The finished
-  lanes sit together under one fold that says how many there are, opens
-  on click and shows only while there is one.
-  A finished lane leaves the board once it finished before the Done window
-  (`done-window`) opened.
-- **Order of lanes.** The unfinished lanes come first, latest changed first,
-  then the finished lanes, latest finished first. Lanes changed at the same
-  time are in number order.
-- **A lane's last change.** The latest thing that happened, on GitHub or in
-  Linewright, to any of its cards or to a pull request that closes one. A
-  run in flight is happening now.
-- **Order in a column.** Ascending by number, within each lane.
-- **No cap.** A column is never cut.
-- **Needing a person.** The browser tab's title carries the count of cards in
-  Needs a person on the whole board, however it is filtered.
-
-#### Filtering by person
-
-The board has one filter ([Filters](#filters)), Person: it narrows the board
-to the cards that match a person. A card matches whoever is party to its
-item, to a pull request on it or, for a ticket, to its tracking issue: by
-having opened it, being assigned to it or reviewing it.
-
-- **Opening.** An item Linewright opened counts as opened by whoever opened
-  the item it was opened for, followed back to an account other than
-  Linewright's, such as a spec gap by that of the item whose work found it
-  and a spec change's issue by the spec change's author. An item opened for
-  none, such as an issue an automation files, stays Linewright's.
-- **Linewright.** Linewright is party to nothing.
-- **Reviewing.** A person reviews a pull request while a review is
-  requested of them by name, and once they have reviewed it.
-- **Lanes.** A lane shows while any of its cards matches.
-- **Lane heads.** A lane's head, with its tickets closed of total, is the
-  whole lane's.
-- **The people.** Person is a list of logins: each person some card on the
-  whole board matches, however it is filtered, and whoever is chosen. It
-  has nothing to type in.
-
-### Cards
-
-A card is the item's number and title and, under them, at most one line that
-says what its column does not: what sets the item apart from the rest of its
-column, what a person acts on, or since when it has sat. A card with nothing
-to add is the title alone.
-
-- **Pull requests.** A card that is a pull request carries a pull request
-  icon beside its number.
-- **The first that holds.** Where more than one row of a column holds, the
-  line is the first.
-- **Card status.** A card whose line has a card status shows it. Card
-  statuses, most pressing first: failed, waiting for a person, in flight,
-  paused or queued.
-- **Done.** A card in Done is quieter than the rest.
-- **When.** In Triage, Needs a person, Ready and Done, the line ends with
-  when the item entered its column, or when it was created where that is not
-  known.
-
-| Column         | The line                                                                                                                                                                                                                                                               | When                                                                                                                                                    | Card status |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| Triage         | as in Ready                                                                                                                                                                                                                                                            | as in Ready                                                                                                                                             | as in Ready |
-| Needs a person | "stalled"                                                                                                                                                                                                                                                              | it holds `linewright:stalled`                                                                                                                           | failed |
-|                | "asked alice", "asked alice and bob", "asked alice, bob and carol": the issue's assignees, in GitHub's order; "people asked" with none                                                                                                                                 | it holds `needs-info`                                                                                                                                   | waiting for a person |
-|                | "handed back"                                                                                                                                                                                                                                                          | Linewright's last act on it was letting go of it: a run handed it back, or its pull request closed unmerged                                             | waiting for a person |
-|                | "decision needed"                                                                                                                                                                                                                                                      | otherwise                                                                                                                                               | waiting for a person |
-| Ready          | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |  |
-|                | "assigned to alice"                                                                                                                                                                                                                                                    | someone other than Linewright is assigned to it                                                                                                         |  |
-|                | "unassigned"                                                                                                                                                                                                                                                           | Linewright was unassigned from it                                                                                                                       |  |
-|                | "not marked for Linewright"                                                                                                                                                                                                                                            | it is not marked for Linewright                                                                                                                         |  |
-|                | "paused until" what ends the hold ([Holds](runs.md#holds)), naming a file: "paused until the environment is built", "paused until the default branch fixes `.linewright/config.toml`"                                                                                  | it would start, but for a hold                                                                                                                          | paused or queued |
-|                | "queued"                                                                                                                                                                                                                                                               | it would start, but the runs in flight are at `max-runs`                                                                                                | paused or queued |
-|                | nothing but the time                                                                                                                                                                                                                                                   | otherwise: the next poll acts on it                                                                                                                     |  |
-| Working        | its stage and how long it has run, "implementation · 12m"                                                                                                                                                                                                              | a run is in flight                                                                                                                                      | in flight |
-|                | "blocked by #12"                                                                                                                                                                                                                                                       | an open issue blocks it                                                                                                                                 |  |
-|                | "paused until" what ends the hold, or "queued"                                                                                                                                                                                                                         | no run is in flight, as in Ready                                                                                                                        | paused or queued |
-| In review      | its pull request, where the card is not the pull request itself, then what stops it merging, the first of the table below that holds | always; a pull request opened by someone else is "#42 by alice" | that of what stops it merging |
-| Done           | "closed in #42", the pull request whose merge made it done                                                                                                                                                                                                             | an issue a merged pull request made done                                                                                                                |  |
-|                | "closed as completed", "closed as not planned" or "closed as a duplicate", GitHub's reason; "closed" where the reason is not known                                                                                                                                     | an issue closed otherwise                                                                                                                               |  |
-|                | "merged"                                                                                                                                                                                                                                                               | a pull request merged                                                                                                                                   |  |
-|                | "closed without merging"                                                                                                                                                                                                                                               | a pull request closed unmerged                                                                                                                          |  |
-
-What stops a pull request merging, in the order the line picks from:
-
-| What stops it merging                                     | When                                       | Card status |
-| --------------------------------------------------------- | ------------------------------------------ | --- |
-| "stalled"                                                 | it holds `linewright:stalled`              | failed |
-| "handed back"                                             | Linewright opened it, is not assigned to it, and its last act on it was letting go of it | waiting for a person |
-| "unassigned"                                              | Linewright opened it and is not assigned to it otherwise | |
-| its stage and how long it has run, as in Working          | a run is in flight on it                   | in flight |
-| "paused until" what ends the hold, or "queued", as in Ready | Linewright would start a run on it, as in Ready | paused or queued |
-| "checks failed"                                           | a check failed                             | failed |
-| "checks running"                                          | a check has not finished                   | in flight |
-| "conflicts"                                               | it cannot merge cleanly                    | failed |
-| "behind main", naming the default branch                  | it is behind the default branch            |  |
-| "draft"                                                   | it is a draft                              |  |
-| "changes requested"                                       | GitHub's review decision is that changes are requested | waiting for a person |
-| "review required"                                         | GitHub requires a review before it merges, such as a code owner's, that it has not had | waiting for a person |
-| "approved"                                                | GitHub's review decision is approved    |  |
-| nothing                                                   | otherwise                                  |  |
-
-### The item page
-
-The item page shows #N's heading, then its facts ([Facts](#facts)) in the
-order below, then its runs ([Lists of runs](#lists-of-runs)).
-
-- **Heading.** #N's number and title as on its card, and under them when
-  `serve` last read #N, such as "as of 2 minutes ago".
-- **Its card.** For an item without a card of its own, such as a pull request on
-  the card of the issue it closes, the card it would have on its own; for a
-  tracking issue, its lane head.
-- **Related items.** An item a fact lists is shown as its card is, with its
-  card status's icon in place of its line, and a tracking issue as its lane
-  head is.
-
-| Fact           | Holds                                                                                                                                  | Shown                          |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| State          | #N's state ([States](#states)), then its card's line where it says more, with its card status ([Cards](#cards)), such as "Being implemented · implementation · 12m"; for a tracking issue, its state, then, once its lane is finished, when it finished, such as "Done · finished 2 days ago"; for an item that is not managed, its state where it has one, then "Left alone" and what keeps it out ([Managed items](repository.md#managed-items)), such as "not marked for Linewright" | always                         |
-| Waiting for    | each thing Linewright waits for before it acts on #N next, one per line, naming what ends it ([Holds](runs.md#holds)), such as "the usage limit, until 14:30", in plain text | while it waits for any         |
-| Tracking issue | a ticket's tracking issue                                                                                                              | while there is one             |
-| Tickets        | a tracking issue's tickets, with how many are closed of the total, such as "3 of 5 closed"                                             | while it has any               |
-| Spec change    | the spec change a spec change's issue was opened for ([Spec changes](sources_of_work.md#spec-changes))                                  | while there is one             |
-| Pull requests  | the open or merged pull requests that close #N                                                                                         | while there are any            |
-| Closes         | the issues a pull request closes                                                                                                       | while there are any            |
-
-### Lists of runs
-
-A list of runs is a table with a row per run, newest first.
-
-| Column   | Holds                                                                                                                  |
-| -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Outcome  | the run's outcome                                                                                                      |
-| Run      | the run ID, linking to the run page                                                                                    |
-| Item     | the item; for an automation's run, "automation" and its name, linking to the automations page |
-| Stage    | the run's stage                                                                                                        |
-| Started  | when the run started, with an automation's run by hand marked there                                                    |
-| Duration | the run's duration                                                                                                     |
-
-- **On the runs page.** Filters for the item, the stage and the time since
-  which runs started narrow the list.
-- **On the item page.** The list leaves out the Item column.
-- **No runs.** "No runs" stands in place of the table.
-- **A cut list.** The item page shows #N's latest ten runs. A last row,
-  across the table, says how many earlier runs were left out and links to the
-  runs page narrowed to #N.
-
-### The run page
-
-The run page shows the run's transcripts ([Transcripts](#transcripts)), each
-under its session's heading.
-
-- **Heading.** The run ID, then ", by hand" for an automation's run by hand
-  and "(it started no session)" for a run that ended without one, and under
-  them the run's item as in the Item column of [Lists of runs](#lists-of-runs).
-- **A session's heading.** The session's number and when it started, such as
-  "session 1: started 5 minutes ago", with how long it has run, leaving out a
-  wait for the usage limit to reset, and up to its last entry where its end is
-  not known, as when a restart interrupted its run.
-- **A session's settings.** Under its heading, the session's model and effort
-  open on click to where its settings and brief files came from.
-- **Views.** The page shows the transcripts as the agent's own default view
-  does or, with the verbose switch, as its verbose view does, such as the
-  agent's thinking open only with the switch, but never what the agent was
-  told besides its prompts.
-- **Prompts.** The brief and each follow-up are entries, each shown as its
-  first line.
-- **Durations.** Each entry that runs shows how long it ran, keeping up while
-  it runs and stopping where its session ends first, or none where that end is
-  not known, and its line leaves that out of its account.
-- **Working.** While a followed session's turn goes on with no entry running,
-  the session ends with a line saying "working" and how long its turn has
-  gone on so far, keeping up; between turns no such line shows. While the
-  session waits for the usage limit to reset, the line says so and until when
-  instead, such as "waiting for the usage limit, until 14:30".
-- **Folding.** An entry opens on click to what its line leaves out: a tool
-  call's full input and result and its sub-agent's work, the clone's error, the
-  maintenance command's output, the full text of the brief or a follow-up, or
-  the thinking a "thought" entry stands for; a "thought" entry with no
-  thinking text does not open.
-  One that failed starts open. A sub-agent's work starts folded to the line of
-  the call that started it, with the count of its entries.
-- **Verbose.** The verbose switch is set once for the page, and opens
-  everything, a session's settings too.
-- **Following.** A run in flight is followed. The page stays at the bottom
-  until the reader scrolls up, and then offers to jump to the latest entry.
-- **Capturing.** A run that can be captured
-  ([Capturing](benchmarks.md#capturing)) offers, by its heading, to capture
-  it as a case. The capture asks for these, then says where the case was
-  written, or why it was not:
-  - the suite: one of the suites of the run's stage, or a new one;
-  - the case's name, filled in with the run ID's letters and digits joined
-    by hyphens, such as `43-implement-2`;
-  - the criteria.
-
-### The automations page
-
-The automations page shows each automation file that does not parse, then a
-row per automation.
-
-| Part     | Holds                                                                   |
-| -------- | ----------------------------------------------------------------------- |
-| name     | the automation's name                                                   |
-| schedule | when it runs, in words                                                  |
-| last run | its last run, with its outcome, linking to the run; or, before its first, when Linewright first saw it |
-| next run | when it runs next                                                       |
-
-### The suites page
-
-The suites page shows a row per suite, and offers to make a suite. To make a
-suite, it asks for the suite's name and stage
-([Suites](benchmarks.md#suites)).
-
-| Column          | Holds                                                        |
-| --------------- | ------------------------------------------------------------ |
-| Suite           | the suite's name, linking to the suite page                  |
-| Stage           | the suite's stage                                            |
-| Cases           | how many cases it holds                                      |
-| Last experiment | its latest experiment and when it was launched, linking to it |
-
-### The suite page
-
-The suite page shows suite NAME's cases, then its experiments, latest first.
-
-- **Cases.** A row per case: its name, the run it was captured from, linking
-  to the run page, and the first line of its criteria, which opens on click
-  to the whole criteria. Each row offers to remove the case.
-- **Adding a case.** The page offers to capture a run of the suite's stage,
-  as the run page does. The maintainer chooses the run from a list of the runs
-  of that stage.
-- **Experiments.** A row per experiment: when it was launched, its state and
-  the pass rate of each configuration, linking to the experiment page.
-- **Launching.** The page offers to launch an experiment on a suite with
-  cases. The launch asks for the configurations and the repetitions
-  ([Experiments](benchmarks.md#experiments)), and shows how many replays they
-  make.
-- **A configuration.** `as-is` comes first and holds nothing. Each other
-  configuration has a name. It can set `model`, `effort` and
-  `session-timeout`, and give the text of any file of the brief. The text of a
-  file starts as the text that a run of the stage would use as the launch
-  opens. A file whose text the maintainer does not change is not part of the
-  configuration.
-
-### The experiment page
-
-The experiment page shows experiment ID's heading, then its results
-([Results](benchmarks.md#results)).
-
-- **Heading.** The suite, linking to the suite page, when the experiment was
-  launched, its state, and how many of its replays have ended of all its
-  replays. A waiting experiment says what it waits for, such as "waiting for
-  the usage limit, until 14:30".
-- **State.** Shown with the icon and the colour of the status with the same
-  meaning ([Status](#status)): running as in flight, waiting as paused,
-  ended as done and cancelled as cancelled.
-- **The chart.** A point for each configuration. The horizontal axis is the
-  mean cost of a replay, and the vertical axis is the pass rate.
-- **The grid.** A row for each case and a column for each configuration. A
-  cell shows the passes of the case under the configuration, such as "2 of
-  3". A cell also shows its leaks and its replays without a judgement, if it
-  has any.
-- **The table.** A row for each configuration, with its figures. Each row
-  opens on click to the configuration's cases. Each case opens on click to
-  its replays. A replay shows its state, its judgement with the reasoning of
-  the judge, its cost and its time. It opens on click to the transcripts of
-  its run and of its judge, shown as the run page shows a run's.
-
-### The server page
-
-The server page shows the facts about Linewright itself ([Facts](#facts)).
-
-- **Builds.** A build of the environment shows as a transcript's maintenance
-  command does, and opens the same way ([The run page](#the-run-page)); a
-  build in progress is followed.
-
-| Fact                                                            | Shown                  |
-| --------------------------------------------------------------- | ---------------------- |
-| since when `serve` has run                                      | always                 |
-| the last poll and the next                                      | always                 |
-| the polls failed since the last that succeeded, with the last error | while there are any |
-| the usage limit and when it resets                              | while one is in force  |
-| a file of the repository's Linewright cannot use, and its error | while there is one     |
-| the drain, since when, and its deadline if set                  | while one is under way |
-| the environment and its builds, as `environment` shows them ([Monitoring](monitoring.md)) | with a setup command |
-| the runs in flight out of `max-runs`                            | always                 |
-| the replays and judges of experiments in flight out of `max-replays` | while there are any |
-| the time of the last webhook delivery accepted                  | with webhooks on       |
-| the webhook deliveries refused since `serve` started            | with webhooks on       |
-
-## Out of scope
-
-- A login of Linewright's own for the web UI.
-- A layout of the board for narrow screens.
-- A status of a lane's own: its cards carry theirs.
-- Acting from the UI on `serve` or on the work, but for capturing a run and
-  for suites and experiments.
-- A link of its own to each transcript entry.
