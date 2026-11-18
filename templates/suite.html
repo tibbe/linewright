@@ -4,6 +4,60 @@
 <h1>Suite {{ suite.name }}</h1>
 <p class="text-muted mb-4">cases of {{ suite.stage }}</p>
 <div id="suite-said" class="mb-3 max-w-xl" role="status"></div>
+<div class="mb-6 flex flex-wrap items-start gap-x-2 gap-y-3">
+<details class="capture-offer"><summary class="btn btn-sm">Add case</summary>
+<form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#capture-said" hx-swap="innerHTML">
+{% block runs -%}
+<div id="capture-runs">
+{%- if runs.is_empty() %}
+<p class="text-muted">No runs of {{ suite.stage }}</p>
+{%- else %}
+<label class="select select-sm w-full"><span class="label">run</span><select name="run">
+{%- for run in runs %}
+<option value="{{ run.id }}" data-name="{{ run.name }}">{{ run.id }}</option>
+{%- endfor %}
+</select></label>
+{%- endif %}
+</div>
+{%- endblock %}
+<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
+<textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>
+{{ ready|safe }}
+</form>
+<div id="capture-said" class="mt-2 max-w-xl" role="status"></div>
+</details>
+{%- if let Some(launch) = launch %}
+<details class="launch-offer"><summary class="btn btn-sm">Run</summary>
+<form class="launch mt-2 flex max-w-3xl flex-col gap-3" method="post" action="{{ path }}/launch" hx-post="{{ path }}/launch" hx-target="#launch-said" hx-swap="innerHTML" data-cases="{{ launch.cases }}">
+<label class="input input-sm w-fit"><span class="label">repetitions</span><input class="w-20" type="number" name="repetitions" value="1" min="1" required></label>
+<fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-muted text-sm">It holds nothing: the stage as it is.</p></fieldset>
+<div class="configurations flex flex-col gap-3"></div>
+<div><button class="add-configuration btn btn-sm" type="button">Add a configuration</button></div>
+<p class="replay-count" aria-live="polite">{{ launch.count }}</p>
+<div><button class="btn btn-sm btn-primary" type="submit">Run experiment</button></div>
+</form>
+<div id="launch-said" class="mt-2 max-w-xl" role="status"></div>
+<template id="configuration-template">
+<fieldset class="configuration fieldset rounded-box border border-base-300 p-3">
+<legend class="fieldset-legend">a configuration</legend>
+<div class="flex flex-wrap gap-2">
+<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="c__N__.name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
+<label class="input input-sm w-auto"><span class="label">model</span><input class="w-40" name="c__N__.model" placeholder="as it is" autocomplete="off"></label>
+<label class="select select-sm w-auto"><span class="label">effort</span><select name="c__N__.effort"><option value="">as it is</option>
+{%- for effort in launch.efforts %}<option value="{{ effort }}">{{ effort }}</option>{% endfor -%}
+</select></label>
+<label class="input input-sm w-auto"><span class="label">session-timeout</span><input class="w-24" name="c__N__.session-timeout" placeholder="as it is" autocomplete="off"></label>
+</div>
+<div class="flex flex-wrap items-center gap-2"><label class="select select-sm w-auto"><span class="label">file of the brief</span><select class="brief-file" aria-label="file of the brief">
+{%- for path in launch.paths %}<option value="{{ path }}">{{ path }}</option>{% endfor -%}
+</select></label><button class="add-file btn btn-sm" type="button">Change it</button><button class="remove-configuration btn btn-sm btn-ghost text-error" type="button">Remove the configuration</button></div>
+<div class="files flex flex-col gap-2"></div>
+</fieldset>
+</template>
+<script type="application/json" id="brief-texts">{{ launch.texts }}</script>
+</details>
+{%- endif %}
+</div>
 {% block cases -%}
 <section id="cases" class="mb-6">
 <h2>Cases</h2>
@@ -33,30 +87,8 @@
 {%- endif %}
 </section>
 {%- endblock %}
-<section id="add-case">
-<h2>Adding a case</h2>
-<form class="capture flex max-w-xl flex-col gap-2" method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#capture-said" hx-swap="innerHTML">
-{% block runs -%}
-<div id="capture-runs">
-{%- if runs.is_empty() %}
-<p class="text-muted">No runs of {{ suite.stage }}</p>
-{%- else %}
-<label class="select select-sm w-full"><span class="label">run</span><select name="run">
-{%- for run in runs %}
-<option value="{{ run.id }}" data-name="{{ run.name }}">{{ run.id }}</option>
-{%- endfor %}
-</select></label>
-{%- endif %}
-</div>
-{%- endblock %}
-<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
-<textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>
-{{ ready|safe }}
-</form>
-<div id="capture-said" class="mt-2 max-w-xl" role="status"></div>
-</section>
 {% block experiments -%}
-<section id="experiments" class="mt-6 mb-6">
+<section id="experiments" class="mb-6">
 <h2>Experiments</h2>
 {%- if experiments.is_empty() %}
 <p>No experiments</p>
@@ -77,36 +109,4 @@
 {%- endif %}
 </section>
 {%- endblock %}
-{%- if let Some(launch) = launch %}
-<section id="launch" class="mt-6">
-<h2>Launching an experiment</h2>
-<form class="launch flex max-w-3xl flex-col gap-3" method="post" action="{{ path }}/launch" hx-post="{{ path }}/launch" hx-target="#launch-said" hx-swap="innerHTML" data-cases="{{ launch.cases }}">
-<label class="input input-sm w-fit"><span class="label">repetitions</span><input class="w-20" type="number" name="repetitions" value="1" min="1" required></label>
-<fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-muted text-sm">It holds nothing: the stage as it is.</p></fieldset>
-<div class="configurations flex flex-col gap-3"></div>
-<div><button class="add-configuration btn btn-sm" type="button">Add a configuration</button></div>
-<p class="replay-count" aria-live="polite">{{ launch.count }}</p>
-<div><button class="btn btn-sm btn-primary" type="submit">Launch</button></div>
-</form>
-<div id="launch-said" class="mt-2 max-w-xl" role="status"></div>
-<template id="configuration-template">
-<fieldset class="configuration fieldset rounded-box border border-base-300 p-3">
-<legend class="fieldset-legend">a configuration</legend>
-<div class="flex flex-wrap gap-2">
-<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="c__N__.name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
-<label class="input input-sm w-auto"><span class="label">model</span><input class="w-40" name="c__N__.model" placeholder="as it is" autocomplete="off"></label>
-<label class="select select-sm w-auto"><span class="label">effort</span><select name="c__N__.effort"><option value="">as it is</option>
-{%- for effort in launch.efforts %}<option value="{{ effort }}">{{ effort }}</option>{% endfor -%}
-</select></label>
-<label class="input input-sm w-auto"><span class="label">session-timeout</span><input class="w-24" name="c__N__.session-timeout" placeholder="as it is" autocomplete="off"></label>
-</div>
-<div class="flex flex-wrap items-center gap-2"><label class="select select-sm w-auto"><span class="label">file of the brief</span><select class="brief-file" aria-label="file of the brief">
-{%- for path in launch.paths %}<option value="{{ path }}">{{ path }}</option>{% endfor -%}
-</select></label><button class="add-file btn btn-sm" type="button">Change it</button><button class="remove-configuration btn btn-sm btn-ghost text-error" type="button">Remove the configuration</button></div>
-<div class="files flex flex-col gap-2"></div>
-</fieldset>
-</template>
-<script type="application/json" id="brief-texts">{{ launch.texts }}</script>
-</section>
-{%- endif %}
 {%- endblock -%}

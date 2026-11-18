@@ -70,6 +70,47 @@ async fn the_suites_page_with_no_suites_says_so_and_offers_to_make_one() {
     assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
 }
 
+/// `docs/specs/benchmarks.md`, Suites, Making a suite.
+#[test_log::test(tokio::test)]
+async fn the_suites_page_opens_making_a_suite_from_new_and_ends_it_in_create() {
+    let pages = with_suites().await;
+
+    let html = pages.page("/suites").await;
+
+    assert_eq!(
+        disclosures(&html, &["make-suite"]),
+        [("New".to_string(), false, "Create".to_string())]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Layout, Adding a case and Launching.
+#[test_log::test(tokio::test)]
+async fn the_suite_page_opens_adding_a_case_and_running_from_under_its_heading_above_its_cases() {
+    let pages = with_suites().await;
+
+    let html = pages.page("/suites/board").await;
+
+    assert_eq!(
+        disclosures(&html, &["capture", "launch"]),
+        [
+            ("Add case".to_string(), false, "Add case".to_string()),
+            ("Run".to_string(), false, "Run experiment".to_string()),
+        ]
+    );
+    let order: Vec<&str> = select(&html, "main h1, main details:has(> form), main section")
+        .into_iter()
+        .filter_map(|element| match element.value().name() {
+            "h1" => Some("heading"),
+            "details" => Some("disclosure"),
+            _ => element.attr("id"),
+        })
+        .collect();
+    assert_eq!(
+        order,
+        ["heading", "disclosure", "disclosure", "cases", "experiments"]
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn making_a_suite_says_so_and_the_page_then_lists_it() {
     let pages = Pages::of(view(vec![], vec![])).await;

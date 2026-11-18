@@ -439,6 +439,31 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
+/// Each disclosure in `main` whose form's class is in `forms`, in the
+/// page's order: the label of the button that opens it, whether it starts
+/// open, and the label of its form's submit button.
+#[track_caller]
+fn disclosures(html: &Html, forms: &[&str]) -> Vec<(String, bool, String)> {
+    let mut disclosures = vec![];
+    for details in select(html, "main details") {
+        let Some(form) = select_in(details, ":scope > form").into_iter().next() else {
+            continue;
+        };
+        if !forms.iter().any(|class| has_classes(form, &[class])) {
+            continue;
+        }
+        let summary = select_in(details, ":scope > summary");
+        let submit = select_in(form, "button[type=submit]");
+        assert_eq!((summary.len(), submit.len()), (1, 1), "{}", details.html());
+        disclosures.push((
+            text(summary[0]),
+            details.attr("open").is_some(),
+            text(submit[0]),
+        ));
+    }
+    disclosures
+}
+
 /// Where each of `links` goes.
 fn hrefs(links: Vec<ElementRef>) -> Vec<String> {
     links
