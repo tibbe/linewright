@@ -478,7 +478,8 @@ The suite page shows suite NAME's cases, then its experiments, latest first.
 - **A configuration.** `as-is` comes first and holds nothing. Each other
   configuration has a name. It can set `model`, `effort` and
   `session-timeout`, and give the text of any file of the brief. The text of a
-  file starts as the text that the replays would use without the
+  file starts as the text that a run of the stage would use as the launch
+  opens. A file whose text the maintainer does not change is not part of the
   configuration.
 
 ### The experiment page

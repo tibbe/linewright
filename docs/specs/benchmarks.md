@@ -100,8 +100,8 @@ case of it, whatever its outcome.
   FILE`. It works whether or not `serve` is running, and exits as the
   monitoring commands do ([Output](monitoring.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
-- **The name.** Given by the capturer: lowercase letters, digits and hyphens.
-  A name a case already has is refused.
+- **The name.** Given by the capturer: lowercase letters, digits and hyphens,
+  starting with a letter or a digit. A name a case already has is refused.
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
@@ -111,8 +111,8 @@ case of it, whatever its outcome.
 A suite is a named set of cases of one stage. A maintainer makes a suite in
 the web UI, captures runs of its stage into it and runs experiments on it.
 
-- **The name.** Lowercase letters, digits and hyphens. A name that a suite
-  already has is refused.
+- **The name.** In the form of the name of a case
+  ([Capturing](#capturing)). A name that a suite already has is refused.
 - **The stage.** Triage, design or implement, given as the suite is made.
 - **One suite for each case.** A case belongs to the suite it was captured
   into. A run captured into two suites gives two cases, each with its own
@@ -304,18 +304,18 @@ case under each configuration.
   ([The experiment page](design_system.md#the-experiment-page)).
 - **The configurations.** The first configuration is `as-is`, which holds
   nothing ([Configurations](#configurations)). The maintainer adds the others,
-  each with a name that no other configuration of the experiment has.
+  each with a name that no other configuration of the experiment has, in the
+  form of the name of a case ([Capturing](#capturing)).
 - **Repetitions.** One or more. The default is 1.
 - **At its launch.** The experiment keeps the cases of the suite with their
   criteria, the configurations and the repetitions. A later change to the
   suite or to a case does not change the experiment. Linewright refuses a
   launch on a suite with no cases, or with a configuration with an error.
-- **Under `serve`.** `serve` runs the replays and the judges of an
-  experiment, each as `lw replay` and `lw judge` do. The holds, the usage
-  limit and stopping apply to each replay and judge as to a run of `serve`
-  ([Holds](runs.md#holds), [Usage limit](runs.md#usage-limit),
-  [Stopping](operation.md#stopping)). An experiment that `serve` does not run
-  waits.
+- **Under `serve`.** `serve` runs the replays and the judges of an experiment,
+  each as `lw replay` and `lw judge` do. A drain, the usage limit and stopping
+  apply to each replay and judge as to a run of `serve` ([Holds](runs.md#holds),
+  [Usage limit](runs.md#usage-limit), [Stopping](operation.md#stopping)). The
+  other holds do not hold them. An experiment that `serve` does not run waits.
 - **Order.** The replays start one repetition at a time. In a repetition, they
   start case by case, and for each case, configuration by configuration. Thus
   all the configurations have replays of the same cases when an experiment
@@ -329,15 +329,15 @@ case under each configuration.
 - **After a restart.** Once `serve` runs, the experiment starts again each
   replay and each judge that the restart interrupted, a replay into a new
   output.
-- **The output.** The outputs of the replays of experiment ID are in
-  `experiments/ID/` under the work directory, one directory for each
-  configuration, case and repetition
+- **The output.** The output of each replay of experiment ID is in
+  `experiments/ID/CONFIGURATION/CASE/REPETITION/` under the work directory
   ([The output of a replay](#the-output-of-a-replay)).
 
 | State     | Event                                      | Next      | Effect                                  |
 | --------- | ------------------------------------------ | --------- | --------------------------------------- |
 | running   | a hold holds its next replay or judge      | waiting   | the experiment shows what it waits for  |
-| waiting   | the hold ends                              | running   | the next replay or judge starts         |
+| running   | its next replay or judge waits for a place under `max-replays`, or for a run of the pipeline to get one under `max-runs` | waiting | the experiment shows what it waits for |
+| waiting   | the hold ends, or a place frees up         | running   | the next replay or judge starts         |
 | running   | its last replay or judge ends              | ended     | its results are complete                |
 | running   | the maintainer cancels it                  | cancelled | its replays and judges in flight stop   |
 | waiting   | the maintainer cancels it                  | cancelled | none                                    |
@@ -370,10 +370,10 @@ experiment that does not exist is as an item or run that does not exist.
 | --------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `lw suites`                                                                 | list the suites                                                 |
 | `lw suite add NAME STAGE`                                                   | make a suite                                                    |
-| `lw suite NAME`                                                             | show a suite: its cases with their criteria, and its experiments |
+| `lw suite show NAME`                                                        | show a suite: its cases with their criteria, and its experiments |
 | `lw suite remove-case NAME CASE`                                            | remove a case from a suite                                      |
 | `lw experiment launch SUITE [--configuration NAME=DIR]... [--repetitions N]` | launch an experiment, with `as-is` and a configuration for each DIR ([Configurations](#configurations)) |
-| `lw experiment ID`                                                          | show an experiment: its state, its replays and its results      |
+| `lw experiment show ID`                                                     | show an experiment: its state, its replays and its results      |
 | `lw experiment cancel ID`                                                   | cancel an experiment                                            |
 
 ## Out of scope
