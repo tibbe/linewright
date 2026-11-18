@@ -105,6 +105,10 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
     let criteria = select_in(form, "textarea[name=criteria]");
     assert_eq!(criteria.len(), 1);
     assert!(criteria[0].attr("required").is_some());
+    assert_eq!(
+        disclosures(&html, &["capture"]),
+        [("Add case".to_string(), false, "Add case".to_string())]
+    );
 }
 
 #[test_log::test(tokio::test)]

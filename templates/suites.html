@@ -1,16 +1,18 @@
 {%- extends "layout.html" -%}
 {%- block main -%}
 <h1>Suites</h1>
-<form class="make-suite mb-4 flex max-w-xl flex-wrap items-center gap-2" method="post" action="/suites" hx-post="/suites" hx-target="#make-said" hx-swap="innerHTML">
+<details class="make-offer mb-4"><summary class="btn btn-sm">New</summary>
+<form class="make-suite mt-2 flex max-w-xl flex-wrap items-center gap-2" method="post" action="/suites" hx-post="/suites" hx-target="#make-said" hx-swap="innerHTML">
 <label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
 <label class="select select-sm w-auto"><span class="label">stage</span><select name="stage">
 {%- for stage in crate::case::ReplayStage::ALL %}
 <option value="{{ stage }}">{{ stage }}</option>
 {%- endfor %}
 </select></label>
-<button class="btn btn-sm btn-primary" type="submit">Make a suite</button>
+<button class="btn btn-sm btn-primary" type="submit">Create</button>
 </form>
-<div id="make-said" class="mb-4 max-w-xl" role="status"></div>
+<div id="make-said" class="mt-2 max-w-xl" role="status"></div>
+</details>
 {% block suites -%}
 <section id="suites">
 {%- if suites.is_empty() %}

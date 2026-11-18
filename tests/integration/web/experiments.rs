@@ -566,7 +566,7 @@ async fn a_suite_with_no_cases_offers_no_launch_and_a_launch_on_it_is_refused() 
     )
     .await;
 
-    assert_eq!(select(&html, "form.launch").len(), 0);
+    assert_eq!(disclosures(&html, &["launch"]), []);
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
