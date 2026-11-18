@@ -937,50 +937,32 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         }
         Command::Suites { json } => return Ok(list_suites(&config, json).await),
         Command::Suite {
-            command: None,
-            name: Some(name),
-            json,
+            command: SuiteCommand::Show { name, json },
         } => return Ok(show_suite(&config, &name, json).await),
         Command::Suite {
-            command: None,
-            name: None,
-            ..
-        } => unreachable!("clap requires a suite's name or a command"),
-        Command::Suite {
-            command: Some(SuiteCommand::Add { name, stage, json }),
-            ..
+            command: SuiteCommand::Add { name, stage, json },
         } => return Ok(make_suite(&config, &name, stage, json).await),
         Command::Suite {
-            command: Some(SuiteCommand::RemoveCase { name, case, json }),
-            ..
+            command: SuiteCommand::RemoveCase { name, case, json },
         } => return Ok(remove_case(&config, &name, &case, json).await),
         Command::Experiment {
-            command: None,
-            id: Some(id),
-            json,
+            command: ExperimentCommand::Show { id, json },
         } => return Ok(show_experiment(&config, id, json).await),
         Command::Experiment {
-            command: None,
-            id: None,
-            ..
-        } => unreachable!("clap requires an experiment's ID or a command"),
-        Command::Experiment {
             command:
-                Some(ExperimentCommand::Launch {
+                ExperimentCommand::Launch {
                     suite,
                     configurations,
                     repetitions,
                     json,
-                }),
-            ..
+                },
         } => {
             return Ok(
                 launch_experiment(&config, &suite, &configurations, repetitions, json).await,
             );
         }
         Command::Experiment {
-            command: Some(ExperimentCommand::Cancel { id, json }),
-            ..
+            command: ExperimentCommand::Cancel { id, json },
         } => return Ok(cancel_experiment(&config, id, json).await),
         Command::Replay {
             case,

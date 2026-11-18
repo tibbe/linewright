@@ -92,7 +92,7 @@ impl Shown {
     }
 }
 
-/// What `experiment ID` answers.
+/// What `experiment show ID` answers.
 #[derive(Serialize)]
 pub struct ExperimentAnswer {
     pub id: ExperimentId,
@@ -249,7 +249,7 @@ impl ExperimentAnswer {
     }
 }
 
-/// An experiment as `experiment ID` prints it: its facts, each
+/// An experiment as `experiment show ID` prints it: its facts, each
 /// configuration's figures, then each replay.
 pub fn render_experiment(answer: &ExperimentAnswer) -> String {
     let results = &answer.results;
@@ -386,7 +386,7 @@ pub fn duration(seconds: f64) -> String {
         .to_string()
 }
 
-/// An experiment as `suite NAME` lists it.
+/// An experiment as `suite show NAME` lists it.
 #[derive(Serialize)]
 pub struct ExperimentSummary {
     pub id: ExperimentId,
@@ -420,7 +420,7 @@ impl ExperimentSummary {
     }
 }
 
-/// An experiment as a line of `suite NAME`.
+/// An experiment as a line of `suite show NAME`.
 pub(super) fn render_summary(summary: &ExperimentSummary) -> String {
     let rates: Vec<String> = summary
         .pass_rates

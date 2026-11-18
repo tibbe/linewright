@@ -219,7 +219,7 @@ async fn lw_experiment_launch_refuses_writing_nothing() {
     assert_eq!(as_is.stderr, "lw: two configurations are named as-is\n");
     let experiments = repo.join("experiments");
     assert!(!experiments.exists() || names_in(&experiments).is_empty());
-    let shown = lw_in(work_dir.path(), &["suite", "board"]).await;
+    let shown = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
     assert!(
         shown.stdout.ends_with("experiments: none\n"),
         "{}",
@@ -284,7 +284,7 @@ async fn an_experiment_keeps_its_cases_as_they_were_at_its_launch() {
         std::fs::read_to_string(kept.join("columns/criteria.md")).unwrap(),
         "Names them.\n"
     );
-    let shown = lw_in(work_dir.path(), &["experiment", "1", "--json"]).await;
+    let shown = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["cases"],
@@ -293,7 +293,7 @@ async fn an_experiment_keeps_its_cases_as_they_were_at_its_launch() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_experiment_shows_its_state_its_results_and_each_replay() {
+async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
     let configurations = tempfile::tempdir().unwrap();
@@ -328,8 +328,8 @@ async fn lw_experiment_shows_its_state_its_results_and_each_replay() {
     .await;
     trial(&repo, 1, (1, 1, 0), "state = 'replaying'").await;
 
-    let text = lw_in(work_dir.path(), &["experiment", "1"]).await;
-    let json = lw_in(work_dir.path(), &["experiment", "1", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
+    let json = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     for line in [
@@ -383,12 +383,16 @@ async fn lw_experiment_shows_its_state_its_results_and_each_replay() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_experiment_of_an_experiment_that_does_not_exist_exits_4() {
+async fn lw_experiment_show_of_an_experiment_that_does_not_exist_exits_4() {
     let work_dir = tempfile::tempdir().unwrap();
     board(work_dir.path()).await;
 
-    let missing = lw_in(work_dir.path(), &["experiment", "3"]).await;
-    let no_database = lw_in(tempfile::tempdir().unwrap().path(), &["experiment", "3"]).await;
+    let missing = lw_in(work_dir.path(), &["experiment", "show", "3"]).await;
+    let no_database = lw_in(
+        tempfile::tempdir().unwrap().path(),
+        &["experiment", "show", "3"],
+    )
+    .await;
     let cancel = lw_in(work_dir.path(), &["experiment", "cancel", "3"]).await;
 
     for output in [missing, no_database, cancel] {
@@ -411,7 +415,7 @@ async fn lw_experiment_cancel_cancels_an_open_experiment_once() {
     assert_eq!(cancelled.stdout, "Cancelled experiment 1\n");
     assert_eq!(again.code, Some(1), "{}", again.stderr);
     assert_eq!(again.stderr, "lw: experiment 1 is cancelled\n");
-    let shown = lw_in(work_dir.path(), &["experiment", "1"]).await;
+    let shown = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
     assert!(
         shown.stdout.contains("\nstate: cancelled\n"),
         "{}",
@@ -444,8 +448,8 @@ async fn lw_suite_lists_its_experiments_latest_first() {
     let cancelled = lw_in(work_dir.path(), &["experiment", "cancel", "1"]).await;
     assert_eq!(cancelled.code, Some(0), "{}", cancelled.stderr);
 
-    let text = lw_in(work_dir.path(), &["suite", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert!(

@@ -347,11 +347,11 @@ It refuses a suite with no cases, a configuration with an error and two
 configurations with one name, `as-is` among them, and then writes nothing. The
 replays' outputs are to go in `experiments/ID/CONFIG/CASE/REP`.
 
-`lw experiment ID` shows an experiment's state, each replay, and each
+`lw experiment show ID` shows an experiment's state, each replay, and each
 configuration's results: its pass rate and passes for each case, of the replays
 with a judgement and no leak, the mean and total of its replays' cost and time,
 its leaks and its replays without a judgement, with the judges' cost apart.
-`lw suite NAME` lists the suite's experiments, latest first, and
+`lw suite show NAME` lists the suite's experiments, latest first, and
 `lw experiment cancel ID` cancels one, stopping its replays and judges in
 flight. The commands work whether `serve` is running or not, and exit 4 for a
 suite or an experiment that does not exist.

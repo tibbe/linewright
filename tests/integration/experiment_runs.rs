@@ -204,7 +204,7 @@ async fn serve_replays_and_judges_every_trial_and_the_cli_shows_the_results() {
         std::fs::read_to_string(repo.join("experiments/1/short/import/2/outcome")).unwrap(),
         "done\n"
     );
-    let shown = lw_in(work_dir.path(), &["experiment", "1"]).await;
+    let shown = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     for line in [
         "state: ended\n",
