@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::case::{CaseName, ReplayStage};
 use crate::cost::Usd;
 use crate::domain::Timestamp;
-use crate::holds::Hold;
+use crate::holds::{ExperimentHold, Hold};
 use crate::phrase::Phrase;
 use crate::reconcile::Wait;
 use crate::results::Verdict;
@@ -48,7 +48,7 @@ pub enum WaitingFor {
         in_flight: usize,
         max_replays: usize,
     },
-    Hold(Hold),
+    Hold(ExperimentHold),
 }
 
 impl Shown {
@@ -84,7 +84,7 @@ impl Shown {
                     in_flight,
                     max_replays,
                 } => format!("a free replay: {in_flight} of {max_replays} in flight").into(),
-                WaitingFor::Hold(hold) => describe_wait(&Wait::from(hold.clone())),
+                WaitingFor::Hold(hold) => describe_wait(&Wait::from(Hold::from(*hold))),
             }),
             Shown::Ended => "ended".into(),
             Shown::Cancelled => "cancelled".into(),
@@ -592,7 +592,7 @@ mod tests {
                     in_flight: 1,
                     max_replays: 1
                 }),
-                Shown::Waiting(WaitingFor::Hold(Hold::UsageLimit {
+                Shown::Waiting(WaitingFor::Hold(ExperimentHold::UsageLimit {
                     resets_at: "2026-11-17T14:30:00Z".parse().unwrap()
                 })),
             ]

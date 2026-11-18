@@ -599,15 +599,11 @@ impl Factory {
         ServeEnd::Stop
     }
 
-    /// Starts what the plan says of the experiments, each step held as a
-    /// run of `serve` would be at the last reconcile, and none while a run
-    /// of the pipeline waits for room. Before the first reconcile, a usage
+    /// Starts what the plan says of the experiments, none while a drain or
+    /// the usage limit holds them at the last reconcile, or while a run of
+    /// the pipeline waits for room. Before the first reconcile, a usage
     /// limit reported holds them.
     async fn tick_experiments(&mut self) {
-        let unusable = self
-            .kept
-            .as_ref()
-            .map_or(&[][..], |kept| kept.repo.unusable.as_slice());
         let LastReconcile {
             at,
             pipeline_waits_for_room,
@@ -615,9 +611,9 @@ impl Factory {
             at: Timestamp::MIN_UTC,
             pipeline_waits_for_room: false,
         });
-        let in_force = InForce::of(&self.memory, at, unusable);
+        let in_force = InForce::of(&self.memory, at, &[]);
         self.experiments
-            .tick(|kind| Gate::at(&in_force, pipeline_waits_for_room, kind))
+            .tick(Gate::at(&in_force, pipeline_waits_for_room))
             .await;
     }
 

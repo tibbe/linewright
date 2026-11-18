@@ -370,10 +370,11 @@ open experiment too.
 `serve` runs the experiments' replays and judges, oldest experiment first, a
 replay's judge before the next replay, and at most `max-replays` of them at
 once (1 unless set). None starts while a run of the pipeline waits for a place
-under `max-runs`, and the holds, the usage limit and a drain hold them as they
-hold runs. An open experiment waits while no `serve` runs, and a replay or
-judge that a stop interrupted starts again once `serve` does, a replay into a
-new output.
+under `max-runs`. A drain and the usage limit hold them as they hold runs, and
+the other holds do not. An experiment shows what it waits for: a place under
+`max-replays`, the pipeline, a drain or the usage limit. An open experiment
+waits while no `serve` runs, and a replay or judge that a stop interrupted
+starts again once `serve` does, a replay into a new output.
 
 ## Monitoring
 
