@@ -166,7 +166,8 @@ pub enum Command {
     /// SUITE, in `cases/` under the work directory.
     Capture {
         id: RunId,
-        /// Lowercase letters, digits and hyphens.
+        /// Lowercase letters, digits and hyphens, starting with a letter or a
+        /// digit.
         name: CaseName,
         /// The suite the case goes into: one of the run's stage.
         #[arg(long)]
@@ -235,9 +236,10 @@ pub enum ExperimentCommand {
     /// and each configuration given.
     Launch {
         suite: SuiteName,
-        /// A configuration named NAME, laid out in the directory DIR as a
-        /// repository's `.linewright/`: its `config.toml` and the files of
-        /// its `briefs/`.
+        /// A configuration named NAME, of lowercase letters, digits and
+        /// hyphens starting with a letter or a digit, laid out in the
+        /// directory DIR as a repository's `.linewright/`: its `config.toml`
+        /// and the files of its `briefs/`.
         #[arg(long = "configuration", value_name = "NAME=DIR", value_parser = parse_configuration)]
         configurations: Vec<(ConfigurationName, PathBuf)>,
         /// How many times to replay each case under each configuration.
@@ -271,7 +273,8 @@ fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), Stri
 pub enum SuiteCommand {
     /// Make the suite NAME, of the stage STAGE: triage, design or implement.
     Add {
-        /// Lowercase letters, digits and hyphens.
+        /// Lowercase letters, digits and hyphens, starting with a letter or a
+        /// digit.
         name: SuiteName,
         stage: ReplayStage,
         /// Print the answer as JSON.

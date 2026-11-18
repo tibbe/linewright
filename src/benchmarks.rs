@@ -28,7 +28,8 @@ use crate::case::{self, CaptureError, CaseName, CaseRefusal, Criteria, ReplaySta
 use crate::database::Database;
 use crate::runs::RunId;
 
-/// A suite's name: one or more lowercase letters, digits and hyphens.
+/// A suite's name: one or more lowercase letters, digits and hyphens,
+/// starting with a letter or a digit.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SuiteName(String);
 
@@ -528,14 +529,16 @@ mod tests {
     use super::*;
 
     #[test_log::test]
-    fn a_suites_name_is_lowercase_letters_digits_and_hyphens() {
-        for name in ["board", "design-2", "-", "7"] {
+    fn a_suites_name_is_lowercase_letters_digits_and_hyphens_starting_with_a_letter_or_a_digit() {
+        for name in ["board", "design-2", "7"] {
             assert_eq!(
                 name.parse::<SuiteName>().map(|n| n.to_string()),
                 Ok(name.into())
             );
         }
-        for name in ["", "Board", "board_1", "board 1", "../board", "bōard"] {
+        for name in [
+            "", "-", "-board", "Board", "board_1", "board 1", "../board", "bōard",
+        ] {
             assert!(name.parse::<SuiteName>().is_err(), "{name:?}");
         }
     }

@@ -18,8 +18,8 @@ changes with it, is a change to the spec (`docs/specs/runs.md`, "Contract").
 A triage, design or implement run that went badly is worth keeping as a case,
 to try a change to its stage's brief against (`docs/specs/benchmarks.md`). Find
 the run's ID with `lw runs N`, such as `43/implement-2`, and capture it into a
-suite of its stage, under a name of lowercase letters, digits and hyphens, with
-what a good result would have been:
+suite of its stage, under a name of lowercase letters, digits and hyphens
+starting with a letter or a digit, with what a good result would have been:
 
 ```sh
 lw suite add implements implement

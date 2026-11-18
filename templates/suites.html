@@ -2,7 +2,7 @@
 {%- block main -%}
 <h1>Suites</h1>
 <form class="make-suite mb-4 flex max-w-xl flex-wrap items-center gap-2" method="post" action="/suites" hx-post="/suites" hx-target="#make-said" hx-swap="innerHTML">
-<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="name" required pattern="[a-z0-9\-]+" autocomplete="off"></label>
+<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
 <label class="select select-sm w-auto"><span class="label">stage</span><select name="stage">
 {%- for stage in crate::case::ReplayStage::ALL %}
 <option value="{{ stage }}">{{ stage }}</option>
