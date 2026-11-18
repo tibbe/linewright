@@ -61,10 +61,10 @@ request that is reviewed, green and ready for a person.
 - **Tuned against real work.** A run of a stage can be captured as a case
   holding what it was given, so that the stage is run on it again with its
   briefs or settings changed.
-- **The maintainer in the web UI, the operator on the command line.** A
-  maintainer works with Linewright in GitHub and the web UI. The operator runs
+- **The maintainer in the UI, the operator on the command line.** A
+  maintainer works with Linewright in GitHub and the UI. The operator runs
   Linewright from the command line, where an agent can also do what a person
-  does in the web UI.
+  does in the UI.
 
 A maintainer merges a pull request that adds invoices to the spec. Linewright
 implements the change, has agents review the work and delivers it as pull
@@ -107,10 +107,11 @@ flowchart LR
 | [Design](design.md) | Choosing the structure of the code before it is built, and cutting the work into tickets. |
 | [Implementation](implementation.md) | Turning tickets into reviewed, committed branches. |
 | [Pull requests](pull_requests.md) | Taking the work from a pull request to a merge. |
-| [Runs](runs.md) | What holds for every piece of work Linewright does, whatever its stage. |
+| [Board](board.md) | Seeing where each piece of work stands, and why. |
+| [Runs](runs.md) | What holds for every run, and what each run did. |
 | [Sessions](sessions.md) | What an agent session is given, and what it is kept from. |
-| [Operation](operation.md) | Running Linewright. |
-| [Monitoring](monitoring.md) | Seeing what Linewright is doing and why, from a shell or a browser. |
+| [Operation](operation.md) | Running Linewright, and seeing what it is doing. |
+| [Navigation](navigation.md) | Getting around the UI. |
 | [Benchmarks](benchmarks.md) | Measuring Linewright against work it has already done. |
 
 ## Out of scope

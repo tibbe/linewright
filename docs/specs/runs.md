@@ -26,6 +26,13 @@ hands #43 back at once, saying which permission to grant.
    running it.
 7. As an operator, I want to know what each session of a run cost, so that I
    see where the time and the tokens go.
+8. As an operator, I want to follow what an agent is doing as it does it, so
+   that I can tell an agent working hard from one that is stuck.
+9. As an operator, I want to see what Linewright did on an item before, with
+   each run's outcome and transcript, so that I understand how it got where it
+   is.
+10. As a maintainer, I want to read agents' transcripts, so that I can tune
+    the repository's skills and instructions.
 
 ## Stages
 
@@ -81,7 +88,7 @@ and ready for the agent.
 - **What it leaves running.** Processes the maintenance command leaves running
   end once the run is done with the clone.
 - **Its output** is kept with the session's transcript
-  ([Transcripts](design_system.md#transcripts)).
+  ([Transcripts](#transcripts)).
 
 ## Performance
 
@@ -212,15 +219,15 @@ sessions.
 
 A run ends in one of these outcomes, each with its name in JSON.
 
-| Outcome                   | In JSON       | Meaning                                                                            |
-| ------------------------- | ------------- | ---------------------------------------------------------------------------------- |
-| done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. |
-| handed back               | `handed-back` | it could not finish and handed its item back.                                      |
-| cancelled                 | `cancelled`   | its item stopped asking for the work, or `serve` was stopped.                      |
-| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under a command other than `serve`. |
-| failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as an automation's run.   |
-| in flight                 | `in-flight`   | it has not ended.                                                                  |
-| interrupted               | `interrupted` | the process running it stopped before it ended, such as by a crash or a kill.      |
+| Outcome                   | In JSON       | Meaning                                                                              | Shows as ([Status](design_system.md#status)) |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------------ | --------- |
+| done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. | done      |
+| handed back               | `handed-back` | it could not finish and handed its item back.                                        | waiting   |
+| cancelled                 | `cancelled`   | its item stopped asking for the work, or `serve` was stopped.                        | cancelled |
+| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under a command other than `serve`.      | cancelled |
+| failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as an automation's run.     | failed    |
+| in flight                 | `in-flight`   | it has not ended.                                                                    | in flight |
+| interrupted               | `interrupted` | the process running it stopped before it ended, such as by a crash or a kill.        | cancelled |
 
 - **Handing back.** Handing an item back is as under
   [Repository](repository.md).
@@ -301,6 +308,187 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
   the usage limit.
 - **Restarts.** A restart forgets the limit.
 
+## Transcripts
+
+- **Where it shows.** [Run](#run) and [`logs`](#lw-logs) each lay out a
+  transcript in their own way, and each can show more than the rules below.
+- **Sessions and turns.** A run's transcripts show in the order of its
+  sessions. Where the rules below leave a choice, a transcript shows as the
+  agent itself shows it. Each turn after the first starts with the follow-up
+  that started it.
+- **Entries.** The agent's messages show in full. Each tool call shows on one
+  line: the tool, its main argument and a short account of its result, such
+  as the lines read, the exit status or, for a sub-agent, the count of its
+  tool calls and how long it ran. A sub-agent's work shows indented under the
+  call that started it.
+- **Thinking.** Where the agent thought before its next step, a "thought"
+  entry shows how long it thought. The time starts at the last event before
+  the thinking, such as the prompt, a tool call that returned or, for a
+  sub-agent's first thought, the call that started the sub-agent. The time
+  ends when the thinking ends.
+- **A turn's length.** Each turn ends with an entry saying "worked for" and
+  how long the turn took, from its prompt to its last entry.
+- **Cut short.** A turn can end before its "thought" entry ends, such as
+  when the session ends or the harness refuses the turn for the usage limit.
+  The entry then shows `interrupted` and how long it went on until the turn
+  ended. A "worked for" entry whose session ends first shows the same. Where
+  Linewright does not know when the turn or session ended, the entry shows
+  no time.
+- **The clone.** Linewright makes a clone for each session
+  ([Stages](#stages)). This is an entry: a line with how long it took, then
+  the error if it failed.
+- **Maintenance.** The maintenance command is an entry
+  ([Maintenance](#maintenance)): a line with the command, its exit status
+  and how long it ran, then its output, which shows as a tool call's full
+  result does, and always when the command failed. An empty one shows
+  nothing.
+- **Running.** A tool call, the clone and the maintenance command are entries
+  that run. Each shows `running` in place of its account until it ends. An
+  entry whose session ends first shows `interrupted`. `running` shows as in
+  flight, and `interrupted` as cancelled ([Status](design_system.md#status)).
+- **In full.** A transcript in full shows everything it holds, including the
+  agent's thinking, each tool's full input and result, and the brief and
+  follow-ups.
+- **Followed.** A followed transcript shows each entry as it happens. An entry
+  that runs shows once it starts, and again with its account, at the time,
+  once it ends: a tool call when it returns or ends in the background.
+
+## `lw runs`
+
+`runs` lists every run, newest first, including runs that started no session:
+its run ID, item, stage, start, duration and outcome.
+
+- **One item.** `runs N` lists #N's, each with its sessions' model and
+  effort; `--json` also gives where each setting and brief file came from,
+  as the record holds it ([Runs](#ending)).
+- **Narrowing.** `--stage`, `--since` and `--limit` narrow the list.
+  `--since` keeps the runs that started at or after a time, or a duration
+  ago.
+- **Outcome.** A run's outcome is one of those under [Ending](#ending), by its
+  name, and in JSON by its name in JSON.
+- **Duration.** A run's duration is how long it ran, or for a run in flight
+  how long it has run so far. An interrupted run has none: in JSON,
+  `duration_seconds` is null.
+- **Run ID.** A run ID is `<item>/<stage>-<n>`, the `n`th run of that stage
+  on that item, such as `43/rework-2`, or `<automation>/<n>` for an automation's
+  runs, with the stages under [Runs](runs.md). It is opaque.
+
+## `lw logs`
+
+`logs N` shows the transcript of #N's run in flight, or else of its latest run
+that started a session.
+
+- **Another run.** `--run ID` picks another run.
+- **The transcripts.** `logs` shows the run's transcripts as
+  [Transcripts](#transcripts) says, as far as text that only
+  ever grows allows. `logs --json` gives what the agent gives about them,
+  following the agent's own JSON output, and so leaves out the "thought" and
+  "worked for" entries, which are Linewright's.
+- **Times.** Each entry starts with the time since its session started, as
+  h:mm:ss with the hours left out under an hour, such as `2:10` or
+  `1:02:10`, not as a duration is shown, so that the entries align.
+- **`--verbose`.** It shows the transcripts in full.
+- **`--follow`.** It shows the transcripts so far, then follows them, and ends
+  when the run ends.
+- **Following in JSON.** `logs --json --follow` gives an entry that runs as
+  two objects, at the times [Followed](#transcripts) says:
+  one as it starts, with what it holds then, and one as it ends, with the
+  whole entry.
+- **Running in JSON.** Read without following, `logs --json` gives an entry
+  still running as one object with what it holds so far and null for the
+  rest.
+- **The clone.** In `logs --json`, the clone's object holds how long it took
+  and, when it failed, the error.
+- **Maintenance.** In `logs --json`, the maintenance command's object holds
+  the command, its exit status, how long it ran and its output, even where
+  the transcript as text wouldn't show the output.
+- **No session.** For a run that started no session, `logs` says so.
+
+## `lw export`
+
+`export ID DIR` writes run ID into DIR in the form that the output of a
+replay gives its run. That is the outcome of the run and the record of each
+session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
+
+- **DIR.** Linewright makes and refuses DIR as it makes and refuses the
+  directory of the output of a replay.
+- **A run in flight.** Linewright writes the run as it is when the command
+  starts.
+
+## Screens
+
+| Screen | Reached from                                                                                                                         | Purpose                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Runs   | the navigation ([Chrome](navigation.md#chrome)), and the last row of Item's runs ([Item](board.md#item))                               | find a run                                                                 |
+| Run    | a run in a list of runs, on Automations or on Suite, and the notice of an automation whose last run failed                          | read a run's transcripts, follow a run in flight, and capture it as a case |
+
+### Runs
+
+- **Layout.** The list of
+  runs, with its filters.
+- **Filters.** Filters for the item, the stage and the time since which runs
+  started narrow the list.
+- **The list of runs.** A table with a row per run, newest first.
+
+| Column   | Holds                                                                                          |
+| -------- | ---------------------------------------------------------------------------------------------- |
+| Outcome  | the run's outcome                                                                              |
+| Run      | the run ID, linking to its Run                                                                 |
+| Item     | the item; for an automation's run, "automation" and its name, linking to Automations           |
+| Stage    | the run's stage                                                                                |
+| Started  | when the run started, with an automation's run by hand marked there                            |
+| Duration | the run's duration                                                                             |
+
+### Run
+
+- **Layout.** The heading at
+  the top, then the run's transcripts ([Transcripts](#transcripts)), each under
+  its session's heading.
+- **Heading.** The run ID, then ", by hand" for an automation's run by hand,
+  and "(it started no session)" for a run that ended without a session. Under
+  them is the run's item, as in the Item column of [Runs](#runs-1).
+- **A session's heading.** The session's number and when it started, such as
+  "session 1: started 5 minutes ago", then how long it has run. This time does
+  not include a wait for the usage limit to reset. Where Linewright does not
+  know when the session ended, such as when a restart interrupted its run,
+  the time goes up to its last entry.
+- **A session's settings.** Under its heading, the session's model and effort
+  open on click to where its settings and brief files came from.
+- **Views.** The screen shows the transcripts as the agent's own default view
+  does. With the verbose switch, it shows them as the agent's verbose view
+  does: for example, the agent's thinking is open only with the switch. The
+  screen never shows what the agent was told other than its prompts.
+- **Prompts.** The brief and each follow-up are entries, each shown as its
+  first line.
+- **Durations.** Each entry that runs shows how long it ran, and the time
+  goes up while the entry runs. If its session ends first, the time stops
+  there, and where Linewright does not know that end, the entry shows no time.
+  The entry's account does not repeat the time.
+- **Working.** While a followed session's turn goes on and no entry runs, the
+  session's last line says "working" and how long the turn has gone on. The time
+  goes up as the turn goes on. Between turns, there is no such line. While the
+  session waits for the usage limit to reset, the line says so and until when
+  instead, such as "waiting for the usage limit, until 14:30".
+- **Folding.** An entry opens on click to what its line leaves out: a tool
+  call's full input and result and its sub-agent's work, the clone's error, the
+  maintenance command's output, the full text of the brief or a follow-up, or
+  the thinking a "thought" entry stands for. A "thought" entry with no thinking
+  text does not open. An entry that failed starts open. A sub-agent's work
+  starts folded to the line of the call that started it, with the count of its
+  entries.
+- **Verbose.** The verbose switch is set once for the screen, and opens
+  everything, a session's settings too.
+- **Following.** A run in flight is followed. The screen stays at the bottom
+  until the reader scrolls up, and then offers to jump to the latest entry.
+- **Capturing.** A run that can be captured
+  ([Capturing](benchmarks.md#capturing)) has "Add case" by its heading. The
+  capture asks for these, then "Add case", then says where the case was written,
+  or why it was not:
+  - the suite: one of the suites of the run's stage, or a new one;
+  - the case's name, filled in with the run ID's letters and digits joined
+    by hyphens, such as `43-implement-2`;
+  - the criteria.
+
 ## Out of scope
 
 - Resuming, after a restart, a session that was waiting out the usage limit.
@@ -310,5 +498,6 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
   it, such as a container its maintenance command started.
 - A bound on how long a plain clone of a branch takes, which the network sets.
 - Removing old runs, with their transcripts and attachments.
-- Showing what a run cost, in the web UI or in the output of `runs` and `logs`.
+- Showing what a run cost, in the UI or in the output of `runs` and `logs`.
+- A link of its own to each transcript entry.
 - Pricing tokens at prices other than the harness's own.

@@ -24,6 +24,14 @@ from Linewright's base image with the project's toolchain added.
    flight, so that an upgrade costs no agent sessions.
 8. As an operator, I want secrets kept out of what Linewright and its sessions
    produce, so that Linewright does not leak them.
+9. As an operator, I want to see at a glance what Linewright is working on and
+   what holds it back, such as the usage limit, so that I know whether it
+   needs me.
+10. As an agent, I want the monitoring commands' answers as compact text, and
+    as JSON where I extract fields, so that I spend little context and can
+    script against them.
+11. As an operator away from Linewright's host, I want the same facts in the
+    UI, so that I follow the pipeline from wherever I am.
 
 ## Commands
 
@@ -34,13 +42,13 @@ The command is `lw`.
 | `serve`               | poll until drained or stopped (see [Stopping](#stopping))                |
 | `once`                | one poll cycle, then exit                                                |
 | `drain`               | tell `serve` to drain (see [Stopping](#stopping))                        |
-| `environment`         | show the environment and its builds (see [Monitoring](monitoring.md))    |
+| `environment`         | show the environment and its builds (see [`lw environment`](sessions.md#lw-environment)) |
 | `environment rebuild` | build the environment now (see [Environment](sessions.md#environment))   |
-| `status`              | show what Linewright is doing (see [Monitoring](monitoring.md))          |
-| `explain N`           | show where an item stands and why (see [Monitoring](monitoring.md))      |
-| `runs [N]`            | list the runs (see [Monitoring](monitoring.md))                          |
-| `logs N`              | show a run's transcript (see [Monitoring](monitoring.md))                |
-| `export ID DIR`       | write run ID as plain files (see [Monitoring](monitoring.md))            |
+| `status`              | show what Linewright is doing (see [`lw status`](#lw-status))            |
+| `explain N`           | show where an item stands and why (see [`lw explain`](board.md#lw-explain)) |
+| `runs [N]`            | list the runs (see [`lw runs`](runs.md#lw-runs))                         |
+| `logs N`              | show a run's transcript (see [`lw logs`](runs.md#lw-logs))               |
+| `export ID DIR`       | write run ID as plain files (see [`lw export`](runs.md#lw-export))       |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
 | `capture ID NAME`     | capture run ID as a case in a suite (see [Benchmarks](benchmarks.md))    |
 | `replay CASE`         | run a case's stage on it again (see [Benchmarks](benchmarks.md))         |
@@ -54,6 +62,75 @@ The command is `lw`.
   standard error.
 - **Errors outside a log.** A command that keeps no log, or fails before its
   log begins, says why in one line, `lw: <why>`.
+
+## Monitoring commands
+
+The monitoring commands let the operator, the maintainer or an agent see what
+a running Linewright is doing and why, as `serve` itself sees it. They talk to
+the `serve` of the configured `repo` on the same host.
+
+| command         | what it shows                                   | where                                          |
+| --------------- | ----------------------------------------------- | ---------------------------------------------- |
+| `status`        | what Linewright is doing and what holds it back | [`lw status`](#lw-status)                      |
+| `explain N`     | where issue or pull request #N stands and why   | [`lw explain`](board.md#lw-explain)            |
+| `runs [N]`      | the runs, all or #N's                           | [`lw runs`](runs.md#lw-runs)                   |
+| `logs N`        | the transcript of #N's run                      | [`lw logs`](runs.md#lw-logs)                   |
+| `environment`   | the environment and its builds' output          | [`lw environment`](sessions.md#lw-environment) |
+| `export ID DIR` | run ID, written into DIR as plain files         | [`lw export`](runs.md#lw-export)               |
+
+- **Without `serve`.** `status` and `explain` need it running; `runs`,
+  `logs`, `environment` and `export` work either way.
+- **Access.** File permissions: only `serve`'s user can open the socket.
+- **The socket's path.** Derived from the repository, in a short per-user
+  directory such as `$XDG_RUNTIME_DIR`.
+- **Requests answered.** Only those whose `Host` is local: `localhost` or a
+  loopback address, ignoring case, port and a trailing dot.
+
+## `lw status`
+
+`status` shows what Linewright is doing and what holds it back, in this
+order:
+
+1. Linewright itself: the facts in the table below.
+2. Each run in flight: its run ID, item, stage and how long it has run.
+3. Each other open managed item: where it stands and, in one line, what
+   Linewright is waiting for on it.
+4. The automations, as [Automations](automations.md) describes.
+
+| Fact about Linewright                          | Shown                  |
+| ---------------------------------------------- | ---------------------- |
+| since when `serve` has run                     | always                 |
+| the last poll and the next                     | always                 |
+| the polls failed since the last that succeeded, with the last error | while there are any |
+| the usage limit and when it resets             | while one is in force  |
+| a file of the repository's Linewright cannot use, and its error ([Linewright's files](repository.md#linewrights-files)) | while there is one |
+| the drain, since when, and its deadline if set | while one is under way |
+| the environment: the commit it was built from and when, a build in progress and since when, and the latest build if it failed, with when ([Environment](sessions.md#environment)) | with a setup command |
+| the runs in flight out of `max-runs`           | always                 |
+| the time of the last webhook delivery accepted | with webhooks on       |
+| the webhook deliveries refused since `serve` started | with webhooks on |
+
+## Output
+
+The commands print text whether or not their output is a terminal: one fact
+per line as `label: value`, items as `#N`, runs by run ID, and colour only on
+a terminal.
+
+- **Cut lists.** A list cut to a limit ends with a line saying how many
+  entries it left out and how to show them.
+- **`--json`.** It prints the same answer as JSON; `logs --json` prints one
+  JSON object per transcript entry and line, two for an entry that runs when
+  followed. Each of a tool call's objects carries the ID the agent gives the
+  call, and a sub-agent's objects carry the ID of the call that started it.
+- **Exit status.** It is:
+
+  | status | meaning                                      |
+  | ------ | -------------------------------------------- |
+  | 0      | success                                      |
+  | 1      | any other error                              |
+  | 2      | the command line is wrong                    |
+  | 3      | `serve` is not running for the repository    |
+  | 4      | no such item or run                          |
 
 ## Stopping
 
@@ -91,7 +168,7 @@ once.
   the request. Ending `drain` itself leaves the drain in place, and a `drain`
   sent to a `serve` already draining or stopping says so and waits the same
   way. Its output and exit statuses are the monitoring commands'
-  ([Monitoring](monitoring.md)).
+  ([Output](#output)).
 - **`--timeout`.** `drain --timeout 2h` sets a deadline, after which the
   drain becomes a stop; `drain` still returns 0, saying so. Without one, a
   drain waits however long. The latest `drain` sets the deadline.
@@ -280,6 +357,46 @@ image the operator builds with those in it.
 - **git.** Linewright finds, once, the git binary that the `git` on its path
   runs, and runs that binary directly from then on.
 
+## Serving the UI
+
+`serve` serves the UI ([Navigation](navigation.md)) on `ui-address`, a
+host and port, and serves none when `ui-address` is empty.
+
+- **Access.** Whoever reaches the port; who reaches it is the operator's to
+  restrict, such as with an authenticating proxy in front.
+- **Requests answered.** Only those whose `Host` is local
+  ([Monitoring commands](#monitoring-commands)), an IP address or one of
+  `ui-hosts`, each compared ignoring case, port and a trailing dot. The
+  others get 421 Misdirected Request.
+
+## Screens
+
+| Screen | Reached from                                                                                      | Purpose                               |
+| ------ | ------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Server | the navigation ([Chrome](navigation.md#chrome)), and the notice of a hold or problem it tells more of | see the facts about Linewright itself |
+
+### Server
+
+- **Layout.** The facts
+  about Linewright itself ([Facts](design_system.md#facts)).
+- **Builds.** A build of the environment shows as a transcript's maintenance
+  command does, and opens the same way ([Run](runs.md#run)); a build in progress
+  is followed.
+
+| Fact                                                            | Shown                  |
+| --------------------------------------------------------------- | ---------------------- |
+| since when `serve` has run                                      | always                 |
+| the last poll and the next                                      | always                 |
+| the polls failed since the last that succeeded, with the last error | while there are any |
+| the usage limit and when it resets                              | while one is in force  |
+| a file of the repository's Linewright cannot use, and its error | while there is one     |
+| the drain, since when, and its deadline if set                  | while one is under way |
+| the environment and its builds, as `environment` shows them ([`lw environment`](sessions.md#lw-environment)) | with a setup command   |
+| the runs in flight out of `max-runs`                            | always                 |
+| the replays and judges of experiments in flight out of `max-replays` | while there are any |
+| the time of the last webhook delivery accepted                  | with webhooks on       |
+| the webhook deliveries refused since `serve` started            | with webhooks on       |
+
 ## The log
 
 A command that does work itself logs each decision and action; a command
@@ -287,7 +404,7 @@ that answers a question, or asks `serve` to act, logs nothing.
 
 - **Format.** The log is readable for a person tailing it and structured
   (JSON lines) for machines, by the `log-format` setting.
-- **What `serve` logs.** It includes, while `serve` serves the web UI, its
+- **What `serve` logs.** It includes, while `serve` serves the UI, its
   address and each request it refuses and why, and, with webhooks on, the
   address it listens on for them, each delivery and what it names, and each
   delivery refused and why.
@@ -312,3 +429,12 @@ that answers a question, or asks `serve` to act, logs nothing.
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.
 - A command that backs up the work directory.
+- A login of Linewright's own for the UI.
+- The monitoring commands from another host, but through a shell on, or a
+  tunnel to, Linewright's host.
+- An MCP server.
+- A liveness check for a container healthcheck or a supervisor.
+- A record of each decision Linewright makes on an item; the log holds them.
+- Answers from `once` and `automation run` while they run.
+- Direction, not the first version: commands that run single pieces of
+  Linewright, so that a coding agent changing Linewright can verify its change.

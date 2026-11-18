@@ -13,8 +13,8 @@ then try a change to the brief of the design stage, and see whether it fixes
 
 ## User Stories
 
-1. As a maintainer, I want to capture a run of a stage from its page, so that I
-   can run that stage on the same input again.
+1. As a maintainer, I want to capture a run of a stage from its screen, so
+   that I can run that stage on the same input again.
 2. As a maintainer, I want a case to hold only what its run was given and
    nothing from after it started, so that the stage run on it again has
    nothing that shows how the work turned out.
@@ -23,7 +23,7 @@ then try a change to the brief of the design stage, and see whether it fixes
 4. As a maintainer, I want to say what a good result is as I capture a case, so
    that results can be judged against it.
 5. As an agent, I want to capture a case from the command line, so that I can
-   build cases without a browser.
+   build cases without the UI.
 6. As a maintainer, I want to run a case's stage again with a setting or its
    brief changed, so that I see what the change does to real work.
 7. As a maintainer, I want Linewright to write nothing to GitHub in a replay,
@@ -43,7 +43,7 @@ then try a change to the brief of the design stage, and see whether it fixes
 13. As a maintainer, I want to keep cases of a stage together in a suite, so
     that I can run them together.
 14. As a maintainer, I want to run a suite under several configurations in
-    the web UI and see their results side by side, so that I can tell which
+    the UI and see their results side by side, so that I can tell which
     change helps across real work.
 15. As a maintainer, I want to run each case more than once, so that a lucky
     or unlucky replay does not decide.
@@ -93,12 +93,10 @@ case of it, whatever its outcome.
   case.
 - **Into a suite.** A capture puts the case into a suite of the run's stage
   ([Suites](#suites)).
-- **From the web UI.** The run page
-  ([The run page](design_system.md#the-run-page)) and the suite page
-  ([The suite page](design_system.md#the-suite-page)).
+- **From the UI.** [Run](runs.md#run) and [Suite](#suite).
 - **From the command line.** `lw capture ID NAME --suite SUITE --criteria
   FILE`. It works whether or not `serve` is running, and exits as the
-  monitoring commands do ([Output](monitoring.md#output)).
+  monitoring commands do ([Output](operation.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
 - **The name.** Given by the capturer: lowercase letters, digits and hyphens,
   starting with a letter or a digit. A name a case already has is refused.
@@ -109,7 +107,7 @@ case of it, whatever its outcome.
 ## Suites
 
 A suite is a named set of cases of one stage. A maintainer makes a suite in
-the web UI, captures runs of its stage into it and runs experiments on it.
+the UI, captures runs of its stage into it and runs experiments on it.
 
 - **The name.** In the form of the name of a case
   ([Capturing](#capturing)). A name that a suite already has is refused.
@@ -160,7 +158,7 @@ GitHub.
   ([Stopping](operation.md#stopping)) leaves in its output what its run did
   until then.
 - **The exit status of the command.** The command exits as the monitoring
-  commands do ([Output](monitoring.md#output)). It succeeds when the run
+  commands do ([Output](operation.md#output)). It succeeds when the run
   ended, whatever the outcome of the run.
 
 ## Configurations
@@ -299,9 +297,8 @@ An experiment replays each case of a suite under each of its configurations,
 and judges each replay. Its repetitions are how many times it replays each
 case under each configuration.
 
-- **From the web UI.** The suite page launches an experiment. The experiment
-  page follows the experiment and shows its results
-  ([The experiment page](design_system.md#the-experiment-page)).
+- **From the UI.** [Suite](#suite) launches an experiment, and
+  [Experiment](#experiment) follows it, shows its results and cancels it.
 - **The configurations.** The first configuration is `as-is`, which holds
   nothing ([Configurations](#configurations)). The maintainer adds the others,
   each with a name that no other configuration of the experiment has, in the
@@ -363,7 +360,7 @@ The results of an experiment give these figures for each configuration.
 ## Suites and experiments on the command line
 
 The commands work whether or not `serve` is running, and exit as the
-monitoring commands do ([Output](monitoring.md#output)). A suite, a case or an
+monitoring commands do ([Output](operation.md#output)). A suite, a case or an
 experiment that does not exist is as an item or run that does not exist.
 
 | Command                                                                     | What it does                                                    |
@@ -375,6 +372,90 @@ experiment that does not exist is as an item or run that does not exist.
 | `lw experiment launch SUITE [--configuration NAME=DIR]... [--repetitions N]` | launch an experiment, with `as-is` and a configuration for each DIR ([Configurations](#configurations)) |
 | `lw experiment show ID`                                                     | show an experiment: its state, its replays and its results      |
 | `lw experiment cancel ID`                                                   | cancel an experiment                                            |
+
+## Screens
+
+| Screen            | Reached from                                                    | Purpose                                                                                  |
+| ----------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Suites            | the navigation ([Chrome](navigation.md#chrome))                   | see the suites, and make one                                                             |
+| Suite             | a suite on Suites, and the suite in Experiment's heading        | see a suite's cases and experiments, capture a run into it, and launch an experiment on it |
+| Experiment        | an experiment on Suite, and a suite's last experiment on Suites | follow an experiment, see its results, and cancel it                                     |
+| Remove case       | "Remove" on a case, on Suite                                    | confirm removing the case                                                                |
+| Cancel experiment | "Cancel the experiment", on Experiment                          | confirm cancelling the experiment                                                        |
+
+### Suites
+
+- **Layout.** A row per
+  suite, and "New", which makes a suite.
+- **Making a suite.** It asks for the suite's name and stage
+  ([Suites](#suites)), then "Create".
+
+| Column          | Holds                                                         |
+| --------------- | ------------------------------------------------------------- |
+| Suite           | the suite's name, linking to its Suite                        |
+| Stage           | the suite's stage                                             |
+| Cases           | how many cases it holds                                       |
+| Last experiment | its latest experiment and when it was launched, linking to it |
+
+### Suite
+
+- **Layout.** Suite
+  NAME's cases, then its experiments, latest first, with "Add case" and
+  "Run".
+- **Cases.** A row per case: its name, the run it was captured from, linking
+  to its Run, and the first line of its criteria, which opens on click
+  to the whole criteria, and "Remove".
+- **Adding a case.** "Add case" captures a run of the suite's stage, as Run
+  does ([Run](runs.md#run)). The maintainer chooses the run from a list of
+  the runs of that stage.
+- **Experiments.** A row per experiment: when it was launched, its state and
+  the pass rate of each configuration, linking to its Experiment.
+- **Launching.** "Run" launches an experiment, on a suite with cases. The launch
+  asks for the configurations and the repetitions ([Experiments](#experiments)),
+  and shows how many replays they make, then "Run experiment".
+- **A configuration.** `as-is` comes first and holds nothing. Each other
+  configuration has a name. It can set `model`, `effort` and
+  `session-timeout`, and give the text of any file of the brief. The text of a
+  file starts as the text that a run of the stage would use as the launch
+  opens. A file whose text the maintainer does not change is not part of the
+  configuration.
+
+### Experiment
+
+- **Layout.** Experiment ID's heading at the top, then its results
+  ([Results](#results)): the chart, the grid and the table.
+- **Heading.** The suite, linking to its Suite, when the experiment was
+  launched, its state, and how many of its replays have ended of all its
+  replays. A waiting experiment says what it waits for, such as "waiting for
+  the usage limit, until 14:30".
+- **State.** The state shows as a status
+  ([Status](design_system.md#status)): running as in flight, waiting as
+  paused, ended as done and cancelled as cancelled.
+- **Cancelling.** While the experiment is running or waiting, its heading
+  holds "Cancel the experiment".
+- **The chart.** A point for each configuration. The horizontal axis is the
+  mean cost of a replay, and the vertical axis is the pass rate.
+- **The grid.** A row for each case and a column for each configuration. A
+  cell shows the passes of the case under the configuration, such as "2 of
+  3". A cell also shows its leaks and its replays without a judgement, if it
+  has any.
+- **The table.** A row for each configuration, with its figures. Each row
+  opens on click to the configuration's cases. Each case opens on click to
+  its replays. A replay shows its state, its judgement with the reasoning of
+  the judge, its cost and its time. It opens on click to the transcripts of
+  its run and of its judge, shown as Run shows a run's.
+
+### Remove case
+
+- **Layout.** A confirmation
+  ([Confirming](design_system.md#confirming)): "Remove the case NAME and its
+  directory?"
+
+### Cancel experiment
+
+- **Layout.** A confirmation
+  ([Confirming](design_system.md#confirming)): "Cancel experiment ID? This
+  stops its running replays and judges."
 
 ## Out of scope
 

@@ -15,7 +15,7 @@ picks the section's Nth table, the first by default.
 The kinds, and what the model gives each, with `A` the header's arguments:
 
 - `state`: a first-match table of (when | state), as a chain of ifs. A row's
-  state is a literal where it is one of the states in design_system.md's
+  state is a literal where it is one of the states in board.md's
   States table or "no state" (""); otherwise `result_<when>(A)` gives it.
   Its when is `when_<when>(A)`, or `else` for "otherwise".
 - `index`: the same table, as the number, from 1, of the first row that holds.
