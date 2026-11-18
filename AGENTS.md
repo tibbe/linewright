@@ -43,6 +43,7 @@ you'll keep building on it.
 ## Checks
 
 - Every check CI runs: `scripts/check`
+- Tests alone, or only some: `cargo nextest run [FILTER]`
 - Only the named checks (`scripts/check --help` lists them):
   `scripts/check NAME...`
 - Fix what the checks report where a tool can, such as formatting and the
