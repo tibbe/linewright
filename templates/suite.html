@@ -8,7 +8,7 @@
 <section id="cases" class="mb-6">
 <h2>Cases</h2>
 {%- if cases.is_empty() %}
-<p>no cases</p>
+<p>No cases</p>
 {%- else %}
 <table class="table">
 <thead><tr><th>Case</th><th>Run</th><th>Criteria</th><th><span class="sr-only">Remove</span></th></tr></thead>
@@ -39,7 +39,7 @@
 {% block runs -%}
 <div id="capture-runs">
 {%- if runs.is_empty() %}
-<p class="text-muted">no runs of {{ suite.stage }} to capture</p>
+<p class="text-muted">No runs of {{ suite.stage }}</p>
 {%- else %}
 <label class="select select-sm w-full"><span class="label">run</span><select name="run">
 {%- for run in runs %}
@@ -59,7 +59,7 @@
 <section id="experiments" class="mt-6 mb-6">
 <h2>Experiments</h2>
 {%- if experiments.is_empty() %}
-<p>no experiments</p>
+<p>No experiments</p>
 {%- else %}
 <table class="table">
 <thead><tr><th>Experiment</th><th>Launched</th><th>State</th><th>Pass rates</th></tr></thead>

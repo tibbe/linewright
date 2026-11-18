@@ -58,7 +58,7 @@ async fn the_suites_page_with_no_suites_says_so_and_offers_to_make_one() {
 
     let html = pages.page("/suites").await;
 
-    assert_eq!(text(select(&html, "#suites p")[0]), "no suites");
+    assert_eq!(text(select(&html, "#suites p")[0]), "No suites");
     let form = select(&html, "form.make-suite");
     assert_eq!(form[0].attr("hx-post"), Some("/suites"));
     let stages: Vec<&str> = select_in(form[0], "select[name=stage] option")
@@ -234,13 +234,16 @@ async fn the_suite_page_shows_each_case_with_its_run_and_the_first_line_of_its_c
     assert_eq!(removes, [Some("columns"), Some("lanes")]);
 }
 
+/// `docs/specs/design_system.md`, Screen states, Empty.
 #[test_log::test(tokio::test)]
-async fn a_suite_with_no_cases_says_so() {
+async fn a_suite_with_no_cases_experiments_or_runs_of_its_stage_says_so() {
     let pages = with_suites().await;
 
     let html = pages.page("/suites/triage-basics").await;
 
-    assert_eq!(text(select(&html, "#cases p")[0]), "no cases");
+    assert_eq!(text(select(&html, "#cases p")[0]), "No cases");
+    assert_eq!(text(select(&html, "#experiments p")[0]), "No experiments");
+    assert_eq!(text(select(&html, "#capture-runs p")[0]), "No runs of triage");
 }
 
 #[test_log::test(tokio::test)]

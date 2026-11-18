@@ -238,6 +238,16 @@ async fn a_run_handed_back_is_a_failed_last_run() {
     );
 }
 
+/// `docs/specs/design_system.md`, Screen states, Empty.
+#[test_log::test(tokio::test)]
+async fn the_automations_page_with_no_automations_says_so() {
+    let pages = Pages::of(with(&[], false)).await;
+
+    let html = pages.page("/automations").await;
+
+    assert_eq!(text(select(&html, "#automations p")[0]), "No automations");
+}
+
 #[test_log::test(tokio::test)]
 async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let dir = tempfile::tempdir().unwrap();
