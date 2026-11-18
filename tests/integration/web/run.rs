@@ -1349,6 +1349,11 @@ async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessi
         lines,
         ["Bash(cargo test) → interrupted", "worked for, interrupted"]
     );
+    let cancelled: Vec<String> = select(&html, "#transcript .tone.badge-neutral")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(cancelled, ["interrupted"]);
 }
 
 /// A Bash call `id` of `command` made `at`.
