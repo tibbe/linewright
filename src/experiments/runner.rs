@@ -12,7 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::{Id, JoinError, JoinSet};
 use tracing::{error, info, warn};
 
-use super::plan::{Gate, Step, StepKind, plan};
+use super::plan::{Gate, Step, plan};
 use crate::benchmarks::{
     ConfigurationName, ExperimentId, ExperimentRecord, ExperimentState, Experiments,
     JudgementFigures, ReplayFigures, Shown, TrialChange, TrialRef,
@@ -104,12 +104,12 @@ impl ExperimentsRunner {
         }
     }
 
-    /// Starts what the plan says of the open experiments, each step once
-    /// `gate` opens for its kind, and cancels the steps of the experiments
+    /// Starts what the plan says of the open experiments once `gate` is
+    /// open, and cancels the steps of the experiments
     /// cancelled. The first tick first takes back the trials a stop left in
     /// flight, and each records the changes earlier ones could not. What
     /// fails is logged, for the next tick to try again.
-    pub async fn tick(&mut self, gate: impl Fn(StepKind) -> Gate) {
+    pub async fn tick(&mut self, gate: Gate) {
         if self.stopping {
             return;
         }

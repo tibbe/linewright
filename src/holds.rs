@@ -70,6 +70,25 @@ impl From<Hold> for Wait {
     }
 }
 
+/// A hold over the replays and the judges of an experiment: a drain and the
+/// usage limit, which hold them as they hold runs, while the other holds do
+/// not (`docs/specs/benchmarks.md`, Experiments: Under `serve`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExperimentHold {
+    Drain,
+    UsageLimit { resets_at: Timestamp },
+}
+
+impl From<ExperimentHold> for Hold {
+    fn from(hold: ExperimentHold) -> Hold {
+        match hold {
+            ExperimentHold::Drain => Hold::Drain,
+            ExperimentHold::UsageLimit { resets_at } => Hold::UsageLimit { resets_at },
+        }
+    }
+}
+
 /// The holds in force at a poll.
 #[derive(Clone, Debug)]
 pub struct InForce<'a> {
@@ -113,6 +132,16 @@ impl<'a> InForce<'a> {
         .collect();
         holds.sort_by(Hold::cmp_rank);
         holds
+    }
+
+    /// The first in rank of the holds over an experiment's replays and
+    /// judges, if one is in force.
+    pub fn holding_experiments(&self) -> Option<ExperimentHold> {
+        if self.drain {
+            return Some(ExperimentHold::Drain);
+        }
+        self.usage_limit
+            .map(|resets_at| ExperimentHold::UsageLimit { resets_at })
     }
 
     /// The hold over every claim, if one is in force.

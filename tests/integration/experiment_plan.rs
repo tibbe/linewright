@@ -11,15 +11,15 @@ use linewright::benchmarks::{
     TrialEnd, TrialKey, TrialRef, TrialState, WaitingFor,
 };
 use linewright::case::ReplayStage;
-use linewright::experiments::plan::{Gate, Step, StepKind, plan};
-use linewright::holds::{Hold, InForce};
+use linewright::experiments::plan::{Gate, Step, plan};
+use linewright::holds::{ExperimentHold, InForce};
 use linewright::prompts::{Readers, Reads};
 use linewright::reconcile::Memory;
 use linewright::repo_files::{FileError, Unusable};
 use linewright::results::Verdict;
 use linewright::runs::{Ending, OutcomeName};
 
-use crate::common::{at, limited_until};
+use crate::common::{at, draining_since, limited_until};
 
 fn id(n: u32) -> ExperimentId {
     n.to_string().parse().unwrap()
@@ -101,15 +101,11 @@ fn experiment(
     }
 }
 
-fn open(_: StepKind) -> Gate {
-    Gate::Open
-}
-
 #[test_log::test]
 fn replays_start_by_repetition_then_case_then_configuration() {
     let open_experiments = [experiment(1, (2, 2, 2), &[])];
 
-    let planned = plan(&open_experiments, 0, 8, open);
+    let planned = plan(&open_experiments, 0, 8, Gate::Open);
 
     assert_eq!(
         planned.starts,
@@ -140,7 +136,7 @@ fn an_experiment_stopped_early_has_replays_of_the_same_cases_under_every_configu
         ],
     )];
 
-    let planned = plan(&open_experiments, 0, 2, open);
+    let planned = plan(&open_experiments, 0, 2, Gate::Open);
 
     assert_eq!(planned.starts, [replay((1, 1, 1)), replay((1, 1, 2))]);
 }
@@ -153,7 +149,7 @@ fn a_pending_judge_starts_before_the_next_replay() {
         &[((1, 0, 0), TrialState::Replayed { replay: done() })],
     )];
 
-    let planned = plan(&open_experiments, 0, 1, open);
+    let planned = plan(&open_experiments, 0, 1, Gate::Open);
 
     assert_eq!(planned.starts, [Step::Judge(trial(1, (1, 0, 0)))]);
 }
@@ -167,17 +163,17 @@ fn no_step_starts_past_max_replays() {
     )];
 
     assert_eq!(
-        plan(&open_experiments, 1, 2, open).starts,
+        plan(&open_experiments, 1, 2, Gate::Open).starts,
         [replay((1, 1, 0))]
     );
-    assert_eq!(plan(&open_experiments, 2, 2, open).starts, []);
+    assert_eq!(plan(&open_experiments, 2, 2, Gate::Open).starts, []);
 }
 
 #[test_log::test]
 fn experiments_start_in_the_order_they_were_launched() {
     let open_experiments = [experiment(1, (1, 1, 1), &[]), experiment(2, (1, 1, 1), &[])];
 
-    let planned = plan(&open_experiments, 0, 1, open);
+    let planned = plan(&open_experiments, 0, 1, Gate::Open);
 
     assert_eq!(planned.starts, [replay((1, 0, 0))]);
     assert_eq!(
@@ -197,47 +193,18 @@ fn experiments_start_in_the_order_they_were_launched() {
 
 #[test_log::test]
 fn a_hold_holds_each_replay_and_the_experiment_waits_for_it() {
-    let usage_limit = Hold::UsageLimit {
+    let usage_limit = ExperimentHold::UsageLimit {
         resets_at: at("2026-11-17T14:30:00Z"),
     };
     let open_experiments = [experiment(1, (1, 2, 1), &[])];
 
-    let planned = plan(&open_experiments, 0, 4, |_| Gate::Held(usage_limit.clone()));
+    let planned = plan(&open_experiments, 0, 4, Gate::Held(usage_limit));
 
     assert_eq!(planned.starts, []);
     assert_eq!(
         planned.shown,
         BTreeMap::from([(id(1), Shown::Waiting(WaitingFor::Hold(usage_limit)))])
     );
-}
-
-#[test_log::test]
-fn a_hold_over_the_judge_alone_holds_the_judges_and_not_the_replays() {
-    let open_experiments = [experiment(
-        1,
-        (1, 2, 1),
-        &[((1, 0, 0), TrialState::Replayed { replay: done() })],
-    )];
-
-    let planned = plan(&open_experiments, 0, 4, |kind| match kind {
-        StepKind::Judge => Gate::Held(Hold::Drain),
-        StepKind::Replay(_) => Gate::Open,
-    });
-
-    assert_eq!(planned.starts, [replay((1, 1, 0))]);
-    assert_eq!(planned.shown, BTreeMap::from([(id(1), Shown::Running)]));
-}
-
-#[test_log::test]
-fn the_gate_is_asked_of_the_experiments_stage() {
-    let open_experiments = [experiment(1, (1, 1, 1), &[])];
-
-    let planned = plan(&open_experiments, 0, 4, |kind| match kind {
-        StepKind::Replay(ReplayStage::Design) => Gate::Held(Hold::Environment),
-        StepKind::Replay(_) | StepKind::Judge => Gate::Open,
-    });
-
-    assert_eq!(planned.starts, []);
 }
 
 #[test_log::test]
@@ -248,7 +215,7 @@ fn nothing_starts_while_a_run_of_the_pipeline_waits_for_room() {
         &[((1, 0, 0), TrialState::Replayed { replay: done() })],
     )];
 
-    let planned = plan(&open_experiments, 0, 4, |_| Gate::PipelineWaitsForRoom);
+    let planned = plan(&open_experiments, 0, 4, Gate::PipelineWaitsForRoom);
 
     assert_eq!(planned.starts, []);
     assert_eq!(
@@ -265,7 +232,7 @@ fn an_experiment_with_a_step_in_flight_is_running_whatever_holds_its_next() {
         &[((1, 0, 0), TrialState::Judging { replay: done() })],
     )];
 
-    let planned = plan(&open_experiments, 1, 4, |_| Gate::Held(Hold::Drain));
+    let planned = plan(&open_experiments, 1, 4, Gate::Held(ExperimentHold::Drain));
 
     assert_eq!(planned.starts, []);
     assert_eq!(planned.shown, BTreeMap::from([(id(1), Shown::Running)]));
@@ -294,7 +261,7 @@ fn an_open_experiment_whose_trials_have_all_ended_is_ended() {
         experiment(2, (1, 1, 1), &[]),
     ];
 
-    let planned = plan(&open_experiments, 0, 1, open);
+    let planned = plan(&open_experiments, 0, 1, Gate::Open);
 
     assert_eq!(planned.starts, [Step::Replay(trial(2, (1, 0, 0)))]);
     assert_eq!(
@@ -303,31 +270,48 @@ fn an_open_experiment_whose_trials_have_all_ended_is_ended() {
     );
 }
 
-/// The file `prompts/judge.md` of the repository, which the judge alone
-/// reads, unusable.
-fn judge_prompt_unusable() -> Unusable {
-    Unusable {
-        file: FileError {
-            path: ".linewright/briefs/prompts/judge.md".into(),
-            error: "it lacks the placeholders `{{criteria}}`".into(),
+/// The files of the repository Linewright cannot use: `prompts/judge.md`,
+/// which the judge alone reads, and `config.toml`, which every run reads.
+fn unusable_files() -> Vec<Unusable> {
+    vec![
+        Unusable {
+            file: FileError {
+                path: ".linewright/briefs/prompts/judge.md".into(),
+                error: "it lacks the placeholders `{{criteria}}`".into(),
+            },
+            holds: Readers::Only(&[Reads::Judge]),
         },
-        holds: Readers::Only(&[Reads::Judge]),
-    }
+        Unusable {
+            file: FileError {
+                path: ".linewright/config.toml".into(),
+                error: "invalid".into(),
+            },
+            holds: Readers::Every,
+        },
+    ]
 }
 
 #[test_log::test]
-fn a_step_is_held_as_a_run_of_its_kind_is() {
-    let unusable = [judge_prompt_unusable()];
-    let in_force = InForce::of(&Memory::default(), at("2026-11-17T12:00:00Z"), &unusable);
+fn neither_the_environment_nor_a_file_holds_an_experiment() {
+    let memory = Memory {
+        awaits_environment: true,
+        ..Memory::default()
+    };
+    let unusable = unusable_files();
+    let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &unusable);
 
-    assert_eq!(
-        Gate::at(&in_force, false, StepKind::Judge),
-        Gate::Held(Hold::File(judge_prompt_unusable().file))
-    );
-    assert_eq!(
-        Gate::at(&in_force, false, StepKind::Replay(ReplayStage::Design)),
-        Gate::Open
-    );
+    assert_eq!(Gate::at(&in_force, false), Gate::Open);
+}
+
+#[test_log::test]
+fn a_drain_holds_an_experiment_before_the_usage_limit() {
+    let memory = Memory {
+        usage_limit: limited_until("2026-11-17T14:30:00Z").usage_limit,
+        ..draining_since("2026-11-17T11:00:00Z")
+    };
+    let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &[]);
+
+    assert_eq!(Gate::at(&in_force, true), Gate::Held(ExperimentHold::Drain));
 }
 
 #[test_log::test]
@@ -336,8 +320,8 @@ fn a_hold_shows_before_the_pipelines_wait_for_room() {
     let in_force = InForce::of(&memory, at("2026-11-17T12:00:00Z"), &[]);
 
     assert_eq!(
-        Gate::at(&in_force, true, StepKind::Replay(ReplayStage::Triage)),
-        Gate::Held(Hold::UsageLimit {
+        Gate::at(&in_force, true),
+        Gate::Held(ExperimentHold::UsageLimit {
             resets_at: at("2026-11-17T14:30:00Z")
         })
     );
@@ -347,9 +331,6 @@ fn a_hold_shows_before_the_pipelines_wait_for_room() {
 fn a_step_waits_while_a_run_of_the_pipeline_waits_for_room() {
     let in_force = InForce::of(&Memory::default(), at("2026-11-17T12:00:00Z"), &[]);
 
-    assert_eq!(
-        Gate::at(&in_force, true, StepKind::Judge),
-        Gate::PipelineWaitsForRoom
-    );
-    assert_eq!(Gate::at(&in_force, false, StepKind::Judge), Gate::Open);
+    assert_eq!(Gate::at(&in_force, true), Gate::PipelineWaitsForRoom);
+    assert_eq!(Gate::at(&in_force, false), Gate::Open);
 }
