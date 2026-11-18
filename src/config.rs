@@ -203,35 +203,29 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show the suite NAME: its cases with their criteria. `suite add` makes
-    /// a suite, and `suite remove-case` removes a case.
-    #[command(args_conflicts_with_subcommands = true)]
+    /// Suites: `suite show` shows one, `suite add` makes one, and
+    /// `suite remove-case` removes a case from one.
     Suite {
         #[command(subcommand)]
-        command: Option<SuiteCommand>,
-        #[arg(value_name = "NAME", required = true)]
-        name: Option<SuiteName>,
-        /// Print the answer as JSON.
-        #[arg(long)]
-        json: bool,
+        command: SuiteCommand,
     },
-    /// Show the experiment ID: its state, its replays and its results.
-    /// `experiment launch` launches one, and `experiment cancel` cancels
-    /// one.
-    #[command(args_conflicts_with_subcommands = true)]
+    /// Experiments: `experiment show` shows one, `experiment launch`
+    /// launches one, and `experiment cancel` cancels one.
     Experiment {
         #[command(subcommand)]
-        command: Option<ExperimentCommand>,
-        #[arg(value_name = "ID", required = true)]
-        id: Option<ExperimentId>,
-        /// Print the answer as JSON.
-        #[arg(long)]
-        json: bool,
+        command: ExperimentCommand,
     },
 }
 
 #[derive(Subcommand, Debug)]
 pub enum ExperimentCommand {
+    /// Show the experiment ID: its state, its replays and its results.
+    Show {
+        id: ExperimentId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Launch an experiment on the cases of the suite SUITE, under `as-is`
     /// and each configuration given.
     Launch {
@@ -271,6 +265,14 @@ fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), Stri
 
 #[derive(Subcommand, Debug)]
 pub enum SuiteCommand {
+    /// Show the suite NAME: its cases with their criteria, and its
+    /// experiments.
+    Show {
+        name: SuiteName,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Make the suite NAME, of the stage STAGE: triage, design or implement.
     Add {
         /// Lowercase letters, digits and hyphens, starting with a letter or a

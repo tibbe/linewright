@@ -103,7 +103,7 @@ async fn lw_suite_add_of_a_stage_no_case_has_or_a_name_not_a_suites_is_a_command
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_suite_shows_its_cases_with_their_criteria() {
+async fn lw_suite_show_shows_its_cases_with_their_criteria() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = made(work_dir.path()).await;
     keep_suite(&repo, "board", "implement").await;
@@ -117,8 +117,8 @@ async fn lw_suite_shows_its_cases_with_their_criteria() {
     .await;
     keep_case(&repo, "board", "columns", "3/implement-2", "Names them.\n").await;
 
-    let text = lw_in(work_dir.path(), &["suite", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert_eq!(
@@ -144,14 +144,14 @@ async fn lw_suite_shows_its_cases_with_their_criteria() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_suite_says_when_a_cases_criteria_do_not_read() {
+async fn lw_suite_show_says_when_a_cases_criteria_do_not_read() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = made(work_dir.path()).await;
     keep_suite(&repo, "board", "implement").await;
     keep_case(&repo, "board", "lanes", "4/implement-1", " \n").await;
 
-    let text = lw_in(work_dir.path(), &["suite", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert_eq!(
@@ -172,12 +172,12 @@ async fn lw_suite_says_when_a_cases_criteria_do_not_read() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_suite_of_a_suite_with_no_cases_says_so() {
+async fn lw_suite_show_of_a_suite_with_no_cases_says_so() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = made(work_dir.path()).await;
     keep_suite(&repo, "board", "triage").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "board"]).await;
+    let output = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
@@ -187,13 +187,32 @@ async fn lw_suite_of_a_suite_with_no_cases_says_so() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_suite_of_a_suite_that_does_not_exist_exits_4() {
+async fn lw_suite_show_shows_a_suite_named_as_a_subcommand() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let repo = made(work_dir.path()).await;
+    keep_suite(&repo, "add", "triage").await;
+
+    let output = lw_in(work_dir.path(), &["suite", "show", "add"]).await;
+
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    assert_eq!(
+        output.stdout,
+        "suite: add\nstage: triage\ncases: none\nexperiments: none\n"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_suite_show_of_a_suite_that_does_not_exist_exits_4() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = made(work_dir.path()).await;
     keep_suite(&repo, "board", "triage").await;
 
-    let missing = lw_in(work_dir.path(), &["suite", "lanes"]).await;
-    let no_database = lw_in(tempfile::tempdir().unwrap().path(), &["suite", "lanes"]).await;
+    let missing = lw_in(work_dir.path(), &["suite", "show", "lanes"]).await;
+    let no_database = lw_in(
+        tempfile::tempdir().unwrap().path(),
+        &["suite", "show", "lanes"],
+    )
+    .await;
 
     for output in [missing, no_database] {
         assert_eq!(output.code, Some(4), "{}", output.stderr);

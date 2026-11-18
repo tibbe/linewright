@@ -45,9 +45,9 @@ properties is refused. A name a case already has is refused too, and so is a
 suite of another stage. A capture that fails, such as for a commit GitHub no
 longer has, writes nothing.
 
-`lw suites` lists the suites, `lw suite NAME` shows a suite's cases with their
-criteria and its experiments, and `lw suite remove-case NAME CASE` removes a
-case, its directory with it. A case captured before suites is in none. The web
+`lw suites` lists the suites, `lw suite show NAME` shows a suite's cases with
+their criteria and its experiments, and `lw suite remove-case NAME CASE` removes
+a case, its directory with it. A case captured before suites is in none. The web
 UI does the same from its suites page, at `/suites`: it lists the suites and
 makes one, and each suite's page shows its cases, captures a run of its stage
 into it and removes a case. An experiment compares configurations on a suite's

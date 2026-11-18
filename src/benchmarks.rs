@@ -435,7 +435,7 @@ pub fn render_suites(answer: &SuitesAnswer) -> String {
     text
 }
 
-/// What `suite NAME` answers.
+/// What `suite show NAME` answers.
 #[derive(Serialize)]
 pub struct SuiteAnswer {
     #[serde(flatten)]
@@ -444,7 +444,7 @@ pub struct SuiteAnswer {
     pub experiments: Vec<ExperimentSummary>,
 }
 
-/// A case as `suite NAME` answers it: its criteria, or why they do not
+/// A case as `suite show NAME` answers it: its criteria, or why they do not
 /// read.
 #[derive(Serialize)]
 pub struct CaseAnswer {
@@ -490,7 +490,7 @@ impl SuiteAnswer {
     }
 }
 
-/// A suite as `suite NAME` prints it: its facts, then each case with its
+/// A suite as `suite show NAME` prints it: its facts, then each case with its
 /// run, and its criteria indented under it, then each experiment, latest
 /// first.
 pub fn render_suite(answer: &SuiteAnswer) -> String {
