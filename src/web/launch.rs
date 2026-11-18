@@ -1,7 +1,8 @@
 //! Launching an experiment from the suite page (`docs/specs/design_system.md`,
 //! The suite page, Launching): the form, which starts each file of the
-//! brief as the replays would have it without a configuration, and the
-//! `POST` that launches what it sends.
+//! brief as the text a run of the stage would use as the form opens, and the
+//! `POST` that launches what it sends: a file whose text is not changed is
+//! not part of the configuration.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -21,7 +22,7 @@ use crate::replay::Configuration;
 use crate::work_settings::Effort;
 
 /// The text of each file of the brief that a configuration may give, by its
-/// path under `briefs/`, as the replays would have it without one: the
+/// path under `briefs/`, as a run of the stage would use it now: the
 /// repository's layer as `serve` last read it, over the operator's and
 /// Linewright's own. None before `serve`'s first poll.
 pub(super) fn starting_texts(sources: &Sources) -> BTreeMap<String, String> {

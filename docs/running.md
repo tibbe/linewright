@@ -359,8 +359,8 @@ suite or an experiment that does not exist.
 The web UI does the same from a suite's page: it lists the suite's
 experiments and launches one, with `as-is` first and each other configuration
 given a name, its `model`, `effort` and `session-timeout`, and the text of any
-file of the brief, which starts as the replays would get it without the
-configuration; only the files you change go into it. Each experiment's page
+file of the brief, which starts as a run of the stage would use it when the
+form opens; only the files you change go into it. Each experiment's page
 follows it as it runs, with a chart of each configuration's mean cost against
 its pass rate, the passes of each case under each configuration, and each
 configuration's figures, which open to its cases and their replays, and from
