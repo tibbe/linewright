@@ -654,11 +654,12 @@ struct Said {
 }
 
 /// The account of an entry that runs as far as `course` says, as markup:
-/// `running`, and how it ended when it failed, each as its status.
+/// `running`, `interrupted`, and how it ended when it failed, each as its
+/// status (`docs/specs/runs.md`, Transcripts, Running).
 fn account_html(course: Course<Said>) -> String {
     match course {
         Course::Running => status_html(Status::InFlight, RUNNING),
-        Course::Interrupted => INTERRUPTED.to_string(),
+        Course::Interrupted => status_html(Status::Cancelled, INTERRUPTED),
         Course::Ended(Said { said, failed: true }) => status_html(Status::Failed, &said),
         Course::Ended(Said {
             said,
