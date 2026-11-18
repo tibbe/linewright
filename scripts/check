@@ -13,14 +13,16 @@ check_fmt() {
 }
 
 check_markdown() {
+  need rumdl || return 1
   rumdl check . 2>&1 | sed "s/^Run \`rumdl fmt\`/Run \`scripts\/fix markdown\`/"
 }
 
 # Fails when assets/linewright.css is not what styles/linewright.css builds.
 check_css() {
   local built output status=0
+  need tailwindcss || return 1
   built="$(mktemp)"
-  if ! output="$(tailwind --input styles/linewright.css --output "$built" --minify 2>&1)"; then
+  if ! output="$(tailwindcss --input styles/linewright.css --output "$built" --minify 2>&1)"; then
     echo "$output"
     status=1
   elif ! cmp -s "$built" assets/linewright.css; then
@@ -34,8 +36,9 @@ check_css() {
 # Fails when the deployment's compose files, alone and with the builds, break
 # the compose specification, reading neither a host's `.env` nor its override.
 check_compose() {
-  compose -f deploy/compose.yaml config --quiet --no-env-resolution &&
-    compose -f deploy/compose.yaml -f deploy/compose.build.yaml config \
+  need docker-compose || return 1
+  docker-compose -f deploy/compose.yaml config --quiet --no-env-resolution &&
+    docker-compose -f deploy/compose.yaml -f deploy/compose.build.yaml config \
       --quiet --no-env-resolution --no-interpolate
 }
 
@@ -52,6 +55,7 @@ check_clippy() {
 # that is not `#[test_log::test]`, around `#[tokio::test]` where it is async.
 check_test() {
   local filter status=0 exec_path
+  need cargo-nextest || return 1
   if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
     export PATH="$exec_path:$PATH"
   fi
@@ -62,14 +66,27 @@ check_test() {
     status=1
   fi
   while IFS= read -r filter; do
-    if [ -z "$(nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then
+    if [ -z "$(cargo nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then
       echo ".config/nextest.toml: the override filter $filter matches no test"
       status=1
     fi
   done < <(sed -n "s/^filter = '\(.*\)'$/\1/p" .config/nextest.toml)
-  [ "$status" = 0 ] && nextest run --locked --cargo-quiet --no-input-handler
+  [ "$status" = 0 ] && cargo nextest run --locked --cargo-quiet --no-input-handler
 }
 check_doc() { cargo doc --no-deps --locked --quiet; }
+
+# Quint, run from a scratch directory: Apalache writes its output under the
+# directory it runs in:
+# https://apalache-mc.org/docs/apalache/running.html#4-detailed-output
+quint() {
+  local tmp status
+  need quint || return 1
+  tmp="$(mktemp -d)"
+  (cd "$tmp" && command quint "$@")
+  status=$?
+  rm -rf "$tmp"
+  return "$status"
+}
 
 models="pipeline cut spec_change pull_request"
 model_args=()

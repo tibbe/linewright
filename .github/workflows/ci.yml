@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - run: scripts/install rumdl && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: scripts/check markdown
 
   compose:
@@ -28,6 +29,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - run: scripts/install docker-compose && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: scripts/check compose
 
   css:
@@ -35,6 +37,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - run: scripts/install tailwindcss && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: scripts/check css
 
   comments:
@@ -83,6 +86,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: scripts/install cargo-nextest && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: git config --global user.name ci && git config --global user.email ci@example.com
       - run: scripts/check test
         env:
@@ -123,7 +127,8 @@ jobs:
             echo "base-image=$(changed Dockerfile .dockerignore rust-toolchain.toml \
               $workflows/base-image.yml $workflows/release.yml $workflows/ci.yml)"
             echo "deploy-images=$(changed Dockerfile .dockerignore rust-toolchain.toml \
-              linewright.toml deploy $workflows/deploy-images.yml $workflows/docker.yml $workflows/ci.yml)"
+              linewright.toml deploy scripts/install quint/package.json quint/package-lock.json \
+              $workflows/deploy-images.yml $workflows/docker.yml $workflows/ci.yml)"
             echo "binaries=$(changed Cargo.toml Cargo.lock rust-toolchain.toml \
               $workflows/binaries.yml $workflows/release.yml $workflows/ci.yml)"
             echo "rust=$(changed . ':!docs' ':!deploy' ':!.agents' ':!.claude' \

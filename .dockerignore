@@ -12,3 +12,6 @@
 !deploy/playwright/package.json
 !deploy/playwright/package-lock.json
 !deploy/playwright-cli
+!scripts/install
+!quint/package.json
+!quint/package-lock.json

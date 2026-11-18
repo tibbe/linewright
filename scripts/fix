@@ -6,11 +6,15 @@ cd "$(dirname "$0")/.."
 
 fix_fmt() { cargo fmt; }
 
-fix_markdown() { rumdl check --fix .; }
+fix_markdown() {
+  need rumdl || return 1
+  rumdl check --fix .
+}
 
 # Builds assets/linewright.css from styles/linewright.css.
 fix_css() {
-  tailwind --input styles/linewright.css --output assets/linewright.css --minify
+  need tailwindcss || return 1
+  tailwindcss --input styles/linewright.css --output assets/linewright.css --minify
 }
 
 # Makes every test `#[test_log::test]`, around `#[tokio::test]` where it is
