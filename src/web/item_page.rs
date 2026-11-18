@@ -8,7 +8,7 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
-use super::cards::{card_line, lane_head, tone};
+use super::cards::{self, card_line, lane_head};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
@@ -21,7 +21,7 @@ use crate::explain;
 use crate::item_facts::{self, ItemFacts, Related, StateFact};
 use crate::lifecycle;
 use crate::managed::{LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::reconcile::NotSpecChange;
 use crate::runs;
 use crate::status;
@@ -97,15 +97,18 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
 /// finished, if it did; for an item Linewright leaves, its state, where it
 /// has one, then "Left alone" and why.
 fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
-    let then = |first: Option<lifecycle::State>, lines: Vec<(Html, Option<Tone>)>| {
+    let then = |first: Option<lifecycle::State>, lines: Vec<(Html, Option<Status>)>| {
         let first = first.map(|item_state| (html::escape(item_state.shown()), None));
         let mut pieces = vec![];
-        for (line, tone) in first.into_iter().chain(lines) {
+        for (line, status) in first.into_iter().chain(lines) {
             if !pieces.is_empty() {
                 pieces.push(Piece::Text(html::escape(" · ")));
             }
-            pieces.push(match tone {
-                Some(tone) => Piece::Status { tone, words: line },
+            pieces.push(match status {
+                Some(status) => Piece::Status {
+                    status,
+                    words: line,
+                },
                 None => Piece::Text(line),
             });
         }
@@ -115,7 +118,7 @@ fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
         StateFact::Card { state, card, .. } => then(
             Some(*state),
             card_line(card)
-                .map(|line| (line.html(names), card.status().map(tone)))
+                .map(|line| (line.html(names), card.status().map(cards::status)))
                 .into_iter()
                 .collect(),
         ),
@@ -152,7 +155,7 @@ fn related(item: &Related, repo: &str) -> Piece {
             pull_request,
             status,
         } => Piece::Item {
-            tone: status.map(tone),
+            status: status.map(cards::status),
             pull_request: *pull_request,
             heading: match title {
                 Some(title) => html::titled(*number, title, repo),
@@ -160,7 +163,7 @@ fn related(item: &Related, repo: &str) -> Piece {
             },
         },
         Related::LaneHead(lane) => Piece::Item {
-            tone: None,
+            status: None,
             pull_request: false,
             heading: lane_head(lane, repo),
         },

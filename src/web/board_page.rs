@@ -9,14 +9,14 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
-use super::cards::{card_line, lane_head, tone};
+use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
 use super::names::Names;
 use super::{Frame, Page, events, frame_regions, given, render, with_filters};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane};
 use crate::domain::Login;
-use crate::phrase::Tone;
+use crate::phrase::Status;
 
 /// The Person filter as the page's address carries it, an empty or blank
 /// one leaving the board unnarrowed (`docs/specs/design_system.md`,
@@ -90,8 +90,8 @@ struct CardShown {
     heading: Html,
     /// Whether it carries the pull request icon.
     pull_request: bool,
-    /// The tone of its card status, if it has one.
-    tone: Option<Tone>,
+    /// The status its card status shows as, if it has one.
+    status: Option<Status>,
     line: Option<Html>,
     /// Whether it is in Done, which is quieter than the rest.
     quiet: bool,
@@ -156,7 +156,7 @@ impl CardShown {
         CardShown {
             heading: html::titled(card.number, &card.title, names.repo()),
             pull_request: card.pull_request,
-            tone: card.status().map(tone),
+            status: card.status().map(cards::status),
             line: card_line(card).map(|line| line.html(names)),
             quiet: column == Column::Done,
         }

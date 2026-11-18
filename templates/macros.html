@@ -1,13 +1,13 @@
-{#- A status as a daisyUI badge in its tone's colour, holding the tone's
-    icon and its words, so that it is never told by colour alone. -#}
-{%- macro status(tone, word) -%}
-<span class="tone badge badge-sm h-auto min-h-5 {{ tone.colour() }}">{% call icon(tone) %}{% endcall %}<span>{{ word }}</span></span>
+{#- A status as a daisyUI badge in its colour, holding its icon and its
+    words, so that it is never told by colour alone. -#}
+{%- macro status(status, word) -%}
+<span class="tone badge badge-sm h-auto min-h-5 {{ status.colour() }}">{% call icon(status) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
-    the tone's icon and its words in its colour, with nothing behind them. -#}
-{%- macro status_text(tone, words) -%}
-<span class="status-text {{ tone.accent() }}">{% call icon(tone) %}{% endcall %}<span>{{ words|safe }}</span></span>
+    the status's icon and its words in its colour, with nothing behind them. -#}
+{%- macro status_text(status, words) -%}
+<span class="status-text {{ status.accent() }}">{% call icon(status) %}{% endcall %}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
 {#- A page's facts (`docs/specs/web/design_system.md`, Facts), drawn as a
@@ -25,10 +25,10 @@
 {%- match piece -%}
 {%- when crate::web::facts::Piece::Text(text) -%}
 {{ text|safe }}
-{%- when crate::web::facts::Piece::Status { tone, words } -%}
-{% call status_text(tone, words) %}{% endcall %}
-{%- when crate::web::facts::Piece::Item { tone, pull_request, heading } -%}
-<span class="related-item{% if let Some(tone) = tone %} {{ tone.accent() }}{% endif %}">{% if let Some(tone) = tone %}{% call icon(tone) %}{% endcall %}{% endif %}{% if pull_request %}{% call pull_request_icon() %}{% endcall %}{% endif %}{{ heading|safe }}</span>
+{%- when crate::web::facts::Piece::Status { status, words } -%}
+{% call status_text(status, words) %}{% endcall %}
+{%- when crate::web::facts::Piece::Item { status, pull_request, heading } -%}
+<span class="related-item{% if let Some(status) = status %} {{ status.accent() }}{% endif %}">{% if let Some(status) = status %}{% call icon(status) %}{% endcall %}{% endif %}{% if pull_request %}{% call pull_request_icon() %}{% endcall %}{% endif %}{{ heading|safe }}</span>
 {%- when crate::web::facts::Piece::Markup(markup) -%}
 {{ markup|safe }}
 {%- endmatch -%}
@@ -76,26 +76,26 @@
 card card-sm border border-base-300 bg-card shadow-sm
 {%- endmacro -%}
 
-{%- macro icon(tone) -%}
+{%- macro icon(status) -%}
 <svg class="icon size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-{%- match tone -%}
-{%- when Tone::Success -%}
+{%- match status -%}
+{%- when Status::Done -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M5 8.25l2 2 4-4.25"/>
-{%- when Tone::Failure -%}
+{%- when Status::Failed -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5"/>
-{%- when Tone::InProgress -%}
+{%- when Status::InFlight -%}
 <circle cx="8" cy="8" r="6.75"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/>
-{%- when Tone::Pending -%}
+{%- when Status::Waiting -%}
 <circle cx="8" cy="8" r="6.75" stroke-dasharray="2.5 2"/>
-{%- when Tone::Cancelled -%}
+{%- when Status::Cancelled -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M3.25 12.75l9.5-9.5"/>
-{%- when Tone::Paused -%}
+{%- when Status::Paused -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M6.5 5.5v5M9.5 5.5v5"/>
 {%- endmatch -%}
 </svg>
 {%- endmacro -%}
 
-{#- The icon of a card that is a pull request, drawn as the tones' icons
+{#- The icon of a card that is a pull request, drawn as the statuses' icons
     are, and named for screen readers, which read it before the number. -#}
 {%- macro pull_request_icon() -%}
 <svg class="pull-request size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="pull request" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -103,7 +103,7 @@ card card-sm border border-base-300 bg-card shadow-sm
 </svg>
 {%- endmacro -%}
 
-{#- A navigation link's icon, drawn as the tones' icons are. It is hidden
+{#- A navigation link's icon, drawn as the statuses' icons are. It is hidden
     from screen readers, so that the link's text is its label. -#}
 {%- macro nav_icon(icon) -%}
 <svg class="size-5 shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
@@ -148,7 +148,7 @@ card card-sm border border-base-300 bg-card shadow-sm
 <tbody>
 {%- for (item, row) in table.rows() %}
 <tr>
-<td>{% call status(row.tone, row.word) %}{% endcall %}</td>
+<td>{% call status(row.status, row.word) %}{% endcall %}</td>
 <td><a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a></td>
 {%- if let Some(item) = item %}
 <td><div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>

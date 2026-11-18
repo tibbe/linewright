@@ -10,19 +10,20 @@ use crate::domain::{Number, Timestamp};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Phrase(Vec<Segment>);
 
-/// What an outcome or a state shows as, each with its own icon
+/// What an outcome or a state shows as (`docs/specs/design_system.md`,
+/// Status), each with its own icon and colour
 /// (`docs/specs/web/design_system.md`, Status).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Tone {
-    Success,
-    Failure,
-    InProgress,
-    Pending,
-    Cancelled,
+pub enum Status {
+    Done,
+    Failed,
+    Waiting,
+    InFlight,
     Paused,
+    Cancelled,
 }
 
-impl Tone {
+impl Status {
     /// The colour it shows in, as the classes of a badge in it: a badge gives
     /// each daisyUI colour its own colour of text, which reads on it in either
     /// theme, while Muted text, a text colour with no content colour of its
@@ -31,12 +32,12 @@ impl Tone {
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
     pub fn colour(self) -> &'static str {
         match self {
-            Tone::Success => "badge-success",
-            Tone::Failure => "badge-error",
-            Tone::InProgress => "badge-info",
-            Tone::Pending => "badge-warning",
-            Tone::Cancelled => "badge-neutral",
-            Tone::Paused => "badge-outline [--badge-color:var(--color-muted)]",
+            Status::Done => "badge-success",
+            Status::Failed => "badge-error",
+            Status::InFlight => "badge-info",
+            Status::Waiting => "badge-warning",
+            Status::Cancelled => "badge-neutral",
+            Status::Paused => "badge-outline [--badge-color:var(--color-muted)]",
         }
     }
 
@@ -45,12 +46,12 @@ impl Tone {
     /// `colour` says why.
     pub fn accent(self) -> &'static str {
         match self {
-            Tone::Success => "[--tone:var(--color-success)]",
-            Tone::Failure => "[--tone:var(--color-error)]",
-            Tone::InProgress => "[--tone:var(--color-info)]",
-            Tone::Pending => "[--tone:var(--color-warning)]",
-            Tone::Cancelled => "[--tone:var(--color-neutral)]",
-            Tone::Paused => "[--tone:var(--color-muted)]",
+            Status::Done => "[--tone:var(--color-success)]",
+            Status::Failed => "[--tone:var(--color-error)]",
+            Status::InFlight => "[--tone:var(--color-info)]",
+            Status::Waiting => "[--tone:var(--color-warning)]",
+            Status::Cancelled => "[--tone:var(--color-neutral)]",
+            Status::Paused => "[--tone:var(--color-muted)]",
         }
     }
 
@@ -59,12 +60,12 @@ impl Tone {
     /// outline alert. Written whole, as `colour` says why.
     pub fn alert(self) -> &'static str {
         match self {
-            Tone::Success => "alert alert-success",
-            Tone::Failure => "alert alert-error",
-            Tone::InProgress => "alert alert-info",
-            Tone::Pending => "alert alert-warning",
-            Tone::Cancelled => "alert",
-            Tone::Paused => "alert alert-outline [--alert-color:var(--color-muted)]",
+            Status::Done => "alert alert-success",
+            Status::Failed => "alert alert-error",
+            Status::InFlight => "alert alert-info",
+            Status::Waiting => "alert alert-warning",
+            Status::Cancelled => "alert",
+            Status::Paused => "alert alert-outline [--alert-color:var(--color-muted)]",
         }
     }
 }
@@ -224,18 +225,18 @@ mod tests {
     /// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
     /// text, cancelled `neutral`.
     #[test_log::test]
-    fn each_tone_has_the_colour_of_the_states_it_shows() {
-        let tones = [
-            Tone::Success,
-            Tone::Failure,
-            Tone::InProgress,
-            Tone::Pending,
-            Tone::Cancelled,
-            Tone::Paused,
+    fn each_status_has_the_colour_of_the_states_it_shows() {
+        let statuses = [
+            Status::Done,
+            Status::Failed,
+            Status::InFlight,
+            Status::Waiting,
+            Status::Cancelled,
+            Status::Paused,
         ];
 
         assert_eq!(
-            tones.map(Tone::colour),
+            statuses.map(Status::colour),
             [
                 "badge-success",
                 "badge-error",
@@ -246,7 +247,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            tones.map(Tone::accent),
+            statuses.map(Status::accent),
             [
                 "[--tone:var(--color-success)]",
                 "[--tone:var(--color-error)]",
@@ -257,7 +258,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            tones.map(Tone::alert),
+            statuses.map(Status::alert),
             [
                 "alert alert-success",
                 "alert alert-error",

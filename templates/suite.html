@@ -68,7 +68,7 @@
 <tr>
 <th><a class="link link-hover" href="{{ experiment.href }}">experiment {{ experiment.id }}</a></th>
 <td>{{ experiment.launched }}</td>
-<td>{% call ui::status(experiment.tone, experiment.state) %}{% endcall %}</td>
+<td>{% call ui::status(experiment.status, experiment.state) %}{% endcall %}</td>
 <td>{{ experiment.pass_rates }}</td>
 </tr>
 {%- endfor %}

@@ -6,7 +6,7 @@ use super::html::{self, Html};
 use super::names::Names;
 use super::run_path;
 use crate::domain::Number;
-use crate::phrase::Tone;
+use crate::phrase::Status;
 use crate::runs::{self, Listing, NoRuns, Run, RunOf};
 
 /// A list of runs, ready for a page, or why there is none.
@@ -30,7 +30,7 @@ enum Rows {
 }
 
 pub(super) struct RunRow {
-    pub(super) tone: Tone,
+    pub(super) status: Status,
     pub(super) word: &'static str,
     pub(super) id: Html,
     pub(super) href: String,
@@ -129,7 +129,7 @@ impl RunsShown {
 impl RunRow {
     fn of(run: &Run, names: &Names) -> RunRow {
         RunRow {
-            tone: run.outcome.tone(),
+            status: run.outcome.status(),
             word: run.outcome.word(),
             id: html::escape(&run.id.to_string()),
             href: run_path(&run.id),

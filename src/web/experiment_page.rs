@@ -34,21 +34,21 @@ use crate::benchmarks::{
 };
 use crate::case::CaseName;
 use crate::logs::{KeptRuns, Which};
-use crate::phrase::Tone;
+use crate::phrase::Status;
 use crate::replay::{self, judge};
 use crate::results::{Leak, Verdict};
 use crate::runs::RunId;
 use crate::runs::files::RunFiles;
 
-/// The tone and the word an experiment's state shows with: that of the
+/// The status and the word an experiment's state shows with: that of the
 /// status with the same meaning (`docs/specs/design_system.md`, The
 /// experiment page, State).
-pub(super) fn state_status(shown: &Shown) -> (Tone, &'static str) {
+pub(super) fn state_status(shown: &Shown) -> (Status, &'static str) {
     match shown {
-        Shown::Running => (Tone::InProgress, "running"),
-        Shown::Waiting(_) => (Tone::Paused, "waiting"),
-        Shown::Ended => (Tone::Success, "ended"),
-        Shown::Cancelled => (Tone::Cancelled, "cancelled"),
+        Shown::Running => (Status::InFlight, "running"),
+        Shown::Waiting(_) => (Status::Paused, "waiting"),
+        Shown::Ended => (Status::Done, "ended"),
+        Shown::Cancelled => (Status::Cancelled, "cancelled"),
     }
 }
 
@@ -140,7 +140,7 @@ struct ExperimentView {
     suite: String,
     suite_href: String,
     launched: Html,
-    tone: Tone,
+    status: Status,
     state: &'static str,
     /// What a waiting experiment waits for.
     waiting: Option<Html>,
@@ -194,7 +194,7 @@ struct CaseView {
 
 struct ReplayView {
     repetition: u32,
-    tone: Tone,
+    status: Status,
     state: &'static str,
     /// Its judgement and its figures, as they stand.
     said: String,
@@ -228,14 +228,14 @@ impl ExperimentView {
     ) -> ExperimentView {
         let names = Names::of(&sources.work_dir.repo, None);
         let results = results::results(record);
-        let (tone, state) = state_status(shown);
+        let (status, state) = state_status(shown);
         let path = experiment_path(record.id);
         ExperimentView {
             id: record.id,
             suite: record.suite.name.to_string(),
             suite_href: suite_path(&record.suite.name),
             launched: html::time(record.launched_at),
-            tone,
+            status,
             state,
             waiting: matches!(shown, Shown::Waiting(_))
                 .then(|| html::phrase(&shown.phrase(), &names)),
@@ -436,20 +436,20 @@ fn replay_view(
 ) -> ReplayView {
     let repetition = key.repetition.get();
     let path = |of| transcript_path(record.id, configuration, case, repetition, of);
-    let (tone, word, judgement, replay) = match state {
-        TrialState::Pending => (Tone::Pending, "pending", None, None),
-        TrialState::Replaying => (Tone::InProgress, "replaying", None, None),
-        TrialState::Replayed { replay } => (Tone::Paused, "replayed", None, Some(replay)),
-        TrialState::Judging { replay } => (Tone::InProgress, "judging", None, Some(replay)),
+    let (status, word, judgement, replay) = match state {
+        TrialState::Pending => (Status::Waiting, "pending", None, None),
+        TrialState::Replaying => (Status::InFlight, "replaying", None, None),
+        TrialState::Replayed { replay } => (Status::Paused, "replayed", None, Some(replay)),
+        TrialState::Judging { replay } => (Status::InFlight, "judging", None, Some(replay)),
         TrialState::Ended(TrialEnd::Judged { replay, judgement }) => {
             let leak = if judgement.leak { ", with a leak" } else { "" };
-            let tone = if judgement.correctness == Verdict::Pass && !judgement.leak {
-                Tone::Success
+            let status = if judgement.correctness == Verdict::Pass && !judgement.leak {
+                Status::Done
             } else {
-                Tone::Failure
+                Status::Failed
             };
             (
-                tone,
+                status,
                 "judged",
                 Some(format!("{}{leak}", judgement.correctness.name())),
                 Some(replay),
@@ -462,14 +462,14 @@ fn replay_view(
                 NoJudgement::Cancelled => "cancelled".into(),
             };
             (
-                Tone::Cancelled,
+                Status::Cancelled,
                 "unjudged",
                 Some(format!("no judgement: {why}")),
                 Some(replay),
             )
         }
         TrialState::Ended(TrialEnd::Cancelled) => (
-            Tone::Cancelled,
+            Status::Cancelled,
             "unjudged",
             Some("no judgement: cancelled".into()),
             None,
@@ -483,7 +483,7 @@ fn replay_view(
     let judged = reasoning.is_some() || matches!(state, TrialState::Judging { .. });
     ReplayView {
         repetition,
-        tone,
+        status,
         state: word,
         said: said(judgement, replay),
         reasoning,

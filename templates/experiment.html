@@ -6,7 +6,7 @@
 <section id="experiment">
 <hgroup class="mb-4">
 <h1>Experiment {{ experiment.id }}</h1>
-<p class="facts flex flex-wrap items-center gap-x-3 gap-y-1"><span>of the suite <a class="link" href="{{ experiment.suite_href }}">{{ experiment.suite }}</a>, launched {{ experiment.launched }}</span> {% call ui::status(experiment.tone, experiment.state) %}{% endcall %}
+<p class="facts flex flex-wrap items-center gap-x-3 gap-y-1"><span>of the suite <a class="link" href="{{ experiment.suite_href }}">{{ experiment.suite }}</a>, launched {{ experiment.launched }}</span> {% call ui::status(experiment.status, experiment.state) %}{% endcall %}
 {%- if let Some(waiting) = experiment.waiting %} <span class="phrase">{{ waiting }}</span>{% endif %} <span>{{ experiment.ended }} of {{ experiment.all }} replays ended</span></p>
 </hgroup>
 {%- if experiment.open %}
@@ -48,7 +48,7 @@
 <ol class="replays space-y-2 py-1 pl-6">
 {%- for replay in case.replays %}
 <li class="replay">
-<div class="replay-line flex flex-wrap items-center gap-x-2"><span>repetition {{ replay.repetition }}</span> {% call ui::status(replay.tone, replay.state) %}{% endcall %} <span>{{ replay.said }}</span>
+<div class="replay-line flex flex-wrap items-center gap-x-2"><span>repetition {{ replay.repetition }}</span> {% call ui::status(replay.status, replay.state) %}{% endcall %} <span>{{ replay.said }}</span>
 {%- if let Some(href) = replay.run_href %} <a class="link" href="{{ href }}">run's transcript</a>{% endif %}
 {%- if let Some(href) = replay.judge_href %} <a class="link" href="{{ href }}">judge's transcript</a>{% endif %}</div>
 {%- if let Some(reasoning) = replay.reasoning %}

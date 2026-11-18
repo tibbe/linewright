@@ -28,7 +28,7 @@ use crate::benchmarks::{
     CaseEntry, ExperimentId, ExperimentRecord, RemoveError, Suite, SuiteName, SuiteShown, percent,
 };
 use crate::case::{self, CaseName, Refusal, ReplayStage, SuiteChoice};
-use crate::phrase::Tone;
+use crate::phrase::Status;
 use crate::runs::{Recorded, RunId};
 
 /// A case's row.
@@ -77,7 +77,7 @@ struct ExperimentRow {
     id: ExperimentId,
     href: String,
     launched: Html,
-    tone: Tone,
+    status: Status,
     state: &'static str,
     /// Each configuration's pass rate, in the experiment's order.
     pass_rates: String,
@@ -85,7 +85,7 @@ struct ExperimentRow {
 
 impl ExperimentRow {
     fn of(sources: &Sources, record: &ExperimentRecord) -> ExperimentRow {
-        let (tone, state) = state_status(&shown_of(sources, record));
+        let (status, state) = state_status(&shown_of(sources, record));
         let pass_rates: Vec<String> = results::results(record)
             .configurations
             .iter()
@@ -101,7 +101,7 @@ impl ExperimentRow {
             id: record.id,
             href: experiment_path(record.id),
             launched: html::time(record.launched_at),
-            tone,
+            status,
             state,
             pass_rates: pass_rates.join(", "),
         }

@@ -18,7 +18,7 @@ use super::{Frame, Hold, Page, Read, events, frame_regions, render};
 use crate::api::Sources;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown};
 use crate::experiments::runner::ExperimentsShown;
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
 
 #[derive(Template, WebTemplate)]
@@ -37,7 +37,7 @@ struct ServerRegion<'a> {
 
 /// The facts about Linewright itself as the page words them, each on a
 /// line, past times standing alone, as the page's script shows them
-/// relative. A hold's or a problem's value shows in its tone.
+/// relative. A hold's or a problem's value shows in its status.
 /// The environment's fact ends with `builds`, each a line. The replays and
 /// judges of experiments `replays` has in flight follow the runs in flight
 /// while there are any.
@@ -53,7 +53,7 @@ fn facts(
     let held = |hold: Hold, label, words| Fact {
         label,
         lines: vec![vec![Piece::Status {
-            tone: hold.tone(),
+            status: hold.status(),
             words,
         }]],
     };
@@ -137,16 +137,16 @@ fn environment(environment: &EnvironmentShown, builds: Vec<Html>) -> Fact<Phrase
                 .time(built.at),
         ),
         None => Piece::Status {
-            tone: Tone::Pending,
+            status: Status::Waiting,
             words: "none yet".into(),
         },
     };
     let building = environment.building_since.map(|since| Piece::Status {
-        tone: Tone::InProgress,
+        status: Status::InFlight,
         words: Phrase::from("building since ").time(since),
     });
     let failed = environment.latest_failed.map(|at| Piece::Status {
-        tone: Tone::Failure,
+        status: Status::Failed,
         words: Phrase::from("the latest build failed ").time(at),
     });
     Fact {
@@ -213,7 +213,7 @@ fn build_html(build: &BuildShown, names: &Names) -> Html {
     let line = match shown::account(build) {
         Account::Failed(account) if record.line.ended.is_none() => entry_row(&Row {
             id: None,
-            text: command_text("setup", command, &status_html(Tone::Failure, &account)),
+            text: command_text("setup", command, &status_html(Status::Failed, &account)),
             lasted: None,
             fold: None,
         }),
@@ -276,24 +276,24 @@ mod tests {
     }
 
     /// Each fact as label, value as the commands print its times, and the
-    /// tone it shows in, for a fact of one line that is all text or one
+    /// status it shows in, for a fact of one line that is all text or one
     /// status.
     fn worded(
         linewright: &Linewright,
         replays: &ExperimentsShown,
-    ) -> Vec<(&'static str, String, Option<Tone>)> {
+    ) -> Vec<(&'static str, String, Option<Status>)> {
         facts(linewright, replays, vec![])
             .into_iter()
             .map(|fact| {
-                let (value, tone) = match &fact.lines[..] {
+                let (value, status) = match &fact.lines[..] {
                     [line] => match &line[..] {
                         [Piece::Text(text)] => (text.to_string(), None),
-                        [Piece::Status { tone, words }] => (words.to_string(), Some(*tone)),
+                        [Piece::Status { status, words }] => (words.to_string(), Some(*status)),
                         _ => panic!("a line of more than one piece"),
                     },
                     _ => panic!("a fact of more than one line"),
                 };
-                (fact.label, value, tone)
+                (fact.label, value, status)
             })
             .collect()
     }
@@ -376,22 +376,22 @@ mod tests {
                     "3, the first 2026-10-01 12:31:00 UTC, the last 2026-10-01 12:33:00 UTC: \
                      taking a snapshot: GitHub is down"
                         .into(),
-                    Some(Tone::Failure)
+                    Some(Status::Failed)
                 ),
                 (
                     "Usage limit",
                     "in force until 2026-10-01 15:00:00 UTC".into(),
-                    Some(Tone::Cancelled)
+                    Some(Status::Cancelled)
                 ),
                 (
                     "Repository file",
                     "`.linewright/config.toml`: the setting `max-runs` is the operator's".into(),
-                    Some(Tone::Failure)
+                    Some(Status::Failed)
                 ),
                 (
                     "Drain",
                     "started 2026-10-01 12:32:00 UTC, deadline 2026-10-01 14:32:00 UTC".into(),
-                    Some(Tone::InProgress)
+                    Some(Status::InFlight)
                 ),
                 ("Runs in flight", "1 of 4".into(), None),
                 (
@@ -422,7 +422,7 @@ mod tests {
             (
                 "Failed polls",
                 "1, 2026-10-01 12:31:00 UTC: taking a snapshot: bad credentials".into(),
-                Some(Tone::Failure)
+                Some(Status::Failed)
             )
         );
     }

@@ -28,7 +28,7 @@ use super::{
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
-use crate::phrase::Tone;
+use crate::phrase::Status;
 use crate::runs::{self, Ran, RunId};
 use crate::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
 use crate::transcript::{
@@ -654,12 +654,12 @@ struct Said {
 }
 
 /// The account of an entry that runs as far as `course` says, as markup:
-/// `running`, and how it ended when it failed, in their tones.
+/// `running`, and how it ended when it failed, each as its status.
 fn account_html(course: Course<Said>) -> String {
     match course {
-        Course::Running => status_html(Tone::InProgress, RUNNING),
+        Course::Running => status_html(Status::InFlight, RUNNING),
         Course::Interrupted => INTERRUPTED.to_string(),
-        Course::Ended(Said { said, failed: true }) => status_html(Tone::Failure, &said),
+        Course::Ended(Said { said, failed: true }) => status_html(Status::Failed, &said),
         Course::Ended(Said {
             said,
             failed: false,
@@ -958,16 +958,16 @@ fn io_html(id: &str, call: &Call) -> String {
 
 #[derive(Template)]
 #[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::status(tone, word) %}{% endcall %}"#,
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::status(status, word) %}{% endcall %}"#,
     ext = "html"
 )]
-struct Status<'a> {
-    tone: Tone,
+struct Badge<'a> {
+    status: Status,
     word: &'a str,
 }
 
-pub(super) fn status_html(tone: Tone, word: &str) -> String {
-    render(&Status { tone, word })
+pub(super) fn status_html(status: Status, word: &str) -> String {
+    render(&Badge { status, word })
 }
 
 /// Where the page's stream follows a run in flight from.

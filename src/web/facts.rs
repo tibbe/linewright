@@ -1,7 +1,7 @@
 //! A page's facts about one thing (`docs/specs/design_system.md` and
 //! `docs/specs/web/design_system.md`, Facts).
 
-use crate::phrase::Tone;
+use crate::phrase::Status;
 
 use super::html::Html;
 
@@ -17,14 +17,14 @@ pub(super) enum Piece<Words = Html> {
     Text(Words),
     /// A status: its icon and words in its colour, nothing behind them.
     Status {
-        tone: Tone,
+        status: Status,
         words: Words,
     },
     /// An item as its card is (`docs/specs/design_system.md`, The item page,
     /// Related items): its card status's icon, if it has one, then its
     /// heading, with the pull request icon where it is one.
     Item {
-        tone: Option<Tone>,
+        status: Option<Status>,
         pull_request: bool,
         heading: Words,
     },
@@ -44,16 +44,16 @@ impl<Words> Fact<Words> {
                     line.into_iter()
                         .map(|piece| match piece {
                             Piece::Text(words) => Piece::Text(draw(words)),
-                            Piece::Status { tone, words } => Piece::Status {
-                                tone,
+                            Piece::Status { status, words } => Piece::Status {
+                                status,
                                 words: draw(words),
                             },
                             Piece::Item {
-                                tone,
+                                status,
                                 pull_request,
                                 heading,
                             } => Piece::Item {
-                                tone,
+                                status,
                                 pull_request,
                                 heading: draw(heading),
                             },

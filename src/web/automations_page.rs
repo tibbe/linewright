@@ -13,9 +13,9 @@ use super::names::Names;
 use super::{ErrorPage, Frame, Page, Read, events, frame_regions, render, run_path};
 use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
-use crate::phrase::{Phrase, Tone};
+use crate::phrase::{Phrase, Status};
 use crate::runs::{self, Recorded, Run};
-use crate::status::{self, Schedule, Status, UnparsedAutomation, View};
+use crate::status::{self, Schedule, UnparsedAutomation, View};
 
 /// The automations as `status` answers for them, with what the page shows
 /// beside: each schedule in words, and each last run's outcome.
@@ -46,7 +46,7 @@ pub(super) enum LastRun {
 impl Automations {
     /// From `status`'s answer over `view` and `recorded`.
     pub(super) fn of(
-        status: &Status,
+        status: &status::Status,
         view: &View,
         recorded: &[Recorded],
         now: Timestamp,
@@ -102,7 +102,7 @@ enum LastRunShown {
     Run {
         id: Html,
         href: String,
-        tone: Tone,
+        status: Status,
         word: &'static str,
         about: Html,
     },
@@ -132,7 +132,7 @@ impl AutomationsShown {
                                 run.started().by_hand(),
                                 run.started_at,
                             )),
-                            tone: run.outcome.tone(),
+                            status: run.outcome.status(),
                             word: run.outcome.word(),
                         },
                         LastRun::NoneYet { first_seen } => {
