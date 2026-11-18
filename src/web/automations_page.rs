@@ -1,4 +1,4 @@
-//! The automations page (`docs/specs/design_system.md`, The automations page):
+//! The automations page (`docs/specs/automations.md`, Automations):
 //! each automation file that does not parse, then a row per automation.
 
 use askama::Template;

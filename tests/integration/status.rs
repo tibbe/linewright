@@ -586,7 +586,7 @@ fn an_issue_cut_into_tickets_shows_as_their_tracking_issue_with_its_closed_ticke
     );
 }
 
-/// `docs/specs/monitoring.md`, status: only the open managed items; a
+/// `docs/specs/operation.md`, `lw status`: only the open managed items; a
 /// closed tracking issue is done.
 #[test_log::test]
 fn a_closed_tracking_issue_is_not_among_the_items() {

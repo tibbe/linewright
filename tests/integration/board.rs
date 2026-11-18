@@ -263,7 +263,7 @@ fn the_done_window_not_the_spec_lookback_says_how_long_a_closed_ticket_stays_in_
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Done, 2)]);
 }
 
-/// `docs/specs/design_system.md`, The board: a card is in the column of its
+/// `docs/specs/board.md`, Board: a card is in the column of its
 /// item's state, whatever run is in flight on it.
 #[test_log::test]
 fn a_card_is_in_the_column_of_its_state_whatever_run_is_in_flight() {
@@ -1482,7 +1482,7 @@ fn changes_requested(number: u64, closes: &[u64]) -> Pull {
     }
 }
 
-/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// `docs/specs/board.md`, Cards, What stops a pull request merging:
 /// a pull request whose run is held back says so, as in Ready, ahead of what
 /// the run would act on.
 #[test_log::test]
@@ -1551,7 +1551,7 @@ fn a_pull_request_whose_run_is_held_back_says_paused_or_queued_ahead_of_what_the
     );
 }
 
-/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// `docs/specs/board.md`, Cards, What stops a pull request merging:
 /// stalled, handed back, unassigned and a run in flight come before a run
 /// held back.
 #[test_log::test]
@@ -1604,7 +1604,7 @@ fn a_stalled_handed_back_unassigned_or_running_pull_request_says_so_ahead_of_its
     );
 }
 
-/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// `docs/specs/board.md`, Cards, What stops a pull request merging:
 /// with no run held back, the line says what stops it merging, and a run
 /// held back on another pull request closing the same issue does not show.
 #[test_log::test]
@@ -1724,7 +1724,7 @@ fn a_ready_card_says_its_lowest_blocker_then_its_assignee_then_what_holds_it_bac
     );
 }
 
-/// `docs/specs/design_system.md`, Cards, and `docs/specs/runs.md`, Holds,
+/// `docs/specs/board.md`, Cards, and `docs/specs/runs.md`, Holds,
 /// Rank: a held card names the first hold in force.
 #[test_log::test]
 fn a_held_card_names_the_first_hold() {
@@ -2060,7 +2060,7 @@ fn assert_card_statuses(board: &Board, cards: &[(&str, u64, Option<CardStatus>)]
     }
 }
 
-/// `docs/specs/design_system.md`, Cards: the Card status column of the table
+/// `docs/specs/board.md`, Cards: the Card status column of the table
 /// of lines.
 #[test_log::test]
 fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
@@ -2149,7 +2149,7 @@ fn each_card_has_the_card_status_the_cards_table_gives_its_line() {
     );
 }
 
-/// `docs/specs/design_system.md`, Cards: in review, a card's status is that
+/// `docs/specs/board.md`, Cards: in review, a card's status is that
 /// of what stops it merging, the Card status column of its table, on an
 /// item's card or on the pull request's own.
 #[test_log::test]
@@ -2627,7 +2627,7 @@ fn a_pull_request_linewright_worked_that_merged_or_closed_unmerged_is_in_done_wh
     );
 }
 
-/// `docs/specs/design_system.md`, The board, Finished lanes: a lane with a
+/// `docs/specs/board.md`, Lanes, Finished lanes: a lane with a
 /// tracking issue is finished only once that issue is closed.
 #[test_log::test]
 fn a_lane_whose_tickets_are_all_closed_is_unfinished_while_its_tracking_issue_is_open() {
@@ -2666,7 +2666,7 @@ fn a_lane_whose_tickets_are_all_closed_is_unfinished_while_its_tracking_issue_is
     );
 }
 
-/// `docs/specs/design_system.md`, The board, Finished lanes: when the last
+/// `docs/specs/board.md`, Lanes, Finished lanes: when the last
 /// of its cards entered Done or its tracking issue closed, whichever is
 /// later.
 #[test_log::test]
@@ -2703,7 +2703,7 @@ fn a_lane_finished_when_its_last_card_entered_done_or_its_tracking_issue_closed_
     );
 }
 
-/// `docs/specs/design_system.md`, The board, Lanes: a lane's cards are its
+/// `docs/specs/board.md`, Lanes: a lane's cards are its
 /// managed tickets, and its head counts every ticket.
 #[test_log::test]
 fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_counts_it() {
@@ -2731,7 +2731,7 @@ fn a_ticket_that_is_not_managed_has_no_card_in_its_lane_and_its_head_still_count
     );
 }
 
-/// `docs/specs/design_system.md`, Cards: Ready's "not marked for
+/// `docs/specs/board.md`, Cards: Ready's "not marked for
 /// Linewright", after its blocker, its assignee and Linewright unassigned.
 #[test_log::test]
 fn a_ready_card_not_marked_for_linewright_says_so_after_its_blocker_assignee_and_unassigned() {
@@ -2775,7 +2775,7 @@ fn a_ready_card_not_marked_for_linewright_says_so_after_its_blocker_assignee_and
     assert_eq!(card(&board, 4).status(), None);
 }
 
-/// `docs/specs/design_system.md`, Cards: a card in Triage says what one in
+/// `docs/specs/board.md`, Cards: a card in Triage says what one in
 /// Ready would.
 #[test_log::test]
 fn a_triage_card_says_what_a_ready_card_would() {
@@ -2822,7 +2822,7 @@ fn a_triage_card_says_what_a_ready_card_would() {
     assert_eq!(line(&unmarked, 4), Some(CardLine::NotMarked));
 }
 
-/// `docs/specs/design_system.md`, Cards: a Working card for an issue an open
+/// `docs/specs/board.md`, Cards: a Working card for an issue an open
 /// issue blocks says so where no run is in flight, ahead of what holds it
 /// back.
 #[test_log::test]
@@ -2850,7 +2850,7 @@ fn a_working_card_blocked_by_an_open_issue_says_so_unless_a_run_is_in_flight() {
     assert!(matches!(line(&board, 2), Some(CardLine::Running(_))));
 }
 
-/// `docs/specs/design_system.md`, Cards: what stops a pull request
+/// `docs/specs/board.md`, Cards: what stops a pull request
 /// Linewright opened and is not assigned to merging is, after a stall,
 /// "handed back" where its last act on it was letting go of it, and
 /// "unassigned" otherwise, ahead of a run in flight and its checks.
@@ -2926,7 +2926,7 @@ fn a_pull_request_linewright_opened_and_is_not_assigned_to_was_handed_back_or_un
     );
 }
 
-/// `docs/specs/design_system.md`, Cards: "closed in #N" names the pull
+/// `docs/specs/board.md`, Cards: "closed in #N" names the pull
 /// request whose merge made the issue done, one since the issue was last
 /// opened or given a status label (`docs/specs/repository.md`, State).
 #[test_log::test]
@@ -3079,7 +3079,7 @@ fn with_issue(mut view: View, issue: Issue) -> View {
 }
 
 /// A ticket's card matches whoever is party to its tracking issue
-/// (`docs/specs/design_system.md`, Filtering by person).
+/// (`docs/specs/board.md`, Filtering by person).
 #[test_log::test]
 fn a_person_assigned_only_to_a_tracking_issue_is_matched_by_each_card_of_its_lane() {
     let view = with_issue(
@@ -3101,8 +3101,8 @@ fn a_person_assigned_only_to_a_tracking_issue_is_matched_by_each_card_of_its_lan
 }
 
 /// A ticket's card matches whoever is party to its tracking issue, not to a
-/// pull request closing that tracking issue (`docs/specs/design_system.md`,
-/// Filtering by person).
+/// pull request closing that tracking issue (`docs/specs/board.md`, Filtering
+/// by person).
 #[test_log::test]
 fn a_person_reviewing_only_a_pull_request_closing_a_tracking_issue_is_not_matched_by_its_tickets() {
     let view = with_peoples_pulls(
@@ -3128,7 +3128,7 @@ fn a_person_reviewing_only_a_pull_request_closing_a_tracking_issue_is_not_matche
 }
 
 /// A ticket Linewright cut counts as opened by whoever opened its tracking
-/// issue (`docs/specs/design_system.md`, Filtering by person, Opening).
+/// issue (`docs/specs/board.md`, Filtering by person, Opening).
 #[test_log::test]
 fn a_tickets_card_matches_its_tracking_issues_opener() {
     let view = with_issue(

@@ -37,9 +37,10 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
     Html(super::render(template))
 }
 
-/// `phrase` as HTML (`docs/specs/design_system.md`): an item is named as
-/// `names` names it, a time and a duration are `<time>` elements holding
-/// the text the commands print, and a label or a command is code.
+/// `phrase` as HTML (`docs/specs/board.md`, Naming items, and
+/// `docs/specs/design_system.md`, Time): an item is named as `names` names it,
+/// a time and a duration are `<time>` elements holding the text the commands
+/// print, and a label or a command is code.
 pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
     let mut html = String::new();
     for segment in phrase.segments() {

@@ -1,5 +1,5 @@
-//! A card's words (`docs/specs/design_system.md`, Cards), and a lane's head
-//! (The board).
+//! A card's words (`docs/specs/board.md`, Cards), and a lane's head
+//! (Lanes).
 
 use super::html::{self, Html};
 use super::names::Names;
@@ -11,7 +11,7 @@ use crate::phrase::{Phrase, Status};
 use crate::reconcile::WorkKind;
 
 /// A card's line, the one place a page names items by their number alone
-/// (`docs/specs/design_system.md`, Navigation).
+/// (`docs/specs/board.md`, Naming items).
 pub(super) struct Line(Phrase);
 
 impl Line {
@@ -36,7 +36,7 @@ fn card_phrase(card: &Card) -> Option<Phrase> {
     }
 }
 
-/// A lane's head (`docs/specs/design_system.md`, The board, Lanes and
+/// A lane's head (`docs/specs/board.md`, Lanes, A lane and
 /// Finished lanes): the tracking issue's number and title and its tickets
 /// closed of total, or the item's number and title; then when it finished,
 /// if it did. What follows the name is one `span` of class `tail`.

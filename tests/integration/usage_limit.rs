@@ -314,7 +314,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
     served.stop().await;
 }
 
-/// `docs/specs/design_system.md`, The run page, Working.
+/// `docs/specs/runs.md`, Run, Working.
 #[test_log::test(tokio::test)]
 async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start_to_its_end() {
     let mut world = World::serving().await;

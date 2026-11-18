@@ -20,7 +20,7 @@ pub(super) enum Piece<Words = Html> {
         status: Status,
         words: Words,
     },
-    /// An item as its card is (`docs/specs/design_system.md`, The item page,
+    /// An item as its card is (`docs/specs/board.md`, Item,
     /// Related items): its card status's icon, if it has one, then its
     /// heading, with the pull request icon where it is one.
     Item {

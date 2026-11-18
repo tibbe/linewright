@@ -1477,7 +1477,7 @@ fn read_merged_text(view: &View, pull: MergedPull) -> Vec<String> {
     lines_of(&render_answer(&answer, false))
 }
 
-/// `docs/specs/monitoring.md`, explain: a merged spec change is in its
+/// `docs/specs/board.md`, `lw explain`: a merged spec change is in its
 /// state, merged, and left alone, its work being its issue's.
 #[test_log::test]
 fn a_spec_change_not_yet_taken_up_is_merged_and_left_alone_to_be_taken_up() {

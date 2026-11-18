@@ -185,7 +185,7 @@ fn settings_shown(html: &Html) -> (String, Vec<String>, bool) {
     (line, layers, settings[0].attr("open").is_some())
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's settings and
+/// `docs/specs/runs.md`, Run, A session's settings and
 /// Verbose.
 #[test_log::test(tokio::test)]
 async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_and_verbose_opens_them()
@@ -227,7 +227,7 @@ async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_mute
     }
 }
 
-/// `docs/specs/design_system.md`, The run page, Views, Prompts, Durations
+/// `docs/specs/runs.md`, Run, Views, Prompts, Durations
 /// and Folding.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_to_its_line() {
@@ -306,7 +306,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/web/design_system.md`, Transcripts, Lines.
+/// `docs/specs/web/runs.md`, Run, Lines.
 #[test_log::test(tokio::test)]
 async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_opens_fills() {
     let pages = implemented_as_recorded().await;
@@ -336,7 +336,7 @@ async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_
     }
 }
 
-/// `docs/specs/design_system.md`, Out of scope: a link of its own to each
+/// `docs/specs/runs.md`, Out of scope: a link of its own to each
 /// transcript entry.
 #[test_log::test(tokio::test)]
 async fn no_entry_on_the_run_page_has_a_link_of_its_own() {
@@ -348,7 +348,7 @@ async fn no_entry_on_the_run_page_has_a_link_of_its_own() {
     assert_eq!(select(&html, "a[href^='#']").len(), 0);
 }
 
-/// `docs/specs/design_system.md`, The run page, Views and Verbose.
+/// `docs/specs/runs.md`, Run, Views and Verbose.
 #[test_log::test(tokio::test)]
 async fn the_run_pages_verbose_switch_shows_the_agents_verbose_view_with_everything_open() {
     let pages = implemented_as_recorded().await;
@@ -899,7 +899,7 @@ fn maintenances_shown(html: &Html) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Maintenance; The run page,
+/// `docs/specs/runs.md`, Transcripts, Maintenance; Run,
 /// Durations, Folding and Verbose.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_maintenance_command_as_its_sessions_first_entry_folded_to_its_line() {
@@ -991,7 +991,7 @@ async fn the_page_of_a_run_whose_maintenance_command_failed_shows_it_open_under_
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// `docs/specs/runs.md`, Transcripts, Running; Run,
 /// Following.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_maintenance_command_running_and_patches_its_line_once_it_ends() {
@@ -1083,7 +1083,7 @@ fn clones_shown(html: &Html) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, The clone; The run page,
+/// `docs/specs/runs.md`, Transcripts, The clone; Run,
 /// Folding.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_the_clone_as_its_sessions_first_entry_before_the_maintenance_command() {
@@ -1123,7 +1123,7 @@ async fn the_run_page_shows_the_clone_as_its_sessions_first_entry_before_the_mai
     );
 }
 
-/// `docs/specs/design_system.md`, The run page, Folding.
+/// `docs/specs/runs.md`, Run, Folding.
 #[test_log::test(tokio::test)]
 async fn the_page_of_a_run_whose_clone_could_not_be_made_shows_its_error_open() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
@@ -1160,7 +1160,7 @@ async fn the_page_of_a_run_whose_clone_could_not_be_made_shows_its_error_open() 
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// `docs/specs/runs.md`, Transcripts, Running; Run,
 /// Following.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_made() {
@@ -1211,7 +1211,7 @@ async fn the_run_page_shows_the_clone_running_and_patches_its_line_once_it_is_ma
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// `docs/specs/runs.md`, Transcripts, Running; Run,
 /// Following.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
@@ -1271,8 +1271,8 @@ async fn the_run_page_shows_an_entry_its_session_ends_first_as_interrupted() {
     assert_eq!(lines, ["Bash(cargo test) → interrupted | 10s"]);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Thinking, A turn's length and
-/// Cut short; The run page, Folding.
+/// `docs/specs/runs.md`, Transcripts, Thinking, A turn's length and
+/// Cut short; Run, Folding.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_how_long_the_agent_thought_and_worked_and_what_its_session_cut_short() {
     let thought = json!({
@@ -1313,7 +1313,7 @@ async fn the_run_page_shows_how_long_the_agent_thought_and_worked_and_what_its_s
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running; The run page,
+/// `docs/specs/runs.md`, Transcripts, Running; Run,
 /// Durations.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_no_duration_for_an_entry_interrupted_where_its_sessions_end_is_not_known()
@@ -1430,8 +1430,8 @@ fn working_step(html: &Html) -> Option<String> {
     })
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading;
-/// `docs/specs/web/design_system.md`, Transcripts, Durations.
+/// `docs/specs/runs.md`, Run, A session's heading;
+/// `docs/specs/web/runs.md`, Run, Durations.
 #[test_log::test(tokio::test)]
 async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_muted_text() {
     let output = cloned_and_called() + &session_ended(at("2026-10-14T12:00:40Z")) + "\n";
@@ -1451,7 +1451,7 @@ async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_muted_t
     assert_in_muted_text(&html, "#s1-heading time.duration");
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading,
+/// `docs/specs/runs.md`, Run, A session's heading,
 /// Working and Following.
 #[test_log::test(tokio::test)]
 async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_step_while_no_entry_runs()
@@ -1562,7 +1562,7 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     assert_eq!(ended_heading, [heading("50s")]);
 }
 
-/// `docs/specs/design_system.md`, The run page, Working.
+/// `docs/specs/runs.md`, Run, Working.
 #[test_log::test(tokio::test)]
 async fn the_working_step_goes_once_the_run_ends() {
     let pages = triaged(&cloned_and_called(), serde_json::Value::Null).await;

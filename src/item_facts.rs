@@ -1,7 +1,6 @@
-//! The item page's facts about #N (`docs/specs/design_system.md`, The item
-//! page): its state and its card, what Linewright waits for
-//! and the items it relates to, from what `explain` answers of it, the view
-//! it answered from and that view's board.
+//! The item page's facts about #N (`docs/specs/board.md`, Item): its state and
+//! its card, what Linewright waits for and the items it relates to, from what
+//! `explain` answers of it, the view it answered from and that view's board.
 
 use crate::board::{self, Board, Card, CardStatus, Column, Lane, LaneHeading};
 use crate::domain::{
@@ -32,7 +31,7 @@ pub struct ItemFacts {
     pub closes: Vec<Related>,
 }
 
-/// The State fact (`docs/specs/design_system.md`, The item page).
+/// The State fact (`docs/specs/board.md`, Item).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateFact {
     /// Its state, and its card and the card's column, on the board or off
@@ -56,7 +55,7 @@ pub enum StateFact {
     },
 }
 
-/// An item a fact lists (`docs/specs/design_system.md`, The item page,
+/// An item a fact lists (`docs/specs/board.md`, Item,
 /// Related items).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Related {

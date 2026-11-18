@@ -1,4 +1,4 @@
-//! The runs page (`docs/specs/design_system.md`, Lists of runs): every run,
+//! The runs page (`docs/specs/runs.md`, Runs): every run,
 //! narrowed by its filters (`docs/specs/design_system.md`, Filters): the
 //! item, the stage and the time since which runs started.
 

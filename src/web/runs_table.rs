@@ -1,4 +1,4 @@
-//! A list of runs as a table (`docs/specs/design_system.md`, Lists of runs).
+//! A list of runs as a table (`docs/specs/runs.md`, Runs).
 
 use askama::Template;
 

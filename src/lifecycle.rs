@@ -32,8 +32,8 @@ pub enum State {
 }
 
 impl State {
-    /// The column of a card in this state (`docs/specs/design_system.md`,
-    /// The board): none for tracking, since a tracking issue has no card.
+    /// The column of a card in this state (`docs/specs/board.md`, Board): none
+    /// for tracking, since a tracking issue has no card.
     pub fn column(self) -> Option<Column> {
         Some(match self {
             State::NeedsTriage => Column::Triage,
@@ -63,7 +63,7 @@ impl State {
         }
     }
 
-    /// How it is shown (`docs/specs/design_system.md`, States).
+    /// How it is shown (`docs/specs/board.md`, States).
     pub fn shown(self) -> &'static str {
         match self {
             State::NeedsTriage => "Waiting for triage",

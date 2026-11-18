@@ -1,4 +1,4 @@
-//! The suites page (`docs/specs/design_system.md`, The suites page): a row
+//! The suites page (`docs/specs/benchmarks.md`, Screens, Suites): a row
 //! per suite, and the form that makes one.
 
 use askama::Template;

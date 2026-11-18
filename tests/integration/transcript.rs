@@ -277,7 +277,7 @@ session 1: started 2026-10-13 10:00:00 UTC
     );
 }
 
-/// `docs/specs/monitoring.md`, logs, Running in JSON.
+/// `docs/specs/runs.md`, `lw logs`, Running in JSON.
 #[test_log::test]
 fn json_gives_a_tool_call_null_for_what_it_holds_once_it_returns() {
     let record = SessionRecord {
@@ -892,7 +892,7 @@ fn after_setting_up() -> [SessionRecord; 2] {
     ]
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Times and Maintenance.
+/// `docs/specs/runs.md`, Transcripts, Maintenance, and `lw logs`, Times.
 #[test_log::test]
 fn a_maintenance_command_is_its_sessions_first_entry_at_its_start_with_its_output_only_in_full_or_when_it_failed()
  {
@@ -958,7 +958,7 @@ fn a_maintenance_command_shows_how_it_ended_and_its_output_unless_it_succeeded_o
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test]
 fn a_maintenance_command_shows_running_until_it_ends() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
@@ -974,7 +974,7 @@ fn a_maintenance_command_shows_running_until_it_ends() {
     );
 }
 
-/// `docs/specs/monitoring.md`, logs, Maintenance.
+/// `docs/specs/runs.md`, `lw logs`, Maintenance.
 #[test_log::test]
 fn json_gives_a_maintenance_command_with_its_account_and_output_null_until_it_has_ended() {
     let running = setting_up("2026-10-13T10:00:00Z", "npm ci", None, "");
@@ -1061,7 +1061,7 @@ fn json_gives_a_maintenance_command_with_its_account_and_output_null_until_it_ha
     );
 }
 
-/// `docs/specs/monitoring.md`, logs, Following in JSON.
+/// `docs/specs/runs.md`, `lw logs`, Following in JSON.
 #[test_log::test]
 fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_ended() {
     let recorded = recorded();
@@ -1101,7 +1101,7 @@ fn following_gives_a_tool_call_as_the_object_it_has_running_then_the_one_it_has_
     assert_eq!(unstamped(&objects[1]), unstamped(&snapshot(&recorded)[0]));
 }
 
-/// `docs/specs/monitoring.md`, logs, Running in JSON.
+/// `docs/specs/runs.md`, `lw logs`, Running in JSON.
 #[test_log::test]
 fn a_maintenance_line_ended_in_part_does_not_read() {
     let line = |ended| {
@@ -1129,7 +1129,7 @@ fn a_maintenance_line_ended_in_part_does_not_read() {
     }
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Followed.
+/// `docs/specs/runs.md`, Transcripts, Followed.
 #[test_log::test]
 fn following_shows_a_maintenance_command_as_it_starts_and_again_at_its_end_with_its_account() {
     let [succeeded, failed] = after_setting_up();
@@ -1252,7 +1252,7 @@ fn a_maintenance_command_recorded_before_its_start_and_end_were_shows_with_no_ti
     assert_eq!(followed[followed.len() - 3..], shown[shown.len() - 3..]);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Followed: a maintenance command's
+/// `docs/specs/runs.md`, Transcripts, Followed: a maintenance command's
 /// output shows once it has ended, however its end is read.
 #[test_log::test]
 fn a_maintenance_commands_output_is_read_once_its_end_is_even_when_a_read_stops_inside_the_end() {
@@ -1321,7 +1321,8 @@ fn with_a_sub_agent_of_3h_2m_9s() -> String {
     ])
 }
 
-/// `docs/specs/design_system.md`, Transcripts; Time, Durations.
+/// `docs/specs/runs.md`, Transcripts, and `lw logs`, Times;
+/// `docs/specs/design_system.md`, Time, Durations.
 #[test_log::test]
 fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its_time_past_the_hour()
  {
@@ -1457,7 +1458,7 @@ fn after_cloning() -> [SessionRecord; 2] {
     ]
 }
 
-/// `docs/specs/design_system.md`, Transcripts, The clone.
+/// `docs/specs/runs.md`, Transcripts, The clone.
 #[test_log::test]
 fn the_clone_is_its_sessions_first_entry_at_its_start_with_how_long_it_took_and_its_error_if_it_failed()
  {
@@ -1490,7 +1491,7 @@ fn the_clone_is_its_sessions_first_entry_at_its_start_with_how_long_it_took_and_
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test]
 fn the_clone_shows_running_until_it_is_made() {
     let running = SessionRecord {
@@ -1509,7 +1510,7 @@ fn the_clone_shows_running_until_it_is_made() {
     );
 }
 
-/// `docs/specs/monitoring.md`, logs, The clone and Running in JSON.
+/// `docs/specs/runs.md`, `lw logs`, The clone and Running in JSON.
 #[test_log::test]
 fn json_gives_the_clone_with_how_long_it_took_and_its_error_null_until_it_is_made() {
     let running = SessionRecord {
@@ -1567,7 +1568,7 @@ fn json_gives_the_clone_with_how_long_it_took_and_its_error_null_until_it_is_mad
     assert!(serde_json::from_value::<transcript::Line>(error_alone).is_err());
 }
 
-/// `docs/specs/monitoring.md`, logs, Following in JSON.
+/// `docs/specs/runs.md`, `lw logs`, Following in JSON.
 #[test_log::test]
 fn following_gives_the_clone_as_it_starts_and_again_once_it_ends() {
     let [made, failed] = after_cloning();
@@ -1610,7 +1611,7 @@ fn following_gives_the_clone_as_it_starts_and_again_once_it_ends() {
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts: a session recorded before its
+/// `docs/specs/runs.md`, Transcripts: a session recorded before its
 /// clone was an entry starts with its maintenance command, as it did.
 #[test_log::test]
 fn a_session_recorded_before_its_clone_was_an_entry_reads_as_before() {
@@ -1653,7 +1654,7 @@ fn session_ended(at: &str) -> serde_json::Value {
     serde_json::from_str(&transcript::session_ended(time(at))).unwrap()
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test]
 fn a_tool_call_its_session_ends_first_shows_interrupted_where_it_showed_running() {
     let known = calling(&[session_ended("2026-10-13T10:00:09Z")]);
@@ -1698,7 +1699,7 @@ fn call_lasted(record: &SessionRecord, written: Written) -> Option<Lasted> {
     transcript::parse(record, written).lasted(&first)
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running and Followed.
+/// `docs/specs/runs.md`, Transcripts, Running and Followed.
 #[test_log::test]
 fn a_tool_call_runs_until_it_returns_or_ends_in_the_background_or_its_session_ends() {
     let returned_at_5 = calling(&[returned("2026-10-13T10:00:05Z", &json!({}))]);
@@ -1747,7 +1748,7 @@ fn a_tool_call_runs_until_it_returns_or_ends_in_the_background_or_its_session_en
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test]
 fn the_clone_and_the_maintenance_command_last_until_they_end_or_their_session_does() {
     let cloned = SessionRecord {
@@ -1796,7 +1797,7 @@ fn the_clone_and_the_maintenance_command_last_until_they_end_or_their_session_do
     );
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading and
+/// `docs/specs/runs.md`, Run, A session's heading and
 /// Working.
 #[test_log::test]
 fn a_session_has_its_end_and_its_waits_for_the_usage_limit() {
@@ -1867,7 +1868,7 @@ fn session_lasted(record: &SessionRecord, written: Written) -> Option<SessionLas
     transcript::parse(record, written).lasted_so_far()
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading.
+/// `docs/specs/runs.md`, Run, A session's heading.
 #[test_log::test]
 fn a_session_lasts_from_its_start_to_its_end_leaving_out_its_waits_for_the_usage_limit() {
     let ended_at_9 = calling(&[session_ended("2026-10-13T10:00:09Z")]);
@@ -1889,7 +1890,7 @@ fn a_session_lasts_from_its_start_to_its_end_leaving_out_its_waits_for_the_usage
     );
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading.
+/// `docs/specs/runs.md`, Run, A session's heading.
 #[test_log::test]
 fn a_session_whose_end_is_not_known_lasts_to_its_last_entry() {
     let returned_at_5 = calling(&[returned("2026-10-13T10:00:05Z", &json!({}))]);
@@ -1917,7 +1918,7 @@ fn a_session_whose_end_is_not_known_lasts_to_its_last_entry() {
     );
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading.
+/// `docs/specs/runs.md`, Run, A session's heading.
 #[test_log::test]
 fn a_session_that_goes_on_lasts_to_now_and_holds_still_while_it_waits_for_the_usage_limit() {
     let going = calling(&[]);
@@ -1950,7 +1951,7 @@ fn a_session_that_goes_on_lasts_to_now_and_holds_still_while_it_waits_for_the_us
     assert_eq!(waiting_since_5.seconds(now), 5.0);
 }
 
-/// `docs/specs/design_system.md`, The run page, A session's heading.
+/// `docs/specs/runs.md`, Run, A session's heading.
 #[test_log::test]
 fn a_session_with_no_start_has_no_duration() {
     let record = SessionRecord {
@@ -1961,7 +1962,7 @@ fn a_session_with_no_start_has_no_duration() {
     assert_eq!(session_lasted(&record, Written::Whole), None);
 }
 
-/// `docs/specs/monitoring.md`, logs, Running in JSON.
+/// `docs/specs/runs.md`, `lw logs`, Running in JSON.
 #[test_log::test]
 fn json_gives_an_interrupted_entry_the_account_interrupted_and_what_it_holds_as_if_running() {
     let call = calling(&[]);
@@ -2006,7 +2007,7 @@ fn json_gives_an_interrupted_entry_the_account_interrupted_and_what_it_holds_as_
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running and Followed.
+/// `docs/specs/runs.md`, Transcripts, Running and Followed.
 #[test_log::test]
 fn following_shows_each_entry_still_running_again_as_interrupted_once_its_session_ends() {
     let maintaining = cloning("2026-10-13T10:00:00Z", Some((2.0, None)))
@@ -2112,7 +2113,7 @@ fn thinking_between_calls() -> SessionRecord {
     }
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Thinking and A turn's length.
+/// `docs/specs/runs.md`, Transcripts, Thinking and A turn's length.
 #[test_log::test]
 fn a_thought_lasts_from_the_last_thing_before_it_in_its_agents_work_and_a_turn_ends_with_how_long_it_worked()
  {
@@ -2132,8 +2133,8 @@ fn a_thought_lasts_from_the_last_thing_before_it_in_its_agents_work_and_a_turn_e
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, In full, and
-/// `docs/specs/monitoring.md`, logs, The transcripts.
+/// `docs/specs/runs.md`, Transcripts, In full, and
+/// `docs/specs/runs.md`, `lw logs`, The transcripts.
 #[test_log::test]
 fn in_full_a_thought_shows_its_text_and_json_gives_only_the_thinking_the_agent_gave() {
     let transcript = of(&[thinking_between_calls()]);
@@ -2196,7 +2197,7 @@ fn in_full_a_thought_shows_its_text_and_json_gives_only_the_thinking_the_agent_g
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Cut short.
+/// `docs/specs/runs.md`, Transcripts, Cut short.
 #[test_log::test]
 fn a_thought_its_turn_ends_first_is_interrupted_up_to_that_end_where_it_is_known() {
     let thinking_after_a_call = |end: &[serde_json::Value]| {
@@ -2261,7 +2262,7 @@ fn a_thought_its_turn_ends_first_is_interrupted_up_to_that_end_where_it_is_known
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, A turn's length and Cut
+/// `docs/specs/runs.md`, Transcripts, A turn's length and Cut
 /// short.
 #[test_log::test]
 fn a_turn_works_from_its_prompt_to_its_last_entry_once_it_ends() {
@@ -2297,7 +2298,7 @@ fn a_turn_works_from_its_prompt_to_its_last_entry_once_it_ends() {
     );
 }
 
-/// `docs/specs/design_system.md`, The run page, Working.
+/// `docs/specs/runs.md`, Run, Working.
 #[test_log::test]
 fn a_turn_goes_on_from_its_prompt_until_it_ends() {
     let so_far = |events: &[serde_json::Value]| {
@@ -2313,7 +2314,7 @@ fn a_turn_goes_on_from_its_prompt_until_it_ends() {
     assert_eq!(so_far(&[turn_ended("2026-10-13T10:00:07Z")]), None);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Followed.
+/// `docs/specs/runs.md`, Transcripts, Followed.
 #[test_log::test]
 fn following_shows_a_thought_once_it_ends_and_a_turns_length_once_it_ends() {
     let record = thinking_between_calls();
@@ -2339,8 +2340,8 @@ fn following_shows_a_thought_once_it_ends_and_a_turns_length_once_it_ends() {
     assert_eq!(at_each_line.last().unwrap(), " 0:35  worked for 34s\n");
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Thinking and In full, and
-/// `docs/specs/monitoring.md`, logs, The transcripts.
+/// `docs/specs/runs.md`, Transcripts, Thinking and In full, and
+/// `docs/specs/runs.md`, `lw logs`, The transcripts.
 #[test_log::test]
 fn a_redacted_thought_shows_as_one_and_in_full_gives_the_agents_block() {
     let record = SessionRecord {
@@ -2385,7 +2386,7 @@ fn a_redacted_thought_shows_as_one_and_in_full_gives_the_agents_block() {
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Thinking.
+/// `docs/specs/runs.md`, Transcripts, Thinking.
 #[test_log::test]
 fn a_thought_whose_thinking_says_no_time_has_no_duration() {
     let record = calling(&[

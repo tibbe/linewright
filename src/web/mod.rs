@@ -1,5 +1,5 @@
-//! The web UI (`docs/specs/design_system.md`, The web UI): pages rendered on
-//! the server, each kept up by one event stream of the regions that changed.
+//! The web UI (`docs/specs/web/architecture.md`, Rendering): pages rendered
+//! on the server, each kept up by one event stream of the regions that changed.
 
 mod automations_page;
 mod board_page;
@@ -56,7 +56,7 @@ use crate::runs::{Outcome, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
 /// Where the web UI is served and the names it answers besides the local
-/// ones and IP addresses (`docs/specs/design_system.md`, Serving).
+/// ones and IP addresses (`docs/specs/operation.md`, Serving the UI).
 #[derive(Clone, Debug)]
 pub struct Ui {
     pub address: Address,
@@ -309,14 +309,14 @@ enum NavIcon {
 }
 
 /// The frame every page has around its own regions
-/// (`docs/specs/design_system.md`, Navigation, and Holds and problems).
+/// (`docs/specs/navigation.md`, Chrome).
 struct Frame {
     repo: Repo,
     holds: Vec<HoldShown>,
 }
 
 /// A hold on Linewright's work, shown on every page while it lasts
-/// (`docs/specs/design_system.md`, Holds and problems).
+/// (`docs/specs/navigation.md`, Chrome).
 enum Hold {
     UsageLimit {
         resets_at: Timestamp,

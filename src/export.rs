@@ -1,6 +1,6 @@
 //! `lw export ID DIR`: a run of the work directory's, written into a
 //! directory in the form that the output of a replay gives its run
-//! (`docs/specs/monitoring.md`, export).
+//! (`docs/specs/runs.md`, `lw export`).
 
 use std::path::{Component, Path, PathBuf};
 

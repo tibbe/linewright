@@ -502,7 +502,7 @@ fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_o
     }
 }
 
-/// `docs/specs/design_system.md`, Holds and problems: a delivery refused
+/// `docs/specs/navigation.md`, Chrome: a delivery refused
 /// is a hold until a delivery is accepted.
 #[test_log::test]
 fn a_refused_delivery_holds_until_a_later_one_is_accepted() {

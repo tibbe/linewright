@@ -356,7 +356,7 @@ fn person_select(html: &Html) -> Vec<String> {
         .collect()
 }
 
-/// The Person filter (`docs/specs/design_system.md`, Filtering by person):
+/// The Person filter (`docs/specs/board.md`, Filtering by person):
 /// alice, asked on #3, is party to it alone, and the maintainer, who opened
 /// #1, #2 and so #3, to all three. Linewright, who filed #4, is party to
 /// nothing.
@@ -406,7 +406,7 @@ async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_b
 }
 
 /// A ticket's card matches whoever is party to its tracking issue
-/// (`docs/specs/design_system.md`, Filtering by person).
+/// (`docs/specs/board.md`, Filtering by person).
 #[test_log::test(tokio::test)]
 async fn the_board_narrowed_to_a_tracking_issues_assignee_shows_its_lane() {
     let mut view = a_board();
@@ -431,8 +431,8 @@ async fn the_board_narrowed_to_a_tracking_issues_assignee_shows_its_lane() {
     assert_eq!(people, ["alice", "carol", "maintainer"]);
 }
 
-/// `docs/specs/design_system.md`, The people: whoever is chosen is listed,
-/// though no card matches them.
+/// `docs/specs/board.md`, Filtering by person, The people: whoever is chosen is
+/// listed, though no card matches them.
 #[test_log::test(tokio::test)]
 async fn a_chosen_person_no_card_matches_is_listed_and_chosen() {
     let pages = Pages::of(a_board()).await;
@@ -718,14 +718,14 @@ fn icons(element: ElementRef) -> Vec<String> {
 /// it is a card of its own.
 const OFF_THE_BOARD: u64 = 9;
 
-/// `docs/specs/web/design_system.md`, Status: waiting for a person is
-/// `warning`.
+/// `docs/specs/board.md`, Cards, Card status, and
+/// `docs/specs/web/design_system.md`, Status: waiting for a person shows as
+/// waiting, which is `warning`.
 const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
-/// `docs/specs/design_system.md`, The board, Lanes: a lane's head is its
-/// number and title, with its tickets closed of total and when it finished,
-/// and no status of its own (Out of scope); `docs/specs/web/design_system.md`,
-/// Board: a bar in the Lane colour.
+/// `docs/specs/board.md`, Lanes: a lane's head is its number and title, with
+/// its tickets closed of total and when it finished, and no status of its own
+/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in the Lane colour.
 #[test_log::test(tokio::test)]
 async fn a_lane_head_shows_no_status_of_its_own() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -747,8 +747,9 @@ async fn a_lane_head_shows_no_status_of_its_own() {
     }
 }
 
-/// `docs/specs/web/design_system.md`, Status: paused or queued is Muted
-/// text.
+/// `docs/specs/board.md`, Cards, Card status, and
+/// `docs/specs/web/design_system.md`, Status: paused or queued shows as
+/// paused, which is Muted text.
 const PAUSED_OR_QUEUED: &str = "[--tone:var(--color-muted)]";
 
 #[test_log::test(tokio::test)]
@@ -781,7 +782,7 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/design_system.md`, Cards: a held card says "paused until"
+/// `docs/specs/board.md`, Cards: a held card says "paused until"
 /// what ends its hold (`docs/specs/runs.md`, Holds).
 #[test_log::test(tokio::test)]
 async fn a_held_card_says_what_ends_its_hold() {
@@ -1154,7 +1155,7 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
     );
 }
 
-/// `docs/specs/design_system.md`, Cards, What stops a pull request merging:
+/// `docs/specs/board.md`, Cards, What stops a pull request merging:
 /// a pull request whose update run waits for a free run says "queued", not
 /// "conflicts", in Muted text.
 #[test_log::test(tokio::test)]

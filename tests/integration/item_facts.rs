@@ -1,4 +1,4 @@
-//! The item page's facts (`docs/specs/design_system.md`, The item page),
+//! The item page's facts (`docs/specs/board.md`, Item),
 //! through the functional core that finds them.
 
 use crate::common;
@@ -290,7 +290,7 @@ fn tracking_five() -> View {
     view
 }
 
-/// `docs/specs/design_system.md`, The item page: an unfinished tracking
+/// `docs/specs/board.md`, Item: an unfinished tracking
 /// issue's State is its state alone.
 #[test_log::test]
 fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
@@ -327,7 +327,7 @@ fn a_tracking_issue_is_tracking_and_has_its_tickets_closed_of_total() {
     assert_eq!(facts.tracking_issue, None);
 }
 
-/// `docs/specs/design_system.md`, The item page: the Spec change fact names
+/// `docs/specs/board.md`, Item: the Spec change fact names
 /// the spec change a spec change's issue was opened for, and a merged spec
 /// change, worked through that issue, has no tracking issue of its own.
 #[test_log::test]
@@ -391,7 +391,7 @@ fn a_tracking_issue_whose_lane_is_finished_is_tracking_and_when_its_last_ticket_
     );
 }
 
-/// `docs/specs/design_system.md`, The board, Finished lanes: a lane
+/// `docs/specs/board.md`, Lanes, Finished lanes: a lane
 /// finished when its last ticket closed or its tracking issue closed,
 /// whichever is later, on the board or off it.
 #[test_log::test]
@@ -445,10 +445,9 @@ fn tracking_finished_before_the_window(open: bool) -> (View, Issue) {
     (view, tracking)
 }
 
-/// `docs/specs/repository.md`, State and Managed items: an open tracking
-/// issue with none of its tickets open is tracking, so managed, and heads
-/// its lane, unfinished until it is done (`docs/specs/design_system.md`, The
-/// board, Finished lanes).
+/// `docs/specs/repository.md`, State and Managed items: an open tracking issue
+/// with none of its tickets open is tracking, so managed, and heads its lane,
+/// unfinished until it is done (`docs/specs/board.md`, Lanes, Finished lanes).
 #[test_log::test]
 fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinished() {
     let (view, tracking) = tracking_finished_before_the_window(true);
@@ -469,7 +468,7 @@ fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinish
     );
 }
 
-/// `docs/specs/design_system.md`, The item page, State: a tracking issue
+/// `docs/specs/board.md`, Item, State: a tracking issue
 /// says when it finished off the board too.
 #[test_log::test]
 fn a_closed_tracking_issue_whose_lane_left_the_board_is_tracking_and_when_its_last_ticket_closed() {
@@ -551,7 +550,7 @@ fn a_closed_tracking_issue_with_a_ticket_closed_at_an_unknown_time_is_tracking()
     );
 }
 
-/// `docs/specs/design_system.md`, The item page, Related items: a tracking
+/// `docs/specs/board.md`, Item, Related items: a tracking
 /// issue heading no lane has no lane head to be shown as, so it is shown by
 /// its number and title, with no card status.
 #[test_log::test]

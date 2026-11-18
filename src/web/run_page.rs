@@ -1,4 +1,4 @@
-//! The run page (`docs/specs/design_system.md`, The run page): a run's
+//! The run page (`docs/specs/runs.md`, Run): a run's
 //! transcripts (Transcripts), as the agent's own default or verbose view
 //! shows them, each entry on a line that opens to what it leaves out, and
 //! followed while the run is in flight.
@@ -68,7 +68,7 @@ struct RunView {
     /// What its heading names: the run's ID, or what stands for it.
     name: String,
     /// What the run is of, as the Item column of a list of runs names it
-    /// (`docs/specs/design_system.md`, The run page, Heading).
+    /// (`docs/specs/runs.md`, Run, Heading).
     item: Html,
     verbose: bool,
     /// The number of sessions the run had when its transcript started, once
@@ -132,7 +132,7 @@ impl Of {
 /// What an entry the page shows is, as its session's transcript holds it
 /// now: what the agent's own views show, and never what it was told
 /// besides its prompts, events or blocks Linewright does not know
-/// (`docs/specs/design_system.md`, The run page, Views).
+/// (`docs/specs/runs.md`, Run, Views).
 enum Kind<'a> {
     Clone(Course<&'a CloneEnded>),
     Maintenance(&'a Maintenance),
@@ -255,7 +255,7 @@ impl SessionView {
     }
 
     /// Its number and when it started, with how long it has run at the
-    /// right (`docs/specs/design_system.md`, The run page, A session's
+    /// right (`docs/specs/runs.md`, Run, A session's
     /// heading).
     fn heading_html(&self, model: &Session) -> String {
         let n = self.number;
@@ -419,7 +419,7 @@ impl SessionView {
 /// goes on with no entry running, while it waits for the usage limit, a
 /// step that says so and until when, or else while a turn goes on, one that
 /// says "working" and how long the turn has gone on so far
-/// (`docs/specs/design_system.md`, The run page, Working).
+/// (`docs/specs/runs.md`, Run, Working).
 fn working_html(n: usize, model: &Session) -> String {
     let step = (model.end == End::Going && !runs_an_entry(model))
         .then(|| {
@@ -485,7 +485,7 @@ fn maintenance(model: &Session) -> &Maintenance {
 
 /// A session's model and effort, opening to where each of its settings and
 /// brief files came from; open from the start with `verbose`
-/// (`docs/specs/design_system.md`, The run page, A session's settings).
+/// (`docs/specs/runs.md`, Run, A session's settings).
 fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
     let said = format!(
         r#"<span class="ran text-muted">{}</span>"#,
@@ -527,7 +527,7 @@ fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
 }
 
 /// An entry's line, and what it opens to, if anything
-/// (`docs/specs/web/design_system.md`, Transcripts).
+/// (`docs/specs/web/runs.md`, Run).
 pub(super) struct Row<'a> {
     /// The start of the IDs of its line, `{id}-line`, of what holds it and
     /// what it opens to, `{id}-fold`, and of what it opens to,
@@ -587,7 +587,7 @@ fn line_html(row: &Row) -> String {
 const DURATION: &str = "duration pl-4 text-right whitespace-nowrap text-muted font-normal";
 
 /// How long an entry that runs ran, ticking while it runs, and nothing
-/// where that is not known (`docs/specs/design_system.md`, The run page,
+/// where that is not known (`docs/specs/runs.md`, Run,
 /// Durations).
 fn duration_html(lasted: Option<Lasted>) -> String {
     let Some(lasted) = lasted else {
@@ -823,7 +823,7 @@ impl Drawn<'_> {
 
     /// The brief or a follow-up, labeled `label`: its first line, opening
     /// to its full `text` where that holds more, and open with `verbose`
-    /// (`docs/specs/design_system.md`, The run page, Prompts).
+    /// (`docs/specs/runs.md`, Run, Prompts).
     fn prompt_row(&self, id: &str, label: &str, text: &str) -> String {
         let text = text.trim();
         let (first, more) = match text.split_once('\n') {
@@ -934,7 +934,7 @@ fn clone_text(course: Course<&CloneEnded>) -> String {
 }
 
 /// What the clone opens to: its error, once it has ended with one, open
-/// from the start (`docs/specs/design_system.md`, The run page, Folding).
+/// from the start (`docs/specs/runs.md`, Run, Folding).
 fn clone_fold(course: Course<&CloneEnded>) -> Option<Fold> {
     let error = course.ended()?.error.as_ref()?;
     Some(Fold {
@@ -1194,7 +1194,7 @@ fn events(run: &RunId, made: Vec<(Made, Vec<Patch>)>) -> Vec<Event> {
 }
 
 /// What `id` is of, as the Item column of a list of runs names it, its item
-/// as Linewright holds it now (`docs/specs/design_system.md`, The run page,
+/// as Linewright holds it now (`docs/specs/runs.md`, Run,
 /// Heading).
 fn item_line(sources: &Sources, id: &RunId) -> Html {
     let view = api::view(sources);

@@ -110,7 +110,7 @@ fn varied_items() -> Vec<AnyItem> {
     ]
 }
 
-/// Where the board shows an item (`docs/specs/design_system.md`, The board).
+/// Where the board shows an item (`docs/specs/board.md`, Board).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Shown {
     /// A card of its own in the column.

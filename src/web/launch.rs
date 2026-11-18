@@ -1,8 +1,8 @@
-//! Launching an experiment from the suite page (`docs/specs/design_system.md`,
-//! The suite page, Launching): the form, which starts each file of the
-//! brief as the text a run of the stage would use as the form opens, and the
-//! `POST` that launches what it sends: a file whose text is not changed is
-//! not part of the configuration.
+//! Launching an experiment from the suite page (`docs/specs/benchmarks.md`,
+//! Suite, Launching): the form, which starts each file of the brief as the text
+//! a run of the stage would use as the form opens, and the `POST` that launches
+//! what it sends: a file whose text is not changed is not part of the
+//! configuration.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;

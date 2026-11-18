@@ -107,7 +107,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
 }
 
 /// `docs/specs/design_system.md`, Filters; `docs/specs/web/design_system.md`,
-/// Filters.
+/// Filters; `docs/specs/web/runs.md`, Runs.
 #[test_log::test(tokio::test)]
 async fn the_runs_pages_filters_are_labelled_unset_and_unbuttoned_with_a_stage_reading_all_stages()
 {
@@ -378,7 +378,8 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
     assert_eq!(select(&html, "[title]").len(), 0);
 }
 
-/// `docs/specs/web/design_system.md`, Status: handed back is `warning`.
+/// `docs/specs/runs.md`, Ending, and `docs/specs/web/design_system.md`,
+/// Status: handed back shows as waiting, which is `warning`.
 #[test_log::test(tokio::test)]
 async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
     let pages = Pages::of(view(vec![ticket(1, "Do it")], vec![])).await;

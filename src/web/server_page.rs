@@ -1,4 +1,4 @@
-//! The server page (`docs/specs/design_system.md`, The server page): the
+//! The server page (`docs/specs/operation.md`, Server): the
 //! facts about Linewright itself, in the page's own words.
 
 use std::num::NonZeroU64;
@@ -313,7 +313,7 @@ mod tests {
         }
     }
 
-    /// `docs/specs/design_system.md`, The server page.
+    /// `docs/specs/operation.md`, Server.
     #[test_log::test]
     fn before_the_first_poll_ends_the_facts_always_shown_say_the_next_is_due() {
         assert_eq!(

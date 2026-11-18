@@ -168,7 +168,7 @@ pub struct Polling {
 }
 
 /// The polls failed since the last that succeeded
-/// (`docs/specs/monitoring.md`, status).
+/// (`docs/specs/operation.md`, `lw status`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailedPolls {
     pub count: NonZeroU64,
@@ -510,8 +510,8 @@ impl Fact {
 }
 
 /// A fact about Linewright itself, of those `status` and the server page
-/// show (`docs/specs/monitoring.md`, status, and
-/// `docs/specs/design_system.md`, The server page), each in its own words.
+/// show (`docs/specs/operation.md`, `lw status`, and
+/// `docs/specs/operation.md`, Server), each in its own words.
 pub(crate) enum LinewrightFact<'a> {
     ServingSince(Timestamp),
     /// The last poll and the next.
@@ -684,9 +684,9 @@ pub(crate) fn describe_next_run(schedule: Schedule) -> Phrase {
     }
 }
 
-/// An item's state in the States words (`docs/specs/design_system.md`,
-/// States), then what `detail` and `tickets` say beyond it: nothing beyond
-/// the state of a pull request that was merged or closed unmerged.
+/// An item's state in the States words (`docs/specs/board.md`, States), then
+/// what `detail` and `tickets` say beyond it: nothing beyond the state of a
+/// pull request that was merged or closed unmerged.
 pub(crate) fn describe(state: State, detail: Option<&Detail>, tickets: Option<&Tickets>) -> Phrase {
     let beyond = match detail {
         Some(Detail::InReview(review)) => {

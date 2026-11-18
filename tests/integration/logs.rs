@@ -254,7 +254,7 @@ async fn world_maintaining_with(maintenance: &str, secrets: Secrets) -> (World, 
     (world, work_dir)
 }
 
-/// `docs/specs/monitoring.md`, logs, Maintenance.
+/// `docs/specs/runs.md`, `lw logs`, Maintenance.
 #[test_log::test(tokio::test)]
 async fn logs_shows_the_maintenance_command_a_session_ran() {
     let (mut world, work_dir) =
@@ -391,7 +391,7 @@ async fn a_session_yet_to_write_anything_counts_as_started() {
     );
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test(tokio::test)]
 async fn every_session_but_a_run_in_flights_last_shows_a_call_that_never_returned_as_interrupted() {
     let made = |at: &str| {

@@ -223,7 +223,7 @@ fn logs<'a>(world: &'a World, args: &'a [&str]) -> impl Future<Output = String> 
     }
 }
 
-/// `docs/specs/design_system.md`, Transcripts, The clone.
+/// `docs/specs/runs.md`, Transcripts, The clone.
 #[test_log::test(tokio::test)]
 async fn logs_shows_the_making_of_a_sessions_clone_before_its_maintenance_command() {
     let mut world = world_in_work_dir_with(|config| maintaining_with(config, "true")).await;
@@ -246,7 +246,7 @@ async fn logs_shows_the_making_of_a_sessions_clone_before_its_maintenance_comman
     );
 }
 
-/// `docs/specs/runs.md`, Stages, 1a; `docs/specs/monitoring.md`, logs, The
+/// `docs/specs/runs.md`, Stages, 1a; `docs/specs/runs.md`, `lw logs`, The
 /// clone.
 #[test_log::test(tokio::test)]
 async fn logs_shows_why_a_sessions_clone_could_not_be_made() {
@@ -277,7 +277,7 @@ async fn logs_shows_why_a_sessions_clone_could_not_be_made() {
     assert_eq!(json[2]["error"], error);
 }
 
-/// `docs/specs/design_system.md`, Transcripts, Running.
+/// `docs/specs/runs.md`, Transcripts, Running.
 #[test_log::test(tokio::test)]
 async fn a_session_whose_clone_could_not_be_made_ends_with_its_end() {
     let mut world = World::new().await;

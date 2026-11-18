@@ -49,7 +49,7 @@ pub struct Managed {
     pub state: State,
     pub detail: Option<Detail>,
     /// Its tickets, if it is a tracking issue, which heads its lane and has
-    /// no card (`docs/specs/design_system.md`, The board).
+    /// no card (`docs/specs/board.md`, Board).
     pub tickets: Option<Tickets>,
     pub waiting_for: Vec<Wait>,
 }
@@ -66,7 +66,7 @@ impl Managed {
         matches!(self.detail, Some(Detail::Ended { .. }))
     }
 
-    /// The column of its card (`docs/specs/design_system.md`, The board):
+    /// The column of its card (`docs/specs/board.md`, Board):
     /// none for a tracking issue.
     pub fn column(&self) -> Option<Column> {
         match self.tickets {
@@ -185,8 +185,7 @@ pub enum Ended {
 }
 
 impl Ended {
-    /// How it ended, as a card in Done says (`docs/specs/design_system.md`,
-    /// Cards).
+    /// How it ended, as a card in Done says (`docs/specs/board.md`, Cards).
     pub(crate) fn worded(self) -> Phrase {
         match self {
             Ended::ClosedIn(pull) => Phrase::from("closed in ").item(pull),
@@ -542,10 +541,10 @@ fn open_issue_state(issue: &Issue, view: &View) -> (Option<State>, Option<Detail
     (state, detail)
 }
 
-/// How a closed issue Linewright worked ended (`docs/specs/design_system.md`,
-/// The board, Cards) and when it entered Done, from `merge`, the merge that
-/// made it done ([`done_by_merge`]), and `closing`: "closed in" names that
-/// pull request before the closer.
+/// How a closed issue Linewright worked ended (`docs/specs/board.md`, Board,
+/// Cards) and when it entered Done, from `merge`, the merge that made it done
+/// ([`done_by_merge`]), and `closing`: "closed in" names that pull request
+/// before the closer.
 fn issue_ended(merge: Option<Merge>, closing: IssueClosing) -> (Ended, Timestamp) {
     match merge {
         Some(merge) => (
