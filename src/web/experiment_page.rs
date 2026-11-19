@@ -670,7 +670,10 @@ pub(super) async fn cancel(
     let parsed: ExperimentId = id
         .parse()
         .map_err(|_| WRITE.refused(StatusCode::NOT_FOUND, &no_such(&id)))?;
-    match experiments(&sources).cancel(parsed).await {
+    match experiments(&sources)
+        .cancel(parsed, sources.clock.now())
+        .await
+    {
         Ok(()) => {
             sources.experiments.changed();
             info!(experiment = %parsed, "cancelled an experiment");

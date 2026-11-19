@@ -99,35 +99,42 @@ impl Serialize for ConfigurationName {
 pub type Repetitions = NonZeroU32;
 
 /// An experiment's state as it is kept: whether `serve` runs it or waits to
-/// is not kept.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// is not kept. An experiment that ended or was cancelled before ends were
+/// kept has no end, `None`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExperimentState {
     Open,
-    Ended,
-    Cancelled,
+    Ended { at: Option<Timestamp> },
+    Cancelled { at: Option<Timestamp> },
 }
 
 impl ExperimentState {
-    const ALL: [ExperimentState; 3] = [
-        ExperimentState::Open,
-        ExperimentState::Ended,
-        ExperimentState::Cancelled,
-    ];
-
     pub fn name(self) -> &'static str {
         match self {
             ExperimentState::Open => "open",
-            ExperimentState::Ended => "ended",
-            ExperimentState::Cancelled => "cancelled",
+            ExperimentState::Ended { .. } => "ended",
+            ExperimentState::Cancelled { .. } => "cancelled",
         }
     }
 
-    fn parse(name: &str) -> Result<ExperimentState> {
-        ExperimentState::ALL
-            .into_iter()
-            .find(|state| state.name() == name)
-            .with_context(|| format!("{name:?} is not an experiment's state"))
+    /// When it ended or was cancelled, if it has and that was kept.
+    pub fn ended_at(self) -> Option<Timestamp> {
+        match self {
+            ExperimentState::Open => None,
+            ExperimentState::Ended { at } | ExperimentState::Cancelled { at } => at,
+        }
+    }
+
+    /// The state a row keeps as `name` and `ended_at`.
+    fn parse(name: &str, ended_at: Option<&str>) -> Result<ExperimentState> {
+        let at = ended_at.map(database::parse_time).transpose()?;
+        match (name, at) {
+            ("open", None) => Ok(ExperimentState::Open),
+            ("open", Some(_)) => anyhow::bail!("an open experiment has an end"),
+            ("ended", at) => Ok(ExperimentState::Ended { at }),
+            ("cancelled", at) => Ok(ExperimentState::Cancelled { at }),
+            (name, _) => anyhow::bail!("{name:?} is not an experiment's state"),
+        }
     }
 }
 
@@ -240,6 +247,19 @@ pub struct ExperimentRecord {
     /// Every trial, in start order, each of a case and a configuration of
     /// the experiment's.
     pub trials: BTreeMap<TrialKey, TrialState>,
+}
+
+impl ExperimentRecord {
+    /// The time from its launch to its end, or to `now` while it is open;
+    /// `None` when its end was not kept.
+    pub fn duration(&self, now: Timestamp) -> Option<Duration> {
+        let end = if self.state == ExperimentState::Open {
+            now
+        } else {
+            self.state.ended_at()?
+        };
+        Some((end - self.launched_at).to_std().unwrap_or_default())
+    }
 }
 
 /// The directory, under the work directory, that holds the experiments.
@@ -555,8 +575,9 @@ impl Experiments {
         Ok(records)
     }
 
-    /// Cancels the open experiment `id`. Its trials stand as they are.
-    pub async fn cancel(&self, id: ExperimentId) -> Result<(), CancelRefusal> {
+    /// Cancels the open experiment `id` at `at`. Its trials stand as they
+    /// are.
+    pub async fn cancel(&self, id: ExperimentId, at: Timestamp) -> Result<(), CancelRefusal> {
         let cancelling = format!("cancelling experiment {id}");
         let mut tx = self
             .db
@@ -564,18 +585,13 @@ impl Experiments {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .context(cancelling.clone())?;
-        let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM experiments WHERE id = ?")
-                .bind(id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .context(cancelling.clone())?;
-        match state.as_deref().map(ExperimentState::parse).transpose()? {
+        match read_state(&mut tx, id).await.context(cancelling.clone())? {
             None => return Err(CancelRefusal::NoSuchExperiment(id)),
             Some(ExperimentState::Open) => {}
             Some(state) => return Err(CancelRefusal::NotOpen { id, state }),
         }
-        sqlx::query("UPDATE experiments SET state = 'cancelled' WHERE id = ?")
+        sqlx::query("UPDATE experiments SET state = 'cancelled', ended_at = ? WHERE id = ?")
+            .bind(database::time_text(at))
             .bind(id.0)
             .execute(&mut *tx)
             .await
@@ -586,13 +602,8 @@ impl Experiments {
 
     /// The state the experiment `id` is kept in, if there is one.
     pub async fn state(&self, id: ExperimentId) -> Result<Option<ExperimentState>> {
-        let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM experiments WHERE id = ?")
-                .bind(id.0)
-                .fetch_optional(self.db.pool())
-                .await
-                .context(READING)?;
-        state.as_deref().map(ExperimentState::parse).transpose()
+        let mut conn = self.db.pool().acquire().await.context(READING)?;
+        read_state(&mut conn, id).await.context(READING)
     }
 
     /// Turns each trial a stop left replaying back into pending, and each
@@ -637,23 +648,24 @@ impl Experiments {
             .context("starting again the trials a stop interrupted")
     }
 
-    /// Records that the experiment `id` ended, if it is open and none of its
-    /// trials is left to end.
-    pub async fn end(&self, id: ExperimentId) -> Result<()> {
+    /// Records that the experiment `id` ended at `at`, if it is open and
+    /// none of its trials is left to end.
+    pub async fn end(&self, id: ExperimentId, at: Timestamp) -> Result<()> {
         let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
-        end_if_done(&mut tx, id).await?;
+        end_if_done(&mut tx, id, at).await?;
         tx.commit().await?;
         Ok(())
     }
 
-    /// Records `change` of the trial `trial`, and that its experiment ended
-    /// once it is open and none of its trials is left to end.
+    /// Records `change` of the trial `trial` at `at`, and that its
+    /// experiment ended then once it is open and none of its trials is left
+    /// to end.
     ///
     /// # Errors
     ///
     /// When there is no such trial, `change` is not one of its state, or the
     /// rows cannot be written.
-    pub async fn step(&self, trial: &TrialRef, change: TrialChange) -> Result<()> {
+    pub async fn step(&self, trial: &TrialRef, change: TrialChange, at: Timestamp) -> Result<()> {
         let TrialRef { experiment, key } = trial;
         let stepping = format!(
             "recording a change of the trial {}/{}/{} of experiment {experiment}",
@@ -674,7 +686,7 @@ impl Experiments {
             .context("there is no such trial")?;
             let (_, state) = decode(&row)?;
             write_trial(&mut tx, *experiment, key, &state.changed(change)?).await?;
-            end_if_done(&mut tx, *experiment).await?;
+            end_if_done(&mut tx, *experiment, at).await?;
             tx.commit().await?;
             anyhow::Ok(())
         };
@@ -713,15 +725,30 @@ async fn write_trial(
     Ok(())
 }
 
-/// Records that the experiment `id` ended, if it is open and none of its
-/// trials is left to end.
-async fn end_if_done(conn: &mut SqliteConnection, id: ExperimentId) -> Result<()> {
+/// The state of the experiment `id`, if there is one.
+async fn read_state(
+    conn: &mut SqliteConnection,
+    id: ExperimentId,
+) -> Result<Option<ExperimentState>> {
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT state, ended_at FROM experiments WHERE id = ?")
+            .bind(id.0)
+            .fetch_optional(&mut *conn)
+            .await?;
+    row.map(|(state, ended_at)| ExperimentState::parse(&state, ended_at.as_deref()))
+        .transpose()
+}
+
+/// Records that the experiment `id` ended at `at`, if it is open and none of
+/// its trials is left to end.
+async fn end_if_done(conn: &mut SqliteConnection, id: ExperimentId, at: Timestamp) -> Result<()> {
     sqlx::query(
-        "UPDATE experiments SET state = 'ended'
+        "UPDATE experiments SET state = 'ended', ended_at = ?
          WHERE id = ? AND state = 'open' AND NOT EXISTS (
              SELECT 1 FROM trials
              WHERE experiment = ? AND state NOT IN ('judged', 'unjudged'))",
     )
+    .bind(database::time_text(at))
     .bind(id.0)
     .bind(id.0)
     .execute(&mut *conn)
@@ -948,9 +975,9 @@ async fn read_record(
     conn: &mut SqliteConnection,
     id: ExperimentId,
 ) -> Result<Option<ExperimentRecord>> {
-    let row: Option<(String, String, String, i64, String)> = sqlx::query_as(
+    let row: Option<(String, String, String, i64, String, Option<String>)> = sqlx::query_as(
         "SELECT experiments.suite, suites.stage, experiments.launched_at,
-                experiments.repetitions, experiments.state
+                experiments.repetitions, experiments.state, experiments.ended_at
          FROM experiments JOIN suites ON suites.name = experiments.suite
          WHERE experiments.id = ?",
     )
@@ -958,7 +985,7 @@ async fn read_record(
     .fetch_optional(&mut *conn)
     .await
     .context(READING)?;
-    let Some((suite, stage, launched_at, repetitions, state)) = row else {
+    let Some((suite, stage, launched_at, repetitions, state, ended_at)) = row else {
         return Ok(None);
     };
     let reading = || format!("reading experiment {id}");
@@ -1008,7 +1035,7 @@ async fn read_record(
                 .ok()
                 .and_then(Repetitions::new)
                 .with_context(|| format!("{repetitions} is not a number of repetitions"))?,
-            state: ExperimentState::parse(&state)?,
+            state: ExperimentState::parse(&state, ended_at.as_deref())?,
             cases,
             configurations,
             trials,
@@ -1223,6 +1250,12 @@ mod tests {
             .await
     }
 
+    /// The time at which the tests record each change, end and cancel.
+    #[track_caller]
+    fn later() -> Timestamp {
+        "2026-11-17T13:00:00Z".parse().expect("a time")
+    }
+
     fn trial(experiment: ExperimentId, case: usize) -> TrialRef {
         TrialRef {
             experiment,
@@ -1253,7 +1286,7 @@ mod tests {
         async move {
             for change in changes {
                 experiments
-                    .step(&trial, change)
+                    .step(&trial, change, later())
                     .await
                     .unwrap_or_else(|e| panic!("stepping at {caller}: {e:#}"));
             }
@@ -1342,7 +1375,7 @@ mod tests {
         assert_eq!(
             state_of(&experiments, trial(id, 1)).await,
             (
-                ExperimentState::Ended,
+                ExperimentState::Ended { at: Some(later()) },
                 TrialState::Ended(TrialEnd::Unjudged {
                     replay: replay(Ending::Done),
                     why: NoJudgement::Judge {
@@ -1419,10 +1452,10 @@ mod tests {
         let (experiments, id) = launched(work_dir.path()).await;
 
         let judged = experiments
-            .step(&trial(id, 0), TrialChange::JudgeStarts)
+            .step(&trial(id, 0), TrialChange::JudgeStarts, later())
             .await;
         let missing = experiments
-            .step(&trial(id, 2), TrialChange::ReplayStarts)
+            .step(&trial(id, 2), TrialChange::ReplayStarts, later())
             .await;
 
         assert!(
@@ -1484,14 +1517,14 @@ mod tests {
             ],
         )
         .await;
-        experiments.cancel(id).await.unwrap();
+        experiments.cancel(id, later()).await.unwrap();
 
         experiments.interrupted().await.unwrap();
 
         assert_eq!(
             state_of(&experiments, trial(id, 0)).await,
             (
-                ExperimentState::Cancelled,
+                ExperimentState::Cancelled { at: Some(later()) },
                 TrialState::Ended(TrialEnd::Cancelled)
             )
         );
@@ -1510,7 +1543,7 @@ mod tests {
         let (experiments, first) = launched(work_dir.path()).await;
         let cancelled = launch(&experiments).await.unwrap().id;
         let last = launch(&experiments).await.unwrap().id;
-        experiments.cancel(cancelled).await.unwrap();
+        experiments.cancel(cancelled, later()).await.unwrap();
 
         let open: Vec<ExperimentId> = experiments
             .open()
@@ -1521,5 +1554,41 @@ mod tests {
             .collect();
 
         assert_eq!(open, [first, last]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn an_open_experiment_is_not_kept_with_an_end() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (experiments, id) = launched(work_dir.path()).await;
+
+        let ended = sqlx::query("UPDATE experiments SET ended_at = ? WHERE id = ?")
+            .bind(database::time_text(later()))
+            .bind(id.0)
+            .execute(experiments.db.pool())
+            .await;
+
+        assert!(ended.is_err(), "an open experiment was kept with an end");
+        assert_eq!(
+            state_of(&experiments, trial(id, 0)).await.0,
+            ExperimentState::Open
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn an_experiments_duration_runs_from_its_launch_to_its_end_or_to_now_while_it_is_open() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (experiments, id) = launched(work_dir.path()).await;
+        let mut record = experiments.show(id).await.unwrap().unwrap();
+        let now: Timestamp = "2026-11-17T12:30:00Z".parse().unwrap();
+
+        let open = record.duration(now);
+        record.state = ExperimentState::Ended { at: Some(later()) };
+        let ended = record.duration(now);
+        record.state = ExperimentState::Cancelled { at: None };
+        let unrecorded = record.duration(now);
+
+        assert_eq!(open, Some(Duration::from_mins(30)));
+        assert_eq!(ended, Some(Duration::from_hours(1)));
+        assert_eq!(unrecorded, None);
     }
 }

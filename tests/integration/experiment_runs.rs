@@ -187,7 +187,7 @@ async fn serve_replays_and_judges_every_trial_and_the_cli_shows_the_results() {
 
     let serving = serve(world.factory);
     let record = rests(&experiments, id, |record| {
-        record.state == ExperimentState::Ended
+        matches!(record.state, ExperimentState::Ended { at: Some(_) })
     })
     .await;
     serving.stop().await;
@@ -252,7 +252,7 @@ async fn a_serve_killed_mid_replay_replays_it_again_into_a_new_output_when_resta
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);
     let record = rests(&experiments, id, |record| {
-        record.state == ExperimentState::Ended
+        matches!(record.state, ExperimentState::Ended { .. })
     })
     .await;
     serving.stop().await;
@@ -295,7 +295,7 @@ async fn a_serve_killed_mid_judge_judges_again_keeping_only_the_new_judges_recor
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);
     let record = rests(&experiments, id, |record| {
-        record.state == ExperimentState::Ended
+        matches!(record.state, ExperimentState::Ended { .. })
     })
     .await;
     serving.stop().await;
@@ -394,7 +394,7 @@ async fn cancelling_an_experiment_stops_its_replay_in_flight_and_starts_no_other
     eventually_async(|| async { shown().await == (200, r#"{"state":"running"}"#.to_string()) })
         .await;
 
-    experiments.cancel(id).await.unwrap();
+    experiments.cancel(id, world.clock.now()).await.unwrap();
     let nudged = routed(
         &api,
         hyper::Method::POST,
@@ -412,7 +412,11 @@ async fn cancelling_an_experiment_stops_its_replay_in_flight_and_starts_no_other
 
     assert_eq!(nudged.status(), 200);
     assert_eq!(cancelled, (200, r#"{"state":"cancelled"}"#.to_string()));
-    assert_eq!(record.state, ExperimentState::Cancelled);
+    assert!(
+        matches!(record.state, ExperimentState::Cancelled { at: Some(_) }),
+        "{:?}",
+        record.state
+    );
     assert_eq!(
         record.trials[&key(0, 0)],
         TrialState::Ended(TrialEnd::Cancelled)

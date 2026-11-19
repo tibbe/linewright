@@ -349,6 +349,7 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
     let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
     assert_eq!(json["state"], "waiting");
     assert_eq!(json["waiting_for"], "serve");
+    assert_eq!(json.get("ended_at"), None);
     assert_eq!(json["configurations"], json!(["as-is", "short"]));
     assert_eq!(
         json["replays"][0],
@@ -457,6 +458,9 @@ async fn lw_experiment_cancel_cancels_an_open_experiment_once() {
         "{}",
         shown.stdout
     );
+    let json = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
+    let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    assert!(json["ended_at"].is_string(), "{json}");
 }
 
 #[test_log::test(tokio::test)]

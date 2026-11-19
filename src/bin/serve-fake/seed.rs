@@ -303,26 +303,28 @@ enum SeedTrial {
 
 /// Launches on `board` an experiment the day before the clock starts, under
 /// `as-is` and `terse`, which sets a low effort, twice, and ends each of its
-/// trials as [`TRIALS`] says: with passes, failures, a leak and replays
-/// without a judgement.
+/// trials as [`TRIALS`] says, twenty minutes after its launch: with passes,
+/// failures, a leak and replays without a judgement.
 async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
         b"effort = \"low\"\n".to_vec(),
     )]))
     .map_err(|errors| anyhow::anyhow!("the seed's configuration: {errors:?}"))?;
+    let launched_at: Timestamp = "2026-03-01T16:00:00Z".parse()?;
     let launched = experiments
         .launch(
             board,
             vec![("terse".parse().map_err(anyhow::Error::msg)?, terse)],
             NonZeroU32::new(2).context("two repetitions")?,
-            "2026-03-01T16:00:00Z".parse()?,
+            launched_at,
         )
         .await?;
     let record = experiments
         .show(launched.id)
         .await?
         .context("the seed's experiment is kept")?;
+    let at = launched_at + chrono::TimeDelta::minutes(20);
     let usd = |money: f64| Usd::new(money).context("a cost is a number of dollars");
     for (key, seeded) in record.trials.keys().zip(&TRIALS) {
         let trial = TrialRef {
@@ -343,7 +345,9 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
             } => (ending, money, seconds),
             SeedTrial::JudgeMadeNone { money, seconds } => (Ending::Done, money, seconds),
         };
-        experiments.step(&trial, TrialChange::ReplayStarts).await?;
+        experiments
+            .step(&trial, TrialChange::ReplayStarts, at)
+            .await?;
         experiments
             .step(
                 &trial,
@@ -352,6 +356,7 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
                     money: Some(usd(money)?),
                     time: Duration::from_secs(seconds),
                 }),
+                at,
             )
             .await?;
         let judged = match *seeded {
@@ -366,8 +371,10 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
                 judge_money: Some(usd(0.02)?),
             },
         };
-        experiments.step(&trial, TrialChange::JudgeStarts).await?;
-        experiments.step(&trial, judged).await?;
+        experiments
+            .step(&trial, TrialChange::JudgeStarts, at)
+            .await?;
+        experiments.step(&trial, judged, at).await?;
     }
     Ok(())
 }

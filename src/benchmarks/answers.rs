@@ -57,8 +57,8 @@ impl Shown {
     pub fn without_serve(state: ExperimentState) -> Shown {
         match state {
             ExperimentState::Open => Shown::Waiting(WaitingFor::Serve),
-            ExperimentState::Ended => Shown::Ended,
-            ExperimentState::Cancelled => Shown::Cancelled,
+            ExperimentState::Ended { .. } => Shown::Ended,
+            ExperimentState::Cancelled { .. } => Shown::Cancelled,
         }
     }
 
@@ -99,6 +99,9 @@ pub struct ExperimentAnswer {
     pub suite: SuiteName,
     pub stage: ReplayStage,
     pub launched_at: Timestamp,
+    /// When it ended or was cancelled, if it has and that was kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<Timestamp>,
     #[serde(flatten)]
     pub shown: Shown,
     pub repetitions: Repetitions,
@@ -239,6 +242,7 @@ impl ExperimentAnswer {
             suite: record.suite.name.clone(),
             stage: record.suite.stage,
             launched_at: record.launched_at,
+            ended_at: record.state.ended_at(),
             shown,
             repetitions: record.repetitions,
             cases: record.cases.clone(),
@@ -258,12 +262,16 @@ pub fn render_experiment(answer: &ExperimentAnswer) -> String {
     let mut judges = dollars(results.judges.total);
     without(&mut judges, results.judges.none, "a cost");
     let mut text = format!(
-        "experiment: {}\nsuite: {}\nstage: {}\nlaunched: {}\nstate: {}\nrepetitions: {}\n\
+        "experiment: {}\nsuite: {}\nstage: {}\nlaunched: {}\n{}state: {}\nrepetitions: {}\n\
          replays ended: {} of {}\ncost: {cost}\njudges' cost: {judges}\n",
         answer.id,
         answer.suite,
         answer.stage,
         Phrase::default().time(answer.launched_at),
+        answer.ended_at.map_or_else(String::new, |at| format!(
+            "ended: {}\n",
+            Phrase::default().time(at)
+        )),
         answer.shown.phrase(),
         answer.repetitions,
         results.replays_ended,
@@ -529,7 +537,9 @@ mod tests {
             },
             launched_at: "2026-11-17T12:00:00Z".parse().unwrap(),
             repetitions: NonZeroU32::MIN,
-            state: ExperimentState::Cancelled,
+            state: ExperimentState::Cancelled {
+                at: Some("2026-11-17T12:30:00Z".parse().unwrap()),
+            },
             cases: ["columns", "lanes", "rows"]
                 .iter()
                 .map(|case| case.parse().unwrap())
@@ -552,6 +562,7 @@ mod tests {
              suite: board\n\
              stage: design\n\
              launched: 2026-11-17 12:00:00 UTC\n\
+             ended: 2026-11-17 12:30:00 UTC\n\
              state: cancelled\n\
              repetitions: 1\n\
              replays ended: 4 of 6\n\
@@ -661,7 +672,10 @@ mod tests {
     #[test_log::test]
     fn an_experiment_not_open_shows_as_it_is_kept_whatever_serve_last_showed() {
         assert_eq!(
-            Shown::of(ExperimentState::Cancelled, Some(Shown::Running)),
+            Shown::of(
+                ExperimentState::Cancelled { at: None },
+                Some(Shown::Running)
+            ),
             Shown::Cancelled
         );
         assert_eq!(
