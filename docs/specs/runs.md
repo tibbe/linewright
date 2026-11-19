@@ -407,11 +407,11 @@ that started a session.
 ## `lw export`
 
 `export ID DIR` writes run ID into DIR in the form that the output of a
-replay gives its run. That is the outcome of the run and the record of each
-session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
+trial gives its run. That is the outcome of the run and the record of each
+session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 
 - **DIR.** Linewright makes and refuses DIR as it makes and refuses the
-  directory of the output of a replay.
+  directory of the output of a trial.
 - **A run in flight.** Linewright writes the run as it is when the command
   starts.
 
@@ -420,7 +420,7 @@ session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
 | Screen | Reached from                                                                                                                         | Purpose                                                                    |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
 | Runs   | the navigation ([Shell](shell.md)), and the last row of Item's runs ([Item](board.md#item))                               | find a run                                                                 |
-| Run    | a run in a list of runs, on Automations or on Suite, and the notice of an automation whose last run failed                          | read a run's transcripts, follow a run in flight, and capture it as a case |
+| Run    | a run in a list of runs, on Automations or on Benchmark, and the notice of an automation whose last run failed                          | read a run's transcripts, follow a run in flight, and capture it as a task |
 
 ### Runs
 
@@ -481,11 +481,11 @@ session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
 - **Following.** A run in flight is followed. The screen stays at the bottom
   until the reader scrolls up, and then offers to jump to the latest entry.
 - **Capturing.** A run that can be captured
-  ([Capturing](benchmarks.md#capturing)) has "Add case" by its heading. The
-  capture asks for these, then "Add case", then says where the case was written,
+  ([Capturing](benchmarks.md#capturing)) has "Add task" by its heading. The
+  capture asks for these, then "Add task", then says where the task was written,
   or why it was not:
-  - the suite: one of the suites of the run's stage, or a new one;
-  - the case's name, filled in with the run ID's letters and digits joined
+  - the benchmark: one of the benchmarks of the run's stage, or a new one;
+  - the task's name, filled in with the run ID's letters and digits joined
     by hyphens, such as `43-implement-2`;
   - the criteria.
 

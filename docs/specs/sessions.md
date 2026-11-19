@@ -60,7 +60,7 @@ through and those Linewright sets.
 - **Set by Linewright.** Linewright sets these:
   - `GH_TOKEN` and `GITHUB_TOKEN`: the session's GitHub token;
   - `TMPDIR`: the session's own temporary directory;
-  - `GH_CONFIG_DIR`, in a session of a replay or of a judge: a configuration
+  - `GH_CONFIG_DIR`, in a session of a trial or of a scorer: a configuration
     of `gh` that
     Linewright makes
     ([The repository on GitHub](benchmarks.md#the-repository-on-github));
@@ -86,7 +86,7 @@ through and those Linewright sets.
   sets replaces a passed one.
 - **Linewright's own.** `session-env` setting a variable Linewright may set
   itself is an error at startup, but for `GH_CONFIG_DIR`: in a session of a
-  replay or of a judge, Linewright's value replaces it.
+  trial or of a scorer, Linewright's value replaces it.
 - **Set values.** `session-env`'s values are strings, taken as written, such
   as a `$`, which refers to no variable, or an empty string, which sets the
   variable empty.

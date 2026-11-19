@@ -6,16 +6,16 @@
 - **Navigation.** First the repository: the avatar of the GitHub account that
   owns it, then the repository's name. Both link to the repository on GitHub.
   Then links to [Board](board.md#board-1), [Runs](runs.md#runs-1),
-  [Automations](automations.md#automations-1), [Suites](benchmarks.md#suites-1)
-  and [Server](operation.md#server).
+  [Automations](automations.md#automations-1),
+  [Benchmarks](benchmarks.md#benchmarks-2) and [Server](operation.md#server).
 - **Breadcrumbs.** They show where the screen is in the UI, such as
-  "Suites › design-cuts › Experiment 14" on Experiment.
+  "Benchmarks › design-cuts › Benchmark run 14" on Benchmark run.
   - **The crumbs.** The first crumb is the screen of the navigation for the
     screen's area. Then comes a crumb for each thing in that area that the
     screen belongs to. The last crumb is the screen itself.
   - **Links.** Each crumb but the last links to its screen.
   - **Names.** A crumb shows the name in its screen's heading, such as
-    "Experiment 14", or "#812" and the item's title. The crumb of a screen of
+    "Benchmark run 14", or "#812" and the item's title. The crumb of a screen of
     the navigation shows that screen's name in the navigation.
   - **No such thing.** A screen that shows "No such"
     ([Screen states](design_system.md#screen-states)) has the crumbs of the

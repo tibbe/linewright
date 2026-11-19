@@ -34,7 +34,7 @@ _Avoid_: agent runtime, runtime, scaffold, engine, CLI, binary, coding agent,
 coding tool, framework, platform, assistant
 
 **Session**:
-Linewright's work in one clone, for a run or as a judge, by an agent in one
+Linewright's work in one clone, for a run or as a scorer, by an agent in one
 context.
 _Avoid_: conversation, task
 
@@ -47,12 +47,12 @@ A prompt sent to a session and the agent's work on it until it stops.
 _Avoid_: interaction, run
 
 **Brief**:
-What a session works from: the prompts it is sent, with its task and result
+What a session works from: the prompts it is sent, with its work and result
 contract, and its skills.
 _Avoid_: system prompt, task description, playbook, template
 
 **Prompt**:
-A template holding a session's task and result contract, which Linewright
+A template holding a session's work and result contract, which Linewright
 fills in and sends the session.
 _Avoid_: instructions, brief
 
@@ -79,7 +79,7 @@ _Avoid_: maintenance script, setup script, setup steps, start command,
 session-start hook, post-create command, post-start command, pre-start hook
 
 **Session setting**:
-A setting that shapes the sessions of a stage, an automation or the judge,
+A setting that shapes the sessions of a stage, an automation or the scorer,
 such as its model or its timeout.
 
 ### Work
@@ -96,41 +96,41 @@ _Avoid_: job, task, build, execution
 A part of the pipeline that a run does, such as triage.
 _Avoid_: phase, step
 
-**Case**:
+**Task**:
 A run of a stage, captured so that the stage can be run again on what the run
 was given.
-_Avoid_: task, test case, sample, example, problem
+_Avoid_: case, test case, sample, example, problem
 
-**Replay**:
-The running of a case's stage on the case, with the case in place of GitHub.
-_Avoid_: trial, attempt, epoch, rollout
+**Trial**:
+The running of a task's stage on the task, with the task in place of GitHub.
+_Avoid_: replay, attempt, epoch, rollout
 
 **Configuration**:
-What a replay changes: files of the brief and settings of the sessions of its
+What a trial changes: files of the brief and settings of the sessions of its
 run, as a layer above every other.
 _Avoid_: variant, arm, candidate, setup
 
-**Judge**:
-The agent that judges the output of a replay against the criteria of its case.
-_Avoid_: scorer, grader, evaluator, reviewer
+**Scorer**:
+The agent that scores the output of a trial against the criteria of its task.
+_Avoid_: judge, grader, evaluator, reviewer
 
-**Judgement**:
-What a judge decides about one replay: whether its output meets the criteria,
+**Score**:
+What a scorer decides about one trial: whether its output meets the criteria,
 and whether a session learned how the work turned out.
-_Avoid_: score, grade, classification, evaluation
+_Avoid_: judgement, grade, classification, evaluation
 
 **Leak**:
-The event in which a session of a replay learns how the work that the replay
+The event in which a session of a trial learns how the work that the trial
 repeats turned out.
 _Avoid_: contamination, cheating, reward hacking
 
-**Suite**:
-A named set of cases of one stage.
-_Avoid_: dataset, benchmark, task set, collection
+**Benchmark**:
+A named set of tasks of one stage.
+_Avoid_: suite, dataset, task set, collection
 
-**Experiment**:
-A comparison of configurations of a stage on the cases of a suite.
-_Avoid_: benchmark run, job, eval, study
+**Benchmark run**:
+A comparison of configurations of a stage on the tasks of a benchmark.
+_Avoid_: experiment, job, eval, study
 
 **Outcome**:
 How a run ended, such as done or handed back, or that it has not ended yet.
@@ -248,7 +248,7 @@ _Avoid_: quiet mode, freeze, gate
 **Layer**:
 One of the ranked places a setting or a file of a brief can be set, such as a
 flag or the repository's file, each the repository's, the operator's or
-Linewright's own, or, in a replay, its configuration.
+Linewright's own, or, in a trial, its configuration.
 _Avoid_: scope, level, tier, source, overlay, override, drop-in
 
 **Drain**:

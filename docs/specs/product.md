@@ -58,7 +58,7 @@ request that is reviewed, green and ready for a person.
 - **Automations beside the pipeline.** Automations in the repository run agents
   on a trigger with instructions the maintainer writes, and may hand work to
   the pipeline.
-- **Tuned against real work.** A run of a stage can be captured as a case
+- **Tuned against real work.** A run of a stage can be captured as a task
   holding what it was given, so that the stage is run on it again with its
   briefs or settings changed.
 - **The maintainer in the UI, the operator on the command line.** A

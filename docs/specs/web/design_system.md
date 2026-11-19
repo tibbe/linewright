@@ -52,9 +52,9 @@ The web UI follows daisyUI, with two themes of its own.
 | Runs        | `/runs`           |
 | Run         | `/runs/ID`        |
 | Automations | `/automations`    |
-| Suites      | `/suites`         |
-| Suite       | `/suites/NAME`    |
-| Experiment  | `/experiments/ID` |
+| Benchmarks      | `/benchmarks`         |
+| Benchmark       | `/benchmarks/NAME`    |
+| Benchmark run  | `/benchmark-runs/ID` |
 | Server      | `/server`         |
 
 ## Making

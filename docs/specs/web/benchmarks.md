@@ -1,15 +1,15 @@
 # Benchmarks on the web
 
-## Suites
+## Benchmarks
 
 - **Name** is an `input`.
 - **Stage** is a `select`.
 
-## Suite
+## Benchmark
 
 - **The tabs** are daisyUI `tabs` in the `tabs-border` style.
 
-## Experiment
+## Benchmark run
 
 - **The facts** are a daisyUI `stats`, each fact a `stat` with its label as
   the `stat-title` and its value as the `stat-value`.

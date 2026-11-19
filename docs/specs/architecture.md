@@ -1,9 +1,9 @@
 # Architecture
 
-Linewright is a controller, in the Kubernetes sense: the state of the work
-lives in GitHub, and Linewright repeatedly compares it with what it has in
-flight and acts to close the gap. The acting is done by agents, which take
-their task in a brief and hand their result back to Linewright to apply.
+Linewright is a controller, in the Kubernetes sense: the state of the work lives
+in GitHub, and Linewright repeatedly compares it with what it has in flight and
+acts to close the gap. The acting is done by agents, which take their work in a
+brief and hand their result back to Linewright to apply.
 
 ## Language and structure
 
@@ -41,15 +41,15 @@ path, is a file.
 
 | Data                                                                                             | Kept as                                                                       |
 | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| each run outside a replay, with the input it recorded ([Recording a run's input](benchmarks.md#recording-a-runs-input)) | rows in the database                                                   |
+| each run outside a trial, with the input it recorded ([Recording a run's input](benchmarks.md#recording-a-runs-input)) | rows in the database                                                   |
 | bookkeeping that no person sets, such as Linewright's pull requests and each automation's last scheduled run | rows in the database                                                  |
 | the environment's commit, and the time of its build                                          | rows in the database                                                          |
-| suites and experiments ([Benchmarks](benchmarks.md))                                             | rows in the database                                                          |
+| benchmarks and benchmark runs ([Benchmarks](benchmarks.md))                                             | rows in the database                                                          |
 | a session's brief, follow-ups and transcript, and its maintenance command's output               | files of the session, with the transcript as one JSON Lines file that only grows |
 | a session's attachments                                                                          | its attachments directory, each file by its own name ([Attachments](runs.md#attachments)) |
 | the output of the environment's builds                                                           | files                                                                         |
 | the clones and the environment                                                                   | directories                                                                   |
-| cases and the outputs of replays                                                                 | directories of plain files ([Benchmarks](benchmarks.md))                      |
+| tasks and the outputs of trials                                                                 | directories of plain files ([Benchmarks](benchmarks.md))                      |
 
 - **Many processes.** Each Linewright process on the host opens the database
   in WAL mode, so that it reads while another process writes.
@@ -72,7 +72,7 @@ during the session.
   one harness interface.
 - **Sessions are processes beside Linewright**
   ([Isolation](sessions.md#isolation)).
-- **In a replay, `gh` sends its requests to Linewright.** The configuration
+- **In a trial, `gh` sends its requests to Linewright.** The configuration
   that Linewright gives a session's `gh` sets `http_unix_socket` to a Unix
   socket of Linewright
   ([The repository on GitHub](benchmarks.md#the-repository-on-github)).
