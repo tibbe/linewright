@@ -2,15 +2,15 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 {% block automations -%}
-<section id="automations" class="flex min-h-0 flex-1 flex-col">
+<section id="automations" class="flex min-h-0 flex-1 flex-col gap-6">
 {%- if !automations.unparsed.is_empty() %}
-<ul class="unparsed mb-4 space-y-1">
+<ul class="unparsed space-y-1">
 {%- for file in automations.unparsed %}
 <li class="text-error">{{ file|safe }}</li>
 {%- endfor %}
 </ul>
 {%- endif %}
-{%- call(part) ui::table_card("Automations", shows_name = false) %}
+{%- call(part) ui::table_card("Automations", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Automations), shows_name = false) %}
 {%- if part == crate::web::table::Part::Table %}
 {%- if automations.rows.is_empty() %}
 <p class="px-4 pb-4">No automations</p>

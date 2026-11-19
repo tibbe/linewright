@@ -101,7 +101,7 @@ fn buttons(html: &Html) -> Vec<(String, String)> {
 
 /// [`with_benchmark_run`]'s pages, with the run `1/triage-1` of `Ship gh`.
 #[track_caller]
-fn with_a_run() -> impl Future<Output = Pages> {
+pub(super) fn with_a_run() -> impl Future<Output = Pages> {
     let pages = with_benchmark_run();
     async move {
         let pages = pages.await;

@@ -12,6 +12,7 @@ mod cards;
 mod confirmation;
 mod facts;
 mod html;
+mod icons;
 mod item_page;
 mod launch;
 mod making;

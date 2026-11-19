@@ -22,7 +22,7 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
 use super::making::{Answer, Making, task_not_made};
-use super::shell::{self, Frame, Heading, Missing, Place, Thing};
+use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
 use super::table::{Align, Column, Fold, View};
 use super::write::{Refused, Write, alert};
 use super::{
@@ -506,7 +506,7 @@ fn page(benchmark: &Benchmark) -> Page {
         ..Heading::named(benchmark.name.as_str())
     };
     Page::new(
-        Place::Alone(Thing::Found(heading)),
+        Place::Alone(Area::Benchmarks, Thing::Found(heading)),
         format!("/events{}", benchmark_path(&benchmark.name)),
     )
 }
@@ -547,7 +547,7 @@ pub(super) async fn benchmark_page(
             let events = format!("/events/benchmarks/{name}");
             match unshown {
                 Unshown::NoSuch => nothing_there(
-                    |thing| Page::new(Place::Alone(thing), events),
+                    |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events),
                     Missing::Benchmark(name),
                     frame,
                     "tasks",
@@ -556,7 +556,10 @@ pub(super) async fn benchmark_page(
                     let error = format!("{e:#}");
                     warn!(benchmark = name, error, "reading a benchmark failed");
                     let page = ErrorPage {
-                        page: Page::new(Place::Alone(Thing::Found(Heading::named(name))), events),
+                        page: Page::new(
+                            Place::Alone(Area::Benchmarks, Thing::Found(Heading::named(name))),
+                            events,
+                        ),
                         frame,
                         region: "tasks",
                         error,

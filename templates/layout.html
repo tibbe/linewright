@@ -15,25 +15,28 @@
 <script src="{{ page.assets.sse }}"></script>
 <script src="{{ page.assets.script }}" defer></script>
 </head>
-<body class="bg-base-100 text-base-content">
+<body class="bg-card text-base-content">
 <div id="stream" hidden hx-sse:connect="{{ page.events }}" hx-swap="none"></div>
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
-<div class="drawer-content isolate min-w-0{% if page.fills_viewport %} flex h-dvh flex-col{% endif %}">
-<label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 shrink-0 lg:hidden" aria-label="Open the navigation">
+<div class="drawer-content isolate flex min-w-0 flex-col {% if page.fills_viewport %}h-dvh{% else %}min-h-dvh{% endif %}">
+<div class="content flex min-h-0 flex-1 flex-col gap-6 bg-base-100 p-4 lg:mt-2 lg:rounded-ss-4xl lg:border-t lg:border-s border-base-300 lg:p-10 lg:[corner-start-start-shape:squircle]">
+<div class="flex shrink-0 items-center gap-2">
+<label for="navigation" class="btn btn-ghost btn-square btn-sm drawer-button lg:hidden" aria-label="Open the navigation">
 <svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
 </label>
-<p class="repo-name flex min-h-8 shrink-0 items-center px-page pt-2 text-xl font-light text-muted">{{ frame.repo }}</p>
+<p class="repo-name flex min-h-8 items-center text-xl font-light text-muted">{{ frame.repo }}</p>
+</div>
 {% block holds -%}
-<div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden px-page pt-2">
+<div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden">
 {%- for hold in frame.holds %}
 <div class="{{ hold.alert }}" role="alert"><span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
-{%- endfor %}
+{%- endfor -%}
 </div>
 {%- endblock %}
-<p id="lost" class="alert alert-warning mx-page mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
+<p id="lost" class="alert alert-warning shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
 {%- if page.place.has_crumbs() %}
-<div class="flex min-h-8 shrink-0 flex-wrap items-center gap-2 px-page pt-2">
+<div class="flex min-h-8 shrink-0 flex-wrap items-center gap-2">
 {% include "shell_crumbs.html" %}
 {% include "shell_buttons.html" %}
 </div>
@@ -41,15 +44,16 @@
 {% include "shell_crumbs.html" %}
 {%- endif %}
 {% include "shell_heading.html" %}
-<main class="px-page py-4{% if page.fills_viewport %} flex min-h-0 flex-1 flex-col{% endif %}">
+<main class="flex flex-col gap-6{% if page.fills_viewport %} min-h-0 flex-1{% endif %}">
 {% block main %}{% endblock %}
 </main>
 </div>
+</div>
 <div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
-<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
-<a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-6 rounded-full lg:max-2xl:size-8"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
-<ul class="menu w-full p-0">
+<nav class="flex min-h-full w-64 flex-col gap-2 bg-card px-2 pt-10 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
+<a class="repo link link-hover mx-5 flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-4 rounded-full"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
+<ul class="menu w-full">
 {%- for area in crate::web::shell::Area::ALL %}
 {%- call nav_link(area) %}{% endcall %}
 {%- endfor %}

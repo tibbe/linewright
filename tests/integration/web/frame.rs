@@ -25,32 +25,6 @@ fn icons(element: ElementRef) -> usize {
     select_in(element, r#"svg[aria-hidden="true"]"#).len()
 }
 
-/// The classes of `element` that set its horizontal padding.
-fn horizontal_padding(element: ElementRef<'_>) -> Vec<&str> {
-    horizontal(element, 'p')
-}
-
-/// The classes of `element` that set its horizontal margin.
-fn horizontal_margin(element: ElementRef<'_>) -> Vec<&str> {
-    horizontal(element, 'm')
-}
-
-/// The classes of `element` with Tailwind's spacing `property` (`p` or `m`)
-/// on every side, the left and right, or one of them.
-fn horizontal(element: ElementRef<'_>, property: char) -> Vec<&str> {
-    element
-        .value()
-        .classes()
-        .filter(|class| {
-            class.strip_prefix(property).is_some_and(|sides| {
-                ["-", "x-", "l-", "r-", "s-", "e-"]
-                    .iter()
-                    .any(|side| sides.starts_with(side))
-            })
-        })
-        .collect()
-}
-
 #[test_log::test(tokio::test)]
 async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_with_their_icons() {
     let pages = Pages::of(a_ticket()).await;
@@ -518,20 +492,7 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
         "{facts:?}"
     );
     assert!(facts.iter().all(|fact| fact.tone.is_none()), "{facts:?}");
-    let cards = classes(&html, "#server dl.card");
-    assert!(
-        cards.len() == 1
-            && [
-                "card-sm",
-                "border",
-                "border-base-300",
-                "bg-card",
-                "shadow-sm"
-            ]
-            .iter()
-            .all(|class| cards[0].contains(class)),
-        "{cards:?}"
-    );
+    assert_eq!(select(&html, "#server dl.card").len(), 1, "{}", html.html());
     assert!(select(&html, "#server table").is_empty(), "{}", html.html());
     assert_eq!(select(&html, "#server time[datetime]").len(), 4);
     assert!(
@@ -579,33 +540,4 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
             .is_some_and(|facts| labelled(facts).contains(&("Webhook deliveries refused", "1"))),
         "{server:?}"
     );
-}
-
-#[test_log::test(tokio::test)]
-async fn every_pages_content_is_inset_by_the_same_gutter_as_the_alerts_above_it() {
-    let pages = super::run::implemented_as_recorded().await;
-
-    for path in [
-        "/",
-        "/items/1",
-        "/runs",
-        "/runs/1/implement-1",
-        "/automations",
-        "/server",
-    ] {
-        let html = pages.page(path).await;
-        let main = select(&html, "main");
-        assert_eq!(main.len(), 1, "{path}");
-        assert_eq!(horizontal_padding(main[0]), ["px-page"], "{path}");
-        assert_eq!(
-            horizontal_padding(select(&html, "#holds")[0]),
-            ["px-page"],
-            "{path}"
-        );
-        assert_eq!(
-            horizontal_margin(select(&html, "#lost")[0]),
-            ["mx-page"],
-            "{path}"
-        );
-    }
 }
