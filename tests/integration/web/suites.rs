@@ -32,54 +32,315 @@ pub(super) async fn with_suites() -> Pages {
     pages
 }
 
+/// `docs/specs/benchmarks.md`, Suites; `docs/specs/design_system.md`,
+/// Tables.
 #[test_log::test(tokio::test)]
-async fn the_suites_page_shows_a_row_per_suite_linking_to_its_page() {
+async fn the_suites_page_shows_a_row_per_suite_by_name_in_a_card_with_its_filters_and_new() {
     let pages = with_suites().await;
+    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
 
     let html = pages.page("/suites").await;
 
     assert_eq!(
+        table_bars(&html),
+        [(
+            "Suites".to_string(),
+            vec!["name".to_string(), "stage".into(), "New".into()]
+        )]
+    );
+    let heads: Vec<String> = select(&html, "#suites thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(heads, ["", "Stage", "Last experiment"]);
+    assert_eq!(
         rows(&html, "#suites"),
         [
-            ["board", "implement", "2", ""],
-            ["triage-basics", "triage", "0", ""],
+            ["board", "implement", "2026-11-17 12:00:00 UTC"],
+            ["triage-basics", "triage", ""],
         ]
     );
+    let names: Vec<String> = select(&html, "#suites tbody tr > th:first-child")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(names, ["board", "triage-basics"]);
     assert_eq!(
         hrefs(select(&html, "#suites tbody a")),
-        ["/suites/board", "/suites/triage-basics"]
+        ["/suites/board", "/experiments/2", "/suites/triage-basics"]
     );
+    assert_eq!(select(&html, ".table-card #suites table").len(), 1);
     assert_eq!(events_path(&html), Some("/events/suites"));
 }
 
+/// `docs/specs/design_system.md`, Screen states, Empty.
 #[test_log::test(tokio::test)]
-async fn the_suites_page_with_no_suites_says_so_and_offers_to_make_one() {
+async fn the_suites_page_with_no_suites_says_so() {
     let pages = Pages::of(view(vec![], vec![])).await;
 
     let html = pages.page("/suites").await;
 
     assert_eq!(text(select(&html, "#suites p")[0]), "No suites");
-    let form = select(&html, "form.make-suite");
-    assert_eq!(form[0].attr("hx-post"), Some("/suites"));
-    let stages: Vec<&str> = select_in(form[0], "select[name=stage] option")
-        .into_iter()
-        .filter_map(|option| option.attr("value"))
-        .collect();
-    assert_eq!(stages, ["triage", "design", "implement"]);
-    let name = select_in(form[0], "input[name=name]");
-    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
 }
 
-/// `docs/specs/benchmarks.md`, Suites, Making a suite.
+/// `docs/specs/benchmarks.md`, Suites, Filters; `docs/specs/design_system.md`,
+/// Filters.
 #[test_log::test(tokio::test)]
-async fn the_suites_page_opens_making_a_suite_from_new_and_ends_it_in_create() {
+async fn the_suites_filters_narrow_the_suites_and_are_carried_in_the_pages_link_and_stream() {
+    let pages = with_suites().await;
+    keep_suite(&pages.path(""), "triage-boards", "triage").await;
+
+    let by_both = pages.page("/suites?name=BOA&stage=triage").await;
+    let unset = pages.page("/suites?name=&stage=").await;
+
+    let names = |html: &Html| -> Vec<String> {
+        rows(html, "#suites")
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    assert_eq!(names(&by_both), ["triage-boards"]);
+    assert_eq!(names(&unset), ["board", "triage-basics", "triage-boards"]);
+    assert_eq!(
+        filters(&by_both),
+        [("name", "BOA".to_string()), ("stage", "triage".to_string())]
+    );
+    assert_eq!(
+        events_path(&by_both),
+        Some("/events/suites?name=BOA&stage=triage")
+    );
+    assert_eq!(
+        select(&by_both, "form[data-filters]")[0].attr("data-filters"),
+        Some("/events/suites")
+    );
+    let stages: Vec<String> = select(&unset, "form[data-filters] select[name=stage] option")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(stages, ["All stages", "triage", "design", "implement"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn the_suites_pages_stream_sends_the_suites_its_filters_keep() {
+    let pages = with_suites().await;
+    let mut events = stream(&pages, "/events/suites?stage=triage").await;
+
+    let event = events.recv().await.unwrap();
+
+    let (_, suites) = regions(&event)
+        .into_iter()
+        .find(|(id, _)| id == "suites")
+        .expect("the suites");
+    assert_eq!(rows(&suites, "#suites"), [["triage-basics", "triage", ""]]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_stage_to_filter_on_that_is_not_a_suites_says_so_in_place_of_the_suites() {
+    let pages = with_suites().await;
+
+    let (status, body) = pages.get("/suites?stage=rework").await;
+
+    assert_eq!(status, 400);
+    let html = Html::parse_document(&body);
+    assert_eq!(
+        text(select(&html, "#suites p")[0]),
+        "\"rework\" is not a stage of a suite: one of triage, design, implement"
+    );
+}
+
+/// The New suite dialog's form as a reader meets it: the value of each field,
+/// a select's its chosen option's, and the refusal above its buttons, if any.
+#[track_caller]
+fn new_suite_form(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
+    let refusals = select(form, ".alert");
+    assert!(refusals.len() <= 1, "{}", form.html());
+    (
+        field_values(select(form, "input[name], select[name]")),
+        refusals.first().map(|refusal| text(*refusal)),
+    )
+}
+
+/// `docs/specs/benchmarks.md`, New suite; `docs/specs/design_system.md`,
+/// Dialogs and Making; `docs/specs/web/design_system.md`, Navigation and
+/// Making.
+#[test_log::test(tokio::test)]
+async fn new_opens_the_new_suite_dialog_outside_the_suites_with_name_and_stage_on_triage() {
     let pages = with_suites().await;
 
     let html = pages.page("/suites").await;
 
+    let new = select(&html, ".table-bar button[command=show-modal]");
+    assert_eq!(new.len(), 1);
+    assert_eq!(text(new[0]), "New");
+    assert_eq!(new[0].attr("type"), Some("button"));
+    let id = new[0].attr("commandfor").unwrap();
+    let dialog = select(&html, &format!("dialog[id='{id}']"));
+    assert_eq!(dialog.len(), 1, "{}", html.html());
+    let dialog = dialog[0];
+    assert!(has_classes(dialog, &["modal"]), "{}", dialog.html());
+    assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
+    assert_eq!(select(&html, "#suites dialog, .table-bar dialog").len(), 0);
+    let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
+    assert_eq!(text(legend[0]), "New suite");
     assert_eq!(
-        disclosures(&html, &["make-suite"]),
-        [("New".to_string(), false, "Create".to_string())]
+        dialog.attr("aria-labelledby"),
+        legend[0].attr("id"),
+        "{}",
+        dialog.html()
+    );
+    let form = select_in(dialog, "form[hx-post]")[0];
+    assert_eq!(form.attr("hx-post"), Some("/suites"));
+    assert_eq!(form.attr("action"), Some("/suites"));
+    assert_eq!(form.attr("hx-target"), Some("this"));
+    assert!(form.attr("data-new").is_some(), "{}", form.html());
+    let labels: Vec<String> = select_in(form, "fieldset label")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(labels, ["Name", "Stage"]);
+    for label in select_in(form, "fieldset label") {
+        let field = label.attr("for").unwrap();
+        assert_eq!(
+            select_in(form, &format!("[id='{field}']")).len(),
+            1,
+            "{field}"
+        );
+    }
+    let stages: Vec<&str> = select_in(form, "select[name=stage] option")
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert_eq!(stages, ["triage", "design", "implement"]);
+    assert_eq!(
+        new_suite_form(&Html::parse_fragment(&form.inner_html())),
+        (
+            vec![("name", String::new()), ("stage", "triage".into())],
+            None
+        )
+    );
+    let buttons = select_in(form, ".modal-action button");
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|button| text(*button))
+            .collect::<Vec<_>>(),
+        ["Cancel", "Create"]
+    );
+    assert_eq!(buttons[0].attr("command"), Some("close"));
+    assert_eq!(buttons[0].attr("commandfor"), Some(id));
+    assert!(has_classes(buttons[1], &["btn-primary"]));
+    assert_eq!(buttons[1].attr("type"), Some("submit"));
+}
+
+/// `docs/specs/design_system.md`, Making.
+#[test_log::test(tokio::test)]
+async fn making_a_suite_answers_the_form_as_it_starts_closing_the_dialog_and_the_stream_then_sends_it()
+ {
+    let pages = Pages::of(view(vec![], vec![])).await;
+    let mut events = stream(&pages, "/events/suites").await;
+    events.recv().await.unwrap();
+
+    let (status, headers, answer) = post_answer(
+        &pages,
+        "/suites",
+        &[SAME_ORIGIN],
+        &[("name", "board"), ("stage", "design")],
+    )
+    .await;
+
+    assert_eq!(status, 200, "{}", answer.html());
+    assert_eq!(headers.get("hx-trigger").unwrap(), "made");
+    assert_eq!(
+        new_suite_form(&answer),
+        (
+            vec![("name", String::new()), ("stage", "triage".into())],
+            None
+        )
+    );
+    assert_eq!(text(select(&answer, "legend")[0]), "New suite");
+    let suites = loop {
+        let event = events.recv().await.unwrap();
+        if let Some((_, suites)) = regions(&event).into_iter().find(|(id, _)| id == "suites") {
+            break suites;
+        }
+    };
+    assert_eq!(rows(&suites, "#suites"), [["board", "design", ""]]);
+}
+
+/// `docs/specs/benchmarks.md`, New suite, Refusals; `docs/specs/design_system.md`,
+/// Making, A refusal.
+#[test_log::test(tokio::test)]
+async fn a_refused_suite_answers_the_form_as_sent_with_the_reason() {
+    let pages = with_suites().await;
+
+    let (taken, taken_headers, taken_form) = post_answer(
+        &pages,
+        "/suites",
+        &[SAME_ORIGIN],
+        &[("name", "board"), ("stage", "design")],
+    )
+    .await;
+    let (malformed, _, malformed_form) = post_answer(
+        &pages,
+        "/suites",
+        &[SAME_ORIGIN],
+        &[("name", "Board 2"), ("stage", "implement")],
+    )
+    .await;
+    let (no_stage, _, no_stage_form) = post_answer(
+        &pages,
+        "/suites",
+        &[SAME_ORIGIN],
+        &[("name", "fresh"), ("stage", "rework")],
+    )
+    .await;
+    let (cross_site, _, cross_site_form) = post_answer(
+        &pages,
+        "/suites",
+        &[CROSS_SITE],
+        &[("name", "fresh"), ("stage", "design")],
+    )
+    .await;
+
+    assert_eq!(taken, 422);
+    assert!(taken_headers.get("hx-trigger").is_none());
+    assert_eq!(
+        new_suite_form(&taken_form),
+        (
+            vec![("name", "board".into()), ("stage", "design".into())],
+            Some("A suite named board already exists.".into())
+        )
+    );
+    assert_eq!(malformed, 422);
+    assert_eq!(
+        new_suite_form(&malformed_form),
+        (
+            vec![("name", "Board 2".into()), ("stage", "implement".into())],
+            Some(
+                "A name holds only lowercase letters, digits and hyphens, and starts with a \
+                 letter or a digit."
+                    .into()
+            )
+        )
+    );
+    assert_eq!(no_stage, 422);
+    assert_eq!(
+        new_suite_form(&no_stage_form),
+        (
+            vec![("name", "fresh".into()), ("stage", "triage".into())],
+            Some("\"rework\" is not a stage of a suite: one of triage, design, implement".into())
+        )
+    );
+    assert_eq!(cross_site, 403);
+    assert_eq!(
+        new_suite_form(&cross_site_form).0,
+        [("name", "fresh".into()), ("stage", "design".into())]
+    );
+    let html = pages.page("/suites").await;
+    assert_eq!(
+        rows(&html, "#suites"),
+        [["board", "implement", ""], ["triage-basics", "triage", ""]]
     );
 }
 
@@ -146,75 +407,6 @@ async fn a_case_named_as_another_cases_question_has_a_confirmation_of_its_own() 
 }
 
 #[test_log::test(tokio::test)]
-async fn making_a_suite_says_so_and_the_page_then_lists_it() {
-    let pages = Pages::of(view(vec![], vec![])).await;
-
-    let (status, answer) = post(
-        &pages,
-        "/suites",
-        &[SAME_ORIGIN],
-        &[("name", "board"), ("stage", "design")],
-    )
-    .await;
-
-    assert_eq!(status, 200, "{}", said(&answer));
-    assert_eq!(said(&answer), "Made the design suite board");
-    let html = pages.page("/suites").await;
-    assert_eq!(rows(&html, "#suites"), [["board", "design", "0", ""]]);
-}
-
-#[test_log::test(tokio::test)]
-async fn a_suites_name_that_is_taken_is_refused() {
-    let pages = with_suites().await;
-
-    let (status, answer) = post(
-        &pages,
-        "/suites",
-        &[SAME_ORIGIN],
-        &[("name", "board"), ("stage", "design")],
-    )
-    .await;
-
-    assert_eq!(status, 422);
-    assert_eq!(said(&answer), "Not made: a suite is already named board");
-    let html = pages.page("/suites").await;
-    assert_eq!(rows(&html, "#suites")[0], ["board", "implement", "2", ""]);
-}
-
-#[test_log::test(tokio::test)]
-async fn a_suite_whose_name_or_stage_does_not_parse_is_refused() {
-    let pages = Pages::of(view(vec![], vec![])).await;
-
-    let (name_status, name) = post(
-        &pages,
-        "/suites",
-        &[SAME_ORIGIN],
-        &[("name", "Board"), ("stage", "design")],
-    )
-    .await;
-    let (stage_status, stage) = post(
-        &pages,
-        "/suites",
-        &[SAME_ORIGIN],
-        &[("name", "board"), ("stage", "rework")],
-    )
-    .await;
-
-    assert_eq!(name_status, 422);
-    assert_eq!(
-        said(&name),
-        "Not made: \"Board\" is not a suite's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
-    );
-    assert_eq!(stage_status, 422);
-    assert_eq!(
-        said(&stage),
-        "Not made: \"rework\" is not a stage of a suite: one of triage, design, implement"
-    );
-    let html = pages.page("/suites").await;
-    assert_eq!(rows(&html, "#suites"), Vec::<Vec<String>>::new());
-}
-
-#[test_log::test(tokio::test)]
 async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let pages = with_suites().await;
     let writes: [(&str, &[(&str, &str)]); 3] = [
@@ -238,10 +430,7 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let html = pages.page("/suites").await;
     assert_eq!(
         rows(&html, "#suites"),
-        [
-            ["board", "implement", "2", ""],
-            ["triage-basics", "triage", "0", ""],
-        ]
+        [["board", "implement", ""], ["triage-basics", "triage", ""]]
     );
     assert_eq!(cases(&pages), ["columns", "lanes"]);
 }
@@ -631,30 +820,4 @@ async fn the_suite_pages_stream_sends_the_runs_to_capture_as_they_change() {
         .map(|option| option.attr("value"))
         .collect();
     assert_eq!(offered, [Some("1/implement-3"), Some("1/implement-2")]);
-}
-
-#[test_log::test(tokio::test)]
-async fn the_suites_page_shows_each_suites_last_experiment_linking_to_it() {
-    let pages = with_suites().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
-    launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
-
-    let html = pages.page("/suites").await;
-
-    assert_eq!(
-        rows(&html, "#suites"),
-        [
-            [
-                "board",
-                "implement",
-                "2",
-                "experiment 2, launched 2026-11-17 12:00:00 UTC"
-            ],
-            ["triage-basics", "triage", "0", ""],
-        ]
-    );
-    assert_eq!(
-        hrefs(select(&html, "#suites tbody td a")),
-        ["/experiments/2"]
-    );
 }

@@ -42,12 +42,12 @@ impl Write {
         }
     }
 
-    /// What the page says of it not happening, for `why`.
+    /// It not happening, for `why`.
     pub(super) fn refused(self, status: StatusCode, why: &str) -> Refused {
-        let said = format!("{}: {}", self.not_done(), html::escape(why));
         Refused {
+            write: self,
             status,
-            said: alert("alert-error", &said).0,
+            why: why.to_string(),
         }
     }
 
@@ -80,16 +80,25 @@ impl Write {
     }
 }
 
-/// A write that did not happen: the status it is answered with, and what
-/// the page says of it.
+/// A write that did not happen: the status it is answered with, and why.
 pub(super) struct Refused {
+    write: Write,
     status: StatusCode,
-    said: String,
+    why: String,
 }
 
+impl Refused {
+    /// The status it is answered with, and why.
+    pub(super) fn into_parts(self) -> (StatusCode, String) {
+        (self.status, self.why)
+    }
+}
+
+/// What the page says of it, as in "Not captured: why", in an alert.
 impl IntoResponse for Refused {
     fn into_response(self) -> Response {
-        (self.status, axum::response::Html(self.said)).into_response()
+        let said = format!("{}: {}", self.write.not_done(), html::escape(&self.why));
+        (self.status, alert("alert-error", &said)).into_response()
     }
 }
 

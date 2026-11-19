@@ -373,6 +373,21 @@ fn post<W: Routed>(
     headers: &[(&str, &str)],
     fields: &[(&str, &str)],
 ) -> impl Future<Output = (u16, Html)> + use<W> {
+    let answer = post_answer(web, path, headers, fields);
+    async move {
+        let (status, _, html) = answer.await;
+        (status, html)
+    }
+}
+
+/// As [`post`], with the headers of the answer too.
+#[track_caller]
+fn post_answer<W: Routed>(
+    web: &W,
+    path: &str,
+    headers: &[(&str, &str)],
+    fields: &[(&str, &str)],
+) -> impl Future<Output = (u16, axum::http::HeaderMap, Html)> + use<W> {
     let caller = std::panic::Location::caller();
     let mut form = form_urlencoded::Serializer::new(String::new());
     for (name, value) in fields {
@@ -392,8 +407,9 @@ fn post<W: Routed>(
     let router = web.router().clone();
     async move {
         let Ok(response) = router.oneshot(request).await;
+        let answered = response.headers().clone();
         let (status, body) = status_and_body(response).await;
-        (status, Html::parse_fragment(&body))
+        (status, answered, Html::parse_fragment(&body))
     }
 }
 
@@ -750,6 +766,32 @@ fn runs_shown(html: &Html) -> Vec<Vec<String>> {
             row.select(&Selector::parse("td, th").unwrap())
                 .map(text)
                 .collect()
+        })
+        .collect()
+}
+
+/// The filters' names and values, a select's the value of its chosen
+/// option.
+#[track_caller]
+fn filters(html: &Html) -> Vec<(&str, String)> {
+    field_values(select(html, "form[data-filters] :is(input, select)"))
+}
+
+/// The names and values of `fields`, a select's the value of its chosen
+/// option.
+#[track_caller]
+fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
+    fields
+        .into_iter()
+        .map(|field| {
+            let value = match field.value().name() {
+                "select" => select_in(field, "option[selected]")
+                    .into_iter()
+                    .filter_map(|option| option.attr("value"))
+                    .collect(),
+                _ => field.attr("value").unwrap_or_default().to_string(),
+            };
+            (field.attr("name").expect("a field's name"), value)
         })
         .collect()
 }

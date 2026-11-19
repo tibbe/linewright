@@ -108,7 +108,8 @@ const morphed = (tagName, attributes, attrName, newValue) => {
 
 /// `docs/specs/design_system.md`, Confirming.
 #[test_log::test(tokio::test)]
-async fn going_ahead_closes_the_confirmation_and_turning_it_down_is_left_to_the_browser() {
+async fn going_ahead_closes_the_confirmation_but_not_a_new_dialog_and_turning_it_down_is_left_to_the_browser()
+ {
     let script = served_script().await;
 
     // A form in a dialog as the browser gives it to a `submit` listener:
@@ -121,17 +122,23 @@ document.addEventListener = (type, listener) => { if (type === "submit") submitt
 const dialog = () => ({ open: true, close() { this.open = false; } });
 const ahead = dialog();
 const down = dialog();
-const form = (method, within) => ({ method, closest: (selector) => (selector === "dialog" ? within : null) });
+const making = dialog();
+const form = (method, within, attributes) => ({
+  method,
+  closest: (selector) => (selector === "dialog" ? within : null),
+  hasAttribute: (name) => attributes.includes(name),
+});
 for (const listener of submitted) {
-  listener({ target: form("post", ahead) });
-  listener({ target: form("dialog", down) });
-  listener({ target: form("get", null) });
+  listener({ target: form("post", ahead, []) });
+  listener({ target: form("dialog", down, []) });
+  listener({ target: form("get", null, []) });
+  listener({ target: form("post", making, ["data-new"]) });
 }
-`ahead: ${ahead.open}, down: ${down.open}`
+`ahead: ${ahead.open}, down: ${down.open}, making: ${making.open}`
 "#;
     let answer = evaluated(&[BROWSER, asked, &script, submit]);
 
-    assert_eq!(answer, "ahead: false, down: true");
+    assert_eq!(answer, "ahead: false, down: true, making: true");
 }
 
 /// Stand-ins for the page's `#tip` and its triggers, and for the events the
@@ -909,6 +916,56 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
     let folds = with_filters(page, asked).await;
 
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
+}
+
+/// `docs/specs/design_system.md`, Making: a "New" dialog closes once
+/// Linewright has made the thing, and opens again as it starts however it
+/// was closed.
+#[test_log::test(tokio::test)]
+async fn a_new_dialog_closes_once_made_and_opens_again_with_its_form_as_it_started() {
+    let page = r#"
+var dialog = Object.assign(element("DIALOG", {}), {
+  open: true,
+  close() { this.open = false; fire("close", event(this)); },
+});
+var making = Object.assign(element("FORM", { "data-new": "" }), { method: "post", innerHTML: "as it starts" });
+making.hasAttribute = (name) => name in making.attributes;
+making.closest = (selector) => (selector === "dialog" ? dialog : null);
+dialog.querySelector = (selector) => (selector === "form[data-new]" ? making : null);
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-suite" });
+opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) =>
+  selector === "dialog form[data-new]" ? [making] : others(selector);
+const byId = document.getElementById;
+document.getElementById = (id) => (id === "new-suite" ? dialog : byId(id));
+const open = () => { fire("click", event(opening)); dialog.open = true; };
+const shown = () => `${dialog.open ? "open" : "closed"}: ${making.innerHTML}`;
+"#;
+    let asked = r#"
+const steps = [];
+making.innerHTML = "refused"; fire("submit", event(making));
+steps.push(shown());
+fire("made", event(making));
+steps.push(shown());
+open(); making.innerHTML = "typed"; dialog.close();
+steps.push(shown());
+making.innerHTML = "answered once closed"; open();
+steps.push(shown());
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            "open: refused",
+            "closed: as it starts",
+            "closed: as it starts",
+            "open: as it starts",
+        ]
+    );
 }
 
 /// `docs/specs/benchmarks.md`, Experiment, The table: a row opens on click

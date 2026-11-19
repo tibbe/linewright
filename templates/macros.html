@@ -120,6 +120,47 @@
 </dialog>
 {%- endmacro -%}
 
+{#- The button "New" in a table's bar (`docs/specs/design_system.md`,
+    Making), which opens the dialog `id` with no request. -#}
+{%- macro new_button(id) -%}
+<button class="btn btn-sm" type="button" command="show-modal" commandfor="{{ id }}">New</button>
+{%- endmacro -%}
+
+{#- A "New" dialog (`docs/specs/design_system.md`, Dialogs and Making;
+    `docs/specs/web/design_system.md`, Navigation and Making): a daisyUI
+    `modal` with no `modal-backdrop`, so that a click outside it leaves it
+    open. It is drawn outside every region a stream sends, so that an update
+    leaves it and what the reader typed in it as they were. Its form posts
+    to `action`, and the answer, the form that `new_form` draws, replaces
+    what the form holds. -#}
+{%- macro new_dialog(id, action) -%}
+<dialog id="{{ id }}" class="modal" aria-labelledby="{{ id }}-title">
+<div class="modal-box">
+<form method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new>
+{{- caller() }}
+</form>
+</div>
+</dialog>
+{%- endmacro -%}
+
+{#- What the form of the "New" dialog `id` holds: the fieldset titled
+    `title`, whose fields, each under its `label`, its caller draws, then
+    the refusal, if there is one, then "Cancel" and the button `button`
+    that makes the thing. -#}
+{%- macro new_form(id, title, button, refusal) -%}
+<fieldset class="fieldset">
+<legend id="{{ id }}-title" class="fieldset-legend text-base">{{ title }}</legend>
+{{- caller() }}
+</fieldset>
+{%- if let Some(refusal) = refusal %}
+<div class="alert alert-error mt-2" role="alert"><span>{{ refusal }}</span></div>
+{%- endif %}
+<div class="modal-action">
+<button class="btn" type="button" command="close" commandfor="{{ id }}">Cancel</button>
+<button class="btn btn-primary" type="submit">{{ button }}</button>
+</div>
+{%- endmacro -%}
+
 {#- A table's row `id` that opens to the rows under it, or one of those,
     under the row `of`, hidden until that row opens. The caller draws its
     cells, the first holding `fold_button` where the row opens. -#}
