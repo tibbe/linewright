@@ -816,8 +816,8 @@ impl ResultSchema {
                 include_str!("../briefs/results/automation.schema.json"),
             ),
             ResultSchema::Scorer => (
-                "judge.schema.json",
-                include_str!("../briefs/results/judge.schema.json"),
+                "scorer.schema.json",
+                include_str!("../briefs/results/scorer.schema.json"),
             ),
         }
     }

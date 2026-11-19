@@ -1,0 +1,1 @@
+[prompts/scorer.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» stage=«implement» criteria=«It counts the widgets.» trial=«[parts/trial-output.md outcome=«/work/trial/outcome» sessions=«/work/trial/sessions» writes=«/work/trial/writes»]» output=«[outputs/scorer.md]»]
