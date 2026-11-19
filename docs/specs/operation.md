@@ -50,10 +50,10 @@ The command is `lw`.
 | `logs N`              | show a run's transcript (see [`lw logs`](runs.md#lw-logs))               |
 | `export ID DIR`       | write run ID as plain files (see [`lw export`](runs.md#lw-export))       |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
-| `capture ID NAME`     | capture run ID as a case in a suite (see [Benchmarks](benchmarks.md))    |
-| `replay CASE`         | run a case's stage on it again (see [Benchmarks](benchmarks.md))         |
-| `judge CASE DIR`      | judge the output of a replay (see [Benchmarks](benchmarks.md))           |
-| `suites`, `suite`, `experiment` | work with suites and experiments (see [Benchmarks](benchmarks.md#suites-and-experiments-on-the-command-line)) |
+| `capture ID NAME`     | capture run ID as a task in a benchmark (see [Benchmarks](benchmarks.md))    |
+| `trial TASK`         | run a task's stage on it again (see [Benchmarks](benchmarks.md))         |
+| `score TASK DIR`       | score the output of a trial (see [Benchmarks](benchmarks.md))           |
+| `benchmarks`, `benchmark`, `benchmark-run` | work with benchmarks and benchmark runs (see [Benchmarks](benchmarks.md#benchmarks-and-benchmark-runs-on-the-command-line)) |
 
 - **The version.** `--version` names the version and the commit it was
   built from.
@@ -179,12 +179,12 @@ Every setting is a key in the operator's TOML config file (`--config`, default
 `linewright.toml` in the working directory); some are also keys in the
 repository's file ([The repository's file](#the-repositorys-file)). Each place a
 setting is set is a layer, highest first: flag, environment variable, the
-repository's file, the operator's file, default. In a replay, a configuration
+repository's file, the operator's file, default. In a trial, a configuration
 overrides them all ([Configurations](benchmarks.md#configurations)).
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
-| `repo` (`owner/name`)                        | required, but not for a command that reads a case |
+| `repo` (`owner/name`)                        | required, but not for a command that reads a task |
 | `poll-interval`                              | 60s                                         |
 | `webhook-address`                            | `0.0.0.0:8080` with the webhook secret set; none without it |
 | `ui-address`                                 | `127.0.0.1:8081`                            |
@@ -193,7 +193,7 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `spec-lookback`                              | 7d                                          |
 | `done-window`                                | 7d                                          |
 | `max-runs`                                   | 4                                           |
-| `max-replays`                                | 1                                           |
+| `max-trials`                                | 1                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
 | `model`                                      | the harness's choice                        |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
@@ -215,9 +215,9 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
-- **`repo` and a case.** A command that reads a case, such as `replay`, reads
+- **`repo` and a task.** A command that reads a task, such as `trial`, reads
   the same settings as every other command. It works on the repository of the
-  case ([Replaying](benchmarks.md#replaying)). It needs no `repo`, and it
+  task ([Trials](benchmarks.md#trials)). It needs no `repo`, and it
   ignores a `repo` that is set.
 - **Combining layers.** A setting's value combines what every layer sets, by
   what the setting holds: a value is the highest layer's, a list holds the
@@ -272,9 +272,9 @@ whole-pipeline layer ([Configuration](#configuration)).
 - **The tables.** A stage's settings are a table in a config file,
   `[stage.NAME]` with the stage's name under [Runs](runs.md), such as
   `[stage.implement]`, with the session settings as its keys.
-- **The judge.** The session of the judge takes its settings as the sessions
-  of a stage do, from the table `[stage.judge]`
-  ([Judging](benchmarks.md#judging)).
+- **The scorer.** The session of the scorer takes its settings as the sessions
+  of a stage do, from the table `[stage.scorer]`
+  ([Scoring](benchmarks.md#scoring)).
 
 ## The repository's file
 
@@ -295,7 +295,7 @@ on its default branch, the same TOML as the operator's file.
 A session's brief comes in three layers, each a directory laid out as
 Linewright's own `briefs/`: the repository's `.linewright/briefs/`, the
 operator's `briefs` directory and Linewright's own. Each file is taken from the
-first layer that has it. In a replay, a configuration overrides the three
+first layer that has it. In a trial, a configuration overrides the three
 ([Configurations](benchmarks.md#configurations)).
 
 - **What a layer may hold.** A layer may hold any file of Linewright's own
@@ -403,7 +403,7 @@ host and port, and serves none when `ui-address` is empty.
 | the drain, since when, and its deadline if set                  | while one is under way |
 | the environment and its builds, as `environment` shows them ([`lw environment`](sessions.md#lw-environment)) | with a setup command   |
 | the runs in flight out of `max-runs`                            | always                 |
-| the replays and judges of experiments in flight out of `max-replays` | while there are any |
+| the trials and scorers of benchmark runs in flight out of `max-trials` | while there are any |
 | the time of the last webhook delivery accepted                  | with webhooks on       |
 | the webhook deliveries refused since `serve` started            | with webhooks on       |
 
@@ -426,7 +426,7 @@ that answers a question, or asks `serve` to act, logs nothing.
 ## Out of scope
 
 - Acting from the UI on `serve` or on the work, but for capturing a run and
-  for suites and experiments.
+  for benchmarks and benchmark runs.
 - Caps on what the repository's file may set, such as the models it may
   choose.
 - The repository's file naming the variables a stage's sessions get, even

@@ -12,28 +12,28 @@
 - **What is so.** A screen states what is so, not what to do about it; how to
   work with Linewright is the user guide's.
 - **Voice.** A sentence on a screen is in the active voice: it names who or
-  what acts, such as "This stops its running replays and judges."
+  what acts, such as "This stops its running trials and scorers."
 - **Buttons.** A button's label is a verb, or "New" for a button that makes
   something. The label also names what the button acts on where the screen
-  does not show it. For example, "Remove" on a case's row and "Cancel" on
-  Experiment need no more, but "Add case" on Run names the case.
+  does not show it. For example, "Remove" on a task's row and "Cancel" on
+  Benchmark run need no more, but "Add task" on Run names the task.
 
 ## Titles
 
 - **A screen's title** is the name in its heading, then "Linewright", such as
-  "Experiment 14 · Linewright". For a screen of the navigation, the name is
+  "Benchmark run 14 · Linewright". For a screen of the navigation, the name is
   the screen's name in the navigation.
 
 ## Screen states
 
 - **Empty.** A list with nothing in it shows "No" and what it lists in its
-  place, such as "No runs" or "No suites", unless its screen shows it only
+  place, such as "No runs" or "No benchmarks", unless its screen shows it only
   while it holds something.
 - **Lost.** A screen that loses `serve` keeps what it last showed, shows
   "Lost `serve` 5 minutes ago; reconnecting.", with the time as a past time
   ([Time](#time)), and reconnects on its own.
-- **Nothing there.** A link can name an item, run, suite or experiment that
-  does not exist. The screen it opens shows "No such" and the name, as the
+- **Nothing there.** A link can name an item, run, benchmark or benchmark run
+  that does not exist. The screen it opens shows "No such" and the name, as the
   screens give it, such as "No such run 43/rework-9" or "No such item #812".
 - **Absent.** A figure that is absent, such as a mean with nothing to
   count, shows as "–".
@@ -82,7 +82,7 @@
   alone. Where a screen also names the state that shows as the status, the
   icon and the state's name are in a badge in the status's colour, but for a
   status among a screen's facts ([Facts](#facts)). For example, a running
-  experiment shows as "running" in the colour of in flight.
+  benchmark run shows as "running" in the colour of in flight.
 
 ## Tables
 
