@@ -273,7 +273,7 @@ async fn serve_fake_seeds_an_ended_experiment_with_leaks_and_replays_without_a_j
 
     let shown = text(&page);
     for said in [
-        "8 of 8 replays ended",
+        "8 of 8",
         "1 leak",
         "no judgement: its run is not done or handed back",
         "no judgement: the judge made none",
@@ -281,9 +281,19 @@ async fn serve_fake_seeds_an_ended_experiment_with_leaks_and_replays_without_a_j
         assert!(shown.contains(said), "{said:?} is not in {shown}");
     }
     assert_eq!(
-        attributes(&page, "#experiment .facts a", "href"),
-        ["/suites/board"]
+        attributes(&page, r#"nav[aria-label="Breadcrumb"] a"#, "href"),
+        ["/suites", "/suites/board"]
     );
+    let opened = attributes(&page, "#configurations tr[id$=_details] a", "href");
+    assert_eq!(opened.len(), 2, "{opened:?}");
+    for transcript in opened {
+        let read = text(&served.page(&transcript).await);
+        assert!(
+            read.contains("The board's columns now carry their names.")
+                || read.contains("The replay passes, and it read nothing it should not."),
+            "{transcript}: {read}"
+        );
+    }
 
     served.stop().await;
 }

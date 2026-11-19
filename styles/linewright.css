@@ -79,6 +79,31 @@
     --tt-trans: -50%;
   }
 
+  .experiment-chart:has(select option[value="time"]:checked) [data-axis="cost"],
+  .experiment-chart:not(:has(select option[value="time"]:checked)) [data-axis="time"] {
+    @apply hidden;
+  }
+
+  .experiment-chart .point-box {
+    @apply pointer-events-none flex h-full items-center text-xs;
+  }
+
+  .experiment-chart .point-box.named-left {
+    @apply justify-end;
+  }
+
+  .experiment-chart .point {
+    @apply pointer-events-auto flex cursor-default items-center gap-1 rounded-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-info;
+  }
+
+  .experiment-chart .named-left .point {
+    @apply flex-row-reverse;
+  }
+
+  .experiment-chart .point .dot {
+    @apply size-4 shrink-0 rounded-full border-2 border-card bg-info;
+  }
+
   a.github::after {
     content: "\2197" / "";
     margin-left: 0.15em;

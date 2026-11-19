@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::num::NonZeroU32;
 use std::path::{Path as FilePath, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +24,7 @@ use super::launch::counted;
 use super::names::Names;
 use super::run_page::{RunQuery, Transcribed, transcript_events, transcript_page};
 use super::shell::{Area, Frame, Trail, Within, frame_regions};
+use super::table::{Align, Column};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Missing, Page, events, experiment_path, experiments, nothing_there, render,
@@ -32,10 +34,10 @@ use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
     CancelRefusal, ConfigurationName, ExperimentId, ExperimentRecord, ExperimentState, NoJudgement,
-    ReplayFigures, Shown, TrialEnd, TrialKey, TrialState, dollars, duration, mean, percent,
-    without,
+    ReplayFigures, Shown, TrialEnd, TrialKey, TrialState, dollars, duration, percent, without,
 };
 use crate::case::CaseName;
+use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
 use crate::phrase::Status;
 use crate::replay::{self, judge};
@@ -139,32 +141,110 @@ impl Outputs {
 /// The experiment as the page shows it.
 struct ExperimentView {
     id: ExperimentId,
-    suite: String,
-    suite_href: String,
-    launched: Html,
     status: Status,
     state: &'static str,
-    /// What a waiting experiment waits for.
-    waiting: Option<Html>,
-    ended: usize,
-    all: usize,
     /// Its cancelling, while it is open (`docs/specs/benchmarks.md`,
-    /// Experiment, Cancelling).
+    /// Experiment, Heading).
     cancel: Option<Confirmation>,
     path: String,
-    chart: Chart,
+    facts: Vec<Fact>,
+    chart: [Plot; 2],
+    /// The configurations' rows, ranked, each followed by the rows it
+    /// opens to.
+    rows: Vec<Row>,
     grid: Grid,
-    configurations: Vec<ConfigurationView>,
-    /// What the judges cost.
-    judges: String,
 }
 
-/// The chart: a point for each configuration at its mean cost and its pass
-/// rate (`docs/specs/benchmarks.md`, Experiment, The chart).
-struct Chart {
-    svg: Html,
-    /// The configurations it has no point for, lacking either figure.
-    unplotted: Vec<ConfigurationName>,
+/// A fact (`docs/specs/benchmarks.md`, Experiment, Facts): its label and
+/// its value, "–" where the value is absent.
+struct Fact {
+    label: &'static str,
+    value: Html,
+}
+
+/// What the page shows of a figure that is absent
+/// (`docs/specs/design_system.md`, Screen states, Absent).
+const ABSENT: &str = "–";
+
+/// The horizontal axis of the chart.
+#[derive(Clone, Copy)]
+enum Axis {
+    Cost,
+    Time,
+}
+
+impl Axis {
+    /// Its name in the page, which the `select`'s option gives.
+    fn name(self) -> &'static str {
+        match self {
+            Axis::Cost => "cost",
+            Axis::Time => "time",
+        }
+    }
+
+    /// Its option's label (`docs/specs/benchmarks.md`, Experiment, The
+    /// chart).
+    fn label(self) -> &'static str {
+        match self {
+            Axis::Cost => "Mean cost",
+            Axis::Time => "Mean time",
+        }
+    }
+
+    /// The mean of `figures` along it, if it has one.
+    fn mean(self, figures: &Figures) -> Option<f64> {
+        match self {
+            Axis::Cost => figures.cost.mean,
+            Axis::Time => figures.time.mean,
+        }
+    }
+
+    /// `value` along it, in words.
+    fn words(self, value: f64) -> String {
+        match self {
+            Axis::Cost => dollars(value),
+            Axis::Time => duration(value),
+        }
+    }
+}
+
+/// The chart along an axis: its ticks and its points, or none with no
+/// point to show.
+struct Plot {
+    axis: Axis,
+    drawn: Option<Drawn>,
+}
+
+/// What a plot with points draws: its SVG's `viewBox`, the lines across it
+/// at a pass rate of 100% and of 50%, its axes, its ticks and its points.
+struct Drawn {
+    view_box: String,
+    rules: String,
+    axes: String,
+    ticks: Vec<Tick>,
+    points: Vec<Point>,
+}
+
+/// A tick's label, at `x`, `y` in the chart's SVG.
+struct Tick {
+    x: f64,
+    y: f64,
+    anchor: &'static str,
+    label: String,
+}
+
+/// A configuration's point (`docs/specs/benchmarks.md`, Experiment, A
+/// point), drawn in the `foreignObject` at `x`, `y` in the chart's SVG,
+/// `POINT_WIDTH` by `POINT_HEIGHT`, whose dot sits at the point's place.
+struct Point {
+    id: String,
+    name: ConfigurationName,
+    tip: String,
+    x: f64,
+    y: f64,
+    /// Whether its name is at its dot's left, so that it stays inside the
+    /// chart.
+    named_left: bool,
 }
 
 struct Grid {
@@ -179,31 +259,148 @@ struct GridRow {
     cells: Vec<String>,
 }
 
-struct ConfigurationView {
-    name: ConfigurationName,
-    pass_rate: String,
-    cost: String,
-    time: String,
-    leaks: usize,
-    unjudged: usize,
-    cases: Vec<CaseView>,
+/// A row of the configurations table (`docs/specs/benchmarks.md`,
+/// Experiment, The table).
+enum Row {
+    Figures(FiguresRow),
+    /// What a replay's row opens to.
+    Replay(ReplayDetails),
 }
 
-struct CaseView {
-    name: CaseName,
-    passes: String,
-    replays: Vec<ReplayView>,
+/// A configuration's, a case's or a replay's row. Its id joins the names
+/// of what it is of with `_`, which no name holds, so that no two rows
+/// share one.
+struct FiguresRow {
+    id: String,
+    level: Level,
+    /// The rows it opens to, if any.
+    opens: Vec<String>,
+    name: String,
+    pass_rate: PassRate,
+    /// Its cells under `ConfigurationsColumn::FIGURES`.
+    figures: [String; 6],
 }
 
-struct ReplayView {
-    repetition: u32,
-    status: Status,
-    state: &'static str,
-    /// Its judgement and its figures, as they stand.
-    said: String,
+/// What a figures row is of, and the id of the row a case's or a
+/// replay's is under.
+enum Level {
+    Configuration,
+    Case { of: String },
+    Replay { of: String },
+}
+
+impl Level {
+    /// The row it is under, or "" for a configuration's.
+    fn of(&self) -> &str {
+        match self {
+            Level::Configuration => "",
+            Level::Case { of } | Level::Replay { of } => of,
+        }
+    }
+
+    /// The classes of its first cell, which set it in under the row it is
+    /// under.
+    fn name_class(&self) -> &'static str {
+        match self {
+            Level::Configuration => "",
+            Level::Case { .. } => "pl-8",
+            Level::Replay { .. } => "pl-12",
+        }
+    }
+}
+
+/// What a row's Pass rate shows.
+enum PassRate {
+    Text(String),
+    /// A replay's, as a status (`docs/specs/benchmarks.md`, Experiment, A
+    /// replay's status).
+    Status {
+        status: Status,
+        words: String,
+    },
+}
+
+/// What a replay's row opens to: its judge's reasoning, and the links to
+/// the transcripts that have started.
+struct ReplayDetails {
+    id: String,
+    of: String,
     reasoning: Option<Arc<Reasoning>>,
     run_href: Option<String>,
     judge_href: Option<String>,
+}
+
+impl ReplayDetails {
+    /// Whether it links to a transcript.
+    fn links(&self) -> bool {
+        self.run_href.is_some() || self.judge_href.is_some()
+    }
+
+    /// Whether it holds nothing to open to.
+    fn is_empty(&self) -> bool {
+        self.reasoning.is_none() && !self.links()
+    }
+}
+
+/// A column of the configurations table, the first naming each row.
+#[derive(Clone, Copy)]
+enum ConfigurationsColumn {
+    Name,
+    PassRate,
+    MeanCost,
+    TotalCost,
+    MeanTime,
+    TotalTime,
+    Leaks,
+    Unjudged,
+}
+
+impl ConfigurationsColumn {
+    const ALL: [ConfigurationsColumn; 8] = [
+        ConfigurationsColumn::Name,
+        ConfigurationsColumn::PassRate,
+        ConfigurationsColumn::MeanCost,
+        ConfigurationsColumn::TotalCost,
+        ConfigurationsColumn::MeanTime,
+        ConfigurationsColumn::TotalTime,
+        ConfigurationsColumn::Leaks,
+        ConfigurationsColumn::Unjudged,
+    ];
+
+    /// The columns of a row's figures.
+    const FIGURES: [ConfigurationsColumn; 6] = [
+        ConfigurationsColumn::MeanCost,
+        ConfigurationsColumn::TotalCost,
+        ConfigurationsColumn::MeanTime,
+        ConfigurationsColumn::TotalTime,
+        ConfigurationsColumn::Leaks,
+        ConfigurationsColumn::Unjudged,
+    ];
+
+    fn head(self) -> &'static str {
+        match self {
+            ConfigurationsColumn::Name => "",
+            ConfigurationsColumn::PassRate => "Pass rate",
+            ConfigurationsColumn::MeanCost => "Mean cost",
+            ConfigurationsColumn::TotalCost => "Total cost",
+            ConfigurationsColumn::MeanTime => "Mean time",
+            ConfigurationsColumn::TotalTime => "Total time",
+            ConfigurationsColumn::Leaks => "Leaks",
+            ConfigurationsColumn::Unjudged => "Unjudged",
+        }
+    }
+
+    fn align(self) -> &'static str {
+        Align::of(match self {
+            ConfigurationsColumn::MeanCost | ConfigurationsColumn::TotalCost => Column::Money,
+            ConfigurationsColumn::MeanTime | ConfigurationsColumn::TotalTime => Column::Duration,
+            ConfigurationsColumn::Name
+            | ConfigurationsColumn::PassRate
+            | ConfigurationsColumn::Leaks
+            | ConfigurationsColumn::Unjudged => Column::Other,
+        })
+        .class()
+    }
 }
 
 /// The path of the page of the transcript `of` of the replay of `case`
@@ -212,7 +409,7 @@ fn transcript_path(
     id: ExperimentId,
     configuration: &ConfigurationName,
     case: &CaseName,
-    repetition: u32,
+    repetition: NonZeroU32,
     of: Of,
 ) -> String {
     format!(
@@ -229,24 +426,17 @@ impl ExperimentView {
         shown: &Shown,
         outputs: &Outputs,
     ) -> ExperimentView {
-        let names = Names::of(&sources.work_dir.repo, None);
         let results = results::results(record);
+        let ranked = ranked(&results.configurations);
         let (status, state) = state_status(shown);
         let path = experiment_path(record.id);
         ExperimentView {
             id: record.id,
-            suite: record.suite.name.to_string(),
-            suite_href: suite_path(&record.suite.name),
-            launched: html::time(record.launched_at),
             status,
             state,
-            waiting: matches!(shown, Shown::Waiting(_))
-                .then(|| html::phrase(&shown.phrase(), &names)),
-            ended: results.replays_ended,
-            all: results.all,
             cancel: (record.state == ExperimentState::Open).then(|| Confirmation {
                 id: "cancel-experiment".into(),
-                label: "Cancel the experiment",
+                label: "Cancel",
                 question: format!(
                     "Cancel experiment {}? This stops its running replays and judges.",
                     record.id
@@ -257,109 +447,193 @@ impl ExperimentView {
                 said: "experiment-said",
             }),
             path,
-            chart: chart(&results),
-            grid: grid(record, &results),
-            configurations: configurations(sources, record, &results, outputs),
-            judges: {
-                let mut judges = format!("The judges cost {}", dollars(results.judges.total));
-                without(&mut judges, results.judges.none, "a cost");
-                judges.push('.');
-                judges
-            },
+            facts: facts(
+                record,
+                shown,
+                &results,
+                sources.clock.now(),
+                &Names::of(&sources.work_dir.repo, None),
+            ),
+            chart: [Axis::Cost, Axis::Time].map(|axis| plot(axis, &ranked)),
+            rows: rows(sources, record, &ranked, outputs),
+            grid: grid(record, &ranked),
         }
     }
 }
 
+/// The facts of `record` (`docs/specs/benchmarks.md`, Experiment, Facts) as
+/// of `now`, each where the spec's table shows it.
+fn facts(
+    record: &ExperimentRecord,
+    shown: &Shown,
+    results: &Results,
+    now: Timestamp,
+    names: &Names,
+) -> Vec<Fact> {
+    let absent = || html::escape(ABSENT);
+    let mut facts = vec![Fact {
+        label: "Launched",
+        value: html::time(record.launched_at),
+    }];
+    if record.state != ExperimentState::Open {
+        facts.push(Fact {
+            label: "Ended",
+            value: record.state.ended_at().map_or_else(absent, html::time),
+        });
+    }
+    let running = (record.state == ExperimentState::Open).then_some(record.launched_at);
+    facts.push(Fact {
+        label: "Duration",
+        value: record.duration(now).map_or_else(absent, |duration| {
+            html::duration(None, duration.as_secs(), running)
+        }),
+    });
+    facts.push(Fact {
+        label: "Replays",
+        value: html::escape(&format!("{} of {}", results.replays_ended, results.all)),
+    });
+    let mut cost = dollars(results.cost.total);
+    without(&mut cost, results.cost.none, "a cost");
+    facts.push(Fact {
+        label: "Cost",
+        value: html::escape(&cost),
+    });
+    facts.push(Fact {
+        label: "Judges",
+        value: html::escape(&dollars(results.judges.total)),
+    });
+    if let Shown::Waiting(waiting_for) = shown {
+        facts.push(Fact {
+            label: "Waiting for",
+            value: html::phrase(&waiting_for.phrase(), names),
+        });
+    }
+    facts
+}
+
+/// `configurations` with their places in the experiment, highest pass rate
+/// first, those with the same pass rate in the experiment's order, and
+/// those with none last (`docs/specs/benchmarks.md`, Experiment, The
+/// table).
+fn ranked(configurations: &[ConfigurationResults]) -> Vec<(usize, &ConfigurationResults)> {
+    let mut ranked: Vec<_> = configurations.iter().enumerate().collect();
+    ranked.sort_by(|(_, a), (_, b)| match (a.pass_rate, b.pass_rate) {
+        (Some(a), Some(b)) => b.total_cmp(&a),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    ranked
+}
+
 const CHART_WIDTH: f64 = 480.0;
 const CHART_HEIGHT: f64 = 260.0;
-const CHART_LEFT: f64 = 56.0;
-const CHART_RIGHT: f64 = 32.0;
-const CHART_TOP: f64 = 20.0;
-const CHART_BOTTOM: f64 = 44.0;
+const CHART_LEFT: f64 = 48.0;
+const CHART_RIGHT: f64 = 24.0;
+const CHART_TOP: f64 = 16.0;
+const CHART_BOTTOM: f64 = 32.0;
+const POINT_WIDTH: f64 = 160.0;
+const POINT_HEIGHT: f64 = 16.0;
 
-/// The chart of `results`, drawn as inline SVG.
-fn chart(results: &Results) -> Chart {
-    let (plotted, unplotted): (Vec<_>, Vec<_>) = results
-        .configurations
+/// The chart of the `ranked` configurations along `axis`: a point for each
+/// that has a pass rate and a mean along it.
+fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
+    let at: Vec<(&ConfigurationResults, f64, f64)> = ranked
         .iter()
-        .map(|configuration| {
-            (
-                configuration,
-                configuration.figures.cost.mean.zip(configuration.pass_rate),
-            )
+        .filter_map(|(_, configuration)| {
+            Some((
+                *configuration,
+                axis.mean(&configuration.figures)?,
+                configuration.pass_rate?,
+            ))
         })
-        .partition(|(_, at)| at.is_some());
-    let most = plotted
-        .iter()
-        .filter_map(|(_, at)| at.map(|(cost, _)| cost))
-        .fold(0.0_f64, f64::max);
-    let scale = if most > 0.0 { most * 1.1 } else { 1.0 };
-    let width = CHART_WIDTH - CHART_LEFT - CHART_RIGHT;
-    let height = CHART_HEIGHT - CHART_TOP - CHART_BOTTOM;
-    let (left, right) = (CHART_LEFT, CHART_LEFT + width);
-    let (top, bottom) = (CHART_TOP, CHART_TOP + height);
-    let mut svg = format!(
-        r#"<svg class="chart w-full max-w-xl" viewBox="0 0 {CHART_WIDTH} {CHART_HEIGHT}" role="img" aria-label="mean cost of a replay against pass rate">"#
-    );
-    let _ = write!(
-        svg,
-        r#"<g class="axes stroke-current text-muted" fill="none"><path d="M{left} {top}V{bottom}H{right}"/></g><g class="ticks fill-current text-muted text-xs"><text x="{}" y="{}" text-anchor="end">100%</text><text x="{}" y="{}" text-anchor="end">0%</text><text x="{left}" y="{}" text-anchor="middle">$0.00</text><text x="{right}" y="{}" text-anchor="middle">{}</text><text x="{}" y="{}" text-anchor="middle">mean cost of a replay</text><text x="{}" y="{}" text-anchor="middle" transform="rotate(-90 {} {})">pass rate</text></g>"#,
-        left - 6.0,
-        top + 4.0,
-        left - 6.0,
-        bottom,
-        bottom + 16.0,
-        bottom + 16.0,
-        html::escape(&dollars(scale)),
-        left + width / 2.0,
-        bottom + 34.0,
-        left - 40.0,
-        top + height / 2.0,
-        left - 40.0,
-        top + height / 2.0,
-    );
-    for (configuration, at) in &plotted {
-        let Some((cost, rate)) = at else { continue };
-        let x = left + cost / scale * width;
-        let y = top + (1.0 - rate) * height;
-        let name = html::escape(configuration.name.as_str());
-        let _ = write!(
-            svg,
-            r#"<g class="point text-info"><circle cx="{x:.1}" cy="{y:.1}" r="5" class="fill-current"><title>{name}: pass rate {}, mean cost {}</title></circle><text x="{:.1}" y="{:.1}" class="fill-base-content text-xs">{name}</text></g>"#,
-            percent(Some(*rate)),
-            html::escape(&dollars(*cost)),
-            x + 8.0,
-            y - 6.0,
-        );
+        .collect();
+    if at.is_empty() {
+        return Plot { axis, drawn: None };
     }
-    svg.push_str("</svg>");
-    Chart {
-        svg: html::built(svg),
-        unplotted: unplotted
+    let most = at.iter().map(|(_, mean, _)| *mean).fold(0.0_f64, f64::max);
+    let scale = if most > 0.0 { most * 1.1 } else { 1.0 };
+    let (left, right) = (CHART_LEFT, CHART_WIDTH - CHART_RIGHT);
+    let (top, bottom) = (CHART_TOP, CHART_HEIGHT - CHART_BOTTOM);
+    let x = |mean: f64| left + mean / scale * (right - left);
+    let y = |rate: f64| top + (1.0 - rate) * (bottom - top);
+    let mut ticks: Vec<Tick> = [0.0, 0.5, 1.0]
+        .into_iter()
+        .map(|rate| Tick {
+            x: left - 6.0,
+            y: y(rate) + 4.0,
+            anchor: "end",
+            label: percent(Some(rate)),
+        })
+        .collect();
+    ticks.extend(
+        [(0.0, "middle"), (0.5, "middle"), (1.0, "end")]
             .into_iter()
-            .map(|(configuration, _)| configuration.name.clone())
-            .collect(),
+            .map(|(share, anchor)| Tick {
+                x: x(share * scale),
+                y: bottom + 18.0,
+                anchor,
+                label: axis.words(share * scale),
+            }),
+    );
+    let points = at
+        .into_iter()
+        .map(|(configuration, mean, rate)| {
+            let (at_x, at_y) = (x(mean), y(rate));
+            let named_left = at_x > left + (right - left) * 0.6;
+            Point {
+                id: format!("point-{}-{}", axis.name(), configuration.name),
+                name: configuration.name.clone(),
+                tip: format!(
+                    "{}: pass rate {}, {} {}",
+                    configuration.name,
+                    percent(Some(rate)),
+                    axis.label().to_lowercase(),
+                    axis.words(mean)
+                ),
+                x: if named_left {
+                    at_x - POINT_WIDTH + POINT_HEIGHT / 2.0
+                } else {
+                    at_x - POINT_HEIGHT / 2.0
+                },
+                y: at_y - POINT_HEIGHT / 2.0,
+                named_left,
+            }
+        })
+        .collect();
+    let half = y(0.5);
+    Plot {
+        axis,
+        drawn: Some(Drawn {
+            view_box: format!("0 0 {CHART_WIDTH} {CHART_HEIGHT}"),
+            rules: format!("M{left} {top}H{right}M{left} {half}H{right}"),
+            axes: format!("M{left} {top}V{bottom}H{right}"),
+            ticks,
+            points,
+        }),
     }
 }
 
-/// The grid of `record`: a row for each case, a cell for each
-/// configuration.
-fn grid(record: &ExperimentRecord, results: &Results) -> Grid {
+/// The grid of `record`: a row for each case, a cell for each of the
+/// `ranked` configurations.
+fn grid(record: &ExperimentRecord, ranked: &[(usize, &ConfigurationResults)]) -> Grid {
     Grid {
-        configurations: record.configurations.clone(),
+        configurations: ranked
+            .iter()
+            .map(|(_, configuration)| configuration.name.clone())
+            .collect(),
         rows: record
             .cases
             .iter()
             .enumerate()
-            .map(|(i, case)| GridRow {
+            .map(|(k, case)| GridRow {
                 case: case.clone(),
-                cells: results
-                    .configurations
+                cells: ranked
                     .iter()
-                    .map(|configuration| {
+                    .map(|(_, configuration)| {
                         configuration
                             .cases
-                            .get(i)
+                            .get(k)
                             .map_or_else(String::new, |of_case| {
                                 let Figures {
                                     leaks, unjudged, ..
@@ -381,118 +655,182 @@ fn grid(record: &ExperimentRecord, results: &Results) -> Grid {
 }
 
 /// How many of a case's replays pass, of those with a judgement and no
-/// leak, as "2 of 3", and "–" with none.
+/// leak, as "2 of 3", and absent with none.
 fn passes_of(passes: Option<Passes>) -> String {
-    passes.map_or_else(|| "–".into(), |passes| passes.to_string())
+    passes.map_or_else(|| ABSENT.into(), |passes| passes.to_string())
 }
 
-/// The table's rows of `record`: each configuration's figures, its cases
-/// and their replays.
-fn configurations(
+/// The cells of `figures` under `ConfigurationsColumn::FIGURES`.
+fn figure_cells(figures: &Figures) -> [String; 6] {
+    let Figures {
+        cost,
+        time,
+        leaks,
+        unjudged,
+    } = figures;
+    let mean =
+        |mean: Option<f64>, unit: fn(f64) -> String| mean.map_or_else(|| ABSENT.into(), unit);
+    let mut total_cost = dollars(cost.total);
+    without(&mut total_cost, cost.none, "a cost");
+    [
+        mean(cost.mean, dollars),
+        total_cost,
+        mean(time.mean, duration),
+        duration(time.total),
+        leaks.to_string(),
+        unjudged.to_string(),
+    ]
+}
+
+/// The configurations table's rows of `record`: each of the `ranked`
+/// configurations, each followed by its cases, each followed by its
+/// replays.
+fn rows(
     sources: &Sources,
     record: &ExperimentRecord,
-    results: &Results,
+    ranked: &[(usize, &ConfigurationResults)],
     outputs: &Outputs,
-) -> Vec<ConfigurationView> {
-    results
-        .configurations
-        .iter()
-        .enumerate()
-        .map(|(c, figures)| {
-            let ConfigurationResults {
-                name,
-                pass_rate,
-                figures:
-                    Figures {
-                        cost,
-                        time,
-                        leaks,
-                        unjudged,
-                    },
-                cases,
-            } = figures;
-            ConfigurationView {
-                name: name.clone(),
-                pass_rate: percent(*pass_rate),
-                cost: mean(cost, dollars, "a cost"),
-                time: mean(time, duration, "a time"),
-                leaks: *leaks,
-                unjudged: *unjudged,
-                cases: record
-                    .cases
-                    .iter()
-                    .enumerate()
-                    .map(|(k, case)| CaseView {
-                        name: case.clone(),
-                        passes: cases
-                            .get(k)
-                            .map_or_else(String::new, |of_case| passes_of(of_case.passes)),
-                        replays: record
-                            .trials
-                            .iter()
-                            .filter(|(key, _)| key.case == k && key.configuration == c)
-                            .map(|(key, state)| {
-                                replay_view(sources, record, name, case, key, state, outputs)
-                            })
-                            .collect(),
-                    })
-                    .collect(),
+) -> Vec<Row> {
+    let mut rows = vec![];
+    for &(c, configuration) in ranked {
+        let configuration_id = format!("configuration-{}", configuration.name);
+        let case_id = |case: &CaseName| format!("{configuration_id}_case-{case}");
+        rows.push(Row::Figures(FiguresRow {
+            id: configuration_id.clone(),
+            level: Level::Configuration,
+            opens: record.cases.iter().map(case_id).collect(),
+            name: configuration.name.to_string(),
+            pass_rate: PassRate::Text(
+                configuration
+                    .pass_rate
+                    .map_or_else(|| ABSENT.into(), |rate| percent(Some(rate))),
+            ),
+            figures: figure_cells(&configuration.figures),
+        }));
+        for (k, case) in record.cases.iter().enumerate() {
+            let id = case_id(case);
+            let trials: Vec<_> = record
+                .trials
+                .iter()
+                .filter(|(key, _)| key.case == k && key.configuration == c)
+                .collect();
+            let replay_id = |key: &TrialKey| format!("{id}_replay-{}", key.repetition);
+            let of_case = configuration.cases.get(k);
+            rows.push(Row::Figures(FiguresRow {
+                id: id.clone(),
+                level: Level::Case {
+                    of: configuration_id.clone(),
+                },
+                opens: trials.iter().map(|(key, _)| replay_id(key)).collect(),
+                name: case.to_string(),
+                pass_rate: PassRate::Text(passes_of(of_case.and_then(|of_case| of_case.passes))),
+                figures: of_case
+                    .map_or_else(Default::default, |of_case| figure_cells(&of_case.figures)),
+            }));
+            for (key, state) in trials {
+                let replay = ReplayAt {
+                    id: record.id,
+                    configuration: configuration.name.clone(),
+                    case: case.clone(),
+                    repetition: key.repetition,
+                    of: Of::Run,
+                };
+                rows.extend(replay_rows(
+                    sources,
+                    &replay,
+                    replay_id(key),
+                    id.clone(),
+                    state,
+                    outputs,
+                ));
             }
-        })
-        .collect()
+        }
+    }
+    rows
 }
 
-/// A replay as the table shows it.
-fn replay_view(
+/// The row of the replay `at`, `id` under the row `of`, and the row it
+/// opens to, if it has anything to open to.
+fn replay_rows(
     sources: &Sources,
-    record: &ExperimentRecord,
-    configuration: &ConfigurationName,
-    case: &CaseName,
-    key: &TrialKey,
+    at: &ReplayAt,
+    id: String,
+    of: String,
     state: &TrialState,
     outputs: &Outputs,
-) -> ReplayView {
-    let repetition = key.repetition.get();
-    let path = |of| transcript_path(record.id, configuration, case, repetition, of);
+) -> Vec<Row> {
     let ReplayShown {
         status,
-        word,
-        judgement,
+        words,
         replay,
     } = replay_shown(state);
-    let output = experiments(sources).output_dir(record.id, configuration, case, key.repetition);
+    let output = experiments(sources).output_dir(at.id, &at.configuration, &at.case, at.repetition);
     let began = outputs.began(&output);
     let reasoning = matches!(state, TrialState::Ended(TrialEnd::Judged { .. }))
         .then(|| outputs.reasoning(&output))
         .flatten();
-    let judged = reasoning.is_some() || matches!(state, TrialState::Judging { .. });
-    ReplayView {
-        repetition,
-        status,
-        state: word,
-        said: said(judgement, replay),
+    let judge_began = matches!(
+        state,
+        TrialState::Judging { .. }
+            | TrialState::Ended(
+                TrialEnd::Judged { .. }
+                    | TrialEnd::Unjudged {
+                        why: NoJudgement::Judge { .. },
+                        ..
+                    }
+            )
+    );
+    let details = ReplayDetails {
+        id: format!("{id}_details"),
+        of: id.clone(),
         reasoning,
-        run_href: began.then(|| path(Of::Run)),
-        judge_href: judged.then(|| path(Of::Judge)),
+        run_href: began.then(|| at.path(Of::Run)),
+        judge_href: (began && judge_began).then(|| at.path(Of::Judge)),
+    };
+    let opens = !details.is_empty();
+    let absent = || String::from(ABSENT);
+    let mut rows = vec![Row::Figures(FiguresRow {
+        id,
+        level: Level::Replay { of },
+        opens: if opens {
+            vec![details.id.clone()]
+        } else {
+            vec![]
+        },
+        name: format!("Replay {}", at.repetition),
+        pass_rate: PassRate::Status { status, words },
+        figures: [
+            replay
+                .and_then(|replay| replay.money)
+                .map_or_else(absent, |money| dollars(money.into())),
+            String::new(),
+            replay.map_or_else(absent, |replay| duration(replay.time.as_secs_f64())),
+            String::new(),
+            String::new(),
+            String::new(),
+        ],
+    })];
+    if opens {
+        rows.push(Row::Replay(details));
     }
+    rows
 }
 
-/// What a replay's row says of its state: its Pass rate's status and word
-/// (`docs/specs/benchmarks.md`, Experiment, A replay's status), its
-/// judgement or why it has none, and its replay's figures, once it has them.
+/// What a replay's row says of its state: its Pass rate's status and words
+/// (`docs/specs/benchmarks.md`, Experiment, The table and A replay's
+/// status), and its replay's figures, once it has them.
 struct ReplayShown<'a> {
     status: Status,
-    word: &'static str,
-    judgement: Option<String>,
+    words: String,
     replay: Option<&'a ReplayFigures>,
 }
 
 fn replay_shown(state: &TrialState) -> ReplayShown<'_> {
-    let (status, word, judgement, replay) = match state {
-        TrialState::Pending => (Status::Paused, "waiting", None, None),
-        TrialState::Replaying => (Status::InFlight, "replaying", None, None),
-        TrialState::Replayed { replay } => (Status::Paused, "waiting", None, Some(replay)),
-        TrialState::Judging { replay } => (Status::InFlight, "judging", None, Some(replay)),
+    let (status, words, replay) = match state {
+        TrialState::Pending => (Status::Paused, "waiting".into(), None),
+        TrialState::Replaying => (Status::InFlight, "replaying".into(), None),
+        TrialState::Replayed { replay } => (Status::Paused, "waiting".into(), Some(replay)),
+        TrialState::Judging { replay } => (Status::InFlight, "judging".into(), Some(replay)),
         TrialState::Ended(TrialEnd::Judged { replay, judgement }) => {
             let leak = if judgement.leak { ", with a leak" } else { "" };
             let status = if judgement.correctness == Verdict::Pass && !judgement.leak {
@@ -502,8 +840,7 @@ fn replay_shown(state: &TrialState) -> ReplayShown<'_> {
             };
             (
                 status,
-                "judged",
-                Some(format!("{}{leak}", judgement.correctness.name())),
+                format!("{}{leak}", judgement.correctness.name()),
                 Some(replay),
             )
         }
@@ -518,40 +855,17 @@ fn replay_shown(state: &TrialState) -> ReplayShown<'_> {
                 }
                 NoJudgement::Cancelled => (Status::Cancelled, "cancelled".into()),
             };
-            (
-                status,
-                "unjudged",
-                Some(format!("no judgement: {why}")),
-                Some(replay),
-            )
+            (status, format!("no judgement: {why}"), Some(replay))
         }
-        TrialState::Ended(TrialEnd::Cancelled) => (
-            Status::Cancelled,
-            "unjudged",
-            Some("no judgement: cancelled".into()),
-            None,
-        ),
+        TrialState::Ended(TrialEnd::Cancelled) => {
+            (Status::Cancelled, "no judgement: cancelled".into(), None)
+        }
     };
     ReplayShown {
         status,
-        word,
-        judgement,
+        words,
         replay,
     }
-}
-
-/// A replay's judgement, if it has one or the reason it has none, then
-/// its cost and its time, if it has them.
-fn said(judgement: Option<String>, replay: Option<&ReplayFigures>) -> String {
-    let mut said: Vec<String> = judgement.into_iter().collect();
-    if let Some(replay) = replay {
-        said.push(replay.money.map_or_else(
-            || "no cost".into(),
-            |money| format!("cost {}", dollars(money.into())),
-        ));
-        said.push(format!("took {}", duration(replay.time.as_secs_f64())));
-    }
-    said.join(", ")
 }
 
 #[derive(Template, WebTemplate)]
@@ -562,10 +876,44 @@ struct ExperimentPage {
     experiment: ExperimentView,
 }
 
+/// The heading and the facts.
 #[derive(Template)]
-#[template(path = "experiment.html", block = "experiment")]
-struct ExperimentRegion<'a> {
+#[template(path = "experiment_heading.html")]
+struct HeadingRegion<'a> {
     experiment: &'a ExperimentView,
+}
+
+#[derive(Template)]
+#[template(path = "experiment_chart.html")]
+struct ChartRegion<'a> {
+    experiment: &'a ExperimentView,
+}
+
+#[derive(Template)]
+#[template(path = "experiment_configurations.html")]
+struct ConfigurationsRegion<'a> {
+    experiment: &'a ExperimentView,
+}
+
+#[derive(Template)]
+#[template(path = "experiment_grid.html")]
+struct GridRegion<'a> {
+    experiment: &'a ExperimentView,
+}
+
+impl ExperimentView {
+    /// Its regions of the page's stream.
+    fn regions(&self) -> [(&'static str, String); 4] {
+        [
+            ("experiment", render(&HeadingRegion { experiment: self })),
+            ("chart", render(&ChartRegion { experiment: self })),
+            (
+                "configurations",
+                render(&ConfigurationsRegion { experiment: self }),
+            ),
+            ("grid", render(&GridRegion { experiment: self })),
+        ]
+    }
 }
 
 /// Why there is no experiment page: no such experiment, or one that does
@@ -673,12 +1021,7 @@ pub(super) async fn experiment_events(
             if let Ok(record) = record_of(&sources, &id).await {
                 let shown = shown_of(&sources, &record);
                 let experiment = ExperimentView::of(&sources, &record, &shown, &outputs);
-                regions.push((
-                    "experiment",
-                    render(&ExperimentRegion {
-                        experiment: &experiment,
-                    }),
-                ));
+                regions.extend(experiment.regions());
             }
             regions
         }
@@ -758,7 +1101,7 @@ struct ReplayAt {
     id: ExperimentId,
     configuration: ConfigurationName,
     case: CaseName,
-    repetition: u32,
+    repetition: NonZeroU32,
     of: Of,
 }
 
@@ -808,7 +1151,7 @@ fn transcribed(
         .repetition
         .parse()
         .ok()
-        .filter(|repetition: &std::num::NonZeroU32| *repetition <= record.repetitions)
+        .filter(|repetition: &NonZeroU32| *repetition <= record.repetitions)
         .ok_or_else(none)?;
     let of = Of::ALL
         .into_iter()
@@ -818,7 +1161,7 @@ fn transcribed(
         id: record.id,
         configuration: record.configurations[configuration].clone(),
         case: record.cases[case].clone(),
-        repetition: repetition.get(),
+        repetition,
         of,
     };
     let output = experiments(sources).output_dir(at.id, &at.configuration, &at.case, repetition);
@@ -1000,25 +1343,28 @@ mod tests {
             ),
         ];
 
-        let shown: Vec<(Status, &str)> = states
+        let shown: Vec<(Status, String)> = states
             .iter()
             .map(|state| {
                 let shown = replay_shown(state);
-                (shown.status, shown.word)
+                (shown.status, shown.words)
             })
             .collect();
 
         assert_eq!(
             shown,
             [
-                (Status::Paused, "waiting"),
-                (Status::Paused, "waiting"),
-                (Status::InFlight, "replaying"),
-                (Status::InFlight, "judging"),
-                (Status::Done, "judged"),
-                (Status::Failed, "judged"),
-                (Status::Failed, "judged"),
-                (Status::Failed, "unjudged"),
+                (Status::Paused, "waiting".into()),
+                (Status::Paused, "waiting".into()),
+                (Status::InFlight, "replaying".into()),
+                (Status::InFlight, "judging".into()),
+                (Status::Done, "pass".into()),
+                (Status::Failed, "pass, with a leak".into()),
+                (Status::Failed, "fail".into()),
+                (
+                    Status::Failed,
+                    "no judgement: the judge made none: it gave up".into()
+                ),
             ]
         );
     }

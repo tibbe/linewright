@@ -246,32 +246,215 @@ async fn new_experiment_shows_in_the_experiments_bar_only_on_a_suite_with_cases(
     );
 }
 
+/// A web UI over the pages of a [`Pages`], with `serve` showing their
+/// experiments as it was told.
+struct Showing {
+    router: axum::Router,
+}
+
+impl Routed for Showing {
+    fn router(&self) -> &axum::Router {
+        &self.router
+    }
+}
+
+/// `pages`' web UI, with `serve` showing experiment 1 as `shown`.
+#[track_caller]
+fn showing(pages: &Pages, shown: linewright::benchmarks::Shown) -> Showing {
+    let (publish, links) = linewright::api::Publish::new();
+    publish
+        .experiments
+        .shown(linewright::experiments::runner::ExperimentsShown {
+            experiments: std::collections::BTreeMap::from([("1".parse().unwrap(), shown)]),
+            in_flight: 0,
+            max_replays: 2,
+        });
+    let sources = Sources {
+        experiments: links.experiments,
+        ..pages.sources.clone()
+    };
+    Showing {
+        router: web::router(sources, UiHosts::default(), pages.stopping.clone()),
+    }
+}
+
+/// The experiment page's heading as a reader reads it: its name, its state's
+/// badge, and the labels of the buttons at its right.
+#[track_caller]
+fn experiment_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
+    let heading = select(html, "#experiment header")[0];
+    (
+        text(select_in(heading, "h1")[0]),
+        select_in(heading, ".badge").into_iter().map(text).collect(),
+        select_in(heading, ":scope > div > button")
+            .into_iter()
+            .map(text)
+            .collect(),
+    )
+}
+
+/// The experiment page's facts (`docs/specs/web/benchmarks.md`,
+/// Experiment), each its `stat-title` and its `stat-value`.
+#[track_caller]
+fn experiment_facts(html: &Html) -> Vec<(String, String)> {
+    select(html, "#experiment .stats > .stat")
+        .into_iter()
+        .map(|stat| {
+            (
+                text(select_in(stat, ".stat-title")[0]),
+                text(select_in(stat, ".stat-value")[0]),
+            )
+        })
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, Heading, State and Facts.
 #[test_log::test(tokio::test)]
-async fn the_experiment_pages_heading_shows_its_suite_its_launch_its_state_and_its_progress() {
+async fn a_waiting_experiments_heading_and_facts_say_what_it_waits_for() {
     let pages = with_experiment().await;
 
     let html = pages.page("/experiments/1").await;
 
-    assert_eq!(text(select(&html, "#experiment h1")[0]), "Experiment 1");
     assert_eq!(
-        text(select(&html, "#experiment .facts")[0]),
-        "of the suite board, launched 2026-11-17 12:00:00 UTC waiting waiting for serve \
-         6 of 8 replays ended"
+        experiment_heading(&html),
+        (
+            "Experiment 1".into(),
+            vec!["waiting".into()],
+            vec!["Cancel".into()]
+        )
     );
     assert_eq!(
-        hrefs(select(&html, "#experiment .facts a")),
-        ["/suites/board"]
+        experiment_facts(&html),
+        [
+            ("Launched".into(), "2026-11-17 12:00:00 UTC".into()),
+            ("Duration".into(), "0s".into()),
+            ("Replays".into(), "6 of 8".into()),
+            ("Cost".into(), "$1.61, 1 without a cost".into()),
+            ("Judges".into(), "$0.11".into()),
+            ("Waiting for".into(), "serve".into()),
+        ]
     );
-    let state = select(&html, "#experiment .facts .badge");
-    assert!(
-        has_classes(state[0], &["badge-outline"]),
-        "{}",
-        state[0].html()
+    assert_eq!(
+        select(&html, "#experiment .stat time[data-since]")[0].attr("data-since"),
+        Some("2026-11-17T12:00:00Z"),
+        "an open experiment's duration is kept up"
     );
+    assert_eq!(
+        select(&html, "#experiment .stats .badge"),
+        [] as [scraper::ElementRef<'_>; 0]
+    );
+    let state = select(&html, "#experiment header .badge")[0];
+    assert!(has_classes(state, &["badge-outline"]), "{}", state.html());
     assert_eq!(events_path(&html), Some("/events/experiments/1"));
     assert_no_status_by_colour_alone(&html);
+
+    let limited = showing(
+        &pages,
+        linewright::benchmarks::Shown::Waiting(linewright::benchmarks::WaitingFor::Hold(
+            linewright::holds::ExperimentHold::UsageLimit {
+                resets_at: "2026-11-17T14:30:00Z".parse().unwrap(),
+            },
+        )),
+    )
+    .page("/experiments/1")
+    .await;
+    assert_eq!(
+        experiment_facts(&limited).last().unwrap().1,
+        "the usage limit, until 2026-11-17 14:30:00 UTC"
+    );
 }
 
+/// `docs/specs/benchmarks.md`, Experiment, Heading, State and Facts.
+#[test_log::test(tokio::test)]
+async fn a_running_experiments_heading_offers_to_cancel_it_and_its_facts_wait_for_nothing() {
+    let pages = with_experiment().await;
+
+    let html = showing(&pages, linewright::benchmarks::Shown::Running)
+        .page("/experiments/1")
+        .await;
+
+    assert_eq!(
+        experiment_heading(&html),
+        (
+            "Experiment 1".into(),
+            vec!["running".into()],
+            vec!["Cancel".into()]
+        )
+    );
+    let labels: Vec<String> = experiment_facts(&html)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect();
+    assert_eq!(
+        labels,
+        ["Launched", "Duration", "Replays", "Cost", "Judges"]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, Heading, State and Facts.
+#[test_log::test(tokio::test)]
+async fn an_ended_experiment_says_when_it_ended_and_how_long_it_took() {
+    let pages = with_experiment().await;
+    for key in [(2, 1, 0), (2, 1, 1)] {
+        trial(
+            &pages.path(""),
+            1,
+            key,
+            "state = 'unjudged', outcome = 'failed', seconds = 5, unjudged = 'outcome'",
+        )
+        .await;
+    }
+    linewright::benchmarks::Experiments::new(pages.sources.runs.database().clone())
+        .end(
+            "1".parse().unwrap(),
+            "2026-11-17T13:30:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let html = pages.page("/experiments/1").await;
+
+    assert_eq!(
+        experiment_heading(&html),
+        ("Experiment 1".into(), vec!["ended".into()], vec![])
+    );
+    assert_eq!(
+        experiment_facts(&html),
+        [
+            ("Launched".into(), "2026-11-17 12:00:00 UTC".into()),
+            ("Ended".into(), "2026-11-17 13:30:00 UTC".into()),
+            ("Duration".into(), "1h 30m".into()),
+            ("Replays".into(), "8 of 8".into()),
+            ("Cost".into(), "$1.61, 3 without a cost".into()),
+            ("Judges".into(), "$0.11".into()),
+        ]
+    );
+    assert_eq!(
+        select(&html, "#experiment .stat time[data-since]"),
+        [] as [scraper::ElementRef<'_>; 0]
+    );
+}
+
+/// `docs/specs/design_system.md`, Screen states, Absent: an experiment that
+/// ended before its end was kept.
+#[test_log::test(tokio::test)]
+async fn an_experiment_whose_end_was_not_kept_shows_its_end_and_duration_absent() {
+    let pages = with_experiment().await;
+    let pool = back_door(&pages.path("")).await;
+    sqlx::query("UPDATE experiments SET state = 'ended', ended_at = NULL WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let html = pages.page("/experiments/1").await;
+
+    let facts = experiment_facts(&html);
+    assert_eq!(facts[1], ("Ended".into(), "–".into()));
+    assert_eq!(facts[2], ("Duration".into(), "–".into()));
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, Heading, and Cancel experiment;
+/// `docs/specs/design_system.md`, Confirming.
 #[test_log::test(tokio::test)]
 async fn the_experiment_page_offers_to_cancel_an_open_experiment_and_cancelling_ends_it() {
     let pages = with_experiment().await;
@@ -279,14 +462,13 @@ async fn the_experiment_page_offers_to_cancel_an_open_experiment_and_cancelling_
     assert_eq!(
         confirmations(&html),
         [Confirmation {
-            asking: "Cancel the experiment".into(),
+            asking: "Cancel".into(),
             question: "Cancel experiment 1? This stops its running replays and judges.".into(),
             turn_down: "Keep running".into(),
             action: "/experiments/1/cancel".into(),
             fields: vec![],
         }]
     );
-    assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
 
     let (status, answer) = post(&pages, "/experiments/1/cancel", &[SAME_ORIGIN], &[]).await;
     let (again, refused) = post(&pages, "/experiments/1/cancel", &[SAME_ORIGIN], &[]).await;
@@ -298,165 +480,442 @@ async fn the_experiment_page_offers_to_cancel_an_open_experiment_and_cancelling_
     assert_eq!(said(&refused), "Not cancelled: experiment 1 is cancelled");
     assert_eq!(other_site, 403);
     let cancelled = pages.page("/experiments/1").await;
-    assert!(
-        text(select(&cancelled, "#experiment .facts")[0]).contains(" cancelled "),
-        "{}",
-        cancelled.html()
+    assert_eq!(
+        experiment_heading(&cancelled),
+        ("Experiment 1".into(), vec!["cancelled".into()], vec![])
     );
     assert_eq!(confirmations(&cancelled), []);
 }
 
+/// `docs/specs/benchmarks.md`, Experiment, Heading, State and Facts.
 #[test_log::test(tokio::test)]
-async fn the_experiment_pages_chart_puts_each_configuration_at_its_mean_cost_and_pass_rate() {
+async fn a_cancelled_experiment_says_when_it_was_cancelled_and_how_long_it_took() {
+    let pages = with_experiment().await;
+    linewright::benchmarks::Experiments::new(pages.sources.runs.database().clone())
+        .cancel(
+            "1".parse().unwrap(),
+            "2026-11-17T14:00:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let html = pages.page("/experiments/1").await;
+
+    assert_eq!(
+        experiment_heading(&html),
+        ("Experiment 1".into(), vec!["cancelled".into()], vec![])
+    );
+    assert_eq!(
+        experiment_facts(&html),
+        [
+            ("Launched".into(), "2026-11-17 12:00:00 UTC".into()),
+            ("Ended".into(), "2026-11-17 14:00:00 UTC".into()),
+            ("Duration".into(), "2h".into()),
+            ("Replays".into(), "6 of 8".into()),
+            ("Cost".into(), "$1.61, 1 without a cost".into()),
+            ("Judges".into(), "$0.11".into()),
+        ]
+    );
+}
+
+/// A point of the chart as a reader meets it: its id, its name, and the
+/// details its tooltip shows.
+#[track_caller]
+fn points(html: &Html, axis: &str) -> Vec<(String, String, String)> {
+    select(html, &format!("#chart [data-axis={axis}] button.point"))
+        .into_iter()
+        .map(|point| {
+            (
+                point.attr("id").unwrap().to_string(),
+                text(point),
+                point.attr("data-tip").unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Where the point `id` is drawn in its chart's SVG: the `x` and the `y`
+/// of the `foreignObject` that holds it.
+#[track_caller]
+fn drawn_at(html: &Html, id: &str) -> (f64, f64) {
+    let drawn = select(html, "#chart foreignObject")
+        .into_iter()
+        .find(|drawn| !select_in(*drawn, &format!("#{id}")).is_empty())
+        .unwrap_or_else(|| panic!("no point {id}: {}", html.html()));
+    let at = |attribute| drawn.attr(attribute).unwrap().parse::<f64>().unwrap();
+    (at("x"), at("y"))
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The chart and A point;
+/// `docs/specs/web/benchmarks.md`, Experiment.
+#[test_log::test(tokio::test)]
+async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the_reader_chooses() {
     let pages = with_experiment().await;
 
     let html = pages.page("/experiments/1").await;
 
-    let points = select(&html, "#chart svg .point");
-    let shown: Vec<String> = points
-        .iter()
-        .map(|point| text(select_in(*point, "title")[0]))
+    let chooser = select(&html, "#experiment-chart select")[0];
+    let options: Vec<(String, bool)> = select_in(chooser, "option")
+        .into_iter()
+        .map(|option| (text(option), option.attr("selected").is_some()))
         .collect();
     assert_eq!(
-        shown,
+        options,
+        [("Mean cost".into(), true), ("Mean time".into(), false)]
+    );
+    let label = select(&html, "#experiment-chart label")[0];
+    assert!(text(label).starts_with("Pass rate vs"), "{}", label.html());
+    assert!(
+        select(
+            &html,
+            "#chart select, #experiment select, #configurations select"
+        )
+        .is_empty(),
+        "the choice is outside every region an update morphs"
+    );
+    assert_eq!(
+        points(&html, "cost"),
         [
-            "as-is: pass rate 100%, mean cost $0.40",
-            "short: pass rate 0%, mean cost $0.23"
+            (
+                "point-cost-as-is".into(),
+                "as-is".into(),
+                "as-is: pass rate 100%, mean cost $0.40".into()
+            ),
+            (
+                "point-cost-short".into(),
+                "short".into(),
+                "short: pass rate 0%, mean cost $0.23".into()
+            ),
         ]
     );
-    let at = |point: ElementRef| -> (f64, f64) {
-        let circle = select_in(point, "circle")[0];
+    assert_eq!(
+        points(&html, "time"),
+        [
+            (
+                "point-time-as-is".into(),
+                "as-is".into(),
+                "as-is: pass rate 100%, mean time 50s".into()
+            ),
+            (
+                "point-time-short".into(),
+                "short".into(),
+                "short: pass rate 0%, mean time 23s".into()
+            ),
+        ]
+    );
+    for axis in ["cost", "time"] {
+        let (as_is, short) = (
+            drawn_at(&html, &format!("point-{axis}-as-is")),
+            drawn_at(&html, &format!("point-{axis}-short")),
+        );
+        assert!(
+            as_is.0 > short.0,
+            "the higher mean is to the right on {axis}"
+        );
+        assert!(
+            as_is.1 < short.1,
+            "the higher pass rate is higher up on {axis}"
+        );
+        assert!(
+            !select(&html, &format!("#chart [data-axis={axis}] svg text")).is_empty(),
+            "its ticks"
+        );
+    }
+    for point in select(&html, "#chart button.point") {
+        assert_eq!(point.attr("type"), Some("button"));
+    }
+    assert!(
+        select(&html, "main [style]").is_empty(),
+        "the page's Content-Security-Policy refuses inline styles"
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, A point.
+#[test_log::test(tokio::test)]
+async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
+    let pages = with_experiment().await;
+    launched(&pages, "board", &["short"], 1, "2026-11-17T13:00:00Z").await;
+
+    let html = pages.page("/experiments/2").await;
+
+    for axis in ["cost", "time"] {
+        let plot = select(&html, &format!("#chart [data-axis={axis}]"))[0];
+        assert_eq!(text(plot), "No results");
+        assert!(
+            select_in(plot, "svg text, button").is_empty(),
+            "{}",
+            plot.html()
+        );
+    }
+}
+
+/// The configurations table's rows that are not under another, and those
+/// under the row `of`, each its id, whether it is hidden and its cells'
+/// text.
+#[track_caller]
+fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> {
+    let selector = match of {
+        None => "#configurations tbody tr:not([data-fold-of])".to_string(),
+        Some(of) => format!("#configurations tbody tr[data-fold-of='{of}']"),
+    };
+    select(html, &selector)
+        .into_iter()
+        .map(|row| {
+            (
+                row.attr("id").unwrap().to_string(),
+                row.attr("hidden").is_some(),
+                select_in(row, ":scope > th, :scope > td")
+                    .into_iter()
+                    .map(text)
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The table;
+/// `docs/specs/design_system.md`, Tables.
+#[test_log::test(tokio::test)]
+async fn the_configurations_table_shows_each_configurations_figures() {
+    let pages = with_experiment().await;
+
+    let html = pages.page("/experiments/1").await;
+
+    assert!(
+        table_bars(&html).contains(&("Configurations".into(), vec![])),
+        "{:?}",
+        table_bars(&html)
+    );
+    let heads: Vec<String> = select(&html, "#configurations thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(
+        heads,
+        [
+            "",
+            "Pass rate",
+            "Mean cost",
+            "Total cost",
+            "Mean time",
+            "Total time",
+            "Leaks",
+            "Unjudged"
+        ]
+    );
+    assert_eq!(
+        fold_rows(&html, None),
+        [
+            (
+                "configuration-as-is".into(),
+                false,
+                vec![
+                    "as-is".into(),
+                    "100%".into(),
+                    "$0.40".into(),
+                    "$0.80, 1 without a cost".into(),
+                    "50s".into(),
+                    "2m 30s".into(),
+                    "0".into(),
+                    "1".into()
+                ]
+            ),
+            (
+                "configuration-short".into(),
+                false,
+                vec![
+                    "short".into(),
+                    "0%".into(),
+                    "$0.23".into(),
+                    "$0.70".into(),
+                    "23s".into(),
+                    "1m 10s".into(),
+                    "1".into(),
+                    "1".into()
+                ]
+            ),
+        ]
+    );
+    let alignments = alignments(&html, "#configurations");
+    let expected = [
+        "start", "start", "end", "end", "end", "end", "start", "start",
+    ];
+    assert_eq!(alignments[0], expected);
+    assert_eq!(alignments[1], expected);
+    assert_eq!(
+        select(&html, "#configuration-as-is > th:first-child > button")[0].attr("aria-controls"),
+        Some("configuration-as-is_case-columns configuration-as-is_case-lanes")
+    );
+    assert_eq!(select(&html, "#configurations details").len(), 0);
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The table: a configuration opens
+/// to its cases, and a case to its replays, in the order the experiment
+/// starts them.
+#[test_log::test(tokio::test)]
+async fn a_configuration_opens_to_its_cases_and_a_case_to_its_replays() {
+    let pages = with_experiment().await;
+
+    let html = pages.page("/experiments/1").await;
+
+    let row = |id: &str, cells: &[&str]| {
         (
-            circle.attr("cx").unwrap().parse().unwrap(),
-            circle.attr("cy").unwrap().parse().unwrap(),
+            id.to_string(),
+            true,
+            cells.iter().map(ToString::to_string).collect::<Vec<_>>(),
         )
     };
-    let (as_is, short) = (at(points[0]), at(points[1]));
-    assert!(as_is.0 > short.0, "the dearer is to the right");
-    assert!(as_is.1 < short.1, "the higher pass rate is higher up");
     assert_eq!(
-        text(select(&html, "#chart figcaption")[0]),
-        "Mean cost of a replay against pass rate, a point for each configuration"
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn the_experiment_pages_grid_shows_the_passes_leaks_and_unjudged_of_each_case_and_configuration()
- {
-    let pages = with_experiment().await;
-
-    let html = pages.page("/experiments/1").await;
-
-    let heads: Vec<String> = select(&html, "#grid thead th")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(heads, ["Case", "as-is", "short"]);
-    assert_eq!(
-        rows(&html, "#grid"),
+        fold_rows(&html, Some("configuration-as-is")),
         [
-            ["columns", "2 of 2", "–, 1 leak, 1 unjudged"],
-            ["lanes", "–, 1 unjudged", "0 of 1"],
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn the_experiment_pages_table_shows_each_configurations_figures_and_the_judges_cost() {
-    let pages = with_experiment().await;
-
-    let html = pages.page("/experiments/1").await;
-
-    let figures: Vec<Vec<String>> = select(&html, "#configurations details.configuration")
-        .into_iter()
-        .map(|configuration| {
-            select_in(configuration, ":scope > summary > span")
-                .into_iter()
-                .map(text)
-                .collect()
-        })
-        .collect();
-    assert_eq!(
-        figures,
-        [
-            [
-                "as-is",
-                "100%",
-                "mean $0.40, total $0.80, 1 without a cost",
-                "mean 50s, total 2m 30s",
-                "0",
-                "1"
-            ],
-            [
-                "short",
-                "0%",
-                "mean $0.23, total $0.70",
-                "mean 23s, total 1m 10s",
-                "1",
-                "1"
-            ],
+            row(
+                "configuration-as-is_case-columns",
+                &["columns", "2 of 2", "$0.40", "$0.80", "1m", "2m", "0", "0"]
+            ),
+            row(
+                "configuration-as-is_case-lanes",
+                &[
+                    "lanes",
+                    "–",
+                    "–",
+                    "$0.00, 1 without a cost",
+                    "30s",
+                    "30s",
+                    "0",
+                    "1"
+                ]
+            ),
         ]
     );
     assert_eq!(
-        text(select(&html, "#configurations .judges")[0]),
-        "The judges cost $0.11, 1 without a cost."
+        fold_rows(&html, Some("configuration-short")),
+        [
+            row(
+                "configuration-short_case-columns",
+                &["columns", "–", "$0.25", "$0.50", "25s", "50s", "1", "1"]
+            ),
+            row(
+                "configuration-short_case-lanes",
+                &["lanes", "0 of 1", "$0.20", "$0.20", "20s", "20s", "0", "0"]
+            ),
+        ]
     );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_configuration_opens_to_its_cases_and_a_case_to_its_replays_with_their_judgements() {
-    let pages = with_experiment().await;
-
-    let html = pages.page("/experiments/1").await;
-
-    let configurations = select(&html, "#configurations details.configuration");
-    let cases: Vec<String> = select_in(configurations[1], "details.case > summary")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(cases, ["columns: –", "lanes: 0 of 1"]);
-    let replays = |configuration: ElementRef, case: usize| -> Vec<String> {
-        let case = select_in(configuration, "details.case")[case];
-        select_in(case, ".replay .replay-line")
-            .into_iter()
-            .map(text)
-            .collect()
+    let replay = |id: &str, name: &str, said: &str, cost: &str, time: &str| {
+        row(id, &[name, said, cost, "", time, "", "", ""])
     };
+    let replays = |of: &str| fold_rows(&html, Some(of));
     assert_eq!(
-        replays(configurations[0], 0),
+        replays("configuration-as-is_case-columns"),
         [
-            "repetition 1 judged pass, cost $0.30, took 1m 30s run's transcript judge's transcript",
-            "repetition 2 judged pass, cost $0.50, took 30s",
+            replay(
+                "configuration-as-is_case-columns_replay-1",
+                "Replay 1",
+                "pass",
+                "$0.30",
+                "1m 30s"
+            ),
+            replay(
+                "configuration-as-is_case-columns_replay-2",
+                "Replay 2",
+                "pass",
+                "$0.50",
+                "30s"
+            ),
         ]
     );
     assert_eq!(
-        replays(configurations[1], 0),
+        replays("configuration-as-is_case-lanes"),
         [
-            "repetition 1 judged fail, with a leak, cost $0.10, took 10s",
-            "repetition 2 unjudged no judgement: the judge made none: it gave up, cost $0.40, \
-             took 40s",
+            replay(
+                "configuration-as-is_case-lanes_replay-1",
+                "Replay 1",
+                "no judgement: its run is not done or handed back",
+                "–",
+                "30s"
+            ),
+            replay(
+                "configuration-as-is_case-lanes_replay-2",
+                "Replay 2",
+                "replaying",
+                "–",
+                "–"
+            ),
         ]
     );
     assert_eq!(
-        replays(configurations[0], 1),
+        replays("configuration-short_case-columns"),
         [
-            "repetition 1 unjudged no judgement: its run is not done or handed back, \
-             no cost, took 30s",
-            "repetition 2 replaying",
+            replay(
+                "configuration-short_case-columns_replay-1",
+                "Replay 1",
+                "fail, with a leak",
+                "$0.10",
+                "10s"
+            ),
+            replay(
+                "configuration-short_case-columns_replay-2",
+                "Replay 2",
+                "no judgement: the judge made none: it gave up",
+                "$0.40",
+                "40s"
+            ),
         ]
     );
-    assert_eq!(replays(configurations[1], 1)[1], "repetition 2 waiting");
-    let waiting = select_in(
-        select_in(configurations[1], "details.case")[1],
-        ".replay .badge",
-    )[1];
+    assert_eq!(
+        replays("configuration-short_case-lanes"),
+        [
+            replay(
+                "configuration-short_case-lanes_replay-1",
+                "Replay 1",
+                "fail",
+                "$0.20",
+                "20s"
+            ),
+            replay(
+                "configuration-short_case-lanes_replay-2",
+                "Replay 2",
+                "waiting",
+                "–",
+                "–"
+            ),
+        ]
+    );
+    assert_eq!(
+        text(select(&html, "#configuration-as-is_case-columns_replay-1 > th")[0]),
+        "Replay 1"
+    );
+    let waiting = select(&html, "#configuration-short_case-lanes_replay-2 .badge")[0];
     assert!(
         has_classes(waiting, &["badge-outline"]),
         "{}",
         waiting.html()
     );
-    let first = select_in(select_in(configurations[0], "details.case")[0], ".replay")[0];
-    let reasoning: Vec<String> = select_in(first, ".reasoning p")
+    assert_no_status_by_colour_alone(&html);
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, A replay.
+#[test_log::test(tokio::test)]
+async fn a_replay_opens_to_its_judges_reasoning_and_the_transcripts_that_have_started() {
+    let pages = with_experiment().await;
+    pages.write(&[("experiments/1/short/columns/2/case", "1/implement-1\n")]);
+
+    let html = pages.page("/experiments/1").await;
+
+    let opens = select(
+        &html,
+        "#configuration-as-is_case-columns_replay-1 > th > button",
+    );
+    assert_eq!(
+        opens[0].attr("aria-controls"),
+        Some("configuration-as-is_case-columns_replay-1_details")
+    );
+    let details = select(&html, "#configuration-as-is_case-columns_replay-1_details")[0];
+    assert_eq!(
+        details.attr("data-fold-of"),
+        Some("configuration-as-is_case-columns_replay-1")
+    );
+    assert!(details.attr("hidden").is_some());
+    let reasoning: Vec<String> = select_in(details, ".reasoning p")
         .into_iter()
         .map(text)
         .collect();
@@ -468,10 +927,105 @@ async fn a_configuration_opens_to_its_cases_and_a_case_to_its_replays_with_their
         ]
     );
     assert_eq!(
-        hrefs(select_in(first, "a")),
+        hrefs(select_in(details, "a")),
         [
             "/experiments/1/as-is/columns/1/run",
             "/experiments/1/as-is/columns/1/judge"
+        ]
+    );
+    let judge_made_none = select(&html, "#configuration-short_case-columns_replay-2_details")[0];
+    assert_eq!(
+        hrefs(select_in(judge_made_none, "a")),
+        [
+            "/experiments/1/short/columns/2/run",
+            "/experiments/1/short/columns/2/judge"
+        ],
+        "a judge that made no judgement had started"
+    );
+    assert!(
+        select(&html, "#configuration-short_case-lanes_replay-2 button").is_empty(),
+        "a replay with nothing to open to has no button"
+    );
+    assert_eq!(
+        select(&html, "#configuration-short_case-lanes_replay-2_details"),
+        [] as [scraper::ElementRef<'_>; 0]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The table and The grid: highest
+/// pass rate first, ties in the experiment's order, and those with none
+/// last.
+#[test_log::test(tokio::test)]
+async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_the_grid() {
+    let pages = with_suites().await;
+    launched(&pages, "board", &["a", "b", "c"], 1, "2026-11-17T12:00:00Z").await;
+    let work_dir = pages.path("");
+    let pass = "state = 'judged', outcome = 'done', seconds = 10, correctness = 'pass', leak = 0";
+    let fail = "state = 'judged', outcome = 'done', seconds = 10, correctness = 'fail', leak = 0";
+    for (key, set) in [
+        ((1, 0, 1), pass),
+        ((1, 1, 1), fail),
+        ((1, 0, 2), pass),
+        ((1, 1, 2), pass),
+        ((1, 0, 3), fail),
+        ((1, 1, 3), pass),
+    ] {
+        trial(&work_dir, 1, key, set).await;
+    }
+
+    let html = pages.page("/experiments/1").await;
+
+    let order: Vec<String> = fold_rows(&html, None)
+        .into_iter()
+        .map(|(_, _, cells)| format!("{} {}", cells[0], cells[1]))
+        .collect();
+    assert_eq!(order, ["b 100%", "a 50%", "c 50%", "as-is –"]);
+    let heads: Vec<String> = select(&html, "#grid thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(heads, ["", "b", "a", "c", "as-is"]);
+    assert_eq!(
+        rows(&html, "#grid"),
+        [
+            ["columns", "1 of 1", "1 of 1", "0 of 1", "–"],
+            ["lanes", "1 of 1", "0 of 1", "1 of 1", "–"],
+        ]
+    );
+    assert_eq!(
+        points(&html, "cost"),
+        Vec::<(String, String, String)>::new(),
+        "no configuration has a cost"
+    );
+    let named: Vec<String> = points(&html, "time")
+        .into_iter()
+        .map(|(_, name, _)| name)
+        .collect();
+    assert_eq!(named, ["b", "a", "c"]);
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The grid.
+#[test_log::test(tokio::test)]
+async fn the_grid_shows_the_passes_leaks_and_unjudged_of_each_case_and_configuration() {
+    let pages = with_experiment().await;
+
+    let html = pages.page("/experiments/1").await;
+
+    assert!(
+        table_bars(&html).contains(&("Passes by case".into(), vec![])),
+        "{:?}",
+        table_bars(&html)
+    );
+    let heads: Vec<String> = select(&html, "#grid thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(heads, ["", "as-is", "short"]);
+    assert_eq!(
+        rows(&html, "#grid"),
+        [
+            ["columns", "2 of 2", "–, 1 leak, 1 unjudged"],
+            ["lanes", "–, 1 unjudged", "0 of 1"],
         ]
     );
 }
@@ -558,13 +1112,21 @@ async fn the_experiment_pages_stream_sends_the_experiment_as_it_changes() {
 
     loop {
         let event = events.recv().await.unwrap();
-        let ended = regions(&event)
-            .into_iter()
+        let sent = regions(&event);
+        let replays = sent
+            .iter()
             .filter(|(id, _)| id == "experiment")
             .any(|(_, experiment)| {
-                text(select(&experiment, ".facts")[0]).ends_with("7 of 8 replays ended")
+                experiment_facts(experiment).contains(&("Replays".into(), "7 of 8".into()))
             });
-        if ended {
+        let row = sent
+            .iter()
+            .filter(|(id, _)| id == "configurations")
+            .any(|(_, table)| {
+                text(select(table, "#configuration-as-is_case-lanes_replay-2 td")[0])
+                    .starts_with("no judgement")
+            });
+        if replays && row {
             break;
         }
     }
@@ -1138,7 +1700,7 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_expe
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["Case", "as-is", "short", "careful"]);
+    assert_eq!(heads, ["", "as-is", "short", "careful"]);
 }
 
 /// The files under `dir` and its subdirectories.

@@ -2,70 +2,25 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 <div id="experiment-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
-{% block experiment -%}
-<section id="experiment">
-<header class="mb-4">
-<hgroup class="mb-4">
-<h1>Experiment {{ experiment.id }}</h1>
-<p class="facts flex flex-wrap items-center gap-x-3 gap-y-1"><span>of the suite <a class="link" href="{{ experiment.suite_href }}">{{ experiment.suite }}</a>, launched {{ experiment.launched }}</span> {% call ui::status(experiment.status, experiment.state) %}{% endcall %}
-{%- if let Some(waiting) = experiment.waiting %} <span class="phrase">{{ waiting }}</span>{% endif %} <span>{{ experiment.ended }} of {{ experiment.all }} replays ended</span></p>
-</hgroup>
-{%- if let Some(cancel) = experiment.cancel %}
-{% call ui::confirm(cancel) %}{% endcall %}
-{%- endif %}
-</header>
-<section id="chart" class="mb-6">
-<h2>Chart</h2>
-<figure>
-{{ experiment.chart.svg }}
-<figcaption class="text-muted text-sm">Mean cost of a replay against pass rate, a point for each configuration</figcaption>
-</figure>
-{%- if !experiment.chart.unplotted.is_empty() %}
-<p class="unplotted text-muted text-sm">No point yet, with no pass rate or no cost: {% for name in experiment.chart.unplotted %}{% if !loop.first %}, {% endif %}{{ name }}{% endfor %}</p>
-{%- endif %}
+{%- include "experiment_heading.html" %}
+<section id="experiment-chart" class="experiment-chart {% call ui::card_look() %}{% endcall %} mb-6 max-w-2xl p-4">
+<label class="select select-sm w-fit"><span class="label">Pass rate vs</span><select>
+{%- for plot in experiment.chart %}
+<option value="{{ plot.axis.name() }}"{% if loop.first %} selected{% endif %}>{{ plot.axis.label() }}</option>
+{%- endfor %}
+</select></label>
+{%- include "experiment_chart.html" %}
 </section>
-<section id="grid" class="mb-6">
-<h2>Passes by case</h2>
-<table class="table w-auto">
-<thead><tr><th>Case</th>{% for name in experiment.grid.configurations %}<th>{{ name }}</th>{% endfor %}</tr></thead>
-<tbody>
-{%- for row in experiment.grid.rows %}
-<tr><th>{{ row.case }}</th>{% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}</tr>
-{%- endfor %}
-</tbody>
-</table>
-</section>
-<section id="configurations" class="mb-6">
-<h2>Configurations</h2>
-<div class="configurations-head text-muted grid grid-cols-[minmax(8rem,1fr)_6rem_minmax(12rem,2fr)_minmax(10rem,2fr)_4rem_5rem] gap-x-4 px-4 py-2 text-sm font-semibold" aria-hidden="true"><span>Configuration</span><span>Pass rate</span><span>Cost</span><span>Time</span><span>Leaks</span><span>Unjudged</span></div>
-{%- for configuration in experiment.configurations %}
-{%- let c = loop.index0 %}
-<details class="configuration border-t border-base-300" id="configuration-{{ c }}">
-<summary class="grid cursor-pointer grid-cols-[minmax(8rem,1fr)_6rem_minmax(12rem,2fr)_minmax(10rem,2fr)_4rem_5rem] gap-x-4 px-4 py-2"><span class="font-semibold">{{ configuration.name }}</span><span>{{ configuration.pass_rate }}</span><span>{{ configuration.cost }}</span><span>{{ configuration.time }}</span><span>{{ configuration.leaks }}</span><span>{{ configuration.unjudged }}</span></summary>
-<div class="pb-2 pl-8">
-{%- for case in configuration.cases %}
-{%- let k = loop.index0 %}
-<details class="case" id="configuration-{{ c }}-case-{{ k }}">
-<summary class="cursor-pointer py-1">{{ case.name }}: {{ case.passes }}</summary>
-<ol class="replays space-y-2 py-1 pl-6">
-{%- for replay in case.replays %}
-<li class="replay">
-<div class="replay-line flex flex-wrap items-center gap-x-2"><span>repetition {{ replay.repetition }}</span> {% call ui::status(replay.status, replay.state) %}{% endcall %} <span>{{ replay.said }}</span>
-{%- if let Some(href) = replay.run_href %} <a class="link" href="{{ href }}">run's transcript</a>{% endif %}
-{%- if let Some(href) = replay.judge_href %} <a class="link" href="{{ href }}">judge's transcript</a>{% endif %}</div>
-{%- if let Some(reasoning) = replay.reasoning %}
-<div class="reasoning text-sm"><p><span class="text-muted">Correctness:</span> {{ reasoning.correctness }}</p><p><span class="text-muted">Leak:</span> {{ reasoning.leak }}</p></div>
+<div class="mb-6">
+{%- call(part) ui::table_card("Configurations") %}
+{%- if part == crate::web::table::Part::Table %}
+{%- include "experiment_configurations.html" %}
 {%- endif %}
-</li>
-{%- endfor %}
-</ol>
-</details>
-{%- endfor %}
+{%- endcall %}
 </div>
-</details>
-{%- endfor %}
-<p class="judges mt-2">{{ experiment.judges }}</p>
-</section>
-</section>
-{%- endblock %}
+{%- call(part) ui::table_card("Passes by case") %}
+{%- if part == crate::web::table::Part::Table %}
+{%- include "experiment_grid.html" %}
+{%- endif %}
+{%- endcall %}
 {%- endblock -%}
