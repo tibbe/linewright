@@ -13,10 +13,16 @@
   work with Linewright is the user guide's.
 - **Voice.** A sentence on a screen is in the active voice: it names who or
   what acts, such as "This stops its running replays and judges."
-- **Buttons.** A button's label is a verb, or "New" for one that makes
-  something, with what it acts on where its
-  place on the screen does not show that, such as "Remove" on a case's row or
-  "Cancel the experiment".
+- **Buttons.** A button's label is a verb, or "New" for a button that makes
+  something. The label also names what the button acts on where the screen
+  does not show it. For example, "Remove" on a case's row and "Cancel" on
+  Experiment need no more, but "Add case" on Run names the case.
+
+## Titles
+
+- **A screen's title** is the name in its heading, then "Linewright", such as
+  "Experiment 14 · Linewright". For a screen of the navigation, the name is
+  the screen's name in the navigation.
 
 ## Screen states
 
@@ -29,6 +35,8 @@
 - **Nothing there.** A link can name an item, run, suite or experiment that
   does not exist. The screen it opens shows "No such" and the name, as the
   screens give it, such as "No such run 43/rework-9" or "No such item #812".
+- **Absent.** A figure that is absent, such as a mean with nothing to
+  count, shows as "–".
 - **Loading.** A screen shows once it has all that it holds; it has no
   loading state.
 
@@ -71,33 +79,61 @@
 - **Statuses.** A status is one of done, failed, waiting, in flight, paused
   and cancelled. Each area says which status each of its states shows as.
 - **Shown.** A status shows as its icon and its colour, never by colour
-  alone.
+  alone. Where a screen also names the state that shows as the status, the
+  icon and the state's name are in a badge in the status's colour, but for a
+  status among a screen's facts ([Facts](#facts)). For example, a running
+  experiment shows as "running" in the colour of in flight.
 
 ## Tables
 
-- As the reader scrolls, a table's column heads stay at the top.
+- **The bar.** A table is in a card, with a bar along its top. The table's name
+  is at the left of the bar. Unless its screen names it, a table's name says
+  what its rows are, such as "Runs". Its filters, then its buttons, are at the
+  right.
+- **A table in a tab.** A table that fills a tab has the tab's name, and its
+  bar shows no name.
+- **The first column.** A first column that names each row has no head: the
+  bar or the tab names the rows. Its cells are the rows' headers, in bold.
+- **Alignment.** Amounts of money and durations align right. Every other
+  column aligns left.
 - A title in a table is on one line.
 
 ## Facts
 
-- A screen's facts about one thing are a list of labels, each with its value
-  beside it.
-- A label is words alone, with no icon or colour. A status among the facts
-  is in the value: its icon and its words in its colour, with nothing behind
-  them.
+- A label is words alone, with no icon or colour. A status among a screen's
+  facts is in the value: its icon and its state's name in its colour, with
+  nothing behind them.
+
+## Dialogs
+
+- **Where.** A dialog opens over the whole page, the shell too
+  ([Shell](shell.md)). It has no link and no breadcrumbs of its own.
+- **Closing.** A click outside a dialog does nothing. Escape closes it, as
+  its back-out button does.
 
 ## Confirming
 
 - **What asks first.** An action that stops work or removes what Linewright
-  cannot bring back asks first, in a confirmation: a question that names
+  cannot bring back asks first, in a confirmation, a dialog
+  ([Dialogs](#dialogs)): a question that names
   what it acts on and says what follows.
-- **Where.** A confirmation shows over the screen it was asked from, and has
-  no link of its own.
 - **The answer.** The reader confirms, and the action goes ahead, or turns
   it down, and nothing changes.
-- **Its buttons.** The button that goes ahead has the label of the button
-  that asked. The other says "Cancel", or "Keep running" where the action
-  cancels.
+- **Its buttons.** The button that goes ahead comes last. It has the label of
+  the button that asked, and is in the Error colour. The other comes first and
+  says "Cancel", or "Keep running" where the action cancels.
+
+## Making
+
+- **New.** A table that the reader can add to has "New" in its bar
+  ([Tables](#tables)).
+- **The dialog.** "New" opens a dialog ([Dialogs](#dialogs)). The dialog
+  shows each field with its label above it, then "Cancel" and the button that
+  makes the thing.
+- **Making.** When the reader clicks the button that makes the thing and
+  Linewright makes it, the dialog closes.
+- **A refusal.** When Linewright refuses, the dialog stays open and shows the
+  reason above its buttons. The fields keep what the reader typed or chose.
 
 ## Layout
 

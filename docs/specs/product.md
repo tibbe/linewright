@@ -111,7 +111,6 @@ flowchart LR
 | [Runs](runs.md) | What holds for every run, and what each run did. |
 | [Sessions](sessions.md) | What an agent session is given, and what it is kept from. |
 | [Operation](operation.md) | Running Linewright, and seeing what it is doing. |
-| [Navigation](navigation.md) | Getting around the UI. |
 | [Benchmarks](benchmarks.md) | Measuring Linewright against work it has already done. |
 
 ## Out of scope

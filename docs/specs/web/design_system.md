@@ -33,13 +33,17 @@ The web UI follows daisyUI, with two themes of its own.
 | paused    | Muted text |
 | cancelled | `neutral`  |
 
+- **A status's badge** is a small daisyUI `badge` in its colour.
+
 ## Navigation
 
 - **A screen** is a page, at the address below. Its link is its address.
 - **A screen's title** is the page's `<title>`, which the browser shows on
   its tab.
 - **A screen that shows over another**, such as a confirmation, is a daisyUI
-  `modal`.
+  `modal` on a `<dialog>` that `showModal()` opens, with no `modal-backdrop`.
+  This modal already closes as [Dialogs](../design_system.md#dialogs) says.
+- **The button that goes ahead** in a confirmation is a `btn-error`.
 
 | Screen      | Address           |
 | ----------- | ----------------- |
@@ -53,6 +57,15 @@ The web UI follows daisyUI, with two themes of its own.
 | Experiment  | `/experiments/ID` |
 | Server      | `/server`         |
 
+## Making
+
+- **The dialog of "New"** holds a `fieldset`, with the dialog's title as its
+  `fieldset-legend`. Each field is an `input`, a `select` or a
+  `textarea` under its `label`, and the buttons are in the `modal-action`.
+- **The button that makes the thing** is a `btn-primary`.
+- **The reason for a refusal** is a daisyUI `alert` in the `alert-error`
+  style.
+
 ## Layout
 
 - **Text cut to fit** is shown whole in a daisyUI `tooltip`.
@@ -61,13 +74,11 @@ The web UI follows daisyUI, with two themes of its own.
 ## Filters
 
 - **The filters** are a row of small daisyUI `input`s and `select`s, each
-  with its label inside it as daisyUI's `label`, at the left.
-
-## Facts
-
-- **The facts** are drawn as a card is, their labels in a column of their
-  own.
+  with its label inside it as daisyUI's `label`.
 
 ## Tables
 
-- **A table** is a daisyUI `table`, its column heads pinned.
+- **A table** is a daisyUI `table`. In a table whose first column names each
+  row, a row's first cell is a `th`.
+- **Its card** is drawn as a card on Board is, with the table's name as the
+  bar's `card-title`, and no line between the bar and the column heads.
