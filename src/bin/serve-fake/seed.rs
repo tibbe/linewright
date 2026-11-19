@@ -477,7 +477,7 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
         ),
         (
             format!("{scorer}/brief.md"),
-            "# Your task\n\nJudge the replay.\n".to_string(),
+            "# Your task\n\nScore the trial.\n".to_string(),
         ),
     ];
     for (path, text) in files {

@@ -79,28 +79,28 @@
     --tt-trans: -50%;
   }
 
-  .experiment-chart:has(select option[value="time"]:checked) [data-axis="cost"],
-  .experiment-chart:not(:has(select option[value="time"]:checked)) [data-axis="time"] {
+  .benchmark-run-chart:has(select option[value="time"]:checked) [data-axis="cost"],
+  .benchmark-run-chart:not(:has(select option[value="time"]:checked)) [data-axis="time"] {
     @apply hidden;
   }
 
-  .experiment-chart .point-box {
+  .benchmark-run-chart .point-box {
     @apply pointer-events-none flex h-full items-center text-xs;
   }
 
-  .experiment-chart .point-box.named-left {
+  .benchmark-run-chart .point-box.named-left {
     @apply justify-end;
   }
 
-  .experiment-chart .point {
+  .benchmark-run-chart .point {
     @apply pointer-events-auto flex cursor-default items-center gap-1 rounded-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-info;
   }
 
-  .experiment-chart .named-left .point {
+  .benchmark-run-chart .named-left .point {
     @apply flex-row-reverse;
   }
 
-  .experiment-chart .point .dot {
+  .benchmark-run-chart .point .dot {
     @apply size-4 shrink-0 rounded-full border-2 border-card bg-info;
   }
 
@@ -220,7 +220,7 @@
     @apply bg-card;
   }
 
-  form.capture:not(:has(option.new-suite:checked)) .new-suite-name {
+  form.capture:not(:has(option.new-benchmark:checked)) .new-benchmark-name {
     @apply hidden;
   }
 }

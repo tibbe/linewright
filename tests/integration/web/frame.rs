@@ -61,7 +61,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
         "/items/1",
         "/runs",
         "/automations",
-        "/suites",
+        "/benchmarks",
         "/server",
         "/items/99",
     ] {
@@ -87,7 +87,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
                 ("Board".to_string(), "/".to_string(), 1),
                 ("Runs".to_string(), "/runs".to_string(), 1),
                 ("Automations".to_string(), "/automations".to_string(), 1),
-                ("Suites".to_string(), "/suites".to_string(), 1),
+                ("Benchmarks".to_string(), "/benchmarks".to_string(), 1),
                 ("Server".to_string(), "/server".to_string(), 1),
             ],
             "{path}"

@@ -131,7 +131,7 @@ impl Outputs {
                 })
             }),
             Err(e) => {
-                warn!(output = %dir.display(), error = format!("{e:#}"), "reading a judgement failed");
+                warn!(output = %dir.display(), error = format!("{e:#}"), "reading a score failed");
                 None
             }
         };
@@ -388,7 +388,7 @@ impl ConfigurationsColumn {
             ConfigurationsColumn::MeanTime => "Mean time",
             ConfigurationsColumn::TotalTime => "Total time",
             ConfigurationsColumn::Leaks => "Leaks",
-            ConfigurationsColumn::Unscored => "Unjudged",
+            ConfigurationsColumn::Unscored => "Unscored",
         }
     }
 
@@ -437,16 +437,16 @@ impl BenchmarkRunView {
             status,
             state,
             cancel: (record.state == BenchmarkRunState::Open).then(|| Confirmation {
-                id: "cancel-experiment".into(),
+                id: "cancel-benchmark-run".into(),
                 label: "Cancel",
                 question: format!(
-                    "Cancel experiment {}? This stops its running replays and judges.",
+                    "Cancel benchmark run {}? This stops its running trials and scorers.",
                     record.id
                 ),
                 turn_down: TurnDown::KeepRunning,
                 action: format!("{path}/cancel"),
                 fields: vec![],
-                said: "experiment-said",
+                said: "benchmark-run-said",
             }),
             path,
             facts: facts(
@@ -491,7 +491,7 @@ fn facts(
         }),
     });
     facts.push(Fact {
-        label: "Replays",
+        label: "Trials",
         value: html::escape(&format!("{} of {}", results.trials_ended, results.all)),
     });
     let mut cost = dollars(results.cost.total);
@@ -501,7 +501,7 @@ fn facts(
         value: html::escape(&cost),
     });
     facts.push(Fact {
-        label: "Judges",
+        label: "Scorers",
         value: html::escape(&dollars(results.scorers.total)),
     });
     if let Shown::Waiting(waiting_for) = shown {
@@ -645,7 +645,7 @@ fn grid(record: &BenchmarkRunRecord, ranked: &[(usize, &ConfigurationResults)]) 
                                     let _ = write!(cell, ", {}", counted(leaks, "leak", "leaks"));
                                 }
                                 if unscored > 0 {
-                                    let _ = write!(cell, ", {unscored} unjudged");
+                                    let _ = write!(cell, ", {unscored} unscored");
                                 }
                                 cell
                             })
@@ -696,7 +696,7 @@ fn rows(
     let mut rows = vec![];
     for &(c, configuration) in ranked {
         let configuration_id = format!("configuration-{}", configuration.name);
-        let task_id = |task: &TaskName| format!("{configuration_id}_case-{task}");
+        let task_id = |task: &TaskName| format!("{configuration_id}_task-{task}");
         rows.push(Row::Figures(FiguresRow {
             id: configuration_id.clone(),
             level: Level::Configuration,
@@ -716,7 +716,7 @@ fn rows(
                 .iter()
                 .filter(|(key, _)| key.task == k && key.configuration == c)
                 .collect();
-            let trial_id = |key: &TrialKey| format!("{id}_replay-{}", key.repetition);
+            let trial_id = |key: &TrialKey| format!("{id}_trial-{}", key.repetition);
             let of_task = configuration.tasks.get(k);
             rows.push(Row::Figures(FiguresRow {
                 id: id.clone(),
@@ -796,7 +796,7 @@ fn trial_rows(
         } else {
             vec![]
         },
-        name: format!("Replay {}", at.repetition),
+        name: format!("Trial {}", at.repetition),
         pass_rate: PassRate::Status { status, words },
         figures: [
             run.and_then(|run| run.money)
@@ -826,9 +826,9 @@ struct TrialShown<'a> {
 fn trial_shown(state: &TrialState) -> TrialShown<'_> {
     let (status, words, run) = match state {
         TrialState::Pending => (Status::Paused, "waiting".into(), None),
-        TrialState::Running => (Status::InFlight, "replaying".into(), None),
+        TrialState::Running => (Status::InFlight, "running".into(), None),
         TrialState::Ran { run } => (Status::Paused, "waiting".into(), Some(run)),
-        TrialState::Scoring { run } => (Status::InFlight, "judging".into(), Some(run)),
+        TrialState::Scoring { run } => (Status::InFlight, "scoring".into(), Some(run)),
         TrialState::Ended(TrialEnd::Scored { run, score }) => {
             let leak = if score.leak { ", with a leak" } else { "" };
             let status = if score.correctness == Verdict::Pass && !score.leak {
@@ -849,14 +849,14 @@ fn trial_shown(state: &TrialState) -> TrialShown<'_> {
                     "its run is not done or handed back".to_string(),
                 ),
                 NoScore::Scorer { reason, .. } => {
-                    (Status::Failed, format!("the judge made none: {reason}"))
+                    (Status::Failed, format!("the scorer made none: {reason}"))
                 }
                 NoScore::Cancelled => (Status::Cancelled, "cancelled".into()),
             };
-            (status, format!("no judgement: {why}"), Some(run))
+            (status, format!("no score: {why}"), Some(run))
         }
         TrialState::Ended(TrialEnd::Cancelled) => {
-            (Status::Cancelled, "no judgement: cancelled".into(), None)
+            (Status::Cancelled, "no score: cancelled".into(), None)
         }
     };
     TrialShown { status, words, run }
@@ -900,7 +900,7 @@ impl BenchmarkRunView {
     fn regions(&self) -> [(&'static str, String); 4] {
         [
             (
-                "experiment",
+                "benchmark-run",
                 render(&HeadingRegion {
                     benchmark_run: self,
                 }),
@@ -936,7 +936,7 @@ enum Unshown {
 
 /// What is said of a benchmark run `id` that there is none of.
 fn no_such(id: &str) -> String {
-    format!("there is no experiment {id}")
+    format!("there is no benchmark run {id}")
 }
 
 /// Benchmark run `id`, by its ID as a path gives it.
@@ -957,7 +957,7 @@ impl Unshown {
             Unshown::NoSuch => (StatusCode::NOT_FOUND, no_such(id)),
             Unshown::Failed(e) => {
                 let error = format!("{e:#}");
-                warn!(experiment = id, error, "reading an experiment failed");
+                warn!(benchmark_run = id, error, "reading a benchmark run failed");
                 (StatusCode::INTERNAL_SERVER_ERROR, error)
             }
         }
@@ -966,7 +966,7 @@ impl Unshown {
 
 /// The name of benchmark run `id` in its heading.
 fn benchmark_run_name(id: impl std::fmt::Display) -> String {
-    format!("Experiment {id}")
+    format!("Benchmark run {id}")
 }
 
 /// The crumbs of the screens of benchmark run `record`: Benchmarks, then its
@@ -1001,16 +1001,16 @@ pub(super) async fn benchmark_run_page(
         Err(unshown) => {
             let page = Page::new(
                 Trail::within(Area::Benchmarks).here(benchmark_run_name(&id)),
-                format!("/events/experiments/{id}"),
+                format!("/events/benchmark-runs/{id}"),
             );
             if let Unshown::NoSuch = unshown {
-                return nothing_there(page, frame, "experiment", Missing::BenchmarkRun(id));
+                return nothing_there(page, frame, "benchmark-run", Missing::BenchmarkRun(id));
             }
             let (status, error) = unshown.answer(&id);
             let page = ErrorPage {
                 page,
                 frame,
-                region: "experiment",
+                region: "benchmark-run",
                 error,
             };
             (status, page).into_response()
@@ -1061,8 +1061,8 @@ pub(super) async fn cancel(
     {
         Ok(()) => {
             sources.benchmark_runs.changed();
-            info!(experiment = %parsed, "cancelled an experiment");
-            let said = format!("Cancelled experiment {parsed}");
+            info!(benchmark_run = %parsed, "cancelled a benchmark run");
+            let said = format!("Cancelled benchmark run {parsed}");
             Ok((StatusCode::OK, alert("alert-success", &said)).into_response())
         }
         Err(e @ CancelRefusal::NoSuchBenchmarkRun(_)) => {
@@ -1073,7 +1073,7 @@ pub(super) async fn cancel(
         }
         Err(CancelRefusal::Failed(e)) => {
             let why = format!("{e:#}");
-            warn!(experiment = %parsed, error = why, "cancelling an experiment failed");
+            warn!(benchmark_run = %parsed, error = why, "cancelling a benchmark run failed");
             Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &why))
         }
     }
@@ -1084,7 +1084,6 @@ pub(super) async fn cancel(
 pub(super) struct TrialPath {
     id: String,
     configuration: String,
-    #[serde(rename = "case")]
     task: String,
     repetition: String,
     of: String,
@@ -1104,7 +1103,7 @@ impl Of {
     fn name(self) -> &'static str {
         match self {
             Of::Run => "run",
-            Of::Scorer => "judge",
+            Of::Scorer => "scorer",
         }
     }
 }
@@ -1147,7 +1146,7 @@ fn transcribed(
     let none = || {
         (
             StatusCode::NOT_FOUND,
-            format!("experiment {} has no replay {trial}", path.id),
+            format!("benchmark run {} has no trial {trial}", path.id),
         )
     };
     let configuration = record
@@ -1182,7 +1181,7 @@ fn transcribed(
     let task_run: RunId = trial::task_run(&output).map_err(unread)?.ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
-            format!("the replay {trial} of experiment {} has not begun", at.id),
+            format!("the trial {trial} of benchmark run {} has not begun", at.id),
         )
     })?;
     let item = match &task_run.of {
@@ -1194,7 +1193,7 @@ fn transcribed(
             kept: KeptRuns::Files(RunFiles::new(&output)),
             which: Which::Item(item),
             name: None,
-            of: html::escape(&format!("the run of replay {}", at.name())),
+            of: html::escape(&format!("the run of trial {}", at.name())),
             missing: None,
         },
         Of::Scorer => Transcribed {
@@ -1203,8 +1202,8 @@ fn transcribed(
                 id: task_run,
                 item: None,
             },
-            name: Some("judge".into()),
-            of: html::escape(&format!("the judge of replay {}", at.name())),
+            name: Some("scorer".into()),
+            of: html::escape(&format!("the scorer of trial {}", at.name())),
             missing: None,
         },
     };
@@ -1216,11 +1215,11 @@ fn transcribed(
 /// transcript.
 fn context(at: &TrialAt) -> Html {
     let (this, other, other_name) = match at.of {
-        Of::Run => ("run's", Of::Scorer, "judge's"),
-        Of::Scorer => ("judge's", Of::Run, "run's"),
+        Of::Run => ("run's", Of::Scorer, "scorer's"),
+        Of::Scorer => ("scorer's", Of::Run, "run's"),
     };
     html::built(format!(
-        r#"<p id="replay" class="mb-3">Replay {} of <a class="link" href="{}">experiment {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></p>"#,
+        r#"<p id="trial" class="mb-3">Trial {} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></p>"#,
         html::escape(&at.name()),
         html::escape(&benchmark_run_path(at.id)),
         at.id,
@@ -1237,7 +1236,7 @@ pub(super) async fn trial_page(
     uri: Uri,
 ) -> Response {
     let name = format!(
-        "Replay {}/{}/{}'s {}",
+        "Trial {}/{}/{}'s {}",
         path.configuration, path.task, path.repetition, path.of
     );
     let record = match record_of(&sources, &path.id).await {
@@ -1364,14 +1363,14 @@ mod tests {
             [
                 (Status::Paused, "waiting".into()),
                 (Status::Paused, "waiting".into()),
-                (Status::InFlight, "replaying".into()),
-                (Status::InFlight, "judging".into()),
+                (Status::InFlight, "running".into()),
+                (Status::InFlight, "scoring".into()),
                 (Status::Done, "pass".into()),
                 (Status::Failed, "pass, with a leak".into()),
                 (Status::Failed, "fail".into()),
                 (
                     Status::Failed,
-                    "no judgement: the judge made none: it gave up".into()
+                    "no score: the scorer made none: it gave up".into()
                 ),
             ]
         );

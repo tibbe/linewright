@@ -95,7 +95,7 @@ fn facts(
             LinewrightFact::RunsInFlight { runs, max_runs } => {
                 let trials = (trials.in_flight > 0).then(|| {
                     fact(
-                        "Replays and judges of experiments in flight",
+                        "Trials and scorers of benchmark runs in flight",
                         format!("{} of {}", trials.in_flight, trials.max_trials).into(),
                     )
                 });
@@ -419,7 +419,7 @@ mod tests {
                 ),
                 ("Runs in flight", "1 of 4".into(), None),
                 (
-                    "Replays and judges of experiments in flight",
+                    "Trials and scorers of benchmark runs in flight",
                     "2 of 3".into(),
                     None
                 ),

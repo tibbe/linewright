@@ -10,8 +10,8 @@
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, adds and removes
- * New experiment's configurations, opens the boxes of the files of the brief
- * they give and counts their replays, and shows the page's tooltip.
+ * New benchmark run's configurations, opens the boxes of the files of the brief
+ * they give and counts their trials, and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -192,7 +192,7 @@
   /**
    * Starts the form of `dialog`, if it is a "New" dialog's, as it starts,
    * but for the regions of the page's stream it holds, which stay as the
-   * stream last sent them (docs/specs/benchmarks.md, New case): its run is
+   * stream last sent them (docs/specs/benchmarks.md, New task): its run is
    * chosen as it starts, the first, with the name suggested for it.
    */
   function startAfresh(dialog) {
@@ -226,7 +226,7 @@
     const launch = dialog?.querySelector?.("form.launch");
     if (!launch) return;
     openedTexts.set(launch, briefTexts());
-    countReplays(launch);
+    countTrials(launch);
   });
 
   /** A fold row's button. */
@@ -256,7 +256,7 @@
 
   /**
    * Opens or closes a fold row on a click on it, but for a click on what acts
-   * by itself, such as a link (docs/specs/benchmarks.md, Suite, Cases).
+   * by itself, such as a link (docs/specs/benchmarks.md, Benchmark, Tasks).
    */
   document.addEventListener("click", (event) => {
     const row = event.target?.closest?.("tr[id]");
@@ -314,7 +314,7 @@
    */
   function swapped(entries) {
     fillOptions();
-    for (const form of document.querySelectorAll("form.launch")) countReplays(form);
+    for (const form of document.querySelectorAll("form.launch")) countTrials(form);
     keepFolds();
     keepRun();
     tick();
@@ -429,7 +429,7 @@
 
   /**
    * Fills the name of the capture of run choice `select` with the name
-   * suggested for the run chosen (docs/specs/benchmarks.md, New case), unless,
+   * suggested for the run chosen (docs/specs/benchmarks.md, New task), unless,
    * but for `always`, the name holds one the reader typed: one suggested for
    * none of the runs.
    */
@@ -472,9 +472,9 @@
     JSON.parse(document.getElementById("brief-texts")?.getAttribute("data-texts") || "{}");
 
   /**
-   * The texts of the files of the brief as New experiment's form `form` was
+   * The texts of the files of the brief as New benchmark run's form `form` was
    * opened, by form, from which each file it opens starts
-   * (docs/specs/benchmarks.md, New experiment, Files of the brief).
+   * (docs/specs/benchmarks.md, New benchmark run, Files of the brief).
    */
   const openedTexts = new Map();
 
@@ -485,25 +485,25 @@
   const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
   /**
-   * Says how many replays New experiment's form `form` makes, of the cases
-   * the suite has as the stream last sent them.
+   * Says how many trials New benchmark run's form `form` makes, of the tasks
+   * the benchmark has as the stream last sent them.
    */
-  function countReplays(form) {
-    const cases =
-      Number(document.getElementById("new-experiment-offer")?.getAttribute("data-cases")) || 0;
+  function countTrials(form) {
+    const tasks =
+      Number(document.getElementById("new-benchmark-run-offer")?.getAttribute("data-tasks")) || 0;
     const configured = form.querySelectorAll("fieldset.configuration").length;
     const typed = form.elements.repetitions.value.trim();
     const repetitions = /^[0-9]+$/.test(typed) ? Math.max(1, Number(typed)) : 1;
-    form.querySelector(".replay-count").textContent =
+    form.querySelector(".trial-count").textContent =
       `${counted(configured, "configuration", "configurations")} × ` +
-      `${counted(cases, "case", "cases")} × ` +
+      `${counted(tasks, "task", "tasks")} × ` +
       `${counted(repetitions, "repetition", "repetitions")}: ` +
-      `${counted(configured * cases * repetitions, "replay", "replays")}`;
+      `${counted(configured * tasks * repetitions, "trial", "trials")}`;
   }
 
   document.addEventListener("input", (event) => {
     const form = event.target?.closest?.("form.launch");
-    if (form && event.target.name === "repetitions") countReplays(form);
+    if (form && event.target.name === "repetitions") countTrials(form);
   });
 
   /**
@@ -523,7 +523,7 @@
     }
   }
 
-  /** The texts of the files of the brief New experiment's form `form` starts from. */
+  /** The texts of the files of the brief New benchmark run's form `form` starts from. */
   const startingTexts = (form) => openedTexts.get(form) ?? briefTexts();
 
   /**
@@ -549,7 +549,7 @@
     );
     form.querySelector(".configurations").append(fieldset);
     fieldset.querySelector("input")?.focus();
-    countReplays(form);
+    countTrials(form);
   }
 
   document.addEventListener("click", (event) => {
@@ -560,7 +560,7 @@
       addConfiguration(form);
     } else if (button.classList.contains("remove-configuration")) {
       button.closest("fieldset.configuration").remove();
-      countReplays(form);
+      countTrials(form);
     }
   });
 
@@ -582,7 +582,7 @@
   /**
    * Opens the box of the file of the brief chosen in `select`, unless its
    * configuration has one, its text starting as the dialog was opened
-   * (docs/specs/benchmarks.md, New experiment, Files of the brief).
+   * (docs/specs/benchmarks.md, New benchmark run, Files of the brief).
    */
   function openFile(select) {
     const path = select.value;

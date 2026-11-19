@@ -62,7 +62,7 @@ enum CriteriaShown {
 impl TaskRow {
     /// Its row's id, keyed by the task's name.
     fn row_id(&self) -> String {
-        format!("case-{}", self.name)
+        format!("task-{}", self.name)
     }
 
     /// The id of the row of its whole criteria, which its row opens to.
@@ -77,11 +77,11 @@ impl TaskRow {
             remove: Confirmation {
                 id: format!("remove-{}", task.name),
                 label: "Remove",
-                question: format!("Remove the case {} and its directory?", task.name),
+                question: format!("Remove the task {} and its directory?", task.name),
                 turn_down: TurnDown::Cancel,
-                action: format!("{path}/remove-case"),
-                fields: vec![("case", task.name.to_string())],
-                said: "suite-said",
+                action: format!("{path}/remove-task"),
+                fields: vec![("task", task.name.to_string())],
+                said: "benchmark-said",
             },
             run_href: run_path(&task.run),
             name: task.name,
@@ -166,7 +166,7 @@ impl BenchmarkRunsColumn {
         match self {
             BenchmarkRunsColumn::Launched => "",
             BenchmarkRunsColumn::State => "State",
-            BenchmarkRunsColumn::Tasks => "Cases",
+            BenchmarkRunsColumn::Tasks => "Tasks",
             BenchmarkRunsColumn::Configurations => "Configurations",
             BenchmarkRunsColumn::Duration => "Duration",
             BenchmarkRunsColumn::Cost => "Cost",
@@ -312,8 +312,8 @@ impl NewTaskFields {
     }
 }
 
-/// The region of the New task dialog that holds the button "Add case".
-const NEW_TASK_READY: &str = "new-case-ready";
+/// The region of the New task dialog that holds the button "Add task".
+const NEW_TASK_READY: &str = "new-task-ready";
 
 /// What the New task dialog's form holds.
 #[derive(Template)]
@@ -344,7 +344,7 @@ impl NewTaskForm {
     }
 
     fn title(&self) -> String {
-        format!("New case in {}", self.benchmark)
+        format!("New task in {}", self.benchmark)
     }
 
     /// The choice of a run, the region of the page's stream that keeps it.
@@ -381,12 +381,12 @@ impl NewTaskRuns<'_> {
     }
 }
 
-/// The region of the New task dialog that holds "Add case": disabled with
+/// The region of the New task dialog that holds "Add task": disabled with
 /// no runs to capture or before `serve` has polled, after `note`, why it
 /// cannot run yet.
 #[derive(Template)]
 #[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit("Add case", NEW_TASK_READY, disabled, note) %}{% endcall %}"#,
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit("Add task", NEW_TASK_READY, disabled, note) %}{% endcall %}"#,
     ext = "html"
 )]
 struct NewTaskReady {
@@ -412,7 +412,7 @@ enum Unshown {
 
 /// What is said of a benchmark named `name` that there is none of.
 fn no_such(name: &str) -> String {
-    format!("there is no suite {name}")
+    format!("there is no benchmark {name}")
 }
 
 /// Benchmark `name` with its tasks, in its order, and its benchmark runs,
@@ -517,16 +517,16 @@ pub(super) async fn benchmark_page(
             .into_response()
         }
         Err(unshown) => {
-            let page = Page::new(trail, format!("/events/suites/{name}"));
+            let page = Page::new(trail, format!("/events/benchmarks/{name}"));
             match unshown {
-                Unshown::NoSuch => nothing_there(page, frame, "cases", Missing::Benchmark(name)),
+                Unshown::NoSuch => nothing_there(page, frame, "tasks", Missing::Benchmark(name)),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
-                    warn!(suite = name, error, "reading a suite failed");
+                    warn!(benchmark = name, error, "reading a benchmark failed");
                     let page = ErrorPage {
                         page,
                         frame,
-                        region: "cases",
+                        region: "tasks",
                         error,
                     };
                     (StatusCode::INTERNAL_SERVER_ERROR, page).into_response()
@@ -556,20 +556,20 @@ pub(super) async fn benchmark_events(
             }) = shown(&sources, &name).await
             {
                 regions.push((
-                    "experiments",
+                    "benchmark-runs",
                     render(&BenchmarkRunsRegion {
                         benchmark_runs: &benchmark_runs,
                     }),
                 ));
                 regions.push((
-                    "new-experiment-offer",
+                    "new-benchmark-run-offer",
                     render(&NewBenchmarkRunRegion { tasks: tasks.len() }),
                 ));
-                regions.push(("cases", render(&TasksRegion { tasks: &tasks })));
+                regions.push(("tasks", render(&TasksRegion { tasks: &tasks })));
                 regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
                 let runs = runs_of(&sources, benchmark.stage).await;
                 regions.push((
-                    "new-case-run",
+                    "new-task-run",
                     render(&NewTaskRuns {
                         runs: &runs,
                         chosen: None,
@@ -614,7 +614,7 @@ pub(super) async fn benchmark_for_making(
         Ok(None) => Err((StatusCode::NOT_FOUND, no_such(name))),
         Err(e) => {
             let why = format!("{e:#}");
-            warn!(suite = %benchmark, error = why, "reading a suite failed");
+            warn!(benchmark = %benchmark, error = why, "reading a benchmark failed");
             Err((StatusCode::INTERNAL_SERVER_ERROR, why))
         }
     }
@@ -685,7 +685,6 @@ pub(super) async fn add_task(
 /// What the form that removes a task sends.
 #[derive(Deserialize)]
 struct RemoveForm {
-    #[serde(rename = "case")]
     task: String,
 }
 
@@ -709,8 +708,8 @@ pub(super) async fn remove_task(
         .map_err(|error: String| WRITE.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
     match benchmarks(&sources).remove_task(&benchmark, &task).await {
         Ok(()) => {
-            info!(suite = %benchmark, case = %task, "removed a case");
-            let said = format!("Removed the case {}", html::escape(task.as_str()));
+            info!(benchmark = %benchmark, task = %task, "removed a task");
+            let said = format!("Removed the task {}", html::escape(task.as_str()));
             Ok((StatusCode::OK, alert("alert-success", &said)).into_response())
         }
         Err(e @ (RemoveError::NoSuchBenchmark(_) | RemoveError::NoSuchTask { .. })) => {
@@ -718,7 +717,7 @@ pub(super) async fn remove_task(
         }
         Err(RemoveError::Failed(e)) => {
             let why = format!("{e:#}");
-            warn!(suite = %benchmark, case = %task, error = why, "removing a case failed");
+            warn!(benchmark = %benchmark, task = %task, error = why, "removing a task failed");
             Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &why))
         }
     }

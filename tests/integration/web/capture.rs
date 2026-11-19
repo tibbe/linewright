@@ -107,7 +107,7 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
     assert!(criteria[0].attr("required").is_some());
     assert_eq!(
         disclosures(&html, &["capture"]),
-        [("Add case".to_string(), false, "Add case".to_string())]
+        [("Add task".to_string(), false, "Add task".to_string())]
     );
 }
 
@@ -186,8 +186,8 @@ fn post_capture(
         RUN_PAGE,
         headers,
         &[
-            ("suite", benchmark),
-            ("new-suite", new_benchmark),
+            ("benchmark", benchmark),
+            ("new-benchmark", new_benchmark),
             ("name", name),
             ("criteria", criteria),
         ],
@@ -205,7 +205,7 @@ async fn submitting_the_form_writes_the_task_and_says_where() {
     assert_eq!(
         said(&answer),
         format!(
-            "Captured 1/implement-1 as the case `{}` in the suite implements",
+            "Captured 1/implement-1 as the task `{}` in the benchmark implements",
             dir.display()
         )
     );
@@ -342,7 +342,7 @@ async fn the_form_offers_the_benchmarks_of_the_runs_stage_or_a_new_one() {
     let html = pages.page(RUN_PAGE).await;
 
     let form = capture_form(&html).expect("a capture form");
-    let options: Vec<(Option<&str>, String)> = select_in(form, "select[name=suite] option")
+    let options: Vec<(Option<&str>, String)> = select_in(form, "select[name=benchmark] option")
         .into_iter()
         .map(|option| (option.attr("value"), text(option)))
         .collect();
@@ -351,11 +351,16 @@ async fn the_form_offers_the_benchmarks_of_the_runs_stage_or_a_new_one() {
         [
             (Some("board"), "board".to_string()),
             (Some(IMPLEMENTS), IMPLEMENTS.to_string()),
-            (Some(""), "a new suite".to_string()),
+            (Some(""), "a new benchmark".to_string()),
         ]
     );
-    let new_benchmark = select_in(form, "input[name=new-suite]");
+    let new_benchmark = select_in(form, "input[name=new-benchmark]");
     assert_eq!(new_benchmark[0].attr("pattern"), Some(NAME_PATTERN));
+    let labels: Vec<String> = select_in(form, "label > span.label")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(labels, ["benchmark", "new benchmark", "name"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -368,12 +373,12 @@ async fn a_capture_into_a_new_benchmark_makes_it_and_says_so() {
     assert_eq!(
         said(&answer),
         format!(
-            "Captured 1/implement-1 as the case `{}` in the new suite fresh",
+            "Captured 1/implement-1 as the task `{}` in the new benchmark fresh",
             pages.path("tasks/gadgets").display()
         )
     );
-    let refreshed = select(&answer, "select#capture-suite[hx-swap-oob]");
-    assert_eq!(refreshed.len(), 1, "the form's suites refreshed");
+    let refreshed = select(&answer, "select#capture-benchmark[hx-swap-oob]");
+    assert_eq!(refreshed.len(), 1, "the form's benchmarks refreshed");
     let options: Vec<(Option<&str>, bool)> = select_in(refreshed[0], "option")
         .into_iter()
         .map(|option| (option.attr("value"), option.attr("selected").is_some()))
@@ -389,7 +394,7 @@ async fn a_capture_into_a_new_benchmark_makes_it_and_says_so() {
     let html = pages.page(RUN_PAGE).await;
     let form = capture_form(&html).unwrap();
     assert_eq!(
-        select_in(form, "select[name=suite] option[value=fresh]").len(),
+        select_in(form, "select[name=benchmark] option[value=fresh]").len(),
         1
     );
 }
@@ -417,6 +422,9 @@ async fn a_new_benchmark_without_a_name_is_refused_and_writes_nothing() {
     let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "Not captured: the new suite needs a name");
+    assert_eq!(
+        said(&answer),
+        "Not captured: the new benchmark needs a name"
+    );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }

@@ -71,9 +71,9 @@ fn with_a_run() -> impl Future<Output = Pages> {
 #[test_log::test(tokio::test)]
 async fn every_screen_shows_its_crumbs_and_is_titled_by_the_last() {
     let pages = with_a_run().await;
-    let benchmarks = || link("Suites", "/suites");
-    let board = || link("board", "/suites/board");
-    let benchmark_run = || link("Experiment 1", "/experiments/1");
+    let benchmarks = || link("Benchmarks", "/benchmarks");
+    let board = || link("board", "/benchmarks/board");
+    let benchmark_run = || link("Benchmark run 1", "/benchmark-runs/1");
 
     for (path, names, shown) in [
         (
@@ -92,36 +92,40 @@ async fn every_screen_shows_its_crumbs_and_is_titled_by_the_last() {
             vec![here("Automations")],
             "Automations · Linewright",
         ),
-        ("/suites", vec![here("Suites")], "Suites · Linewright"),
         (
-            "/suites/board",
+            "/benchmarks",
+            vec![here("Benchmarks")],
+            "Benchmarks · Linewright",
+        ),
+        (
+            "/benchmarks/board",
             vec![benchmarks(), here("board")],
             "board · Linewright",
         ),
         (
-            "/experiments/1",
-            vec![benchmarks(), board(), here("Experiment 1")],
-            "Experiment 1 · Linewright",
+            "/benchmark-runs/1",
+            vec![benchmarks(), board(), here("Benchmark run 1")],
+            "Benchmark run 1 · Linewright",
         ),
         (
-            "/experiments/1/as-is/columns/1/run",
+            "/benchmark-runs/1/as-is/columns/1/run",
             vec![
                 benchmarks(),
                 board(),
                 benchmark_run(),
-                here("Replay as-is/columns/1's run"),
+                here("Trial as-is/columns/1's run"),
             ],
-            "Replay as-is/columns/1's run · Linewright",
+            "Trial as-is/columns/1's run · Linewright",
         ),
         (
-            "/experiments/1/as-is/columns/1/judge",
+            "/benchmark-runs/1/as-is/columns/1/scorer",
             vec![
                 benchmarks(),
                 board(),
                 benchmark_run(),
-                here("Replay as-is/columns/1's judge"),
+                here("Trial as-is/columns/1's scorer"),
             ],
-            "Replay as-is/columns/1's judge · Linewright",
+            "Trial as-is/columns/1's scorer · Linewright",
         ),
         ("/server", vec![here("Server")], "Server · Linewright"),
     ] {
@@ -167,27 +171,27 @@ async fn a_no_such_screen_has_the_crumbs_of_the_screen_its_link_names_ending_in_
             vec![link("Runs", "/runs"), here("nothing")],
         ),
         (
-            "/suites/nothing",
-            vec![link("Suites", "/suites"), here("nothing")],
+            "/benchmarks/nothing",
+            vec![link("Benchmarks", "/benchmarks"), here("nothing")],
         ),
         (
-            "/experiments/9",
-            vec![link("Suites", "/suites"), here("Experiment 9")],
+            "/benchmark-runs/9",
+            vec![link("Benchmarks", "/benchmarks"), here("Benchmark run 9")],
         ),
         (
-            "/experiments/9/as-is/columns/1/run",
+            "/benchmark-runs/9/as-is/columns/1/run",
             vec![
-                link("Suites", "/suites"),
-                here("Replay as-is/columns/1's run"),
+                link("Benchmarks", "/benchmarks"),
+                here("Trial as-is/columns/1's run"),
             ],
         ),
         (
-            "/experiments/1/as-is/columns/2/judge",
+            "/benchmark-runs/1/as-is/columns/2/scorer",
             vec![
-                link("Suites", "/suites"),
-                link("board", "/suites/board"),
-                link("Experiment 1", "/experiments/1"),
-                here("Replay as-is/columns/2's judge"),
+                link("Benchmarks", "/benchmarks"),
+                link("board", "/benchmarks/board"),
+                link("Benchmark run 1", "/benchmark-runs/1"),
+                here("Trial as-is/columns/2's scorer"),
             ],
         ),
     ] {

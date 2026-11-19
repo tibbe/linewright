@@ -933,13 +933,13 @@ making.hasAttribute = (name) => name in making.attributes;
 making.closest = (selector) => (selector === "dialog" ? dialog : null);
 making.querySelectorAll = () => [];
 dialog.querySelector = (selector) => (selector === "form[data-new]" ? making : null);
-var opening = element("BUTTON", { command: "show-modal", commandfor: "new-suite" });
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-benchmark" });
 opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
 const others = document.querySelectorAll;
 document.querySelectorAll = (selector) =>
   selector === "dialog form[data-new]" ? [making] : others(selector);
 const byId = document.getElementById;
-document.getElementById = (id) => (id === "new-suite" ? dialog : byId(id));
+document.getElementById = (id) => (id === "new-benchmark" ? dialog : byId(id));
 const open = () => { fire("click", event(opening)); dialog.open = true; };
 const shown = () => `${dialog.open ? "open" : "closed"}: ${making.innerHTML}`;
 "#;
@@ -986,8 +986,8 @@ dialog.querySelector = (selector) => (selector === "form[data-new]" ? making : n
 var name = Object.assign(element("INPUT", {}), { name: "name", value: "" });
 var run;
 function hold(values, sent) {
-  run = Object.assign(element("SELECT", { id: "new-case-run", "data-region": "" }), {
-    id: "new-case-run", name: "run", form: making, selectedIndex: 0, sent,
+  run = Object.assign(element("SELECT", { id: "new-task-run", "data-region": "" }), {
+    id: "new-task-run", name: "run", form: making, selectedIndex: 0, sent,
   });
   run.options = values.map((value) =>
     Object.assign(element("OPTION", { "data-name": value.replace("/", "-") }), { value }));
@@ -1003,7 +1003,7 @@ Object.defineProperty(making, "innerHTML", {
 hold(["1/implement-1"], "as the page started");
 making.querySelectorAll = (selector) =>
   selector === "[data-region]" || selector === "select[name=run]" ? [run] : [];
-making.querySelector = (selector) => (selector === '[id="new-case-run"]' ? run : null);
+making.querySelector = (selector) => (selector === '[id="new-task-run"]' ? run : null);
 const others = document.querySelectorAll;
 document.querySelectorAll = (selector) =>
   selector === "dialog form[data-new]" ? [making] : selector === "select[name=run]" ? [run] : others(selector);
@@ -1060,7 +1060,7 @@ function row(id, under) {
   return tr;
 }
 function rendered() {
-  row("cheap"); row("cheap-case-a", "cheap"); row("cheap-case-a-replay-1", "cheap-case-a");
+  row("cheap"); row("cheap-task-a", "cheap"); row("cheap-task-a-trial-1", "cheap-task-a");
 }
 rendered();
 const byId = document.getElementById;
@@ -1078,8 +1078,8 @@ const shown = () => Object.values(rows)
     let asked = r#"
 const steps = [];
 click("cheap"); steps.push(shown());
-click("cheap-case-a", "cell"); steps.push(shown());
-click("cheap-case-a", "link"); steps.push(shown());
+click("cheap-task-a", "cell"); steps.push(shown());
+click("cheap-task-a", "link"); steps.push(shown());
 click("cheap"); steps.push(shown());
 rendered(); fire("htmx:sse:after:message", { detail: { message: { id: "" } } }); steps.push(shown());
 click("cheap"); steps.push(shown());
@@ -1091,12 +1091,12 @@ steps.join("\n")
     assert_eq!(
         steps,
         [
-            "cheap true, cheap-case-a false, cheap-case-a-replay-1 hidden false",
-            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
-            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
-            "cheap false, cheap-case-a hidden true, cheap-case-a-replay-1 hidden false",
-            "cheap false, cheap-case-a hidden true, cheap-case-a-replay-1 hidden false",
-            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
+            "cheap true, cheap-task-a false, cheap-task-a-trial-1 hidden false",
+            "cheap true, cheap-task-a true, cheap-task-a-trial-1 false",
+            "cheap true, cheap-task-a true, cheap-task-a-trial-1 false",
+            "cheap false, cheap-task-a hidden true, cheap-task-a-trial-1 hidden false",
+            "cheap false, cheap-task-a hidden true, cheap-task-a-trial-1 hidden false",
+            "cheap true, cheap-task-a true, cheap-task-a-trial-1 false",
         ]
     );
 }
@@ -1216,20 +1216,20 @@ steps.join("\n")
 async fn opening_the_launch_counts_its_trials_with_the_benchmarks_tasks_as_the_stream_last_sent_them()
  {
     let page = r#"
-var offer = element("DIV", { id: "new-experiment-offer", "data-cases": "3" });
+var offer = element("DIV", { id: "new-benchmark-run-offer", "data-tasks": "3" });
 var count = { textContent: "" };
 var launch = Object.assign(element("FORM", {}), {
   elements: { repetitions: { value: "2" } },
   querySelectorAll: (selector) => (selector === "fieldset.configuration" ? [{}] : []),
-  querySelector: (selector) => (selector === ".replay-count" ? count : null),
+  querySelector: (selector) => (selector === ".trial-count" ? count : null),
 });
 var dialog = element("DIALOG", {});
 dialog.querySelector = (selector) => (selector === "form.launch" ? launch : null);
-var opening = element("BUTTON", { command: "show-modal", commandfor: "new-experiment" });
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-benchmark-run" });
 opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
 const byId = document.getElementById;
 document.getElementById = (id) =>
-  id === "new-experiment" ? dialog : id === "new-experiment-offer" ? offer : byId(id);
+  id === "new-benchmark-run" ? dialog : id === "new-benchmark-run-offer" ? offer : byId(id);
 "#;
     let asked = r#"
 fire("click", event(opening));
@@ -1240,7 +1240,7 @@ count.textContent
 
     assert_eq!(
         counted,
-        ["1 configuration × 3 cases × 2 repetitions: 6 replays"]
+        ["1 configuration × 3 tasks × 2 repetitions: 6 trials"]
     );
 }
 
@@ -1261,10 +1261,10 @@ var files = {
 };
 function drawn() {
   const label = Object.assign(element("LABEL", {}), {
-    children: [], htmlFor: "new-experiment-c__N__-briefs/__PATH__", textContent: "__PATH__",
+    children: [], htmlFor: "new-benchmark-run-c__N__-briefs/__PATH__", textContent: "__PATH__",
   });
   const area = Object.assign(element("TEXTAREA", {}), {
-    name: "c__N__.briefs/__PATH__", id: "new-experiment-c__N__-briefs/__PATH__", value: "",
+    name: "c__N__.briefs/__PATH__", id: "new-benchmark-run-c__N__-briefs/__PATH__", value: "",
   });
   const started = Object.assign(element("INPUT", {}), { name: "c__N__.started/__PATH__", value: "" });
   const box = element("DIV", {});
@@ -1282,7 +1282,7 @@ var count = { textContent: "" };
 var launch = Object.assign(element("FORM", {}), {
   elements: { repetitions: { value: "1" } },
   querySelectorAll: (selector) => (selector === "fieldset.configuration" ? [configuration] : []),
-  querySelector: (selector) => (selector === ".replay-count" ? count : null),
+  querySelector: (selector) => (selector === ".trial-count" ? count : null),
 });
 var configuration = Object.assign(element("FIELDSET", {}), {
   dataset: { n: "1" },
@@ -1294,11 +1294,11 @@ choice.closest = (selector) =>
   selector === "form.launch" ? launch : selector === "fieldset.configuration" ? configuration : null;
 var dialog = element("DIALOG", {});
 dialog.querySelector = (selector) => (selector === "form.launch" ? launch : null);
-var opening = element("BUTTON", { command: "show-modal", commandfor: "new-experiment" });
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-benchmark-run" });
 opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
 const byId = document.getElementById;
 document.getElementById = (id) =>
-  id === "new-experiment" ? dialog
+  id === "new-benchmark-run" ? dialog
     : id === "brief-texts" ? texts
     : id === "brief-file-template" ? template
     : byId(id);

@@ -3,9 +3,9 @@
 {%- block main -%}
 <h1>{{ benchmark.name }}</h1>
 <p class="text-muted mb-4">{{ benchmark.stage }}</p>
-<div id="suite-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
+<div id="benchmark-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
 <div role="tablist" class="tabs tabs-border">
-<input type="radio" name="suite-tab" role="tab" class="tab" aria-label="Experiments"{% if !self.opens_on_tasks() %} checked{% endif %}>
+<input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Runs"{% if !self.opens_on_tasks() %} checked{% endif %}>
 <div role="tabpanel" class="tab-content pt-4">
 {%- call(part) ui::table_card("", buttons = true) %}
 {%- match part %}
@@ -17,12 +17,12 @@
 {%- endmatch %}
 {%- endcall %}
 </div>
-<input type="radio" name="suite-tab" role="tab" class="tab" aria-label="Cases"{% if self.opens_on_tasks() %} checked{% endif %}>
+<input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Tasks"{% if self.opens_on_tasks() %} checked{% endif %}>
 <div role="tabpanel" class="tab-content pt-4">
 {%- call(part) ui::table_card("", buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
-{%- call ui::new_button("new-case") %}{% endcall %}
+{%- call ui::new_button("new-task") %}{% endcall %}
 {%- when crate::web::table::Part::Table %}
 {%- include "benchmark_tasks.html" %}
 {%- when crate::web::table::Part::Filters %}
@@ -30,10 +30,10 @@
 {%- endcall %}
 </div>
 </div>
-{%- call ui::new_dialog("new-case", path) %}
+{%- call ui::new_dialog("new-task", path) %}
 {{ new_task }}
 {%- endcall %}
-{%- call ui::new_dialog("new-experiment", self.launch_path(), wide = true, form_class = "launch") %}
+{%- call ui::new_dialog("new-benchmark-run", self.launch_path(), wide = true, form_class = "launch") %}
 {{ new_benchmark_run }}
 {%- endcall %}
 <template id="configuration-template">{{ added_configuration }}</template>

@@ -45,14 +45,14 @@ fn trial_count(configurations: usize, tasks: usize, repetitions: u32) -> String 
     format!(
         "{} × {} × {}: {}",
         counted(configurations, "configuration", "configurations"),
-        counted(tasks, "case", "cases"),
+        counted(tasks, "task", "tasks"),
         counted(repetitions, "repetition", "repetitions"),
         counted(
             configurations
                 .saturating_mul(tasks)
                 .saturating_mul(repetitions),
-            "replay",
-            "replays"
+            "trial",
+            "trials"
         ),
     )
 }
@@ -271,7 +271,7 @@ impl NewBenchmarkRunForm {
     }
 
     fn title(&self) -> String {
-        format!("New experiment on {}", self.benchmark)
+        format!("New benchmark run on {}", self.benchmark)
     }
 
     fn count(&self) -> String {
@@ -335,7 +335,7 @@ struct ConfigurationBox<'a> {
 impl ConfigurationBox<'_> {
     /// The id of its field `key`.
     fn id(&self, key: &str) -> String {
-        format!("new-experiment-c{}-{key}", self.n)
+        format!("new-benchmark-run-c{}-{key}", self.n)
     }
 
     /// The box of its file of the brief at `path`, holding `text`.
@@ -443,13 +443,13 @@ pub(super) async fn launch(
     {
         Ok(launched) => {
             sources.benchmark_runs.changed();
-            info!(experiment = %launched.id, suite = %benchmark, replays = launched.trials, "launched an experiment");
+            info!(benchmark_run = %launched.id, benchmark = %benchmark, trials = launched.trials, "launched a benchmark run");
             form.making = Making::blank();
             Answer::Made { blank: form }
         }
         Err(refusal) => {
             if let LaunchRefusal::Failed(e) = &refusal {
-                warn!(suite = %benchmark, error = format!("{e:#}"), "launching an experiment failed");
+                warn!(benchmark = %benchmark, error = format!("{e:#}"), "launching a benchmark run failed");
             }
             form.refused(launch_refused(&refusal))
         }

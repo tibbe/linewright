@@ -41,38 +41,42 @@ async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_it
     launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
     launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
 
-    let html = pages.page("/suites").await;
+    let html = pages.page("/benchmarks").await;
 
     assert_eq!(
         table_bars(&html),
         [(
-            "Suites".to_string(),
+            "Benchmarks".to_string(),
             vec!["name".to_string(), "stage".into(), "New".into()]
         )]
     );
-    let heads: Vec<String> = select(&html, "#suites thead th")
+    let heads: Vec<String> = select(&html, "#benchmarks thead th")
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "Stage", "Last experiment"]);
+    assert_eq!(heads, ["", "Stage", "Last benchmark run"]);
     assert_eq!(
-        rows(&html, "#suites"),
+        rows(&html, "#benchmarks"),
         [
             ["board", "implement", "2026-11-17 12:00:00 UTC"],
             ["triage-basics", "triage", ""],
         ]
     );
-    let names: Vec<String> = select(&html, "#suites tbody tr > th:first-child")
+    let names: Vec<String> = select(&html, "#benchmarks tbody tr > th:first-child")
         .into_iter()
         .map(text)
         .collect();
     assert_eq!(names, ["board", "triage-basics"]);
     assert_eq!(
-        hrefs(select(&html, "#suites tbody a")),
-        ["/suites/board", "/experiments/2", "/suites/triage-basics"]
+        hrefs(select(&html, "#benchmarks tbody a")),
+        [
+            "/benchmarks/board",
+            "/benchmark-runs/2",
+            "/benchmarks/triage-basics"
+        ]
     );
-    assert_eq!(select(&html, ".table-card #suites table").len(), 1);
-    assert_eq!(events_path(&html), Some("/events/suites"));
+    assert_eq!(select(&html, ".table-card #benchmarks table").len(), 1);
+    assert_eq!(events_path(&html), Some("/events/benchmarks"));
 }
 
 /// `docs/specs/design_system.md`, Screen states, Empty.
@@ -80,9 +84,9 @@ async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_it
 async fn the_benchmarks_page_with_no_benchmarks_says_so() {
     let pages = Pages::of(view(vec![], vec![])).await;
 
-    let html = pages.page("/suites").await;
+    let html = pages.page("/benchmarks").await;
 
-    assert_eq!(text(select(&html, "#suites p")[0]), "No suites");
+    assert_eq!(text(select(&html, "#benchmarks p")[0]), "No benchmarks");
 }
 
 /// `docs/specs/benchmarks.md`, Benchmarks, Filters;
@@ -93,11 +97,11 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
     let pages = with_benchmarks().await;
     keep_benchmark(&pages.path(""), "triage-boards", "triage").await;
 
-    let by_both = pages.page("/suites?name=BOA&stage=triage").await;
-    let unset = pages.page("/suites?name=&stage=").await;
+    let by_both = pages.page("/benchmarks?name=BOA&stage=triage").await;
+    let unset = pages.page("/benchmarks?name=&stage=").await;
 
     let names = |html: &Html| -> Vec<String> {
-        rows(html, "#suites")
+        rows(html, "#benchmarks")
             .into_iter()
             .map(|row| row[0].clone())
             .collect()
@@ -110,11 +114,11 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
     );
     assert_eq!(
         events_path(&by_both),
-        Some("/events/suites?name=BOA&stage=triage")
+        Some("/events/benchmarks?name=BOA&stage=triage")
     );
     assert_eq!(
         select(&by_both, "form[data-filters]")[0].attr("data-filters"),
-        Some("/events/suites")
+        Some("/events/benchmarks")
     );
     let stages: Vec<String> = select(&unset, "form[data-filters] select[name=stage] option")
         .into_iter()
@@ -126,30 +130,49 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_pages_stream_sends_the_benchmarks_its_filters_keep() {
     let pages = with_benchmarks().await;
-    let mut events = stream(&pages, "/events/suites?stage=triage").await;
+    let mut events = stream(&pages, "/events/benchmarks?stage=triage").await;
 
     let event = events.recv().await.unwrap();
 
     let (_, benchmarks) = regions(&event)
         .into_iter()
-        .find(|(id, _)| id == "suites")
-        .expect("the suites");
+        .find(|(id, _)| id == "benchmarks")
+        .expect("the benchmarks");
     assert_eq!(
-        rows(&benchmarks, "#suites"),
+        rows(&benchmarks, "#benchmarks"),
         [["triage-basics", "triage", ""]]
     );
+}
+
+/// `docs/specs/web/design_system.md`, the addresses: a screen is at the address
+/// the table gives it, and at no other.
+#[test_log::test(tokio::test)]
+async fn suites_and_experiments_are_at_no_address() {
+    let pages = with_benchmarks().await;
+    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    let nowhere = pages.get("/nowhere").await;
+
+    for path in [
+        "/suites",
+        "/suites/board",
+        "/experiments/1",
+        "/events/suites",
+        "/events/experiments/1",
+    ] {
+        assert_eq!(pages.get(path).await, nowhere, "{path}");
+    }
 }
 
 #[test_log::test(tokio::test)]
 async fn a_stage_to_filter_on_that_is_not_a_benchmarks_says_so_in_place_of_the_benchmarks() {
     let pages = with_benchmarks().await;
 
-    let (status, body) = pages.get("/suites?stage=rework").await;
+    let (status, body) = pages.get("/benchmarks?stage=rework").await;
 
     assert_eq!(status, 400);
     let html = Html::parse_document(&body);
     assert_eq!(
-        text(select(&html, "#suites p")[0]),
+        text(select(&html, "#benchmarks p")[0]),
         "\"rework\" is not a stage of a benchmark: one of triage, design, implement"
     );
 }
@@ -174,7 +197,7 @@ fn new_benchmark_form(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
 async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and_stage_on_triage() {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/suites").await;
+    let html = pages.page("/benchmarks").await;
 
     let new = select(&html, ".table-bar button[command=show-modal]");
     assert_eq!(new.len(), 1);
@@ -186,9 +209,12 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
     let dialog = dialog[0];
     assert!(has_classes(dialog, &["modal"]), "{}", dialog.html());
     assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
-    assert_eq!(select(&html, "#suites dialog, .table-bar dialog").len(), 0);
+    assert_eq!(
+        select(&html, "#benchmarks dialog, .table-bar dialog").len(),
+        0
+    );
     let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
-    assert_eq!(text(legend[0]), "New suite");
+    assert_eq!(text(legend[0]), "New benchmark");
     assert_eq!(
         dialog.attr("aria-labelledby"),
         legend[0].attr("id"),
@@ -196,8 +222,8 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
         dialog.html()
     );
     let form = select_in(dialog, "form[hx-post]")[0];
-    assert_eq!(form.attr("hx-post"), Some("/suites"));
-    assert_eq!(form.attr("action"), Some("/suites"));
+    assert_eq!(form.attr("hx-post"), Some("/benchmarks"));
+    assert_eq!(form.attr("action"), Some("/benchmarks"));
     assert_eq!(form.attr("hx-target"), Some("this"));
     assert!(form.attr("data-new").is_some(), "{}", form.html());
     let labels: Vec<String> = select_in(form, "fieldset label")
@@ -244,12 +270,12 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
 async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and_the_stream_then_sends_it()
  {
     let pages = Pages::of(view(vec![], vec![])).await;
-    let mut events = stream(&pages, "/events/suites").await;
+    let mut events = stream(&pages, "/events/benchmarks").await;
     events.recv().await.unwrap();
 
     let (status, headers, answer) = post_answer(
         &pages,
-        "/suites",
+        "/benchmarks",
         &[SAME_ORIGIN],
         &[("name", "board"), ("stage", "design")],
     )
@@ -264,14 +290,17 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
             None
         )
     );
-    assert_eq!(text(select(&answer, "legend")[0]), "New suite");
+    assert_eq!(text(select(&answer, "legend")[0]), "New benchmark");
     let benchmarks = loop {
         let event = events.recv().await.unwrap();
-        if let Some((_, benchmarks)) = regions(&event).into_iter().find(|(id, _)| id == "suites") {
+        if let Some((_, benchmarks)) = regions(&event)
+            .into_iter()
+            .find(|(id, _)| id == "benchmarks")
+        {
             break benchmarks;
         }
     };
-    assert_eq!(rows(&benchmarks, "#suites"), [["board", "design", ""]]);
+    assert_eq!(rows(&benchmarks, "#benchmarks"), [["board", "design", ""]]);
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark, Refusals;
@@ -282,28 +311,28 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
 
     let (taken, taken_headers, taken_form) = post_answer(
         &pages,
-        "/suites",
+        "/benchmarks",
         &[SAME_ORIGIN],
         &[("name", "board"), ("stage", "design")],
     )
     .await;
     let (malformed, _, malformed_form) = post_answer(
         &pages,
-        "/suites",
+        "/benchmarks",
         &[SAME_ORIGIN],
         &[("name", "Board 2"), ("stage", "implement")],
     )
     .await;
     let (no_stage, _, no_stage_form) = post_answer(
         &pages,
-        "/suites",
+        "/benchmarks",
         &[SAME_ORIGIN],
         &[("name", "fresh"), ("stage", "rework")],
     )
     .await;
     let (cross_site, _, cross_site_form) = post_answer(
         &pages,
-        "/suites",
+        "/benchmarks",
         &[CROSS_SITE],
         &[("name", "fresh"), ("stage", "design")],
     )
@@ -315,7 +344,7 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
         new_benchmark_form(&taken_form),
         (
             vec![("name", "board".into()), ("stage", "design".into())],
-            Some("A suite named board already exists.".into())
+            Some("A benchmark named board already exists.".into())
         )
     );
     assert_eq!(malformed, 422);
@@ -345,9 +374,9 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
         new_benchmark_form(&cross_site_form).0,
         [("name", "fresh".into()), ("stage", "design".into())]
     );
-    let html = pages.page("/suites").await;
+    let html = pages.page("/benchmarks").await;
     assert_eq!(
-        rows(&html, "#suites"),
+        rows(&html, "#benchmarks"),
         [["board", "implement", ""], ["triage-basics", "triage", ""]]
     );
 }
@@ -371,7 +400,7 @@ fn tabs(html: &Html) -> Vec<(String, bool, Vec<String>)> {
             (
                 tab.attr("aria-label").unwrap_or_default().to_string(),
                 tab.attr("checked").is_some(),
-                select_in(panel, "[id]:is(#experiments, #cases)")
+                select_in(panel, "[id]:is(#benchmark-runs, #tasks)")
                     .into_iter()
                     .filter_map(|region| region.attr("id").map(str::to_string))
                     .collect(),
@@ -387,7 +416,7 @@ async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_whi
  {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
     assert_eq!(text(select(&html, "main h1")[0]), "board");
     assert_eq!(text(select(&html, "main h1 + p")[0]), "implement");
@@ -395,14 +424,14 @@ async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_whi
         tabs(&html),
         [
             (
-                "Experiments".to_string(),
+                "Runs".to_string(),
                 false,
-                vec!["experiments".to_string()]
+                vec!["benchmark-runs".to_string()]
             ),
-            ("Cases".to_string(), true, vec!["cases".to_string()]),
+            ("Tasks".to_string(), true, vec!["tasks".to_string()]),
         ]
     );
-    assert_eq!(select(&html, "#experiments [role=tablist], #cases [role=tablist], #experiments input.tab, #cases input.tab").len(), 0);
+    assert_eq!(select(&html, "#benchmark-runs [role=tablist], #tasks [role=tablist], #benchmark-runs input.tab, #tasks input.tab").len(), 0);
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Tabs.
@@ -411,7 +440,7 @@ async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
     let pages = with_benchmarks().await;
     launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
     let opened: Vec<(String, bool)> = tabs(&html)
         .into_iter()
@@ -419,10 +448,7 @@ async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
         .collect();
     assert_eq!(
         opened,
-        [
-            ("Experiments".to_string(), true),
-            ("Cases".to_string(), false)
-        ]
+        [("Runs".to_string(), true), ("Tasks".to_string(), false)]
     );
 }
 
@@ -438,7 +464,7 @@ async fn a_task_named_as_another_tasks_question_has_a_confirmation_of_its_own() 
     )
     .await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
     let questions: Vec<String> = confirmations(&html)
         .into_iter()
@@ -447,9 +473,9 @@ async fn a_task_named_as_another_tasks_question_has_a_confirmation_of_its_own() 
     assert_eq!(
         questions,
         [
-            "Remove the case columns and its directory?",
-            "Remove the case lanes and its directory?",
-            "Remove the case lanes-question and its directory?",
+            "Remove the task columns and its directory?",
+            "Remove the task lanes and its directory?",
+            "Remove the task lanes-question and its directory?",
         ]
     );
 }
@@ -458,16 +484,16 @@ async fn a_task_named_as_another_tasks_question_has_a_confirmation_of_its_own() 
 async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let pages = with_benchmarks().await;
     let writes: [(&str, &[(&str, &str)]); 3] = [
-        ("/suites", &[("name", "fresh"), ("stage", "design")]),
+        ("/benchmarks", &[("name", "fresh"), ("stage", "design")]),
         (
-            "/suites/board",
+            "/benchmarks/board",
             &[
                 ("run", "1/implement-1"),
                 ("name", "more"),
                 ("criteria", "Ships.\n"),
             ],
         ),
-        ("/suites/board/remove-case", &[("case", "columns")]),
+        ("/benchmarks/board/remove-task", &[("task", "columns")]),
     ];
 
     for (path, fields) in writes {
@@ -475,9 +501,9 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
         assert_eq!(status, 403, "{path}");
     }
 
-    let html = pages.page("/suites").await;
+    let html = pages.page("/benchmarks").await;
     assert_eq!(
-        rows(&html, "#suites"),
+        rows(&html, "#benchmarks"),
         [["board", "implement", ""], ["triage-basics", "triage", ""]]
     );
     assert_eq!(tasks(&pages), ["columns", "lanes"]);
@@ -488,16 +514,16 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
 async fn the_page_of_no_benchmark_says_there_is_none() {
     let pages = with_benchmarks().await;
 
-    let (no_benchmark, no_benchmark_body) = pages.get("/suites/nothing").await;
-    let (no_name, no_name_body) = pages.get("/suites/Not%20a%20name").await;
+    let (no_benchmark, no_benchmark_body) = pages.get("/benchmarks/nothing").await;
+    let (no_name, no_name_body) = pages.get("/benchmarks/Not%20a%20name").await;
 
     for (status, body, shown) in [
-        (no_benchmark, no_benchmark_body, "No such suite nothing"),
-        (no_name, no_name_body, "No such suite Not a name"),
+        (no_benchmark, no_benchmark_body, "No such benchmark nothing"),
+        (no_name, no_name_body, "No such benchmark Not a name"),
     ] {
         assert_eq!(status, 404);
         let html = Html::parse_document(&body);
-        assert_eq!(text(select(&html, "main #cases")[0]), shown);
+        assert_eq!(text(select(&html, "main #tasks")[0]), shown);
     }
 }
 
@@ -505,10 +531,10 @@ async fn the_page_of_no_benchmark_says_there_is_none() {
 async fn a_benchmark_that_does_not_exist_answers_404() {
     let pages = with_benchmarks().await;
 
-    let (page, _) = pages.get("/suites/nothing").await;
+    let (page, _) = pages.get("/benchmarks/nothing").await;
     let (capture, _) = post(
         &pages,
-        "/suites/nothing",
+        "/benchmarks/nothing",
         &[SAME_ORIGIN],
         &[
             ("run", "1/implement-1"),
@@ -519,9 +545,9 @@ async fn a_benchmark_that_does_not_exist_answers_404() {
     .await;
     let (removal, _) = post(
         &pages,
-        "/suites/nothing/remove-case",
+        "/benchmarks/nothing/remove-task",
         &[SAME_ORIGIN],
-        &[("case", "columns")],
+        &[("task", "columns")],
     )
     .await;
 
@@ -544,15 +570,15 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
     )
     .await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
-    assert_eq!(events_path(&html), Some("/events/suites/board"));
-    let heads: Vec<String> = select(&html, "#cases thead th")
+    assert_eq!(events_path(&html), Some("/events/benchmarks/board"));
+    let heads: Vec<String> = select(&html, "#tasks thead th")
         .into_iter()
         .map(text)
         .collect();
     assert_eq!(heads, ["", "Captured from", ""]);
-    let tasks = select(&html, "#cases tbody tr:not([data-fold-of])");
+    let tasks = select(&html, "#tasks tbody tr:not([data-fold-of])");
     let shown: Vec<(String, String, String)> = tasks
         .iter()
         .map(|row| {
@@ -586,14 +612,14 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
         ]
     );
     assert_eq!(
-        hrefs(select(&html, "#cases tbody td a")),
+        hrefs(select(&html, "#tasks tbody td a")),
         [
             "/runs/1/implement-1",
             "/runs/1/implement-2",
             "/runs/1/implement-1"
         ]
     );
-    let criteria = select(&html, "#cases tbody tr[data-fold-of]");
+    let criteria = select(&html, "#tasks tbody tr[data-fold-of]");
     assert_eq!(criteria.len(), 3);
     assert_eq!(
         select_in(criteria[0], "pre")[0].text().collect::<String>(),
@@ -608,9 +634,9 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
 async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
-    let rows: Vec<(Option<&str>, Option<&str>, bool)> = select(&html, "#cases tbody tr")
+    let rows: Vec<(Option<&str>, Option<&str>, bool)> = select(&html, "#tasks tbody tr")
         .into_iter()
         .map(|row| {
             (
@@ -623,22 +649,22 @@ async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
     assert_eq!(
         rows,
         [
-            (Some("case-columns"), None, false),
-            (Some("case-columns_criteria"), Some("case-columns"), true),
-            (Some("case-lanes"), None, false),
-            (Some("case-lanes_criteria"), Some("case-lanes"), true),
+            (Some("task-columns"), None, false),
+            (Some("task-columns_criteria"), Some("task-columns"), true),
+            (Some("task-lanes"), None, false),
+            (Some("task-lanes_criteria"), Some("task-lanes"), true),
         ]
     );
-    let buttons = select(&html, "#case-columns > th:first-child > button");
+    let buttons = select(&html, "#task-columns > th:first-child > button");
     assert_eq!(buttons.len(), 1, "{}", html.html());
     assert_eq!(buttons[0].attr("type"), Some("button"));
     assert_eq!(buttons[0].attr("aria-expanded"), Some("false"));
     assert_eq!(
         buttons[0].attr("aria-controls"),
-        Some("case-columns_criteria")
+        Some("task-columns_criteria")
     );
     assert_eq!(text(buttons[0]), "columns");
-    assert_eq!(select(&html, "#cases details").len(), 0);
+    assert_eq!(select(&html, "#tasks details").len(), 0);
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Tasks, and Remove task;
@@ -647,14 +673,14 @@ async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
 async fn each_task_is_removed_after_a_confirmation_naming_it() {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
     let removal = |task: &str| Confirmation {
         asking: "Remove".into(),
-        question: format!("Remove the case {task} and its directory?"),
+        question: format!("Remove the task {task} and its directory?"),
         turn_down: "Cancel".into(),
-        action: "/suites/board/remove-case".into(),
-        fields: vec![("case".into(), task.into())],
+        action: "/benchmarks/board/remove-task".into(),
+        fields: vec![("task".into(), task.into())],
     };
     assert_eq!(confirmations(&html), [removal("columns"), removal("lanes")]);
     assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
@@ -666,15 +692,18 @@ async fn each_task_is_removed_after_a_confirmation_naming_it() {
 async fn a_benchmark_with_no_tasks_benchmark_runs_or_runs_of_its_stage_says_so() {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/suites/triage-basics").await;
+    let html = pages.page("/benchmarks/triage-basics").await;
 
-    assert_eq!(text(select(&html, "#cases p")[0]), "No cases");
-    assert_eq!(text(select(&html, "#experiments p")[0]), "No experiments");
-    let run = select(&html, "dialog#new-case select[name=run]");
+    assert_eq!(text(select(&html, "#tasks p")[0]), "No tasks");
+    assert_eq!(
+        text(select(&html, "#benchmark-runs p")[0]),
+        "No benchmark runs"
+    );
+    let run = select(&html, "dialog#new-task select[name=run]");
     assert!(run[0].attr("disabled").is_some(), "{}", run[0].html());
     assert_eq!(text(run[0]), "No runs");
-    let add = select(&html, "dialog#new-case button[type=submit]");
-    assert_eq!(text(add[0]), "Add case");
+    let add = select(&html, "dialog#new-task button[type=submit]");
+    assert_eq!(text(add[0]), "Add task");
     assert!(add[0].attr("disabled").is_some(), "{}", add[0].html());
 }
 
@@ -684,17 +713,17 @@ async fn removing_a_task_removes_it_from_the_page_and_from_the_tasks() {
 
     let (status, answer) = post(
         &pages,
-        "/suites/board/remove-case",
+        "/benchmarks/board/remove-task",
         &[SAME_ORIGIN],
-        &[("case", "columns")],
+        &[("task", "columns")],
     )
     .await;
 
     assert_eq!(status, 200, "{}", said(&answer));
-    assert_eq!(said(&answer), "Removed the case columns");
+    assert_eq!(said(&answer), "Removed the task columns");
     assert_eq!(tasks(&pages), ["lanes"]);
-    let html = pages.page("/suites/board").await;
-    let names: Vec<String> = select(&html, "#cases tbody th button")
+    let html = pages.page("/benchmarks/board").await;
+    let names: Vec<String> = select(&html, "#tasks tbody th button")
         .into_iter()
         .map(text)
         .collect();
@@ -707,9 +736,9 @@ async fn removing_a_task_the_benchmark_does_not_hold_is_refused() {
 
     let (status, answer) = post(
         &pages,
-        "/suites/triage-basics/remove-case",
+        "/benchmarks/triage-basics/remove-task",
         &[SAME_ORIGIN],
-        &[("case", "columns")],
+        &[("task", "columns")],
     )
     .await;
 
@@ -815,22 +844,22 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
  {
     let pages = with_runs().await;
 
-    let html = pages.page("/suites/board").await;
+    let html = pages.page("/benchmarks/board").await;
 
     let buttons: Vec<&str> = select(&html, ".table-bar button[command=show-modal]")
         .into_iter()
         .filter_map(|button| button.attr("commandfor"))
         .collect();
-    assert_eq!(buttons, ["new-experiment", "new-case"]);
-    let dialog = select(&html, "dialog#new-case")[0];
+    assert_eq!(buttons, ["new-benchmark-run", "new-task"]);
+    let dialog = select(&html, "dialog#new-task")[0];
     assert!(has_classes(dialog, &["modal"]));
     assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
-    assert_eq!(select(&html, "#cases dialog#new-case").len(), 0);
+    assert_eq!(select(&html, "#tasks dialog#new-task").len(), 0);
     let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
-    assert_eq!(text(legend[0]), "New case in board");
+    assert_eq!(text(legend[0]), "New task in board");
     assert_eq!(dialog.attr("aria-labelledby"), legend[0].attr("id"));
     let form = select_in(dialog, "form[hx-post]")[0];
-    assert_eq!(form.attr("hx-post"), Some("/suites/board"));
+    assert_eq!(form.attr("hx-post"), Some("/benchmarks/board"));
     assert_eq!(form.attr("hx-target"), Some("this"));
     let labels: Vec<String> = select_in(form, "fieldset label")
         .into_iter()
@@ -863,7 +892,7 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
     );
     let actions = select_in(form, ".modal-action button");
     let action_labels: Vec<String> = actions.iter().map(|button| text(*button)).collect();
-    assert_eq!(action_labels, ["Cancel", "Add case"]);
+    assert_eq!(action_labels, ["Cancel", "Add task"]);
     assert!(has_classes(actions[1], &["btn-primary"]));
     assert!(actions[1].attr("disabled").is_none());
 }
@@ -876,7 +905,7 @@ async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_
 
     let (status, headers, answer) = post_answer(
         &pages,
-        "/suites/board",
+        "/benchmarks/board",
         &[SAME_ORIGIN],
         &[
             ("run", "1/implement-2"),
@@ -899,10 +928,10 @@ async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_
             None
         )
     );
-    assert_eq!(text(select(&answer, "legend")[0]), "New case in board");
+    assert_eq!(text(select(&answer, "legend")[0]), "New task in board");
     assert_eq!(tasks(&pages), ["columns", "gadgets", "lanes"]);
-    let html = pages.page("/suites/board").await;
-    let names: Vec<String> = select(&html, "#cases tbody th button")
+    let html = pages.page("/benchmarks/board").await;
+    let names: Vec<String> = select(&html, "#tasks tbody th button")
         .into_iter()
         .map(text)
         .collect();
@@ -935,11 +964,11 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
         sent("Gadgets 2", "Ships gh.\n"),
         sent("gadgets", "  \n"),
     ] {
-        answers.push(post_answer(&pages, "/suites/board", &[SAME_ORIGIN], &fields).await);
+        answers.push(post_answer(&pages, "/benchmarks/board", &[SAME_ORIGIN], &fields).await);
     }
     let (other_stage, _, other_stage_form) = post_answer(
         &pages,
-        "/suites/board",
+        "/benchmarks/board",
         &[SAME_ORIGIN],
         &[
             ("run", "1/design-1"),
@@ -950,7 +979,7 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
     .await;
     let (cross_site, _, cross_site_form) = post_answer(
         &pages,
-        "/suites/board",
+        "/benchmarks/board",
         &[CROSS_SITE],
         &sent("gadgets", "Ships gh.\n"),
     )
@@ -974,7 +1003,7 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
                 false,
                 (
                     as_sent("columns", "Ships gh.\n"),
-                    Some("A case named columns already exists.".into())
+                    Some("A task named columns already exists.".into())
                 )
             ),
             (
@@ -994,7 +1023,7 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
                 false,
                 (
                     as_sent("gadgets", "  \n"),
-                    Some("A case needs criteria.".into())
+                    Some("A task needs criteria.".into())
                 )
             ),
         ]
@@ -1022,20 +1051,20 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_stream_sends_its_tasks_as_they_change() {
     let pages = with_benchmarks().await;
-    let mut events = stream(&pages, "/events/suites/board").await;
+    let mut events = stream(&pages, "/events/benchmarks/board").await;
     events.recv().await.unwrap();
 
     post(
         &pages,
-        "/suites/board/remove-case",
+        "/benchmarks/board/remove-task",
         &[SAME_ORIGIN],
-        &[("case", "lanes")],
+        &[("task", "lanes")],
     )
     .await;
 
     let tasks = loop {
         let event = events.recv().await.unwrap();
-        if let Some((_, tasks)) = regions(&event).into_iter().find(|(id, _)| id == "cases") {
+        if let Some((_, tasks)) = regions(&event).into_iter().find(|(id, _)| id == "tasks") {
             break tasks;
         }
     };
@@ -1049,13 +1078,13 @@ async fn the_benchmark_pages_stream_sends_its_tasks_as_they_change() {
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_stream_sends_the_runs_to_capture_as_they_change() {
     let pages = with_runs().await;
-    let mut events = stream(&pages, "/events/suites/board").await;
+    let mut events = stream(&pages, "/events/benchmarks/board").await;
     events.recv().await.unwrap();
     let head = committed(&pages).await;
 
     record_run(&pages, "implement", 3, "2026-10-13T12:00:00Z", Some(&head)).await;
 
-    let runs = next_region(&mut events, "new-case-run").await;
+    let runs = next_region(&mut events, "new-task-run").await;
     let offered: Vec<Option<&str>> = select(&runs, "select[name=run] option")
         .into_iter()
         .map(|option| option.attr("value"))
@@ -1088,7 +1117,7 @@ fn next_region<'a>(
 async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_and_add_task_once_it_has_a_run()
  {
     let pages = with_benchmarks().await;
-    let mut events = stream(&pages, "/events/suites/triage-basics").await;
+    let mut events = stream(&pages, "/events/benchmarks/triage-basics").await;
     let first = events.recv().await.unwrap();
     let sent = regions(&first);
     let region = |id: &str| {
@@ -1097,8 +1126,11 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
             .map(|(_, region)| region.clone())
             .unwrap()
     };
-    assert_eq!(select(&region("new-experiment-offer"), "button").len(), 0);
-    let unready = region("new-case-ready");
+    assert_eq!(
+        select(&region("new-benchmark-run-offer"), "button").len(),
+        0
+    );
+    let unready = region("new-task-ready");
     assert!(
         select(&unready, "button[type=submit]")[0]
             .attr("disabled")
@@ -1107,7 +1139,7 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
 
     let head = committed(&pages).await;
     record_run(&pages, "triage", 1, "2026-10-13T09:00:00Z", Some(&head)).await;
-    let ready = next_region(&mut events, "new-case-ready").await;
+    let ready = next_region(&mut events, "new-task-ready").await;
     keep_task(
         &pages.path(""),
         "triage-basics",
@@ -1116,10 +1148,10 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
         "Sorts it.\n",
     )
     .await;
-    let offer = next_region(&mut events, "new-experiment-offer").await;
+    let offer = next_region(&mut events, "new-benchmark-run-offer").await;
 
     let add = select(&ready, "button[type=submit]");
-    assert_eq!(text(add[0]), "Add case");
+    assert_eq!(text(add[0]), "Add task");
     assert!(add[0].attr("disabled").is_none(), "{}", ready.html());
     let new: Vec<String> = select(&offer, "button[command=show-modal]")
         .into_iter()
@@ -1127,7 +1159,7 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
         .collect();
     assert_eq!(new, ["New"]);
     assert_eq!(
-        select(&offer, "#new-experiment-offer")[0].attr("data-cases"),
+        select(&offer, "#new-benchmark-run-offer")[0].attr("data-tasks"),
         Some("1")
     );
 }

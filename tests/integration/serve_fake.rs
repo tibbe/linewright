@@ -269,20 +269,20 @@ async fn serve_fake_and_the_browser_clock_it_names_tell_the_time_from_the_seeds_
 async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score() {
     let served = Served::start().await;
 
-    let page = served.page("/experiments/1").await;
+    let page = served.page("/benchmark-runs/1").await;
 
     let shown = text(&page);
     for said in [
         "8 of 8",
         "1 leak",
-        "no judgement: its run is not done or handed back",
-        "no judgement: the judge made none",
+        "no score: its run is not done or handed back",
+        "no score: the scorer made none",
     ] {
         assert!(shown.contains(said), "{said:?} is not in {shown}");
     }
     assert_eq!(
         attributes(&page, r#"nav[aria-label="Breadcrumb"] a"#, "href"),
-        ["/suites", "/suites/board"]
+        ["/benchmarks", "/benchmarks/board"]
     );
     let opened = attributes(&page, "#configurations tr[id$=_details] a", "href");
     assert_eq!(opened.len(), 2, "{opened:?}");

@@ -83,7 +83,7 @@ pub(super) fn benchmark_not_made(error: &MakeError) -> String {
 /// The refusal of a benchmark named as one that exists
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
 fn benchmark_taken(name: &BenchmarkName) -> String {
-    format!("A suite named {name} already exists.")
+    format!("A benchmark named {name} already exists.")
 }
 
 /// The refusal of a task that was not made (`docs/specs/benchmarks.md`, New
@@ -101,11 +101,11 @@ pub(super) fn task_not_made(not: &NotCaptured) -> String {
 }
 
 /// The refusal of a task without criteria.
-const CRITERIA_NEEDED: &str = "A case needs criteria.";
+const CRITERIA_NEEDED: &str = "A task needs criteria.";
 
 /// The refusal of a task named as one that exists.
 fn task_taken(name: &TaskName) -> String {
-    format!("A case named {name} already exists.")
+    format!("A task named {name} already exists.")
 }
 
 /// The refusal of repetitions that are not a whole number, 1 or more.
@@ -159,7 +159,7 @@ pub(super) fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
         LaunchRefusal::NoSuchBenchmark(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
         LaunchRefusal::NoTasks(name) => (
             StatusCode::UNPROCESSABLE_ENTITY,
-            format!("The suite {name} has no cases."),
+            format!("The benchmark {name} has no tasks."),
         ),
         LaunchRefusal::DuplicateConfiguration(name) => (
             StatusCode::UNPROCESSABLE_ENTITY,

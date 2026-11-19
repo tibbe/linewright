@@ -45,7 +45,7 @@ impl Offer {
         let benchmarks = match benchmarks_of(&benchmarks(sources), run.stage()).await {
             Ok(benchmarks) => benchmarks,
             Err(e) => {
-                warn!(run = %id, error = format!("{e:#}"), "reading the suites failed");
+                warn!(run = %id, error = format!("{e:#}"), "reading the benchmarks failed");
                 return None;
             }
         };
@@ -62,7 +62,7 @@ impl Offer {
         let path = html::escape(&run_path(&self.run));
         let name = html::escape(TaskName::suggested(&self.run).as_str());
         html::built(format!(
-            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Add case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="select select-sm w-full"><span class="label">suite</span>{select}</label><label class="new-suite-name input input-sm w-full"><span class="label">new suite</span><input name="new-suite" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
+            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Add task</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
             select = benchmark_select(&self.benchmarks, None, ""),
             pattern = html::escape(task::NAME_PATTERN),
             ready = Offer::ready_html(sources),
@@ -85,14 +85,14 @@ impl Offer {
             )
         };
         html::built(format!(
-            r#"<div id="{READY}" class="flex items-center gap-2"><button class="btn btn-sm btn-primary" type="submit"{disabled}>Add case</button>{note}</div>"#
+            r#"<div id="{READY}" class="flex items-center gap-2"><button class="btn btn-sm btn-primary" type="submit"{disabled}>Add task</button>{note}</div>"#
         ))
     }
 }
 
 const READY: &str = "capture-ready";
 
-const NEW_BENCHMARK_UNNAMED: &str = "the new suite needs a name";
+const NEW_BENCHMARK_UNNAMED: &str = "the new benchmark needs a name";
 
 /// Whether `serve` has polled, so that a capture can run.
 pub(super) fn polled(sources: &Sources) -> bool {
@@ -137,20 +137,19 @@ fn benchmark_select(
         );
     }
     format!(
-        r#"<select id="{BENCHMARK_SELECT}" name="suite"{attributes}>{options}<option class="new-suite" value="">a new suite</option></select>"#
+        r#"<select id="{BENCHMARK_SELECT}" name="benchmark"{attributes}>{options}<option class="new-benchmark" value="">a new benchmark</option></select>"#
     )
 }
 
-const BENCHMARK_SELECT: &str = "capture-suite";
+const BENCHMARK_SELECT: &str = "capture-benchmark";
 
 /// What the form sends.
 #[derive(Deserialize)]
 struct CaptureForm {
     /// Empty for a new benchmark.
     #[serde(default)]
-    #[serde(rename = "suite")]
     benchmark: String,
-    #[serde(default, rename = "new-suite")]
+    #[serde(default, rename = "new-benchmark")]
     new_benchmark: String,
     #[serde(flatten)]
     task: TaskFields,
@@ -199,7 +198,7 @@ pub(super) async fn capture(
                 r#" hx-swap-oob="true""#,
             ));
         }
-        Err(e) => warn!(error = format!("{e:#}"), "reading the suites failed"),
+        Err(e) => warn!(error = format!("{e:#}"), "reading the benchmarks failed"),
     }
     Ok((StatusCode::OK, axum::response::Html(answer)).into_response())
 }
@@ -224,7 +223,7 @@ impl Captured {
             BenchmarkChoice::New(_) => "new ",
         };
         let said = format!(
-            "Captured {} as the case <code>{}</code> in the {new}suite {}",
+            "Captured {} as the task <code>{}</code> in the {new}benchmark {}",
             html::escape(&run.to_string()),
             html::escape(&self.dir.display().to_string()),
             html::escape(choice.benchmark().as_str()),
@@ -298,12 +297,12 @@ pub(super) async fn capture_run(
     };
     match captured {
         Ok(captured) => {
-            info!(run = %run, case = %captured.dir.display(), suite = %choice.benchmark(), "captured a run as a case");
+            info!(run = %run, task = %captured.dir.display(), benchmark = %choice.benchmark(), "captured a run as a task");
             Ok(captured)
         }
         Err(error) => {
             let why = served.redaction().apply(&error.why());
-            warn!(run = %run, case = %name, error = why, "a capture failed");
+            warn!(run = %run, task = %name, error = why, "a capture failed");
             Err(NotCaptured::Capture { error, why })
         }
     }
