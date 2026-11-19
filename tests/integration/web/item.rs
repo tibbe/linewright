@@ -174,7 +174,7 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
 
     assert_eq!(
         runs_heads(&running_html),
-        ["Outcome", "Run", "Stage", "Started", "Duration"]
+        ["Outcome", "Run", "Stage", "Started", "Duration", ""]
     );
     let running = runs_shown(&running_html);
     assert_eq!(running.len(), 1, "{running:?}");
@@ -187,7 +187,10 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
             "2026-10-01 12:00:00 UTC"
         ]
     );
-    let ticking = select(&running_html, "#runs tbody td:last-child time[data-since]");
+    let ticking = select(
+        &running_html,
+        "#runs tbody td:nth-last-child(2) time[data-since]",
+    );
     assert_eq!(
         ticking.first().and_then(|time| time.attr("data-since")),
         Some("2026-10-01T12:00:00Z"),
@@ -201,7 +204,8 @@ async fn the_item_page_shows_the_run_in_flight_ticking_as_a_row_and_then_the_run
             "1/triage-1",
             "triage",
             "2026-10-01 12:00:00 UTC",
-            "1m"
+            "1m",
+            "View"
         ]]
     );
     let done: Vec<ElementRef> = select(&html, "#runs .tone.badge-success");
@@ -234,13 +238,14 @@ async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the
             "1/triage-12",
             "triage",
             "2026-10-01 11:00:00 UTC",
-            ""
+            "",
+            "View"
         ]
     );
     assert_eq!(shown[9][1], "1/triage-3");
     assert_eq!(shown[10], ["left out: 2 earlier runs; show them all"]);
     let last = select(&html, "#runs tbody tr:last-child > td");
-    assert_eq!(last[0].attr("colspan"), Some("5"));
+    assert_eq!(last[0].attr("colspan"), Some("6"));
     let more = select(&html, "#runs tbody tr:last-child a");
     assert_eq!(more[0].attr("href"), Some("/runs?item=1"));
     let all = runs_shown(&pages.page("/runs?item=1").await);
@@ -250,13 +255,21 @@ async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the
         tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
         "{tables:?}"
     );
-    assert_eq!(table_bars(&html), [("Runs".to_string(), vec![])]);
+    assert_eq!(table_cards(&html), [named_card("Runs", &[])]);
+    assert_eq!(
+        views(&html, "#runs")[0],
+        (
+            "View".to_string(),
+            "View run 1/triage-12".to_string(),
+            "/runs/1/triage-12".to_string()
+        )
+    );
     assert_eq!(
         select(&html, "#item ~ .table-card #runs .scroll-box").len(),
         1
     );
     let start = "start";
-    let row = vec![start, start, start, start, "end"];
+    let row = vec![start, start, start, start, "end", start];
     let mut aligned = vec![row; 11];
     aligned.push(vec!["none"]);
     assert_eq!(alignments(&html, "#runs"), aligned);
@@ -311,7 +324,8 @@ async fn the_item_pages_stream_sends_the_runs_of_an_item_linewright_leaves_as_th
             &format!("{}/triage-1", closed.0),
             "triage",
             "2026-10-01 11:00:00 UTC",
-            ""
+            "",
+            "View"
         ]]
     );
 }

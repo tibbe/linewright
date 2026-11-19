@@ -5,7 +5,7 @@ use askama::Template;
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_path;
-use super::table::{Align, Column};
+use super::table::{Align, Column, View};
 use crate::domain::Number;
 use crate::phrase::Status;
 use crate::runs::{self, Listing, NoRuns, Run, RunOf};
@@ -34,7 +34,7 @@ pub(super) struct RunRow {
     pub(super) status: Status,
     pub(super) word: &'static str,
     pub(super) id: Html,
-    pub(super) href: String,
+    pub(super) view: View,
     /// `None` for an automation's run, which has no stage.
     pub(super) stage: Option<&'static str>,
     pub(super) started: Html,
@@ -52,6 +52,8 @@ pub(super) enum RunsColumn {
     Stage,
     Started,
     Duration,
+    /// "View", linking to the run's Run.
+    View,
 }
 
 impl RunsColumn {
@@ -63,6 +65,7 @@ impl RunsColumn {
             RunsColumn::Stage => "Stage",
             RunsColumn::Started => "Started",
             RunsColumn::Duration => "Duration",
+            RunsColumn::View => "",
         }
     }
 
@@ -74,7 +77,8 @@ impl RunsColumn {
             | RunsColumn::Run
             | RunsColumn::Item
             | RunsColumn::Stage
-            | RunsColumn::Started => Column::Other,
+            | RunsColumn::Started
+            | RunsColumn::View => Column::Other,
         };
         Align::of(column).class()
     }
@@ -180,7 +184,10 @@ impl RunRow {
             status: run.outcome.status(),
             word: run.outcome.word(),
             id: html::escape(&run.id.to_string()),
-            href: run_path(&run.id),
+            view: View {
+                href: run_path(&run.id),
+                name: format!("run {}", run.id),
+            },
             stage: match run.id.of {
                 RunOf::Work { stage, .. } => Some(stage.name()),
                 RunOf::Automation { .. } => None,
@@ -212,7 +219,12 @@ impl RunsTable {
         [RunsColumn::Outcome, RunsColumn::Run]
             .into_iter()
             .chain(item)
-            .chain([RunsColumn::Stage, RunsColumn::Started, RunsColumn::Duration])
+            .chain([
+                RunsColumn::Stage,
+                RunsColumn::Started,
+                RunsColumn::Duration,
+                RunsColumn::View,
+            ])
             .collect()
     }
 

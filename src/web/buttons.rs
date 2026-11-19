@@ -9,6 +9,7 @@
 pub(super) enum Verb {
     Cancel,
     AddTask,
+    Remove,
 }
 
 impl Verb {
@@ -16,6 +17,7 @@ impl Verb {
         match self {
             Verb::Cancel => "Cancel",
             Verb::AddTask => "Add task",
+            Verb::Remove => "Remove",
         }
     }
 }

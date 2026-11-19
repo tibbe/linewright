@@ -1,7 +1,7 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-{%- call(part) ui::table_card("Runs", filters_stream = "/events/runs") %}
+{%- call(part) ui::table_card("Runs", shows_name = false, filters_stream = "/events/runs") %}
 {%- match part %}
 {%- when crate::web::table::Part::Filters %}
 {%- call ui::filter_input("Item", "item", filters.item, width = "w-16", inputmode = "numeric") %}{% endcall %}

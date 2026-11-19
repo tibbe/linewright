@@ -203,6 +203,10 @@
     @apply rotate-90;
   }
 
+  td:has(> .row-view) {
+    @apply w-0;
+  }
+
   .transcript .thinking .text {
     @apply text-muted;
   }

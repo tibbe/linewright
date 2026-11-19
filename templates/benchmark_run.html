@@ -12,13 +12,13 @@
 {%- include "benchmark_run_chart.html" %}
 </section>
 <div class="mb-6">
-{%- call(part) ui::table_card("Configurations") %}
+{%- call(part) ui::table_card("Configurations", shows_name = true) %}
 {%- if part == crate::web::table::Part::Table %}
 {%- include "benchmark_run_configurations.html" %}
 {%- endif %}
 {%- endcall %}
 </div>
-{%- call(part) ui::table_card("Passes by task") %}
+{%- call(part) ui::table_card("Passes by task", shows_name = true) %}
 {%- if part == crate::web::table::Part::Table %}
 {%- include "benchmark_run_grid.html" %}
 {%- endif %}

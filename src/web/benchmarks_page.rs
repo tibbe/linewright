@@ -19,7 +19,7 @@ use super::buttons::ScreenButton;
 use super::html::{self, Html};
 use super::making::{Answer, Making, NOT_A_NAME, benchmark_not_made};
 use super::shell::{self, Area, Frame, Place};
-use super::table::{Align, Column};
+use super::table::{Align, Column, View};
 use super::write::Write;
 use super::{
     Page, benchmark_path, benchmark_run_path, benchmark_runs, benchmarks, events, given, render,
@@ -115,7 +115,7 @@ impl Filters {
 struct Row {
     name: BenchmarkName,
     stage: TaskStage,
-    href: String,
+    view: View,
     /// Its latest benchmark run, if it has one.
     last: Option<LastBenchmarkRun>,
 }
@@ -130,7 +130,10 @@ struct LastBenchmarkRun {
 impl Row {
     fn of(listed: BenchmarkListed, last: Option<(BenchmarkRunId, Timestamp)>) -> Row {
         Row {
-            href: benchmark_path(&listed.benchmark.name),
+            view: View {
+                href: benchmark_path(&listed.benchmark.name),
+                name: format!("benchmark {}", listed.benchmark.name),
+            },
             name: listed.benchmark.name,
             stage: listed.benchmark.stage,
             last: last.map(|(id, at)| LastBenchmarkRun {
@@ -147,21 +150,24 @@ enum BenchmarksColumn {
     Name,
     Stage,
     LastBenchmarkRun,
+    /// "View", linking to the benchmark's Benchmark.
+    View,
 }
 
 impl BenchmarksColumn {
-    const ALL: [BenchmarksColumn; 3] = [
+    const ALL: [BenchmarksColumn; 4] = [
         BenchmarksColumn::Name,
         BenchmarksColumn::Stage,
         BenchmarksColumn::LastBenchmarkRun,
+        BenchmarksColumn::View,
     ];
 
-    /// Empty for the column that names each row, which has no head.
     fn head(self) -> &'static str {
         match self {
-            BenchmarksColumn::Name => "",
+            BenchmarksColumn::Name => "Benchmark",
             BenchmarksColumn::Stage => "Stage",
             BenchmarksColumn::LastBenchmarkRun => "Last benchmark run",
+            BenchmarksColumn::View => "",
         }
     }
 
@@ -170,7 +176,8 @@ impl BenchmarksColumn {
         let column = match self {
             BenchmarksColumn::Name
             | BenchmarksColumn::Stage
-            | BenchmarksColumn::LastBenchmarkRun => Column::Other,
+            | BenchmarksColumn::LastBenchmarkRun
+            | BenchmarksColumn::View => Column::Other,
         };
         Align::of(column).class()
     }

@@ -1,3 +1,4 @@
+{%- import "macros.html" as ui -%}
 <div id="benchmarks">
 {%- match benchmarks %}
 {%- when BenchmarksShown::Table(rows) %}
@@ -12,11 +13,13 @@
 {%- for column in BenchmarksColumn::ALL %}
 {%- match column %}
 {%- when BenchmarksColumn::Name %}
-<th class="{{ column.align() }}"><a class="link link-hover" href="{{ row.href }}">{{ row.name }}</a></th>
+<th class="{{ column.align() }}">{{ row.name }}</th>
 {%- when BenchmarksColumn::Stage %}
 <td class="{{ column.align() }}">{{ row.stage }}</td>
 {%- when BenchmarksColumn::LastBenchmarkRun %}
 <td class="{{ column.align() }}">{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.launched }}</a>{% endif %}</td>
+{%- when BenchmarksColumn::View %}
+<td class="{{ column.align() }}">{% call ui::row_view(row.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>

@@ -725,7 +725,7 @@ function fire(type, event) { for (const listener of listeners[type] || []) liste
 function event(target, more) {
   return Object.assign({ target, prevented: false, preventDefault() { this.prevented = true; } }, more);
 }
-var location = { pathname: "/runs" };
+var location = { pathname: "/runs", search: "" };
 var addresses = [];
 var history = { replaceState(state, unused, url) { addresses.push(url); } };
 var swaps = [];
@@ -869,6 +869,34 @@ async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
                 "/runs?item=5&stage=triage&since=2h%20ago | {}",
                 restarted("/events/runs?item=5&stage=triage&since=2h%20ago")
             ),
+        ]
+    );
+}
+
+/// `docs/specs/web/design_system.md`, Filters: a search the reader clears by
+/// its own button or by Escape, which fire `search` and no Enter, unsets its
+/// filter; a `search` the reader's Enter already applied applies nothing more.
+#[test_log::test(tokio::test)]
+async fn a_search_cleared_by_its_button_unsets_its_filter_once() {
+    let applied = applied_after_each(&[
+        r#"location.search = "?item=5&stage=triage"; stage.value = "triage"; fire("search", event(item));"#,
+        r#"location.search = "?stage=triage"; fire("keydown", event(item, { key: "Enter" })); fire("search", event(item));"#,
+        r#"item.value = "6"; fire("search", event(item));"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            format!(
+                "/runs?stage=triage | {}",
+                restarted("/events/runs?stage=triage")
+            ),
+            format!(
+                "/runs?stage=triage | {}",
+                restarted("/events/runs?stage=triage")
+            ),
+            "-".to_string(),
         ]
     );
 }
@@ -1046,27 +1074,29 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark run, The table: a row opens on click
-/// to the rows under it, and those to theirs, each staying as the reader left
-/// it through updates.
+/// `docs/specs/benchmarks.md`, Benchmark run, The table: a row opens to the
+/// rows under it, and those to theirs, each staying as the reader left it
+/// through updates; `docs/specs/design_system.md`, Tables: only its chevron
+/// button opens it, and no other part of the row acts on a click.
 #[test_log::test(tokio::test)]
-async fn a_fold_row_opens_to_its_rows_on_a_click_but_on_a_link_and_stays_as_the_reader_left_it_through_updates()
+async fn a_fold_row_opens_to_its_rows_by_its_button_alone_and_stays_as_the_reader_left_it_through_updates()
  {
     let page = r#"
 var rows = {};
 function row(id, under) {
   const tr = Object.assign(element("TR", under ? { id, "data-fold-of": under } : { id }), { id, hidden: !!under });
   const button = element("BUTTON", { "aria-expanded": "false", "aria-controls": `${id}-rows` });
-  const interactive = (selector) => selector.startsWith("a, button");
   button.closest = (selector) =>
-    selector === "tr[id]" ? tr : selector === "button" || interactive(selector) ? button : null;
+    selector === "tr[id]" ? tr : selector.startsWith("button") ? button : null;
+  tr.chevron = element("svg", {});
+  tr.chevron.closest = button.closest;
   tr.querySelector = (selector) => (selector.includes("button") ? button : null);
   tr.button = button;
   tr.cell = element("TD", {});
   tr.cell.closest = (selector) => (selector === "tr[id]" ? tr : null);
   tr.link = element("A", {});
   tr.link.closest = (selector) =>
-    selector === "tr[id]" ? tr : interactive(selector) ? tr.link : null;
+    selector === "tr[id]" ? tr : selector === "a" ? tr.link : null;
   rows[id] = tr;
   return tr;
 }
@@ -1091,6 +1121,7 @@ const steps = [];
 click("cheap"); steps.push(shown());
 click("cheap-task-a", "cell"); steps.push(shown());
 click("cheap-task-a", "link"); steps.push(shown());
+click("cheap-task-a", "chevron"); steps.push(shown());
 click("cheap"); steps.push(shown());
 rendered(); fire("htmx:sse:after:message", { detail: { message: { id: "" } } }); steps.push(shown());
 click("cheap"); steps.push(shown());
@@ -1103,7 +1134,8 @@ steps.join("\n")
         steps,
         [
             "cheap true, cheap-task-a false, cheap-task-a-trial-1 hidden false",
-            "cheap true, cheap-task-a true, cheap-task-a-trial-1 false",
+            "cheap true, cheap-task-a false, cheap-task-a-trial-1 hidden false",
+            "cheap true, cheap-task-a false, cheap-task-a-trial-1 hidden false",
             "cheap true, cheap-task-a true, cheap-task-a-trial-1 false",
             "cheap false, cheap-task-a hidden true, cheap-task-a-trial-1 hidden false",
             "cheap false, cheap-task-a hidden true, cheap-task-a-trial-1 hidden false",

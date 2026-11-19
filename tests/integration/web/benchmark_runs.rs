@@ -158,7 +158,7 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
 /// `docs/specs/benchmarks.md`, Benchmark, Runs; `docs/specs/design_system.md`,
 /// Tables and Status.
 #[test_log::test(tokio::test)]
-async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_linking_to_each() {
+async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_from_its_end() {
     let pages = with_benchmark_run().await;
     launched(&pages, "board", &[], 1, "2026-11-17T13:00:00Z").await;
     linewright::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
@@ -177,7 +177,15 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_linking_to_eac
         .collect();
     assert_eq!(
         heads,
-        ["", "State", "Tasks", "Configurations", "Duration", "Cost"]
+        [
+            "Launched",
+            "State",
+            "Tasks",
+            "Configurations",
+            "Duration",
+            "Cost",
+            ""
+        ]
     );
     assert_eq!(
         rows(&html, "#benchmark-runs"),
@@ -188,7 +196,8 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_linking_to_eac
                 "2",
                 "1",
                 "1h",
-                "$0.00"
+                "$0.00",
+                "View"
             ],
             [
                 "2026-11-17 12:00:00 UTC",
@@ -197,14 +206,26 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_linking_to_eac
                 "2",
                 "0s",
                 "$1.61, 1 without a cost",
+                "View"
             ],
         ]
     );
-    let launches: Vec<&str> = select(&html, "#benchmark-runs tbody tr > th:first-child a")
-        .into_iter()
-        .filter_map(|link| link.attr("href"))
-        .collect();
-    assert_eq!(launches, ["/benchmark-runs/2", "/benchmark-runs/1"]);
+    assert_eq!(select(&html, "#benchmark-runs tbody th a").len(), 0);
+    assert_eq!(
+        views(&html, "#benchmark-runs"),
+        [
+            (
+                "View".to_string(),
+                "View benchmark run 2".to_string(),
+                "/benchmark-runs/2".to_string()
+            ),
+            (
+                "View".into(),
+                "View benchmark run 1".into(),
+                "/benchmark-runs/1".into()
+            ),
+        ]
+    );
     assert_eq!(
         select(
             &html,
@@ -221,7 +242,7 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_linking_to_eac
     assert!(
         alignments
             .iter()
-            .all(|row| row == &["start", "start", "start", "start", "end", "end"]),
+            .all(|row| row == &["start", "start", "start", "start", "end", "end", "start"]),
         "{alignments:?}"
     );
 }
@@ -660,8 +681,8 @@ async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
 }
 
 /// The configurations table's rows that are not under another, and those
-/// under the row `of`, each its id, whether it is hidden and its cells'
-/// text.
+/// under the row `of`, each its id, whether it is hidden and the text of its
+/// cells after its leading cell, which holds its chevron.
 #[track_caller]
 fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> {
     let selector = match of {
@@ -674,7 +695,7 @@ fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> 
             (
                 row.attr("id").unwrap().to_string(),
                 row.attr("hidden").is_some(),
-                select_in(row, ":scope > th, :scope > td")
+                select_in(row, ":scope > th, :scope > td:not(:first-child)")
                     .into_iter()
                     .map(text)
                     .collect(),
@@ -692,9 +713,9 @@ async fn the_configurations_table_shows_each_configurations_figures() {
     let html = pages.page("/benchmark-runs/1").await;
 
     assert!(
-        table_bars(&html).contains(&("Configurations".into(), vec![])),
+        table_cards(&html).contains(&named_card("Configurations", &[])),
         "{:?}",
-        table_bars(&html)
+        table_cards(&html)
     );
     let heads: Vec<String> = select(&html, "#configurations thead th")
         .into_iter()
@@ -704,6 +725,7 @@ async fn the_configurations_table_shows_each_configurations_figures() {
         heads,
         [
             "",
+            "Configuration",
             "Pass rate",
             "Mean cost",
             "Total cost",
@@ -748,14 +770,26 @@ async fn the_configurations_table_shows_each_configurations_figures() {
     );
     let alignments = alignments(&html, "#configurations");
     let expected = [
-        "start", "start", "end", "end", "end", "end", "start", "start",
+        "none", "start", "start", "end", "end", "end", "end", "start", "start",
     ];
     assert_eq!(alignments[0], expected);
     assert_eq!(alignments[1], expected);
+    let chevron = select(&html, "#configuration-as-is > td:first-child > button")[0];
     assert_eq!(
-        select(&html, "#configuration-as-is > th:first-child > button")[0].attr("aria-controls"),
+        chevron.attr("aria-controls"),
         Some("configuration-as-is_task-columns configuration-as-is_task-lanes")
     );
+    assert_eq!(chevron.attr("aria-expanded"), Some("false"));
+    assert_eq!(chevron.attr("aria-label"), Some("Show the tasks of as-is"));
+    assert_eq!(
+        select(
+            &html,
+            "#configuration-as-is_task-columns > td:first-child > button"
+        )[0]
+        .attr("aria-label"),
+        Some("Show the trials of columns under as-is")
+    );
+    assert_eq!(select(&html, "#configurations th button").len(), 0);
     assert_eq!(select(&html, "#configurations details").len(), 0);
 }
 
@@ -913,11 +947,15 @@ async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_st
 
     let opens = select(
         &html,
-        "#configuration-as-is_task-columns_trial-1 > th > button",
+        "#configuration-as-is_task-columns_trial-1 > td:first-child > button",
     );
     assert_eq!(
         opens[0].attr("aria-controls"),
         Some("configuration-as-is_task-columns_trial-1_details")
+    );
+    assert_eq!(
+        opens[0].attr("aria-label"),
+        Some("Show the details of trial 1 of columns under as-is")
     );
     let details = select(&html, "#configuration-as-is_task-columns_trial-1_details")[0];
     assert_eq!(
@@ -952,9 +990,14 @@ async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_st
         ],
         "a scorer that made no score had started"
     );
-    assert!(
-        select(&html, "#configuration-short_task-lanes_trial-2 button").is_empty(),
-        "a trial with nothing to open to has no button"
+    let leading = select(
+        &html,
+        "#configuration-short_task-lanes_trial-2 > :first-child",
+    )[0];
+    assert_eq!(
+        (leading.value().name(), leading.children().count()),
+        ("td", 0),
+        "a trial with nothing to open to has an empty leading cell"
     );
     assert_eq!(
         select(&html, "#configuration-short_task-lanes_trial-2_details"),
@@ -994,7 +1037,7 @@ async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_th
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "b", "a", "c", "as-is"]);
+    assert_eq!(heads, ["Task", "b", "a", "c", "as-is"]);
     assert_eq!(
         rows(&html, "#grid"),
         [
@@ -1022,15 +1065,15 @@ async fn the_grid_shows_the_passes_leaks_and_unscored_of_each_task_and_configura
     let html = pages.page("/benchmark-runs/1").await;
 
     assert!(
-        table_bars(&html).contains(&("Passes by task".into(), vec![])),
+        table_cards(&html).contains(&named_card("Passes by task", &[])),
         "{:?}",
-        table_bars(&html)
+        table_cards(&html)
     );
     let heads: Vec<String> = select(&html, "#grid thead th")
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "as-is", "short"]);
+    assert_eq!(heads, ["Task", "as-is", "short"]);
     assert_eq!(
         rows(&html, "#grid"),
         [
@@ -1151,7 +1194,7 @@ async fn the_benchmark_run_pages_stream_sends_the_benchmark_run_as_it_changes() 
             .iter()
             .filter(|(id, _)| id == "configurations")
             .any(|(_, table)| {
-                text(select(table, "#configuration-as-is_task-lanes_trial-2 td")[0])
+                text(select(table, "#configuration-as-is_task-lanes_trial-2 td")[1])
                     .starts_with("no score")
             });
         if trials && row {
@@ -1699,7 +1742,7 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
         }
     };
     assert_eq!(
-        hrefs(select(&benchmark_runs, "tbody tr > th a")),
+        hrefs(select(&benchmark_runs, "tbody tr > :last-child a")),
         ["/benchmark-runs/1"]
     );
     let kept = pages.path("benchmark-runs/1/.kept/configurations");
@@ -1728,7 +1771,7 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "as-is", "short", "careful"]);
+    assert_eq!(heads, ["Task", "as-is", "short", "careful"]);
 }
 
 /// The files under `dir` and its subdirectories.

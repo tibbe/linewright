@@ -786,28 +786,104 @@ fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
         .collect()
 }
 
-/// The table cards on `html` (`docs/specs/design_system.md`, Tables), each
-/// as a reader reads its bar: the name at its left, then the names of the
-/// filters and the labels of the buttons at its right, in order.
+/// A table card (`docs/specs/design_system.md`, Tables) as a reader reads
+/// it: the name at the left of its top, if it shows one, the labels of the
+/// buttons at the right of its top, and the names of the filters in the row
+/// under the top, each in order.
+#[derive(Debug, PartialEq, Eq)]
+struct TableCard {
+    name: Option<String>,
+    buttons: Vec<String>,
+    filters: Vec<String>,
+}
+
+/// The table cards on `html`. A card's top, where it has one, comes first,
+/// then its filters' row, if it has filters, then the rest.
 #[track_caller]
-fn table_bars(html: &Html) -> Vec<(String, Vec<String>)> {
-    select(html, ".table-card > .table-bar")
+fn table_cards(html: &Html) -> Vec<TableCard> {
+    select(html, ".table-card")
         .into_iter()
-        .map(|bar| {
-            let name = select_in(bar, ".card-title")
+        .map(|card| {
+            let parts: Vec<&str> = card
+                .children()
+                .filter_map(ElementRef::wrap)
+                .map(|part| {
+                    let classes: Vec<&str> = part.value().classes().collect();
+                    ["table-top", "table-filters"]
+                        .into_iter()
+                        .find(|kind| classes.contains(kind))
+                        .unwrap_or("rest")
+                })
+                .collect();
+            let mut ordered = parts.clone();
+            ordered.sort_by_key(|part| match *part {
+                "table-top" => 0,
+                "table-filters" => 1,
+                _ => 2,
+            });
+            assert_eq!(parts, ordered, "{}", card.html());
+            let titles: Vec<String> = select_in(card, ":scope > .table-top > .card-title")
                 .into_iter()
                 .map(text)
                 .collect();
-            let right = select_in(bar, "[name], button")
-                .into_iter()
-                .map(|field| match field.attr("name") {
-                    Some(field_name) => field_name.to_string(),
-                    None => text(field),
-                })
-                .collect();
-            (name, right)
+            assert!(titles.len() <= 1, "{titles:?}");
+            TableCard {
+                name: titles.into_iter().next(),
+                buttons: select_in(card, ":scope > .table-top button")
+                    .into_iter()
+                    .map(text)
+                    .collect(),
+                filters: select_in(card, ":scope > .table-filters [name]")
+                    .into_iter()
+                    .map(|field| field.attr("name").unwrap().to_string())
+                    .collect(),
+            }
         })
         .collect()
+}
+
+/// A table card showing `name`, with no buttons and the filters `filters`.
+fn named_card(name: &str, filters: &[&str]) -> TableCard {
+    TableCard {
+        name: Some(name.to_string()),
+        buttons: vec![],
+        filters: filters.iter().map(ToString::to_string).collect(),
+    }
+}
+
+/// A table card showing no name, with the buttons `buttons` and the filters
+/// `filters`.
+fn unnamed_card(buttons: &[&str], filters: &[&str]) -> TableCard {
+    TableCard {
+        name: None,
+        buttons: buttons.iter().map(ToString::to_string).collect(),
+        filters: filters.iter().map(ToString::to_string).collect(),
+    }
+}
+
+/// The links at the ends of the rows of the table `table` on `html`
+/// (`docs/specs/design_system.md`, Tables, A row's screen), each as a reader
+/// meets it: its text, its accessible name and where it goes.
+#[track_caller]
+fn views(html: &Html, table: &str) -> Vec<(String, String, String)> {
+    select(
+        html,
+        &format!("{table} tbody tr > :last-child > a.row-view"),
+    )
+    .into_iter()
+    .map(|link| {
+        assert!(
+            has_classes(link, &["btn", "btn-ghost", "btn-xs"]),
+            "{}",
+            link.html()
+        );
+        (
+            text(link),
+            link.attr("aria-label").unwrap_or_default().to_string(),
+            link.attr("href").unwrap().to_string(),
+        )
+    })
+    .collect()
 }
 
 /// How each cell of the table `table` on `html` aligns, its head row

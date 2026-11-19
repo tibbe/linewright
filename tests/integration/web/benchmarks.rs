@@ -35,30 +35,25 @@ pub(super) async fn with_benchmarks() -> Pages {
 /// `docs/specs/benchmarks.md`, Benchmarks; `docs/specs/design_system.md`,
 /// Tables.
 #[test_log::test(tokio::test)]
-async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_its_filters() {
+async fn the_benchmarks_page_shows_a_row_per_benchmark_viewed_from_its_end_in_a_card_with_its_filters_and_no_name()
+ {
     let pages = with_benchmarks().await;
     launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
     launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
 
     let html = pages.page("/benchmarks").await;
 
-    assert_eq!(
-        table_bars(&html),
-        [(
-            "Benchmarks".to_string(),
-            vec!["name".to_string(), "stage".into()]
-        )]
-    );
+    assert_eq!(table_cards(&html), [unnamed_card(&[], &["name", "stage"])]);
     let heads: Vec<String> = select(&html, "#benchmarks thead th")
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "Stage", "Last benchmark run"]);
+    assert_eq!(heads, ["Benchmark", "Stage", "Last benchmark run", ""]);
     assert_eq!(
         rows(&html, "#benchmarks"),
         [
-            ["board", "implement", "2026-11-17 12:00:00 UTC"],
-            ["triage-basics", "triage", ""],
+            ["board", "implement", "2026-11-17 12:00:00 UTC", "View"],
+            ["triage-basics", "triage", "", "View"],
         ]
     );
     let names: Vec<String> = select(&html, "#benchmarks tbody tr > th:first-child")
@@ -66,13 +61,25 @@ async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_it
         .map(text)
         .collect();
     assert_eq!(names, ["board", "triage-basics"]);
+    assert_eq!(select(&html, "#benchmarks tbody th a").len(), 0);
     assert_eq!(
-        hrefs(select(&html, "#benchmarks tbody a")),
+        views(&html, "#benchmarks"),
         [
-            "/benchmarks/board",
-            "/benchmark-runs/2",
-            "/benchmarks/triage-basics"
+            (
+                "View".to_string(),
+                "View benchmark board".to_string(),
+                "/benchmarks/board".to_string()
+            ),
+            (
+                "View".into(),
+                "View benchmark triage-basics".into(),
+                "/benchmarks/triage-basics".into()
+            ),
         ]
+    );
+    assert_eq!(
+        hrefs(select(&html, "#benchmarks tbody td:nth-child(3) a")),
+        ["/benchmark-runs/2"]
     );
     assert_eq!(select(&html, ".table-card #benchmarks table").len(), 1);
     assert_eq!(events_path(&html), Some("/events/benchmarks"));
@@ -126,6 +133,32 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
     assert_eq!(stages, ["All stages", "triage", "design", "implement"]);
 }
 
+/// `docs/specs/web/design_system.md`, Filters: a filter that searches.
+#[test_log::test(tokio::test)]
+async fn the_benchmarks_name_filter_is_a_search_with_a_magnifier_at_its_start_taking_the_spare_width()
+ {
+    let pages = with_benchmarks().await;
+
+    let html = pages.page("/benchmarks?name=boa").await;
+
+    let search = select(&html, ".table-filters input[name=name]")[0];
+    assert_eq!(search.attr("type"), Some("search"));
+    assert_eq!(search.attr("value"), Some("boa"));
+    assert_eq!(search.attr("aria-label"), Some("Name"));
+    let field = ElementRef::wrap(search.parent().unwrap()).unwrap();
+    assert_eq!(field.value().name(), "label");
+    assert!(
+        has_classes(field, &["input", "input-sm", "grow"]),
+        "{}",
+        field.html()
+    );
+    let first = field.children().find_map(ElementRef::wrap).unwrap();
+    assert_eq!(first.value().name(), "svg", "{}", field.html());
+    assert_eq!(first.attr("aria-hidden"), Some("true"));
+    let row = select(&html, "form.table-filters")[0];
+    assert!(has_classes(row, &["flex"]), "{}", row.html());
+}
+
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_pages_stream_sends_the_benchmarks_its_filters_keep() {
     let pages = with_benchmarks().await;
@@ -139,7 +172,7 @@ async fn the_benchmarks_pages_stream_sends_the_benchmarks_its_filters_keep() {
         .expect("the benchmarks");
     assert_eq!(
         rows(&benchmarks, "#benchmarks"),
-        [["triage-basics", "triage", ""]]
+        [["triage-basics", "triage", "", "View"]]
     );
 }
 
@@ -299,7 +332,10 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
             break benchmarks;
         }
     };
-    assert_eq!(rows(&benchmarks, "#benchmarks"), [["board", "design", ""]]);
+    assert_eq!(
+        rows(&benchmarks, "#benchmarks"),
+        [["board", "design", "", "View"]]
+    );
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark, Refusals;
@@ -376,7 +412,10 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
     let html = pages.page("/benchmarks").await;
     assert_eq!(
         rows(&html, "#benchmarks"),
-        [["board", "implement", ""], ["triage-basics", "triage", ""]]
+        [
+            ["board", "implement", "", "View"],
+            ["triage-basics", "triage", "", "View"]
+        ]
     );
 }
 
@@ -503,7 +542,10 @@ async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let html = pages.page("/benchmarks").await;
     assert_eq!(
         rows(&html, "#benchmarks"),
-        [["board", "implement", ""], ["triage-basics", "triage", ""]]
+        [
+            ["board", "implement", "", "View"],
+            ["triage-basics", "triage", "", "View"]
+        ]
     );
     assert_eq!(tasks(&pages), ["columns", "lanes"]);
 }
@@ -576,18 +618,21 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "Captured from", ""]);
+    assert_eq!(heads, ["", "Task", "Captured from", ""]);
     let tasks = select(&html, "#tasks tbody tr:not([data-fold-of])");
     let shown: Vec<(String, String, String)> = tasks
         .iter()
         .map(|row| {
             let header = select_in(*row, ":scope > th")[0];
             let cells = select_in(*row, ":scope > td");
-            (
-                text(header),
-                text(cells[0]),
-                text(select_in(cells[1], "button[command=show-modal]")[0]),
-            )
+            let remove = select_in(cells[2], "button[command=show-modal]")[0];
+            assert!(
+                has_classes(remove, &["btn", "btn-ghost", "btn-xs"]),
+                "{}",
+                remove.html()
+            );
+            assert_eq!(select_in(remove, "svg[aria-hidden=true]").len(), 1);
+            (text(header), text(cells[1]), text(remove))
         })
         .collect();
     assert_eq!(
@@ -624,14 +669,16 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
         select_in(criteria[0], "pre")[0].text().collect::<String>(),
         "Names the columns.\nAnd orders them.\n"
     );
-    assert_eq!(select_in(criteria[0], "td")[0].attr("colspan"), Some("3"));
+    assert_eq!(select_in(criteria[0], "td")[0].attr("colspan"), Some("4"));
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark, Tasks: a task's row opens on click to
-/// the whole of its criteria, as a fold row whose ids are keyed by names.
+/// `docs/specs/benchmarks.md`, Benchmark, Tasks: a task's row opens to the
+/// whole of its criteria, as a fold row whose ids are keyed by names;
+/// `docs/specs/design_system.md`, Tables, Opening in place.
 #[test_log::test(tokio::test)]
-async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
+async fn a_tasks_row_opens_to_its_criteria_by_a_chevron_in_its_leading_cell() {
     let pages = with_benchmarks().await;
+    keep_task_row(&pages.path(""), "board", "aisles", "1/implement-1").await;
 
     let html = pages.page("/benchmarks/board").await;
 
@@ -652,9 +699,10 @@ async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
             (Some("task-columns_criteria"), Some("task-columns"), true),
             (Some("task-lanes"), None, false),
             (Some("task-lanes_criteria"), Some("task-lanes"), true),
+            (Some("task-aisles"), None, false),
         ]
     );
-    let buttons = select(&html, "#task-columns > th:first-child > button");
+    let buttons = select(&html, "#task-columns > td:first-child > button");
     assert_eq!(buttons.len(), 1, "{}", html.html());
     assert_eq!(buttons[0].attr("type"), Some("button"));
     assert_eq!(buttons[0].attr("aria-expanded"), Some("false"));
@@ -662,7 +710,21 @@ async fn a_tasks_row_is_a_fold_row_opening_to_its_criteria() {
         buttons[0].attr("aria-controls"),
         Some("task-columns_criteria")
     );
-    assert_eq!(text(buttons[0]), "columns");
+    assert_eq!(
+        buttons[0].attr("aria-label"),
+        Some("Show the criteria of columns")
+    );
+    assert_eq!(select_in(buttons[0], "svg.chevron").len(), 1);
+    assert_eq!(select(&html, "#tasks th button").len(), 0);
+    let unread = select(&html, "#task-aisles > :first-child")[0];
+    assert_eq!(unread.value().name(), "td");
+    assert_eq!(unread.children().count(), 0, "{}", unread.html());
+    assert_eq!(
+        text(select(&html, "#task-aisles > th")[0])
+            .split_whitespace()
+            .next(),
+        Some("aisles")
+    );
     assert_eq!(select(&html, "#tasks details").len(), 0);
 }
 
@@ -722,7 +784,7 @@ async fn removing_a_task_removes_it_from_the_page_and_from_the_tasks() {
     assert_eq!(said(&answer), "Removed the task columns");
     assert_eq!(tasks(&pages), ["lanes"]);
     let html = pages.page("/benchmarks/board").await;
-    let names: Vec<String> = select(&html, "#tasks tbody th button")
+    let names: Vec<String> = select(&html, "#tasks tbody th > span:first-child")
         .into_iter()
         .map(text)
         .collect();
@@ -845,7 +907,7 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
 
     let html = pages.page("/benchmarks/board").await;
 
-    let buttons: Vec<&str> = select(&html, ".table-bar button[command=show-modal]")
+    let buttons: Vec<&str> = select(&html, ".table-top button[command=show-modal]")
         .into_iter()
         .filter_map(|button| button.attr("commandfor"))
         .collect();
@@ -930,7 +992,7 @@ async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_
     assert_eq!(text(select(&answer, "legend")[0]), "New task in board");
     assert_eq!(tasks(&pages), ["columns", "gadgets", "lanes"]);
     let html = pages.page("/benchmarks/board").await;
-    let names: Vec<String> = select(&html, "#tasks tbody th button")
+    let names: Vec<String> = select(&html, "#tasks tbody th > span:first-child")
         .into_iter()
         .map(text)
         .collect();
@@ -1067,7 +1129,7 @@ async fn the_benchmark_pages_stream_sends_its_tasks_as_they_change() {
             break tasks;
         }
     };
-    let names: Vec<String> = select(&tasks, "tbody th button")
+    let names: Vec<String> = select(&tasks, "tbody th > span:first-child")
         .into_iter()
         .map(text)
         .collect();
