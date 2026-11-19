@@ -1,7 +1,7 @@
-//! The New experiment dialog (`docs/specs/benchmarks.md`, New experiment):
-//! its form, which starts each file of the brief as the text a run of the
-//! stage uses as the dialog opens, and the `POST` that launches what it
-//! sends: a file whose text is not changed is not part of the configuration.
+//! The New benchmark run dialog (`docs/specs/benchmarks.md`, New benchmark
+//! run): its form, which starts each file of the brief as the text a run of the
+//! stage uses as the dialog opens, and the `POST` that launches what it sends:
+//! a file whose text is not changed is not part of the configuration.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -12,17 +12,17 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use tracing::{info, warn};
 
-use super::experiments;
+use super::benchmark_page::benchmark_for_making;
+use super::benchmark_runs;
 use super::html::{self, Html};
 use super::making::{
     Answer, Making, REPETITIONS, configuration_misnamed, configuration_unnamed,
     configuration_unusable, launch_refused,
 };
-use super::suite_page::suite_for_making;
 use super::write::Write;
 use crate::api::Sources;
-use crate::benchmarks::{ConfigurationName, LaunchRefusal, SuiteName};
-use crate::replay::Configuration;
+use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal};
+use crate::trial::Configuration;
 use crate::work_settings::Effort;
 
 /// The text of each file of the brief that a configuration may give, by its
@@ -38,18 +38,18 @@ fn starting_texts(sources: &Sources) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-/// How many replays `configurations` configurations, `as-is` among them,
-/// `cases` cases and `repetitions` repetitions make, in words.
-fn replay_count(configurations: usize, cases: usize, repetitions: u32) -> String {
+/// How many trials `configurations` configurations, `as-is` among them,
+/// `tasks` tasks and `repetitions` repetitions make, in words.
+fn trial_count(configurations: usize, tasks: usize, repetitions: u32) -> String {
     let repetitions = usize::try_from(repetitions).unwrap_or(usize::MAX);
     format!(
         "{} × {} × {}: {}",
         counted(configurations, "configuration", "configurations"),
-        counted(cases, "case", "cases"),
+        counted(tasks, "case", "cases"),
         counted(repetitions, "repetition", "repetitions"),
         counted(
             configurations
-                .saturating_mul(cases)
+                .saturating_mul(tasks)
                 .saturating_mul(repetitions),
             "replay",
             "replays"
@@ -118,7 +118,7 @@ impl ConfigurationKey<'_> {
     }
 }
 
-/// What the New experiment dialog sends: the repetitions as typed, and each
+/// What the New benchmark run dialog sends: the repetitions as typed, and each
 /// configuration but `as-is`, in the order the dialog shows them.
 pub(super) struct LaunchFields {
     repetitions: String,
@@ -242,38 +242,42 @@ impl ConfigurationFields {
     }
 }
 
-/// What the New experiment dialog's form holds.
+/// What the New benchmark run dialog's form holds.
 #[derive(Template)]
-#[template(path = "new_experiment.html")]
-pub(super) struct NewExperimentForm {
-    /// The suite's name, as its path gives it.
-    suite: String,
-    /// How many cases the suite has.
-    cases: usize,
+#[template(path = "new_benchmark_run.html")]
+pub(super) struct NewBenchmarkRunForm {
+    /// The benchmark's name, as its path gives it.
+    benchmark: String,
+    /// How many tasks the benchmark has.
+    tasks: usize,
     making: Making<LaunchFields>,
     /// The paths under `briefs/` of the files a configuration may give.
     paths: Vec<String>,
 }
 
-impl NewExperimentForm {
-    /// The form as it starts, for suite `suite` with `cases` cases.
-    pub(super) fn blank(sources: &Sources, suite: &SuiteName, cases: usize) -> NewExperimentForm {
-        NewExperimentForm {
-            suite: suite.to_string(),
-            cases,
+impl NewBenchmarkRunForm {
+    /// The form as it starts, for benchmark `benchmark` with `tasks` tasks.
+    pub(super) fn blank(
+        sources: &Sources,
+        benchmark: &BenchmarkName,
+        tasks: usize,
+    ) -> NewBenchmarkRunForm {
+        NewBenchmarkRunForm {
+            benchmark: benchmark.to_string(),
+            tasks,
             making: Making::blank(),
             paths: starting_texts(sources).into_keys().collect(),
         }
     }
 
     fn title(&self) -> String {
-        format!("New experiment on {}", self.suite)
+        format!("New experiment on {}", self.benchmark)
     }
 
     fn count(&self) -> String {
-        replay_count(
+        trial_count(
             self.making.fields.configurations.len() + 1,
-            self.cases,
+            self.tasks,
             self.making.fields.repetitions().map_or(1, NonZeroU32::get),
         )
     }
@@ -311,15 +315,15 @@ impl NewExperimentForm {
     }
 
     /// It refused for `why`, answered with `status`.
-    fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewExperimentForm> {
+    fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewBenchmarkRunForm> {
         self.making.refusal = Some(why);
         Answer::Refused { status, form: self }
     }
 }
 
-/// A configuration but `as-is` in the New experiment dialog.
+/// A configuration but `as-is` in the New benchmark run dialog.
 #[derive(Template)]
-#[template(path = "new_experiment_configuration.html")]
+#[template(path = "new_benchmark_run_configuration.html")]
 struct ConfigurationBox<'a> {
     /// Its number in its fields' names.
     n: String,
@@ -353,7 +357,7 @@ const UNCHOSEN: &str = "__PATH__";
 
 /// The box of a file of the brief that a configuration gives.
 #[derive(Template)]
-#[template(path = "new_experiment_file.html")]
+#[template(path = "new_benchmark_run_file.html")]
 struct BriefFileBox<'a> {
     /// Its configuration's number in its fields' names.
     n: &'a str,
@@ -365,7 +369,7 @@ struct BriefFileBox<'a> {
 }
 
 /// The texts of the files of the brief, by path, as a run of the stage uses
-/// them now, as a region of the suite page's stream.
+/// them now, as a region of the benchmark page's stream.
 #[derive(Template)]
 #[template(
     source = r#"<div id="brief-texts" hidden data-texts="{{ json }}"></div>"#,
@@ -383,18 +387,18 @@ impl BriefTexts {
     }
 }
 
-/// Launches an experiment on suite `suite_named` as the New experiment dialog's
-/// form in `body` asks, tells `serve` so, and answers with the dialog's form:
-/// as it starts once launched, or as sent with why it was refused. Refused,
-/// launching nothing, unless the browser shows the request came from the web
-/// UI's own pages.
+/// Launches a benchmark run on benchmark `benchmark_named` as the New benchmark
+/// run dialog's form in `body` asks, tells `serve` so, and answers with the
+/// dialog's form: as it starts once launched, or as sent with why it was
+/// refused. Refused, launching nothing, unless the browser shows the request
+/// came from the web UI's own pages.
 pub(super) async fn launch(
     State(sources): State<Sources>,
-    Path(suite_named): Path<String>,
+    Path(benchmark_named): Path<String>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
-) -> Answer<NewExperimentForm> {
+) -> Answer<NewBenchmarkRunForm> {
     const WRITE: Write = Write::Launch;
     let sent = WRITE.read_form::<Vec<(String, String)>>(&body);
     let (fields, unread) = match &sent {
@@ -402,18 +406,18 @@ pub(super) async fn launch(
         Err(_) => (LaunchFields::default(), None),
     };
     let starting = starting_texts(&sources);
-    let mut form = NewExperimentForm {
-        suite: suite_named,
-        cases: 0,
+    let mut form = NewBenchmarkRunForm {
+        benchmark: benchmark_named,
+        tasks: 0,
         making: Making {
             fields,
             refusal: None,
         },
         paths: starting.keys().cloned().collect(),
     };
-    let found = suite_for_making(&sources, &form.suite).await;
+    let found = benchmark_for_making(&sources, &form.benchmark).await;
     if let Ok(shown) = &found {
-        form.cases = shown.cases.len();
+        form.tasks = shown.tasks.len();
     }
     if let Err(refused) = WRITE.same_origin(&headers, &uri).and(sent) {
         return form.refused(refused.into_parts());
@@ -421,8 +425,8 @@ pub(super) async fn launch(
     if let Some(why) = unread {
         return form.refused((StatusCode::BAD_REQUEST, why));
     }
-    let suite = match found {
-        Ok(shown) => shown.suite.name,
+    let benchmark = match found {
+        Ok(shown) => shown.benchmark.name,
         Err(refused) => return form.refused(refused),
     };
     let unprocessable = |why: String| (StatusCode::UNPROCESSABLE_ENTITY, why);
@@ -433,19 +437,19 @@ pub(super) async fn launch(
         Ok(configurations) => configurations,
         Err(why) => return form.refused(unprocessable(why)),
     };
-    match experiments(&sources)
-        .launch(&suite, configurations, repetitions, sources.clock.now())
+    match benchmark_runs(&sources)
+        .launch(&benchmark, configurations, repetitions, sources.clock.now())
         .await
     {
         Ok(launched) => {
-            sources.experiments.changed();
-            info!(experiment = %launched.id, suite = %suite, replays = launched.replays, "launched an experiment");
+            sources.benchmark_runs.changed();
+            info!(experiment = %launched.id, suite = %benchmark, replays = launched.trials, "launched an experiment");
             form.making = Making::blank();
             Answer::Made { blank: form }
         }
         Err(refusal) => {
             if let LaunchRefusal::Failed(e) = &refusal {
-                warn!(suite = %suite, error = format!("{e:#}"), "launching an experiment failed");
+                warn!(suite = %benchmark, error = format!("{e:#}"), "launching an experiment failed");
             }
             form.refused(launch_refused(&refusal))
         }

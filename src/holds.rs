@@ -70,21 +70,21 @@ impl From<Hold> for Wait {
     }
 }
 
-/// A hold over the replays and the judges of an experiment: a drain and the
+/// A hold over the trials and the scorers of a benchmark run: a drain and the
 /// usage limit, which hold them as they hold runs, while the other holds do
-/// not (`docs/specs/benchmarks.md`, Experiments: Under `serve`).
+/// not (`docs/specs/benchmarks.md`, Benchmark runs: Under `serve`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum ExperimentHold {
+pub enum BenchmarkRunHold {
     Drain,
     UsageLimit { resets_at: Timestamp },
 }
 
-impl From<ExperimentHold> for Hold {
-    fn from(hold: ExperimentHold) -> Hold {
+impl From<BenchmarkRunHold> for Hold {
+    fn from(hold: BenchmarkRunHold) -> Hold {
         match hold {
-            ExperimentHold::Drain => Hold::Drain,
-            ExperimentHold::UsageLimit { resets_at } => Hold::UsageLimit { resets_at },
+            BenchmarkRunHold::Drain => Hold::Drain,
+            BenchmarkRunHold::UsageLimit { resets_at } => Hold::UsageLimit { resets_at },
         }
     }
 }
@@ -134,14 +134,14 @@ impl<'a> InForce<'a> {
         holds
     }
 
-    /// The first in rank of the holds over an experiment's replays and
-    /// judges, if one is in force.
-    pub fn holding_experiments(&self) -> Option<ExperimentHold> {
+    /// The first in rank of the holds over a benchmark run's trials and
+    /// scorers, if one is in force.
+    pub fn holding_benchmark_runs(&self) -> Option<BenchmarkRunHold> {
         if self.drain {
-            return Some(ExperimentHold::Drain);
+            return Some(BenchmarkRunHold::Drain);
         }
         self.usage_limit
-            .map(|resets_at| ExperimentHold::UsageLimit { resets_at })
+            .map(|resets_at| BenchmarkRunHold::UsageLimit { resets_at })
     }
 
     /// The hold over every claim, if one is in force.

@@ -112,7 +112,7 @@ impl Own {
 
 /// Every variable `set_for_session` may set, whether or not it sets it for
 /// a given session, that `session-env` may not set: all but
-/// `GH_CONFIG_DIR`, whose value in a replay replaces `session-env`'s.
+/// `GH_CONFIG_DIR`, whose value in a trial replaces `session-env`'s.
 pub const SET_FOR_SESSIONS: [&str; Own::NOT_SET_BY_OPERATOR.len()] = {
     let mut names = [""; Own::NOT_SET_BY_OPERATOR.len()];
     let mut i = 0;
@@ -427,7 +427,7 @@ impl Log {
 
 impl ClaudeCode {
     /// The variables Linewright sets for a session, given whether its `gh`
-    /// reaches GitHub through a gate, as in a replay.
+    /// reaches GitHub through a gate, as in a trial.
     pub fn variables_set_for_sessions(gh_through_gate: bool) -> Vec<&'static str> {
         let gh_config = gh_through_gate.then_some(Path::new(""));
         set_for_session(Path::new(""), Path::new(""), "", None, gh_config)

@@ -1,9 +1,0 @@
-{%- import "macros.html" as ui -%}
-{%- call ui::new_form("new-case", self.title(), "Add case", making.refusal, region = NEW_CASE_READY, disabled = self.ready().disabled, note = self.ready().note) %}
-<label class="label" for="new-case-run">Run</label>
-{{ self.runs() }}
-<label class="label" for="new-case-name">Name</label>
-<input id="new-case-name" class="input w-full" name="name" value="{{ making.fields.name }}" autocomplete="off">
-<label class="label" for="new-case-criteria">Criteria</label>
-<textarea id="new-case-criteria" class="textarea w-full" name="criteria" rows="6">{{ making.fields.criteria }}</textarea>
-{%- endcall %}

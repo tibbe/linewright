@@ -251,32 +251,32 @@ fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
 }
 
 #[test_log::test]
-fn the_judges_table_sets_the_judges_sessions_and_no_stages() {
+fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
     let file = "model = \"sonnet\"\neffort = \"low\"\nsession-timeout = \"10m\"\n\n\
                 [stage.judge]\nmodel = \"opus\"\neffort = \"max\"\nsession-timeout = \"2h\"\n";
 
     let config = resolve(&["--model", "haiku"], &[], Some(file)).unwrap();
 
-    let judge = config.work.for_run(
-        RunKind::Judge,
+    let scorer = config.work.for_run(
+        RunKind::Scorer,
         &RepoSettings::default(),
         &Environments::default(),
     );
     assert_eq!(
-        judge.model,
+        scorer.model,
         Some(Sourced::new("opus".into(), Layer::Operator))
     );
     assert_eq!(
-        judge.effort,
+        scorer.effort,
         Some(Sourced::new(Effort::Max, Layer::Operator))
     );
-    assert_eq!(judge.session_timeout.value, Duration::from_hours(2));
+    assert_eq!(scorer.session_timeout.value, Duration::from_hours(2));
     assert_eq!(
-        judge.timeout_setting,
-        TimeoutSetting::Stage(StageKey::Judge)
+        scorer.timeout_setting,
+        TimeoutSetting::Stage(StageKey::Scorer)
     );
     assert_eq!(
-        judge.timeout_setting.to_string(),
+        scorer.timeout_setting.to_string(),
         "`session-timeout` in `[stage.judge]`"
     );
     for stage in WorkKind::ALL {
@@ -291,7 +291,7 @@ fn the_judges_table_sets_the_judges_sessions_and_no_stages() {
 }
 
 #[test_log::test]
-fn the_repositorys_judge_table_ranks_above_the_operators() {
+fn the_repositorys_scorer_table_ranks_above_the_operators() {
     let config = resolve(
         &[],
         &[],
@@ -303,25 +303,25 @@ fn the_repositorys_judge_table_ranks_above_the_operators() {
     )
     .unwrap();
 
-    let judge = config
+    let scorer = config
         .work
-        .for_run(RunKind::Judge, &repo, &Environments::default());
+        .for_run(RunKind::Scorer, &repo, &Environments::default());
 
     assert_eq!(
-        judge.effort,
+        scorer.effort,
         Some(Sourced::new(Effort::Low, Layer::Repository))
     );
     assert_eq!(
-        judge.model,
+        scorer.model,
         Some(Sourced::new("haiku".into(), Layer::Operator))
     );
     assert_eq!(
-        judge.session_timeout,
+        scorer.session_timeout,
         Sourced::new(Duration::from_mins(5), Layer::Repository)
     );
     assert_eq!(
-        judge.timeout_setting,
-        TimeoutSetting::Stage(StageKey::Judge)
+        scorer.timeout_setting,
+        TimeoutSetting::Stage(StageKey::Scorer)
     );
     assert_eq!(
         repo_session(
@@ -335,7 +335,7 @@ fn the_repositorys_judge_table_ranks_above_the_operators() {
 }
 
 #[test_log::test]
-fn the_judges_table_adds_to_the_judges_environment() {
+fn the_scorers_table_adds_to_the_scorers_environment() {
     let config = resolve(
         &[],
         &[],
@@ -352,10 +352,10 @@ fn the_judges_table_adds_to_the_judges_environment() {
         .work
         .environments(&config.session_env, environment, &[]);
 
-    let mut judge: Vec<(String, String)> = config
+    let mut scorer: Vec<(String, String)> = config
         .work
         .for_run(
-            RunKind::Judge,
+            RunKind::Scorer,
             &RepoSettings::default(),
             &split.environments,
         )
@@ -368,9 +368,9 @@ fn the_judges_table_adds_to_the_judges_environment() {
             )
         })
         .collect();
-    judge.sort();
+    scorer.sort();
     assert_eq!(
-        judge,
+        scorer,
         pairs(&[
             ("CARGO_HOME", "/cargo"),
             ("CI", "judge"),
@@ -383,12 +383,12 @@ fn the_judges_table_adds_to_the_judges_environment() {
     );
     assert_eq!(
         split.added,
-        [(StageKey::Judge, vec!["JUDGE_KEY".to_string()])].into()
+        [(StageKey::Scorer, vec!["JUDGE_KEY".to_string()])].into()
     );
 }
 
 #[test_log::test]
-fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_judge_among_the_names() {
+fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_scorer_among_the_names() {
     let operator_error = resolve(&[], &[], Some("[stage.deploy]\nmodel = \"opus\"\n")).unwrap_err();
     let repo_error = format!(
         "{:#}",
@@ -768,10 +768,10 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
 }
 
 #[test_log::test]
-fn max_replays_is_read_from_the_file() {
+fn max_trials_is_read_from_the_file() {
     let config = resolve(&["--repo", "acme/widgets"], &[], Some("max-replays = 3\n")).unwrap();
 
-    assert_eq!(config.max_replays, 3);
+    assert_eq!(config.max_trials, 3);
 }
 
 #[test_log::test]
@@ -792,7 +792,7 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.spec_lookback, chrono::TimeDelta::days(7));
     assert_eq!(config.done_window, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
-    assert_eq!(config.max_replays, 1);
+    assert_eq!(config.max_trials, 1);
     assert_eq!(
         session(&config).session_timeout,
         Sourced::new(Duration::from_hours(6), Layer::Linewright)

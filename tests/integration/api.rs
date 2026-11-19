@@ -38,7 +38,7 @@ fn sources(work_dir: RepoWorkDir) -> impl Future<Output = Sources> {
             runs,
             ends: Ends::new(),
             environment: api::EnvironmentLink::default(),
-            experiments: api::ExperimentsLink::default(),
+            benchmark_runs: api::BenchmarkRunsLink::default(),
             exiting: linewright::winding_up::WindingUp::default().exiting(),
         }
     }

@@ -8,17 +8,17 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use linewright::benchmarks::{
-    Experiments, JudgementFigures, ReplayFigures, SuiteName, Suites, TrialChange, TrialRef,
+    BenchmarkName, BenchmarkRuns, Benchmarks, ScoreFigures, TrialChange, TrialFigures, TrialRef,
 };
-use linewright::case::{self, Criteria, ReplayStage, SuiteChoice};
 use linewright::cost::Usd;
 use linewright::database::Database;
 use linewright::domain::{Login, MergeMethods, Number, Timestamp, label};
 use linewright::input::{self, Wanted};
-use linewright::replay::Configuration;
 use linewright::results::Verdict;
 use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
+use linewright::task::{self, BenchmarkChoice, Criteria, TaskStage};
+use linewright::trial::Configuration;
 use serde_json::{Value, json};
 
 use crate::scenario::{Scenario, Step};
@@ -128,26 +128,26 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
     Ok(())
 }
 
-/// The issue whose runs the seed's suite holds cases of: the one closed as
+/// The issue whose runs the seed's benchmark holds tasks of: the one closed as
 /// done.
-const CASES_ISSUE: Number = Number(3);
+const TASKS_ISSUE: Number = Number(3);
 
-/// Closes as done the issue the seed's cases are captured from. Its runs'
-/// input is recorded as it was before, open, which a replay needs.
+/// Closes as done the issue the seed's tasks are captured from. Its runs'
+/// input is recorded as it was before, open, which a trial needs.
 ///
 /// # Errors
 ///
 /// When the store refuses the write.
 pub fn close_done(store: &LocalStore) -> Result<()> {
-    store.close_issue_as_completed(CASES_ISSUE)
+    store.close_issue_as_completed(TASKS_ISSUE)
 }
 
-/// The suite of design cases.
+/// The benchmark of design tasks.
 const BOARD: &str = "board";
 
-/// A case of [`BOARD`], and the design run of [`CASES_ISSUE`] it is
+/// A task of [`BOARD`], and the design run of [`TASKS_ISSUE`] it is
 /// captured from.
-struct SeedCase {
+struct SeedTask {
     name: &'static str,
     /// The run's number.
     n: u32,
@@ -159,15 +159,15 @@ struct SeedCase {
 }
 
 /// In the order they are captured, which is not the order of their names.
-const BOARD_CASES: [SeedCase; 2] = [
-    SeedCase {
+const BOARD_TASKS: [SeedTask; 2] = [
+    SeedTask {
         name: "columns-named",
         n: 2,
         started_at: "2026-03-01T14:00:00Z",
         ending: "done",
         criteria: "A good design cuts the work into one ticket, with a test that reads the names off the board.\n",
     },
-    SeedCase {
+    SeedTask {
         name: "columns-first-try",
         n: 1,
         started_at: "2026-03-01T10:00:00Z",
@@ -176,105 +176,105 @@ const BOARD_CASES: [SeedCase; 2] = [
     },
 ];
 
-/// A suite with no cases yet.
-const EMPTY_SUITE: &str = "triage-basics";
+/// A benchmark with no tasks yet.
+const EMPTY_BENCHMARK: &str = "triage-basics";
 
-/// Writes into the work directory `work_dir` the suites the web UI shows: a
-/// suite of design cases captured from #3's runs, which the seed records
-/// as ended, with an experiment on it that has ended, and an empty suite of
-/// triage. A work directory that holds the
-/// first of those runs already is left as it is.
+/// Writes into the work directory `work_dir` the benchmarks the web UI shows: a
+/// benchmark of design tasks captured from #3's runs, which the seed records as
+/// ended, with a benchmark run on it that has ended, and an empty benchmark of
+/// triage. A work directory that holds the first of those runs already is left
+/// as it is.
 ///
 /// # Errors
 ///
 /// When the database, the store or a capture fails.
-pub async fn suites(store: &LocalStore, work_dir: &Path) -> Result<()> {
+pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
     let db = Database::open(work_dir).await?;
     let runs = Runs::new(db.clone());
-    let suites = Suites::new(db);
-    let first = run_of(&BOARD_CASES[0])?;
+    let benchmarks = Benchmarks::new(db);
+    let first = run_of(&BOARD_TASKS[0])?;
     if runs.try_read_run(&first).await?.is_some() {
         return Ok(());
     }
     let wanted = Wanted {
-        items: BTreeSet::from([CASES_ISSUE]),
+        items: BTreeSet::from([TASKS_ISSUE]),
         branches: vec![DEFAULT_BRANCH.into()],
     };
-    for case in &BOARD_CASES {
-        let start: Timestamp = case.started_at.parse()?;
+    for task in &BOARD_TASKS {
+        let start: Timestamp = task.started_at.parse()?;
         let input = input::record(store, &wanted, start).await?;
-        record_run(work_dir, case, start, &serde_json::to_string(&input)?).await?;
+        record_run(work_dir, task, start, &serde_json::to_string(&input)?).await?;
     }
-    let board: SuiteName = BOARD.parse().map_err(anyhow::Error::msg)?;
-    suites.make(&board, ReplayStage::Design).await?;
-    for case in &BOARD_CASES {
-        let capturable = case::capturable(
+    let board: BenchmarkName = BOARD.parse().map_err(anyhow::Error::msg)?;
+    benchmarks.make(&board, TaskStage::Design).await?;
+    for task in &BOARD_TASKS {
+        let capturable = task::capturable(
             &runs,
-            &suites,
-            &run_of(case)?,
-            &case.name.parse().map_err(anyhow::Error::msg)?,
-            &SuiteChoice::Named(board.clone()),
+            &benchmarks,
+            &run_of(task)?,
+            &task.name.parse().map_err(anyhow::Error::msg)?,
+            &BenchmarkChoice::Named(board.clone()),
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.why()))?;
-        let criteria = Criteria::parse(case.criteria).context("the seed's criteria are blank")?;
-        case::capture(store, capturable, &criteria, &suites)
+        let criteria = Criteria::parse(task.criteria).context("the seed's criteria are blank")?;
+        task::capture(store, capturable, &criteria, &benchmarks)
             .await
             .map_err(|e| anyhow::anyhow!(e.why()))?;
     }
-    let empty: SuiteName = EMPTY_SUITE.parse().map_err(anyhow::Error::msg)?;
-    suites.make(&empty, ReplayStage::Triage).await?;
-    experiment(&Experiments::new(runs.database().clone()), &board).await
+    let empty: BenchmarkName = EMPTY_BENCHMARK.parse().map_err(anyhow::Error::msg)?;
+    benchmarks.make(&empty, TaskStage::Triage).await?;
+    benchmark_run(&BenchmarkRuns::new(runs.database().clone()), &board).await
 }
 
-/// How each trial of the seed's experiment ended, in start order: by
-/// repetition, then case, then configuration.
+/// How each trial of the seed's benchmark run ended, in start order: by
+/// repetition, then task, then configuration.
 const TRIALS: [SeedTrial; 8] = [
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::Done,
         money: 0.42,
         seconds: 95,
         verdict: Verdict::Pass,
         leak: false,
     },
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::Done,
         money: 0.21,
         seconds: 61,
         verdict: Verdict::Fail,
         leak: true,
     },
-    SeedTrial::Unjudged {
+    SeedTrial::Unscored {
         ending: Ending::Failed,
         money: 0.05,
         seconds: 12,
     },
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::HandedBack,
         money: 0.18,
         seconds: 48,
         verdict: Verdict::Pass,
         leak: false,
     },
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::Done,
         money: 0.39,
         seconds: 88,
         verdict: Verdict::Fail,
         leak: false,
     },
-    SeedTrial::JudgeMadeNone {
+    SeedTrial::ScorerMadeNone {
         money: 0.24,
         seconds: 70,
     },
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::Done,
         money: 0.47,
         seconds: 102,
         verdict: Verdict::Pass,
         leak: false,
     },
-    SeedTrial::Judged {
+    SeedTrial::Scored {
         ending: Ending::Done,
         money: 0.2,
         seconds: 55,
@@ -283,9 +283,9 @@ const TRIALS: [SeedTrial; 8] = [
     },
 ];
 
-/// How a trial of the seed's experiment ended.
+/// How a trial of the seed's benchmark run ended.
 enum SeedTrial {
-    Judged {
+    Scored {
         ending: Ending,
         money: f64,
         seconds: u64,
@@ -293,28 +293,28 @@ enum SeedTrial {
         leak: bool,
     },
     /// Its run neither done nor handed back.
-    Unjudged {
+    Unscored {
         ending: Ending,
         money: f64,
         seconds: u64,
     },
-    /// Its run done, and its judge made no judgement.
-    JudgeMadeNone { money: f64, seconds: u64 },
+    /// Its run done, and its scorer made no score.
+    ScorerMadeNone { money: f64, seconds: u64 },
 }
 
-/// Launches on `board` an experiment the day before the clock starts, under
+/// Launches on `board` a benchmark run the day before the clock starts, under
 /// `as-is` and `terse`, which sets a low effort, twice, and ends each of its
 /// trials as [`TRIALS`] says, twenty minutes after its launch: with passes,
-/// failures, a leak and replays without a judgement. The first replay's
-/// output holds what its run and its judge left, as [`replay_output`] says.
-async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> {
+/// failures, a leak and trials without a score. The first trial's
+/// output holds what its run and its scorer left, as [`trial_output`] says.
+async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
         b"effort = \"low\"\n".to_vec(),
     )]))
     .map_err(|errors| anyhow::anyhow!("the seed's configuration: {errors:?}"))?;
     let launched_at: Timestamp = "2026-03-01T16:00:00Z".parse()?;
-    let launched = experiments
+    let launched = benchmark_runs
         .launch(
             board,
             vec![("terse".parse().map_err(anyhow::Error::msg)?, terse)],
@@ -322,7 +322,7 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
             launched_at,
         )
         .await?;
-    let record = experiments
+    let record = benchmark_runs
         .show(launched.id)
         .await?
         .context("the seed's experiment is kept")?;
@@ -330,30 +330,30 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
     let usd = |money: f64| Usd::new(money).context("a cost is a number of dollars");
     for (key, seeded) in record.trials.keys().zip(&TRIALS) {
         let trial = TrialRef {
-            experiment: launched.id,
+            benchmark_run: launched.id,
             key: *key,
         };
         let (ending, money, seconds) = match *seeded {
-            SeedTrial::Judged {
+            SeedTrial::Scored {
                 ending,
                 money,
                 seconds,
                 ..
             }
-            | SeedTrial::Unjudged {
+            | SeedTrial::Unscored {
                 ending,
                 money,
                 seconds,
             } => (ending, money, seconds),
-            SeedTrial::JudgeMadeNone { money, seconds } => (Ending::Done, money, seconds),
+            SeedTrial::ScorerMadeNone { money, seconds } => (Ending::Done, money, seconds),
         };
-        experiments
-            .step(&trial, TrialChange::ReplayStarts, at)
+        benchmark_runs
+            .step(&trial, TrialChange::RunStarts, at)
             .await?;
-        experiments
+        benchmark_runs
             .step(
                 &trial,
-                TrialChange::ReplayEnds(ReplayFigures {
+                TrialChange::RunEnds(TrialFigures {
                     outcome: OutcomeName::Ended(ending),
                     money: Some(usd(money)?),
                     time: Duration::from_secs(seconds),
@@ -361,52 +361,52 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
                 at,
             )
             .await?;
-        let judged = match *seeded {
-            SeedTrial::Unjudged { .. } => continue,
-            SeedTrial::Judged { verdict, leak, .. } => TrialChange::Judged(JudgementFigures {
+        let scored = match *seeded {
+            SeedTrial::Unscored { .. } => continue,
+            SeedTrial::Scored { verdict, leak, .. } => TrialChange::Scored(ScoreFigures {
                 correctness: verdict,
                 leak,
-                judge_money: Some(usd(0.03)?),
+                scorer_money: Some(usd(0.03)?),
             }),
-            SeedTrial::JudgeMadeNone { .. } => TrialChange::JudgeMakesNone {
+            SeedTrial::ScorerMadeNone { .. } => TrialChange::ScorerMakesNone {
                 reason: "the judge's session ended without a judgement: it timed out".into(),
-                judge_money: Some(usd(0.02)?),
+                scorer_money: Some(usd(0.02)?),
             },
         };
-        experiments
-            .step(&trial, TrialChange::JudgeStarts, at)
+        benchmark_runs
+            .step(&trial, TrialChange::ScorerStarts, at)
             .await?;
-        experiments.step(&trial, judged, at).await?;
+        benchmark_runs.step(&trial, scored, at).await?;
     }
     let first = record
         .trials
         .keys()
         .next()
         .context("the experiment has trials")?;
-    let case = &record.cases[first.case];
-    let case_run = BOARD_CASES
+    let task = &record.tasks[first.task];
+    let task_run = BOARD_TASKS
         .iter()
-        .find(|seeded| seeded.name == case.as_str())
+        .find(|seeded| seeded.name == task.as_str())
         .context("the replay's case is the seed's")?;
-    replay_output(
-        &experiments.output_dir(
+    trial_output(
+        &benchmark_runs.output_dir(
             launched.id,
             &record.configurations[first.configuration],
-            case,
+            task,
             first.repetition,
         ),
-        case_run,
+        task_run,
     )
 }
 
-/// Writes in `output` what the first replay of the seed's experiment left
-/// there as it replayed `case` and its judge judged it: the case it
-/// replays, its run's record and session, its judgement and its judge's
+/// Writes in `output` what the first trial of the seed's benchmark run left
+/// there as it ran `task` and its scorer scored it: the task it
+/// ran, its run's record and session, its score and its scorer's
 /// session.
-fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
-    let run = run_of(case)?;
-    let session = format!("sessions/issue-{}/20260301T160005Z-design", CASES_ISSUE.0);
-    let judge = "judge/20260301T161000Z-judge";
+fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
+    let run = run_of(task)?;
+    let session = format!("sessions/issue-{}/20260301T160005Z-design", TASKS_ISSUE.0);
+    let scorer = "judge/20260301T161000Z-judge";
     let ran = json!({
         "model": null,
         "effort": null,
@@ -415,16 +415,16 @@ fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
     let mut session_entry = json!({"dir": session});
     extend(&mut session_entry, &ran)?;
     let record = json!({
-        "item": CASES_ISSUE.0,
+        "item": TASKS_ISSUE.0,
         "stage": "design",
-        "n": case.n,
+        "n": task.n,
         "started_at": "2026-03-01T16:00:05Z",
         "end": {"at": "2026-03-01T16:09:40Z", "ending": "done"},
         "sessions": [session_entry],
     });
-    let mut judge_session = json!({"record": judge, "cost": {}});
-    extend(&mut judge_session, &ran)?;
-    let judgement = json!({
+    let mut scorer_session = json!({"record": scorer, "cost": {}});
+    extend(&mut scorer_session, &ran)?;
+    let score = json!({
         "correctness": {
             "reasoning": "The board names its columns as the criteria ask, and the tests pass.",
             "verdict": "pass",
@@ -434,7 +434,7 @@ fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
             "found": false,
             "calls": [],
         },
-        "session": judge_session,
+        "session": scorer_session,
         "linewright": env!("CARGO_PKG_VERSION"),
     });
     let transcript = |at: &str, text: &str| -> String {
@@ -448,9 +448,9 @@ fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
         format!("{started}\n{said}\n")
     };
     let files = [
-        (linewright::replay::CASE.to_string(), format!("{run}\n")),
+        (linewright::trial::TASK.to_string(), format!("{run}\n")),
         (
-            format!("runs/items/{}/design-{}.json", CASES_ISSUE.0, case.n),
+            format!("runs/items/{}/design-{}.json", TASKS_ISSUE.0, task.n),
             record.to_string(),
         ),
         (
@@ -465,18 +465,18 @@ fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
             "# Your task\n\nDesign the ticket below.\n".to_string(),
         ),
         (
-            linewright::replay::judge::JUDGEMENT.to_string(),
-            judgement.to_string(),
+            linewright::trial::scorer::SCORE.to_string(),
+            score.to_string(),
         ),
         (
-            format!("{judge}/output.jsonl"),
+            format!("{scorer}/output.jsonl"),
             transcript(
                 "2026-03-01T16:10:00Z",
                 "The replay passes, and it read nothing it should not.",
             ),
         ),
         (
-            format!("{judge}/brief.md"),
+            format!("{scorer}/brief.md"),
             "# Your task\n\nJudge the replay.\n".to_string(),
         ),
     ];
@@ -497,16 +497,16 @@ fn extend(object: &mut Value, more: &Value) -> Result<()> {
     Ok(())
 }
 
-/// The ID of the run `case` is captured from.
-fn run_of(case: &SeedCase) -> Result<RunId> {
-    format!("{}/design-{}", CASES_ISSUE.0, case.n)
+/// The ID of the run `task` is captured from.
+fn run_of(task: &SeedTask) -> Result<RunId> {
+    format!("{}/design-{}", TASKS_ISSUE.0, task.n)
         .parse()
         .map_err(anyhow::Error::msg)
 }
 
-/// Records the run `case` is captured from, started at `start`, with
+/// Records the run `task` is captured from, started at `start`, with
 /// `input`, in the database of `work_dir` as a run keeps it.
-async fn record_run(work_dir: &Path, case: &SeedCase, start: Timestamp, input: &str) -> Result<()> {
+async fn record_run(work_dir: &Path, task: &SeedTask, start: Timestamp, input: &str) -> Result<()> {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(work_dir.join("linewright.db"))
         .foreign_keys(true);
@@ -516,11 +516,11 @@ async fn record_run(work_dir: &Path, case: &SeedCase, start: Timestamp, input: &
         "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
          VALUES ('item', ?, 'design', ?, ?, ?, ?) RETURNING id",
     )
-    .bind(i64::try_from(CASES_ISSUE.0)?)
-    .bind(case.n)
+    .bind(i64::try_from(TASKS_ISSUE.0)?)
+    .bind(task.n)
     .bind(text(start))
     .bind(text(start + chrono::TimeDelta::minutes(20)))
-    .bind(case.ending)
+    .bind(task.ending)
     .fetch_one(&pool)
     .await?;
     sqlx::query("INSERT INTO run_inputs (run, input) VALUES (?, ?)")
@@ -532,7 +532,7 @@ async fn record_run(work_dir: &Path, case: &SeedCase, start: Timestamp, input: &
     Ok(())
 }
 
-/// The design run of [`CASES_ISSUE`] whose session ended while its Bash
+/// The design run of [`TASKS_ISSUE`] whose session ended while its Bash
 /// call ran, so that its transcript shows the call interrupted.
 const INTERRUPTED_RUN: u32 = 3;
 
@@ -544,7 +544,7 @@ const INTERRUPTED_RUN: u32 = 3;
 ///
 /// When the database or the session's output cannot be written.
 pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
-    let dir = format!("sessions/issue-{}/20260301T180000Z-design", CASES_ISSUE.0);
+    let dir = format!("sessions/issue-{}/20260301T180000Z-design", TASKS_ISSUE.0);
     let call = json!({
         "type": "assistant",
         "timestamp": "2026-03-01T18:00:20Z",
@@ -570,7 +570,7 @@ pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
          VALUES ('item', ?, 'design', ?, '2026-03-01T18:00:00Z', '2026-03-01T18:05:00Z', 'failed')
          RETURNING id",
     )
-    .bind(i64::try_from(CASES_ISSUE.0)?)
+    .bind(i64::try_from(TASKS_ISSUE.0)?)
     .bind(INTERRUPTED_RUN)
     .fetch_one(&pool)
     .await?;
@@ -590,7 +590,7 @@ pub fn scenario() -> Scenario {
             ("triage".into(), triaging()),
             ("design".into(), designing()),
             ("implement".into(), implementing()),
-            ("judge".into(), judging()),
+            ("judge".into(), scoring()),
         ]),
         ..Scenario::default()
     }
@@ -678,7 +678,7 @@ fn implementing() -> Vec<Step> {
     steps
 }
 
-fn judging() -> Vec<Step> {
+fn scoring() -> Vec<Step> {
     let mut steps = session(
         BRISK_MILLIS,
         vec![

@@ -79,7 +79,7 @@ where
         runs: Runs::new(database.clone()),
         ends: ends.clone(),
         environment: links.environment,
-        experiments: links.experiments,
+        benchmark_runs: links.benchmark_runs,
         exiting: winding_up.exiting(),
     };
     let ui = match &config.ui {
@@ -178,7 +178,7 @@ pub struct Starting {
     briefs: OperatorBriefs,
     sessions: SessionCredentials,
     environments: Environments,
-    replay_environments: Environments,
+    trial_environments: Environments,
 }
 
 impl Starting {
@@ -199,13 +199,13 @@ impl Starting {
         Starting::with_gh(config, program, token, false).await
     }
 
-    /// [`Starting::new`], for a replay's sessions, whose `gh` reaches GitHub
+    /// [`Starting::new`], for a trial's sessions, whose `gh` reaches GitHub
     /// through a gate.
     ///
     /// # Errors
     ///
     /// As [`Starting::new`].
-    pub async fn replaying(
+    pub async fn running(
         config: &Config,
         program: &str,
         token: impl FnOnce() -> Result<SessionToken>,
@@ -225,14 +225,14 @@ impl Starting {
         require_tool(program).await?;
         let sessions = SessionCredentials::new(token()?, &config.secrets)?;
         let environments = environments(config, gh_through_gate);
-        let replay_environments = split_environments(config, true).environments;
+        let trial_environments = split_environments(config, true).environments;
         Ok(Starting {
             program: program.into(),
             bash,
             briefs,
             sessions,
             environments,
-            replay_environments,
+            trial_environments,
         })
     }
 
@@ -264,7 +264,7 @@ impl Starting {
             spec_lookback: config.spec_lookback,
             done_window: config.done_window,
             max_runs: config.max_runs,
-            max_replays: config.max_replays,
+            max_trials: config.max_trials,
             ci_grace: config.ci_grace,
             ci_timeout: config.ci_timeout,
             ci_attempts: config.ci_attempts,
@@ -272,7 +272,7 @@ impl Starting {
             bash: self.bash,
             work: config.work.clone(),
             environments: self.environments,
-            replay_environments: self.replay_environments,
+            trial_environments: self.trial_environments,
             merge_method: config.merge_method,
             auto_merge: config.auto_merge,
             require_label: config.require_label.clone(),

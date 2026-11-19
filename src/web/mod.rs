@@ -2,11 +2,13 @@
 //! on the server, each kept up by one event stream of the regions that changed.
 
 mod automations_page;
+mod benchmark_page;
+mod benchmark_run_page;
+mod benchmarks_page;
 mod board_page;
 mod capture;
 mod cards;
 mod confirmation;
-mod experiment_page;
 mod facts;
 mod html;
 mod item_page;
@@ -18,8 +20,6 @@ mod runs_page;
 mod runs_table;
 mod server_page;
 mod shell;
-mod suite_page;
-mod suites_page;
 mod table;
 mod write;
 
@@ -47,7 +47,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{Sources, Unanswered};
-use crate::benchmarks::{ExperimentId, Experiments, SuiteName, Suites};
+use crate::benchmarks::{BenchmarkName, BenchmarkRunId, BenchmarkRuns, Benchmarks};
 use crate::domain::Number;
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
@@ -116,29 +116,38 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         )
         .route(
             "/suites",
-            get(suites_page::suites_page).post(suites_page::make_suite),
+            get(benchmarks_page::benchmarks_page).post(benchmarks_page::make_benchmark),
         )
-        .route("/events/suites", get(suites_page::suites_events))
+        .route("/events/suites", get(benchmarks_page::benchmarks_events))
         .route(
             "/suites/{name}",
-            get(suite_page::suite_page).post(suite_page::add_case),
+            get(benchmark_page::benchmark_page).post(benchmark_page::add_task),
         )
-        .route("/suites/{name}/remove-case", post(suite_page::remove_case))
+        .route(
+            "/suites/{name}/remove-case",
+            post(benchmark_page::remove_task),
+        )
         .route("/suites/{name}/launch", post(launch::launch))
-        .route("/events/suites/{name}", get(suite_page::suite_events))
-        .route("/experiments/{id}", get(experiment_page::experiment_page))
+        .route(
+            "/events/suites/{name}",
+            get(benchmark_page::benchmark_events),
+        )
+        .route(
+            "/experiments/{id}",
+            get(benchmark_run_page::benchmark_run_page),
+        )
         .route(
             "/events/experiments/{id}",
-            get(experiment_page::experiment_events),
+            get(benchmark_run_page::benchmark_run_events),
         )
-        .route("/experiments/{id}/cancel", post(experiment_page::cancel))
+        .route("/experiments/{id}/cancel", post(benchmark_run_page::cancel))
         .route(
             "/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
-            get(experiment_page::replay_page),
+            get(benchmark_run_page::trial_page),
         )
         .route(
             "/events/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
-            get(experiment_page::replay_events),
+            get(benchmark_run_page::trial_events),
         )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
@@ -331,14 +340,14 @@ struct ErrorPage {
 
 /// What a link named that does not exist, as the screens name it
 /// (`docs/specs/design_system.md`, Screen states, Nothing there). A run,
-/// suite or experiment is named as the path gave it, whether or not it
+/// benchmark or benchmark run is named as the path gave it, whether or not it
 /// parses.
 #[derive(Clone)]
 enum Missing {
     Item(Number),
     Run(String),
-    Suite(String),
-    Experiment(String),
+    Benchmark(String),
+    BenchmarkRun(String),
 }
 
 impl std::fmt::Display for Missing {
@@ -346,8 +355,8 @@ impl std::fmt::Display for Missing {
         match self {
             Missing::Item(number) => write!(f, "No such item {number}"),
             Missing::Run(id) => write!(f, "No such run {id}"),
-            Missing::Suite(name) => write!(f, "No such suite {name}"),
-            Missing::Experiment(id) => write!(f, "No such experiment {id}"),
+            Missing::Benchmark(name) => write!(f, "No such suite {name}"),
+            Missing::BenchmarkRun(id) => write!(f, "No such experiment {id}"),
         }
     }
 }
@@ -388,23 +397,23 @@ fn run_path(id: &RunId) -> String {
     format!("/runs/{id}")
 }
 
-/// The suites of `serve`'s work directory.
-fn suites(sources: &Sources) -> Suites {
-    Suites::new(sources.runs.database().clone())
+/// The benchmarks of `serve`'s work directory.
+fn benchmarks(sources: &Sources) -> Benchmarks {
+    Benchmarks::new(sources.runs.database().clone())
 }
 
-/// The experiments of `serve`'s work directory.
-fn experiments(sources: &Sources) -> Experiments {
-    Experiments::new(sources.runs.database().clone())
+/// The benchmark runs of `serve`'s work directory.
+fn benchmark_runs(sources: &Sources) -> BenchmarkRuns {
+    BenchmarkRuns::new(sources.runs.database().clone())
 }
 
-/// The path of experiment `id`'s page.
-fn experiment_path(id: ExperimentId) -> String {
+/// The path of benchmark run `id`'s page.
+fn benchmark_run_path(id: BenchmarkRunId) -> String {
     format!("/experiments/{id}")
 }
 
-/// The path of suite `name`'s page.
-fn suite_path(name: &SuiteName) -> String {
+/// The path of benchmark `name`'s page.
+fn benchmark_path(name: &BenchmarkName) -> String {
     format!("/suites/{name}")
 }
 

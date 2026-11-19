@@ -59,7 +59,7 @@ pub(crate) struct Shell {
     pub settings: RepoSettings,
     pub work_dir: PathBuf,
     /// Where the ticket branches its runs push are recorded: nowhere in a
-    /// replay, whose pushes go to a store of its own.
+    /// trial, whose pushes go to a store of its own.
     pub pushed_branches: Option<PushedBranches>,
     /// Private, so that [`Shell::new`] is the only way a `Shell` is built.
     _by_new: (),

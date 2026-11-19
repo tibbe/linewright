@@ -8,9 +8,9 @@ use axum::response::{IntoResponse, Response};
 
 use super::capture::NotCaptured;
 use super::render;
-use crate::benchmarks::{ConfigurationName, LaunchRefusal, MakeError, SuiteName};
-use crate::case::{CaptureError, CaseName};
+use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal, MakeError};
 use crate::repo_files::FileError;
+use crate::task::{CaptureError, TaskName};
 
 /// A dialog's form as drawn: the fields as the reader left them, and why
 /// Linewright refused, if it did.
@@ -68,43 +68,43 @@ impl<Form: Template> IntoResponse for Answer<Form> {
 }
 
 /// The refusal of a name not in the form of a name
-/// (`docs/specs/benchmarks.md`, New suite, Refusals).
+/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
 pub(super) const NOT_A_NAME: &str =
     "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a digit.";
 
-/// The refusal of a suite that was not made, or why making it failed.
-pub(super) fn suite_not_made(error: &MakeError) -> String {
+/// The refusal of a benchmark that was not made, or why making it failed.
+pub(super) fn benchmark_not_made(error: &MakeError) -> String {
     match error {
-        MakeError::Taken(name) => suite_taken(name),
+        MakeError::Taken(name) => benchmark_taken(name),
         MakeError::Failed(e) => format!("{e:#}"),
     }
 }
 
-/// The refusal of a suite named as one that exists
-/// (`docs/specs/benchmarks.md`, New suite, Refusals).
-fn suite_taken(name: &SuiteName) -> String {
+/// The refusal of a benchmark named as one that exists
+/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
+fn benchmark_taken(name: &BenchmarkName) -> String {
     format!("A suite named {name} already exists.")
 }
 
-/// The refusal of a case that was not made (`docs/specs/benchmarks.md`, New
-/// case, Refusals), or why making it was refused otherwise or failed.
-pub(super) fn case_not_made(not: &NotCaptured) -> String {
+/// The refusal of a task that was not made (`docs/specs/benchmarks.md`, New
+/// task, Refusals), or why making it was refused otherwise or failed.
+pub(super) fn task_not_made(not: &NotCaptured) -> String {
     match not {
         NotCaptured::Name(_) => NOT_A_NAME.into(),
         NotCaptured::NoCriteria => CRITERIA_NEEDED.into(),
         NotCaptured::Capture {
             error: CaptureError::Taken(name),
             ..
-        } => case_taken(name),
+        } => task_taken(name),
         NotCaptured::NotPolled | NotCaptured::Capture { .. } => not.why().into(),
     }
 }
 
-/// The refusal of a case without criteria.
+/// The refusal of a task without criteria.
 const CRITERIA_NEEDED: &str = "A case needs criteria.";
 
-/// The refusal of a case named as one that exists.
-fn case_taken(name: &CaseName) -> String {
+/// The refusal of a task named as one that exists.
+fn task_taken(name: &TaskName) -> String {
     format!("A case named {name} already exists.")
 }
 
@@ -113,7 +113,7 @@ pub(super) const REPETITIONS: &str = "The repetitions are a whole number, 1 or m
 
 /// The refusal of a configuration with no name, the configuration `added`
 /// after `as-is`, counting from 0. It is named by its place in the New
-/// experiment dialog, where `as-is` is 1st.
+/// benchmark run dialog, where `as-is` is 1st.
 pub(super) fn configuration_unnamed(added: usize) -> String {
     const AFTER_AS_IS: usize = 2;
     format!(
@@ -152,12 +152,12 @@ pub(super) fn configuration_unusable(name: &ConfigurationName, errors: &[FileErr
     )
 }
 
-/// The status and the refusal of an experiment that was not launched, or
+/// The status and the refusal of a benchmark run that was not launched, or
 /// why launching it failed.
 pub(super) fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
     match refusal {
-        LaunchRefusal::NoSuchSuite(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
-        LaunchRefusal::NoCases(name) => (
+        LaunchRefusal::NoSuchBenchmark(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
+        LaunchRefusal::NoTasks(name) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("The suite {name} has no cases."),
         ),

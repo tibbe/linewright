@@ -24,7 +24,7 @@ pub(super) enum Area {
     Board,
     Runs,
     Automations,
-    Suites,
+    Benchmarks,
     Server,
 }
 
@@ -33,7 +33,7 @@ impl Area {
         Area::Board,
         Area::Runs,
         Area::Automations,
-        Area::Suites,
+        Area::Benchmarks,
         Area::Server,
     ];
 
@@ -43,7 +43,7 @@ impl Area {
             Area::Board => "Board",
             Area::Runs => "Runs",
             Area::Automations => "Automations",
-            Area::Suites => "Suites",
+            Area::Benchmarks => "Suites",
             Area::Server => "Server",
         }
     }
@@ -54,7 +54,7 @@ impl Area {
             Area::Board => "/",
             Area::Runs => "/runs",
             Area::Automations => "/automations",
-            Area::Suites => "/suites",
+            Area::Benchmarks => "/suites",
             Area::Server => "/server",
         }
     }

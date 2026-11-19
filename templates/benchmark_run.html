@@ -1,0 +1,26 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<div id="experiment-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
+{%- include "benchmark_run_heading.html" %}
+<section id="experiment-chart" class="experiment-chart {% call ui::card_look() %}{% endcall %} mb-6 max-w-2xl p-4">
+<label class="select select-sm w-fit"><span class="label">Pass rate vs</span><select>
+{%- for plot in benchmark_run.chart %}
+<option value="{{ plot.axis.name() }}"{% if loop.first %} selected{% endif %}>{{ plot.axis.label() }}</option>
+{%- endfor %}
+</select></label>
+{%- include "benchmark_run_chart.html" %}
+</section>
+<div class="mb-6">
+{%- call(part) ui::table_card("Configurations") %}
+{%- if part == crate::web::table::Part::Table %}
+{%- include "benchmark_run_configurations.html" %}
+{%- endif %}
+{%- endcall %}
+</div>
+{%- call(part) ui::table_card("Passes by case") %}
+{%- if part == crate::web::table::Part::Table %}
+{%- include "benchmark_run_grid.html" %}
+{%- endif %}
+{%- endcall %}
+{%- endblock -%}

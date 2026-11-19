@@ -406,7 +406,7 @@ mod tests {
     }
 
     /// Whether the tests run as root, for whom no permission bits forbid
-    /// anything, so a case about them shows nothing.
+    /// anything, so a task about them shows nothing.
     fn running_as_root() -> bool {
         rustix::process::geteuid().is_root()
     }

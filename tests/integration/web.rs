@@ -1,10 +1,11 @@
 use crate::common;
 
 mod automations;
+mod benchmark_runs;
+mod benchmarks;
 mod board;
 mod capture;
 mod environment;
-mod experiments;
 mod frame;
 mod item;
 mod run;
@@ -12,7 +13,6 @@ mod runs;
 mod script;
 mod serving;
 mod shell;
-mod suites;
 
 use std::time::Duration;
 
@@ -74,7 +74,7 @@ fn sources(
             runs: runs.await,
             ends: linewright::ending::Ends::new(),
             environment: linewright::api::EnvironmentLink::default(),
-            experiments: linewright::api::ExperimentsLink::default(),
+            benchmark_runs: linewright::api::BenchmarkRunsLink::default(),
             exiting: linewright::winding_up::WindingUp::default().exiting(),
         }
     }
@@ -354,8 +354,9 @@ trait Routed {
     }
 }
 
-/// The form of a name of a suite, a case or a configuration, as the `pattern`
-/// of the inputs that take one (`docs/specs/benchmarks.md`, Capturing).
+/// The form of a name of a benchmark, a task or a configuration, as the
+/// `pattern` of the inputs that take one (`docs/specs/benchmarks.md`,
+/// Capturing).
 const NAME_PATTERN: &str = r"[a-z0-9][a-z0-9\-]*";
 
 /// A web UI's own page's request.
@@ -421,9 +422,9 @@ fn said(html: &Html) -> String {
     text(alerts[0])
 }
 
-/// The cases under `pages`' work directory, by name.
+/// The tasks under `pages`' work directory, by name.
 #[track_caller]
-fn cases(pages: &Pages) -> Vec<String> {
+fn tasks(pages: &Pages) -> Vec<String> {
     match std::fs::read_dir(pages.path("cases")) {
         Ok(entries) => {
             let mut names: Vec<String> = entries

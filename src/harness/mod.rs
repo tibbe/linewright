@@ -13,8 +13,8 @@ use crate::cost::TurnSpend;
 use crate::domain::Timestamp;
 use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
-use crate::replay::GhConfigDir;
 use crate::session_env::Given;
+use crate::trial::GhConfigDir;
 use crate::work_settings::Effort;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,8 +24,8 @@ pub enum Purpose {
         kind: WorkKind,
     },
     Automation(AutomationName),
-    /// The judge of a replay (`docs/specs/benchmarks.md`, Judging).
-    Judge,
+    /// The scorer of a trial (`docs/specs/benchmarks.md`, Scoring).
+    Scorer,
 }
 
 /// How a session's `gh` reaches GitHub.
@@ -33,7 +33,7 @@ pub enum Purpose {
 pub enum GhReach {
     /// As it is configured on the host.
     Direct,
-    /// Through the configuration a replay's gate serves
+    /// Through the configuration a trial's gate serves
     /// (`docs/specs/benchmarks.md`, The repository on GitHub).
     Through(GhConfigDir),
 }

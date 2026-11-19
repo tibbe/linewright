@@ -181,7 +181,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         spec_lookback: TimeDelta::days(7),
         done_window: TimeDelta::days(7),
         max_runs: 4,
-        max_replays: 1,
+        max_trials: 1,
         ci_grace: TimeDelta::minutes(5),
         ci_timeout: TimeDelta::hours(6),
         ci_attempts: 2,
@@ -195,7 +195,7 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
             ..WorkSettings::default()
         },
         environments: Environments::default(),
-        replay_environments: Environments::default(),
+        trial_environments: Environments::default(),
         merge_method: None,
         auto_merge: false,
         require_label: None,
@@ -776,7 +776,7 @@ pub struct Serving {
     pub served: tokio::sync::watch::Receiver<Option<Served>>,
     pub polling: tokio::sync::watch::Receiver<Option<Polling>>,
     pub environment: linewright::api::EnvironmentLink,
-    pub experiments: linewright::api::ExperimentsLink,
+    pub benchmark_runs: linewright::api::BenchmarkRunsLink,
 }
 
 impl Serving {
@@ -800,7 +800,7 @@ impl Serving {
             served: links.served,
             polling: links.polling,
             environment: links.environment,
-            experiments: links.experiments,
+            benchmark_runs: links.benchmark_runs,
         }
     }
 

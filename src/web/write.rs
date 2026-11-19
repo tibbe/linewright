@@ -1,5 +1,5 @@
-//! The web UI's writes: capturing a run, making a suite, removing a case
-//! from one, and launching and cancelling an experiment. Each is refused
+//! The web UI's writes: capturing a run, making a benchmark, removing a task
+//! from one, and launching and cancelling a benchmark run. Each is refused
 //! unless its request came from the web UI's own pages, and answered with
 //! what the page says of it.
 
@@ -13,8 +13,8 @@ use super::html;
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Write {
     Capture,
-    MakeSuite,
-    RemoveCase,
+    MakeBenchmark,
+    RemoveTask,
     Launch,
     Cancel,
 }
@@ -24,8 +24,8 @@ impl Write {
     fn not_done(self) -> &'static str {
         match self {
             Write::Capture => "Not captured",
-            Write::MakeSuite => "Not made",
-            Write::RemoveCase => "Not removed",
+            Write::MakeBenchmark => "Not made",
+            Write::RemoveTask => "Not removed",
             Write::Launch => "Not launched",
             Write::Cancel => "Not cancelled",
         }
@@ -35,8 +35,8 @@ impl Write {
     fn noun(self) -> &'static str {
         match self {
             Write::Capture => "a capture",
-            Write::MakeSuite => "a new suite",
-            Write::RemoveCase => "a case's removal",
+            Write::MakeBenchmark => "a new suite",
+            Write::RemoveTask => "a case's removal",
             Write::Launch => "a launch",
             Write::Cancel => "a cancel",
         }

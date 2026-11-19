@@ -1,0 +1,30 @@
+<div id="suites">
+{%- match benchmarks %}
+{%- when BenchmarksShown::Table(rows) %}
+{%- if rows.is_empty() %}
+<p class="px-4 pb-4">No suites</p>
+{%- else %}
+<table class="table">
+<thead><tr>{% for column in BenchmarksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in rows %}
+<tr>
+{%- for column in BenchmarksColumn::ALL %}
+{%- match column %}
+{%- when BenchmarksColumn::Name %}
+<th class="{{ column.align() }}"><a class="link link-hover" href="{{ row.href }}">{{ row.name }}</a></th>
+{%- when BenchmarksColumn::Stage %}
+<td class="{{ column.align() }}">{{ row.stage }}</td>
+{%- when BenchmarksColumn::LastBenchmarkRun %}
+<td class="{{ column.align() }}">{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.launched }}</a>{% endif %}</td>
+{%- endmatch %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+{%- when BenchmarksShown::Unlisted(error) %}
+<p class="px-4 pb-4">{{ error }}</p>
+{%- endmatch %}
+</div>

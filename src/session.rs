@@ -334,14 +334,14 @@ impl Workspace {
 /// scratch directory and its brief's plugin.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Beside {
-    /// A judge's copy of the replay it judges.
-    Replay,
+    /// A scorer's copy of the trial it scores.
+    Trial,
 }
 
 impl Beside {
     fn name(self) -> &'static str {
         match self {
-            Beside::Replay => "replay",
+            Beside::Trial => "replay",
         }
     }
 }
@@ -379,7 +379,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
         Purpose::Automation(name) => format!("automation-{name}"),
-        Purpose::Judge => "judge".into(),
+        Purpose::Scorer => "judge".into(),
     }
 }
 
@@ -395,7 +395,7 @@ pub(crate) fn new_record_dir(
     let kind = match purpose {
         Purpose::Work { kind, .. } => kind.name(),
         Purpose::Automation(_) => "automation",
-        Purpose::Judge => "judge",
+        Purpose::Scorer => "judge",
     };
     let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
     for n in 1.. {

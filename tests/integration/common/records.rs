@@ -309,9 +309,13 @@ pub fn session_events(
     }
 }
 
-/// Keeps the suite `name` of `stage` in the database of `work_dir`.
+/// Keeps the benchmark `name` of `stage` in the database of `work_dir`.
 #[track_caller]
-pub fn keep_suite(work_dir: &Path, name: &str, stage: &str) -> impl Future<Output = ()> + use<> {
+pub fn keep_benchmark(
+    work_dir: &Path,
+    name: &str,
+    stage: &str,
+) -> impl Future<Output = ()> + use<> {
     let caller = Location::caller();
     let pool = back_door(work_dir);
     let (name, stage) = (name.to_string(), stage.to_string());
@@ -327,19 +331,19 @@ pub fn keep_suite(work_dir: &Path, name: &str, stage: &str) -> impl Future<Outpu
     }
 }
 
-/// Keeps the case `name` of the suite `suite`, captured from `run`, in the
-/// database of `work_dir`, without its directory, last in the suite's order
-/// as a capture keeps it.
+/// Keeps the task `name` of the benchmark `benchmark`, captured from `run`, in
+/// the database of `work_dir`, without its directory, last in the benchmark's
+/// order as a capture keeps it.
 #[track_caller]
-pub fn keep_case_row(
+pub fn keep_task_row(
     work_dir: &Path,
-    suite: &str,
+    benchmark: &str,
     name: &str,
     run: &str,
 ) -> impl Future<Output = ()> + use<> {
     let caller = Location::caller();
     let pool = back_door(work_dir);
-    let (suite, name, run) = (suite.to_string(), name.to_string(), run.to_string());
+    let (benchmark, name, run) = (benchmark.to_string(), name.to_string(), run.to_string());
     async move {
         let pool = pool.await;
         sqlx::query(
@@ -347,7 +351,7 @@ pub fn keep_case_row(
                  (SELECT COALESCE(MAX(seq), 0) + 1 FROM cases WHERE suite = ?2))",
         )
         .bind(name)
-        .bind(suite)
+        .bind(benchmark)
         .bind(run)
         .execute(&pool)
         .await
@@ -356,12 +360,12 @@ pub fn keep_case_row(
     }
 }
 
-/// Keeps the case `name` of the suite `suite`, captured from `run`, in the
-/// database of `work_dir`, with its directory holding `criteria`.
+/// Keeps the task `name` of the benchmark `benchmark`, captured from `run`, in
+/// the database of `work_dir`, with its directory holding `criteria`.
 #[track_caller]
-pub fn keep_case(
+pub fn keep_task(
     work_dir: &Path,
-    suite: &str,
+    benchmark: &str,
     name: &str,
     run: &str,
     criteria: &str,
@@ -369,10 +373,10 @@ pub fn keep_case(
     let dir = work_dir.join("cases").join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("criteria.md"), criteria).unwrap();
-    keep_case_row(work_dir, suite, name, run)
+    keep_task_row(work_dir, benchmark, name, run)
 }
 
-/// Sets when the experiment `id` of `work_dir` was launched, through the
+/// Sets when the benchmark run `id` of `work_dir` was launched, through the
 /// back door, so that what shows it is known.
 #[track_caller]
 pub fn launched_at(work_dir: &Path, id: i64, at: &str) -> impl Future<Output = ()> + use<> {
@@ -391,14 +395,14 @@ pub fn launched_at(work_dir: &Path, id: i64, at: &str) -> impl Future<Output = (
     }
 }
 
-/// Sets the trial `(repetition, case, configuration)` of the experiment
+/// Sets the trial `(repetition, task, configuration)` of the benchmark run
 /// `id` of `work_dir` to the columns `set`, through the back door, as a
 /// run of it under `serve` would leave it.
 #[track_caller]
 pub fn trial(
     work_dir: &Path,
     id: i64,
-    (repetition, case, configuration): (i64, i64, i64),
+    (repetition, task, configuration): (i64, i64, i64),
     set: &'static str,
 ) -> impl Future<Output = ()> + use<> {
     let caller = Location::caller();
@@ -411,7 +415,7 @@ pub fn trial(
         let updated = sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(id)
             .bind(repetition)
-            .bind(case)
+            .bind(task)
             .bind(configuration)
             .execute(&pool)
             .await

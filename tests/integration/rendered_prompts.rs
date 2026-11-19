@@ -9,11 +9,11 @@ use std::borrow::Cow;
 use chrono::{DateTime, Utc};
 
 use crate::common;
-use linewright::case::Case;
 use linewright::domain::*;
 use linewright::git::{BranchStart, Conflict, UnfinishedCommits};
 use linewright::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
-use linewright::replay::judge::{ReplayCopy, Replayed};
+use linewright::task::Task;
+use linewright::trial::scorer::{ScoreableTrial, TrialCopy};
 use linewright::working_pull::Feedback;
 
 fn created() -> Timestamp {
@@ -357,17 +357,17 @@ fn the_history_is_a_series_for_merge_and_rebase_and_on_top_for_squash() {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
+async fn the_scorer_is_sent_its_prompt_filled_with_no_attachments_contract() {
     let under = tempfile::tempdir().unwrap();
-    let (case, out) = crate::judge::triage_output(under.path(), "done").await;
-    let case = Case::open(&case).await.unwrap();
-    let replayed = Replayed::open(&out, &case).await.unwrap();
+    let (task, out) = crate::scorer::triage_output(under.path(), "done").await;
+    let task = Task::open(&task).await.unwrap();
+    let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
     let into = under.path().join("replay");
     std::fs::create_dir(&into).unwrap();
-    let copy = ReplayCopy::make(&replayed, &into).await.unwrap();
+    let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
     let name = repo_name();
-    let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
-    let prompt = prompts::judge(
+    let criteria = linewright::task::Criteria::parse("It counts the widgets.\n").unwrap();
+    let prompt = prompts::scorer(
         &common::marker_briefs().templates,
         &repo(&name),
         linewright::reconcile::WorkKind::Implement,
@@ -380,14 +380,14 @@ async fn the_judge_is_sent_its_prompt_filled_with_no_attachments_contract() {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
+async fn an_operators_scorer_prompt_is_the_one_the_scorer_is_sent() {
     let under = tempfile::tempdir().unwrap();
-    let (case, out) = crate::judge::triage_output(under.path(), "done").await;
-    let case = Case::open(&case).await.unwrap();
-    let replayed = Replayed::open(&out, &case).await.unwrap();
+    let (task, out) = crate::scorer::triage_output(under.path(), "done").await;
+    let task = Task::open(&task).await.unwrap();
+    let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
     let into = under.path().join("replay");
     std::fs::create_dir(&into).unwrap();
-    let copy = ReplayCopy::make(&replayed, &into).await.unwrap();
+    let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
     let operators = tempfile::tempdir().unwrap();
     std::fs::create_dir(operators.path().join("prompts")).unwrap();
     std::fs::write(
@@ -400,9 +400,9 @@ async fn an_operators_judge_prompt_is_the_one_the_judge_is_sent() {
             .unwrap()
             .briefs();
     let name = repo_name();
-    let criteria = linewright::case::Criteria::parse("It counts the widgets.\n").unwrap();
+    let criteria = linewright::task::Criteria::parse("It counts the widgets.\n").unwrap();
 
-    let prompt = prompts::judge(
+    let prompt = prompts::scorer(
         &briefs.templates,
         &repo(&name),
         linewright::reconcile::WorkKind::Implement,

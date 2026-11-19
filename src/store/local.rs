@@ -14,7 +14,6 @@ use super::{
     Property, PushError, PushMode, RecordedItem, RecordedProperties, Resource, Store, holds,
     read_openings,
 };
-use crate::case::{Case, CaseItem, CaseItemKind, CasePull, CasePullState, IssueState};
 use crate::clock::Clock;
 use crate::domain::{
     Assignment, BranchIssue, Check, CheckFailure, CheckLog, CheckState, ClosedItem, ClosedKind,
@@ -26,6 +25,7 @@ use crate::domain::{
     pull_events,
 };
 use crate::git::{self, Merged};
+use crate::task::{IssueState, Task, TaskItem, TaskItemKind, TaskPull, TaskPullState};
 
 mod history;
 
@@ -286,18 +286,18 @@ impl LocalStore {
         LocalStore::init(root, &repository, seed, clock).await
     }
 
-    /// The model of GitHub that the case `case` was captured from: its
+    /// The model of GitHub that the task `task` was captured from: its
     /// repository copied to `repository` as a bare repository; its items
     /// as the records, without the events GitHub keeps of them; its
     /// properties as the repository's; each of Linewright's labels present;
     /// and the next issue or pull request numbered above its items.
-    pub async fn from_case(
+    pub async fn from_task(
         root: &Path,
         repository: &Path,
-        case: &Case,
+        task: &Task,
         clock: Arc<dyn Clock>,
     ) -> Result<LocalStore> {
-        let properties = case.properties();
+        let properties = task.properties();
         let settings = &properties.settings;
         let seed = Seed {
             repo: settings.repo.clone(),
@@ -312,7 +312,7 @@ impl LocalStore {
             allowed_merge_methods: settings.allowed_merge_methods.clone(),
         };
         let store = LocalStore::init(root, repository, seed, clock).await?;
-        let case_repository = url(case.repository())?;
+        let task_repository = url(task.repository())?;
         git::git(
             &store.repository,
             &[
@@ -320,13 +320,13 @@ impl LocalStore {
                 "--quiet",
                 "--no-tags",
                 "--no-write-fetch-head",
-                case_repository,
+                task_repository,
                 "refs/heads/*:refs/heads/*",
             ],
         )
         .await
         .context("copying the case's repository")?;
-        store.state().seed(case.items());
+        store.state().seed(task.items());
         Ok(store)
     }
 
@@ -1345,7 +1345,7 @@ impl State {
 
     /// Holds `items` as GitHub holds them, every one of Linewright's
     /// labels, and the next number above the items'.
-    fn seed(&mut self, items: &[CaseItem]) {
+    fn seed(&mut self, items: &[TaskItem]) {
         for label in label::ALL {
             self.labels
                 .insert(label.name.to_string(), Some(label.description.to_string()));
@@ -1357,7 +1357,7 @@ impl State {
         }
         for item in items {
             match &item.kind {
-                CaseItemKind::Issue(state) => {
+                TaskItemKind::Issue(state) => {
                     let record = IssueRecord {
                         issue: Issue {
                             number: item.number,
@@ -1381,7 +1381,7 @@ impl State {
                         blocked_by: item.blocked_by.clone(),
                         sub_issues: items
                             .iter()
-                            .filter(|child| matches!(child.kind, CaseItemKind::Issue(_)))
+                            .filter(|child| matches!(child.kind, TaskItemKind::Issue(_)))
                             .filter(|child| child.parent == Some(item.number))
                             .map(|child| Added {
                                 number: child.number,
@@ -1399,11 +1399,11 @@ impl State {
                     };
                     self.issues.insert(item.number, record);
                 }
-                CaseItemKind::Pull(CasePull { base, head, state }) => {
+                TaskItemKind::Pull(TaskPull { base, head, state }) => {
                     let (state, merge) = match state {
-                        CasePullState::Open { draft } => (PullState::Open { draft: *draft }, None),
-                        CasePullState::Closed { at } => (PullState::Closed { at: *at }, None),
-                        CasePullState::Merged { at, merge } => {
+                        TaskPullState::Open { draft } => (PullState::Open { draft: *draft }, None),
+                        TaskPullState::Closed { at } => (PullState::Closed { at: *at }, None),
+                        TaskPullState::Merged { at, merge } => {
                             (PullState::Merged { at: *at }, Some(merge))
                         }
                     };

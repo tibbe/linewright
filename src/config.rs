@@ -7,8 +7,7 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::benchmarks::{ConfigurationName, ExperimentId, Repetitions, SuiteName};
-use crate::case::{CaseName, ReplayStage};
+use crate::benchmarks::{BenchmarkName, BenchmarkRunId, ConfigurationName, Repetitions};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
@@ -19,6 +18,7 @@ use crate::runs::{RepoWorkDir, RunId};
 use crate::secrets;
 use crate::session_env::{PassEnv, SessionEnv, SetEnv};
 use crate::spec_glob::SpecGlob;
+use crate::task::{TaskName, TaskStage};
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
@@ -168,10 +168,10 @@ pub enum Command {
         id: RunId,
         /// Lowercase letters, digits and hyphens, starting with a letter or a
         /// digit.
-        name: CaseName,
+        name: TaskName,
         /// The suite the case goes into: one of the run's stage.
-        #[arg(long)]
-        suite: SuiteName,
+        #[arg(long = "suite", value_name = "SUITE")]
+        benchmark: BenchmarkName,
         /// What a good result is, as `criteria.md` in the case: refused
         /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
@@ -182,8 +182,10 @@ pub enum Command {
     },
     /// Run the stage of the case in the directory CASE on it again, with the
     /// case in place of GitHub, writing what the run did to DIR.
-    Replay {
-        case: PathBuf,
+    #[command(name = "replay")]
+    Trial {
+        #[arg(value_name = "CASE")]
+        task: PathBuf,
         /// The directory of the output: made if missing, and refused unless
         /// empty.
         #[arg(long, value_name = "DIR")]
@@ -196,32 +198,40 @@ pub enum Command {
     },
     /// Judge DIR, the output of a replay of the case in the directory CASE,
     /// against the case's criteria, keeping the judgement in DIR.
-    Judge { case: PathBuf, dir: PathBuf },
+    #[command(name = "judge")]
+    Score {
+        #[arg(value_name = "CASE")]
+        task: PathBuf,
+        dir: PathBuf,
+    },
     /// List the suites, each with its stage and how many cases it holds.
-    Suites {
+    #[command(name = "suites")]
+    Benchmarks {
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Suites: `suite show` shows one, `suite add` makes one, and
     /// `suite remove-case` removes a case from one.
-    Suite {
+    #[command(name = "suite")]
+    Benchmark {
         #[command(subcommand)]
-        command: SuiteCommand,
+        command: BenchmarkCommand,
     },
     /// Experiments: `experiment show` shows one, `experiment launch`
     /// launches one, and `experiment cancel` cancels one.
-    Experiment {
+    #[command(name = "experiment")]
+    BenchmarkRun {
         #[command(subcommand)]
-        command: ExperimentCommand,
+        command: BenchmarkRunCommand,
     },
 }
 
 #[derive(Subcommand, Debug)]
-pub enum ExperimentCommand {
+pub enum BenchmarkRunCommand {
     /// Show the experiment ID: its state, its replays and its results.
     Show {
-        id: ExperimentId,
+        id: BenchmarkRunId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
@@ -229,7 +239,8 @@ pub enum ExperimentCommand {
     /// Launch an experiment on the cases of the suite SUITE, under `as-is`
     /// and each configuration given.
     Launch {
-        suite: SuiteName,
+        #[arg(value_name = "SUITE")]
+        benchmark: BenchmarkName,
         /// A configuration named NAME, of lowercase letters, digits and
         /// hyphens starting with a letter or a digit, laid out in the
         /// directory DIR as a repository's `.linewright/`: its `config.toml`
@@ -245,7 +256,7 @@ pub enum ExperimentCommand {
     },
     /// Cancel the experiment ID.
     Cancel {
-        id: ExperimentId,
+        id: BenchmarkRunId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
@@ -264,11 +275,11 @@ fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), Stri
 }
 
 #[derive(Subcommand, Debug)]
-pub enum SuiteCommand {
+pub enum BenchmarkCommand {
     /// Show the suite NAME: its cases with their criteria, and its
     /// experiments.
     Show {
-        name: SuiteName,
+        name: BenchmarkName,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
@@ -277,17 +288,19 @@ pub enum SuiteCommand {
     Add {
         /// Lowercase letters, digits and hyphens, starting with a letter or a
         /// digit.
-        name: SuiteName,
-        stage: ReplayStage,
+        name: BenchmarkName,
+        stage: TaskStage,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Remove the case CASE from the suite NAME, and with it the case's
     /// directory.
-    RemoveCase {
-        name: SuiteName,
-        case: CaseName,
+    #[command(name = "remove-case")]
+    RemoveTask {
+        name: BenchmarkName,
+        #[arg(value_name = "CASE")]
+        task: TaskName,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
@@ -426,8 +439,8 @@ pub struct Settings {
     pub max_runs: Option<String>,
     /// The ceiling on replays and judges of experiments in flight
     /// [default: 1]
-    #[arg(long, global = true)]
-    pub max_replays: Option<String>,
+    #[arg(long = "max-replays", value_name = "MAX_REPLAYS", global = true)]
+    pub max_trials: Option<String>,
     /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
@@ -530,7 +543,7 @@ pub struct Config {
     pub spec_lookback: TimeDelta,
     pub done_window: TimeDelta,
     pub max_runs: usize,
-    pub max_replays: usize,
+    pub max_trials: usize,
     pub work_dir: PathBuf,
     /// `model`, `effort`, `session-timeout`, `maintenance` and the stages'
     /// tables, and where `session-env` and `session-pass-env` came from.
@@ -561,7 +574,7 @@ impl Settings {
             ("spec-lookback", &self.spec_lookback),
             ("done-window", &self.done_window),
             ("max-runs", &self.max_runs),
-            ("max-replays", &self.max_replays),
+            ("max-replays", &self.max_trials),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("effort", &self.effort),
@@ -1231,7 +1244,7 @@ impl Config {
             spec_lookback: delta("spec-lookback", "7d")?,
             done_window: delta("done-window", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
-            max_replays: number("max-replays", "1")? as usize,
+            max_trials: number("max-replays", "1")? as usize,
             work_dir,
             work,
             briefs: get("briefs").map(PathBuf::from),
@@ -1385,7 +1398,7 @@ fn set(table: &mut StageTable, setting: StageSetting, value: toml::Value) -> Res
 }
 
 /// Sets `setting` in `settings` to `value`, as the repository's file and
-/// a replay's configuration set it.
+/// a trial's configuration set it.
 pub(crate) fn set_session(
     settings: &mut Partial,
     setting: RepositorySetting,
@@ -1479,7 +1492,7 @@ impl RepoSettings {
     }
 }
 
-/// A replay's configuration's `config.toml`, which holds only `model`,
+/// A trial's configuration's `config.toml`, which holds only `model`,
 /// `effort` and `session-timeout` (`docs/specs/benchmarks.md`,
 /// Configurations). An error names the key at fault.
 pub fn configuration_settings(file: &str) -> Result<Partial> {
