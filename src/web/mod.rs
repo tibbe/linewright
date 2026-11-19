@@ -11,6 +11,7 @@ mod facts;
 mod html;
 mod item_page;
 mod launch;
+mod making;
 mod names;
 mod run_page;
 mod runs_page;

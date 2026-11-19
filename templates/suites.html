@@ -1,37 +1,18 @@
 {%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
 {%- block main -%}
-<h1>Suites</h1>
-<details class="make-offer mb-4"><summary class="btn btn-sm">New</summary>
-<form class="make-suite mt-2 flex max-w-xl flex-wrap items-center gap-2" method="post" action="/suites" hx-post="/suites" hx-target="#make-said" hx-swap="innerHTML">
-<label class="input input-sm w-auto"><span class="label">name</span><input class="w-40" name="name" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
-<label class="select select-sm w-auto"><span class="label">stage</span><select name="stage">
-{%- for stage in crate::case::ReplayStage::ALL %}
-<option value="{{ stage }}">{{ stage }}</option>
-{%- endfor %}
-</select></label>
-<button class="btn btn-sm btn-primary" type="submit">Create</button>
-</form>
-<div id="make-said" class="mt-2 max-w-xl" role="status"></div>
-</details>
-{% block suites -%}
-<section id="suites">
-{%- if suites.is_empty() %}
-<p>No suites</p>
-{%- else %}
-<table class="table">
-<thead><tr><th>Suite</th><th>Stage</th><th>Cases</th><th>Last experiment</th></tr></thead>
-<tbody>
-{%- for row in suites %}
-<tr>
-<th><a class="link link-hover" href="{{ row.href }}">{{ row.name }}</a></th>
-<td>{{ row.stage }}</td>
-<td>{{ row.cases }}</td>
-<td>{% if let Some(last) = row.last %}<a class="link link-hover" href="{{ last.href }}">{{ last.said }}</a>{% endif %}</td>
-</tr>
-{%- endfor %}
-</tbody>
-</table>
-{%- endif %}
-</section>
-{%- endblock %}
+{%- call(part) ui::table_card("Suites", filters_stream = "/events/suites", buttons = true) %}
+{%- match part %}
+{%- when crate::web::table::Part::Filters %}
+{%- call ui::filter_input("Name", "name", filters.name, width = "w-40") %}{% endcall %}
+{%- call ui::filter_select("Stage", "stage", "All stages", filters.stages) %}{% endcall %}
+{%- when crate::web::table::Part::Buttons %}
+{%- call ui::new_button("new-suite") %}{% endcall %}
+{%- when crate::web::table::Part::Table %}
+{%- include "suites_table.html" %}
+{%- endmatch %}
+{%- endcall %}
+{%- call ui::new_dialog("new-suite", "/suites") %}
+{%- include "new_suite.html" %}
+{%- endcall %}
 {%- endblock -%}

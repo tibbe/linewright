@@ -4,8 +4,9 @@
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
  * entry while the reader is there, opens and closes fold rows, keeps each
  * fold, fold row and confirmation as the reader opened or closed it through
- * updates, closes a confirmation as it goes ahead, keeps the options of the
- * page's filters up and
+ * updates, closes a confirmation as it goes ahead and a "New" dialog once
+ * its thing is made, starts a "New" dialog's form afresh as it closes,
+ * keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, builds a launch's
  * configurations and counts its replays, and shows the page's tooltip.
@@ -161,8 +162,40 @@
    */
   document.addEventListener("submit", (event) => {
     const form = event.target;
-    if (form.method === "dialog") return;
+    if (form.method === "dialog" || isNewForm(form)) return;
     form.closest?.("dialog")?.close();
+  });
+
+  /**
+   * Whether `form` is a "New" dialog's (docs/specs/design_system.md, Making),
+   * which answers into itself and stays open on a refusal.
+   */
+  const isNewForm = (form) => form.hasAttribute?.("data-new") ?? false;
+
+  /** What each "New" dialog's form holds as it starts, by form. */
+  const blanks = new Map(
+    Array.from(document.querySelectorAll("dialog form[data-new]"), (form) => [form, form.innerHTML]),
+  );
+
+  /** Starts the form of `dialog`, if it is a "New" dialog's, as it starts. */
+  function startAfresh(dialog) {
+    const form = dialog?.querySelector?.("form[data-new]");
+    if (form && blanks.has(form)) form.innerHTML = blanks.get(form);
+  }
+
+  /** Closes a "New" dialog once its thing is made. */
+  document.addEventListener("made", (event) => event.target?.closest?.("dialog")?.close());
+
+  /**
+   * Starts a "New" dialog's form afresh as the dialog closes, however it
+   * closes, and as it opens, after any answer that came once it had closed.
+   * `close` does not bubble:
+   * https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element
+   */
+  document.addEventListener("close", (event) => startAfresh(event.target), true);
+  document.addEventListener("click", (event) => {
+    const opening = event.target?.closest?.("button[command=show-modal]");
+    if (opening) startAfresh(document.getElementById(opening.getAttribute("commandfor")));
   });
 
   /** A fold row's button. */

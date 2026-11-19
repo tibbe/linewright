@@ -2,24 +2,6 @@ use super::*;
 
 use serde_json::json;
 
-/// The filters' names and values, a select's the value of its chosen
-/// option.
-fn filters(html: &Html) -> Vec<(&str, String)> {
-    select(html, "form[data-filters] :is(input, select)")
-        .into_iter()
-        .map(|field| {
-            let value = match field.value().name() {
-                "select" => field
-                    .select(&Selector::parse("option[selected]").unwrap())
-                    .filter_map(|option| option.attr("value"))
-                    .collect(),
-                _ => field.attr("value").unwrap_or_default().to_string(),
-            };
-            (field.attr("name").unwrap(), value)
-        })
-        .collect()
-}
-
 /// #1 and #2, each triaged in a run of its own, #2's the later.
 async fn two_issues_triaged() -> Pages {
     let pages = Pages::of(view(
