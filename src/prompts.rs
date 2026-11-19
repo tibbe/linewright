@@ -272,17 +272,17 @@ values!(AutomationRun: Shared {
     output
 });
 values!(
-    /// What the scorer of a trial is sent, from `judge.md`.
+    /// What the scorer of a trial is sent, from `scorer.md`.
     Scorer: Shared {
         stage,
         criteria,
-        replay,
+        trial,
         output
     }
 );
 values!(
     /// Where the parts of a trial's output are, from
-    /// `parts/replay-output.md`.
+    /// `parts/trial-output.md`.
     TrialOutput {
         outcome,
         sessions,
@@ -544,7 +544,7 @@ templates! {
     fix_ci: FixCi = "prompts/fix-ci.md", FIX_CI, AsWritten;
     update: PullRequest = "prompts/update.md", UPDATE, AsWritten;
     automation: AutomationRun = "prompts/automation.md", AUTOMATIONS, AsWritten;
-    scorer: Scorer = "prompts/judge.md", SCORER, Trimmed;
+    scorer: Scorer = "prompts/scorer.md", SCORER, Trimmed;
     result_error: ResultError = "prompts/follow-ups/result-error.md", Readers::Every, Trimmed;
     loose_ends: LooseEnds = "prompts/follow-ups/loose-ends.md", ATTACHING, Trimmed;
     usage_limit_reset: NoValues = "prompts/follow-ups/usage-limit-reset.md", Readers::Every, Trimmed;
@@ -571,7 +571,7 @@ templates! {
     attachments: Attachments = "parts/attachments.md", ATTACHING, Trimmed;
     attachment_secret: AttachmentSecret = "parts/attachment-secret.md", ATTACHING, Trimmed;
     attachment_refused: AttachmentRefused = "parts/attachment-refused.md", ATTACHING, Trimmed;
-    trial_output: TrialOutput = "parts/replay-output.md", SCORER, Trimmed;
+    trial_output: TrialOutput = "parts/trial-output.md", SCORER, Trimmed;
     result_no_json: NoValues = "parts/result-no-json.md", Readers::Every, Trimmed;
     result_not_json: ResultError = "parts/result-not-json.md", Readers::Every, Trimmed;
     result_schema: SchemaMismatches = "parts/result-schema.md", Readers::Every, Trimmed;
@@ -602,7 +602,7 @@ templates! {
     fix_ci_output: NoValues = "outputs/fix-ci.md", FIX_CI, Trimmed;
     update_output: NoValues = "outputs/update.md", UPDATE, Trimmed;
     automation_output: NoValues = "outputs/automation.md", AUTOMATIONS, Trimmed;
-    scorer_output: NoValues = "outputs/judge.md", SCORER, Trimmed;
+    scorer_output: NoValues = "outputs/scorer.md", SCORER, Trimmed;
 }
 
 /// A file of the brief: its path under `briefs/`, the runs that read it, how
@@ -1144,7 +1144,7 @@ pub fn scorer(
         base: shared(templates, repo),
         stage: stage.name().into(),
         criteria: criteria.as_str().trim_end().into(),
-        replay: templates.trial_output.fill(&TrialOutput {
+        trial: templates.trial_output.fill(&TrialOutput {
             outcome: trial.outcome().display().to_string(),
             sessions: trial.sessions().display().to_string(),
             writes: trial.writes().display().to_string(),

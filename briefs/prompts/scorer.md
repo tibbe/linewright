@@ -4,7 +4,7 @@ Judge what a replay of the {{stage}} stage made. You must not write to GitHub.
 
 {{facts}}
 
-{{replay}}
+{{trial}}
 
 ## The criteria
 

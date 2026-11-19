@@ -362,7 +362,7 @@ async fn the_scorer_is_sent_its_prompt_filled_with_no_attachments_contract() {
     let (task, out) = crate::scorer::triage_output(under.path(), "done").await;
     let task = Task::open(&task).await.unwrap();
     let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
-    let into = under.path().join("replay");
+    let into = under.path().join("trial");
     std::fs::create_dir(&into).unwrap();
     let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
     let name = repo_name();
@@ -374,9 +374,9 @@ async fn the_scorer_is_sent_its_prompt_filled_with_no_attachments_contract() {
         &criteria,
         &copy,
     )
-    .replace(into.to_str().unwrap(), "/work/replay");
+    .replace(into.to_str().unwrap(), "/work/trial");
 
-    assert_filled_as(&prompt, "judge.txt");
+    assert_filled_as(&prompt, "scorer.txt");
 }
 
 #[test_log::test(tokio::test)]
@@ -385,14 +385,14 @@ async fn an_operators_scorer_prompt_is_the_one_the_scorer_is_sent() {
     let (task, out) = crate::scorer::triage_output(under.path(), "done").await;
     let task = Task::open(&task).await.unwrap();
     let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
-    let into = under.path().join("replay");
+    let into = under.path().join("trial");
     std::fs::create_dir(&into).unwrap();
     let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
     let operators = tempfile::tempdir().unwrap();
     std::fs::create_dir(operators.path().join("prompts")).unwrap();
     std::fs::write(
-        operators.path().join("prompts/judge.md"),
-        "Our judge.\n\n{{facts}} {{stage}} {{criteria}} {{replay}} {{output}}\n",
+        operators.path().join("prompts/scorer.md"),
+        "Our scorer.\n\n{{facts}} {{stage}} {{criteria}} {{trial}} {{output}}\n",
     )
     .unwrap();
     let briefs =
@@ -411,11 +411,11 @@ async fn an_operators_scorer_prompt_is_the_one_the_scorer_is_sent() {
     );
 
     assert!(
-        prompt.starts_with("Our judge.\n\n[parts/facts.md repo=«owner/widgets» "),
+        prompt.starts_with("Our scorer.\n\n[parts/facts.md repo=«owner/widgets» "),
         "{prompt}"
     );
     assert_eq!(
-        briefs.layers()["prompts/judge.md"],
+        briefs.layers()["prompts/scorer.md"],
         linewright::layer::Layer::Operator
     );
 }

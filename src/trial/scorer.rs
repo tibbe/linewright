@@ -732,7 +732,7 @@ async fn scorer_in(
 
 /// The scorer's session in `sessions`, recorded in `record`, on what the
 /// trial left, cancelled by `cancel`: sent the filled
-/// `briefs/prompts/judge.md`, until its result is accepted.
+/// `briefs/prompts/scorer.md`, until its result is accepted.
 async fn session(
     task: &Task,
     scoreable: &ScoreableTrial,

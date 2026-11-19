@@ -501,6 +501,25 @@ fn an_operators_files_that_cannot_be_used_are_refused_each_named() {
 }
 
 #[test_log::test]
+fn an_operators_scorer_prompt_under_its_old_name_is_refused() {
+    let dir = briefs_dir(&[(
+        "prompts/judge.md",
+        "{{facts}} {{stage}} {{criteria}} {{replay}} {{output}}",
+    )]);
+
+    let error = OperatorBriefs::read(Some(dir.path())).unwrap_err();
+
+    assert_eq!(
+        format!("{error:#}"),
+        format!(
+            "the `briefs` directory {} holds files Linewright cannot use:\n\
+             - prompts/judge.md: not a file a layer may hold",
+            dir.path().display()
+        )
+    );
+}
+
+#[test_log::test]
 fn every_file_of_the_brief_but_the_results_and_the_plugins_manifest_is_layered() {
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("briefs");
     let expected: Vec<String> = ["prompts", "parts", "outputs", "plugin"]
@@ -528,7 +547,7 @@ fn every_file_of_the_brief_but_the_plugin_has_its_readers_by_its_path_under_brie
     assert_eq!(distinct.len(), paths.len());
     for path in [
         "prompts/implement.md",
-        "prompts/judge.md",
+        "prompts/scorer.md",
         "prompts/follow-ups/result-error.md",
         "parts/facts.md",
         "outputs/implement.md",
@@ -562,9 +581,9 @@ fn every_file_of_the_brief_has_its_values_placeholders() {
 #[test_log::test]
 fn the_scorers_files_are_read_by_the_scorer_only() {
     for path in [
-        "prompts/judge.md",
-        "outputs/judge.md",
-        "parts/replay-output.md",
+        "prompts/scorer.md",
+        "outputs/scorer.md",
+        "parts/trial-output.md",
     ] {
         let readers = prompts::readers(path).unwrap();
 

@@ -281,13 +281,13 @@ fn an_open_benchmark_run_whose_trials_have_all_ended_is_ended() {
     );
 }
 
-/// The files of the repository Linewright cannot use: `prompts/judge.md`,
+/// The files of the repository Linewright cannot use: `prompts/scorer.md`,
 /// which the scorer alone reads, and `config.toml`, which every run reads.
 fn unusable_files() -> Vec<Unusable> {
     vec![
         Unusable {
             file: FileError {
-                path: ".linewright/briefs/prompts/judge.md".into(),
+                path: ".linewright/briefs/prompts/scorer.md".into(),
                 error: "it lacks the placeholders `{{criteria}}`".into(),
             },
             holds: Readers::Only(&[Reads::Scorer]),
