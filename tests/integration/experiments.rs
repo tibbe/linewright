@@ -288,7 +288,7 @@ async fn an_experiment_keeps_its_cases_as_they_were_at_its_launch() {
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["cases"],
-        json!(["columns", "lanes"])
+        json!(["lanes", "columns"])
     );
 }
 
@@ -336,8 +336,8 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
         "launched: 2026-11-17 12:00:00 UTC",
         "state: waiting for serve",
         "replays ended: 2 of 4",
-        "replay as-is/columns/1: judged pass, run done, cost $0.30, took 1m 30s, judge's cost $0.05",
-        "replay short/lanes/1: pending",
+        "replay as-is/lanes/1: judged pass, run done, cost $0.30, took 1m 30s, judge's cost $0.05",
+        "replay short/columns/1: pending",
     ] {
         assert!(
             text.stdout.lines().any(|shown| shown == line),
@@ -355,7 +355,7 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
         json["replays"][0],
         json!({
             "repetition": 1,
-            "case": "columns",
+            "case": "lanes",
             "configuration": "as-is",
             "state": "judged",
             "outcome": "done",
@@ -370,7 +370,7 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
         json["replays"][1],
         json!({
             "repetition": 1,
-            "case": "columns",
+            "case": "lanes",
             "configuration": "short",
             "state": "unjudged",
             "outcome": "failed",
@@ -390,7 +390,7 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
             "unjudged": 0,
             "cases": [
                 {
-                    "case": "columns",
+                    "case": "lanes",
                     "passes": {"pass": 1, "of": 1},
                     "cost": {"mean": 0.3, "total": 0.3, "none": 0},
                     "time": {"mean": 90.0, "total": 90.0, "none": 0},
@@ -398,7 +398,7 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
                     "unjudged": 0,
                 },
                 {
-                    "case": "lanes",
+                    "case": "columns",
                     "passes": null,
                     "cost": none,
                     "time": none,

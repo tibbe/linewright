@@ -328,7 +328,8 @@ pub fn keep_suite(work_dir: &Path, name: &str, stage: &str) -> impl Future<Outpu
 }
 
 /// Keeps the case `name` of the suite `suite`, captured from `run`, in the
-/// database of `work_dir`, without its directory.
+/// database of `work_dir`, without its directory, last in the suite's order
+/// as a capture keeps it.
 #[track_caller]
 pub fn keep_case_row(
     work_dir: &Path,
@@ -341,13 +342,16 @@ pub fn keep_case_row(
     let (suite, name, run) = (suite.to_string(), name.to_string(), run.to_string());
     async move {
         let pool = pool.await;
-        sqlx::query("INSERT INTO cases (name, suite, run) VALUES (?, ?, ?)")
-            .bind(name)
-            .bind(suite)
-            .bind(run)
-            .execute(&pool)
-            .await
-            .unwrap_or_else(|e| panic!("keeping a case at {caller}: {e}"));
+        sqlx::query(
+            "INSERT INTO cases (name, suite, run, seq) VALUES (?1, ?2, ?3,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM cases WHERE suite = ?2))",
+        )
+        .bind(name)
+        .bind(suite)
+        .bind(run)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("keeping a case at {caller}: {e}"));
         pool.close().await;
     }
 }

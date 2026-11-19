@@ -240,7 +240,7 @@ pub struct ExperimentRecord {
     pub launched_at: Timestamp,
     pub repetitions: Repetitions,
     pub state: ExperimentState,
-    /// The suite's cases at the launch, by name.
+    /// The suite's cases at the launch, in its order.
     pub cases: Vec<CaseName>,
     /// `as-is` first.
     pub configurations: Vec<ConfigurationName>,
@@ -844,8 +844,8 @@ fn kept_configuration(dir: &Path, name: &ConfigurationName) -> PathBuf {
     dir.join(KEPT).join(CONFIGURATIONS).join(name.as_str())
 }
 
-/// The cases of the suite `suite`, by name, or `None` when there is no such
-/// suite.
+/// The cases of the suite `suite`, in its order, or `None` when there is no
+/// such suite.
 async fn suite_cases(
     conn: &mut SqliteConnection,
     suite: &SuiteName,
@@ -859,7 +859,7 @@ async fn suite_cases(
         return Ok(None);
     }
     let names: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM cases WHERE suite = ? ORDER BY name")
+        sqlx::query_scalar("SELECT name FROM cases WHERE suite = ? ORDER BY seq")
             .bind(suite.as_str())
             .fetch_all(&mut *conn)
             .await
@@ -1221,12 +1221,13 @@ mod tests {
                 .execute(db.pool())
                 .await
                 .unwrap_or_else(|e| panic!("keeping the suite at {caller}: {e}"));
-            for (case, run) in [("columns", "3/design-1"), ("lanes", "4/design-1")] {
+            for (seq, case, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
                 std::fs::create_dir_all(work_dir.join("cases").join(case))
                     .unwrap_or_else(|e| panic!("making the case at {caller}: {e}"));
-                sqlx::query("INSERT INTO cases (name, suite, run) VALUES (?, 'board', ?)")
+                sqlx::query("INSERT INTO cases (name, suite, run, seq) VALUES (?, 'board', ?, ?)")
                     .bind(case)
                     .bind(run)
+                    .bind(seq)
                     .execute(db.pool())
                     .await
                     .unwrap_or_else(|e| panic!("keeping the case at {caller}: {e}"));

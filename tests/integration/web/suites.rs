@@ -490,7 +490,7 @@ async fn the_suite_page_offers_to_capture_a_run_of_its_stage_that_can_be_capture
 }
 
 #[test_log::test(tokio::test)]
-async fn adding_a_case_captures_the_run_into_the_suite_and_the_page_then_shows_it() {
+async fn adding_a_case_captures_the_run_into_the_suite_and_the_page_then_shows_it_last() {
     let pages = with_runs().await;
 
     let (status, answer) = post(
@@ -519,7 +519,7 @@ async fn adding_a_case_captures_the_run_into_the_suite_and_the_page_then_shows_i
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(names, ["columns", "gadgets", "lanes"]);
+    assert_eq!(names, ["columns", "lanes", "gadgets"]);
 }
 
 #[test_log::test(tokio::test)]

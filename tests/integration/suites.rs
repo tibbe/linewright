@@ -103,7 +103,7 @@ async fn lw_suite_add_of_a_stage_no_case_has_or_a_name_not_a_suites_is_a_command
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_suite_show_shows_its_cases_with_their_criteria() {
+async fn lw_suite_show_shows_its_cases_with_their_criteria_in_the_order_they_were_captured() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = made(work_dir.path()).await;
     keep_suite(&repo, "board", "implement").await;
@@ -124,8 +124,8 @@ async fn lw_suite_show_shows_its_cases_with_their_criteria() {
     assert_eq!(
         text.stdout,
         "suite: board\nstage: implement\n\
-         case columns: captured from 3/implement-2\n  Names them.\n\
          case lanes: captured from 4/implement-1\n  Stacks them.\n\n  On a phone.\n\
+         case columns: captured from 3/implement-2\n  Names them.\n\
          experiments: none\n"
     );
     assert_eq!(json.code, Some(0), "{}", json.stderr);
@@ -135,8 +135,8 @@ async fn lw_suite_show_shows_its_cases_with_their_criteria() {
             "name": "board",
             "stage": "implement",
             "cases": [
-                {"name": "columns", "run": "3/implement-2", "criteria": "Names them.\n"},
                 {"name": "lanes", "run": "4/implement-1", "criteria": "Stacks them.\n\nOn a phone.\n"},
+                {"name": "columns", "run": "3/implement-2", "criteria": "Names them.\n"},
             ],
             "experiments": [],
         })

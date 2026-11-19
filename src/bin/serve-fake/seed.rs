@@ -158,20 +158,21 @@ struct SeedCase {
     criteria: &'static str,
 }
 
+/// In the order they are captured, which is not the order of their names.
 const BOARD_CASES: [SeedCase; 2] = [
-    SeedCase {
-        name: "columns-first-try",
-        n: 1,
-        started_at: "2026-03-01T10:00:00Z",
-        ending: "handed-back",
-        criteria: "A good design names each column of the board after its stage.\n\nIt keeps the names short enough for a narrow column.\n",
-    },
     SeedCase {
         name: "columns-named",
         n: 2,
         started_at: "2026-03-01T14:00:00Z",
         ending: "done",
         criteria: "A good design cuts the work into one ticket, with a test that reads the names off the board.\n",
+    },
+    SeedCase {
+        name: "columns-first-try",
+        n: 1,
+        started_at: "2026-03-01T10:00:00Z",
+        ending: "handed-back",
+        criteria: "A good design names each column of the board after its stage.\n\nIt keeps the names short enough for a narrow column.\n",
     },
 ];
 
