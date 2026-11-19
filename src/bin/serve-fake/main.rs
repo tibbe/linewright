@@ -139,7 +139,7 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
     for name in WorkKind::ALL
         .map(WorkKind::name)
         .into_iter()
-        .chain(["judge"])
+        .chain(["scorer"])
     {
         write!(
             text,

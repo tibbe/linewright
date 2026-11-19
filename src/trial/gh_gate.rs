@@ -174,12 +174,12 @@ async fn serve(listener: UnixListener, forward: Arc<Forward>) {
                             .serve_connection(TokioIo::new(stream), service)
                             .await;
                         if let Err(e) = served {
-                            warn!(error = %e, "serving a replay's gh failed");
+                            warn!(error = %e, "serving a trial's gh failed");
                         }
                     });
                 }
                 Err(e) => {
-                    warn!(error = %e, "accepting a connection of a replay's gh failed");
+                    warn!(error = %e, "accepting a connection of a trial's gh failed");
                     tokio::time::sleep(AFTER_FAILED_ACCEPT).await;
                 }
             },
@@ -202,12 +202,12 @@ async fn answer(forward: &Forward, request: Request<Incoming>) -> Answer {
         info!(
             method = %parts.method,
             target,
-            "refused a request of a replay's gh for the case's repository"
+            "refused a request of a trial's gh for the task's repository"
         );
         error_answer(
             StatusCode::FORBIDDEN,
             &format!(
-                "The repository {} on GitHub is not available in a replay.",
+                "The repository {} on GitHub is not available in a trial.",
                 forward.repo
             ),
         )
@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({
-                "message": "The repository Acme/Widgets on GitHub is not available in a replay."
+                "message": "The repository Acme/Widgets on GitHub is not available in a trial."
             })
         );
         assert_eq!(*seen.lock().unwrap(), vec![]);

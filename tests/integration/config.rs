@@ -253,7 +253,7 @@ fn a_mistake_in_a_stages_table_is_an_error_naming_the_file_and_the_key() {
 #[test_log::test]
 fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
     let file = "model = \"sonnet\"\neffort = \"low\"\nsession-timeout = \"10m\"\n\n\
-                [stage.judge]\nmodel = \"opus\"\neffort = \"max\"\nsession-timeout = \"2h\"\n";
+                [stage.scorer]\nmodel = \"opus\"\neffort = \"max\"\nsession-timeout = \"2h\"\n";
 
     let config = resolve(&["--model", "haiku"], &[], Some(file)).unwrap();
 
@@ -277,7 +277,7 @@ fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
     );
     assert_eq!(
         scorer.timeout_setting.to_string(),
-        "`session-timeout` in `[stage.judge]`"
+        "`session-timeout` in `[stage.scorer]`"
     );
     for stage in WorkKind::ALL {
         let session = stage_session(&config, stage);
@@ -295,11 +295,11 @@ fn the_repositorys_scorer_table_ranks_above_the_operators() {
     let config = resolve(
         &[],
         &[],
-        Some("[stage.judge]\nmodel = \"haiku\"\neffort = \"max\"\n"),
+        Some("[stage.scorer]\nmodel = \"haiku\"\neffort = \"max\"\n"),
     )
     .unwrap();
     let repo = RepoSettings::parse(
-        "model = \"sonnet\"\n\n[stage.judge]\neffort = \"low\"\nsession-timeout = \"5m\"\n",
+        "model = \"sonnet\"\n\n[stage.scorer]\neffort = \"low\"\nsession-timeout = \"5m\"\n",
     )
     .unwrap();
 
@@ -326,7 +326,7 @@ fn the_repositorys_scorer_table_ranks_above_the_operators() {
     assert_eq!(
         repo_session(
             &config,
-            "[stage.judge]\neffort = \"low\"\n",
+            "[stage.scorer]\neffort = \"low\"\n",
             WorkKind::Design
         )
         .effort,
@@ -341,11 +341,11 @@ fn the_scorers_table_adds_to_the_scorers_environment() {
         &[],
         Some(
             "session-pass-env = [\"CARGO_HOME\"]\n\n\
-             [stage.judge]\nsession-pass-env = [\"JUDGE_KEY\"]\nsession-env = { CI = \"judge\" }\n",
+             [stage.scorer]\nsession-pass-env = [\"SCORER_KEY\"]\nsession-env = { CI = \"scorer\" }\n",
         ),
     )
     .unwrap();
-    let environment = [("CARGO_HOME", "/cargo"), ("JUDGE_KEY", "k")]
+    let environment = [("CARGO_HOME", "/cargo"), ("SCORER_KEY", "k")]
         .map(|(name, value)| (name.into(), value.into()));
 
     let split = config
@@ -373,8 +373,8 @@ fn the_scorers_table_adds_to_the_scorers_environment() {
         scorer,
         pairs(&[
             ("CARGO_HOME", "/cargo"),
-            ("CI", "judge"),
-            ("JUDGE_KEY", "k")
+            ("CI", "scorer"),
+            ("SCORER_KEY", "k")
         ])
     );
     assert_eq!(
@@ -383,7 +383,7 @@ fn the_scorers_table_adds_to_the_scorers_environment() {
     );
     assert_eq!(
         split.added,
-        [(StageKey::Scorer, vec!["JUDGE_KEY".to_string()])].into()
+        [(StageKey::Scorer, vec!["SCORER_KEY".to_string()])].into()
     );
 }
 
@@ -397,7 +397,7 @@ fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_scorer_among_the
 
     for error in [operator_error, repo_error] {
         assert!(error.contains("`[stage.deploy]`"), "{error}");
-        assert!(error.contains("update, judge"), "{error}");
+        assert!(error.contains("update, scorer"), "{error}");
     }
 }
 
@@ -508,6 +508,38 @@ fn a_mistake_in_the_repositorys_file_is_an_error_naming_the_key() {
 
         assert!(error.contains(named), "{file}: {error}");
         assert!(!error.contains("operator's"), "{file}: {error}");
+    }
+}
+
+#[test_log::test]
+fn the_earlier_names_of_the_benchmarking_commands_and_flags_are_unknown() {
+    for (args, unknown) in [
+        (&["replay", "task", "--out", "out"][..], "'replay'"),
+        (&["judge", "task", "out"], "'judge'"),
+        (&["suites"], "'suites'"),
+        (&["suite", "show", "board"], "'suite'"),
+        (&["experiment", "show", "1"], "'experiment'"),
+        (
+            &["benchmark", "remove-case", "board", "lanes"],
+            "'remove-case'",
+        ),
+        (
+            &[
+                "capture",
+                "43/implement-2",
+                "lanes",
+                "--suite",
+                "board",
+                "--criteria",
+                "c.md",
+            ],
+            "'--suite'",
+        ),
+        (&["--max-replays", "2", "status"], "'--max-replays'"),
+    ] {
+        let error = Cli::try_parse_from(["lw"].iter().chain(args)).unwrap_err();
+
+        assert!(error.to_string().contains(unknown), "{args:?}: {error}");
     }
 }
 
@@ -769,9 +801,31 @@ fn a_flag_beats_the_environment_which_beats_the_file_which_beats_the_default() {
 
 #[test_log::test]
 fn max_trials_is_read_from_the_file() {
-    let config = resolve(&["--repo", "acme/widgets"], &[], Some("max-replays = 3\n")).unwrap();
+    let config = resolve(&["--repo", "acme/widgets"], &[], Some("max-trials = 3\n")).unwrap();
 
     assert_eq!(config.max_trials, 3);
+}
+
+#[test_log::test]
+fn max_trials_is_read_from_its_flag_and_defaults_to_1() {
+    let flagged = resolve(&["--repo", "acme/widgets", "--max-trials", "2"], &[], None).unwrap();
+    let unset = resolve(&["--repo", "acme/widgets"], &[], None).unwrap();
+
+    assert_eq!(flagged.max_trials, 2);
+    assert_eq!(unset.max_trials, 1);
+}
+
+#[test_log::test]
+fn the_earlier_max_replays_key_and_scorers_table_are_errors_naming_them() {
+    let max_replays =
+        resolve(&["--repo", "acme/widgets"], &[], Some("max-replays = 3\n")).unwrap_err();
+    let judge = resolve(&[], &[], Some("[stage.judge]\nmodel = \"opus\"\n")).unwrap_err();
+
+    assert!(
+        max_replays.contains("an unknown setting `max-replays`"),
+        "{max_replays}"
+    );
+    assert!(judge.contains("`[stage.judge]`"), "{judge}");
 }
 
 #[test_log::test]

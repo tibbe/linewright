@@ -56,7 +56,7 @@ fn capture<'a>(
             .await
         {
             Ok(_) | Err(MakeError::Taken(_)) => {}
-            Err(e) => panic!("making the suite at {caller}: {e:#}"),
+            Err(e) => panic!("making the benchmark at {caller}: {e:#}"),
         }
         benchmarks
     };
@@ -389,7 +389,7 @@ async fn a_name_a_task_already_has_is_refused_and_the_task_kept() {
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "a case is already named gadgets"
+        "a task is already named gadgets"
     );
     assert_eq!(read(&dir.join("criteria.md")), "First.\n");
     assert_eq!(
@@ -449,7 +449,7 @@ fn tasks_of<'a>(
             .await
             .show(&name)
             .await
-            .unwrap_or_else(|e| panic!("showing the suite at {caller}: {e:#}"))?;
+            .unwrap_or_else(|e| panic!("showing the benchmark at {caller}: {e:#}"))?;
         Some(
             shown
                 .tasks
@@ -510,7 +510,7 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        format!("the suite designs holds cases of design, and the run {run} is of implement")
+        format!("the benchmark designs holds tasks of design, and the run {run} is of implement")
     );
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
     assert_eq!(tasks_of(&world, "designs").await, Some(vec![]));
@@ -536,7 +536,7 @@ async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "there is no suite nowhere"
+        "there is no benchmark nowhere"
     );
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
@@ -592,7 +592,7 @@ async fn a_new_benchmark_a_benchmark_already_has_the_name_of_is_refused() {
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "a suite is already named implements"
+        "a benchmark is already named implements"
     );
     assert_eq!(
         entries(&tasks(&world)),
@@ -669,7 +669,7 @@ fn gadgets_capturable<'a>(
         benchmarks
             .make(&implements, TaskStage::Implement)
             .await
-            .unwrap_or_else(|e| panic!("making the suite at {caller}: {e:#}"));
+            .unwrap_or_else(|e| panic!("making the benchmark at {caller}: {e:#}"));
         task::capturable(
             &runs(world).await,
             &benchmarks,
@@ -689,7 +689,7 @@ async fn a_capture_whose_directory_cannot_be_moved_into_place_keeps_no_row() {
     let capturable = gadgets_capturable(&world, &run).await;
     let before = tasks(&world).join("gadgets");
     std::fs::create_dir_all(&before).unwrap();
-    std::fs::write(before.join("criteria.md"), "Captured before suites.\n").unwrap();
+    std::fs::write(before.join("criteria.md"), "Captured before benchmarks.\n").unwrap();
 
     let refused = task::capture(
         &*world.store,
@@ -706,7 +706,7 @@ async fn a_capture_whose_directory_cannot_be_moved_into_place_keeps_no_row() {
     assert_eq!(tasks_of(&world, IMPLEMENTS).await, Some(vec![]));
     assert_eq!(
         read(&before.join("criteria.md")),
-        "Captured before suites.\n"
+        "Captured before benchmarks.\n"
     );
     assert_eq!(
         entries(&tasks(&world)),
@@ -742,7 +742,7 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
-/// Runs `lw capture run name --suite implements --criteria FILE` in
+/// Runs `lw capture run name --benchmark implements --criteria FILE` in
 /// `work_dir`, the file holding `criteria`.
 #[track_caller]
 fn lw_capture<'a>(
@@ -763,7 +763,7 @@ fn lw_capture<'a>(
                 "capture",
                 run,
                 name,
-                "--suite",
+                "--benchmark",
                 IMPLEMENTS,
                 "--criteria",
                 &path,
@@ -863,7 +863,7 @@ async fn lw_capture_into_a_benchmark_that_does_not_exist_exits_4_saying_why() {
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: there is no suite implements\n");
+    assert_eq!(output.stderr, "lw: there is no benchmark implements\n");
     assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
@@ -879,7 +879,7 @@ async fn lw_capture_into_a_benchmark_of_another_stage_exits_1_saying_why() {
     assert_eq!(
         output.stderr,
         format!(
-            "lw: the suite implements holds cases of design, and the run {run} is of implement\n"
+            "lw: the benchmark implements holds tasks of design, and the run {run} is of implement\n"
         )
     );
     assert!(!work_dir.path().join(REPO).join("tasks").exists());
@@ -905,7 +905,7 @@ async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
     .await;
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
-    assert!(output.stderr.contains("--suite"), "{}", output.stderr);
+    assert!(output.stderr.contains("--benchmark"), "{}", output.stderr);
 }
 
 #[test_log::test(tokio::test)]
@@ -919,6 +919,6 @@ async fn lw_capture_of_a_name_a_benchmarks_task_has_exits_1_before_reaching_gith
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: a case is already named gadgets\n");
+    assert_eq!(output.stderr, "lw: a task is already named gadgets\n");
     assert!(!repo.join("tasks").exists());
 }

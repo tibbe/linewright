@@ -88,7 +88,7 @@ pub enum StageKey {
 
 impl StageKey {
     /// The scorer's `NAME`.
-    const SCORER: &'static str = "judge";
+    const SCORER: &'static str = "scorer";
 
     /// Its `NAME` in `[stage.NAME]`.
     pub fn name(self) -> &'static str {
@@ -114,7 +114,7 @@ impl std::str::FromStr for StageKey {
             .ok_or_else(|| {
                 let stages = WorkKind::ALL.map(WorkKind::name);
                 format!(
-                    "{name:?} is not a stage or the judge: one of {}, {}",
+                    "{name:?} is not a stage or the scorer: one of {}, {}",
                     stages.join(", "),
                     StageKey::SCORER
                 )
@@ -460,7 +460,7 @@ impl RepoSettings {
 pub enum RunKind<'a> {
     Stage(WorkKind),
     Automation(&'a Automation),
-    /// The scorer's session, which takes `[stage.judge]`'s settings.
+    /// The scorer's session, which takes `[stage.scorer]`'s settings.
     Scorer,
 }
 

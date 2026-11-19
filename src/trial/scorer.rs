@@ -70,7 +70,7 @@ pub enum ScoreRefusal {
     #[error("the output has no `{OUTCOME}` part")]
     NoOutcome,
     #[error(
-        "the replay's outcome is `{0}`: only a replay whose run ended done or handed back is judged"
+        "the trial's outcome is `{0}`: only a trial whose run ended done or handed back is scored"
     )]
     Outcome(String),
     #[error("the output has no `{TASK}` part, which names the run its task was captured from")]
@@ -233,10 +233,10 @@ impl ScorerRecord {
     /// When the directory cannot be made.
     pub fn make(scoreable: &ScoreableTrial) -> Result<ScorerRecord> {
         let dir = session::new_record_dir(&scoreable.dir, &Purpose::Scorer, SystemClock.now())
-            .context("making the record of the judge's session")?;
+            .context("making the record of the scorer's session")?;
         let relative = dir
             .strip_prefix(&scoreable.dir)
-            .context("the judge's record is in the output")?
+            .context("the scorer's record is in the output")?
             .to_path_buf();
         Ok(ScorerRecord {
             dir,
@@ -259,7 +259,7 @@ impl ScorerRecord {
     fn restart(&self) -> Result<()> {
         std::fs::remove_dir_all(&self.dir)
             .and_then(|()| std::fs::create_dir(&self.dir))
-            .context("emptying the record of the judge's session")
+            .context("emptying the record of the scorer's session")
     }
 }
 
@@ -418,7 +418,7 @@ pub fn discard_unkept(scoreable: &ScoreableTrial) {
     let scorers = scoreable.dir.join(session::purpose_name(&Purpose::Scorer));
     match std::fs::remove_dir_all(&scorers) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            warn!(dir = %scorers.display(), error = %e, "removing the judges' records failed");
+            warn!(dir = %scorers.display(), error = %e, "removing the scorers' records failed");
         }
         _ => {}
     }
@@ -438,7 +438,7 @@ pub fn discard(dir: &Path) {
     }
     match removed {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            warn!(dir = %dir.display(), error = %e, "removing the judge's record failed");
+            warn!(dir = %dir.display(), error = %e, "removing the scorer's record failed");
         }
         _ => {
             if let Some(scorers) = dir.parent() {
@@ -539,9 +539,9 @@ pub enum Unscored {
 impl fmt::Display for Unscored {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Unscored::GaveUp(reason) => write!(f, "the judge gave up: {reason}"),
+            Unscored::GaveUp(reason) => write!(f, "the scorer gave up: {reason}"),
             Unscored::Ended { reason, log_tail } => {
-                write!(f, "the judge's session ended without a judgement: {reason}")?;
+                write!(f, "the scorer's session ended without a score: {reason}")?;
                 match log_tail {
                     Some(tail) => write!(f, "\n\n{tail}"),
                     None => Ok(()),
@@ -549,9 +549,9 @@ impl fmt::Display for Unscored {
             }
             Unscored::UsageLimit { resets_at } => write!(
                 f,
-                "the judge's session reached the usage limit, which resets at {resets_at}"
+                "the scorer's session reached the usage limit, which resets at {resets_at}"
             ),
-            Unscored::Failed(error) => write!(f, "the judge could not judge: {error:#}"),
+            Unscored::Failed(error) => write!(f, "the scorer could not score: {error:#}"),
         }
     }
 }
@@ -571,7 +571,7 @@ impl From<Failure> for Unscored {
             Failure::Infrastructure { error, .. } | Failure::Apply { error, .. } => {
                 Unscored::Failed(error)
             }
-            Failure::Cancelled => Unscored::Failed(anyhow!("the judge's session was cancelled")),
+            Failure::Cancelled => Unscored::Failed(anyhow!("the scorer's session was cancelled")),
         }
     }
 }
@@ -616,7 +616,7 @@ pub async fn run(
     let (correctness, leak) = scored;
     let session = lock_set_whole(&record.session)
         .take()
-        .ok_or_else(|| Unscored::Failed(anyhow!("the judge's session is not recorded")))?;
+        .ok_or_else(|| Unscored::Failed(anyhow!("the scorer's session is not recorded")))?;
     Ok(Score {
         correctness,
         leak,
@@ -669,7 +669,7 @@ async fn scorer_in(
             if let Some(build) = built {
                 error!(
                     output = build.output,
-                    "the build of the judge's environment"
+                    "the build of the scorer's environment"
                 );
             }
             return Err(Unscored::Failed(e));
@@ -716,7 +716,7 @@ async fn scorer_in(
                 let error = config.secrets.redaction().apply(&format!("{error:#}"));
                 warn!(
                     error,
-                    "the judge's session failed on its infrastructure; retrying once"
+                    "the scorer's session failed on its infrastructure; retrying once"
                 );
                 record.restart().map_err(Unscored::Failed)?;
             }
@@ -756,7 +756,7 @@ async fn session(
     let copying = async { TrialCopy::make(scoreable, &ws.make_beside(Beside::Trial)?).await };
     let copy = copying
         .await
-        .context("copying the replay for the judge")
+        .context("copying the trial for the scorer")
         .map_err(|error| opened.ended(sessions, infra(error)))?;
     let settings = &task.properties().settings;
     let repo = Repo {
@@ -807,9 +807,7 @@ async fn fetch_pushed(repository: &Path, commits: &Path, branch: &str) -> Result
         ],
     )
     .await
-    .with_context(|| {
-        format!("fetching {branch}, the branch the replay pushed, from its commits")
-    })?;
+    .with_context(|| format!("fetching {branch}, the branch the trial pushed, from its commits"))?;
     Ok(())
 }
 
@@ -828,7 +826,7 @@ pub fn keep(scoreable: &ScoreableTrial, mut score: Score) -> Result<()> {
         .session
         .record
         .file_name()
-        .context("the judge's record has a name")?
+        .context("the scorer's record has a name")?
         .to_string_lossy()
         .into_owned();
     let path = scoreable.dir.join(SCORE);

@@ -1037,7 +1037,9 @@ async fn made_benchmarks(config: &Config) -> Result<Benchmarks> {
 }
 
 fn no_such_benchmark(name: &BenchmarkName) -> (u8, String) {
-    refused(&RequestError::NotFound(format!("there is no suite {name}")))
+    refused(&RequestError::NotFound(format!(
+        "there is no benchmark {name}"
+    )))
 }
 
 /// `answer` as JSON, or as `render` gives it as text.
@@ -1109,8 +1111,8 @@ async fn benchmark_run_shown(
     if record.state != BenchmarkRunState::Open {
         return Ok(Shown::without_serve(record.state));
     }
-    let resource = format!("/api/experiments/{}", record.id);
-    let answer = ask_or_read(config, &resource, "an experiment's state", async |_| {
+    let resource = format!("/api/benchmark-runs/{}", record.id);
+    let answer = ask_or_read(config, &resource, "a benchmark run's state", async |_| {
         Ok::<_, Unanswered>(Shown::without_serve(record.state))
     })
     .await?;
@@ -1123,7 +1125,7 @@ async fn nudge_serve(config: &Config) {
     let Ok(work_dir) = config.repo_work_dir() else {
         return;
     };
-    match api::post_answer(&socket_dir(), &work_dir.repo, "/api/experiments/changed").await {
+    match api::post_answer(&socket_dir(), &work_dir.repo, "/api/benchmark-runs/changed").await {
         Ok(_) | Err(RequestError::NotServing { .. }) => {}
         Err(e) => complain(format!(
             "`serve` was not told of the change, and takes it up at its next poll: {e:#}"
@@ -1143,7 +1145,7 @@ async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage,
             .map(|benchmark| {
                 answer_text(&benchmark, json, |benchmark| {
                     format!(
-                        "Made the suite {}, of {}\n",
+                        "Made the benchmark {}, of {}\n",
                         benchmark.name, benchmark.stage
                     )
                 })
@@ -1152,12 +1154,10 @@ async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage,
     )
 }
 
-/// What `suite remove-case` answers.
+/// What `benchmark remove-task` answers.
 #[derive(serde::Serialize)]
 struct Removed<'a> {
-    #[serde(rename = "suite")]
     benchmark: &'a BenchmarkName,
-    #[serde(rename = "case")]
     task: &'a TaskName,
 }
 
@@ -1180,7 +1180,7 @@ async fn remove_task(config: &Config, name: &BenchmarkName, task: &TaskName, jso
                     json,
                     |removed| {
                         format!(
-                            "Removed the case {} from the suite {}\n",
+                            "Removed the task {} from the benchmark {}\n",
                             removed.task, removed.benchmark
                         )
                     },
@@ -1206,17 +1206,15 @@ async fn existing_benchmark_runs(config: &Config) -> Result<Option<BenchmarkRuns
 
 fn no_such_benchmark_run(id: BenchmarkRunId) -> (u8, String) {
     refused(&RequestError::NotFound(format!(
-        "there is no experiment {id}"
+        "there is no benchmark run {id}"
     )))
 }
 
-/// What `experiment launch` answers.
+/// What `benchmark-run launch` answers.
 #[derive(serde::Serialize)]
 struct LaunchedAnswer<'a> {
     id: BenchmarkRunId,
-    #[serde(rename = "suite")]
     benchmark: &'a BenchmarkName,
-    #[serde(rename = "replays")]
     trials: usize,
 }
 
@@ -1272,7 +1270,7 @@ async fn launch_benchmark_run(
                 };
                 answer_text(&answer, json, |answer| {
                     format!(
-                        "Launched experiment {} on the suite {}: {} replays\n",
+                        "Launched benchmark run {} on the benchmark {}: {} trials\n",
                         answer.id, answer.benchmark, answer.trials
                     )
                 })
@@ -1312,7 +1310,7 @@ async fn show_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> 
     }))
 }
 
-/// What `experiment cancel` answers.
+/// What `benchmark-run cancel` answers.
 #[derive(serde::Serialize)]
 struct Cancelled {
     id: BenchmarkRunId,
@@ -1332,7 +1330,7 @@ async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -
         cancelling
             .map(|()| {
                 answer_text(&Cancelled { id }, json, |cancelled| {
-                    format!("Cancelled experiment {}\n", cancelled.id)
+                    format!("Cancelled benchmark run {}\n", cancelled.id)
                 })
             })
             .map_err(|e| match e {
@@ -1356,9 +1354,7 @@ struct Capture {
 #[derive(serde::Serialize)]
 struct Captured<'a> {
     run: &'a RunId,
-    #[serde(rename = "case")]
     task: &'a TaskName,
-    #[serde(rename = "suite")]
     benchmark: &'a BenchmarkName,
     dir: &'a Path,
 }
@@ -1423,7 +1419,7 @@ impl Capture {
                     };
                     answer_text(&captured, json, |captured| {
                         format!(
-                            "Captured {} as the case {} in the suite {}\n",
+                            "Captured {} as the task {} in the benchmark {}\n",
                             captured.run,
                             captured.dir.display(),
                             captured.benchmark
@@ -1466,10 +1462,7 @@ async fn trial(
                 Ok(task) => task,
                 Err(e) => {
                     out.finished();
-                    return print_answer(Err((
-                        FAILURE,
-                        format!("the case cannot be replayed: {e}"),
-                    )));
+                    return print_answer(Err((FAILURE, format!("the task cannot be run: {e}"))));
                 }
             };
             log.begin();
@@ -1546,11 +1539,11 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
     };
     let task = match Task::open(task).await {
         Ok(task) => task,
-        Err(e) => return print_answer(Err((FAILURE, format!("the case cannot be judged: {e}")))),
+        Err(e) => return print_answer(Err((FAILURE, format!("the task cannot be scored: {e}")))),
     };
     let scoreable = match scorer::ScoreableTrial::open(dir, &task).await {
         Ok(scoreable) => scoreable,
-        Err(e) => return print_answer(Err((FAILURE, format!("the output cannot be judged: {e}")))),
+        Err(e) => return print_answer(Err((FAILURE, format!("the output cannot be scored: {e}")))),
     };
     let record = match ScorerRecord::make(&scoreable) {
         Ok(record) => record,
@@ -1575,7 +1568,7 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
         }),
         |signal| {
             scorer::discard(&record_dir);
-            complain("the judge made no judgement: a signal ended the command");
+            complain("the scorer made no score: a signal ended the command");
             signal.exit_status()
         },
     );

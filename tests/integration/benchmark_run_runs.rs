@@ -130,17 +130,17 @@ fn rests<'a>(
                 let record = benchmark_runs
                     .show(id)
                     .await
-                    .unwrap_or_else(|e| panic!("reading experiment {id} at {caller}: {e:#}"))
-                    .unwrap_or_else(|| panic!("no experiment {id} at {caller}"));
+                    .unwrap_or_else(|e| panic!("reading benchmark run {id} at {caller}: {e:#}"))
+                    .unwrap_or_else(|| panic!("no benchmark run {id} at {caller}"));
                 if done(&record) {
                     return record;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         });
-        waited
-            .await
-            .unwrap_or_else(|_| panic!("experiment {id} did not come to rest, waited at {caller}"))
+        waited.await.unwrap_or_else(|_| {
+            panic!("benchmark run {id} did not come to rest, waited at {caller}")
+        })
     }
 }
 
@@ -205,16 +205,16 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
         std::fs::read_to_string(repo.join("benchmark-runs/1/short/import/2/outcome")).unwrap(),
         "done\n"
     );
-    let shown = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     for line in [
         "state: ended\n",
-        "replays ended: 8 of 8\n",
+        "trials ended: 8 of 8\n",
         "configuration as-is:\n  pass rate: 100%\n",
         "configuration short:\n  pass rate: 100%\n",
-        "  case export:\n    passes: 2 of 2\n",
-        "  case import:\n    passes: 2 of 2\n",
-        "replay short/import/2: judged pass",
+        "  task export:\n    passes: 2 of 2\n",
+        "  task import:\n    passes: 2 of 2\n",
+        "trial short/import/2: scored pass",
     ] {
         assert!(
             shown.stdout.contains(line),
@@ -388,7 +388,7 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
             &api,
             hyper::Method::GET,
             Some("localhost"),
-            "/api/experiments/1",
+            "/api/benchmark-runs/1",
         );
         status_and_body(response.await).await
     };
@@ -400,7 +400,7 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
         &api,
         hyper::Method::POST,
         Some("localhost"),
-        "/api/experiments/changed",
+        "/api/benchmark-runs/changed",
     )
     .await;
     let record = rests(&benchmark_runs, id, |record| {

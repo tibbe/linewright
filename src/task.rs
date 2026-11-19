@@ -52,7 +52,7 @@ impl std::str::FromStr for TaskName {
     type Err = String;
 
     fn from_str(name: &str) -> Result<TaskName, String> {
-        check_name(name, "a case's").map(|()| TaskName(name.to_string()))
+        check_name(name, "a task's").map(|()| TaskName(name.to_string()))
     }
 }
 
@@ -60,7 +60,7 @@ impl std::str::FromStr for TaskName {
 /// HTML input, so that a web form refuses the names the server would.
 pub(crate) const NAME_PATTERN: &str = r"[a-z0-9][a-z0-9\-]*";
 
-/// Refuses `name` as `whose` name, such as "a case's", unless it is one or
+/// Refuses `name` as `whose` name, such as "a task's", unless it is one or
 /// more lowercase letters, digits and hyphens, starting with a letter or a
 /// digit.
 pub(crate) fn check_name(name: &str, whose: &str) -> Result<(), String> {
@@ -151,14 +151,14 @@ pub enum CaptureError {
     NoInput(RunId),
     #[error("the run {run}'s record lacks the {part}, so it cannot be captured")]
     Lacks { run: RunId, part: TaskPart },
-    #[error("a case is already named {0}")]
+    #[error("a task is already named {0}")]
     Taken(TaskName),
-    #[error("there is no suite {0}")]
+    #[error("there is no benchmark {0}")]
     NoSuchBenchmark(BenchmarkName),
-    #[error("a suite is already named {0}")]
+    #[error("a benchmark is already named {0}")]
     BenchmarkTaken(BenchmarkName),
     #[error(
-        "the suite {} holds cases of {}, and the run {run} is of {stage}",
+        "the benchmark {} holds tasks of {}, and the run {run} is of {stage}",
         benchmark.name,
         benchmark.stage
     )]
@@ -410,14 +410,14 @@ pub async fn capture(
         benchmark,
     } = capturable;
     let tasks = benchmarks.tasks_dir();
-    std::fs::create_dir_all(&tasks).context("creating the cases' directory")?;
+    std::fs::create_dir_all(&tasks).context("creating the tasks' directory")?;
     let building = tempfile::Builder::new()
         .prefix(".capturing-")
         .tempdir_in(&tasks)
         .context("creating a directory to capture into")?;
     let write = |file: &str, contents: &[u8]| {
         std::fs::write(building.path().join(file), contents)
-            .with_context(|| format!("writing the case's {file}"))
+            .with_context(|| format!("writing the task's {file}"))
     };
     let task = TaskFile {
         stage: stage.kind(),
@@ -497,7 +497,7 @@ impl std::str::FromStr for TaskStage {
             .ok_or_else(|| {
                 let names: Vec<&str> = TaskStage::ALL.map(TaskStage::name).to_vec();
                 format!(
-                    "{name:?} is not a stage of a suite: one of {}",
+                    "{name:?} is not a stage of a benchmark: one of {}",
                     names.join(", ")
                 )
             })
@@ -518,7 +518,7 @@ impl Serialize for TaskStage {
 
 /// Why a task cannot be opened: the part it lacks or cannot read.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("the case's {part}: {why}")]
+#[error("the task's {part}: {why}")]
 pub struct TaskRefusal {
     pub part: TaskPart,
     pub why: String,
@@ -565,7 +565,7 @@ impl Task {
         if !items.iter().any(|item| item.number == file.item) {
             return Err(refusal(
                 TaskPart::Items,
-                format!("they lack the case's item {}", file.item),
+                format!("they lack the task's item {}", file.item),
             ));
         }
         let criteria = read_criteria(dir)?;
@@ -664,7 +664,7 @@ fn read_task_file(dir: &Path) -> Result<TaskFileRead, TaskRefusal> {
         .map_err(|kind| {
             refusal(
                 TaskPart::Stage,
-                format!("a case of {} cannot be replayed", kind.name()),
+                format!("a task of {} cannot be run", kind.name()),
             )
         })?;
     Ok(TaskFileRead {
@@ -931,7 +931,7 @@ mod tests {
         ] {
             assert_eq!(
                 browser_matches(&mut js, name),
-                check_name(name, "a case's").is_ok(),
+                check_name(name, "a task's").is_ok(),
                 "{name:?}"
             );
         }

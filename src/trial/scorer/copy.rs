@@ -55,7 +55,7 @@ impl TrialCopy {
         if !referred.is_empty() {
             tokio::fs::create_dir(into.join(ATTACHMENTS))
                 .await
-                .with_context(|| format!("making `{ATTACHMENTS}` in the judge's copy"))?;
+                .with_context(|| format!("making `{ATTACHMENTS}` in the scorer's copy"))?;
         }
         for name in referred {
             let path = Path::new(ATTACHMENTS).join(name);

@@ -17,11 +17,9 @@ pub struct Results {
     pub configurations: Vec<ConfigurationResults>,
     /// The cost of the scorers, in US dollars, apart from the
     /// configurations'.
-    #[serde(rename = "judges")]
     pub scorers: Total,
     /// How many of its trials have ended: those whose run has, whether or
     /// not their scorer has.
-    #[serde(rename = "replays_ended")]
     pub trials_ended: usize,
     /// How many trials it makes.
     pub all: usize,
@@ -40,7 +38,6 @@ pub struct ConfigurationResults {
     #[serde(flatten)]
     pub figures: Figures,
     /// For each task, in the benchmark run's order.
-    #[serde(rename = "cases")]
     pub tasks: Vec<TaskResults>,
 }
 
@@ -55,14 +52,12 @@ pub struct Figures {
     pub leaks: usize,
     /// How many of the trials have no score for a reason the spec
     /// gives: their run's outcome, their scorer, or a cancel after their run.
-    #[serde(rename = "unjudged")]
     pub unscored: usize,
 }
 
 /// A configuration's figures of its trials of a task.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskResults {
-    #[serde(rename = "case")]
     pub task: TaskName,
     /// `None` with no trial with a score and no leak.
     pub passes: Option<Passes>,
@@ -282,7 +277,7 @@ fn share_of(part: f64, whole: usize) -> Option<f64> {
 
 #[expect(
     clippy::cast_precision_loss,
-    reason = "an experiment counts far fewer replays than an f64 holds exactly"
+    reason = "a benchmark run counts far fewer trials than an f64 holds exactly"
 )]
 fn count(n: usize) -> f64 {
     n as f64

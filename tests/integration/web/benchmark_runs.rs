@@ -7,7 +7,7 @@ use serde_json::json;
 
 /// Launches a benchmark run on the benchmark `benchmark` of `pages` under
 /// `as-is` and a configuration setting the model for each of `configurations`,
-/// each run `repetitions` times, as `lw experiment launch` does, and sets its
+/// each run `repetitions` times, as `lw benchmark-run launch` does, and sets its
 /// launch to `at`: its ID.
 #[track_caller]
 pub(super) fn launched<'a>(
@@ -477,7 +477,10 @@ async fn the_benchmark_run_page_offers_to_cancel_an_open_benchmark_run_and_cance
     assert_eq!(status, 200, "{}", said(&answer));
     assert_eq!(said(&answer), "Cancelled experiment 1");
     assert_eq!(again, 422);
-    assert_eq!(said(&refused), "Not cancelled: experiment 1 is cancelled");
+    assert_eq!(
+        said(&refused),
+        "Not cancelled: benchmark run 1 is cancelled"
+    );
     assert_eq!(other_site, 403);
     let cancelled = pages.page("/experiments/1").await;
     assert_eq!(

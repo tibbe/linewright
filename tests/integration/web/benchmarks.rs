@@ -150,7 +150,7 @@ async fn a_stage_to_filter_on_that_is_not_a_benchmarks_says_so_in_place_of_the_b
     let html = Html::parse_document(&body);
     assert_eq!(
         text(select(&html, "#suites p")[0]),
-        "\"rework\" is not a stage of a suite: one of triage, design, implement"
+        "\"rework\" is not a stage of a benchmark: one of triage, design, implement"
     );
 }
 
@@ -335,7 +335,9 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
         new_benchmark_form(&no_stage_form),
         (
             vec![("name", "fresh".into()), ("stage", "triage".into())],
-            Some("\"rework\" is not a stage of a suite: one of triage, design, implement".into())
+            Some(
+                "\"rework\" is not a stage of a benchmark: one of triage, design, implement".into()
+            )
         )
     );
     assert_eq!(cross_site, 403);
@@ -714,7 +716,7 @@ async fn removing_a_task_the_benchmark_does_not_hold_is_refused() {
     assert_eq!(status, 404);
     assert_eq!(
         said(&answer),
-        "Not removed: the suite triage-basics has no case columns"
+        "Not removed: the benchmark triage-basics has no task columns"
     );
     assert_eq!(tasks(&pages), ["columns", "lanes"]);
 }
@@ -1001,7 +1003,8 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
     assert_eq!(
         new_task_form(&other_stage_form).1,
         Some(
-            "the suite board holds cases of implement, and the run 1/design-1 is of design".into()
+            "the benchmark board holds tasks of implement, and the run 1/design-1 is of design"
+                .into()
         )
     );
     assert_eq!(cross_site, 403);

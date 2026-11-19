@@ -43,11 +43,9 @@ pub enum WaitingFor {
     /// A run of the pipeline waits for a place under `max-runs`.
     Pipeline,
     /// Trials and scorers of benchmark runs take every place under
-    /// `max-replays`.
-    #[serde(rename = "free-replay")]
+    /// `max-trials`.
     FreePlace {
         in_flight: usize,
-        #[serde(rename = "max_replays")]
         max_trials: usize,
     },
     Hold(BenchmarkRunHold),
@@ -63,7 +61,7 @@ impl WaitingFor {
             WaitingFor::FreePlace {
                 in_flight,
                 max_trials,
-            } => format!("a free replay: {in_flight} of {max_trials} in flight").into(),
+            } => format!("a place under max-trials: {in_flight} of {max_trials} in flight").into(),
             WaitingFor::Hold(hold) => describe_wait(&Wait::from(Hold::from(*hold))),
         }
     }
@@ -100,11 +98,10 @@ impl Shown {
     }
 }
 
-/// What `experiment show ID` answers.
+/// What `benchmark-run show ID` answers.
 #[derive(Serialize)]
 pub struct BenchmarkRunAnswer {
     pub id: BenchmarkRunId,
-    #[serde(rename = "suite")]
     pub benchmark: BenchmarkName,
     pub stage: TaskStage,
     pub launched_at: Timestamp,
@@ -114,11 +111,9 @@ pub struct BenchmarkRunAnswer {
     #[serde(flatten)]
     pub shown: Shown,
     pub repetitions: Repetitions,
-    #[serde(rename = "cases")]
     pub tasks: Vec<TaskName>,
     pub configurations: Vec<ConfigurationName>,
     /// Every trial, in the order they start.
-    #[serde(rename = "replays")]
     pub trials: Vec<KeyedTrialAnswer>,
     pub results: Results,
 }
@@ -127,7 +122,6 @@ pub struct BenchmarkRunAnswer {
 #[derive(Serialize)]
 pub struct KeyedTrialAnswer {
     pub repetition: NonZeroU32,
-    #[serde(rename = "case")]
     pub task: TaskName,
     pub configuration: ConfigurationName,
     #[serde(flatten)]
@@ -139,29 +133,23 @@ pub struct KeyedTrialAnswer {
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum TrialAnswer {
     Pending,
-    #[serde(rename = "replaying")]
     Running,
-    #[serde(rename = "replayed")]
     Ran {
         #[serde(flatten)]
         run: TrialFiguresAnswer,
     },
-    #[serde(rename = "judging")]
     Scoring {
         #[serde(flatten)]
         run: TrialFiguresAnswer,
     },
-    #[serde(rename = "judged")]
     Scored {
         #[serde(flatten)]
         run: TrialFiguresAnswer,
         correctness: Verdict,
         leak: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "judge_cost")]
         scorer_cost: Option<Usd>,
     },
-    #[serde(rename = "unjudged")]
     Unscored {
         /// `None` when it was cancelled before its run ended.
         #[serde(flatten)]
@@ -173,14 +161,12 @@ pub enum TrialAnswer {
 
 /// Why a trial has no score.
 #[derive(Serialize)]
-#[serde(tag = "unjudged", rename_all = "lowercase")]
+#[serde(tag = "unscored", rename_all = "lowercase")]
 pub enum WhyUnscored {
     Outcome,
-    #[serde(rename = "judge")]
     Scorer {
         reason: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[serde(rename = "judge_cost")]
         scorer_cost: Option<Usd>,
     },
     Cancelled,
@@ -269,7 +255,7 @@ impl BenchmarkRunAnswer {
     }
 }
 
-/// A benchmark run as `experiment show ID` prints it: its facts, each
+/// A benchmark run as `benchmark-run show ID` prints it: its facts, each
 /// configuration's figures, then each trial.
 pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
     let results = &answer.results;
@@ -278,8 +264,8 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
     let mut scorers = dollars(results.scorers.total);
     without(&mut scorers, results.scorers.none, "a cost");
     let mut text = format!(
-        "experiment: {}\nsuite: {}\nstage: {}\nlaunched: {}\n{}state: {}\nrepetitions: {}\n\
-         replays ended: {} of {}\ncost: {cost}\njudges' cost: {scorers}\n",
+        "benchmark run: {}\nbenchmark: {}\nstage: {}\nlaunched: {}\n{}state: {}\nrepetitions: {}\n\
+         trials ended: {} of {}\ncost: {cost}\nscorers' cost: {scorers}\n",
         answer.id,
         answer.benchmark,
         answer.stage,
@@ -304,7 +290,7 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
         for task in &configuration.tasks {
             let _ = write!(
                 text,
-                "  case {}:\n    passes: {}\n{}",
+                "  task {}:\n    passes: {}\n{}",
                 task.task,
                 task.passes
                     .map_or_else(|| "none".into(), |passes| passes.to_string()),
@@ -315,7 +301,7 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
     for trial in &answer.trials {
         let _ = writeln!(
             text,
-            "replay {}/{}/{}: {}",
+            "trial {}/{}/{}: {}",
             trial.configuration,
             trial.task,
             trial.repetition,
@@ -328,7 +314,7 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
 /// The lines of `figures`, each indented by `indent`.
 fn describe_figures(figures: &Figures, indent: &str) -> String {
     format!(
-        "{indent}cost: {}\n{indent}time: {}\n{indent}leaks: {}\n{indent}unjudged: {}\n",
+        "{indent}cost: {}\n{indent}time: {}\n{indent}leaks: {}\n{indent}unscored: {}\n",
         mean(&figures.cost, dollars, "a cost"),
         mean(&figures.time, duration, "a time"),
         figures.leaks,
@@ -341,9 +327,9 @@ fn describe_figures(figures: &Figures, indent: &str) -> String {
 fn describe_trial(state: &TrialAnswer) -> String {
     let (mut words, run, scorer_cost) = match state {
         TrialAnswer::Pending => ("pending".to_string(), None, None),
-        TrialAnswer::Running => ("replaying".into(), None, None),
-        TrialAnswer::Ran { run } => ("replayed".into(), Some(run), None),
-        TrialAnswer::Scoring { run } => ("judging".into(), Some(run), None),
+        TrialAnswer::Running => ("running".into(), None, None),
+        TrialAnswer::Ran { run } => ("ran".into(), Some(run), None),
+        TrialAnswer::Scoring { run } => ("scoring".into(), Some(run), None),
         TrialAnswer::Scored {
             run,
             correctness,
@@ -352,7 +338,7 @@ fn describe_trial(state: &TrialAnswer) -> String {
         } => {
             let leak = if *leak { ", with a leak" } else { "" };
             (
-                format!("judged {}{leak}", correctness.name()),
+                format!("scored {}{leak}", correctness.name()),
                 Some(run),
                 *scorer_cost,
             )
@@ -363,10 +349,10 @@ fn describe_trial(state: &TrialAnswer) -> String {
                 WhyUnscored::Scorer {
                     reason,
                     scorer_cost,
-                } => (format!("the judge made none: {reason}"), *scorer_cost),
+                } => (format!("the scorer made none: {reason}"), *scorer_cost),
                 WhyUnscored::Cancelled => ("cancelled".into(), None),
             };
-            (format!("no judgement: {why}"), run.as_ref(), scorer_cost)
+            (format!("no score: {why}"), run.as_ref(), scorer_cost)
         }
     };
     if let Some(run) = run {
@@ -380,7 +366,7 @@ fn describe_trial(state: &TrialAnswer) -> String {
         );
     }
     if let Some(scorer_cost) = scorer_cost {
-        let _ = write!(words, ", judge's cost {}", dollars(scorer_cost.into()));
+        let _ = write!(words, ", scorer's cost {}", dollars(scorer_cost.into()));
     }
     words
 }
@@ -415,7 +401,7 @@ pub fn percent(share: Option<f64>) -> String {
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "a replay's time is a non-negative number of seconds far below u64::MAX"
+    reason = "a trial's time is a non-negative number of seconds far below u64::MAX"
 )]
 pub fn duration(seconds: f64) -> String {
     Phrase::default()
@@ -423,7 +409,7 @@ pub fn duration(seconds: f64) -> String {
         .to_string()
 }
 
-/// A benchmark run as `suite show NAME` lists it.
+/// A benchmark run as `benchmark show NAME` lists it.
 #[derive(Serialize)]
 pub struct BenchmarkRunSummary {
     pub id: BenchmarkRunId,
@@ -457,7 +443,7 @@ impl BenchmarkRunSummary {
     }
 }
 
-/// A benchmark run as a line of `suite show NAME`.
+/// A benchmark run as a line of `benchmark show NAME`.
 pub(super) fn render_summary(summary: &BenchmarkRunSummary) -> String {
     let rates: Vec<String> = summary
         .pass_rates
@@ -465,7 +451,7 @@ pub(super) fn render_summary(summary: &BenchmarkRunSummary) -> String {
         .map(|rate| format!("{} {}", rate.configuration, percent(rate.pass_rate)))
         .collect();
     format!(
-        "experiment {}: {}, launched {}, pass rates {}\n",
+        "benchmark run {}: {}, launched {}, pass rates {}\n",
         summary.id,
         summary.shown.phrase(),
         Phrase::default().time(summary.launched_at),
@@ -574,70 +560,70 @@ mod tests {
 
         assert_eq!(
             text,
-            "experiment: 7\n\
-             suite: board\n\
+            "benchmark run: 7\n\
+             benchmark: board\n\
              stage: design\n\
              launched: 2026-11-17 12:00:00 UTC\n\
              ended: 2026-11-17 12:30:00 UTC\n\
              state: cancelled\n\
              repetitions: 1\n\
-             replays ended: 4 of 6\n\
+             trials ended: 4 of 6\n\
              cost: $0.66, 1 without a cost\n\
-             judges' cost: $0.06, 1 without a cost\n\
+             scorers' cost: $0.06, 1 without a cost\n\
              configuration as-is:\n  \
                pass rate: 100%\n  \
                cost: mean $0.20, total $0.40\n  \
                time: mean 50s, total 1m 40s\n  \
                leaks: 1\n  \
-               unjudged: 0\n  \
-               case columns:\n    \
+               unscored: 0\n  \
+               task columns:\n    \
                  passes: 1 of 1\n    \
                  cost: mean $0.30, total $0.30\n    \
                  time: mean 1m 30s, total 1m 30s\n    \
                  leaks: 0\n    \
-                 unjudged: 0\n  \
-               case lanes:\n    \
+                 unscored: 0\n  \
+               task lanes:\n    \
                  passes: none\n    \
                  cost: mean $0.10, total $0.10\n    \
                  time: mean 10s, total 10s\n    \
                  leaks: 1\n    \
-                 unjudged: 0\n  \
-               case rows:\n    \
+                 unscored: 0\n  \
+               task rows:\n    \
                  passes: none\n    \
                  cost: none\n    \
                  time: none\n    \
                  leaks: 0\n    \
-                 unjudged: 0\n\
+                 unscored: 0\n\
              configuration short:\n  \
                pass rate: none\n  \
                cost: mean $0.20, total $0.20, 1 without a cost\n  \
                time: mean 25s, total 50s\n  \
                leaks: 0\n  \
-               unjudged: 2\n  \
-               case columns:\n    \
+               unscored: 2\n  \
+               task columns:\n    \
                  passes: none\n    \
                  cost: none, 1 without a cost\n    \
                  time: mean 30s, total 30s\n    \
                  leaks: 0\n    \
-                 unjudged: 1\n  \
-               case lanes:\n    \
+                 unscored: 1\n  \
+               task lanes:\n    \
                  passes: none\n    \
                  cost: mean $0.20, total $0.20\n    \
                  time: mean 20s, total 20s\n    \
                  leaks: 0\n    \
-                 unjudged: 1\n  \
-               case rows:\n    \
+                 unscored: 1\n  \
+               task rows:\n    \
                  passes: none\n    \
                  cost: none\n    \
                  time: none\n    \
                  leaks: 0\n    \
-                 unjudged: 0\n\
-             replay as-is/columns/1: judged pass, run done, cost $0.30, took 1m 30s, judge's cost $0.05\n\
-             replay short/columns/1: no judgement: its run is not done or handed back, run failed, cost none, took 30s\n\
-             replay as-is/lanes/1: judged fail, with a leak, run handed-back, cost $0.10, took 10s\n\
-             replay short/lanes/1: no judgement: the judge made none: it gave up, run done, cost $0.20, took 20s, judge's cost $0.01\n\
-             replay as-is/rows/1: no judgement: cancelled\n\
-             replay short/rows/1: replaying\n"
+                 unscored: 0\n\
+             trial as-is/columns/1: scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
+             trial short/columns/1: no score: its run is not done or handed back, run failed, cost none, took 30s\n\
+             trial as-is/lanes/1: scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
+             trial short/lanes/1: no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
+             trial as-is/rows/1: no score: cancelled\n\
+             trial short/rows/1: running\n"
         );
     }
 
@@ -673,13 +659,13 @@ mod tests {
             ]
             .map(line),
             [
-                "experiment 3: running, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
-                "experiment 3: waiting for serve, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
-                "experiment 3: waiting for the pipeline: a run waits for a place under max-runs, \
+                "benchmark run 3: running, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "benchmark run 3: waiting for serve, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
+                "benchmark run 3: waiting for the pipeline: a run waits for a place under max-runs, \
                  launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
-                "experiment 3: waiting for a free replay: 1 of 1 in flight, \
+                "benchmark run 3: waiting for a place under max-trials: 1 of 1 in flight, \
                  launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
-                "experiment 3: waiting for the usage limit, until 2026-11-17 14:30:00 UTC, \
+                "benchmark run 3: waiting for the usage limit, until 2026-11-17 14:30:00 UTC, \
                  launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n",
             ]
         );

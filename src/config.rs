@@ -136,7 +136,7 @@ pub enum Command {
         follow: bool,
     },
     /// Write run ID, such as 43/implement-2, into DIR as the output of a
-    /// replay gives its run: its outcome, its record and its sessions, as
+    /// trial gives its run: its outcome, its record and its sessions, as
     /// they are now.
     Export {
         id: RunId,
@@ -162,17 +162,17 @@ pub enum Command {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Capture run ID, such as 43/implement-2, as the case NAME of the suite
-    /// SUITE, in `tasks/` under the work directory.
+    /// Capture run ID, such as 43/implement-2, as the task NAME of the
+    /// benchmark BENCHMARK, in `tasks/` under the work directory.
     Capture {
         id: RunId,
         /// Lowercase letters, digits and hyphens, starting with a letter or a
         /// digit.
         name: TaskName,
-        /// The suite the case goes into: one of the run's stage.
-        #[arg(long = "suite", value_name = "SUITE")]
+        /// The benchmark the task goes into: one of the run's stage.
+        #[arg(long)]
         benchmark: BenchmarkName,
-        /// What a good result is, as `criteria.md` in the case: refused
+        /// What a good result is, as `criteria.md` in the task: refused
         /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
         criteria: PathBuf,
@@ -180,47 +180,37 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Run the stage of the case in the directory CASE on it again, with the
-    /// case in place of GitHub, writing what the run did to DIR.
-    #[command(name = "replay")]
+    /// Run the stage of the task in the directory TASK on it again, with the
+    /// task in place of GitHub, writing what the run did to DIR.
     Trial {
-        #[arg(value_name = "CASE")]
         task: PathBuf,
         /// The directory of the output: made if missing, and refused unless
         /// empty.
         #[arg(long, value_name = "DIR")]
         out: PathBuf,
-        /// A configuration to replay with, laid out as a repository's
+        /// A configuration to run the trial with, laid out as a repository's
         /// `.linewright/`: its `config.toml` and the files of its `briefs/`
         /// override every other layer, flags included.
         #[arg(long, value_name = "CONFIG")]
         configuration: Option<PathBuf>,
     },
-    /// Judge DIR, the output of a replay of the case in the directory CASE,
-    /// against the case's criteria, keeping the judgement in DIR.
-    #[command(name = "judge")]
-    Score {
-        #[arg(value_name = "CASE")]
-        task: PathBuf,
-        dir: PathBuf,
-    },
-    /// List the suites, each with its stage and how many cases it holds.
-    #[command(name = "suites")]
+    /// Score DIR, the output of a trial of the task in the directory TASK,
+    /// against the task's criteria, keeping the score in DIR.
+    Score { task: PathBuf, dir: PathBuf },
+    /// List the benchmarks, each with its stage and how many tasks it holds.
     Benchmarks {
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Suites: `suite show` shows one, `suite add` makes one, and
-    /// `suite remove-case` removes a case from one.
-    #[command(name = "suite")]
+    /// Benchmarks: `benchmark show` shows one, `benchmark add` makes one,
+    /// and `benchmark remove-task` removes a task from one.
     Benchmark {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
-    /// Experiments: `experiment show` shows one, `experiment launch`
-    /// launches one, and `experiment cancel` cancels one.
-    #[command(name = "experiment")]
+    /// Benchmark runs: `benchmark-run show` shows one, `benchmark-run launch`
+    /// launches one, and `benchmark-run cancel` cancels one.
     BenchmarkRun {
         #[command(subcommand)]
         command: BenchmarkRunCommand,
@@ -229,17 +219,16 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BenchmarkRunCommand {
-    /// Show the experiment ID: its state, its replays and its results.
+    /// Show the benchmark run ID: its state, its trials and its results.
     Show {
         id: BenchmarkRunId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Launch an experiment on the cases of the suite SUITE, under `as-is`
-    /// and each configuration given.
+    /// Launch a benchmark run on the tasks of the benchmark BENCHMARK, under
+    /// `as-is` and each configuration given.
     Launch {
-        #[arg(value_name = "SUITE")]
         benchmark: BenchmarkName,
         /// A configuration named NAME, of lowercase letters, digits and
         /// hyphens starting with a letter or a digit, laid out in the
@@ -247,14 +236,14 @@ pub enum BenchmarkRunCommand {
         /// and the files of its `briefs/`.
         #[arg(long = "configuration", value_name = "NAME=DIR", value_parser = parse_configuration)]
         configurations: Vec<(ConfigurationName, PathBuf)>,
-        /// How many times to replay each case under each configuration.
+        /// How many trials to make of each task under each configuration.
         #[arg(long, value_name = "N", default_value = "1")]
         repetitions: Repetitions,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Cancel the experiment ID.
+    /// Cancel the benchmark run ID.
     Cancel {
         id: BenchmarkRunId,
         /// Print the answer as JSON.
@@ -276,15 +265,16 @@ fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), Stri
 
 #[derive(Subcommand, Debug)]
 pub enum BenchmarkCommand {
-    /// Show the suite NAME: its cases with their criteria, and its
-    /// experiments.
+    /// Show the benchmark NAME: its tasks with their criteria, and its
+    /// benchmark runs.
     Show {
         name: BenchmarkName,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Make the suite NAME, of the stage STAGE: triage, design or implement.
+    /// Make the benchmark NAME, of the stage STAGE: triage, design or
+    /// implement.
     Add {
         /// Lowercase letters, digits and hyphens, starting with a letter or a
         /// digit.
@@ -294,12 +284,10 @@ pub enum BenchmarkCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove the case CASE from the suite NAME, and with it the case's
+    /// Remove the task TASK from the benchmark NAME, and with it the task's
     /// directory.
-    #[command(name = "remove-case")]
     RemoveTask {
         name: BenchmarkName,
-        #[arg(value_name = "CASE")]
         task: TaskName,
         /// Print the answer as JSON.
         #[arg(long)]
@@ -437,9 +425,9 @@ pub struct Settings {
     /// The ceiling on runs in flight [default: 4]
     #[arg(long, global = true)]
     pub max_runs: Option<String>,
-    /// The ceiling on replays and judges of experiments in flight
+    /// The ceiling on trials and scorers of benchmark runs in flight
     /// [default: 1]
-    #[arg(long = "max-replays", value_name = "MAX_REPLAYS", global = true)]
+    #[arg(long, global = true)]
     pub max_trials: Option<String>,
     /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
     #[arg(long, global = true)]
@@ -574,7 +562,7 @@ impl Settings {
             ("spec-lookback", &self.spec_lookback),
             ("done-window", &self.done_window),
             ("max-runs", &self.max_runs),
-            ("max-replays", &self.max_trials),
+            ("max-trials", &self.max_trials),
             ("work-dir", &self.work_dir),
             ("model", &self.model),
             ("effort", &self.effort),
@@ -677,7 +665,7 @@ const SETTINGS: [(&str, Form); 30] = [
     ("spec-lookback", VALUE),
     ("done-window", VALUE),
     ("max-runs", VALUE),
-    ("max-replays", VALUE),
+    ("max-trials", VALUE),
     ("work-dir", VALUE),
     stage_entry(StageSetting::Repository(RepositorySetting::Model)),
     stage_entry(StageSetting::Repository(RepositorySetting::Effort)),
@@ -1244,7 +1232,7 @@ impl Config {
             spec_lookback: delta("spec-lookback", "7d")?,
             done_window: delta("done-window", "7d")?,
             max_runs: number("max-runs", "4")? as usize,
-            max_trials: number("max-replays", "1")? as usize,
+            max_trials: number("max-trials", "1")? as usize,
             work_dir,
             work,
             briefs: get("briefs").map(PathBuf::from),
