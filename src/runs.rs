@@ -972,14 +972,27 @@ pub enum Unended {
     Interrupted,
 }
 
+impl OutcomeName {
+    /// The status it shows as (`docs/specs/runs.md`, Ending).
+    pub(crate) fn status(self) -> Status {
+        match self {
+            OutcomeName::Ended(ending) => match ending {
+                Ending::Done => Status::Done,
+                Ending::Failed => Status::Failed,
+                Ending::HandedBack => Status::Waiting,
+                Ending::Cancelled | Ending::UsageLimit => Status::Cancelled,
+            },
+            OutcomeName::Unended(Unended::InFlight) => Status::InFlight,
+            OutcomeName::Unended(Unended::Interrupted) => Status::Cancelled,
+        }
+    }
+}
+
 impl From<Run> for RunAnswer {
     fn from(run: Run) -> RunAnswer {
-        let (outcome, duration_seconds) = match run.outcome {
-            Outcome::Ended { ending, seconds } => (OutcomeName::Ended(ending), Some(seconds)),
-            Outcome::InFlight { seconds } => {
-                (OutcomeName::Unended(Unended::InFlight), Some(seconds))
-            }
-            Outcome::Interrupted => (OutcomeName::Unended(Unended::Interrupted), None),
+        let duration_seconds = match run.outcome {
+            Outcome::Ended { seconds, .. } | Outcome::InFlight { seconds } => Some(seconds),
+            Outcome::Interrupted => None,
         };
         RunAnswer {
             id: run.id.to_string(),
@@ -987,7 +1000,7 @@ impl From<Run> for RunAnswer {
             started_by: run.started_by,
             started_at: run.started_at,
             duration_seconds,
-            outcome,
+            outcome: run.outcome.name(),
             sessions: run.sessions,
         }
     }
@@ -1224,18 +1237,18 @@ impl Outcome {
         )
     }
 
+    /// Its name in JSON.
+    fn name(self) -> OutcomeName {
+        match self {
+            Outcome::Ended { ending, .. } => OutcomeName::Ended(ending),
+            Outcome::InFlight { .. } => OutcomeName::Unended(Unended::InFlight),
+            Outcome::Interrupted => OutcomeName::Unended(Unended::Interrupted),
+        }
+    }
+
     /// The status it shows as (`docs/specs/runs.md`, Ending).
     pub(crate) fn status(self) -> Status {
-        match self {
-            Outcome::Ended { ending, .. } => match ending {
-                Ending::Done => Status::Done,
-                Ending::Failed => Status::Failed,
-                Ending::HandedBack => Status::Waiting,
-                Ending::Cancelled | Ending::UsageLimit => Status::Cancelled,
-            },
-            Outcome::InFlight { .. } => Status::InFlight,
-            Outcome::Interrupted => Status::Cancelled,
-        }
+        self.name().status()
     }
 }
 
@@ -1375,6 +1388,40 @@ mod tests {
                 .await
                 .unwrap_or_else(|e| panic!("keeping the record at {caller}: {e:#}"));
         }
+    }
+
+    /// `docs/specs/runs.md`, Ending: each outcome, by its name in JSON, and
+    /// the status it shows as.
+    #[test_log::test]
+    fn each_outcome_shows_as_the_status_the_ending_table_gives_it() {
+        let shown: Vec<(&str, Status)> = [
+            "done",
+            "handed-back",
+            "cancelled",
+            "usage-limit",
+            "failed",
+            "in-flight",
+            "interrupted",
+        ]
+        .into_iter()
+        .map(|name| {
+            let outcome: OutcomeName = serde_json::from_value(name.into()).unwrap();
+            (name, outcome.status())
+        })
+        .collect();
+
+        assert_eq!(
+            shown,
+            [
+                ("done", Status::Done),
+                ("handed-back", Status::Waiting),
+                ("cancelled", Status::Cancelled),
+                ("usage-limit", Status::Cancelled),
+                ("failed", Status::Failed),
+                ("in-flight", Status::InFlight),
+                ("interrupted", Status::Cancelled),
+            ]
+        );
     }
 
     fn ended(item: u64, stage: &str, n: u32) -> serde_json::Value {
