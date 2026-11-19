@@ -1,7 +1,7 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-{%- call(part) ui::table_card("Benchmarks", shows_name = false, filters_stream = "/events/benchmarks") %}
+{%- call(part) ui::table_card("Benchmarks", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Benchmarks), shows_name = false, filters_stream = "/events/benchmarks") %}
 {%- match part %}
 {%- when crate::web::table::Part::Filters %}
 {%- call ui::filter_search("Name", "name", filters.name) %}{% endcall %}

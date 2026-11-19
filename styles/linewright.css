@@ -21,48 +21,85 @@
   themes: false;
 }
 
-/* Each colour but white is a step of Radix Slate
-   (https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale),
-   copied from `@radix-ui/colors`' `slate.css` and `slate-dark.css`. */
 @plugin "./daisyui-theme.mjs" {
   name: "light";
   default: true;
   color-scheme: light;
-  --color-base-100: #f9f9fb;
-  --color-base-200: #f0f0f3;
-  --color-base-300: #d9d9e0;
-  --color-base-content: #1c2024;
-  --card: #ffffff;
-  --muted: #60646c;
+  --color-base-100: oklch(96% 0.008 68);
+  --color-base-200: oklch(97% 0.008 68);
+  --color-base-300: oklch(98% 0.008 68);
+  --color-base-content: oklch(21% 0.006 285.885);
+  --color-primary: oklch(46% 0.228 260.92);
+  --color-primary-content: oklch(93% 0.034 272.788);
+  --color-secondary: oklch(68% 0.163 184.32);
+  --color-secondary-content: oklch(98% 0.014 180.72);
+  --color-accent: oklch(0.3627 0.1049 260.92);
+  --color-accent-content: oklch(0.7318 0.1049 260.92);
+  --color-neutral: oklch(14% 0.052 265.87);
+  --color-neutral-content: oklch(92% 0.004 286.32);
+  --color-info: oklch(83% 0.094 211.43);
+  --color-info-content: oklch(29% 0.066 243.157);
+  --color-success: oklch(82% 0.092 163.21);
+  --color-success-content: oklch(37% 0.077 168.94);
+  --color-warning: oklch(83% 0.092 76.54);
+  --color-warning-content: oklch(41% 0.112 45.904);
+  --color-error: oklch(82% 0.112 24.87);
+  --color-error-content: oklch(27% 0.105 12.094);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 0.5px;
+  --depth: 1;
+  --noise: 0;
 }
 
 @plugin "./daisyui-theme.mjs" {
   name: "dark";
   prefersdark: true;
   color-scheme: dark;
-  --color-base-100: #212225;
-  --color-base-200: #18191b;
-  --color-base-300: #363a3f;
-  --color-base-content: #edeef0;
-  --card: #2e3135;
-  --muted: #b0b4ba;
+  --color-base-100: oklch(0.2046 0.007 257.8);
+  --color-base-200: oklch(0.2286 0.007 257.8);
+  --color-base-300: oklch(0.2486 0.007 257.8);
+  --color-base-content: oklch(97.807% 0.029 256.847);
+  --color-primary: oklch(46% 0.228 260.92);
+  --color-primary-content: oklch(96% 0.018 272.314);
+  --color-secondary: oklch(68% 0.163 184.32);
+  --color-secondary-content: oklch(94% 0.028 342.258);
+  --color-accent: oklch(0.3627 0.1049 260.92);
+  --color-accent-content: oklch(0.7318 0.1049 260.92);
+  --color-neutral: oklch(43% 0.046 261.32);
+  --color-neutral-content: oklch(92% 0.004 286.32);
+  --color-info: oklch(29% 0.066 243.157);
+  --color-info-content: oklch(83% 0.094 211.43);
+  --color-success: oklch(37% 0.077 168.94);
+  --color-success-content: oklch(82% 0.092 163.21);
+  --color-warning: oklch(41% 0.112 45.904);
+  --color-warning-content: oklch(83% 0.092 76.54);
+  --color-error: oklch(27% 0.105 12.094);
+  --color-error-content: oklch(82% 0.112 24.87);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.25rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 0.5px;
+  --depth: 1;
+  --noise: 0;
 }
 
 /* The Card colour as Tailwind's `bg-card`, and Muted text as `text-muted`
    and `var(--color-muted)`
    (https://tailwindcss.com/docs/colors#using-a-custom-color). */
 @theme inline {
-  --color-card: var(--card);
-  --color-muted: var(--muted);
-}
-
-@theme {
-  --spacing-page: 1rem;
+  --color-card: var(--color-base-200);
+  --color-muted: color-mix(in oklab, var(--color-base-content) 60%, transparent);
 }
 
 @layer base {
   code {
-    @apply rounded-sm bg-base-200 px-1 font-mono text-[0.9em];
+    @apply rounded-sm bg-base-300 px-1 font-mono text-[0.9em];
   }
 }
 
@@ -153,7 +190,7 @@
   }
 
   .board .lane-head {
-    @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) rounded-t-[calc(var(--radius-box)-var(--lane-border))] bg-base-200 px-(--lane-padding) pt-2 font-semibold;
+    @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) rounded-t-box px-(--lane-padding) pt-2 font-semibold;
   }
 
   .board .card.toned {

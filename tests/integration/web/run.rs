@@ -336,6 +336,26 @@ async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_
     }
 }
 
+/// `docs/specs/web/runs.md`, Run, Hover: an entry's line is in the Border
+/// colour on hover.
+#[test_log::test(tokio::test)]
+async fn every_entrys_line_is_in_the_border_colour_on_hover() {
+    let pages = implemented_as_recorded().await;
+
+    let html = pages.page("/runs/1/implement-1?verbose=").await;
+
+    let lines = select(&html, "#transcript .entry .line");
+    assert_ne!(lines.len(), 0);
+    for line in lines {
+        let hovered: Vec<&str> = line
+            .value()
+            .classes()
+            .filter(|class| class.starts_with("hover:"))
+            .collect();
+        assert_eq!(hovered, ["hover:bg-base-300"], "{}", line.html());
+    }
+}
+
 /// `docs/specs/runs.md`, Out of scope: a link of its own to each
 /// transcript entry.
 #[test_log::test(tokio::test)]

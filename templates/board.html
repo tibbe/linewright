@@ -9,7 +9,7 @@
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
-<li class="{% call ui::card_look() %}{% endcall %}{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
+<li class="{% call ui::card_look("bg-base-100") %}{% endcall %}{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-75{% endif %}">
 <div class="card-body gap-1">
 <h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{% if card.pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
@@ -24,11 +24,11 @@
 {%- endmacro -%}
 {#- A lane's head, sticky under the column heads while the reader is in
     its lane, and its text sticky at the left as the board scrolls
-    sideways, cut to the board's visible width less the lane's inset on
+    sideways, cut to the board's visible width less the lane's padding on
     each side so that it can stay there inside its lane, and whole in the
     page's tooltip while it is cut (`docs/specs/design_system.md`, Layout). -#}
 {%- macro lane_head(lane) -%}
-<span class="name-cut-1 sticky left-(--lane-inset) max-w-[calc(100cqw-2*var(--lane-inset))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
+<span class="name-cut-1 sticky left-(--lane-padding) max-w-[calc(100cqw-2*var(--lane-padding))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
 {%- endmacro -%}
 {%- block main -%}
 {%- call ui::filters("/events/") %}
@@ -46,15 +46,15 @@
 {#- A sticky box stays within its containing block, and sticks to the
     scrollport of its nearest scroll container:
     https://drafts.csswg.org/css-position/#stickypos-insets -#}
-<div class="board min-w-[calc(6*200px+5*--spacing(2)+2*var(--lane-inset))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem] [--lane-padding:--spacing(2)] [--lane-border:1px] [--lane-inset:calc(var(--lane-padding)+var(--lane-border))]">
-<div class="sticky top-0 z-20 grid h-(--column-heads) grid-cols-(--columns) items-center gap-2 bg-base-100 px-(--lane-inset)">
+<div class="board min-w-[calc(6*200px+5*--spacing(2)+2*var(--lane-padding))] [--column-heads:2rem] [--columns:repeat(6,minmax(200px,1fr))] [--lane-head:2.5rem] [--lane-padding:--spacing(2)]">
+<div class="sticky top-0 z-20 grid h-(--column-heads) grid-cols-(--columns) items-center gap-2 bg-base-100 px-(--lane-padding)">
 {%- for column in board.columns %}
 <h2 class="column font-semibold">{{ column }}</h2>
 {%- endfor %}
 </div>
 {%- for lane in board.unfinished %}
-<section class="lane mt-3 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
-<h2 class="lane-head">{% call lane_head(lane) %}{% endcall %}</h2>
+<section class="lane rounded-box {% call ui::card_surface() %}{% endcall %} mt-3 pb-(--lane-padding)" id="{{ lane.id }}">
+<h2 class="lane-head bg-card">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
@@ -62,8 +62,8 @@
 <details id="finished" class="mt-3 border-t border-base-300 pt-2">
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
-<details class="lane mt-2 rounded-box border-(length:--lane-border) border-base-300 bg-base-200 pb-(--lane-padding)" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer">{% call lane_head(lane) %}{% endcall %}</summary>
+<details class="lane rounded-box {% call ui::card_surface() %}{% endcall %} mt-2 pb-(--lane-padding)" id="{{ lane.id }}">
+<summary class="lane-head cursor-pointer bg-card">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>
 {%- endfor %}

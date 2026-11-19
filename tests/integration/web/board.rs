@@ -1,3 +1,4 @@
+use super::look::assert_drawn_as_a_card;
 use super::*;
 
 use linewright::domain::{
@@ -676,8 +677,10 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
     }
 }
 
+/// `docs/specs/web/board.md`, Board: a lane is drawn as a card is, its head
+/// a bar in the Card colour, and its cards are cards in the Page colour.
 #[test_log::test(tokio::test)]
-async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it() {
+async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
 
     let html = pages.page("/").await;
@@ -685,34 +688,18 @@ async fn each_lane_is_a_surface_sunk_into_the_page_with_its_cards_raised_on_it()
     let lanes = select(&html, "#board .lane");
     assert_eq!(lanes.len(), 4);
     for lane in lanes {
-        assert!(
-            has_classes(
-                lane,
-                &[
-                    "bg-base-200",
-                    "border-(length:--lane-border)",
-                    "border-base-300",
-                    "rounded-box"
-                ]
-            ),
-            "{}",
-            lane.html()
-        );
+        assert!(has_classes(lane, &["rounded-box"]), "{}", lane.html());
+        assert_drawn_as_a_card(lane, "bg-card", "a lane");
         for head in select_in(lane, ".lane-head") {
+            assert!(has_classes(head, &["bg-card"]), "{}", head.html());
             assert!(lacks_classes(head, &["border-t"]), "{}", head.html());
         }
     }
-    let cards = select(&html, "#board .card");
+    let cards = select(&html, "#board li");
     assert_eq!(cards.len(), 4);
     for card in cards {
-        assert!(
-            has_classes(
-                card,
-                &["card", "bg-card", "border", "border-base-300", "shadow-sm"]
-            ),
-            "{}",
-            card.html()
-        );
+        assert!(has_classes(card, &["card"]), "{}", card.html());
+        assert_drawn_as_a_card(card, "bg-base-100", "a board card");
     }
 }
 
@@ -735,7 +722,7 @@ const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
 /// `docs/specs/board.md`, Lanes: a lane's head is its number and title, with
 /// its tickets closed of total and when it finished, and no status of its own
-/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in the Lane colour.
+/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in the Card colour.
 #[test_log::test(tokio::test)]
 async fn a_lane_head_shows_no_status_of_its_own() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;

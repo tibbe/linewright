@@ -8,11 +8,13 @@ mod capture;
 mod environment;
 mod frame;
 mod item;
+mod look;
 mod run;
 mod runs;
 mod script;
 mod serving;
 mod shell;
+mod theme;
 
 use std::time::Duration;
 

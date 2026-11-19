@@ -13,7 +13,7 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{self, Frame, Heading, Missing, Place, Thing};
+use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
 use super::{ErrorPage, Page, events, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
@@ -267,7 +267,11 @@ struct ItemRegion<'a> {
 
 /// Item `number`'s page, with `thing` its heading or that it is missing.
 fn page(number: Number, thing: Thing) -> Page {
-    Page::new(Place::Alone(thing), format!("/events/items/{}", number.0)).filling_the_viewport()
+    Page::new(
+        Place::Alone(Area::Board, thing),
+        format!("/events/items/{}", number.0),
+    )
+    .filling_the_viewport()
 }
 
 pub(super) async fn item_page(

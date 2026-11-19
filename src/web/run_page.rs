@@ -225,12 +225,12 @@ impl SessionView {
         let n = self.number;
         let Some(started_at) = self.started_at else {
             return format!(
-                r#"<h2 class="mt-4 mb-1 font-semibold" id="s{n}-heading"><span class="text">session {n}</span></h2>"#
+                r#"<h2 class="mt-4 mb-1 in-[.session:first-child]:mt-0 font-semibold" id="s{n}-heading"><span class="text">session {n}</span></h2>"#
             );
         };
         let lasted = duration_html(model.lasted_so_far().map(Lasted::from));
         format!(
-            r#"<h2 class="mt-4 mb-1 flex items-baseline font-semibold" id="s{n}-heading"><span class="text grow">session {n}: started {}</span>{lasted}</h2>"#,
+            r#"<h2 class="mt-4 mb-1 in-[.session:first-child]:mt-0 flex items-baseline font-semibold" id="s{n}-heading"><span class="text grow">session {n}: started {}</span>{lasted}</h2>"#,
             html::time(started_at),
         )
     }
@@ -533,15 +533,15 @@ pub(super) fn entry_row(row: &Row) -> String {
     )
 }
 
-/// A row's line: the summary of its fold, if it opens, in the Lane colour
-/// on hover and on keyboard focus (`docs/specs/design_system.md`, Layout).
+/// A row's line: the summary of its fold, if it opens, in the Border colour
+/// on hover and on keyboard focus (`docs/specs/web/runs.md`, Run, Hover).
 fn line_html(row: &Row) -> String {
     let tag = if row.fold.is_some() { "summary" } else { "div" };
     let id = row
         .id
         .map_or(String::new(), |id| format!(r#" id="{id}-line""#));
     format!(
-        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-200 focus-visible:bg-base-200"{id}><span class="chevron text-center text-muted" aria-hidden="true"></span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
+        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron text-center text-muted" aria-hidden="true"></span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
         text = row.text,
         duration = duration_html(row.lasted),
     )
@@ -1291,7 +1291,7 @@ pub(super) async fn transcript_page(
             (Err(RunError::NoSuchRun(_)), Some(missing)) => {
                 let events = format!("/events{path}");
                 return nothing_there(
-                    |thing| Page::new(shell::Place::Alone(thing), events),
+                    |thing| Page::new(run_place(thing), events),
                     missing,
                     frame,
                     "transcript",
@@ -1328,6 +1328,11 @@ pub(super) async fn transcript_page(
     }
 }
 
+/// The place of a run's screen, or of a transcript's: alone, in Runs.
+fn run_place(thing: Thing) -> shell::Place {
+    shell::Place::Alone(shell::Area::Runs, thing)
+}
+
 pub(super) async fn run_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
@@ -1336,13 +1341,13 @@ pub(super) async fn run_page(
     let events = format!("/events/runs/{id}");
     let Ok(run) = id.parse::<RunId>() else {
         let frame = Frame::of(&sources).await;
-        let page = |thing| Page::new(shell::Place::Alone(thing), events);
+        let page = |thing| Page::new(run_place(thing), events);
         return nothing_there(page, Missing::Run(id), frame, "transcript");
     };
     let thing = match run_thing(&sources, &run).await {
         Some(Thing::Missing(missing)) => {
             let frame = Frame::of(&sources).await;
-            let page = |thing| Page::new(shell::Place::Alone(thing), events);
+            let page = |thing| Page::new(run_place(thing), events);
             return nothing_there(page, missing, frame, "transcript");
         }
         Some(found) => found,
@@ -1354,7 +1359,7 @@ pub(super) async fn run_page(
     transcript_page(
         &sources,
         &run_path(&run),
-        shell::Place::Alone(thing),
+        run_place(thing),
         Ok(Transcribed::run(&sources, &run)),
         query.verbose(),
         capture,
@@ -1393,11 +1398,7 @@ pub(super) async fn run_events(
                     Some(run) if found => run_thing(&sources, run).await?,
                     _ => Thing::Missing(Missing::Run(id)),
                 };
-                Some(transcript_page_at(
-                    shell::Place::Alone(thing),
-                    events,
-                    captures,
-                ))
+                Some(transcript_page_at(run_place(thing), events, captures))
             })
         })
     };

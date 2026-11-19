@@ -2,11 +2,11 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 {% block item -%}
-<section id="item" class="mb-4 space-y-3">
+<section id="item">
 {% call ui::facts(item.facts) %}{% endcall %}
 </section>
 {%- endblock %}
-{%- call(part) ui::table_card("Runs", shows_name = true) %}
+{%- call(part) ui::table_card("Runs", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Runs), shows_name = true) %}
 {%- if part == crate::web::table::Part::Table %}
 {%- call ui::runs(runs) %}{% endcall %}
 {%- endif %}

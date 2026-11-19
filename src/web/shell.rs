@@ -9,6 +9,7 @@ use askama::Template;
 
 use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
+use super::icons::CardIcon;
 use super::names::Names;
 use super::{Page, render, run_path};
 use crate::api::{self, Sources};
@@ -90,9 +91,9 @@ pub(super) enum Place {
         screen: &'static str,
         thing: Thing,
     },
-    /// A screen of one thing that belongs to no other, such as Run: it has
-    /// no breadcrumbs, and its heading's name is its `h1`.
-    Alone(Thing),
+    /// A screen of one thing in `area` that belongs to no other, such as
+    /// Run: it has no breadcrumbs, and its heading's name is its `h1`.
+    Alone(Area, Thing),
 }
 
 /// What a screen of one thing shows of it.
@@ -215,7 +216,7 @@ impl Place {
                 screen,
                 ..
             } => (*area, crumbs, screen),
-            Place::Alone(_) => return vec![],
+            Place::Alone(..) => return vec![],
         };
         let area = CrumbShown {
             name: area.name(),
@@ -238,15 +239,21 @@ impl Place {
     /// Whether it has breadcrumbs, whose last crumb is then the page's `h1`
     /// and at whose right are the screen's buttons.
     pub(super) fn has_crumbs(&self) -> bool {
-        !matches!(self, Place::Alone(_))
+        !matches!(self, Place::Alone(..))
     }
 
     /// What a screen of one thing shows of it.
     fn thing(&self) -> Option<&Thing> {
         match self {
             Place::Navigation(_) => None,
-            Place::Within { thing, .. } | Place::Alone(thing) => Some(thing),
+            Place::Within { thing, .. } | Place::Alone(_, thing) => Some(thing),
         }
+    }
+
+    /// The icon of its heading card's title: its area's.
+    pub(super) fn icon(&self) -> CardIcon {
+        let (Place::Navigation(area) | Place::Within { area, .. } | Place::Alone(area, _)) = self;
+        CardIcon::Area(*area)
     }
 
     /// Its heading card, on a screen of one thing that Linewright found.
@@ -262,7 +269,7 @@ impl Place {
     pub(super) fn title(&self) -> String {
         let name = match self {
             Place::Navigation(area) => area.name().to_string(),
-            Place::Within { thing, .. } | Place::Alone(thing) => thing.name(),
+            Place::Within { thing, .. } | Place::Alone(_, thing) => thing.name(),
         };
         format!("{name} · Linewright")
     }
@@ -636,7 +643,7 @@ mod tests {
 
     #[test_log::test]
     fn a_screen_of_one_thing_alone_has_no_crumbs_and_is_titled_by_its_heading() {
-        let place = Place::Alone(Thing::Found(Heading::named("43/rework-9")));
+        let place = Place::Alone(Area::Runs, Thing::Found(Heading::named("43/rework-9")));
 
         assert_eq!(place.crumbs(), []);
         assert!(!place.has_crumbs());
@@ -650,7 +657,7 @@ mod tests {
             "Benchmark run",
             Thing::Missing(Missing::BenchmarkRun("9".into())),
         );
-        let alone = Place::Alone(Thing::Missing(Missing::Item(Number(812))));
+        let alone = Place::Alone(Area::Board, Thing::Missing(Missing::Item(Number(812))));
 
         assert_eq!(
             within.crumbs(),

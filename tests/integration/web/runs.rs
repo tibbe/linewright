@@ -372,13 +372,6 @@ async fn the_runs_table_is_in_a_card_showing_no_name_with_the_filters_in_a_row_a
         [unnamed_card(&[], &["item", "stage", "since"])]
     );
     assert_eq!(select(&html, ".table-card #runs table").len(), 1);
-    let card = classes(&html, ".table-card");
-    assert!(
-        ["card", "border", "border-base-300", "bg-card", "shadow-sm"]
-            .iter()
-            .all(|look| card[0].contains(look)),
-        "{card:?}"
-    );
     let start = "start";
     let row = [start, start, start, start, start, "end", start];
     assert_eq!(alignments(&html, "#runs"), [row, row, row]);
