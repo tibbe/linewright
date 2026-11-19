@@ -383,6 +383,15 @@ host and port, and serves none when `ui-address` is empty.
 - **Builds.** A build of the environment shows as a transcript's maintenance
   command does, and opens the same way ([Run](runs.md#run)); a build in progress
   is followed.
+- **The environment's status.** The environment shows as the status of the
+  first row below that holds ([Status](design_system.md#status)).
+
+  | The environment                 | Shows as  |
+  | ------------------------------- | --------- |
+  | a build runs                    | in flight |
+  | its latest build failed         | failed    |
+  | there is no environment yet     | paused    |
+  | otherwise                       | done      |
 
 | Fact                                                            | Shown                  |
 | --------------------------------------------------------------- | ---------------------- |
