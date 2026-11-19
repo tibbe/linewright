@@ -2,9 +2,10 @@
  * The web UI's script (docs/specs/design_system.md): it says since when the
  * page lost `serve`, shows times and durations in the page's language and the
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
- * entry while the reader is there, keeps each fold and confirmation as the
- * reader opened or closed it through updates, closes a confirmation as it
- * goes ahead, keeps the options of the page's filters up and
+ * entry while the reader is there, opens and closes fold rows, keeps each
+ * fold, fold row and confirmation as the reader opened or closed it through
+ * updates, closes a confirmation as it goes ahead, keeps the options of the
+ * page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, builds a launch's
  * configurations and counts its replays, and shows the page's tooltip.
@@ -15,12 +16,27 @@
   // A hook that returns false keeps the attribute from being morphed:
   // https://four.htmx.org/docs/extension-authoring-guide#event-hooks
   htmx.registerExtension("linewright-folds", {
-    htmx_before_morph_attr: (element, detail) =>
-      !(
-        (element.tagName === "DETAILS" || element.tagName === "DIALOG") &&
-        detail.attrName === "open"
-      ),
+    htmx_before_morph_attr: (element, detail) => !leftByReader(element, detail.attrName),
   });
+
+  /**
+   * Whether `attrName` of `element` is as the reader left it, opened or
+   * closed: a fold's or a confirmation's `open`, a fold row's button's
+   * `aria-expanded` or the `hidden` of a row under a fold row.
+   */
+  function leftByReader(element, attrName) {
+    switch (element.tagName) {
+      case "DETAILS":
+      case "DIALOG":
+        return attrName === "open";
+      case "BUTTON":
+        return attrName === "aria-expanded" && element.hasAttribute("aria-controls");
+      case "TR":
+        return attrName === "hidden" && element.hasAttribute("data-fold-of");
+      default:
+        return false;
+    }
+  }
 
   const lang = document.documentElement.lang;
   const relative = new Intl.RelativeTimeFormat(lang, { numeric: "always" });
@@ -124,7 +140,7 @@
     window.scrollTo(0, document.documentElement.scrollHeight);
   }
 
-  /** Whether the reader left each fold open, by its id. */
+  /** Whether the reader left each fold or fold row open, by its id. */
   const folds = new Map();
 
   // `toggle` does not bubble: https://html.spec.whatwg.org/multipage/interactive-elements.html#the-details-element
@@ -149,12 +165,56 @@
     form.closest?.("dialog")?.close();
   });
 
-  /** Opens or closes each fold the reader toggled, as they left it. */
+  /** A fold row's button. */
+  const foldButtonSelector = "button[aria-expanded][aria-controls]";
+
+  /** The button in the first cell of fold row `row` that opens it, if any. */
+  const foldButton = (row) => row?.querySelector?.(`:scope > :first-child > ${foldButtonSelector}`);
+
+  /** Whether fold row `id` shows the rows under it: it is open and shows itself. */
+  function showsUnder(id) {
+    const row = document.getElementById(id);
+    if (foldButton(row)?.getAttribute("aria-expanded") !== "true") return false;
+    const under = row.getAttribute("data-fold-of");
+    return !under || showsUnder(under);
+  }
+
+  /** Shows each row under a fold row while every row it is under shows its rows. */
+  function showFolded() {
+    for (const row of document.querySelectorAll("tr[data-fold-of]")) {
+      const hidden = !showsUnder(row.getAttribute("data-fold-of"));
+      if (row.hidden !== hidden) row.hidden = hidden;
+    }
+  }
+
+  /** What a click on acts on by itself, rather than on the row it is in. */
+  const interactive = "a, button, input, select, textarea, label, summary, dialog";
+
+  /**
+   * Opens or closes a fold row on a click on it, but for a click on what acts
+   * by itself, such as a link (docs/specs/benchmarks.md, Suite, Cases).
+   */
+  document.addEventListener("click", (event) => {
+    const row = event.target?.closest?.("tr[id]");
+    const button = foldButton(row);
+    if (!button || (event.target.closest(interactive) ?? button) !== button) return;
+    const open = button.getAttribute("aria-expanded") !== "true";
+    button.setAttribute("aria-expanded", String(open));
+    folds.set(row.id, open);
+    showFolded();
+  });
+
+  /** Opens or closes each fold and fold row the reader toggled, as they left it. */
   function keepFolds() {
     for (const [id, open] of folds) {
       const fold = document.getElementById(id);
-      if (fold && fold.tagName === "DETAILS" && fold.open !== open) fold.open = open;
+      if (fold?.tagName === "DETAILS") {
+        if (fold.open !== open) fold.open = open;
+      } else if (fold?.tagName === "TR") {
+        foldButton(fold)?.setAttribute("aria-expanded", String(open));
+      }
     }
+    showFolded();
   }
 
   /**

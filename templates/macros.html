@@ -120,6 +120,23 @@
 </dialog>
 {%- endmacro -%}
 
+{#- A table's row `id` that opens to the rows under it, or one of those,
+    under the row `of`, hidden until that row opens. The caller draws its
+    cells, the first holding `fold_button` where the row opens. -#}
+{%- macro fold_row(id, of = "") -%}
+<tr id="{{ id }}"{% if !of.is_empty() %} data-fold-of="{{ of }}" hidden{% endif %}>
+{{- caller() -}}
+</tr>
+{%- endmacro -%}
+
+{#- The button in a fold row's first cell, which opens and closes the rows
+    `opens`, their ids. -#}
+{%- macro fold_button(opens) -%}
+<button class="fold cursor-pointer text-left" type="button" aria-expanded="false" aria-controls="{{ opens|join(" ") }}">
+{{- caller() -}}
+</button>
+{%- endmacro -%}
+
 {#- The classes of a board card's look (`docs/specs/web/board.md`, Board). -#}
 {%- macro card_look() -%}
 card card-sm border border-base-300 bg-card shadow-sm

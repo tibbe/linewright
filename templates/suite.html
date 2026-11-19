@@ -68,19 +68,29 @@
 <thead><tr><th>Case</th><th>Run</th><th>Criteria</th><th><span class="sr-only">Remove</span></th></tr></thead>
 <tbody>
 {%- for case in cases %}
-<tr>
+{%- call ui::fold_row(case.row_id()) %}
+{%- match case.criteria %}
+{%- when CriteriaShown::Read { first_line: _, text: _ } %}
+<th>{% call ui::fold_button([case.criteria_id()]) %}{{ case.name }}{% endcall %}</th>
+{%- when CriteriaShown::Unreadable(_) %}
 <th>{{ case.name }}</th>
+{%- endmatch %}
 <td><a class="link link-hover" href="{{ case.run_href }}">{{ case.run }}</a></td>
 <td>
 {%- match case.criteria -%}
-{%- when CriteriaShown::Read { first_line, text } -%}
-<details id="criteria-{{ case.name }}" class="criteria"><summary class="cursor-pointer">{{ first_line }}</summary><pre class="mt-2 font-sans whitespace-pre-wrap">{{ text }}</pre></details>
+{%- when CriteriaShown::Read { first_line, text: _ } -%}
+{{ first_line }}
 {%- when CriteriaShown::Unreadable(why) -%}
 <span class="text-error">the criteria do not read: {{ why }}</span>
 {%- endmatch -%}
 </td>
 <td>{% call ui::confirm(case.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}</td>
-</tr>
+{%- endcall %}
+{%- if let CriteriaShown::Read { first_line: _, text } = case.criteria %}
+{%- call ui::fold_row(case.criteria_id(), of = case.row_id()) %}
+<td colspan="4"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
+{%- endcall %}
+{%- endif %}
 {%- endfor %}
 </tbody>
 </table>

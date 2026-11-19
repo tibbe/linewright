@@ -54,7 +54,7 @@ fn evaluated(sources: &[&str]) -> String {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_update_neither_opens_nor_closes_a_fold_or_a_confirmation_and_morphs_every_other_attribute()
+async fn an_update_neither_opens_nor_closes_a_fold_a_fold_row_or_a_confirmation_and_morphs_every_other_attribute()
  {
     let script = served_script().await;
 
@@ -64,16 +64,25 @@ async fn an_update_neither_opens_nor_closes_a_fold_or_a_confirmation_and_morphs_
 const hooks = Object.values(extensions)
   .map((extension) => extension.htmx_before_morph_attr)
   .filter(Boolean);
-const morphed = (tagName, attrName, newValue) =>
-  hooks.every((hook) => hook({ tagName }, { attrName, newValue }) !== false);
+const morphed = (tagName, attributes, attrName, newValue) => {
+  const element = { tagName, hasAttribute: (name) => attributes.includes(name) };
+  return hooks.every((hook) => hook(element, { attrName, newValue }) !== false);
+};
 [
-  ["DETAILS", "open", ""],
-  ["DETAILS", "open", null],
-  ["DETAILS", "class", "lane"],
-  ["DIALOG", "open", ""],
-  ["DIALOG", "open", null],
-  ["SECTION", "open", null],
-].map(([tag, attr, value]) => `${tag} ${attr}=${value}: ${morphed(tag, attr, value)}`)
+  ["DETAILS", [], "open", ""],
+  ["DETAILS", [], "open", null],
+  ["DETAILS", [], "class", "lane"],
+  ["DIALOG", [], "open", ""],
+  ["DIALOG", [], "open", null],
+  ["SECTION", [], "open", null],
+  ["BUTTON", ["aria-controls"], "aria-expanded", "false"],
+  ["BUTTON", ["aria-controls"], "class", "fold"],
+  ["BUTTON", [], "aria-expanded", "false"],
+  ["TR", ["data-fold-of"], "hidden", ""],
+  ["TR", ["data-fold-of"], "hidden", null],
+  ["TR", [], "hidden", ""],
+].map(([tag, attributes, attr, value]) =>
+  `${tag}${attributes.map((name) => `[${name}]`).join("")} ${attr}=${value}: ${morphed(tag, attributes, attr, value)}`)
  .join("\n")
 "#;
     let answers = evaluated(&[BROWSER, &script, asked]);
@@ -87,6 +96,12 @@ const morphed = (tagName, attrName, newValue) =>
             "DIALOG open=: false",
             "DIALOG open=null: false",
             "SECTION open=null: true",
+            "BUTTON[aria-controls] aria-expanded=false: false",
+            "BUTTON[aria-controls] class=fold: true",
+            "BUTTON aria-expanded=false: true",
+            "TR[data-fold-of] hidden=: false",
+            "TR[data-fold-of] hidden=null: false",
+            "TR hidden=: true",
         ]
     );
 }
@@ -894,6 +909,72 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
     let folds = with_filters(page, asked).await;
 
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
+}
+
+/// `docs/specs/benchmarks.md`, Experiment, The table: a row opens on click
+/// to the rows under it, and those to theirs, each staying as the reader left
+/// it through updates.
+#[test_log::test(tokio::test)]
+async fn a_fold_row_opens_to_its_rows_on_a_click_but_on_a_link_and_stays_as_the_reader_left_it_through_updates()
+ {
+    let page = r#"
+var rows = {};
+function row(id, under) {
+  const tr = Object.assign(element("TR", under ? { id, "data-fold-of": under } : { id }), { id, hidden: !!under });
+  const button = element("BUTTON", { "aria-expanded": "false", "aria-controls": `${id}-rows` });
+  const interactive = (selector) => selector.startsWith("a, button");
+  button.closest = (selector) =>
+    selector === "tr[id]" ? tr : selector === "button" || interactive(selector) ? button : null;
+  tr.querySelector = (selector) => (selector.includes("button") ? button : null);
+  tr.button = button;
+  tr.cell = element("TD", {});
+  tr.cell.closest = (selector) => (selector === "tr[id]" ? tr : null);
+  tr.link = element("A", {});
+  tr.link.closest = (selector) =>
+    selector === "tr[id]" ? tr : interactive(selector) ? tr.link : null;
+  rows[id] = tr;
+  return tr;
+}
+function rendered() {
+  row("cheap"); row("cheap-case-a", "cheap"); row("cheap-case-a-replay-1", "cheap-case-a");
+}
+rendered();
+const byId = document.getElementById;
+document.getElementById = (id) => rows[id] || byId(id);
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) =>
+  selector === "tr[data-fold-of]"
+    ? Object.values(rows).filter((row) => "data-fold-of" in row.attributes)
+    : others(selector);
+const click = (id, on = "button") => fire("click", event(rows[id][on]));
+const shown = () => Object.values(rows)
+  .map((row) => `${row.id}${row.hidden ? " hidden" : ""} ${row.button.getAttribute("aria-expanded")}`)
+  .join(", ");
+"#;
+    let asked = r#"
+const steps = [];
+click("cheap"); steps.push(shown());
+click("cheap-case-a", "cell"); steps.push(shown());
+click("cheap-case-a", "link"); steps.push(shown());
+click("cheap"); steps.push(shown());
+rendered(); fire("htmx:sse:after:message", { detail: { message: { id: "" } } }); steps.push(shown());
+click("cheap"); steps.push(shown());
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            "cheap true, cheap-case-a false, cheap-case-a-replay-1 hidden false",
+            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
+            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
+            "cheap false, cheap-case-a hidden true, cheap-case-a-replay-1 hidden false",
+            "cheap false, cheap-case-a hidden true, cheap-case-a-replay-1 hidden false",
+            "cheap true, cheap-case-a true, cheap-case-a-replay-1 false",
+        ]
+    );
 }
 
 /// `docs/specs/benchmarks.md`, Suite: Adding a case.

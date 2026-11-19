@@ -54,6 +54,16 @@ enum CriteriaShown {
 }
 
 impl CaseRow {
+    /// Its row's id, keyed by the case's name.
+    fn row_id(&self) -> String {
+        format!("case-{}", self.name)
+    }
+
+    /// The id of the row of its whole criteria, which its row opens to.
+    fn criteria_id(&self) -> String {
+        format!("{}_criteria", self.row_id())
+    }
+
     /// The row of `case`, of the suite at `path`, removed after a
     /// confirmation (`docs/specs/benchmarks.md`, Remove case).
     fn of(case: CaseEntry, path: &str) -> CaseRow {
