@@ -29,7 +29,7 @@ use super::{
     suite_path,
 };
 use crate::api::Sources;
-use crate::benchmarks::results::{self, CasePasses, ConfigurationResults, Results};
+use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
     CancelRefusal, ConfigurationName, ExperimentId, ExperimentRecord, ExperimentState, NoJudgement,
     ReplayFigures, Shown, TrialEnd, TrialKey, TrialState, dollars, duration, mean, percent,
@@ -242,7 +242,7 @@ impl ExperimentView {
             state,
             waiting: matches!(shown, Shown::Waiting(_))
                 .then(|| html::phrase(&shown.phrase(), &names)),
-            ended: results.ended,
+            ended: results.replays_ended,
             all: results.all,
             cancel: (record.state == ExperimentState::Open).then(|| Confirmation {
                 id: "cancel-experiment".into(),
@@ -285,7 +285,7 @@ fn chart(results: &Results) -> Chart {
         .map(|configuration| {
             (
                 configuration,
-                configuration.cost.mean.zip(configuration.pass_rate),
+                configuration.figures.cost.mean.zip(configuration.pass_rate),
             )
         })
         .partition(|(_, at)| at.is_some());
@@ -358,19 +358,18 @@ fn grid(record: &ExperimentRecord, results: &Results) -> Grid {
                     .iter()
                     .map(|configuration| {
                         configuration
-                            .passes
+                            .cases
                             .get(i)
-                            .map_or_else(String::new, |passes| {
-                                let mut cell = passes_of(passes);
-                                if passes.leaks > 0 {
-                                    let _ = write!(
-                                        cell,
-                                        ", {}",
-                                        counted(passes.leaks, "leak", "leaks")
-                                    );
+                            .map_or_else(String::new, |of_case| {
+                                let Figures {
+                                    leaks, unjudged, ..
+                                } = of_case.figures;
+                                let mut cell = passes_of(of_case.passes);
+                                if leaks > 0 {
+                                    let _ = write!(cell, ", {}", counted(leaks, "leak", "leaks"));
                                 }
-                                if passes.unjudged > 0 {
-                                    let _ = write!(cell, ", {} unjudged", passes.unjudged);
+                                if unjudged > 0 {
+                                    let _ = write!(cell, ", {unjudged} unjudged");
                                 }
                                 cell
                             })
@@ -382,9 +381,9 @@ fn grid(record: &ExperimentRecord, results: &Results) -> Grid {
 }
 
 /// How many of a case's replays pass, of those with a judgement and no
-/// leak, as "2 of 3".
-fn passes_of(passes: &CasePasses) -> String {
-    format!("{} of {}", passes.pass, passes.of)
+/// leak, as "2 of 3", and "–" with none.
+fn passes_of(passes: Option<Passes>) -> String {
+    passes.map_or_else(|| "–".into(), |passes| passes.to_string())
 }
 
 /// The table's rows of `record`: each configuration's figures, its cases
@@ -403,11 +402,14 @@ fn configurations(
             let ConfigurationResults {
                 name,
                 pass_rate,
-                cost,
-                time,
-                leaks,
-                unjudged,
-                passes,
+                figures:
+                    Figures {
+                        cost,
+                        time,
+                        leaks,
+                        unjudged,
+                    },
+                cases,
             } = figures;
             ConfigurationView {
                 name: name.clone(),
@@ -422,7 +424,9 @@ fn configurations(
                     .enumerate()
                     .map(|(k, case)| CaseView {
                         name: case.clone(),
-                        passes: passes.get(k).map_or_else(String::new, passes_of),
+                        passes: cases
+                            .get(k)
+                            .map_or_else(String::new, |of_case| passes_of(of_case.passes)),
                         replays: record
                             .trials
                             .iter()

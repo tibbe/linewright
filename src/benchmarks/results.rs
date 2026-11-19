@@ -1,5 +1,7 @@
 //! An experiment's results (`docs/specs/benchmarks.md`, Results): figures of
-//! the trials that have ended, worked out on each read.
+//! the replays that have ended, worked out on each read.
+
+use std::num::NonZeroUsize;
 
 use serde::Serialize;
 
@@ -18,10 +20,14 @@ pub struct Results {
     /// The cost of the judges, in US dollars, apart from the
     /// configurations'.
     pub judges: Total,
-    /// How many of its replays have ended.
-    pub ended: usize,
+    /// How many of its replays have ended: those whose run has, whether or
+    /// not their judge has.
+    pub replays_ended: usize,
     /// How many replays it makes.
     pub all: usize,
+    /// The cost of its replays and its judges, in US dollars, and how many of
+    /// its replays have none.
+    pub cost: Total,
 }
 
 /// A configuration's figures.
@@ -31,31 +37,48 @@ pub struct ConfigurationResults {
     /// Of its replays with a judgement and no leak, the share that pass;
     /// `None` with no such replay.
     pub pass_rate: Option<f64>,
+    #[serde(flatten)]
+    pub figures: Figures,
     /// For each case, in the experiment's order.
-    pub passes: Vec<CasePasses>,
+    pub cases: Vec<CaseResults>,
+}
+
+/// The figures of a configuration's replays, or of its replays of a case.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Figures {
     /// In US dollars, of the replays that have a cost.
     pub cost: Mean,
     /// In seconds.
     pub time: Mean,
-    /// How many of its replays have a judgement with a leak.
+    /// How many of the replays have a judgement with a leak.
     pub leaks: usize,
-    /// How many of its replays have no judgement.
+    /// How many of the replays have no judgement for a reason the spec
+    /// gives: their run's outcome, their judge, or a cancel after their run.
     pub unjudged: usize,
 }
 
-/// How many of a configuration's replays of a case pass.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct CasePasses {
+/// A configuration's figures of its replays of a case.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CaseResults {
     pub case: CaseName,
+    /// `None` with no replay with a judgement and no leak.
+    pub passes: Option<Passes>,
+    #[serde(flatten)]
+    pub figures: Figures,
+}
+
+/// How many replays pass, of those with a judgement and no leak.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Passes {
     pub pass: usize,
-    /// Of those with a judgement and no leak.
-    pub of: usize,
-    /// How many of them have a judgement with a leak.
-    #[serde(skip)]
-    pub leaks: usize,
-    /// How many of them have no judgement.
-    #[serde(skip)]
-    pub unjudged: usize,
+    pub of: NonZeroUsize,
+}
+
+impl std::fmt::Display for Passes {
+    /// As "2 of 3" (`docs/specs/benchmarks.md`, Experiment, The table).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} of {}", self.pass, self.of)
+    }
 }
 
 /// A figure's mean and total over the replays that have it, and how many
@@ -75,88 +98,105 @@ pub struct Total {
     pub none: usize,
 }
 
-/// The results of `record`, of the trials that have ended.
+/// The results of `record`, of the replays that have ended.
 pub fn results(record: &ExperimentRecord) -> Results {
     let mut judges = Sum::default();
-    let mut configurations: Vec<Tally> = record
+    let mut tallies: Vec<Vec<Tally>> = record
         .configurations
         .iter()
-        .map(|_| Tally {
-            passes: record
-                .cases
-                .iter()
-                .map(|case| CasePasses {
-                    case: case.clone(),
-                    pass: 0,
-                    of: 0,
-                    leaks: 0,
-                    unjudged: 0,
-                })
-                .collect(),
-            ..Tally::default()
-        })
+        .map(|_| record.cases.iter().map(|_| Tally::default()).collect())
         .collect();
-    let mut ended = 0;
     for (key, state) in &record.trials {
-        let TrialState::Ended(end) = state else {
+        let Some(tally) = tallies
+            .get_mut(key.configuration)
+            .and_then(|cases| cases.get_mut(key.case))
+        else {
             continue;
         };
-        ended += 1;
-        let Some(tally) = configurations.get_mut(key.configuration) else {
-            continue;
-        };
-        let Some(passes) = tally.passes.get_mut(key.case) else {
-            continue;
-        };
-        match end {
-            TrialEnd::Judged { replay, judgement } => {
+        match state {
+            TrialState::Pending
+            | TrialState::Replaying
+            | TrialState::Ended(TrialEnd::Cancelled) => {}
+            TrialState::Replayed { replay } | TrialState::Judging { replay } => {
+                tally.replay(replay);
+            }
+            TrialState::Ended(TrialEnd::Judged { replay, judgement }) => {
+                tally.replay(replay);
                 judges.add(judgement.judge_money.map(f64::from));
                 if judgement.leak {
-                    passes.leaks += 1;
                     tally.leaks += 1;
                 } else {
-                    passes.of += 1;
+                    tally.of += 1;
                     if judgement.correctness == Verdict::Pass {
-                        passes.pass += 1;
+                        tally.pass += 1;
                     }
                 }
-                tally.replay(Some(replay));
             }
-            TrialEnd::Unjudged { replay, why } => {
-                passes.unjudged += 1;
+            TrialState::Ended(TrialEnd::Unjudged { replay, why }) => {
+                tally.replay(replay);
                 tally.unjudged += 1;
                 if let NoJudgement::Judge { judge_money, .. } = why {
                     judges.add(judge_money.map(f64::from));
                 }
-                tally.replay(Some(replay));
-            }
-            TrialEnd::Cancelled => {
-                passes.unjudged += 1;
-                tally.unjudged += 1;
-                tally.replay(None);
             }
         }
     }
-    Results {
-        configurations: record
-            .configurations
+    let replays_ended = tallies.iter().flatten().map(|tally| tally.ended).sum();
+    let configurations: Vec<ConfigurationResults> = record
+        .configurations
+        .iter()
+        .zip(tallies)
+        .map(|(name, cases)| {
+            let all = cases.iter().fold(Tally::default(), Tally::and);
+            ConfigurationResults {
+                name: name.clone(),
+                pass_rate: share(all.pass, all.of),
+                figures: all.figures(),
+                cases: record
+                    .cases
+                    .iter()
+                    .zip(cases)
+                    .map(|(case, tally)| CaseResults {
+                        case: case.clone(),
+                        passes: NonZeroUsize::new(tally.of).map(|of| Passes {
+                            pass: tally.pass,
+                            of,
+                        }),
+                        figures: tally.figures(),
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let (replays_cost, without_cost) =
+        configurations
             .iter()
-            .zip(configurations)
-            .map(|(name, tally)| tally.results(name))
-            .collect(),
+            .fold((0.0, 0), |(total, none), configuration| {
+                let cost = &configuration.figures.cost;
+                (total + cost.total, none + cost.none)
+            });
+    Results {
+        configurations,
+        cost: Total {
+            total: replays_cost + judges.total,
+            none: without_cost,
+        },
         judges: Total {
             total: judges.total,
             none: judges.none,
         },
-        ended,
+        replays_ended,
         all: record.trials.len(),
     }
 }
 
-/// A configuration's figures as the trials are counted.
+/// The figures of a configuration's replays of a case as they are counted.
 #[derive(Default)]
 struct Tally {
-    passes: Vec<CasePasses>,
+    /// How many of the replays have ended.
+    ended: usize,
+    pass: usize,
+    of: usize,
     cost: Sum,
     time: Sum,
     leaks: usize,
@@ -164,22 +204,28 @@ struct Tally {
 }
 
 impl Tally {
-    /// Counts the cost and the time of a replay, which has neither without
-    /// figures.
-    fn replay(&mut self, replay: Option<&ReplayFigures>) {
-        self.cost
-            .add(replay.and_then(|replay| replay.money).map(f64::from));
-        self.time
-            .add(replay.map(|replay| replay.time.as_secs_f64()));
+    /// Counts a replay that ended, with its cost and its time.
+    fn replay(&mut self, replay: &ReplayFigures) {
+        self.ended += 1;
+        self.cost.add(replay.money.map(f64::from));
+        self.time.add(Some(replay.time.as_secs_f64()));
     }
 
-    fn results(self, name: &ConfigurationName) -> ConfigurationResults {
-        let pass = self.passes.iter().map(|passes| passes.pass).sum();
-        let of = self.passes.iter().map(|passes| passes.of).sum();
-        ConfigurationResults {
-            name: name.clone(),
-            pass_rate: share(pass, of),
-            passes: self.passes,
+    /// The tally of the replays of both.
+    fn and(self, other: &Tally) -> Tally {
+        Tally {
+            ended: self.ended + other.ended,
+            pass: self.pass + other.pass,
+            of: self.of + other.of,
+            cost: self.cost.and(&other.cost),
+            time: self.time.and(&other.time),
+            leaks: self.leaks + other.leaks,
+            unjudged: self.unjudged + other.unjudged,
+        }
+    }
+
+    fn figures(&self) -> Figures {
+        Figures {
             cost: self.cost.mean(),
             time: self.time.mean(),
             leaks: self.leaks,
@@ -204,6 +250,14 @@ impl Sum {
                 self.counted += 1;
             }
             None => self.none += 1,
+        }
+    }
+
+    fn and(self, other: &Sum) -> Sum {
+        Sum {
+            total: self.total + other.total,
+            counted: self.counted + other.counted,
+            none: self.none + other.none,
         }
     }
 
@@ -318,18 +372,15 @@ mod tests {
     }
 
     #[track_caller]
-    fn passes(
-        case: &str,
-        (pass, of): (usize, usize),
-        (leaks, unjudged): (usize, usize),
-    ) -> CasePasses {
-        CasePasses {
-            case: case.parse().unwrap(),
+    fn passes(pass: usize, of: usize) -> Passes {
+        Passes {
             pass,
-            of,
-            leaks,
-            unjudged,
+            of: NonZeroUsize::new(of).unwrap(),
         }
+    }
+
+    fn unjudged(replay: ReplayFigures, why: NoJudgement) -> TrialState {
+        TrialState::Ended(TrialEnd::Unjudged { replay, why })
     }
 
     #[track_caller]
@@ -367,97 +418,85 @@ mod tests {
 
         let as_is = &results.configurations[0];
         approx(as_is.pass_rate, 0.5);
-        assert_eq!(as_is.passes, [passes("lanes", (1, 2), (1, 0))]);
-        assert_eq!(as_is.leaks, 1);
-        assert_eq!(as_is.unjudged, 0);
-        assert_eq!((results.ended, results.all), (3, 3));
+        assert_eq!(as_is.cases[0].passes, Some(passes(1, 2)));
+        assert_eq!(as_is.cases[0].figures.leaks, 1);
+        assert_eq!(as_is.figures.leaks, 1);
+        assert_eq!(as_is.figures.unjudged, 0);
+        assert_eq!((results.replays_ended, results.all), (3, 3));
     }
 
     #[test_log::test]
-    fn each_case_counts_its_own_leaks_and_replays_without_a_judgement() {
+    fn each_case_has_the_figures_of_a_configuration_of_its_own_replays() {
         let record = experiment(
             &["columns", "lanes"],
             &[],
-            2,
+            4,
             vec![
                 (
                     key(1, 0, 0),
-                    judged(replay(None, 10), Verdict::Pass, true, None),
+                    judged(replay(Some(0.5), 60), Verdict::Pass, false, None),
                 ),
-                (key(1, 1, 0), TrialState::Ended(TrialEnd::Cancelled)),
                 (
-                    key(2, 1, 0),
-                    TrialState::Ended(TrialEnd::Unjudged {
-                        replay: replay(None, 10),
-                        why: NoJudgement::Outcome,
-                    }),
+                    key(2, 0, 0),
+                    judged(replay(None, 30), Verdict::Pass, false, None),
                 ),
-            ],
-        );
-
-        let as_is = &results(&record).configurations[0];
-
-        let counted: Vec<(usize, usize)> = as_is
-            .passes
-            .iter()
-            .map(|passes| (passes.leaks, passes.unjudged))
-            .collect();
-        assert_eq!(counted, [(1, 0), (0, 2)]);
-    }
-
-    #[test_log::test]
-    fn a_replay_with_no_cost_is_counted_apart_from_the_cost_and_still_in_the_time() {
-        let record = experiment(
-            &["columns", "lanes"],
-            &[],
-            1,
-            vec![
                 (
-                    key(1, 0, 0),
-                    judged(replay(Some(0.3), 10), Verdict::Pass, false, None),
+                    key(3, 0, 0),
+                    judged(replay(Some(0.25), 90), Verdict::Fail, false, None),
+                ),
+                (
+                    key(4, 0, 0),
+                    judged(replay(Some(0.75), 60), Verdict::Pass, true, None),
                 ),
                 (
                     key(1, 1, 0),
-                    TrialState::Ended(TrialEnd::Unjudged {
-                        replay: ReplayFigures {
-                            outcome: OutcomeName::Ended(Ending::Failed),
-                            money: None,
-                            time: Duration::from_secs(50),
-                        },
-                        why: NoJudgement::Outcome,
-                    }),
+                    judged(replay(Some(1.0), 100), Verdict::Pass, false, None),
+                ),
+                (
+                    key(2, 1, 0),
+                    unjudged(replay(Some(2.0), 200), NoJudgement::Outcome),
                 ),
             ],
         );
 
         let as_is = &results(&record).configurations[0];
 
-        approx(as_is.cost.mean, 0.3);
-        approx(Some(as_is.cost.total), 0.3);
-        assert_eq!(as_is.cost.none, 1);
-        approx(as_is.time.mean, 30.0);
-        approx(Some(as_is.time.total), 60.0);
-        assert_eq!(as_is.time.none, 0);
-        approx(as_is.pass_rate, 1.0);
-        assert_eq!(
-            as_is.passes,
-            [
-                passes("columns", (1, 1), (0, 0)),
-                passes("lanes", (0, 0), (0, 1))
-            ]
-        );
-        assert_eq!(as_is.unjudged, 1);
+        let columns = &as_is.cases[0];
+        assert_eq!(columns.case.as_str(), "columns");
+        assert_eq!(columns.passes, Some(passes(2, 3)));
+        approx(columns.figures.cost.mean, 0.5);
+        approx(Some(columns.figures.cost.total), 1.5);
+        assert_eq!(columns.figures.cost.none, 1);
+        approx(columns.figures.time.mean, 60.0);
+        approx(Some(columns.figures.time.total), 240.0);
+        assert_eq!((columns.figures.leaks, columns.figures.unjudged), (1, 0));
+        let lanes = &as_is.cases[1];
+        assert_eq!(lanes.passes, Some(passes(1, 1)));
+        approx(lanes.figures.cost.mean, 1.5);
+        approx(Some(lanes.figures.cost.total), 3.0);
+        assert_eq!(lanes.figures.cost.none, 0);
+        approx(Some(lanes.figures.time.total), 300.0);
+        assert_eq!((lanes.figures.leaks, lanes.figures.unjudged), (0, 1));
+        approx(as_is.pass_rate, 0.75);
+        approx(as_is.figures.cost.mean, 0.9);
+        approx(Some(as_is.figures.cost.total), 4.5);
+        assert_eq!(as_is.figures.cost.none, 1);
+        approx(Some(as_is.figures.time.total), 540.0);
+        assert_eq!((as_is.figures.leaks, as_is.figures.unjudged), (1, 1));
     }
 
     #[test_log::test]
-    fn with_nothing_to_count_a_pass_rate_and_a_mean_are_absent() {
+    fn with_nothing_to_count_the_passes_of_a_case_a_pass_rate_and_a_mean_are_absent() {
         let record = experiment(
             &["lanes"],
             &["short"],
             1,
             vec![
                 (key(1, 0, 0), TrialState::Replaying),
-                (key(1, 0, 1), TrialState::Ended(TrialEnd::Cancelled)),
+                (
+                    key(1, 0, 1),
+                    unjudged(replay(None, 10), NoJudgement::Outcome),
+                ),
             ],
         );
 
@@ -470,30 +509,104 @@ mod tests {
         };
         let as_is = &results.configurations[0];
         assert_eq!(as_is.pass_rate, None);
-        assert_eq!(as_is.cost, empty);
-        assert_eq!(as_is.time, empty);
-        assert_eq!(as_is.unjudged, 0);
+        assert_eq!(as_is.cases[0].passes, None);
+        assert_eq!(as_is.figures.cost, empty);
+        assert_eq!(as_is.figures.time, empty);
+        assert_eq!(as_is.cases[0].figures.cost, empty);
         let short = &results.configurations[1];
         assert_eq!(short.name.as_str(), "short");
         assert_eq!(short.pass_rate, None);
-        assert_eq!(short.passes, [passes("lanes", (0, 0), (0, 1))]);
-        assert_eq!(short.cost.mean, None);
-        assert_eq!(short.cost.none, 1);
-        assert_eq!(short.time.mean, None);
-        assert_eq!(short.time.none, 1);
-        assert_eq!(short.unjudged, 1);
-        assert_eq!(
-            results.judges,
-            Total {
-                total: 0.0,
-                none: 0
-            }
-        );
-        assert_eq!((results.ended, results.all), (1, 2));
+        assert_eq!(short.cases[0].passes, None);
+        assert_eq!(short.figures.cost.mean, None);
+        assert_eq!(short.figures.cost.none, 1);
+        assert_eq!(short.figures.unjudged, 1);
     }
 
     #[test_log::test]
-    fn the_judges_cost_is_apart_from_the_configurations_and_counts_a_judge_that_made_none() {
+    fn a_replay_has_ended_once_its_run_has_whether_or_not_its_judge_has_and_not_when_cancelled_before()
+     {
+        let record = experiment(
+            &["columns", "lanes", "rows"],
+            &["short"],
+            1,
+            vec![
+                (key(1, 0, 0), TrialState::Replaying),
+                (
+                    key(1, 0, 1),
+                    TrialState::Replayed {
+                        replay: replay(Some(1.0), 10),
+                    },
+                ),
+                (
+                    key(1, 1, 0),
+                    TrialState::Judging {
+                        replay: replay(Some(2.0), 20),
+                    },
+                ),
+                (
+                    key(1, 1, 1),
+                    judged(replay(Some(4.0), 40), Verdict::Pass, false, None),
+                ),
+                (key(1, 2, 0), TrialState::Ended(TrialEnd::Cancelled)),
+            ],
+        );
+
+        let results = results(&record);
+
+        assert_eq!((results.replays_ended, results.all), (3, 6));
+        assert_eq!(
+            results.cost,
+            Total {
+                total: 7.0,
+                none: 0
+            }
+        );
+        let as_is = &results.configurations[0];
+        approx(Some(as_is.figures.cost.total), 2.0);
+        assert_eq!(as_is.figures.cost.none, 0);
+        approx(Some(as_is.figures.time.total), 20.0);
+        assert_eq!(as_is.figures.time.none, 0);
+        assert_eq!(as_is.pass_rate, None);
+        assert_eq!(as_is.figures.unjudged, 0);
+    }
+
+    #[test_log::test]
+    fn unjudged_counts_the_replays_without_a_judgement_for_a_reason_the_spec_gives() {
+        let record = experiment(
+            &["columns"],
+            &[],
+            5,
+            vec![
+                (
+                    key(1, 0, 0),
+                    unjudged(replay(Some(0.1), 10), NoJudgement::Outcome),
+                ),
+                (
+                    key(2, 0, 0),
+                    unjudged(
+                        replay(Some(0.1), 10),
+                        NoJudgement::Judge {
+                            reason: "it gave up".into(),
+                            judge_money: None,
+                        },
+                    ),
+                ),
+                (
+                    key(3, 0, 0),
+                    unjudged(replay(Some(0.1), 10), NoJudgement::Cancelled),
+                ),
+                (key(4, 0, 0), TrialState::Ended(TrialEnd::Cancelled)),
+            ],
+        );
+
+        let as_is = &results(&record).configurations[0];
+
+        assert_eq!(as_is.figures.unjudged, 3);
+        assert_eq!(as_is.cases[0].figures.unjudged, 3);
+    }
+
+    #[test_log::test]
+    fn the_experiments_cost_sums_its_replays_and_its_judges_and_counts_the_replays_with_none() {
         let record = experiment(
             &["lanes"],
             &["short"],
@@ -505,17 +618,17 @@ mod tests {
                 ),
                 (
                     key(1, 0, 1),
-                    judged(replay(Some(2.0), 10), Verdict::Fail, false, Some(0.07)),
+                    judged(replay(None, 10), Verdict::Fail, false, Some(0.07)),
                 ),
                 (
                     key(2, 0, 0),
-                    TrialState::Ended(TrialEnd::Unjudged {
-                        replay: replay(Some(1.0), 10),
-                        why: NoJudgement::Judge {
+                    unjudged(
+                        replay(Some(1.0), 10),
+                        NoJudgement::Judge {
                             reason: "it gave up".into(),
                             judge_money: Usd::new(0.02),
                         },
-                    }),
+                    ),
                 ),
                 (
                     key(2, 0, 1),
@@ -526,9 +639,11 @@ mod tests {
 
         let results = results(&record);
 
-        approx(Some(results.configurations[0].cost.total), 2.0);
-        approx(Some(results.configurations[1].cost.total), 4.0);
+        approx(Some(results.configurations[0].figures.cost.total), 2.0);
+        approx(Some(results.configurations[1].figures.cost.total), 2.0);
         approx(Some(results.judges.total), 0.14);
         assert_eq!(results.judges.none, 1);
+        approx(Some(results.cost.total), 4.14);
+        assert_eq!(results.cost.none, 1);
     }
 }

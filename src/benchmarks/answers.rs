@@ -17,7 +17,7 @@ use crate::runs::OutcomeName;
 use crate::status::describe_wait;
 
 use super::experiments::outcome_name;
-use super::results::{self, Mean, Results};
+use super::results::{self, Figures, Mean, Results};
 use super::{
     ConfigurationName, ExperimentId, ExperimentRecord, ExperimentState, NoJudgement, Repetitions,
     ReplayFigures, SuiteName, TrialEnd, TrialState,
@@ -253,38 +253,40 @@ impl ExperimentAnswer {
 /// configuration's figures, then each replay.
 pub fn render_experiment(answer: &ExperimentAnswer) -> String {
     let results = &answer.results;
+    let mut cost = dollars(results.cost.total);
+    without(&mut cost, results.cost.none, "a cost");
     let mut judges = dollars(results.judges.total);
     without(&mut judges, results.judges.none, "a cost");
     let mut text = format!(
         "experiment: {}\nsuite: {}\nstage: {}\nlaunched: {}\nstate: {}\nrepetitions: {}\n\
-         replays ended: {} of {}\njudges' cost: {judges}\n",
+         replays ended: {} of {}\ncost: {cost}\njudges' cost: {judges}\n",
         answer.id,
         answer.suite,
         answer.stage,
         Phrase::default().time(answer.launched_at),
         answer.shown.phrase(),
         answer.repetitions,
-        results.ended,
+        results.replays_ended,
         results.all,
     );
     for configuration in &results.configurations {
-        let passes: Vec<String> = configuration
-            .passes
-            .iter()
-            .map(|passes| format!("{} {} of {}", passes.case, passes.pass, passes.of))
-            .collect();
         let _ = write!(
             text,
-            "configuration {}:\n  pass rate: {}\n  passes: {}\n  cost: {}\n  time: {}\n  \
-             leaks: {}\n  unjudged: {}\n",
+            "configuration {}:\n  pass rate: {}\n{}",
             configuration.name,
             percent(configuration.pass_rate),
-            passes.join(", "),
-            mean(&configuration.cost, dollars, "a cost"),
-            mean(&configuration.time, duration, "a time"),
-            configuration.leaks,
-            configuration.unjudged,
+            describe_figures(&configuration.figures, "  "),
         );
+        for case in &configuration.cases {
+            let _ = write!(
+                text,
+                "  case {}:\n    passes: {}\n{}",
+                case.case,
+                case.passes
+                    .map_or_else(|| "none".into(), |passes| passes.to_string()),
+                describe_figures(&case.figures, "    "),
+            );
+        }
     }
     for replay in &answer.replays {
         let _ = writeln!(
@@ -297,6 +299,17 @@ pub fn render_experiment(answer: &ExperimentAnswer) -> String {
         );
     }
     text
+}
+
+/// The lines of `figures`, each indented by `indent`.
+fn describe_figures(figures: &Figures, indent: &str) -> String {
+    format!(
+        "{indent}cost: {}\n{indent}time: {}\n{indent}leaks: {}\n{indent}unjudged: {}\n",
+        mean(&figures.cost, dollars, "a cost"),
+        mean(&figures.time, duration, "a time"),
+        figures.leaks,
+        figures.unjudged,
+    )
 }
 
 /// Where a replay stands, then its judgement and its figures, if it has
@@ -541,22 +554,57 @@ mod tests {
              launched: 2026-11-17 12:00:00 UTC\n\
              state: cancelled\n\
              repetitions: 1\n\
-             replays ended: 5 of 6\n\
+             replays ended: 4 of 6\n\
+             cost: $0.66, 1 without a cost\n\
              judges' cost: $0.06, 1 without a cost\n\
              configuration as-is:\n  \
                pass rate: 100%\n  \
-               passes: columns 1 of 1, lanes 0 of 0, rows 0 of 0\n  \
-               cost: mean $0.20, total $0.40, 1 without a cost\n  \
-               time: mean 50s, total 1m 40s, 1 without a time\n  \
+               cost: mean $0.20, total $0.40\n  \
+               time: mean 50s, total 1m 40s\n  \
                leaks: 1\n  \
-               unjudged: 1\n\
+               unjudged: 0\n  \
+               case columns:\n    \
+                 passes: 1 of 1\n    \
+                 cost: mean $0.30, total $0.30\n    \
+                 time: mean 1m 30s, total 1m 30s\n    \
+                 leaks: 0\n    \
+                 unjudged: 0\n  \
+               case lanes:\n    \
+                 passes: none\n    \
+                 cost: mean $0.10, total $0.10\n    \
+                 time: mean 10s, total 10s\n    \
+                 leaks: 1\n    \
+                 unjudged: 0\n  \
+               case rows:\n    \
+                 passes: none\n    \
+                 cost: none\n    \
+                 time: none\n    \
+                 leaks: 0\n    \
+                 unjudged: 0\n\
              configuration short:\n  \
                pass rate: none\n  \
-               passes: columns 0 of 0, lanes 0 of 0, rows 0 of 0\n  \
                cost: mean $0.20, total $0.20, 1 without a cost\n  \
                time: mean 25s, total 50s\n  \
                leaks: 0\n  \
-               unjudged: 2\n\
+               unjudged: 2\n  \
+               case columns:\n    \
+                 passes: none\n    \
+                 cost: none, 1 without a cost\n    \
+                 time: mean 30s, total 30s\n    \
+                 leaks: 0\n    \
+                 unjudged: 1\n  \
+               case lanes:\n    \
+                 passes: none\n    \
+                 cost: mean $0.20, total $0.20\n    \
+                 time: mean 20s, total 20s\n    \
+                 leaks: 0\n    \
+                 unjudged: 1\n  \
+               case rows:\n    \
+                 passes: none\n    \
+                 cost: none\n    \
+                 time: none\n    \
+                 leaks: 0\n    \
+                 unjudged: 0\n\
              replay as-is/columns/1: judged pass, run done, cost $0.30, took 1m 30s, judge's cost $0.05\n\
              replay short/columns/1: no judgement: its run is not done or handed back, run failed, cost none, took 30s\n\
              replay as-is/lanes/1: judged fail, with a leak, run handed-back, cost $0.10, took 10s\n\

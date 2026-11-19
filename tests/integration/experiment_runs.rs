@@ -209,8 +209,10 @@ async fn serve_replays_and_judges_every_trial_and_the_cli_shows_the_results() {
     for line in [
         "state: ended\n",
         "replays ended: 8 of 8\n",
-        "configuration as-is:\n  pass rate: 100%\n  passes: export 2 of 2, import 2 of 2\n",
-        "configuration short:\n  pass rate: 100%\n  passes: export 2 of 2, import 2 of 2\n",
+        "configuration as-is:\n  pass rate: 100%\n",
+        "configuration short:\n  pass rate: 100%\n",
+        "  case export:\n    passes: 2 of 2\n",
+        "  case import:\n    passes: 2 of 2\n",
         "replay short/import/2: judged pass",
     ] {
         assert!(

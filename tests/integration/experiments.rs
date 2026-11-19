@@ -377,9 +377,40 @@ async fn lw_experiment_show_shows_its_state_its_results_and_each_replay() {
             "unjudged": "outcome",
         })
     );
-    assert_eq!(json["results"]["configurations"][0]["pass_rate"], 1.0);
-    assert_eq!(json["results"]["ended"], 2);
+    let none = json!({"mean": null, "total": 0.0, "none": 0});
+    assert_eq!(
+        json["results"]["configurations"][0],
+        json!({
+            "name": "as-is",
+            "pass_rate": 1.0,
+            "cost": {"mean": 0.3, "total": 0.3, "none": 0},
+            "time": {"mean": 90.0, "total": 90.0, "none": 0},
+            "leaks": 0,
+            "unjudged": 0,
+            "cases": [
+                {
+                    "case": "columns",
+                    "passes": {"pass": 1, "of": 1},
+                    "cost": {"mean": 0.3, "total": 0.3, "none": 0},
+                    "time": {"mean": 90.0, "total": 90.0, "none": 0},
+                    "leaks": 0,
+                    "unjudged": 0,
+                },
+                {
+                    "case": "lanes",
+                    "passes": null,
+                    "cost": none,
+                    "time": none,
+                    "leaks": 0,
+                    "unjudged": 0,
+                },
+            ],
+        })
+    );
+    assert_eq!(json["results"]["replays_ended"], 2);
     assert_eq!(json["results"]["all"], 4);
+    assert_eq!(json["results"]["cost"], json!({"total": 0.35, "none": 1}));
+    assert_eq!(json["results"]["judges"], json!({"total": 0.05, "none": 0}));
 }
 
 #[test_log::test(tokio::test)]
