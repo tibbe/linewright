@@ -300,7 +300,7 @@ async fn the_suite_page_shows_each_case_with_its_run_and_the_first_line_of_its_c
 
     assert_eq!(text(select(&html, "h1")[0]), "Suite board");
     assert_eq!(events_path(&html), Some("/events/suites/board"));
-    let cases = select(&html, "#cases tbody tr");
+    let cases = select(&html, "#cases tbody tr:not([data-fold-of])");
     assert_eq!(cases.len(), 2);
     let names: Vec<String> = cases
         .iter()
@@ -311,15 +311,52 @@ async fn the_suite_page_shows_each_case_with_its_run_and_the_first_line_of_its_c
         hrefs(select(&html, "#cases tbody a")),
         ["/runs/1/implement-1", "/runs/1/implement-2"]
     );
-    let criteria = select_in(cases[0], "details.criteria")[0];
+    assert_eq!(text(select_in(cases[0], "td")[1]), "Names the columns.");
+    let criteria = select(&html, "#cases tbody tr[data-fold-of]");
+    assert_eq!(criteria.len(), 2);
     assert_eq!(
-        text(select_in(criteria, "summary")[0]),
-        "Names the columns."
-    );
-    assert_eq!(
-        select_in(criteria, "pre")[0].text().collect::<String>(),
+        select_in(criteria[0], "pre")[0].text().collect::<String>(),
         "Names the columns.\nAnd orders them.\n"
     );
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Cases: a case's row opens on click to
+/// the whole of its criteria, as a fold row whose ids are keyed by names.
+#[test_log::test(tokio::test)]
+async fn a_cases_row_is_a_fold_row_opening_to_its_criteria() {
+    let pages = with_suites().await;
+
+    let html = pages.page("/suites/board").await;
+
+    let rows: Vec<(Option<&str>, Option<&str>, bool)> = select(&html, "#cases tbody tr")
+        .into_iter()
+        .map(|row| {
+            (
+                row.attr("id"),
+                row.attr("data-fold-of"),
+                row.attr("hidden").is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (Some("case-columns"), None, false),
+            (Some("case-columns_criteria"), Some("case-columns"), true),
+            (Some("case-lanes"), None, false),
+            (Some("case-lanes_criteria"), Some("case-lanes"), true),
+        ]
+    );
+    let buttons = select(&html, "#case-columns > th:first-child > button");
+    assert_eq!(buttons.len(), 1, "{}", html.html());
+    assert_eq!(buttons[0].attr("type"), Some("button"));
+    assert_eq!(buttons[0].attr("aria-expanded"), Some("false"));
+    assert_eq!(
+        buttons[0].attr("aria-controls"),
+        Some("case-columns_criteria")
+    );
+    assert_eq!(text(buttons[0]), "columns");
+    assert_eq!(select(&html, "#cases details").len(), 0);
 }
 
 /// `docs/specs/benchmarks.md`, Suite, Cases, and Remove case;
