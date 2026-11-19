@@ -1,0 +1,24 @@
+<fieldset class="configuration fieldset rounded-box border border-base-300 p-3" data-n="{{ n }}">
+<div class="grid grid-cols-1 gap-x-3 sm:grid-cols-4">
+<div class="flex flex-col"><label class="label" for="{{ self.id("name") }}">Name</label>
+<input id="{{ self.id("name") }}" class="input input-sm w-full" name="c{{ n }}.name" value="{{ fields.name }}" autocomplete="off"></div>
+<div class="flex flex-col"><label class="label" for="{{ self.id("model") }}">model</label>
+<input id="{{ self.id("model") }}" class="input input-sm w-full" name="c{{ n }}.model" value="{{ fields.model }}" placeholder="as it is" autocomplete="off"></div>
+<div class="flex flex-col"><label class="label" for="{{ self.id("effort") }}">effort</label>
+<select id="{{ self.id("effort") }}" class="select select-sm w-full" name="c{{ n }}.effort"><option value="">as it is</option>
+{%- for effort in efforts %}<option value="{{ effort }}"{% if *effort == fields.effort %} selected{% endif %}>{{ effort }}</option>{% endfor -%}
+</select></div>
+<div class="flex flex-col"><label class="label" for="{{ self.id("session-timeout") }}">session-timeout</label>
+<input id="{{ self.id("session-timeout") }}" class="input input-sm w-full" name="c{{ n }}.session-timeout" value="{{ fields.session_timeout }}" placeholder="as it is" autocomplete="off"></div>
+</div>
+<label class="label" for="{{ self.id("file") }}">Files of the brief</label>
+<select id="{{ self.id("file") }}" class="brief-file select select-sm w-full"><option value="">–</option>
+{%- for path in paths %}<option value="{{ path }}">{{ path }}</option>{% endfor -%}
+</select>
+<div class="files flex flex-col gap-2">
+{%- for (path, text) in fields.briefs %}
+{{ self.file(path, text) }}
+{%- endfor %}
+</div>
+<div><button class="remove-configuration btn btn-sm btn-ghost" type="button">Remove</button></div>
+</fieldset>

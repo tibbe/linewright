@@ -1,0 +1,8 @@
+<div class="brief-file-box flex flex-col">
+<label class="label" for="new-experiment-c{{ n }}-briefs/{{ path }}">{{ path }}</label>
+<textarea id="new-experiment-c{{ n }}-briefs/{{ path }}" class="textarea textarea-sm w-full font-mono" name="c{{ n }}.briefs/{{ path }}" rows="12">
+{{ text }}</textarea>
+{%- if let Some(started) = started %}
+<input type="hidden" name="c{{ n }}.started/{{ path }}" value="{{ started }}">
+{%- endif %}
+</div>

@@ -132,11 +132,12 @@
     open. It is drawn outside every region a stream sends, so that an update
     leaves it and what the reader typed in it as they were. Its form posts
     to `action`, and the answer, the form that `new_form` draws, replaces
-    what the form holds. -#}
-{%- macro new_dialog(id, action) -%}
+    what the form holds. A `wide` dialog has room for fields side by
+    side, and `form_class` gives the form its classes. -#}
+{%- macro new_dialog(id, action, wide = false, form_class = "") -%}
 <dialog id="{{ id }}" class="modal" aria-labelledby="{{ id }}-title">
-<div class="modal-box">
-<form method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new>
+<div class="modal-box{% if wide %} max-w-3xl{% endif %}">
+<form{% if !form_class.is_empty() %} class="{{ form_class }}"{% endif %} method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new>
 {{- caller() }}
 </form>
 </div>

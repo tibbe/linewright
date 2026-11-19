@@ -1,7 +1,7 @@
 //! The suite page (`docs/specs/benchmarks.md`, Suite and New case): suite
 //! NAME's heading, then its experiments and its cases, each in a tab of its
 //! own, the New case dialog that captures a run of the suite's stage into it,
-//! and the form that launches an experiment on it.
+//! and the New experiment dialog that launches an experiment on it.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -18,7 +18,7 @@ use super::capture::{CaseFields, NOT_POLLED, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::experiment_page::{shown_of, state_status};
 use super::html::{self, Html};
-use super::launch;
+use super::launch::{BriefTexts, NewExperimentForm};
 use super::making::{Answer, Making, case_not_made};
 use super::shell::{Area, Frame, Trail, frame_regions};
 use super::table::{Align, Column};
@@ -219,30 +219,6 @@ impl CasesColumn {
     }
 }
 
-/// The form that launches an experiment on the suite.
-struct LaunchOffer {
-    /// How many replays the form makes as it starts.
-    count: String,
-    /// The paths under `briefs/` of the files a configuration may give.
-    paths: Vec<String>,
-    /// Their texts as the form starts them, for its script.
-    texts: Html,
-    efforts: [&'static str; 5],
-}
-
-impl LaunchOffer {
-    /// The form for a suite with `cases` cases.
-    fn of(sources: &Sources, cases: usize) -> LaunchOffer {
-        let texts = launch::starting_texts(sources);
-        LaunchOffer {
-            count: launch::replay_count(cases, 1, 1),
-            paths: texts.keys().cloned().collect(),
-            texts: launch::texts_json(&texts),
-            efforts: launch::efforts(),
-        }
-    }
-}
-
 /// A suite as its page shows it.
 struct Shown {
     suite: Suite,
@@ -267,9 +243,15 @@ struct SuitePage {
     path: String,
     cases: Vec<CaseRow>,
     experiments: Vec<ExperimentRow>,
-    /// "New" on the experiments, which opens `launch`.
+    /// "New" on the experiments, which opens the New experiment dialog.
+    new_experiment_offer: Html,
+    /// The New experiment dialog's form.
     new_experiment: Html,
-    launch: LaunchOffer,
+    /// What "Add a configuration" adds to it.
+    added_configuration: Html,
+    /// What choosing a file of the brief adds to a configuration.
+    added_file: Html,
+    brief_texts: Html,
     /// The New case dialog's form.
     new_case: Html,
 }
@@ -279,6 +261,10 @@ impl SuitePage {
     /// suite has no experiments.
     fn opens_on_cases(&self) -> bool {
         self.experiments.is_empty()
+    }
+
+    fn launch_path(&self) -> String {
+        format!("{}/launch", self.path)
     }
 }
 
@@ -508,11 +494,15 @@ pub(super) async fn suite_page(
         }) => {
             let path = suite_path(&suite.name);
             let new_case = NewCaseForm::blank(&sources, &suite.name, suite.stage).await;
+            let new_experiment = NewExperimentForm::blank(&sources, &suite.name, cases.len());
             SuitePage {
                 page: Page::new(trail, format!("/events{path}")),
                 frame,
-                launch: LaunchOffer::of(&sources, cases.len()),
-                new_experiment: html::rendered(&NewExperimentRegion { cases: cases.len() }),
+                new_experiment_offer: html::rendered(&NewExperimentRegion { cases: cases.len() }),
+                added_configuration: new_experiment.added(),
+                added_file: NewExperimentForm::added_file(),
+                new_experiment: html::rendered(&new_experiment),
+                brief_texts: html::rendered(&BriefTexts::of(&sources)),
                 new_case: html::rendered(&new_case),
                 path,
                 suite,
@@ -571,6 +561,7 @@ pub(super) async fn suite_events(
                     render(&NewExperimentRegion { cases: cases.len() }),
                 ));
                 regions.push(("cases", render(&CasesRegion { cases: &cases })));
+                regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
                 let runs = runs_of(&sources, suite.stage).await;
                 regions.push((
                     "new-case-run",
@@ -604,17 +595,17 @@ struct AddForm {
     case: CaseFields,
 }
 
-/// The stage of suite `name`, or else the status and why there is no
-/// suite to add a case to.
-async fn stage_of(
+/// Suite `name` with its cases and experiments, or else the status and why
+/// there is no suite for a "New" dialog to make a thing in.
+pub(super) async fn suite_for_making(
     sources: &Sources,
     name: &str,
-) -> Result<(SuiteName, ReplayStage), (StatusCode, String)> {
+) -> Result<SuiteShown, (StatusCode, String)> {
     let suite: SuiteName = name
         .parse()
         .map_err(|_| (StatusCode::NOT_FOUND, no_such(name)))?;
     match suites(sources).show(&suite).await {
-        Ok(Some(shown)) => Ok((suite, shown.suite.stage)),
+        Ok(Some(shown)) => Ok(shown),
         Ok(None) => Err((StatusCode::NOT_FOUND, no_such(name))),
         Err(e) => {
             let why = format!("{e:#}");
@@ -658,8 +649,8 @@ pub(super) async fn add_case(
         Ok(sent) => sent,
         Err(refused) => return form.refused(refused.into_parts()),
     };
-    let (suite, stage) = match stage_of(&sources, &form.suite).await {
-        Ok(of) => of,
+    let (suite, stage) = match suite_for_making(&sources, &form.suite).await {
+        Ok(shown) => (shown.suite.name, shown.suite.stage),
         Err(refused) => return form.refused(refused),
     };
     form.runs = runs_of(&sources, stage).await;

@@ -1,0 +1,14 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_form("new-experiment", self.title(), "Run experiment", making.refusal) %}
+<p class="label">Configurations</p>
+<div class="configurations flex flex-col gap-3">
+<fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-muted text-sm">It holds nothing: the stage as it is.</p></fieldset>
+{%- for (i, configuration) in making.fields.configurations.iter().enumerate() %}
+{{ self.configuration(i + 1, configuration) }}
+{%- endfor %}
+</div>
+<div><button class="add-configuration btn btn-sm" type="button">Add a configuration</button></div>
+<label class="label" for="new-experiment-repetitions">Repetitions</label>
+<input id="new-experiment-repetitions" class="input w-24" type="number" name="repetitions" value="{{ making.fields.repetitions }}" autocomplete="off">
+<p class="replay-count mt-2" aria-live="polite">{{ self.count() }}</p>
+{%- endcall %}
