@@ -1,0 +1,41 @@
+{%- import "macros.html" as ui -%}
+<div id="configurations" class="overflow-x-auto">
+<table class="table">
+<thead><tr>{% for column in ConfigurationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in experiment.rows %}
+{%- match row %}
+{%- when Row::Figures(row) %}
+{%- call ui::fold_row(row.id, of = row.level.of()) %}
+<th class="{{ ConfigurationsColumn::Name.align() }} {{ row.level.name_class() }} whitespace-nowrap">
+{%- if row.opens.is_empty() %}{{ row.name }}{% else %}{% call ui::fold_button(row.opens) %}{{ row.name }}{% endcall %}{% endif -%}
+</th>
+<td class="{{ ConfigurationsColumn::PassRate.align() }}">
+{%- match row.pass_rate %}
+{%- when PassRate::Text(text) %}{{ text }}
+{%- when PassRate::Status { status, words } %}{% call ui::status(status, words) %}{% endcall %}
+{%- endmatch -%}
+</td>
+{%- for figure in row.figures %}
+<td class="{{ ConfigurationsColumn::FIGURES[loop.index0].align() }} whitespace-nowrap">{{ figure }}</td>
+{%- endfor %}
+{%- endcall %}
+{%- when Row::Replay(details) %}
+{%- call ui::fold_row(details.id, of = details.of) %}
+<td colspan="{{ ConfigurationsColumn::ALL.len() }}">
+{%- if let Some(reasoning) = details.reasoning %}
+<div class="reasoning max-w-3xl space-y-1 text-sm"><p><span class="text-muted">Correctness:</span> {{ reasoning.correctness }}</p><p><span class="text-muted">Leak:</span> {{ reasoning.leak }}</p></div>
+{%- endif %}
+{%- if details.links() %}
+<p class="mt-1 flex gap-4 text-sm">
+{%- if let Some(href) = details.run_href %}<a class="link" href="{{ href }}">Run's transcript</a>{% endif %}
+{%- if let Some(href) = details.judge_href %}<a class="link" href="{{ href }}">Judge's transcript</a>{% endif -%}
+</p>
+{%- endif %}
+</td>
+{%- endcall %}
+{%- endmatch %}
+{%- endfor %}
+</tbody>
+</table>
+</div>

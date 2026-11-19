@@ -51,6 +51,22 @@ pub enum WaitingFor {
     Hold(ExperimentHold),
 }
 
+impl WaitingFor {
+    /// What an experiment waits for, in words, such as "the usage limit,
+    /// until 14:30".
+    pub fn phrase(&self) -> Phrase {
+        match self {
+            WaitingFor::Serve => "serve".into(),
+            WaitingFor::Pipeline => "the pipeline: a run waits for a place under max-runs".into(),
+            WaitingFor::FreeReplay {
+                in_flight,
+                max_replays,
+            } => format!("a free replay: {in_flight} of {max_replays} in flight").into(),
+            WaitingFor::Hold(hold) => describe_wait(&Wait::from(Hold::from(*hold))),
+        }
+    }
+}
+
 impl Shown {
     /// The state of `state` where `serve` does not say how an open
     /// experiment stands.
@@ -75,17 +91,7 @@ impl Shown {
     pub fn phrase(&self) -> Phrase {
         match self {
             Shown::Running => "running".into(),
-            Shown::Waiting(waiting_for) => Phrase::from("waiting for ").then(match waiting_for {
-                WaitingFor::Serve => "serve".into(),
-                WaitingFor::Pipeline => {
-                    "the pipeline: a run waits for a place under max-runs".into()
-                }
-                WaitingFor::FreeReplay {
-                    in_flight,
-                    max_replays,
-                } => format!("a free replay: {in_flight} of {max_replays} in flight").into(),
-                WaitingFor::Hold(hold) => describe_wait(&Wait::from(Hold::from(*hold))),
-            }),
+            Shown::Waiting(waiting_for) => Phrase::from("waiting for ").then(waiting_for.phrase()),
             Shown::Ended => "ended".into(),
             Shown::Cancelled => "cancelled".into(),
         }
