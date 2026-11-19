@@ -52,7 +52,8 @@ const WRITES: &str = "writes";
 /// The directory of the output that keeps the attachments.
 const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
-const CASE: &str = "case";
+/// The part of an output that names the run whose case it replays.
+pub const CASE: &str = "case";
 /// The directory of the output that keeps a copy of the configuration.
 const CONFIGURATION: &str = "configuration";
 const BUILD_LOG: &str = "build.log";
