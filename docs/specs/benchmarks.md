@@ -529,6 +529,17 @@ experiment that does not exist is as an item or run that does not exist.
   | Leaks      | its leaks                                   | its replays of the case with a leak         |                                                                                           |
   | Unjudged   | its unjudged replays                        | its unjudged replays of the case            |                                                                                           |
 
+- **A replay's status.** A replay's Pass rate shows as a status
+  ([Status](design_system.md#status)):
+
+  | The replay                                   | Shows as                                     |
+  | -------------------------------------------- | -------------------------------------------- |
+  | "waiting"                                    | paused                                       |
+  | "replaying" or "judging"                     | in flight                                    |
+  | a judgement that passes with no leak         | done                                         |
+  | any other judgement                          | failed                                       |
+  | no judgement, as its judge made none         | failed                                       |
+  | no judgement, as its run is not done or handed back | as its run's outcome does ([Ending](runs.md#ending)) |
 - **A replay.** A replay's row opens on click to the reasoning of its judge, if
   it has a judgement. It also opens to the transcripts of its run and of its
   judge, as Run shows a run's, once each has started.
