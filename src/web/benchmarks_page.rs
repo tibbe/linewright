@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use super::buttons::ScreenButton;
 use super::html::{self, Html};
 use super::making::{Answer, Making, NOT_A_NAME, benchmark_not_made};
+use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Place};
 use super::table::{Align, Column, View};
 use super::write::Write;
@@ -30,10 +31,19 @@ use crate::benchmarks::{BenchmarkListed, BenchmarkName, BenchmarkRunId, MakeErro
 use crate::domain::Timestamp;
 use crate::task::TaskStage;
 
+/// What the page's address carries: the filters and the page of the table.
+#[derive(Deserialize)]
+pub(super) struct BenchmarksQuery {
+    #[serde(flatten)]
+    filters: FilterQuery,
+    #[serde(default)]
+    page: Requested,
+}
+
 /// The filters as the page's address carries them, an empty one leaving the
 /// list unnarrowed by it.
 #[derive(Deserialize)]
-pub(super) struct FilterQuery {
+struct FilterQuery {
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -45,6 +55,8 @@ struct Narrowing {
     /// Trimmed, to fill the filters in again.
     fields: FilterQuery,
     narrowed: Result<Narrowed, String>,
+    /// The page of the table the address asks for.
+    page: Requested,
 }
 
 struct Narrowed {
@@ -53,7 +65,8 @@ struct Narrowed {
 }
 
 impl Narrowing {
-    fn of(fields: &FilterQuery) -> Narrowing {
+    fn of(query: &BenchmarksQuery) -> Narrowing {
+        let fields = &query.filters;
         let fields = FilterQuery {
             name: fields.name.trim().to_string(),
             stage: fields.stage.trim().to_string(),
@@ -65,13 +78,25 @@ impl Narrowing {
                 name: given(&fields.name).map(str::to_string),
                 stage,
             });
-        Narrowing { fields, narrowed }
+        Narrowing {
+            fields,
+            narrowed,
+            page: query.page,
+        }
     }
 
-    /// The fields given, as the query of `path`.
-    fn path(&self, path: &str) -> String {
+    /// The fields given and the page `page`, as the query of `path`.
+    fn path(&self, path: &str, page: Requested) -> String {
         let FilterQuery { name, stage } = &self.fields;
-        with_filters(path, &[("name", name), ("stage", stage)])
+        with_filters(
+            path,
+            &[("name", name), ("stage", stage), ("page", &page.field())],
+        )
+    }
+
+    /// Where the link to page `page` of the table leads.
+    fn href(&self, page: Requested) -> PageHref {
+        PageHref::at(self.path("/benchmarks", page))
     }
 }
 
@@ -183,9 +208,13 @@ impl BenchmarksColumn {
     }
 }
 
-/// The benchmarks the filters keep, by name, or why they are not listed.
+/// A page of the benchmarks the filters keep, by name, with the pages under
+/// them, or why they are not listed.
 enum BenchmarksShown {
-    Table(Vec<Row>),
+    Table {
+        rows: Vec<Row>,
+        pages: Option<PagesShown>,
+    },
     Unlisted(String),
 }
 
@@ -252,15 +281,21 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
     };
     match read.await {
         Ok((listed, mut latest)) => {
-            let rows = listed
+            let kept: Vec<BenchmarkListed> = listed
                 .into_iter()
                 .filter(|listed| narrowed.keeps(listed))
-                .map(|listed| {
-                    let last = latest.remove(&listed.benchmark.name);
-                    Row::of(listed, last)
+                .collect();
+            let pages = Pages::of(kept.len(), narrowing.page);
+            let rows = pages
+                .shows(kept)
+                .into_iter()
+                .map(|kept| {
+                    let last = latest.remove(&kept.benchmark.name);
+                    Row::of(kept, last)
                 })
                 .collect();
-            (StatusCode::OK, BenchmarksShown::Table(rows))
+            let pages = pages.shown("benchmarks", |page| narrowing.href(page));
+            (StatusCode::OK, BenchmarksShown::Table { rows, pages })
         }
         Err(e) => {
             let error = format!("{e:#}");
@@ -278,7 +313,7 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
 fn page(narrowing: &Narrowing) -> Page {
     Page::new(
         Place::Navigation(Area::Benchmarks),
-        narrowing.path("/events/benchmarks"),
+        narrowing.path("/events/benchmarks", narrowing.page),
     )
     .buttons(vec![ScreenButton::New {
         dialog: NEW_BENCHMARK,
@@ -290,9 +325,9 @@ const NEW_BENCHMARK: &str = "new-benchmark";
 
 pub(super) async fn benchmarks_page(
     State(sources): State<Sources>,
-    Query(fields): Query<FilterQuery>,
+    Query(query): Query<BenchmarksQuery>,
 ) -> Response {
-    let narrowing = Narrowing::of(&fields);
+    let narrowing = Narrowing::of(&query);
     let (status, benchmarks) = listed(&sources, &narrowing).await;
     let page = BenchmarksPage {
         page: page(&narrowing),
@@ -309,9 +344,9 @@ pub(super) async fn benchmarks_page(
 pub(super) async fn benchmarks_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
-    Query(fields): Query<FilterQuery>,
+    Query(query): Query<BenchmarksQuery>,
 ) -> Response {
-    let narrowing = Arc::new(Narrowing::of(&fields));
+    let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
         let sources = sources.clone();
         let narrowing = narrowing.clone();
@@ -423,9 +458,12 @@ mod tests {
     /// `board` (implement), `triage-boards` (triage) and `lanes` (triage).
     #[track_caller]
     fn kept(name: &str, stage: &str) -> Vec<&'static str> {
-        let narrowing = Narrowing::of(&FilterQuery {
-            name: name.into(),
-            stage: stage.into(),
+        let narrowing = Narrowing::of(&BenchmarksQuery {
+            filters: FilterQuery {
+                name: name.into(),
+                stage: stage.into(),
+            },
+            page: Requested::default(),
         });
         let narrowed = narrowing.narrowed.unwrap();
         [

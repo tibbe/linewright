@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
 <div id="benchmarks">
 {%- match benchmarks %}
-{%- when BenchmarksShown::Table(rows) %}
+{%- when BenchmarksShown::Table { rows, pages } %}
 {%- if rows.is_empty() %}
 <p class="px-4 pb-4">No benchmarks</p>
 {%- else %}
@@ -26,6 +26,9 @@
 {%- endfor %}
 </tbody>
 </table>
+{%- if let Some(pages) = pages %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 {%- endif %}
 {%- when BenchmarksShown::Unlisted(error) %}
 <p class="px-4 pb-4">{{ error }}</p>

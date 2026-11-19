@@ -133,6 +133,66 @@ async fn the_benchmarks_filters_narrow_the_benchmarks_and_are_carried_in_the_pag
     assert_eq!(stages, ["All stages", "triage", "design", "implement"]);
 }
 
+/// `docs/specs/design_system.md`, Tables, Pages.
+#[test_log::test(tokio::test)]
+async fn the_benchmarks_page_shows_its_benchmarks_25_at_a_time_its_link_carrying_the_page_and_the_filters()
+ {
+    let pages = with_benchmarks().await;
+    for n in 1..=26 {
+        keep_benchmark(&pages.path(""), &format!("bench-{n:02}"), "implement").await;
+    }
+
+    let first = pages.page("/benchmarks?stage=implement").await;
+    let second = pages.page("/benchmarks?stage=implement&page=2").await;
+
+    let names = |html: &Html| -> Vec<String> {
+        rows(html, "#benchmarks")
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect()
+    };
+    assert_eq!(names(&first).len(), 25);
+    assert_eq!(names(&second), ["bench-26", "board"]);
+    assert_eq!(
+        pages_nav(&first, "#benchmarks"),
+        Some(PagesNav {
+            label: "Pages of benchmarks".into(),
+            showing: "Showing 1–25 of 27 benchmarks".into(),
+            items: vec![
+                no_link("Previous"),
+                page_link(
+                    "1*",
+                    "/benchmarks?stage=implement",
+                    "/events/benchmarks?stage=implement"
+                ),
+                page_link(
+                    "2",
+                    "/benchmarks?stage=implement&page=2",
+                    "/events/benchmarks?stage=implement&page=2"
+                ),
+                page_link(
+                    "Next",
+                    "/benchmarks?stage=implement&page=2",
+                    "/events/benchmarks?stage=implement&page=2"
+                ),
+            ],
+        })
+    );
+    assert_eq!(
+        events_path(&second),
+        Some("/events/benchmarks?stage=implement&page=2")
+    );
+    let mut events = stream(&pages, "/events/benchmarks?stage=implement&page=2").await;
+    let sent = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        names(region_of(&regions(&sent), "benchmarks")),
+        ["bench-26", "board"]
+    );
+}
+
 /// `docs/specs/web/design_system.md`, Filters: a filter that searches.
 #[test_log::test(tokio::test)]
 async fn the_benchmarks_name_filter_is_a_search_with_a_magnifier_at_its_start_taking_the_spare_width()
@@ -416,6 +476,102 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
             ["board", "implement", "", "View"],
             ["triage-basics", "triage", "", "View"]
         ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Tables, Pages: each of Benchmark's tables
+/// has its own page, which its link carries beside the other's.
+#[test_log::test(tokio::test)]
+async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_of_their_own() {
+    let pages = with_benchmarks().await;
+    for n in 1..=26 {
+        keep_task(
+            &pages.path(""),
+            "board",
+            &format!("task-{n:02}"),
+            "1/implement-1",
+            "Does it.\n",
+        )
+        .await;
+    }
+    for n in 1..=26 {
+        launched(
+            &pages,
+            "board",
+            &["short"],
+            1,
+            &format!("2026-10-{n:02}T12:00:00Z"),
+        )
+        .await;
+    }
+
+    let html = pages
+        .page("/benchmarks/board?runs-page=2&tasks-page=2")
+        .await;
+
+    let tasks: Vec<String> = select(&html, "#tasks tbody tr:not([data-fold-of]) > th > span")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(tasks, ["task-24", "task-25", "task-26"]);
+    assert_eq!(select(&html, "#tasks tbody tr[data-fold-of]").len(), 3);
+    assert_eq!(
+        pages_nav(&html, "#tasks"),
+        Some(PagesNav {
+            label: "Pages of tasks".into(),
+            showing: "Showing 26–28 of 28 tasks".into(),
+            items: vec![
+                page_link(
+                    "Previous",
+                    "/benchmarks/board?runs-page=2",
+                    "/events/benchmarks/board?runs-page=2"
+                ),
+                page_link(
+                    "1",
+                    "/benchmarks/board?runs-page=2",
+                    "/events/benchmarks/board?runs-page=2"
+                ),
+                page_link(
+                    "2*",
+                    "/benchmarks/board?runs-page=2&tasks-page=2",
+                    "/events/benchmarks/board?runs-page=2&tasks-page=2"
+                ),
+                no_link("Next"),
+            ],
+        })
+    );
+    assert_eq!(rows(&html, "#benchmark-runs").len(), 1);
+    assert_eq!(
+        pages_nav(&html, "#benchmark-runs").unwrap().showing,
+        "Showing 26–26 of 26 benchmark runs"
+    );
+    assert_eq!(
+        pages_nav(&html, "#benchmark-runs").unwrap().items[0],
+        page_link(
+            "Previous",
+            "/benchmarks/board?tasks-page=2",
+            "/events/benchmarks/board?tasks-page=2"
+        )
+    );
+    assert_eq!(
+        events_path(&html),
+        Some("/events/benchmarks/board?runs-page=2&tasks-page=2")
+    );
+    let mut events = stream(&pages, "/events/benchmarks/board?tasks-page=2").await;
+    let sent = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let sent = regions(&sent);
+    assert_eq!(
+        rows(region_of(&sent, "benchmark-runs"), "#benchmark-runs").len(),
+        25
+    );
+    assert_eq!(
+        pages_nav(region_of(&sent, "tasks"), "#tasks")
+            .unwrap()
+            .showing,
+        "Showing 26–28 of 28 tasks"
     );
 }
 

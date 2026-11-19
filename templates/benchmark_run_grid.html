@@ -1,4 +1,6 @@
-<div id="grid" class="overflow-x-auto">
+{%- import "macros.html" as ui -%}
+<div id="grid">
+<div class="overflow-x-auto">
 <table class="table w-auto">
 <thead><tr><th class="text-left">Task</th>{% for name in benchmark_run.grid.configurations %}<th class="text-left">{{ name }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -7,4 +9,8 @@
 {%- endfor %}
 </tbody>
 </table>
+</div>
+{%- if let Some(pages) = benchmark_run.grid_nav %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 </div>

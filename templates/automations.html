@@ -45,6 +45,9 @@
 </tbody>
 </table>
 </div>
+{%- if let Some(pages) = automations.pages %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 {%- endif %}
 {%- endif %}
 {%- endcall %}

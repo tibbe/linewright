@@ -947,3 +947,75 @@ fn record_interrupted(
     });
     pages.record(&record)
 }
+
+/// The pages under a table (`docs/specs/design_system.md`, Tables, Pages), as
+/// a reader meets them.
+#[derive(Debug, PartialEq)]
+struct PagesNav {
+    label: String,
+    /// Which rows show, of how many.
+    showing: String,
+    /// "Previous", the numbers, "…" and "Next" in order, the current page's
+    /// number marked "*".
+    items: Vec<PageLink>,
+}
+
+#[derive(Debug, PartialEq)]
+struct PageLink {
+    text: String,
+    /// The page's address and its stream's, `None` where it is no link.
+    to: Option<(String, String)>,
+}
+
+/// The page link or item `text` leading to `page` and its stream at `stream`.
+fn page_link(text: &str, page: &str, stream: &str) -> PageLink {
+    PageLink {
+        text: text.into(),
+        to: Some((page.into(), stream.into())),
+    }
+}
+
+/// The page item `text` that is no link: a disabled end, or "…".
+fn no_link(text: &str) -> PageLink {
+    PageLink {
+        text: text.into(),
+        to: None,
+    }
+}
+
+/// The pages under the table in `within` on `html`, if it has any. Each item
+/// is a small button in a daisyUI `join`, and which rows show is in Muted
+/// text.
+#[track_caller]
+fn pages_nav(html: &Html, within: &str) -> Option<PagesNav> {
+    let navs = select(html, &format!("{within} nav.pages"));
+    assert!(navs.len() <= 1, "{}", html.html());
+    let nav = *navs.first()?;
+    assert_in_muted_text(html, &format!("{within} nav.pages .pages-showing"));
+    let showing = select_in(nav, ".pages-showing");
+    let items = select_in(nav, ".join > *")
+        .into_iter()
+        .map(|item| {
+            assert!(
+                has_classes(item, &["join-item", "btn", "btn-sm"]),
+                "{}",
+                item.html()
+            );
+            let current = item.attr("aria-current") == Some("page");
+            PageLink {
+                text: format!("{}{}", text(item), if current { "*" } else { "" }),
+                to: (item.value().name() == "a").then(|| {
+                    (
+                        item.attr("href").unwrap().to_string(),
+                        item.attr("data-stream").unwrap().to_string(),
+                    )
+                }),
+            }
+        })
+        .collect();
+    Some(PagesNav {
+        label: nav.attr("aria-label").unwrap_or_default().to_string(),
+        showing: text(showing[0]),
+        items,
+    })
+}

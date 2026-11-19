@@ -30,5 +30,8 @@
 {%- endfor %}
 </tbody>
 </table>
+{%- if let Some(pages) = benchmark_runs_nav %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 {%- endif %}
 </div>

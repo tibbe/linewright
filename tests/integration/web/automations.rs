@@ -362,3 +362,37 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
     );
     web.stop().await;
 }
+
+/// `docs/specs/design_system.md`, Tables, Pages.
+#[test_log::test(tokio::test)]
+async fn the_automations_page_shows_its_automations_25_at_a_time() {
+    let names: Vec<String> = (1..=27).map(|n| format!("weekly-{n:02}")).collect();
+    let parsed: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), WEEKLY)).collect();
+    let pages = Pages::of(with(&parsed, false)).await;
+
+    let first = pages.page("/automations").await;
+    let second = pages.page("/automations?page=2").await;
+
+    let shown = |html: &Html| -> Vec<String> {
+        select(html, "#automations tbody tr > th:first-child")
+            .into_iter()
+            .map(text)
+            .collect()
+    };
+    assert_eq!(shown(&first), names[..25]);
+    assert_eq!(shown(&second), ["weekly-26", "weekly-27"]);
+    assert_eq!(
+        pages_nav(&second, "#automations"),
+        Some(PagesNav {
+            label: "Pages of automations".into(),
+            showing: "Showing 26–27 of 27 automations".into(),
+            items: vec![
+                page_link("Previous", "/automations", "/events/automations"),
+                page_link("1", "/automations", "/events/automations"),
+                page_link("2*", "/automations?page=2", "/events/automations?page=2"),
+                no_link("Next"),
+            ],
+        })
+    );
+    assert_eq!(events_path(&second), Some("/events/automations?page=2"));
+}

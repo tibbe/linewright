@@ -1,5 +1,6 @@
 {%- import "macros.html" as ui -%}
-<div id="configurations" class="overflow-x-auto">
+<div id="configurations">
+<div class="overflow-x-auto">
 <table class="table">
 <thead><tr><th class="w-0"></th>{% for column in ConfigurationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -37,4 +38,8 @@
 {%- endfor %}
 </tbody>
 </table>
+</div>
+{%- if let Some(pages) = benchmark_run.configurations_nav %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 </div>

@@ -4,6 +4,7 @@ use askama::Template;
 
 use super::html::{self, Html};
 use super::names::Names;
+use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_path;
 use super::table::{Align, Column, View};
 use crate::domain::Number;
@@ -12,7 +13,7 @@ use crate::runs::{self, Listing, NoRuns, Run, RunOf};
 
 /// A list of runs, ready for a page, or why there is none.
 pub(super) enum RunsShown {
-    Table(RunsTable),
+    Table(Box<RunsTable>),
     NoRuns,
     /// Why the runs were not listed, such as a narrowing that does not read.
     Unlisted(String),
@@ -22,6 +23,7 @@ pub(super) enum RunsShown {
 pub(super) struct RunsTable {
     rows: Rows,
     left_out: Option<LeftOut>,
+    pages: Option<PagesShown>,
 }
 
 /// Newest first, with an Item cell in every row or in none.
@@ -133,17 +135,23 @@ pub(super) struct LeftOut {
 }
 
 impl RunsShown {
-    /// The runs of `listing`, uncut, each with its item as `names` names
-    /// it.
-    pub(super) fn all(listing: &Listing, names: &Names) -> RunsShown {
+    /// The `requested` page of the runs of `listing`, each with its item
+    /// as `names` names it, its links to other pages leading where `href`
+    /// says.
+    pub(super) fn all(
+        listing: &Listing,
+        names: &Names,
+        requested: Requested,
+        href: impl Fn(Requested) -> PageHref,
+    ) -> RunsShown {
+        let pages = Pages::of(listing.runs.len(), requested);
         let rows = Rows::WithItems(
-            listing
-                .runs
+            listing.runs[pages.range()]
                 .iter()
                 .map(|run| (ItemCell::of(&run.id.of, names), RunRow::of(run, names)))
                 .collect(),
         );
-        RunsShown::of(listing, rows, None)
+        RunsShown::of(listing, rows, None, pages.shown("runs", href))
     }
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
@@ -167,14 +175,23 @@ impl RunsShown {
             earlier: runs::earlier_runs(listing.left_out),
             href: format!("/runs?item={}", item.0),
         });
-        RunsShown::of(&listing, rows, left_out)
+        RunsShown::of(&listing, rows, left_out, None)
     }
 
-    fn of(listing: &Listing, rows: Rows, left_out: Option<LeftOut>) -> RunsShown {
+    fn of(
+        listing: &Listing,
+        rows: Rows,
+        left_out: Option<LeftOut>,
+        pages: Option<PagesShown>,
+    ) -> RunsShown {
         if listing.runs.is_empty() {
             return RunsShown::NoRuns;
         }
-        RunsShown::Table(RunsTable { rows, left_out })
+        RunsShown::Table(Box::new(RunsTable {
+            rows,
+            left_out,
+            pages,
+        }))
     }
 }
 
@@ -235,5 +252,10 @@ impl RunsTable {
 
     pub(super) fn left_out(&self) -> Option<&LeftOut> {
         self.left_out.as_ref()
+    }
+
+    /// The pages under the table, where it has more runs than a page shows.
+    pub(super) fn pages(&self) -> Option<&PagesShown> {
+        self.pages.as_ref()
     }
 }
