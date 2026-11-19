@@ -402,7 +402,7 @@ benchmark run that does not exist is as an item or run that does not exist.
 
   | Column          | Holds                                                |
   | --------------- | ---------------------------------------------------- |
-  |                 | the benchmark's name, linking to its Benchmark               |
+  | Benchmark       | the benchmark's name                                 |
   | Stage           | the benchmark's stage                                    |
   | Last benchmark run | when its last benchmark run was launched, linking to it, and nothing for a benchmark with none |
 
@@ -431,7 +431,7 @@ benchmark run that does not exist is as an item or run that does not exist.
 
   | Column         | Holds                                           |
   | -------------- | ----------------------------------------------- |
-  |                | when it was launched, linking to its Benchmark run |
+  | Launched       | when it was launched                               |
   | State          | its state ([Benchmark run](#benchmark-run))           |
   | Tasks          | how many tasks it makes trials of  |
   | Configurations | how many configurations it has                  |
@@ -440,12 +440,12 @@ benchmark run that does not exist is as an item or run that does not exist.
 
 - **Tasks.** A table that fills the tab ([Tables](design_system.md#tables)),
   with a row per task in the benchmark's order ([Benchmarks](#benchmarks-1)),
-  and "New" ([Making](design_system.md#making)). A task's row opens on click to
-  the whole of its criteria.
+  and "New" ([Making](design_system.md#making)). A task's row opens to the whole
+  of its criteria.
 
   | Column        | Holds                                                         |
   | ------------- | ------------------------------------------------------------- |
-  |               | the task's name, with the first line of its criteria under it |
+  | Task          | the task's name, with the first line of its criteria under it |
   | Captured from | the run it was captured from, linking to its Run              |
   |               | "Remove"                                                      |
 
@@ -489,7 +489,8 @@ benchmark run that does not exist is as an item or run that does not exist.
 - **Layout.** The heading at the top, then the benchmark run's facts, then its
   results ([Results](#results)): the chart, the table and the grid.
 - **Heading.** Benchmark run ID and its state. While the benchmark run is
-  running or waiting, "Cancel" is at its right.
+  running or waiting, "Cancel" is with the screen's buttons
+  ([Shell](shell.md)).
 - **State.** The state shows as a status
   ([Status](design_system.md#status)): running as in flight, waiting as
   paused, ended as done and cancelled as cancelled.
@@ -517,14 +518,13 @@ benchmark run that does not exist is as an item or run that does not exist.
 - **The table.** "Configurations": a row for each configuration, highest pass
   rate first. Configurations with the same pass rate are in the order of the
   benchmark run. Those with no pass rate are last, in the order of the benchmark
-  run. A configuration's row opens on click to a row for each task. A task's row
-  opens on click to a row for each of its trials. Tasks and trials are in the
-  order in which the benchmark run starts them
-  ([Benchmark runs](#benchmark-runs)).
+  run. A configuration's row opens to a row for each task. A task's row opens to
+  a row for each of its trials. Tasks and trials are in the order in which the
+  benchmark run starts them ([Benchmark runs](#benchmark-runs)).
 
   | Column     | For a configuration                         | For a task                                  | For a trial                                                                              |
   | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
-  |            | its name                                    | the task's name                             | its repetition, such as "Trial 2"                                                        |
+  | Configuration | its name                                 | the task's name                             | its repetition, such as "Trial 2"                                                        |
   | Pass rate  | its pass rate                               | its passes, such as "2 of 3"                | its score; before it has one, "waiting", "running" or "scoring"; or why it has none |
   | Mean cost  | the mean of its cost                        | the same, of its trials of the task        | its cost                                                                                  |
   | Total cost | the total of its cost, and how many of its trials have no cost | the same, of its trials of the task      |                                                                                           |
@@ -544,13 +544,13 @@ benchmark run that does not exist is as an item or run that does not exist.
   | any other score                            | failed                                       |
   | no score, as its scorer made none          | failed                                       |
   | no score, as its run is not done or handed back | as its run's outcome does ([Ending](runs.md#ending)) |
-- **A trial.** A trial's row opens on click to the reasoning of its scorer, if
+- **A trial.** A trial's row opens to the reasoning of its scorer, if
   it has a score. It also opens to the transcripts of its run and of its
   scorer, as Run shows a run's, once each has started.
-- **The grid.** "Passes by task": a row for each task and a column for each
-  configuration, in the order of the table. A cell shows the passes of the task
-  under the configuration, such as "2 of 3". A cell also shows its leaks and its
-  trials without a score, if it has any.
+- **The grid.** "Passes by task": a row for each task, under the head "Task",
+  and a column for each configuration, in the order of the table. A cell shows
+  the passes of the task under the configuration, such as "2 of 3". A cell also
+  shows its leaks and its trials without a score, if it has any.
 
 ### Remove task
 

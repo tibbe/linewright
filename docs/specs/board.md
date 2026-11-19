@@ -118,8 +118,8 @@ An item's state ([State](repository.md#state)) is shown in these words.
   tracking issue's number and title, and how many of its tickets are closed
   of the total. Its cards are its managed tickets. Otherwise, the head shows
   the item's number and title, and the item is its one card.
-- **Its look.** A lane is a surface sunk into the screen, and its cards are
-  raised on it.
+- **Its look.** A lane stands apart from the screen around it, and each of
+  its cards stands apart from the lane.
 - **Finished lanes.** A lane is finished once its cards are all in Done and,
   where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or

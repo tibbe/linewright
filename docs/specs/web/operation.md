@@ -2,5 +2,5 @@
 
 ## Server
 
-- **The facts** are drawn as a card is, their labels in a column of their
-  own.
+- **The facts** are in a card ([Cards](design_system.md#cards)), their labels
+  in a column of their own.

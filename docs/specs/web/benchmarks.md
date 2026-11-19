@@ -11,7 +11,11 @@
 
 ## Benchmark run
 
-- **The facts** are a daisyUI `stats`, each fact a `stat` with its label as
+- **The facts** are a daisyUI `stats`, drawn as a card is
+  ([Cards](design_system.md#cards)). Each fact is a `stat`, with its label as
   the `stat-title` and its value as the `stat-value`.
+- **The chart** is in a card whose title is "Pass rate vs" and the choice of
+  the horizontal axis. The chart runs to the left, right and bottom edges of
+  the card.
 - **The reader chooses the horizontal axis** in a `select`.
 - **A point's details on hover** are in a daisyUI `tooltip`.

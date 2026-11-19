@@ -15,4 +15,4 @@
   lines. What the entry opens to starts there too.
 - **Durations.** An entry's duration is at the right edge of its line. A
   session's duration is at the right of its heading.
-- **Hover.** An entry's line is in the Lane colour on hover.
+- **Hover.** An entry's line is in the Border colour on hover.
