@@ -18,17 +18,20 @@ use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::buttons::{ScreenButton, Verb};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
-use super::run_page::{RunQuery, Transcribed, transcript_events, transcript_page};
-use super::shell::{Area, Frame, Trail, Within, frame_regions};
+use super::run_page::{
+    PageOf, RunQuery, ShellRegions, Transcribed, transcript_events, transcript_page,
+};
+use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing, Within};
 use super::table::{Align, Column};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Missing, Page, benchmark_path, benchmark_run_path, benchmark_runs, events,
-    nothing_there, render,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_runs, events, nothing_there,
+    render, with_query,
 };
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
@@ -870,10 +873,9 @@ struct BenchmarkRunPage {
     benchmark_run: BenchmarkRunView,
 }
 
-/// The heading and the facts.
 #[derive(Template)]
-#[template(path = "benchmark_run_heading.html")]
-struct HeadingRegion<'a> {
+#[template(path = "benchmark_run_facts.html")]
+struct FactsRegion<'a> {
     benchmark_run: &'a BenchmarkRunView,
 }
 
@@ -895,13 +897,56 @@ struct GridRegion<'a> {
     benchmark_run: &'a BenchmarkRunView,
 }
 
+/// The query of the stream of a page that draws the dialog "Cancel" opens.
+const CANCELS: &str = "cancels";
+
+/// What the benchmark run page's stream is asked.
+#[derive(serde::Deserialize)]
+pub(super) struct StreamQuery {
+    /// Set where the page draws the dialog "Cancel" opens.
+    cancels: Option<String>,
+}
+
+/// The name of Benchmark run's screen, its last crumb.
+const BENCHMARK_RUN: &str = "Benchmark run";
+
 impl BenchmarkRunView {
+    /// Its page, of `record`: under its benchmark, its heading its name and
+    /// its state, and "Cancel" among the screen's buttons while it is open
+    /// (`docs/specs/benchmarks.md`, Benchmark run, Heading), where `cancels`,
+    /// the page drawing the dialog "Cancel" opens.
+    fn page(&self, record: &BenchmarkRunRecord, cancels: bool) -> Page {
+        let heading = Heading {
+            state: Some((self.status, self.state)),
+            ..Heading::named(benchmark_run_name(self.id))
+        };
+        let buttons = self
+            .cancel
+            .iter()
+            .filter(|_| cancels)
+            .map(|cancel| ScreenButton::Act {
+                verb: Verb::Cancel,
+                dialog: cancel.id.clone(),
+            })
+            .collect();
+        let events = format!("/events{}", self.path);
+        Page::new(
+            benchmark_crumbs(record).screen(BENCHMARK_RUN, Thing::Found(heading)),
+            if cancels {
+                with_query(&events, CANCELS)
+            } else {
+                events
+            },
+        )
+        .buttons(buttons)
+    }
+
     /// Its regions of the page's stream.
     fn regions(&self) -> [(&'static str, String); 4] {
         [
             (
                 "benchmark-run",
-                render(&HeadingRegion {
+                render(&FactsRegion {
                     benchmark_run: self,
                 }),
             ),
@@ -972,7 +1017,7 @@ fn benchmark_run_name(id: impl std::fmt::Display) -> String {
 /// The crumbs of the screens of benchmark run `record`: Benchmarks, then its
 /// benchmark (`docs/specs/shell.md`, Breadcrumbs).
 fn benchmark_crumbs(record: &BenchmarkRunRecord) -> Within {
-    Trail::within(Area::Benchmarks).under(
+    Place::within(Area::Benchmarks).under(
         record.benchmark.name.to_string(),
         benchmark_path(&record.benchmark.name),
     )
@@ -989,23 +1034,24 @@ pub(super) async fn benchmark_run_page(
             let benchmark_run =
                 BenchmarkRunView::of(&sources, &record, &shown, &Outputs::default());
             BenchmarkRunPage {
-                page: Page::new(
-                    benchmark_crumbs(&record).here(benchmark_run_name(record.id)),
-                    format!("/events{}", benchmark_run.path),
-                ),
+                page: benchmark_run.page(&record, benchmark_run.cancel.is_some()),
                 frame,
                 benchmark_run,
             }
             .into_response()
         }
         Err(unshown) => {
-            let page = Page::new(
-                Trail::within(Area::Benchmarks).here(benchmark_run_name(&id)),
-                format!("/events/benchmark-runs/{id}"),
-            );
+            let events = format!("/events/benchmark-runs/{id}");
+            let page = |thing| {
+                Page::new(
+                    Place::within(Area::Benchmarks).screen(BENCHMARK_RUN, thing),
+                    events,
+                )
+            };
             if let Unshown::NoSuch = unshown {
-                return nothing_there(page, frame, "benchmark-run", Missing::BenchmarkRun(id));
+                return nothing_there(page, Missing::BenchmarkRun(id), frame, "benchmark-run");
             }
+            let page = page(Thing::Found(Heading::named(benchmark_run_name(&id))));
             let (status, error) = unshown.answer(&id);
             let page = ErrorPage {
                 page,
@@ -1018,23 +1064,27 @@ pub(super) async fn benchmark_run_page(
     }
 }
 
-/// The benchmark run page's regions: the frame's, and the benchmark run once it
-/// reads.
+/// The benchmark run page's regions: the notices, and once the benchmark run
+/// reads, the rest of the shell's and the benchmark run's.
 pub(super) async fn benchmark_run_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
+    Query(query): Query<StreamQuery>,
 ) -> Response {
+    let cancels = query.cancels.is_some();
     let outputs = Outputs::default();
     let regions = move || {
         let (sources, id, outputs) = (sources.clone(), id.clone(), outputs.clone());
         async move {
-            let mut regions = frame_regions(&Frame::of(&sources).await);
-            if let Ok(record) = record_of(&sources, &id).await {
-                let shown = shown_of(&sources, &record);
-                let benchmark_run = BenchmarkRunView::of(&sources, &record, &shown, &outputs);
-                regions.extend(benchmark_run.regions());
-            }
+            let frame = Frame::of(&sources).await;
+            let Ok(record) = record_of(&sources, &id).await else {
+                return vec![shell::holds(&frame)];
+            };
+            let shown = shown_of(&sources, &record);
+            let benchmark_run = BenchmarkRunView::of(&sources, &record, &shown, &outputs);
+            let mut regions = shell::regions(&frame, &benchmark_run.page(&record, cancels));
+            regions.extend(benchmark_run.regions());
             regions
         }
     };
@@ -1192,8 +1242,6 @@ fn transcribed(
         Of::Run => Transcribed {
             kept: KeptRuns::Files(RunFiles::new(&output)),
             which: Which::Item(item),
-            name: None,
-            of: html::escape(&format!("the run of trial {}", at.name())),
             missing: None,
         },
         Of::Scorer => Transcribed {
@@ -1202,8 +1250,6 @@ fn transcribed(
                 id: task_run,
                 item: None,
             },
-            name: Some("scorer".into()),
-            of: html::escape(&format!("the scorer of trial {}", at.name())),
             missing: None,
         },
     };
@@ -1219,12 +1265,48 @@ fn context(at: &TrialAt) -> Html {
         Of::Scorer => ("scorer's", Of::Run, "run's"),
     };
     html::built(format!(
-        r#"<p id="trial" class="mb-3">Trial {} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></p>"#,
+        r#"<span id="trial">Trial {} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></span>"#,
         html::escape(&at.name()),
         html::escape(&benchmark_run_path(at.id)),
         at.id,
         html::escape(&at.path(other)),
     ))
+}
+
+/// The name of the screen of a trial's transcript, its last crumb.
+const TRIAL: &str = "Trial";
+
+/// The place of the page of the trial's transcript that `path` names, and
+/// where the transcript is read from or why it cannot be; or else the
+/// benchmark run the path named that does not exist.
+async fn trial_transcript(
+    sources: &Sources,
+    path: &TrialPath,
+) -> Result<(Place, Result<Transcribed, (StatusCode, String)>), Missing> {
+    let record = match record_of(sources, &path.id).await {
+        Err(Unshown::NoSuch) => return Err(Missing::BenchmarkRun(path.id.clone())),
+        record => record.map_err(|unshown| unshown.answer(&path.id)),
+    };
+    let within = match &record {
+        Ok(record) => benchmark_crumbs(record)
+            .under(benchmark_run_name(record.id), benchmark_run_path(record.id)),
+        Err(_) => Place::within(Area::Benchmarks),
+    };
+    let transcribed = record.and_then(|record| transcribed(sources, path, &record));
+    let heading = Heading {
+        line: transcribed.as_ref().ok().map(|(at, _)| context(at)),
+        ..Heading::named(format!(
+            "Trial {}/{}/{}'s {}",
+            path.configuration, path.task, path.repetition, path.of
+        ))
+    };
+    let place = within.screen(TRIAL, Thing::Found(heading));
+    Ok((place, transcribed.map(|(_, transcribed)| transcribed)))
+}
+
+/// The page of a trial's transcript whose benchmark run is missing, `thing`.
+fn missing_trial_page(thing: Thing, events: String) -> Page {
+    Page::new(Place::within(Area::Benchmarks).screen(TRIAL, thing), events)
 }
 
 /// The page of a trial's run's or scorer's transcript, shown as the run
@@ -1235,61 +1317,62 @@ pub(super) async fn trial_page(
     Query(query): Query<RunQuery>,
     uri: Uri,
 ) -> Response {
-    let name = format!(
-        "Trial {}/{}/{}'s {}",
-        path.configuration, path.task, path.repetition, path.of
-    );
-    let record = match record_of(&sources, &path.id).await {
-        Err(Unshown::NoSuch) => {
-            let trail = Trail::within(Area::Benchmarks).here(name);
-            let page = Page::new(trail, format!("/events{}", uri.path()));
+    let (place, transcribed) = match trial_transcript(&sources, &path).await {
+        Ok(shown) => shown,
+        Err(missing) => {
+            let events = format!("/events{}", uri.path());
             let frame = Frame::of(&sources).await;
-            return nothing_there(page, frame, "transcript", Missing::BenchmarkRun(path.id));
+            return nothing_there(
+                |thing| missing_trial_page(thing, events),
+                missing,
+                frame,
+                "transcript",
+            );
         }
-        record => record.map_err(|unshown| unshown.answer(&path.id)),
     };
-    let trail = match &record {
-        Ok(record) => benchmark_crumbs(record)
-            .under(benchmark_run_name(record.id), benchmark_run_path(record.id)),
-        Err(_) => Trail::within(Area::Benchmarks),
-    }
-    .here(name);
-    let (context, transcribed) =
-        match record.and_then(|record| transcribed(&sources, &path, &record)) {
-            Ok((at, transcribed)) => (context(&at), Ok(transcribed)),
-            Err(e) => (Html::default(), Err(e)),
-        };
     transcript_page(
         &sources,
         uri.path(),
-        trail,
-        context,
+        place,
         transcribed,
         query.verbose(),
-        Html::default(),
+        None,
     )
     .await
 }
 
-/// The regions of the page of a trial's transcript.
+/// The regions of the page of a trial's transcript, whose place, read as
+/// the stream starts, stays as its page shows it.
 pub(super) async fn trial_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Path(path): Path<TrialPath>,
     Query(query): Query<RunQuery>,
+    uri: Uri,
     headers: HeaderMap,
 ) -> Response {
-    let transcribed = match record_of(&sources, &path.id).await {
-        Ok(record) => transcribed(&sources, &path, &record).ok().map(|(_, t)| t),
-        Err(_) => None,
+    let events = uri.path().to_string();
+    let (place, transcribed) = match trial_transcript(&sources, &path).await {
+        Ok((place, transcribed)) => (place, transcribed.ok()),
+        Err(missing) => {
+            let place = Place::within(Area::Benchmarks).screen(TRIAL, Thing::Missing(missing));
+            (place, None)
+        }
     };
+    let page: PageOf = Box::new(move || {
+        let page = Page::new(place.clone(), events.clone());
+        Box::pin(async move { Some(page) })
+    });
     transcript_events(
         sources,
         stopping,
         transcribed.as_ref(),
         &query,
         &headers,
-        false,
+        ShellRegions {
+            page,
+            captures: false,
+        },
     )
     .await
 }

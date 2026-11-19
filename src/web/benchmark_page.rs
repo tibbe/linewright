@@ -21,12 +21,12 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
 use super::making::{Answer, Making, task_not_made};
-use super::shell::{Area, Frame, Trail, frame_regions};
+use super::shell::{self, Frame, Heading, Missing, Place, Thing};
 use super::table::{Align, Column};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Missing, Page, benchmark_path, benchmark_run_path, benchmarks, events,
-    nothing_there, render, run_path,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmarks, events, nothing_there, render,
+    run_path,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -240,7 +240,6 @@ struct RunChoice {
 struct BenchmarkPage {
     page: Page,
     frame: Frame,
-    benchmark: Benchmark,
     path: String,
     tasks: Vec<TaskRow>,
     benchmark_runs: Vec<BenchmarkRunRow>,
@@ -482,11 +481,23 @@ async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunChoice> {
     runs
 }
 
+/// The page of `benchmark`: its heading, its name with its stage under it
+/// (`docs/specs/benchmarks.md`, Benchmark, Heading).
+fn page(benchmark: &Benchmark) -> Page {
+    let heading = Heading {
+        line: Some(html::escape(&benchmark.stage.to_string())),
+        ..Heading::named(benchmark.name.as_str())
+    };
+    Page::new(
+        Place::Alone(Thing::Found(heading)),
+        format!("/events{}", benchmark_path(&benchmark.name)),
+    )
+}
+
 pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
     Path(name): Path<String>,
 ) -> Response {
-    let trail = Trail::within(Area::Benchmarks).here(name.as_str());
     let frame = Frame::of(&sources).await;
     match shown(&sources, &name).await {
         Ok(Shown {
@@ -499,7 +510,7 @@ pub(super) async fn benchmark_page(
             let new_benchmark_run =
                 NewBenchmarkRunForm::blank(&sources, &benchmark.name, tasks.len());
             BenchmarkPage {
-                page: Page::new(trail, format!("/events{path}")),
+                page: page(&benchmark),
                 frame,
                 new_benchmark_run_offer: html::rendered(&NewBenchmarkRunRegion {
                     tasks: tasks.len(),
@@ -510,21 +521,25 @@ pub(super) async fn benchmark_page(
                 brief_texts: html::rendered(&BriefTexts::of(&sources)),
                 new_task: html::rendered(&new_task),
                 path,
-                benchmark,
                 tasks,
                 benchmark_runs,
             }
             .into_response()
         }
         Err(unshown) => {
-            let page = Page::new(trail, format!("/events/benchmarks/{name}"));
+            let events = format!("/events/benchmarks/{name}");
             match unshown {
-                Unshown::NoSuch => nothing_there(page, frame, "tasks", Missing::Benchmark(name)),
+                Unshown::NoSuch => nothing_there(
+                    |thing| Page::new(Place::Alone(thing), events),
+                    Missing::Benchmark(name),
+                    frame,
+                    "tasks",
+                ),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
                     warn!(benchmark = name, error, "reading a benchmark failed");
                     let page = ErrorPage {
-                        page,
+                        page: Page::new(Place::Alone(Thing::Found(Heading::named(name))), events),
                         frame,
                         region: "tasks",
                         error,
@@ -536,8 +551,8 @@ pub(super) async fn benchmark_page(
     }
 }
 
-/// The benchmark page's regions: the frame's, and once the benchmark reads, its
-/// benchmark runs, whether it offers to launch one, its tasks, and the runs
+/// The benchmark page's regions: the notices, and once the benchmark reads,
+/// the rest of the shell's, its benchmark runs, whether it offers to launch one, its tasks, and the runs
 /// New task offers and whether it can add one.
 pub(super) async fn benchmark_events(
     State(sources): State<Sources>,
@@ -548,36 +563,38 @@ pub(super) async fn benchmark_events(
         let sources = sources.clone();
         let name = name.clone();
         async move {
-            let mut regions = frame_regions(&Frame::of(&sources).await);
-            if let Ok(Shown {
+            let frame = Frame::of(&sources).await;
+            let Ok(Shown {
                 benchmark,
                 tasks,
                 benchmark_runs,
             }) = shown(&sources, &name).await
-            {
-                regions.push((
-                    "benchmark-runs",
-                    render(&BenchmarkRunsRegion {
-                        benchmark_runs: &benchmark_runs,
-                    }),
-                ));
-                regions.push((
-                    "new-benchmark-run-offer",
-                    render(&NewBenchmarkRunRegion { tasks: tasks.len() }),
-                ));
-                regions.push(("tasks", render(&TasksRegion { tasks: &tasks })));
-                regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
-                let runs = runs_of(&sources, benchmark.stage).await;
-                regions.push((
-                    "new-task-run",
-                    render(&NewTaskRuns {
-                        runs: &runs,
-                        chosen: None,
-                    }),
-                ));
-                let ready = NewTaskReady::of(&runs, polled(&sources));
-                regions.push((NEW_TASK_READY, render(&ready)));
-            }
+            else {
+                return vec![shell::holds(&frame)];
+            };
+            let mut regions = shell::regions(&frame, &page(&benchmark));
+            regions.push((
+                "benchmark-runs",
+                render(&BenchmarkRunsRegion {
+                    benchmark_runs: &benchmark_runs,
+                }),
+            ));
+            regions.push((
+                "new-benchmark-run-offer",
+                render(&NewBenchmarkRunRegion { tasks: tasks.len() }),
+            ));
+            regions.push(("tasks", render(&TasksRegion { tasks: &tasks })));
+            regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
+            let runs = runs_of(&sources, benchmark.stage).await;
+            regions.push((
+                "new-task-run",
+                render(&NewTaskRuns {
+                    runs: &runs,
+                    chosen: None,
+                }),
+            ));
+            let ready = NewTaskReady::of(&runs, polled(&sources));
+            regions.push((NEW_TASK_READY, render(&ready)));
             regions
         }
     };

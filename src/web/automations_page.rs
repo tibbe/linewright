@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
 use super::names::Names;
-use super::shell::{Area, Frame, Read, Trail, frame_regions};
+use super::shell::{self, Area, Frame, Place, Read};
 use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path};
 use crate::api::{Sources, Unexplained};
@@ -215,9 +215,16 @@ async fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
     (Frame::of_read(sources, &read), automations)
 }
 
+fn page() -> Page {
+    Page::new(
+        Place::Navigation(Area::Automations),
+        "/events/automations".into(),
+    )
+    .filling_the_viewport()
+}
+
 pub(super) async fn automations_page(State(sources): State<Sources>) -> Response {
-    let page = Page::new(Trail::of(Area::Automations), "/events/automations".into())
-        .filling_the_viewport();
+    let page = page();
     match shown(&sources).await {
         (frame, Some(automations)) => AutomationsPage {
             page,
@@ -237,7 +244,7 @@ pub(super) async fn automations_page(State(sources): State<Sources>) -> Response
     }
 }
 
-/// The automations page's regions: the frame's, and the automations once a
+/// The automations page's regions: the shell's, and the automations once a
 /// poll has seen them.
 pub(super) async fn automations_events(
     State(sources): State<Sources>,
@@ -247,7 +254,7 @@ pub(super) async fn automations_events(
         let sources = sources.clone();
         async move {
             let (frame, automations) = shown(&sources).await;
-            let mut regions = frame_regions(&frame);
+            let mut regions = shell::regions(&frame, &page());
             if let Some(automations) = automations {
                 regions.push((
                     "automations",

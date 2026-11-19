@@ -105,10 +105,59 @@ async fn a_run_that_can_be_captured_offers_a_form_with_the_suggested_name() {
     let criteria = select_in(form, "textarea[name=criteria]");
     assert_eq!(criteria.len(), 1);
     assert!(criteria[0].attr("required").is_some());
-    assert_eq!(
-        disclosures(&html, &["capture"]),
-        [("Add task".to_string(), false, "Add task".to_string())]
+    let opening = select(&html, "#buttons button[command=show-modal]");
+    assert_eq!(opening.len(), 1, "{}", html.html());
+    assert_eq!(text(opening[0]), "Add task");
+    let dialog = select(&html, "dialog#capture.modal")[0];
+    assert_eq!(opening[0].attr("commandfor"), Some("capture"));
+    assert!(
+        select_in(dialog, "form.capture").first() == Some(&form),
+        "{}",
+        dialog.html()
     );
+    assert_eq!(text(select_in(form, "button[type=submit]")[0]), "Add task");
+}
+
+#[test_log::test(tokio::test)]
+async fn the_capture_dialog_is_drawn_outside_every_region_the_stream_sends() {
+    let pages = implemented(Recorded::Whole).await;
+    let html = pages.page(RUN_PAGE).await;
+    let mut events = stream(&pages, events_path(&html).unwrap()).await;
+
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let first = regions(&first);
+    for (id, region) in &first {
+        assert_eq!(select(region, "dialog, form.capture").len(), 0, "{id}");
+    }
+    let (_, buttons) = first.iter().find(|(id, _)| id == "buttons").unwrap();
+    assert_eq!(
+        select(buttons, "button[commandfor=capture]")
+            .into_iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["Add task"]
+    );
+}
+
+/// "Add task" opens the dialog its page drew, so a stream offers it only to
+/// a page that drew it.
+#[test_log::test(tokio::test)]
+async fn the_stream_of_a_run_page_without_the_capture_offers_no_add_task() {
+    let pages = implemented(Recorded::Whole).await;
+    let mut events = stream(&pages, &format!("/events{RUN_PAGE}")).await;
+
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let first = regions(&first);
+    let (_, buttons) = first.iter().find(|(id, _)| id == "buttons").unwrap();
+    assert_eq!(select(buttons, "button"), [] as [ElementRef<'_>; 0]);
 }
 
 #[test_log::test(tokio::test)]
@@ -314,7 +363,7 @@ async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 
-    let mut events = stream(&pages, "/events/runs/1/implement-1").await;
+    let mut events = stream(&pages, events_path(&html).unwrap()).await;
     events.recv().await.unwrap();
     pages.publish(view);
     let ready = loop {

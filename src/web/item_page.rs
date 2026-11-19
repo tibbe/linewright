@@ -13,8 +13,8 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{Area, Frame, Trail, crumbs_region, frame_regions, title_region};
-use super::{ErrorPage, Missing, Page, events, nothing_there, render};
+use super::shell::{self, Frame, Heading, Missing, Place, Thing};
+use super::{ErrorPage, Page, events, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
 use crate::domain::{Number, Snapshot};
@@ -27,25 +27,42 @@ use crate::reconcile::NotSpecChange;
 use crate::runs;
 use crate::status;
 
-/// #N's heading and facts, ready for the page.
+/// #N's facts, ready for the page.
 struct ItemShown {
-    heading: Html,
-    /// Whether it carries the pull request icon, as its card does.
-    pull_request: bool,
-    /// When `serve` last read it.
-    as_of: Html,
     facts: Vec<Fact>,
 }
 
 impl ItemShown {
     fn of(facts: &ItemFacts, names: &Names) -> ItemShown {
-        let repo = names.repo();
         ItemShown {
-            heading: html::titled(facts.number, &facts.title, repo),
-            pull_request: facts.pull_request,
-            as_of: html::time(facts.last_read),
             facts: shown_facts(facts, names),
         }
+    }
+}
+
+/// #N's name in its heading: its number and title as on its card, with the
+/// pull request icon where its card has it (`docs/specs/board.md`, Item,
+/// Heading).
+#[derive(Template)]
+#[template(
+    source = r#"{%- import "macros.html" as ui -%}{% if pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ titled|safe }}"#,
+    ext = "html"
+)]
+struct ItemName {
+    pull_request: bool,
+    titled: Html,
+}
+
+/// #N's heading: its name, and under it when `serve` last read it.
+fn heading(facts: &ItemFacts, repo: &str) -> Heading {
+    Heading {
+        title: format!("{} {}", facts.number, facts.title),
+        name: html::rendered(&ItemName {
+            pull_request: facts.pull_request,
+            titled: html::titled(facts.number, &facts.title, repo),
+        }),
+        state: None,
+        line: Some(html::escape("as of ").then(&html::time(facts.last_read))),
     }
 }
 
@@ -248,15 +265,9 @@ struct ItemRegion<'a> {
     item: &'a ItemShown,
 }
 
-/// Item `number`'s page, under Board and named by its number and `title`,
-/// if known (`docs/specs/shell.md`, Breadcrumbs).
-fn page(number: Number, title: Option<&str>) -> Page {
-    let name = match title {
-        Some(title) => format!("{number} {title}"),
-        None => number.to_string(),
-    };
-    let trail = Trail::within(Area::Board).here(name);
-    Page::new(trail, format!("/events/items/{}", number.0)).filling_the_viewport()
+/// Item `number`'s page, with `thing` its heading or that it is missing.
+fn page(number: Number, thing: Thing) -> Page {
+    Page::new(Place::Alone(thing), format!("/events/items/{}", number.0)).filling_the_viewport()
 }
 
 pub(super) async fn item_page(
@@ -268,14 +279,14 @@ pub(super) async fn item_page(
         Ok((facts, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
-                page: page(number, Some(&facts.title)),
+                page: page(number, Thing::Found(heading(&facts, names.repo()))),
                 item: ItemShown::of(&facts, &names),
                 runs: item_runs(&sources, number, &names).await,
                 frame,
             }
             .into_response()
         }
-        Err(e) => error_page(page(number, None), frame, &e),
+        Err(e) => error_page(number, frame, &e),
     }
 }
 
@@ -285,12 +296,17 @@ fn names<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Names<'a> 
     Names::of(&sources.work_dir.repo, snapshot)
 }
 
-fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
-    if let Unexplained::NoSuchItem(number) = e {
-        return nothing_there(page, frame, "item", Missing::Item(*number));
+fn error_page(number: Number, frame: Frame, e: &Unexplained) -> Response {
+    if let Unexplained::NoSuchItem(missing) = e {
+        return nothing_there(
+            |thing| page(number, thing),
+            Missing::Item(*missing),
+            frame,
+            "item",
+        );
     }
     let page = ErrorPage {
-        page,
+        page: page(number, Thing::Found(Heading::named(number.to_string()))),
         frame,
         region: "item",
         error: e.to_string(),
@@ -298,9 +314,9 @@ fn error_page(page: Page, frame: Frame, e: &Unexplained) -> Response {
     (e.status(), page).into_response()
 }
 
-/// The item page's regions: the frame's, the item as `serve`'s view
-/// explains it, without reading GitHub, when it holds the item, with the
-/// view's board, and its runs from their records whether or not the view
+/// The item page's regions: the notices; the rest of the shell's and the
+/// item as `serve`'s view explains it, without reading GitHub, when it holds
+/// the item, with the view's board; and its runs from their records whether or not the view
 /// holds it.
 pub(super) async fn item_events(
     State(sources): State<Sources>,
@@ -310,7 +326,8 @@ pub(super) async fn item_events(
     let regions = move || {
         let sources = sources.clone();
         async move {
-            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let frame = Frame::of(&sources).await;
+            let mut regions = vec![];
             let in_view = api::explaining(&sources).await.ok();
             let names = names(
                 &sources,
@@ -329,10 +346,11 @@ pub(super) async fn item_events(
                     in_view.now,
                 );
                 let item = ItemShown::of(&facts, &names);
-                let page = page(number, Some(&facts.title));
-                regions.push(crumbs_region(&page));
-                regions.push(title_region(&page));
+                let page = page(number, Thing::Found(heading(&facts, names.repo())));
+                regions.extend(shell::regions(&frame, &page));
                 regions.push(("item", render(&ItemRegion { item: &item })));
+            } else {
+                regions.push(shell::holds(&frame));
             }
             let runs = item_runs(&sources, number, &names).await;
             regions.push(("runs", render(&RunsRegion { runs: &runs })));

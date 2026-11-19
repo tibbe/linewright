@@ -1,8 +1,6 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-<h1>{{ benchmark.name }}</h1>
-<p class="text-muted mb-4">{{ benchmark.stage }}</p>
 <div id="benchmark-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
 <div role="tablist" class="tabs tabs-border">
 <input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Runs"{% if !self.opens_on_tasks() %} checked{% endif %}>

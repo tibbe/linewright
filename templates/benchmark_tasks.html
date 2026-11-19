@@ -24,7 +24,7 @@
 {%- when TasksColumn::CapturedFrom %}
 <td class="{{ column.align() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
 {%- when TasksColumn::Remove %}
-<td class="{{ column.align() }}">{% call ui::confirm(task.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}</td>
+<td class="{{ column.align() }}">{% call ui::confirm_button(task.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}{% call ui::confirm_dialog(task.remove) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 {%- endcall %}

@@ -106,9 +106,10 @@ const morphed = (tagName, attributes, attrName, newValue) => {
     );
 }
 
-/// `docs/specs/design_system.md`, Confirming.
+/// `docs/specs/design_system.md`, Confirming; `docs/specs/runs.md`, Run,
+/// Capturing: the capture says what came of it in its own dialog.
 #[test_log::test(tokio::test)]
-async fn going_ahead_closes_the_confirmation_but_not_a_new_dialog_and_turning_it_down_is_left_to_the_browser()
+async fn going_ahead_closes_the_confirmation_but_not_a_dialog_that_answers_within_and_turning_it_down_is_left_to_the_browser()
  {
     let script = served_script().await;
 
@@ -118,27 +119,37 @@ async fn going_ahead_closes_the_confirmation_but_not_a_new_dialog_and_turning_it
 var submitted = [];
 document.addEventListener = (type, listener) => { if (type === "submit") submitted.push(listener); };
 "#;
-    let submit = r#"
-const dialog = () => ({ open: true, close() { this.open = false; } });
+    let submit = r##"
+const dialog = (holds = []) => ({
+  open: true,
+  close() { this.open = false; },
+  querySelector: (selector) => (holds.includes(selector) ? {} : null),
+});
 const ahead = dialog();
 const down = dialog();
 const making = dialog();
-const form = (method, within, attributes) => ({
+const capturing = dialog(["#capture-said"]);
+const form = (method, within, attributes, target = null) => ({
   method,
   closest: (selector) => (selector === "dialog" ? within : null),
   hasAttribute: (name) => attributes.includes(name),
+  getAttribute: (name) => (name === "hx-target" ? target : null),
 });
 for (const listener of submitted) {
-  listener({ target: form("post", ahead, []) });
+  listener({ target: form("post", ahead, [], "#benchmark-run-said") });
   listener({ target: form("dialog", down, []) });
   listener({ target: form("get", null, []) });
-  listener({ target: form("post", making, ["data-new"]) });
+  listener({ target: form("post", making, ["data-new"], "this") });
+  listener({ target: form("post", capturing, [], "#capture-said") });
 }
-`ahead: ${ahead.open}, down: ${down.open}, making: ${making.open}`
-"#;
+`ahead: ${ahead.open}, down: ${down.open}, making: ${making.open}, capturing: ${capturing.open}`
+"##;
     let answer = evaluated(&[BROWSER, asked, &script, submit]);
 
-    assert_eq!(answer, "ahead: false, down: true, making: true");
+    assert_eq!(
+        answer,
+        "ahead: false, down: true, making: true, capturing: true"
+    );
 }
 
 /// Stand-ins for the page's `#tip` and its triggers, and for the events the

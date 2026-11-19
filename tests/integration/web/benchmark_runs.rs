@@ -286,14 +286,14 @@ fn showing(pages: &Pages, shown: linewright::benchmarks::Shown) -> Showing {
 }
 
 /// The benchmark run page's heading as a reader reads it: its name, its state's
-/// badge, and the labels of the buttons at its right.
+/// badge, and the labels of the screen's buttons.
 #[track_caller]
 fn benchmark_run_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
-    let heading = select(html, "#benchmark-run header")[0];
+    let heading = select(html, "#heading")[0];
     (
-        text(select_in(heading, "h1")[0]),
+        text(select_in(heading, ".card-title")[0]),
         select_in(heading, ".badge").into_iter().map(text).collect(),
-        select_in(heading, ":scope > div > button")
+        select(html, "#buttons button")
             .into_iter()
             .map(text)
             .collect(),
@@ -350,9 +350,9 @@ async fn a_waiting_benchmark_runs_heading_and_facts_say_what_it_waits_for() {
         select(&html, "#benchmark-run .stats .badge"),
         [] as [scraper::ElementRef<'_>; 0]
     );
-    let state = select(&html, "#benchmark-run header .badge")[0];
+    let state = select(&html, "#heading .badge")[0];
     assert!(has_classes(state, &["badge-outline"]), "{}", state.html());
-    assert_eq!(events_path(&html), Some("/events/benchmark-runs/1"));
+    assert_eq!(events_path(&html), Some("/events/benchmark-runs/1?cancels"));
     assert_no_status_by_colour_alone(&html);
 
     let limited = showing(
@@ -1047,7 +1047,10 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     let run = pages.page("/benchmark-runs/1/as-is/columns/1/run").await;
     let scorer = pages.page("/benchmark-runs/1/as-is/columns/1/scorer").await;
 
-    assert_eq!(text(select(&run, "#transcript h1")[0]), "1/implement-1");
+    assert_eq!(
+        text(select(&run, "#heading .card-title")[0]),
+        "Trial as-is/columns/1's run"
+    );
     assert_eq!(
         text(select(&run, "#trial")[0]),
         "Trial as-is/columns/1 of benchmark run 1: its run's transcript, or its scorer's"
@@ -1060,10 +1063,13 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
         ]
     );
     assert!(!select(&run, "#s1 .entry").is_empty(), "{}", run.html());
-    assert_eq!(text(select(&scorer, "#transcript h1")[0]), "scorer");
     assert_eq!(
-        text(select(&scorer, "#transcript hgroup p")[0]),
-        "the scorer of trial as-is/columns/1"
+        text(select(&scorer, "#heading .card-title")[0]),
+        "Trial as-is/columns/1's scorer"
+    );
+    assert_eq!(
+        text(select(&scorer, "#heading .line")[0]),
+        "Trial as-is/columns/1 of benchmark run 1: its scorer's transcript, or its run's"
     );
     assert!(
         !select(&scorer, "#s1 .entry").is_empty(),

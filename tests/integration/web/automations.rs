@@ -309,7 +309,17 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["holds", "automations"]);
+    assert_eq!(
+        ids,
+        [
+            "holds",
+            "title",
+            "crumbs",
+            "heading",
+            "buttons",
+            "automations"
+        ]
+    );
 
     web.harness.on_automation(|_| Ok(nothing_needs_doing()));
     web.factory_beside()

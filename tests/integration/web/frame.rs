@@ -552,7 +552,10 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
         .unwrap()
         .unwrap();
     let ids: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, ["holds", "server"]);
+    assert_eq!(
+        ids,
+        ["holds", "title", "crumbs", "heading", "buttons", "server"]
+    );
 
     Request {
         signature: None,
@@ -576,18 +579,6 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
             .is_some_and(|facts| labelled(facts).contains(&("Webhook deliveries refused", "1"))),
         "{server:?}"
     );
-}
-
-#[test_log::test(tokio::test)]
-async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
-    let pages = super::run::implemented_as_recorded().await;
-
-    for path in ["/items/1", "/runs/1/implement-1", "/server"] {
-        let html = pages.page(path).await;
-        let headings = select(&html, "h1");
-        assert_eq!(headings.len(), 1, "{path}");
-        assert_eq!(headings[0].attr("class"), None, "{path}");
-    }
 }
 
 #[test_log::test(tokio::test)]

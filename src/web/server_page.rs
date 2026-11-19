@@ -14,7 +14,7 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
-use super::shell::{Area, Frame, Hold, Read, Trail, frame_regions};
+use super::shell::{self, Area, Frame, Hold, Place, Read};
 use super::{Page, events, render};
 use crate::api::Sources;
 use crate::benchmark_runs::runner::BenchmarkRunsShown;
@@ -259,17 +259,21 @@ fn build_html(build: &BuildShown, names: &Names) -> Html {
     ))
 }
 
+fn page() -> Page {
+    Page::new(Place::Navigation(Area::Server), "/events/server".into())
+}
+
 pub(super) async fn server_page(State(sources): State<Sources>) -> Response {
     let (frame, facts) = shown(&sources).await;
     ServerPage {
-        page: Page::new(Trail::of(Area::Server), "/events/server".into()),
+        page: page(),
         frame,
         facts,
     }
     .into_response()
 }
 
-/// The server page's regions: the frame's, and the facts.
+/// The server page's regions: the shell's, and the facts.
 pub(super) async fn server_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -278,7 +282,7 @@ pub(super) async fn server_events(
         let sources = sources.clone();
         async move {
             let (frame, facts) = shown(&sources).await;
-            let mut regions = frame_regions(&frame);
+            let mut regions = shell::regions(&frame, &page());
             regions.push(("server", render(&ServerRegion { facts: &facts })));
             regions
         }

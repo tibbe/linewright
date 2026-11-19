@@ -23,6 +23,7 @@
 <label for="navigation" class="btn btn-ghost btn-square drawer-button m-2 shrink-0 lg:hidden" aria-label="Open the navigation">
 <svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
 </label>
+<p class="repo-name flex min-h-8 shrink-0 items-center px-page pt-2 text-xl font-light text-muted">{{ frame.repo }}</p>
 {% block holds -%}
 <div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden px-page pt-2">
 {%- for hold in frame.holds %}
@@ -31,20 +32,15 @@
 </div>
 {%- endblock %}
 <p id="lost" class="alert alert-warning mx-page mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
-{% block crumbs -%}
-<nav id="crumbs" class="breadcrumbs shrink-0 px-page pt-2 text-sm" aria-label="Breadcrumb">
-<ul>
-{%- for crumb in page.trail.shown() %}
-{%- match crumb.href %}
-{%- when Some(href) %}
-<li><a class="link link-hover" href="{{ href }}">{{ crumb.name }}</a></li>
-{%- when None %}
-<li><span aria-current="page">{{ crumb.name }}</span></li>
-{%- endmatch %}
-{%- endfor %}
-</ul>
-</nav>
-{%- endblock %}
+{%- if page.place.has_crumbs() %}
+<div class="flex min-h-8 shrink-0 flex-wrap items-center gap-2 px-page pt-2">
+{% include "shell_crumbs.html" %}
+{% include "shell_buttons.html" %}
+</div>
+{%- else %}
+{% include "shell_crumbs.html" %}
+{%- endif %}
+{% include "shell_heading.html" %}
 <main class="px-page py-4{% if page.fills_viewport %} flex min-h-0 flex-1 flex-col{% endif %}">
 {% block main %}{% endblock %}
 </main>

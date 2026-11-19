@@ -55,14 +55,17 @@ impl Offer {
         })
     }
 
-    /// The form, its benchmark the first of the run's stage or else a new one,
-    /// its name filled in with the suggested one, and where it says what
-    /// came of a capture.
-    pub(super) fn html(&self, sources: &Sources) -> Html {
+    /// The dialog `id` of the capture (`docs/specs/web/design_system.md`,
+    /// Navigation): a daisyUI `modal` holding the form, its benchmark the
+    /// first of the run's stage or else a new one, its name filled in with
+    /// the suggested one, then where it says what came of a capture. The
+    /// page draws it outside every region a stream sends.
+    pub(super) fn html(&self, sources: &Sources, id: &str) -> Html {
         let path = html::escape(&run_path(&self.run));
         let name = html::escape(TaskName::suggested(&self.run).as_str());
+        let id = html::escape(id);
         html::built(format!(
-            r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Add task</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
+            r##"<dialog id="{id}" class="modal" aria-labelledby="{id}-title"><div class="modal-box"><form class="capture" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><fieldset class="fieldset gap-2"><legend id="{id}-title" class="fieldset-legend text-base">Add task</legend><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea></fieldset><div class="modal-action items-center"><button class="btn btn-sm" type="button" command="close" commandfor="{id}">Cancel</button>{ready}</div></form><div id="capture-said" class="mt-2" role="status"></div></div></dialog>"##,
             select = benchmark_select(&self.benchmarks, None, ""),
             pattern = html::escape(task::NAME_PATTERN),
             ready = Offer::ready_html(sources),

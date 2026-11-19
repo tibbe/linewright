@@ -15,9 +15,10 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::buttons::ScreenButton;
 use super::html::{self, Html};
 use super::making::{Answer, Making, NOT_A_NAME, benchmark_not_made};
-use super::shell::{Area, Frame, Trail, frame_regions};
+use super::shell::{self, Area, Frame, Place};
 use super::table::{Align, Column};
 use super::write::Write;
 use super::{
@@ -265,6 +266,21 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
     }
 }
 
+/// The benchmarks page, its stream's narrowed as `narrowing` says, with
+/// "New" among the screen's buttons (`docs/specs/design_system.md`, Making).
+fn page(narrowing: &Narrowing) -> Page {
+    Page::new(
+        Place::Navigation(Area::Benchmarks),
+        narrowing.path("/events/benchmarks"),
+    )
+    .buttons(vec![ScreenButton::New {
+        dialog: NEW_BENCHMARK,
+    }])
+}
+
+/// The id of the New benchmark dialog.
+const NEW_BENCHMARK: &str = "new-benchmark";
+
 pub(super) async fn benchmarks_page(
     State(sources): State<Sources>,
     Query(fields): Query<FilterQuery>,
@@ -272,10 +288,7 @@ pub(super) async fn benchmarks_page(
     let narrowing = Narrowing::of(&fields);
     let (status, benchmarks) = listed(&sources, &narrowing).await;
     let page = BenchmarksPage {
-        page: Page::new(
-            Trail::of(Area::Benchmarks),
-            narrowing.path("/events/benchmarks"),
-        ),
+        page: page(&narrowing),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         benchmarks,
@@ -284,7 +297,7 @@ pub(super) async fn benchmarks_page(
     (status, page).into_response()
 }
 
-/// The benchmarks page's regions: the frame's, and the benchmarks the filters
+/// The benchmarks page's regions: the shell's, and the benchmarks the filters
 /// keep.
 pub(super) async fn benchmarks_events(
     State(sources): State<Sources>,
@@ -296,7 +309,7 @@ pub(super) async fn benchmarks_events(
         let sources = sources.clone();
         let narrowing = narrowing.clone();
         async move {
-            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let mut regions = shell::regions(&Frame::of(&sources).await, &page(&narrowing));
             let (_, benchmarks) = listed(&sources, &narrowing).await;
             regions.push((
                 "benchmarks",

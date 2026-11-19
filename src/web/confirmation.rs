@@ -1,7 +1,7 @@
 //! A confirmation (`docs/specs/design_system.md`, Confirming): an action
 //! that asks first, in a daisyUI `modal` over the page
-//! (`docs/specs/web/design_system.md`, Navigation), drawn by the `confirm`
-//! macro.
+//! (`docs/specs/web/design_system.md`, Navigation), drawn by the
+//! `confirm_button` and `confirm_dialog` macros.
 
 /// An action that asks before it acts.
 pub(super) struct Confirmation {

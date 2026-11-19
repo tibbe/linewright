@@ -2,7 +2,7 @@
 {%- import "macros.html" as ui -%}
 {%- block main -%}
 <div id="benchmark-run-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
-{%- include "benchmark_run_heading.html" %}
+{%- include "benchmark_run_facts.html" %}
 <section id="benchmark-run-chart" class="benchmark-run-chart {% call ui::card_look() %}{% endcall %} mb-6 max-w-2xl p-4">
 <label class="select select-sm w-fit"><span class="label">Pass rate vs</span><select>
 {%- for plot in benchmark_run.chart %}
@@ -23,4 +23,7 @@
 {%- include "benchmark_run_grid.html" %}
 {%- endif %}
 {%- endcall %}
+{%- if let Some(cancel) = benchmark_run.cancel %}
+{%- call ui::confirm_dialog(cancel) %}{% endcall %}
+{%- endif %}
 {%- endblock -%}
