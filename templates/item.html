@@ -10,9 +10,9 @@
 {% call ui::facts(item.facts) %}{% endcall %}
 </section>
 {%- endblock %}
-{% block runs -%}
-<section id="runs" class="flex min-h-0 flex-1 flex-col">
+{%- call(part) ui::table_card("Runs") %}
+{%- if part == crate::web::table::Part::Table %}
 {%- call ui::runs(runs) %}{% endcall %}
-</section>
-{%- endblock %}
+{%- endif %}
+{%- endcall %}
 {%- endblock -%}

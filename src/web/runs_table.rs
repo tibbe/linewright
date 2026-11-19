@@ -5,6 +5,7 @@ use askama::Template;
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_path;
+use super::table::{Align, Column};
 use crate::domain::Number;
 use crate::phrase::Status;
 use crate::runs::{self, Listing, NoRuns, Run, RunOf};
@@ -42,6 +43,43 @@ pub(super) struct RunRow {
     pub(super) duration: Option<Html>,
 }
 
+/// A column of a list of runs.
+#[derive(Clone, Copy)]
+pub(super) enum RunsColumn {
+    Outcome,
+    Run,
+    Item,
+    Stage,
+    Started,
+    Duration,
+}
+
+impl RunsColumn {
+    pub(super) fn head(self) -> &'static str {
+        match self {
+            RunsColumn::Outcome => "Outcome",
+            RunsColumn::Run => "Run",
+            RunsColumn::Item => "Item",
+            RunsColumn::Stage => "Stage",
+            RunsColumn::Started => "Started",
+            RunsColumn::Duration => "Duration",
+        }
+    }
+
+    /// The class that aligns the column's head and cells as its kind does.
+    pub(super) fn align(self) -> &'static str {
+        let column = match self {
+            RunsColumn::Duration => Column::Duration,
+            RunsColumn::Outcome
+            | RunsColumn::Run
+            | RunsColumn::Item
+            | RunsColumn::Stage
+            | RunsColumn::Started => Column::Other,
+        };
+        Align::of(column).class()
+    }
+}
+
 /// What a run is of, as the Item column names it.
 pub(super) enum ItemCell {
     /// The item's number, and its title where known, linking to its page.
@@ -72,6 +110,16 @@ impl ItemCell {
 )]
 struct ItemCellHtml<'a> {
     item: &'a ItemCell,
+}
+
+/// A list of runs as the region `runs` of its page.
+#[derive(Template)]
+#[template(
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::runs(runs) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub(super) struct RunsRegion<'a> {
+    pub(super) runs: &'a RunsShown,
 }
 
 /// How many earlier runs a cut list left out, and where they are listed.
@@ -145,7 +193,7 @@ impl RunRow {
 }
 
 impl RunsTable {
-    pub(super) fn has_items(&self) -> bool {
+    fn has_items(&self) -> bool {
         matches!(self.rows, Rows::WithItems(_))
     }
 
@@ -157,20 +205,20 @@ impl RunsTable {
         }
     }
 
-    /// The heads of the columns the table shows, Item among them only when
-    /// its rows have Item cells.
-    pub(super) fn heads(&self) -> Vec<&'static str> {
-        let item = self.has_items().then_some("Item");
-        ["Outcome", "Run"]
+    /// The columns the table shows, Item among them only when its rows
+    /// have Item cells.
+    pub(super) fn columns(&self) -> Vec<RunsColumn> {
+        let item = self.has_items().then_some(RunsColumn::Item);
+        [RunsColumn::Outcome, RunsColumn::Run]
             .into_iter()
             .chain(item)
-            .chain(["Stage", "Started", "Duration"])
+            .chain([RunsColumn::Stage, RunsColumn::Started, RunsColumn::Duration])
             .collect()
     }
 
     /// How many columns the table shows.
-    pub(super) fn columns(&self) -> usize {
-        self.heads().len()
+    pub(super) fn column_count(&self) -> usize {
+        self.columns().len()
     }
 
     pub(super) fn left_out(&self) -> Option<&LeftOut> {

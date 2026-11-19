@@ -350,6 +350,35 @@ async fn the_runs_page_says_why_a_narrowing_does_not_read() {
     );
 }
 
+/// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
+/// Tables.
+#[test_log::test(tokio::test)]
+async fn the_runs_table_is_in_a_card_named_runs_with_the_filters_in_its_bar_and_durations_aligned_right()
+ {
+    let pages = two_issues_triaged().await;
+
+    let html = pages.page("/runs").await;
+
+    assert_eq!(
+        table_bars(&html),
+        [(
+            "Runs".to_string(),
+            vec!["item".to_string(), "stage".into(), "since".into()]
+        )]
+    );
+    assert_eq!(select(&html, ".table-card #runs table").len(), 1);
+    let card = classes(&html, ".table-card");
+    assert!(
+        ["card", "border", "border-base-300", "bg-card", "shadow-sm"]
+            .iter()
+            .all(|look| card[0].contains(look)),
+        "{card:?}"
+    );
+    let start = "start";
+    let row = [start, start, start, start, start, "end"];
+    assert_eq!(alignments(&html, "#runs"), [row, row, row]);
+}
+
 #[test_log::test(tokio::test)]
 async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_on_one_line_whole_in_the_tooltip()
  {
@@ -363,7 +392,6 @@ async fn the_runs_table_pins_its_heads_in_a_box_scrolling_both_ways_with_titles_
         tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
         "{tables:?}"
     );
-    assert_eq!(select(&html, "form ~ #runs .scroll-box").len(), 1);
     let titles = select(&html, "#runs tbody td:nth-child(3) > *");
     assert_eq!(titles.len(), 2);
     for title in titles {

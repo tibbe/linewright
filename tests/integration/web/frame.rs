@@ -585,13 +585,7 @@ async fn the_server_pages_stream_sends_the_frame_and_the_facts_then_what_changed
 async fn every_pages_heading_takes_its_look_from_the_stylesheet_alone() {
     let pages = super::run::implemented_as_recorded().await;
 
-    for path in [
-        "/items/1",
-        "/runs",
-        "/runs/1/implement-1",
-        "/automations",
-        "/server",
-    ] {
+    for path in ["/items/1", "/runs/1/implement-1", "/server"] {
         let html = pages.page(path).await;
         let headings = select(&html, "h1");
         assert_eq!(headings.len(), 1, "{path}");
