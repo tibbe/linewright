@@ -13,11 +13,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::html::{self, Html};
+use super::shell::{Area, Frame, Trail, frame_regions};
 use super::write::{Refused, Write, alert};
-use super::{
-    ErrorPage, Frame, Page, events, experiment_path, experiments, frame_regions, render,
-    suite_path, suites,
-};
+use super::{ErrorPage, Page, events, experiment_path, experiments, render, suite_path, suites};
 use crate::api::Sources;
 use crate::benchmarks::{ExperimentId, MakeError, SuiteListed, SuiteName};
 use crate::case::ReplayStage;
@@ -83,10 +81,7 @@ async fn listed(sources: &Sources) -> anyhow::Result<Vec<Row>> {
 }
 
 pub(super) async fn suites_page(State(sources): State<Sources>) -> Response {
-    let page = Page::new(
-        format!("Suites · {}", sources.work_dir.repo),
-        "/events/suites".into(),
-    );
+    let page = Page::new(Trail::of(Area::Suites), "/events/suites".into());
     let frame = Frame::of(&sources).await;
     match listed(&sources).await {
         Ok(suites) => SuitesPage {

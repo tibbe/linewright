@@ -16,19 +16,18 @@ mod run_page;
 mod runs_page;
 mod runs_table;
 mod server_page;
+mod shell;
 mod suite_page;
 mod suites_page;
 mod write;
 
-use automations_page::{Automations, LastRun};
-use html::Html;
-use names::Names;
+use shell::{Frame, Trail};
 
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use askama::Template;
@@ -45,16 +44,12 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::api::{self, Sources, Unanswered};
+use crate::api::{Sources, Unanswered};
 use crate::benchmarks::{ExperimentId, Experiments, SuiteName, Suites};
-use crate::domain::{Number, Repo, Snapshot, Timestamp};
-use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
+use crate::domain::Number;
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
-use crate::phrase::{Phrase, Status};
-use crate::repo_files::FileError;
-use crate::runs::{Outcome, RunId};
-use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
+use crate::runs::RunId;
 
 /// Where the web UI is served and the names it answers besides the local
 /// ones and IP addresses (`docs/specs/operation.md`, Serving the UI).
@@ -258,7 +253,10 @@ async fn asset(Path(name): Path<String>) -> Response {
 
 /// What every page's layout holds.
 struct Page {
-    title: String,
+    /// Where the page is, which its breadcrumbs and its title show.
+    trail: Trail,
+    /// The count of cards in Needs a person, on Board.
+    needing_a_person: Option<usize>,
     /// The path of the page's event stream.
     events: String,
     /// Whether the page is as tall as the viewport, its `main` a flex column
@@ -276,10 +274,11 @@ struct PageAssets {
 }
 
 impl Page {
-    fn new(title: String, events: String) -> Page {
+    fn new(trail: Trail, events: String) -> Page {
         let path = |name| HASHED.names[name].as_str();
         Page {
-            title,
+            trail,
+            needing_a_person: None,
             events,
             fills_viewport: false,
             assets: PageAssets {
@@ -291,235 +290,31 @@ impl Page {
         }
     }
 
+    /// The page, its title led by `count`, of cards in Needs a person
+    /// (`docs/specs/board.md`, Board, Needing a person).
+    fn needing_a_person(self, count: usize) -> Page {
+        Page {
+            needing_a_person: Some(count),
+            ..self
+        }
+    }
+
+    /// Its title: its trail's, led by the count of cards in Needs a person
+    /// where it has one.
+    fn title(&self) -> String {
+        let title = self.trail.title();
+        match self.needing_a_person {
+            Some(count) => format!("({count}) {title}"),
+            None => title,
+        }
+    }
+
     fn filling_the_viewport(self) -> Page {
         Page {
             fills_viewport: true,
             ..self
         }
     }
-}
-
-/// The icon of a link in the navigation.
-#[derive(Clone, Copy)]
-enum NavIcon {
-    Board,
-    Runs,
-    Automations,
-    Suites,
-    Server,
-}
-
-/// The frame every page has around its own regions
-/// (`docs/specs/navigation.md`, Chrome).
-struct Frame {
-    repo: Repo,
-    holds: Vec<HoldShown>,
-}
-
-/// A hold on Linewright's work, shown on every page while it lasts
-/// (`docs/specs/navigation.md`, Chrome).
-enum Hold {
-    UsageLimit {
-        resets_at: Timestamp,
-    },
-    Drain(DrainShown),
-    /// A webhook delivery refused, with none accepted since.
-    WebhooksRefused {
-        last_refused: Timestamp,
-    },
-    /// Polls failed, with none succeeded since.
-    PollsFailed(FailedPolls),
-    UnparsedAutomation(UnparsedAutomation),
-    /// A file of the repository's Linewright cannot use.
-    UnusableFile(FileError),
-    /// With a setup command, no environment yet, or a latest build that
-    /// failed.
-    Environment(Attention),
-    /// An automation whose last run failed.
-    AutomationFailed {
-        name: String,
-        run: RunId,
-        outcome: Outcome,
-    },
-}
-
-impl Hold {
-    fn of(linewright: &Linewright, automations: Option<&Automations>) -> Vec<Hold> {
-        let failed_polls = linewright.failed_polls.clone().map(Hold::PollsFailed);
-        let usage_limit = linewright
-            .usage_limit_resets_at
-            .map(|resets_at| Hold::UsageLimit { resets_at });
-        let drain = linewright.drain.map(Hold::Drain);
-        let refused = linewright
-            .webhooks
-            .and_then(|received| received.refused_since_accepted())
-            .map(|last_refused| Hold::WebhooksRefused { last_refused });
-        let unparsed = automations
-            .into_iter()
-            .flat_map(|automations| &automations.unparsed)
-            .map(|file| Hold::UnparsedAutomation(file.clone()));
-        let unusable = linewright
-            .unusable_files
-            .iter()
-            .map(|file| Hold::UnusableFile(file.clone()));
-        let environment = linewright
-            .environment
-            .as_ref()
-            .and_then(EnvironmentShown::attention)
-            .map(Hold::Environment);
-        let failed = automations
-            .into_iter()
-            .flat_map(|automations| &automations.rows)
-            .filter_map(|row| match &row.last_run {
-                LastRun::Run(run) if run.outcome.failed() => Some(Hold::AutomationFailed {
-                    name: row.name.clone(),
-                    run: run.id.clone(),
-                    outcome: run.outcome,
-                }),
-                LastRun::Run(_) | LastRun::NoneYet { .. } => None,
-            });
-        [usage_limit, drain, refused, failed_polls]
-            .into_iter()
-            .flatten()
-            .chain(unparsed)
-            .chain(unusable)
-            .chain(environment)
-            .chain(failed)
-            .collect()
-    }
-
-    fn phrase(&self) -> Phrase {
-        match self {
-            Hold::PollsFailed(failed) => status::polls_failed_since(failed),
-            Hold::UsageLimit { resets_at } => status::usage_limit(*resets_at),
-            Hold::Drain(drain) => status::drain_under_way(*drain),
-            Hold::WebhooksRefused { last_refused } => Phrase::from("webhook delivery refused: ")
-                .time(*last_refused)
-                .text(", none accepted since"),
-            Hold::UnparsedAutomation(file) => status::does_not_parse(file),
-            Hold::UnusableFile(file) => status::unusable_file(file),
-            Hold::Environment(Attention::LatestFailed(at)) => {
-                Phrase::from("environment: the latest build failed ").time(*at)
-            }
-            Hold::Environment(Attention::FirstBuilding(since)) => {
-                Phrase::from("environment: none yet, building since ").time(*since)
-            }
-            Hold::Environment(Attention::NoneYet) => "environment: none yet".into(),
-            Hold::AutomationFailed { name, run, outcome } => {
-                format!("automation {name}: last run {run} {}", outcome.word()).into()
-            }
-        }
-    }
-
-    /// Its status (`docs/specs/web/design_system.md`, Status): a usage limit
-    /// shows neutral, the status it shares with a cancelled run.
-    fn status(&self) -> Status {
-        match self {
-            Hold::UsageLimit { .. } => Status::Cancelled,
-            Hold::Drain(_) => Status::InFlight,
-            Hold::WebhooksRefused { .. } => Status::Waiting,
-            Hold::Environment(Attention::FirstBuilding(_)) => Status::InFlight,
-            Hold::Environment(Attention::NoneYet) => Status::Waiting,
-            Hold::Environment(Attention::LatestFailed(_)) => Status::Failed,
-            Hold::PollsFailed(_)
-            | Hold::UnparsedAutomation(_)
-            | Hold::UnusableFile(_)
-            | Hold::AutomationFailed { .. } => Status::Failed,
-        }
-    }
-
-    /// The page that tells more of it.
-    fn href(&self) -> String {
-        match self {
-            Hold::PollsFailed(_)
-            | Hold::UsageLimit { .. }
-            | Hold::Drain(_)
-            | Hold::WebhooksRefused { .. }
-            | Hold::UnusableFile(_)
-            | Hold::Environment(_) => "/server".into(),
-            Hold::UnparsedAutomation(_) => "/automations".into(),
-            Hold::AutomationFailed { run, .. } => run_path(run),
-        }
-    }
-}
-
-struct HoldShown {
-    alert: &'static str,
-    phrase: Html,
-    href: String,
-}
-
-/// What the frame shows, from one read of `serve`'s view and the runs.
-struct Read {
-    /// What `status` says of Linewright.
-    linewright: Linewright,
-    /// `None` before the first poll.
-    automations: Option<Automations>,
-    /// The view's, `None` before the first poll.
-    snapshot: Option<Arc<Snapshot>>,
-    /// The environment's builds, from the same read as what `status` says
-    /// of it.
-    builds: Vec<BuildShown>,
-}
-
-impl Read {
-    async fn of(sources: &Sources) -> Read {
-        let view = api::view(sources);
-        let recorded = api::recorded_or_none(sources).await;
-        let now = sources.clock.now();
-        let (environment, builds) = api::environment_or_none(sources)
-            .await
-            .and_then(|answer| answer.environment)
-            .map_or((None, Vec::new()), |environment| {
-                (Some(environment.shown), environment.builds)
-            });
-        let status = api::status_of(sources, view.as_ref(), &recorded, environment);
-        Read {
-            builds,
-            automations: view
-                .as_ref()
-                .map(|view| Automations::of(&status, view, &recorded, now)),
-            linewright: status.linewright,
-            snapshot: view.map(|view| view.snapshot),
-        }
-    }
-
-    /// How the page names items: with the titles of the view it read.
-    fn names<'a>(&'a self, repo: &'a str) -> Names<'a> {
-        Names::of(repo, self.snapshot.as_deref())
-    }
-}
-
-impl Frame {
-    async fn of(sources: &Sources) -> Frame {
-        Frame::of_read(sources, &Read::of(sources).await)
-    }
-
-    fn of_read(sources: &Sources, read: &Read) -> Frame {
-        let linewright = &read.linewright;
-        let repo = sources.work_dir.repo.clone();
-        let names = read.names(&repo);
-        let holds = Hold::of(linewright, read.automations.as_ref())
-            .iter()
-            .map(|hold| HoldShown {
-                alert: hold.status().alert(),
-                phrase: html::phrase(&hold.phrase(), &names),
-                href: hold.href(),
-            })
-            .collect();
-        Frame { repo, holds }
-    }
-}
-
-#[derive(Template)]
-#[template(path = "layout.html", block = "holds")]
-struct HoldsRegion<'a> {
-    frame: &'a Frame,
-}
-
-/// The frame's regions, which every page's stream sends before its own.
-fn frame_regions(frame: &Frame) -> Vec<(&'static str, String)> {
-    vec![("holds", render(&HoldsRegion { frame }))]
 }
 
 #[derive(Template, WebTemplate)]

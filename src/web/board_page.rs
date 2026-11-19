@@ -12,7 +12,8 @@ use tokio_util::sync::CancellationToken;
 use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
 use super::names::Names;
-use super::{Frame, Page, events, frame_regions, given, render, with_filters};
+use super::shell::{Area, Frame, Trail, frame_regions, title_region};
+use super::{Page, events, given, render, with_filters};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane};
 use crate::domain::Login;
@@ -33,12 +34,12 @@ impl FilterQuery {
     }
 }
 
-/// The board as the page shows it: the whole board's tab title, its lanes
-/// narrowed to `person`, if set, and the people to choose from, the whole
-/// board's and `person`, each once, by login (`docs/specs/board.md`, Filtering
-/// by person, The people).
+/// The board as the page shows it: the whole board's count of cards in Needs
+/// a person, its lanes narrowed to `person`, if set, and the people to choose
+/// from, the whole board's and `person`, each once, by login
+/// (`docs/specs/board.md`, Filtering by person, The people).
 struct BoardPageShown {
-    title: String,
+    needing_a_person: usize,
     board: BoardShown,
     people: Vec<Login>,
 }
@@ -54,7 +55,7 @@ impl BoardPageShown {
             people.sort();
         }
         BoardPageShown {
-            title: board_title(board, repo),
+            needing_a_person: board.needing_a_person,
             board: BoardShown::of(narrowed.as_ref().unwrap_or(board), repo),
             people,
         }
@@ -187,10 +188,12 @@ struct PeopleRegion<'a> {
     people: &'a [Login],
 }
 
-/// The tab's title, with the count of cards in Needs a person on the whole
-/// board.
-fn board_title(board: &Board, repo: &str) -> String {
-    format!("({}) Board · {repo}", board.needing_a_person)
+/// The board's page, its stream's narrowed to `person`, if set, and its
+/// title counting `needing_a_person`.
+fn page(person: Option<&Login>, needing_a_person: usize) -> Page {
+    Page::new(Trail::of(Area::Board), events_path(person))
+        .needing_a_person(needing_a_person)
+        .filling_the_viewport()
 }
 
 /// The Person filter's options: each of `people`'s logins and whether it is
@@ -217,7 +220,7 @@ pub(super) async fn board_page(
     let shown = BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
     let person_options = person_options(&shown.people, person.as_ref());
     BoardPage {
-        page: Page::new(shown.title, events_path(person.as_ref())).filling_the_viewport(),
+        page: page(person.as_ref(), shown.needing_a_person),
         frame: Frame::of(&sources).await,
         board: shown.board,
         people: shown.people,
@@ -242,11 +245,7 @@ pub(super) async fn board_events(
             let mut regions = frame_regions(&Frame::of(&sources).await);
             let shown =
                 BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
-            let title = format!(
-                r#"<title id="title">{}</title>"#,
-                html::escape(&shown.title)
-            );
-            regions.push(("title", title));
+            regions.push(title_region(&page(person.as_ref(), shown.needing_a_person)));
             regions.push((
                 "board",
                 render(&BoardRegion {

@@ -18,10 +18,11 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::experiment_page::{shown_of, state_status};
 use super::html::{self, Html};
 use super::launch;
+use super::shell::{Area, Frame, Trail, frame_regions};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Frame, Missing, Page, events, experiment_path, frame_regions, nothing_there, render,
-    run_path, suite_path, suites,
+    ErrorPage, Missing, Page, events, experiment_path, nothing_there, render, run_path, suite_path,
+    suites,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -276,7 +277,7 @@ pub(super) async fn suite_page(
     State(sources): State<Sources>,
     Path(name): Path<String>,
 ) -> Response {
-    let title = format!("{name} · {}", sources.work_dir.repo);
+    let trail = Trail::within(Area::Suites).here(name.as_str());
     let frame = Frame::of(&sources).await;
     match shown(&sources, &name).await {
         Ok(Shown {
@@ -286,7 +287,7 @@ pub(super) async fn suite_page(
         }) => {
             let path = suite_path(&suite.name);
             SuitePage {
-                page: Page::new(title, format!("/events{path}")),
+                page: Page::new(trail, format!("/events{path}")),
                 frame,
                 runs: runs_of(&sources, suite.stage).await,
                 launch: LaunchOffer::of(&sources, cases.len()),
@@ -299,7 +300,7 @@ pub(super) async fn suite_page(
             .into_response()
         }
         Err(unshown) => {
-            let page = Page::new(title, format!("/events/suites/{name}"));
+            let page = Page::new(trail, format!("/events/suites/{name}"));
             match unshown {
                 Unshown::NoSuch => nothing_there(page, frame, "cases", Missing::Suite(name)),
                 Unshown::Failed(e) => {

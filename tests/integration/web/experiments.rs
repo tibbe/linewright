@@ -55,7 +55,7 @@ pub(super) fn launched<'a>(
 /// failures, a leak and two without a judgement, one replays and one is
 /// pending. The first replay's output holds its run and its judgement.
 #[track_caller]
-fn with_experiment() -> impl Future<Output = Pages> {
+pub(super) fn with_experiment() -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = with_suites().await;

@@ -22,9 +22,10 @@ use super::capture::Offer;
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::ItemCell;
+use super::shell::{Area, Frame, Trail, frame_regions};
 use super::{
-    ErrorPage, Frame, Missing, Page, Sent, frame_regions, nothing_there, render, run_path, samples,
-    unanswered, with_query,
+    ErrorPage, Missing, Page, Sent, nothing_there, render, run_path, samples, unanswered,
+    with_query,
 };
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
@@ -1256,13 +1257,13 @@ fn page_path(path: &str, prefix: &str, verbose: bool, follow: Option<&Follow>) -
     with_query(&format!("{prefix}{path}"), &query.finish())
 }
 
-/// The page of the transcript `transcribed` names, at `path`, titled
-/// `title`, with `context` above it and `capture` by its heading; or,
-/// where it cannot be shown, why, standing in for it.
+/// The page of the transcript `transcribed` names, at `path` and `trail`,
+/// with `context` above it and `capture` by its heading; or, where it cannot
+/// be shown, why, standing in for it.
 pub(super) async fn transcript_page(
     sources: &Sources,
     path: &str,
-    title: String,
+    trail: Trail,
     context: Html,
     transcribed: Result<Transcribed, (StatusCode, String)>,
     verbose: bool,
@@ -1272,7 +1273,7 @@ pub(super) async fn transcript_page(
     let shown = match transcribed {
         Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.missing) {
             (Err(RunError::NoSuchRun(_)), Some(missing)) => {
-                let page = Page::new(title, format!("/events{path}"));
+                let page = Page::new(trail, format!("/events{path}"));
                 return nothing_there(page, frame, "transcript", missing);
             }
             (shown, _) => shown,
@@ -1281,7 +1282,7 @@ pub(super) async fn transcript_page(
     };
     match shown {
         Ok((transcript, follow)) => RunPage {
-            page: Page::new(title, page_path(path, "/events", verbose, follow.as_ref())),
+            page: Page::new(trail, page_path(path, "/events", verbose, follow.as_ref())),
             frame,
             context,
             verbose,
@@ -1293,7 +1294,7 @@ pub(super) async fn transcript_page(
         Err(e) => {
             let (status, error) = e.answer();
             let page = ErrorPage {
-                page: Page::new(title, format!("/events{path}")),
+                page: Page::new(trail, format!("/events{path}")),
                 frame,
                 region: "transcript",
                 error,
@@ -1308,9 +1309,9 @@ pub(super) async fn run_page(
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
 ) -> Response {
-    let title = format!("{id} · {}", sources.work_dir.repo);
+    let trail = Trail::within(Area::Runs).here(id.as_str());
     let Ok(run) = id.parse::<RunId>() else {
-        let page = Page::new(title, format!("/events/runs/{id}"));
+        let page = Page::new(trail, format!("/events/runs/{id}"));
         let frame = Frame::of(&sources).await;
         return nothing_there(page, frame, "transcript", Missing::Run(id));
     };
@@ -1321,7 +1322,7 @@ pub(super) async fn run_page(
     transcript_page(
         &sources,
         &run_path(&run),
-        title,
+        trail,
         Html::default(),
         Ok(Transcribed::run(&sources, &run)),
         query.verbose(),

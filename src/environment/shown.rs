@@ -38,7 +38,7 @@ pub struct BuiltShown {
     pub at: Timestamp,
 }
 
-/// Why the environment asks for attention (`docs/specs/navigation.md`, Chrome).
+/// Why the environment asks for attention (`docs/specs/shell.md`, Notices).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Attention {
     /// Its latest build failed, at this time.

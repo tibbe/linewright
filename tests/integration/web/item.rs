@@ -318,8 +318,8 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unwrap();
     let first = regions(&first);
     let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["holds", "item", "runs"]);
-    let before = item_facts(&first[1].1);
+    assert_eq!(ids, ["holds", "crumbs", "title", "item", "runs"]);
+    let before = item_facts(&first[3].1);
     let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 

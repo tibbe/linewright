@@ -22,10 +22,11 @@ use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
 use super::run_page::{RunQuery, Transcribed, transcript_events, transcript_page};
+use super::shell::{Area, Frame, Trail, Within, frame_regions};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Frame, Missing, Page, events, experiment_path, experiments, frame_regions,
-    nothing_there, render, suite_path,
+    ErrorPage, Missing, Page, events, experiment_path, experiments, nothing_there, render,
+    suite_path,
 };
 use crate::api::Sources;
 use crate::benchmarks::results::{self, CasePasses, ConfigurationResults, Results};
@@ -570,25 +571,44 @@ impl Unshown {
     }
 }
 
+/// The name of experiment `id` in its heading.
+fn experiment_name(id: impl std::fmt::Display) -> String {
+    format!("Experiment {id}")
+}
+
+/// The crumbs of the screens of experiment `record`: Suites, then its suite
+/// (`docs/specs/shell.md`, Breadcrumbs).
+fn suite_crumbs(record: &ExperimentRecord) -> Within {
+    Trail::within(Area::Suites).under(
+        record.suite.name.to_string(),
+        suite_path(&record.suite.name),
+    )
+}
+
 pub(super) async fn experiment_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
 ) -> Response {
-    let title = format!("Experiment {id} · {}", sources.work_dir.repo);
     let frame = Frame::of(&sources).await;
     match record_of(&sources, &id).await {
         Ok(record) => {
             let shown = shown_of(&sources, &record);
             let experiment = ExperimentView::of(&sources, &record, &shown, &Outputs::default());
             ExperimentPage {
-                page: Page::new(title, format!("/events{}", experiment.path)),
+                page: Page::new(
+                    suite_crumbs(&record).here(experiment_name(record.id)),
+                    format!("/events{}", experiment.path),
+                ),
                 frame,
                 experiment,
             }
             .into_response()
         }
         Err(unshown) => {
-            let page = Page::new(title, format!("/events/experiments/{id}"));
+            let page = Page::new(
+                Trail::within(Area::Suites).here(experiment_name(&id)),
+                format!("/events/experiments/{id}"),
+            );
             if let Unshown::NoSuch = unshown {
                 return nothing_there(page, frame, "experiment", Missing::Experiment(id));
             }
@@ -823,18 +843,26 @@ pub(super) async fn replay_page(
     Query(query): Query<RunQuery>,
     uri: Uri,
 ) -> Response {
-    let title = format!(
-        "Replay {}/{}/{} of experiment {} · {}",
-        path.configuration, path.case, path.repetition, path.id, sources.work_dir.repo
+    let name = format!(
+        "Replay {}/{}/{}'s {}",
+        path.configuration, path.case, path.repetition, path.of
     );
     let record = match record_of(&sources, &path.id).await {
         Err(Unshown::NoSuch) => {
-            let page = Page::new(title, format!("/events{}", uri.path()));
+            let trail = Trail::within(Area::Suites).here(name);
+            let page = Page::new(trail, format!("/events{}", uri.path()));
             let frame = Frame::of(&sources).await;
             return nothing_there(page, frame, "transcript", Missing::Experiment(path.id));
         }
         record => record.map_err(|unshown| unshown.answer(&path.id)),
     };
+    let trail = match &record {
+        Ok(record) => {
+            suite_crumbs(record).under(experiment_name(record.id), experiment_path(record.id))
+        }
+        Err(_) => Trail::within(Area::Suites),
+    }
+    .here(name);
     let (context, transcribed) =
         match record.and_then(|record| transcribed(&sources, &path, &record)) {
             Ok((at, transcribed)) => (context(&at), Ok(transcribed)),
@@ -843,7 +871,7 @@ pub(super) async fn replay_page(
     transcript_page(
         &sources,
         uri.path(),
-        title,
+        trail,
         context,
         transcribed,
         query.verbose(),
