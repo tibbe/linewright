@@ -14,15 +14,24 @@
 - **Voice.** A sentence on a screen is in the active voice: it names who or
   what acts, such as "This stops its running trials and scorers."
 - **Buttons.** A button's label is a verb, or "New" for a button that makes
-  something. The label also names what the button acts on where the screen
-  does not show it. For example, "Remove" on a task's row and "Cancel" on
-  Benchmark run need no more, but "Add task" on Run names the task.
+  something, but for the buttons of a table's pages ([Tables](#tables)). The
+  label also names what the button acts on where the screen does not show it.
+  For example, "Remove" on a task's row and "Cancel" on Benchmark run need no
+  more, but "Add task" on Run names the task.
 
 ## Titles
 
 - **A screen's title** is the name in its heading, then "Linewright", such as
   "Benchmark run 14 · Linewright". For a screen of the navigation, the name is
   the screen's name in the navigation.
+
+## Headings
+
+- **A heading.** A screen of one thing, such as a run, has a heading in a card
+  of its own. The card is under the screen's breadcrumbs, or at its top where it
+  has none. The heading holds the thing's name, then the badge of its state
+  where the screen gives its state there. Under the name is the line that the
+  screen gives, if any.
 
 ## Screen states
 
@@ -78,25 +87,49 @@
 
 - **Statuses.** A status is one of done, failed, waiting, in flight, paused
   and cancelled. Each area says which status each of its states shows as.
-- **Shown.** A status shows as its icon and its colour, never by colour
-  alone. Where a screen also names the state that shows as the status, the
-  icon and the state's name are in a badge in the status's colour, but for a
-  status among a screen's facts ([Facts](#facts)). For example, a running
+- **Shown.** A status shows as its icon and its colour, never by colour alone.
+  Where a screen also names a status's state, a badge in the status's colour
+  holds the state's name in place of the icon. A status among a
+  screen's facts is the exception ([Facts](#facts)). For example, a running
   benchmark run shows as "running" in the colour of in flight.
 
 ## Tables
 
-- **The bar.** A table is in a card, with a bar along its top. The table's name
-  is at the left of the bar. Unless its screen names it, a table's name says
-  what its rows are, such as "Runs". Its filters, then its buttons, are at the
-  right.
-- **A table in a tab.** A table that fills a tab has the tab's name, and its
-  bar shows no name.
-- **The first column.** A first column that names each row has no head: the
-  bar or the tab names the rows. Its cells are the rows' headers, in bold.
+- **The card.** A table is in a card. The top of the card holds the table's name
+  at the left and the table's buttons at the right. The table's filters are in a
+  row of their own under the top. Unless its screen names it, a table's name
+  says what its rows are, such as "Runs".
+- **A table in a tab.** A table that fills a tab has the tab's name.
+- **No name shown.** The card of a table that fills a tab, or of the table
+  that a screen of the navigation lists, shows no name: the tab or the
+  breadcrumbs name it.
+- **A row's buttons.** A row has its buttons at its end, but for the button
+  that opens it in place. No part of a row but a button or a link acts on a
+  click.
+  - **A row's screen.** A row that stands for a thing with a screen of its
+    own has "View" at its end, a link to that screen. A screen reader reads
+    the row's name after it, such as "View run 148/implement-1".
+  - **Opening in place.** A row that opens in place, such as to rows under it,
+    starts with a button that shows a chevron. The chevron points right while
+    the row is closed and down while it is open. A screen reader reads the
+    button as what it opens, such as "Show the tasks of opus-high". A row with
+    nothing to open to has no button there, and its first cell keeps its place.
+- **The first column.** A first column that names each row has a head. Its
+  cells are the rows' headers, in bold.
 - **Alignment.** Amounts of money and durations align right. Every other
   column aligns left.
 - A title in a table is on one line.
+- **Pages.** A table with more than 25 rows shows them 25 at a time. Only the
+  table's own rows count, not the rows that they open to.
+  - **Under the table.** At the left is which rows show, of how many, such as
+    "Showing 26–50 of 248 runs". At the right are "Previous", the numbers of the
+    pages and "Next". The numbers are those of the first page, the last and the
+    two on each side of the reader's. "…" is in place of the numbers between
+    them. "Previous" is disabled on the first page, and "Next" on the last.
+  - **Links.** A screen's link carries its pages, as it carries its filters
+    ([Filters](#filters)). Changing a filter goes back to the first page.
+  - **Updates.** When the table gets rows or loses them, the reader stays on the
+    page that they are on. A page that no longer exists shows as the last page.
 
 ## Facts
 
@@ -125,7 +158,8 @@
 
 ## Making
 
-- **New.** A table that the reader can add to has "New" in its bar
+- **New.** A table that the reader can add to has "New" with its screen's
+  buttons ([Shell](shell.md)), or, for a table in a tab, in its card
   ([Tables](#tables)).
 - **The dialog.** "New" opens a dialog ([Dialogs](#dialogs)). The dialog
   shows each field with its label above it, then "Cancel" and the button that

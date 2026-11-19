@@ -433,7 +433,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 | Column   | Holds                                                                                          |
 | -------- | ---------------------------------------------------------------------------------------------- |
 | Outcome  | the run's outcome                                                                              |
-| Run      | the run ID, linking to its Run                                                                 |
+| Run      | the run ID                                                                                     |
 | Item     | the item; for an automation's run, "automation" and its name, linking to Automations           |
 | Stage    | the run's stage                                                                                |
 | Started  | when the run started, with an automation's run by hand marked there                            |
@@ -481,9 +481,9 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 - **Following.** A run in flight is followed. The screen stays at the bottom
   until the reader scrolls up, and then offers to jump to the latest entry.
 - **Capturing.** A run that can be captured
-  ([Capturing](benchmarks.md#capturing)) has "Add task" by its heading. The
-  capture asks for these, then "Add task", then says where the task was written,
-  or why it was not:
+  ([Capturing](benchmarks.md#capturing)) has "Add task" with the screen's
+  buttons ([Shell](shell.md)). The capture asks for these, then "Add task", then
+  says where the task was written, or why it was not:
   - the benchmark: one of the benchmarks of the run's stage, or a new one;
   - the task's name, filled in with the run ID's letters and digits joined
     by hyphens, such as `43-implement-2`;
