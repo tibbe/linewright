@@ -146,8 +146,9 @@
 {#- What the form of the "New" dialog `id` holds: the fieldset titled
     `title`, whose fields, each under its `label`, its caller draws, then
     the refusal, if there is one, then "Cancel" and the button `button`
-    that makes the thing. -#}
-{%- macro new_form(id, title, button, refusal) -%}
+    that makes the thing, drawn by `new_submit` with `region`, `disabled`
+    and `note`. -#}
+{%- macro new_form(id, title, button, refusal, region = "", disabled = false, note = "") -%}
 <fieldset class="fieldset">
 <legend id="{{ id }}-title" class="fieldset-legend text-base">{{ title }}</legend>
 {{- caller() }}
@@ -157,8 +158,18 @@
 {%- endif %}
 <div class="modal-action">
 <button class="btn" type="button" command="close" commandfor="{{ id }}">Cancel</button>
-<button class="btn btn-primary" type="submit">{{ button }}</button>
+{% call new_submit(button, region, disabled, note) %}{% endcall %}
 </div>
+{%- endmacro -%}
+
+{#- The button `button` that makes a "New" dialog's thing. Given `region`,
+    the id of a region of the page's stream inside the dialog, it is in that
+    region, `disabled` and after `note` as the stream keeps them. -#}
+{%- macro new_submit(button, region = "", disabled = false, note = "") -%}
+{%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>
+{%- if !note.is_empty() %}<span class="text-muted self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
+<button class="btn btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ button }}</button>
+{%- if !region.is_empty() %}</div>{% endif %}
 {%- endmacro -%}
 
 {#- A table's row `id` that opens to the rows under it, or one of those,

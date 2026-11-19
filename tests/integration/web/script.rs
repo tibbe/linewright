@@ -931,6 +931,7 @@ var dialog = Object.assign(element("DIALOG", {}), {
 var making = Object.assign(element("FORM", { "data-new": "" }), { method: "post", innerHTML: "as it starts" });
 making.hasAttribute = (name) => name in making.attributes;
 making.closest = (selector) => (selector === "dialog" ? dialog : null);
+making.querySelectorAll = () => [];
 dialog.querySelector = (selector) => (selector === "form[data-new]" ? making : null);
 var opening = element("BUTTON", { command: "show-modal", commandfor: "new-suite" });
 opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
@@ -964,6 +965,72 @@ steps.join("\n")
             "closed: as it starts",
             "closed: as it starts",
             "open: as it starts",
+        ]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, New case: a "New" dialog starts afresh
+/// with the regions of the page's stream it holds as the stream last sent
+/// them, New case's run chosen as it starts and its name suggested for it.
+#[test_log::test(tokio::test)]
+async fn a_new_dialog_starts_afresh_keeping_its_regions_as_the_stream_last_sent_them() {
+    let page = r#"
+var dialog = Object.assign(element("DIALOG", {}), {
+  open: true,
+  close() { this.open = false; fire("close", event(this)); },
+});
+var making = Object.assign(element("FORM", { "data-new": "" }), { method: "post", elements: [] });
+making.hasAttribute = (name) => name in making.attributes;
+making.closest = (selector) => (selector === "dialog" ? dialog : null);
+dialog.querySelector = (selector) => (selector === "form[data-new]" ? making : null);
+var name = Object.assign(element("INPUT", {}), { name: "name", value: "" });
+var run;
+function hold(values, sent) {
+  run = Object.assign(element("SELECT", { id: "new-case-run", "data-region": "" }), {
+    id: "new-case-run", name: "run", form: making, selectedIndex: 0, sent,
+  });
+  run.options = values.map((value) =>
+    Object.assign(element("OPTION", { "data-name": value.replace("/", "-") }), { value }));
+  run.replaceWith = (other) => { run = other; making.elements = [run, name]; };
+  making.elements = [run, name];
+  return run;
+}
+var html = "as it starts";
+Object.defineProperty(making, "innerHTML", {
+  get: () => html,
+  set: (value) => { html = value; hold(["1/implement-1"], "as the page started"); name.value = "1-implement-1"; },
+});
+hold(["1/implement-1"], "as the page started");
+making.querySelectorAll = (selector) =>
+  selector === "[data-region]" || selector === "select[name=run]" ? [run] : [];
+making.querySelector = (selector) => (selector === '[id="new-case-run"]' ? run : null);
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) =>
+  selector === "dialog form[data-new]" ? [making] : selector === "select[name=run]" ? [run] : others(selector);
+const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
+const shown = () => `${run.sent}: ${run.options[run.selectedIndex].value} ${name.value}`;
+"#;
+    let asked = r#"
+const steps = [];
+const sent = hold(["1/implement-2", "1/implement-1"], "as the stream sent it");
+sent.selectedIndex = 1; fire("change", event(sent));
+name.value = "mine";
+steps.push(shown());
+dialog.close();
+steps.push(shown());
+message();
+steps.push(shown());
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            "as the stream sent it: 1/implement-1 mine",
+            "as the stream sent it: 1/implement-2 1-implement-2",
+            "as the stream sent it: 1/implement-2 1-implement-2",
         ]
     );
 }
@@ -1093,4 +1160,86 @@ steps.join("\n")
     let chosen = with_filters(page, asked).await;
 
     assert_eq!(chosen, ["1/implement-1", "1/implement-3"]);
+}
+
+/// `docs/specs/benchmarks.md`, New case, Fields, and
+/// `docs/specs/design_system.md`, Making, A refusal: the name follows the
+/// run an update chooses unless the reader typed one, and the run sent
+/// stays chosen through updates.
+#[test_log::test(tokio::test)]
+async fn the_suggested_name_follows_the_run_an_update_chooses_and_the_run_sent_stays_chosen() {
+    let page = r#"
+var capture = element("FORM", {});
+var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
+function offer(values) {
+  run.options = values.map((value) => Object.assign(element("OPTION", { "data-name": value }), { value }));
+  run.selectedIndex = 0;
+}
+offer(["1/implement-2"]);
+var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "1/implement-2" });
+capture.elements = [run, name];
+capture.querySelectorAll = (selector) => (selector === "select[name=run]" ? [run] : []);
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) => (selector === "select[name=run]" ? [run] : others(selector));
+const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
+const shown = () => `${run.options[run.selectedIndex].value} ${name.value}`;
+"#;
+    let asked = r#"
+const steps = [];
+offer(["1/implement-3", "1/implement-2"]); message();
+steps.push(shown());
+name.value = "mine";
+offer(["1/implement-4", "1/implement-3", "1/implement-2"]); message();
+steps.push(shown());
+name.value = "1/implement-4";
+run.selectedIndex = 1; fire("submit", event(capture));
+offer(["1/implement-5", "1/implement-4", "1/implement-3", "1/implement-2"]); message();
+steps.push(shown());
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            "1/implement-3 1/implement-3",
+            "1/implement-4 mine",
+            "1/implement-3 1/implement-3",
+        ]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Experiments: the launch counts its
+/// replays with the cases the suite has as the dialog opens.
+#[test_log::test(tokio::test)]
+async fn opening_the_launch_counts_its_replays_with_the_suites_cases_as_the_stream_last_sent_them()
+{
+    let page = r#"
+var offer = element("DIV", { id: "new-experiment-offer", "data-cases": "3" });
+var count = { textContent: "" };
+var launch = Object.assign(element("FORM", {}), {
+  elements: { repetitions: { value: "2" } },
+  querySelectorAll: (selector) => (selector === "fieldset.configuration" ? [{}] : []),
+  querySelector: (selector) => (selector === ".replay-count" ? count : null),
+});
+var dialog = element("DIALOG", {});
+dialog.querySelector = (selector) => (selector === "form.launch" ? launch : null);
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-experiment" });
+opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
+const byId = document.getElementById;
+document.getElementById = (id) =>
+  id === "new-experiment" ? dialog : id === "new-experiment-offer" ? offer : byId(id);
+"#;
+    let asked = r#"
+fire("click", event(opening));
+count.textContent
+"#;
+
+    let counted = with_filters(page, asked).await;
+
+    assert_eq!(
+        counted,
+        ["6 replays: 3 cases, 1 configuration, 2 repetitions"]
+    );
 }
