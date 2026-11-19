@@ -1,0 +1,10 @@
+<div id="grid" class="overflow-x-auto">
+<table class="table w-auto">
+<thead><tr><th class="text-left"></th>{% for name in benchmark_run.grid.configurations %}<th class="text-left">{{ name }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in benchmark_run.grid.rows %}
+<tr><th class="text-left">{{ row.task }}</th>{% for cell in row.cells %}<td class="text-left">{{ cell }}</td>{% endfor %}</tr>
+{%- endfor %}
+</tbody>
+</table>
+</div>

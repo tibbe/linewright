@@ -1,15 +1,15 @@
 //! `lw export ID DIR`: a run of the work directory's, written into a
-//! directory in the form that the output of a replay gives its run
+//! directory in the form that the output of a trial gives its run
 //! (`docs/specs/runs.md`, `lw export`).
 
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use crate::replay::{self, OutputRefusal};
 use crate::runs::files::RunFiles;
 use crate::runs::{OutcomeName, Recorded, RunId, Runs, SessionEntry, State, Unended};
 use crate::transcript;
+use crate::trial::{self, OutputRefusal};
 
 /// Why a run was not exported.
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +24,7 @@ pub enum ExportError {
 
 /// Writes run `id` of `runs`, or of none where there is no database, into
 /// `dir` as it is now: its outcome, its record and its sessions'
-/// directories, each at its path in the output of a replay. `dir` is made
+/// directories, each at its path in the output of a trial. `dir` is made
 /// when it is missing. Gives `dir` as an absolute path.
 ///
 /// # Errors
@@ -99,7 +99,7 @@ async fn snapshot(runs: &Runs, id: &RunId) -> Result<Snapshot, ExportError> {
 }
 
 /// The path in the output of the session's directory `dir`: its path under
-/// `work_dir`, as a replay keeps its sessions under its output.
+/// `work_dir`, as a trial keeps its sessions under its output.
 fn in_output(work_dir: &Path, dir: &Path) -> Result<PathBuf> {
     match dir.strip_prefix(work_dir) {
         Ok(relative)
@@ -167,7 +167,7 @@ impl Snapshot {
     /// directories, its record, and then its outcome. Gives `dir` as an
     /// absolute path.
     async fn write(self, dir: &Path) -> Result<PathBuf, ExportError> {
-        let dir = replay::make_empty_dir(dir)?;
+        let dir = trial::make_empty_dir(dir)?;
         let into = dir.clone();
         tokio::task::spawn_blocking(move || self.write_blocking(&into))
             .await
@@ -185,7 +185,7 @@ impl Snapshot {
             });
         }
         RunFiles::new(dir).write(&recorded)?;
-        replay::write_outcome(dir, outcome(recorded.state))
+        trial::write_outcome(dir, outcome(recorded.state))
     }
 }
 
@@ -237,7 +237,7 @@ fn copy_file(from: &Path, to: &Path, len: Option<u64>) -> Result<()> {
     copying().with_context(|| format!("copying {} to {}", from.display(), to.display()))
 }
 
-/// The outcome of a run in `state`, as the output of a replay names it.
+/// The outcome of a run in `state`, as the output of a trial names it.
 fn outcome(state: State) -> OutcomeName {
     match state {
         State::Ended { ending, .. } => OutcomeName::Ended(ending),

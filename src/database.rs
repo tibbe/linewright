@@ -38,10 +38,10 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(BOOKKEEPING_TABLES),
     Migration::Sql(SESSION_COSTS),
     Migration::Sql(PUSHED_BRANCHES_TABLES),
-    Migration::Sql(SUITES_TABLES),
-    Migration::Sql(EXPERIMENTS_TABLES),
-    Migration::Sql(EXPERIMENT_ENDS),
-    Migration::Sql(CASES_IN_ORDER),
+    Migration::Sql(BENCHMARKS_TABLES),
+    Migration::Sql(BENCHMARK_RUNS_TABLES),
+    Migration::Sql(BENCHMARK_RUN_ENDS),
+    Migration::Sql(TASKS_IN_ORDER),
 ];
 
 /// The table of the release that made each schema version.
@@ -52,7 +52,7 @@ const RELEASES_TABLE: Migration = Migration::Sql(
     ) STRICT",
 );
 
-/// Each run outside a replay, its sessions and the input it recorded.
+/// Each run outside a trial, its sessions and the input it recorded.
 const RUNS_TABLES: &str = "CREATE TABLE runs (
         id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL CHECK (kind IN ('item', 'automation')),
@@ -134,9 +134,9 @@ const PUSHED_BRANCHES_TABLES: &str = "CREATE TABLE pushed_branches (
         record TEXT PRIMARY KEY CHECK (record IN ('pushed-branches'))
     ) STRICT;";
 
-/// The suites, and the case each holds by name, whose directory is in
+/// The benchmarks, and the task each holds by name, whose directory is in
 /// `cases/`.
-const SUITES_TABLES: &str = "CREATE TABLE suites (
+const BENCHMARKS_TABLES: &str = "CREATE TABLE suites (
         name TEXT PRIMARY KEY,
         stage TEXT NOT NULL CHECK (stage IN ('triage', 'design', 'implement'))
     ) STRICT;
@@ -147,12 +147,12 @@ const SUITES_TABLES: &str = "CREATE TABLE suites (
     ) STRICT;
     CREATE INDEX cases_of_suites ON cases (suite);";
 
-/// The experiments, each with the cases and configurations it was launched
+/// The benchmark runs, each with the tasks and configurations it was launched
 /// with, in order, and its trials, whose copies and outputs are in
-/// `experiments/`. A trial's row holds the figures of its replay and its
-/// judge once its state has them, and only then: a trial cancelled before
-/// its replay ended has none.
-const EXPERIMENTS_TABLES: &str = "CREATE TABLE experiments (
+/// `experiments/`. A trial's row holds the figures of its run and its
+/// scorer once its state has them, and only then: a trial cancelled before
+/// its run ended has none.
+const BENCHMARK_RUNS_TABLES: &str = "CREATE TABLE experiments (
         id INTEGER PRIMARY KEY CHECK (id > 0),
         suite TEXT NOT NULL REFERENCES suites (name),
         launched_at TEXT NOT NULL,
@@ -207,15 +207,15 @@ const EXPERIMENTS_TABLES: &str = "CREATE TABLE experiments (
         CHECK ((reason IS NOT NULL) = (unjudged IS 'judge'))
     ) STRICT;";
 
-/// When each experiment ended or was cancelled, kept from this version on: an
-/// experiment that ended before has none, and an open one never has one.
-const EXPERIMENT_ENDS: &str = "ALTER TABLE experiments
+/// When each benchmark run ended or was cancelled, kept from this version on: a
+/// benchmark run that ended before has none, and an open one never has one.
+const BENCHMARK_RUN_ENDS: &str = "ALTER TABLE experiments
     ADD COLUMN ended_at TEXT CHECK (state <> 'open' OR ended_at IS NULL)";
 
-/// Each case's place in its suite's order, the order of their captures: one
-/// more than the highest in its suite at its capture. The cases kept before
+/// Each task's place in its benchmark's order, the order of their captures: one
+/// more than the highest in its benchmark at its capture. The tasks kept before
 /// were inserted in that order, so their row IDs give it.
-const CASES_IN_ORDER: &str = "CREATE TABLE cases_in_order (
+const TASKS_IN_ORDER: &str = "CREATE TABLE cases_in_order (
         name TEXT PRIMARY KEY,
         suite TEXT NOT NULL REFERENCES suites (name),
         run TEXT NOT NULL,

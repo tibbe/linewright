@@ -10,10 +10,10 @@ const RUN_PAGE: &str = "/runs/1/implement-1";
 /// Criteria a capture is given.
 const CRITERIA: &str = "A good result ships gh.\n";
 
-/// The suite of implement cases #1's run is captured into.
+/// The benchmark of implement tasks #1's run is captured into.
 const IMPLEMENTS: &str = "implements";
 
-/// A suite of design cases.
+/// A benchmark of design tasks.
 const DESIGNS: &str = "designs";
 
 /// What run 1 recorded of its input.
@@ -31,8 +31,8 @@ fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
-        keep_suite(&pages.path(""), IMPLEMENTS, "implement").await;
-        keep_suite(&pages.path(""), DESIGNS, "design").await;
+        keep_benchmark(&pages.path(""), IMPLEMENTS, "implement").await;
+        keep_benchmark(&pages.path(""), DESIGNS, "design").await;
         pages
             .record(&json!({
                 "item": 1,
@@ -134,11 +134,11 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
         "Not captured: the run 1/implement-1's record lacks the properties, so it cannot be \
          captured"
     );
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
-/// Submits the capture form of #1's implement run, naming the case `name`
-/// with `criteria`, into the suite [`IMPLEMENTS`], as a page of the web
+/// Submits the capture form of #1's implement run, naming the task `name`
+/// with `criteria`, into the benchmark [`IMPLEMENTS`], as a page of the web
 /// UI's own does: the status and the fragment it answers with.
 #[track_caller]
 fn submit<'a>(
@@ -146,17 +146,17 @@ fn submit<'a>(
     name: &'a str,
     criteria: &'a str,
 ) -> impl Future<Output = (u16, Html)> + 'a {
-    submit_into(pages, Chosen::Suite(IMPLEMENTS), name, criteria)
+    submit_into(pages, Chosen::Benchmark(IMPLEMENTS), name, criteria)
 }
 
-/// The suite a capture goes into.
+/// The benchmark a capture goes into.
 #[derive(Clone, Copy)]
 enum Chosen<'a> {
-    Suite(&'a str),
+    Benchmark(&'a str),
     New(&'a str),
 }
 
-/// [`submit`], into the suite `into`.
+/// [`submit`], into the benchmark `into`.
 #[track_caller]
 fn submit_into(
     pages: &Pages,
@@ -177,17 +177,17 @@ fn post_capture(
     name: &str,
     criteria: &str,
 ) -> impl Future<Output = (u16, Html)> + use<> {
-    let (suite, new_suite) = match into {
-        Chosen::Suite(suite) => (suite, ""),
-        Chosen::New(suite) => ("", suite),
+    let (benchmark, new_benchmark) = match into {
+        Chosen::Benchmark(benchmark) => (benchmark, ""),
+        Chosen::New(benchmark) => ("", benchmark),
     };
     post(
         pages,
         RUN_PAGE,
         headers,
         &[
-            ("suite", suite),
-            ("new-suite", new_suite),
+            ("suite", benchmark),
+            ("new-suite", new_benchmark),
             ("name", name),
             ("criteria", criteria),
         ],
@@ -195,7 +195,7 @@ fn post_capture(
 }
 
 #[test_log::test(tokio::test)]
-async fn submitting_the_form_writes_the_case_and_says_where() {
+async fn submitting_the_form_writes_the_task_and_says_where() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "gadgets", "A good result ships gh.\n").await;
@@ -209,7 +209,7 @@ async fn submitting_the_form_writes_the_case_and_says_where() {
             dir.display()
         )
     );
-    assert_eq!(cases(&pages), ["gadgets"]);
+    assert_eq!(tasks(&pages), ["gadgets"]);
     assert_eq!(
         std::fs::read_to_string(dir.join("criteria.md")).unwrap(),
         "A good result ships gh.\n"
@@ -227,7 +227,7 @@ async fn a_capture_with_blank_criteria_is_refused_and_writes_nothing() {
         said(&answer),
         "Not captured: the criteria are required: what a good result is, not only white space"
     );
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -245,7 +245,7 @@ async fn a_taken_name_is_refused_and_says_so() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
+async fn a_name_that_is_not_a_tasks_is_refused_and_says_so() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "../Gadgets", CRITERIA).await;
@@ -255,7 +255,7 @@ async fn a_name_that_is_not_a_cases_is_refused_and_says_so() {
         said(&answer),
         "Not captured: \"../Gadgets\" is not a case's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
     );
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -270,7 +270,7 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
     let said = said(&answer);
     assert!(said.starts_with("Not captured: "), "{said}");
     assert!(said.contains(missing), "{said}");
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -280,14 +280,14 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     let (status, _) = post_capture(
         &pages,
         &[CROSS_SITE],
-        Chosen::Suite(IMPLEMENTS),
+        Chosen::Benchmark(IMPLEMENTS),
         "gadgets",
         CRITERIA,
     )
     .await;
 
     assert_eq!(status, 403);
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -312,7 +312,7 @@ async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
         said(&answer),
         "Not captured: the capture can't run before Linewright's first poll"
     );
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 
     let mut events = stream(&pages, "/events/runs/1/implement-1").await;
     events.recv().await.unwrap();
@@ -335,9 +335,9 @@ async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_form_offers_the_suites_of_the_runs_stage_or_a_new_one() {
+async fn the_form_offers_the_benchmarks_of_the_runs_stage_or_a_new_one() {
     let pages = implemented(Recorded::Whole).await;
-    keep_suite(&pages.path(""), "board", "implement").await;
+    keep_benchmark(&pages.path(""), "board", "implement").await;
 
     let html = pages.page(RUN_PAGE).await;
 
@@ -354,12 +354,12 @@ async fn the_form_offers_the_suites_of_the_runs_stage_or_a_new_one() {
             (Some(""), "a new suite".to_string()),
         ]
     );
-    let new_suite = select_in(form, "input[name=new-suite]");
-    assert_eq!(new_suite[0].attr("pattern"), Some(NAME_PATTERN));
+    let new_benchmark = select_in(form, "input[name=new-suite]");
+    assert_eq!(new_benchmark[0].attr("pattern"), Some(NAME_PATTERN));
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_into_a_new_suite_makes_it_and_says_so() {
+async fn a_capture_into_a_new_benchmark_makes_it_and_says_so() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit_into(&pages, Chosen::New("fresh"), "gadgets", CRITERIA).await;
@@ -395,10 +395,11 @@ async fn a_capture_into_a_new_suite_makes_it_and_says_so() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing() {
+async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit_into(&pages, Chosen::Suite(DESIGNS), "gadgets", CRITERIA).await;
+    let (status, answer) =
+        submit_into(&pages, Chosen::Benchmark(DESIGNS), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(
@@ -406,16 +407,16 @@ async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing()
         "Not captured: the suite designs holds cases of design, and the run 1/implement-1 is of \
          implement"
     );
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_suite_without_a_name_is_refused_and_writes_nothing() {
+async fn a_new_benchmark_without_a_name_is_refused_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(said(&answer), "Not captured: the new suite needs a name");
-    assert_eq!(cases(&pages), Vec::<String>::new());
+    assert_eq!(tasks(&pages), Vec::<String>::new());
 }

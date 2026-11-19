@@ -505,11 +505,12 @@ impl SpecGaps for PullWorkResult {
     }
 }
 
-/// What a judge answers (`docs/specs/benchmarks.md`, Judging).
+/// What a scorer answers (`docs/specs/benchmarks.md`, Scoring).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "kebab-case")]
-pub enum JudgeResult {
-    Judged {
+pub enum ScorerResult {
+    #[serde(rename = "judged")]
+    Scored {
         correctness: Correctness,
         leak: Leak,
     },
@@ -519,7 +520,7 @@ pub enum JudgeResult {
     },
 }
 
-/// Whether a replay's output meets its case's criteria, and why.
+/// Whether a trial's output meets its task's criteria, and why.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Correctness {
     #[serde(deserialize_with = "trimmed")]
@@ -544,7 +545,7 @@ impl Verdict {
     }
 }
 
-/// Whether a session of a replay learned how the work turned out, and why:
+/// Whether a session of a trial learned how the work turned out, and why:
 /// a leak found always quotes a tool call that shows it. Kept as
 /// `reasoning`, `found` and `calls`, with no calls for a leak not found.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -573,7 +574,7 @@ impl Calls {
         Calls { first, rest }
     }
 
-    /// The calls, in the order the judge gave them.
+    /// The calls, in the order the scorer gave them.
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.first.as_str()).chain(self.rest.iter().map(String::as_str))
     }
@@ -685,8 +686,8 @@ impl Contract for AutomationResult {
     }
 }
 
-impl Contract for JudgeResult {
-    const SCHEMA: ResultSchema = ResultSchema::Judge;
+impl Contract for ScorerResult {
+    const SCHEMA: ResultSchema = ResultSchema::Scorer;
 
     fn read(value: Value) -> Result<Self, ContractError> {
         deserialized(value)
@@ -770,7 +771,7 @@ pub enum ContractError {
     Cycle,
 }
 
-/// A stage's result schema in `briefs/results/`, or the judge's.
+/// A stage's result schema in `briefs/results/`, or the scorer's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ResultSchema {
     Triage,
@@ -778,7 +779,7 @@ pub enum ResultSchema {
     Implement,
     PullRequest,
     Automation,
-    Judge,
+    Scorer,
 }
 
 impl ResultSchema {
@@ -788,7 +789,7 @@ impl ResultSchema {
         ResultSchema::Implement,
         ResultSchema::PullRequest,
         ResultSchema::Automation,
-        ResultSchema::Judge,
+        ResultSchema::Scorer,
     ];
 
     /// Its file name and text, as the spec's file holds them.
@@ -814,7 +815,7 @@ impl ResultSchema {
                 "automation.schema.json",
                 include_str!("../briefs/results/automation.schema.json"),
             ),
-            ResultSchema::Judge => (
+            ResultSchema::Scorer => (
                 "judge.schema.json",
                 include_str!("../briefs/results/judge.schema.json"),
             ),
@@ -1143,7 +1144,7 @@ mod tests {
         );
     }
 
-    fn judged(leak: &Value) -> Value {
+    fn scored(leak: &Value) -> Value {
         json!({
             "outcome": "judged",
             "correctness": {"reasoning": "It triages the issue.", "verdict": "pass"},
@@ -1152,9 +1153,9 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_judgement_with_a_found_leak_keeps_the_calls_that_show_it() {
-        let result = parse::<JudgeResult>(
-            &judged(&json!({
+    fn a_score_with_a_found_leak_keeps_the_calls_that_show_it() {
+        let result = parse::<ScorerResult>(
+            &scored(&json!({
                 "reasoning": "It read the pull request.",
                 "found": true,
                 "calls": ["curl https://github.com/owner/widgets/pull/8"]
@@ -1164,7 +1165,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Ok(JudgeResult::Judged {
+            Ok(ScorerResult::Scored {
                 correctness: Correctness {
                     reasoning: "It triages the issue.".into(),
                     verdict: Verdict::Pass,
@@ -1186,7 +1187,7 @@ mod tests {
             json!({"reasoning": "It read the pull request.", "found": true}),
             json!({"reasoning": "It read the pull request.", "found": true, "calls": []}),
         ] {
-            let error = rejected::<JudgeResult>(&judged(&leak));
+            let error = rejected::<ScorerResult>(&scored(&leak));
 
             assert!(
                 mismatches(error.clone()).iter().any(|m| matches!(
@@ -1200,15 +1201,15 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_judgement_with_no_leak_needs_no_calls() {
-        let result = parse::<JudgeResult>(
-            &judged(&json!({"reasoning": "It read only the issue.", "found": false})).to_string(),
+    fn a_score_with_no_leak_needs_no_calls() {
+        let result = parse::<ScorerResult>(
+            &scored(&json!({"reasoning": "It read only the issue.", "found": false})).to_string(),
         );
 
         assert!(
             matches!(
                 &result,
-                Ok(JudgeResult::Judged { leak: Leak::None { reasoning }, .. })
+                Ok(ScorerResult::Scored { leak: Leak::None { reasoning }, .. })
                     if reasoning == "It read only the issue."
             ),
             "{result:?}"
@@ -1216,14 +1217,14 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_judge_that_gives_up_says_why() {
-        let result = parse::<JudgeResult>(
+    fn a_scorer_that_gives_up_says_why() {
+        let result = parse::<ScorerResult>(
             &json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string(),
         );
 
         assert_eq!(
             result,
-            Ok(JudgeResult::GaveUp {
+            Ok(ScorerResult::GaveUp {
                 reason: "The output is empty.".into()
             })
         );

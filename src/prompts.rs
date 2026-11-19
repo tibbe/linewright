@@ -9,18 +9,18 @@ use anyhow::{Result, bail};
 
 use crate::attachments::BadReference;
 use crate::automation::Automation;
-use crate::case::Criteria;
 use crate::domain;
 use crate::domain::{
     CheckFailure, Comment, Issue, MergeMethod, MergedPull, Number, Parent, Pull, UpdateMethod,
 };
 use crate::git::{self, BranchStart, Conflict, UnfinishedCommits};
 use crate::reconcile::WorkKind;
-use crate::replay::judge::ReplayCopy;
 use crate::results::{ContractError, Mismatch, ParseError};
 use crate::secrets::Held;
 use crate::spec_gap::FiledGaps;
 use crate::store::FoundSecrets;
+use crate::task::Criteria;
+use crate::trial::scorer::TrialCopy;
 use crate::work_settings::RunKind;
 use crate::working_pull::Feedback;
 
@@ -272,8 +272,8 @@ values!(AutomationRun: Shared {
     output
 });
 values!(
-    /// What the judge of a replay is sent, from `judge.md`.
-    Judge: Shared {
+    /// What the scorer of a trial is sent, from `judge.md`.
+    Scorer: Shared {
         stage,
         criteria,
         replay,
@@ -281,9 +281,9 @@ values!(
     }
 );
 values!(
-    /// Where the parts of a replay's output are, from
+    /// Where the parts of a trial's output are, from
     /// `parts/replay-output.md`.
-    ReplayOutput {
+    TrialOutput {
         outcome,
         sessions,
         writes
@@ -544,7 +544,7 @@ templates! {
     fix_ci: FixCi = "prompts/fix-ci.md", FIX_CI, AsWritten;
     update: PullRequest = "prompts/update.md", UPDATE, AsWritten;
     automation: AutomationRun = "prompts/automation.md", AUTOMATIONS, AsWritten;
-    judge: Judge = "prompts/judge.md", JUDGE, Trimmed;
+    scorer: Scorer = "prompts/judge.md", SCORER, Trimmed;
     result_error: ResultError = "prompts/follow-ups/result-error.md", Readers::Every, Trimmed;
     loose_ends: LooseEnds = "prompts/follow-ups/loose-ends.md", ATTACHING, Trimmed;
     usage_limit_reset: NoValues = "prompts/follow-ups/usage-limit-reset.md", Readers::Every, Trimmed;
@@ -571,7 +571,7 @@ templates! {
     attachments: Attachments = "parts/attachments.md", ATTACHING, Trimmed;
     attachment_secret: AttachmentSecret = "parts/attachment-secret.md", ATTACHING, Trimmed;
     attachment_refused: AttachmentRefused = "parts/attachment-refused.md", ATTACHING, Trimmed;
-    replay_output: ReplayOutput = "parts/replay-output.md", JUDGE, Trimmed;
+    trial_output: TrialOutput = "parts/replay-output.md", SCORER, Trimmed;
     result_no_json: NoValues = "parts/result-no-json.md", Readers::Every, Trimmed;
     result_not_json: ResultError = "parts/result-not-json.md", Readers::Every, Trimmed;
     result_schema: SchemaMismatches = "parts/result-schema.md", Readers::Every, Trimmed;
@@ -602,7 +602,7 @@ templates! {
     fix_ci_output: NoValues = "outputs/fix-ci.md", FIX_CI, Trimmed;
     update_output: NoValues = "outputs/update.md", UPDATE, Trimmed;
     automation_output: NoValues = "outputs/automation.md", AUTOMATIONS, Trimmed;
-    judge_output: NoValues = "outputs/judge.md", JUDGE, Trimmed;
+    scorer_output: NoValues = "outputs/judge.md", SCORER, Trimmed;
 }
 
 /// A file of the brief: its path under `briefs/`, the runs that read it, how
@@ -741,8 +741,8 @@ pub enum Readers {
 pub enum Reads {
     Stage(WorkKind),
     Automations,
-    /// The judge of a replay (docs/specs/benchmarks.md, "Judging").
-    Judge,
+    /// The scorer of a trial (docs/specs/benchmarks.md, "Scoring").
+    Scorer,
 }
 
 impl Readers {
@@ -752,7 +752,7 @@ impl Readers {
             Readers::Only(reads) => reads.iter().any(|reads| match (reads, run) {
                 (Reads::Stage(kind), RunKind::Stage(run)) => kind == run,
                 (Reads::Automations, RunKind::Automation(_)) => true,
-                (Reads::Judge, RunKind::Judge) => true,
+                (Reads::Scorer, RunKind::Scorer) => true,
                 _ => false,
             }),
         }
@@ -766,7 +766,7 @@ const REWORK: Readers = Readers::Only(&[Reads::Stage(WorkKind::Rework)]);
 const FIX_CI: Readers = Readers::Only(&[Reads::Stage(WorkKind::FixCi)]);
 const UPDATE: Readers = Readers::Only(&[Reads::Stage(WorkKind::Update)]);
 const AUTOMATIONS: Readers = Readers::Only(&[Reads::Automations]);
-const JUDGE: Readers = Readers::Only(&[Reads::Judge]);
+const SCORER: Readers = Readers::Only(&[Reads::Scorer]);
 /// The runs that rework a pull request or fix its CI.
 const FIXES: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::Rework),
@@ -801,7 +801,7 @@ const OUTCOMES: Readers = Readers::Only(&[
     Reads::Stage(WorkKind::Rework),
     Reads::Stage(WorkKind::FixCi),
     Reads::Stage(WorkKind::Update),
-    Reads::Judge,
+    Reads::Scorer,
 ]);
 /// The runs whose result may attach files: every stage's and every
 /// automation's.
@@ -1129,27 +1129,27 @@ pub fn automation(
     })
 }
 
-/// What the judge of a replay of a case of `stage` in `repo` is sent: the
-/// case's `criteria`, and where the parts of the replay's output are in the
-/// judge's copy `replay` (`docs/specs/benchmarks.md`, Judging).
+/// What the scorer of a trial of a task of `stage` in `repo` is sent: the
+/// task's `criteria`, and where the parts of the trial's output are in the
+/// scorer's copy `trial` (`docs/specs/benchmarks.md`, Scoring).
 /// Its result contract has nothing on attachments.
-pub fn judge(
+pub fn scorer(
     templates: &Templates,
     repo: &Repo,
     stage: WorkKind,
     criteria: &Criteria,
-    replay: &ReplayCopy,
+    trial: &TrialCopy,
 ) -> String {
-    templates.judge.fill(&Judge {
+    templates.scorer.fill(&Scorer {
         base: shared(templates, repo),
         stage: stage.name().into(),
         criteria: criteria.as_str().trim_end().into(),
-        replay: templates.replay_output.fill(&ReplayOutput {
-            outcome: replay.outcome().display().to_string(),
-            sessions: replay.sessions().display().to_string(),
-            writes: replay.writes().display().to_string(),
+        replay: templates.trial_output.fill(&TrialOutput {
+            outcome: trial.outcome().display().to_string(),
+            sessions: trial.sessions().display().to_string(),
+            writes: trial.writes().display().to_string(),
         }),
-        output: templates.judge_output.fill(&NoValues {}),
+        output: templates.scorer_output.fill(&NoValues {}),
     })
 }
 

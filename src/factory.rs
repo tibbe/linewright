@@ -13,7 +13,9 @@ use tracing::{error, info, warn};
 use crate::api::{Publish, Served};
 use crate::apply;
 use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
-use crate::benchmarks::Experiments;
+use crate::benchmark_runs::plan::Gate;
+use crate::benchmark_runs::runner::BenchmarkRunsRunner;
+use crate::benchmarks::BenchmarkRuns;
 use crate::briefs::OperatorBriefs;
 use crate::cadence::Cadence;
 use crate::clock::Clock;
@@ -25,8 +27,6 @@ use crate::domain::{
 };
 use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
-use crate::experiments::plan::Gate;
-use crate::experiments::runner::ExperimentsRunner;
 use crate::harness::{GhReach, Harness, UsageLimit};
 use crate::holds::InForce;
 use crate::pull_records::PullRecords;
@@ -54,8 +54,8 @@ pub struct FactoryConfig {
     pub spec_lookback: TimeDelta,
     pub done_window: TimeDelta,
     pub max_runs: usize,
-    /// The ceiling on replays and judges of experiments in flight.
-    pub max_replays: usize,
+    /// The ceiling on trials and scorers of benchmark runs in flight.
+    pub max_trials: usize,
     pub ci_grace: TimeDelta,
     pub ci_timeout: TimeDelta,
     pub ci_attempts: u32,
@@ -66,9 +66,9 @@ pub struct FactoryConfig {
     pub work: WorkSettings,
     /// What sessions are given of Linewright's environment.
     pub environments: Environments,
-    /// What the sessions of experiments' replays and judges are given of
+    /// What the sessions of benchmark runs' trials and scorers are given of
     /// it, their `gh` reaching GitHub through a gate.
-    pub replay_environments: Environments,
+    pub trial_environments: Environments,
     /// `None` follows the repository's settings.
     pub merge_method: Option<MergeMethod>,
     /// Merge green pull requests instead of leaving them for review.
@@ -167,10 +167,10 @@ pub struct Factory {
     database: Database,
     recorded_runs: Runs,
     runs: JoinSet<()>,
-    /// The replays and judges of experiments in flight: the second class of
+    /// The trials and scorers of benchmark runs in flight: the second class of
     /// work, after the pipeline's runs.
-    experiments: ExperimentsRunner,
-    /// What the experiments' steps take from the last reconcile, if any.
+    benchmark_runs: BenchmarkRunsRunner,
+    /// What the benchmark runs' steps take from the last reconcile, if any.
     last_reconcile: Option<LastReconcile>,
     refusals: tokio::sync::mpsc::UnboundedReceiver<UsageLimit>,
     live: HashMap<Id, LiveEntry>,
@@ -191,7 +191,7 @@ pub struct Factory {
     labeled_old_tracking_issues: bool,
 }
 
-/// What the holds over experiments' steps are taken from: the last
+/// What the holds over benchmark runs' steps are taken from: the last
 /// reconcile's time, at which the pipeline's runs are held too, and whether
 /// a run of the pipeline waited for room then.
 #[derive(Clone, Copy, Debug)]
@@ -276,15 +276,15 @@ impl Factory {
             .await
             .context("reading the automations' last scheduled runs")?;
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
-        let experiments = ExperimentsRunner::new(
-            Experiments::new(config.database.clone()),
+        let benchmark_runs = BenchmarkRunsRunner::new(
+            BenchmarkRuns::new(config.database.clone()),
             clock.clone(),
             harness.clone(),
             FactoryConfig {
-                environments: config.replay_environments.clone(),
+                environments: config.trial_environments.clone(),
                 ..config.clone()
             },
-            config.max_replays,
+            config.max_trials,
             report_refusal.clone(),
         );
         let runs = Runs::new(config.database.clone());
@@ -358,7 +358,7 @@ impl Factory {
             database: config.database,
             recorded_runs: runs,
             runs: JoinSet::new(),
-            experiments,
+            benchmark_runs,
             last_reconcile: None,
             refusals,
             live: HashMap::new(),
@@ -535,18 +535,18 @@ impl Factory {
                 }
             };
             failed = FailedPolls::after(failed, poll);
-            self.tick_experiments().await;
+            self.tick_benchmark_runs().await;
             publish.polling.send_replace(Some(Polling {
                 next: next_poll,
                 failed: failed.clone(),
             }));
             publish.served.send_replace(self.served(next_poll));
             publish.environment.tally(self.environment.tally());
-            publish.experiments.shown(self.experiments.shown());
+            publish.benchmark_runs.shown(self.benchmark_runs.shown());
             loop {
                 if self
                     .memory
-                    .drained(self.runs.len() + self.experiments.in_flight())
+                    .drained(self.runs.len() + self.benchmark_runs.in_flight())
                 {
                     info!("drained: no run, replay or judge is in flight");
                     self.environment.exit().await;
@@ -566,10 +566,10 @@ impl Factory {
                     Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
                         self.finished(result).await;
                     }
-                    Some(ended) = self.experiments.join_next(), if self.experiments.in_flight() > 0 => {
-                        self.experiments.finished(ended).await;
+                    Some(ended) = self.benchmark_runs.join_next(), if self.benchmark_runs.in_flight() > 0 => {
+                        self.benchmark_runs.finished(ended).await;
                     }
-                    () = publish.experiments.changed() => {}
+                    () = publish.benchmark_runs.changed() => {}
                     Some(limit) = self.refusals.recv() => self.refused(limit),
                     end = self.environment.next_build_end(), if self.environment.is_building() => {
                         self.environment.ended(end);
@@ -590,21 +590,21 @@ impl Factory {
                         }
                     }
                 }
-                self.tick_experiments().await;
+                self.tick_benchmark_runs().await;
                 publish.served.send_replace(self.served(next_poll));
                 publish.environment.tally(self.environment.tally());
-                publish.experiments.shown(self.experiments.shown());
+                publish.benchmark_runs.shown(self.benchmark_runs.shown());
             }
         }
         self.environment.exit().await;
         ServeEnd::Stop
     }
 
-    /// Starts what the plan says of the experiments, none while a drain or
+    /// Starts what the plan says of the benchmark runs, none while a drain or
     /// the usage limit holds them at the last reconcile, or while a run of
     /// the pipeline waits for room. Before the first reconcile, a usage
     /// limit reported holds them.
-    async fn tick_experiments(&mut self) {
+    async fn tick_benchmark_runs(&mut self) {
         let LastReconcile {
             at,
             pipeline_waits_for_room,
@@ -613,7 +613,7 @@ impl Factory {
             pipeline_waits_for_room: false,
         });
         let in_force = InForce::of(&self.memory, at, &[]);
-        self.experiments
+        self.benchmark_runs
             .tick(Gate::at(&in_force, pipeline_waits_for_room))
             .await;
     }
@@ -923,7 +923,7 @@ impl Factory {
     }
 
     pub fn is_idle(&self) -> bool {
-        self.runs.is_empty() && self.experiments.in_flight() == 0
+        self.runs.is_empty() && self.benchmark_runs.in_flight() == 0
     }
 
     pub async fn next_finished(&mut self) {
@@ -932,7 +932,7 @@ impl Factory {
                 self.finished(result).await;
             }
         } else {
-            self.experiments.next_finished().await;
+            self.benchmark_runs.next_finished().await;
         }
     }
 
@@ -954,7 +954,7 @@ impl Factory {
         for entry in self.live.values() {
             entry.cancel();
         }
-        self.experiments.cancel_all();
+        self.benchmark_runs.cancel_all();
         self.settle().await;
     }
 

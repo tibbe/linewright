@@ -1,0 +1,6 @@
+{%- import "macros.html" as ui -%}
+<div id="new-experiment-offer" class="contents" data-cases="{{ tasks }}">
+{%- if tasks > 0 %}
+{%- call ui::new_button("new-experiment") %}{% endcall %}
+{%- endif %}
+</div>

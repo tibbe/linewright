@@ -1,7 +1,7 @@
 //! The breadcrumbs and the title of every screen (`docs/specs/shell.md`,
 //! Breadcrumbs, and `docs/specs/design_system.md`, Titles).
 
-use super::experiments::with_experiment;
+use super::benchmark_runs::with_benchmark_run;
 use super::*;
 
 use linewright::domain::Issue;
@@ -48,10 +48,10 @@ fn region<'a>(regions: &'a [(String, Html)], id: &str) -> &'a Html {
         .unwrap_or_else(|| panic!("no {id}: {regions:?}"))
 }
 
-/// [`with_experiment`]'s pages, with the run `1/triage-1` of `Ship gh`.
+/// [`with_benchmark_run`]'s pages, with the run `1/triage-1` of `Ship gh`.
 #[track_caller]
 fn with_a_run() -> impl Future<Output = Pages> {
-    let pages = with_experiment();
+    let pages = with_benchmark_run();
     async move {
         let pages = pages.await;
         pages
@@ -71,9 +71,9 @@ fn with_a_run() -> impl Future<Output = Pages> {
 #[test_log::test(tokio::test)]
 async fn every_screen_shows_its_crumbs_and_is_titled_by_the_last() {
     let pages = with_a_run().await;
-    let suites = || link("Suites", "/suites");
+    let benchmarks = || link("Suites", "/suites");
     let board = || link("board", "/suites/board");
-    let experiment = || link("Experiment 1", "/experiments/1");
+    let benchmark_run = || link("Experiment 1", "/experiments/1");
 
     for (path, names, shown) in [
         (
@@ -95,20 +95,20 @@ async fn every_screen_shows_its_crumbs_and_is_titled_by_the_last() {
         ("/suites", vec![here("Suites")], "Suites · Linewright"),
         (
             "/suites/board",
-            vec![suites(), here("board")],
+            vec![benchmarks(), here("board")],
             "board · Linewright",
         ),
         (
             "/experiments/1",
-            vec![suites(), board(), here("Experiment 1")],
+            vec![benchmarks(), board(), here("Experiment 1")],
             "Experiment 1 · Linewright",
         ),
         (
             "/experiments/1/as-is/columns/1/run",
             vec![
-                suites(),
+                benchmarks(),
                 board(),
-                experiment(),
+                benchmark_run(),
                 here("Replay as-is/columns/1's run"),
             ],
             "Replay as-is/columns/1's run · Linewright",
@@ -116,9 +116,9 @@ async fn every_screen_shows_its_crumbs_and_is_titled_by_the_last() {
         (
             "/experiments/1/as-is/columns/1/judge",
             vec![
-                suites(),
+                benchmarks(),
                 board(),
-                experiment(),
+                benchmark_run(),
                 here("Replay as-is/columns/1's judge"),
             ],
             "Replay as-is/columns/1's judge · Linewright",
@@ -154,7 +154,7 @@ async fn the_boards_title_leads_with_its_count_of_cards_in_needs_a_person() {
 
 #[test_log::test(tokio::test)]
 async fn a_no_such_screen_has_the_crumbs_of_the_screen_its_link_names_ending_in_the_name_it_gave() {
-    let pages = with_experiment().await;
+    let pages = with_benchmark_run().await;
 
     for (path, names) in [
         ("/items/99", vec![link("Board", "/"), here("#99")]),

@@ -266,7 +266,7 @@ async fn serve_fake_and_the_browser_clock_it_names_tell_the_time_from_the_seeds_
 }
 
 #[test_log::test(tokio::test)]
-async fn serve_fake_seeds_an_ended_experiment_with_leaks_and_replays_without_a_judgement() {
+async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score() {
     let served = Served::start().await;
 
     let page = served.page("/experiments/1").await;

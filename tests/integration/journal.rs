@@ -1,5 +1,5 @@
-//! A replay's writes, kept as plain files in order (`docs/specs/benchmarks.md`,
-//! The output of a replay).
+//! A trial's writes, kept as plain files in order (`docs/specs/benchmarks.md`,
+//! The output of a trial).
 
 use crate::common;
 
@@ -13,9 +13,9 @@ use linewright::domain::{
     Windows, label,
 };
 use linewright::git::CommitId;
-use linewright::replay::Journal;
 use linewright::store::local::LocalStore;
 use linewright::store::{AnyItem, NewIssue, NewPull, PushMode, Store};
+use linewright::trial::Journal;
 use serde_json::{Value, json};
 
 /// A journal of the writes to a store whose default branch, `main`, holds a

@@ -5,12 +5,12 @@ use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use linewright::benchmarks::{MakeError, SuiteName, Suites};
-use linewright::case::{self, CaptureError, CaseName, Criteria, ReplayStage, SuiteChoice};
+use linewright::benchmarks::{BenchmarkName, Benchmarks, MakeError};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
 use linewright::runs::{RunId, Runs};
 use linewright::store::API_VERSION;
+use linewright::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskName, TaskStage};
 use serde_json::{Value, json};
 
 const SECRET: &str = "s3cr3t-of-the-maintainer";
@@ -20,7 +20,7 @@ fn runs(world: &World) -> impl Future<Output = Runs> + use<> {
     runs_in(&world.dir.path().join("work"))
 }
 
-fn cases(world: &World) -> PathBuf {
+fn tasks(world: &World) -> PathBuf {
     world.dir.path().join("work").join("cases")
 }
 
@@ -29,17 +29,17 @@ fn id(id: &str) -> RunId {
     id.parse().unwrap()
 }
 
-/// The suite of implement cases the tests capture into.
+/// The benchmark of implement tasks the tests capture into.
 const IMPLEMENTS: &str = "implements";
 
 #[track_caller]
-fn suites(world: &World) -> impl Future<Output = Suites> + use<> {
+fn benchmarks(world: &World) -> impl Future<Output = Benchmarks> + use<> {
     let runs = runs(world);
-    async move { Suites::new(runs.await.database().clone()) }
+    async move { Benchmarks::new(runs.await.database().clone()) }
 }
 
-/// Captures run `run` of `world` as the case `named`, with `criteria`, into
-/// the suite [`IMPLEMENTS`], made if missing.
+/// Captures run `run` of `world` as the task `named`, with `criteria`, into
+/// the benchmark [`IMPLEMENTS`], made if missing.
 #[track_caller]
 fn capture<'a>(
     world: &'a World,
@@ -48,24 +48,24 @@ fn capture<'a>(
     criteria: &str,
 ) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
     let caller = Location::caller();
-    let suites = suites(world);
+    let benchmarks = benchmarks(world);
     let made = async move {
-        let suites = suites.await;
-        match suites
-            .make(&suite(IMPLEMENTS), ReplayStage::Implement)
+        let benchmarks = benchmarks.await;
+        match benchmarks
+            .make(&benchmark(IMPLEMENTS), TaskStage::Implement)
             .await
         {
             Ok(_) | Err(MakeError::Taken(_)) => {}
             Err(e) => panic!("making the suite at {caller}: {e:#}"),
         }
-        suites
+        benchmarks
     };
     let into = capture_into(
         world,
         run,
         named,
         criteria,
-        SuiteChoice::Named(suite(IMPLEMENTS)),
+        BenchmarkChoice::Named(benchmark(IMPLEMENTS)),
     );
     Box::pin(async move {
         made.await;
@@ -73,25 +73,25 @@ fn capture<'a>(
     })
 }
 
-/// Captures run `run` of `world` as the case `named`, with `criteria`, into
-/// the suite `suite`.
+/// Captures run `run` of `world` as the task `named`, with `criteria`, into
+/// the benchmark `benchmark`.
 #[track_caller]
 fn capture_into<'a>(
     world: &'a World,
     run: &str,
     named: &str,
     criteria: &str,
-    suite: SuiteChoice,
+    benchmark: BenchmarkChoice,
 ) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
-    let named: CaseName = named.parse().unwrap();
+    let named: TaskName = named.parse().unwrap();
     let criteria = Criteria::parse(criteria).unwrap();
     let run = id(run);
-    let suites = suites(world);
+    let benchmarks = benchmarks(world);
     Box::pin(async move {
-        let suites = suites.await;
+        let benchmarks = benchmarks.await;
         let capturable =
-            case::capturable(&runs(world).await, &suites, &run, &named, &suite).await?;
-        case::capture(&*world.store, capturable, &criteria, &suites).await
+            task::capturable(&runs(world).await, &benchmarks, &run, &named, &benchmark).await?;
+        task::capture(&*world.store, capturable, &criteria, &benchmarks).await
     })
 }
 
@@ -225,7 +225,7 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         .await
         .unwrap();
 
-    assert_eq!(dir, cases(&world).join("gadgets-1"));
+    assert_eq!(dir, tasks(&world).join("gadgets-1"));
     assert_eq!(
         entries(&dir),
         BTreeSet::from(
@@ -334,7 +334,7 @@ async fn an_automations_run_is_refused() {
         "the run hourly/1 is an automation's run: only a triage, design or implement run can \
          be captured"
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -353,7 +353,7 @@ async fn a_run_that_recorded_no_input_is_refused() {
         refused.unwrap_err().to_string(),
         format!("the run {run} recorded no input, so it cannot be captured")
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -372,11 +372,11 @@ async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
         refused.unwrap_err().to_string(),
         format!("the run {run}'s record lacks the properties, so it cannot be captured")
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_name_a_case_already_has_is_refused_and_the_case_kept() {
+async fn a_name_a_task_already_has_is_refused_and_the_task_kept() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let dir = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
@@ -393,7 +393,7 @@ async fn a_name_a_case_already_has_is_refused_and_the_case_kept() {
     );
     assert_eq!(read(&dir.join("criteria.md")), "First.\n");
     assert_eq!(
-        entries(&cases(&world)),
+        entries(&tasks(&world)),
         BTreeSet::from(["gadgets".to_string()])
     );
 }
@@ -418,7 +418,7 @@ async fn of_two_captures_under_one_name_one_wins_and_the_other_is_refused() {
     );
     assert_eq!(read(&won.join("criteria.md")), criteria);
     assert_eq!(
-        entries(&cases(&world)),
+        entries(&tasks(&world)),
         BTreeSet::from(["gadgets".to_string()])
     );
 }
@@ -432,33 +432,33 @@ async fn a_capture_whose_commit_the_store_lacks_fails_and_leaves_nothing() {
     let failed = capture(&world, &run, "gadgets", "Lost.\n").await;
 
     assert!(matches!(failed, Err(CaptureError::Failed(_))), "{failed:?}");
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
-/// The cases of the suite `name` of `world`, each as its name, its run and
-/// its criteria; `None` when there is no such suite.
+/// The tasks of the benchmark `name` of `world`, each as its name, its run and
+/// its criteria; `None` when there is no such benchmark.
 #[track_caller]
-fn cases_of<'a>(
+fn tasks_of<'a>(
     world: &'a World,
     name: &str,
 ) -> impl Future<Output = Option<Vec<(String, String, String)>>> + 'a {
     let caller = Location::caller();
-    let name: SuiteName = name.parse().unwrap();
+    let name: BenchmarkName = name.parse().unwrap();
     async move {
-        let shown = suites(world)
+        let shown = benchmarks(world)
             .await
             .show(&name)
             .await
             .unwrap_or_else(|e| panic!("showing the suite at {caller}: {e:#}"))?;
         Some(
             shown
-                .cases
+                .tasks
                 .into_iter()
-                .map(|case| {
-                    let criteria = case
+                .map(|task| {
+                    let criteria = task
                         .criteria
                         .map_or_else(|refused| refused.why, |c| c.as_str().into());
-                    (case.name.to_string(), case.run.to_string(), criteria)
+                    (task.name.to_string(), task.run.to_string(), criteria)
                 })
                 .collect(),
         )
@@ -466,12 +466,12 @@ fn cases_of<'a>(
 }
 
 #[track_caller]
-fn suite(name: &str) -> SuiteName {
+fn benchmark(name: &str) -> BenchmarkName {
     name.parse().unwrap()
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_keeps_the_case_in_its_suite() {
+async fn a_capture_keeps_the_task_in_its_benchmark() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
 
@@ -480,18 +480,18 @@ async fn a_capture_keeps_the_case_in_its_suite() {
         .unwrap();
 
     assert_eq!(
-        cases_of(&world, IMPLEMENTS).await,
+        tasks_of(&world, IMPLEMENTS).await,
         Some(vec![("gadgets".into(), run, "Gadgets.\n".into())])
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing() {
+async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothing() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    suites(&world)
+    benchmarks(&world)
         .await
-        .make(&suite("designs"), ReplayStage::Design)
+        .make(&benchmark("designs"), TaskStage::Design)
         .await
         .unwrap();
 
@@ -500,7 +500,7 @@ async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing()
         &run,
         "gadgets",
         "Gadgets.\n",
-        SuiteChoice::Named(suite("designs")),
+        BenchmarkChoice::Named(benchmark("designs")),
     )
     .await;
 
@@ -512,12 +512,12 @@ async fn a_capture_into_a_suite_of_another_stage_is_refused_and_writes_nothing()
         refused.unwrap_err().to_string(),
         format!("the suite designs holds cases of design, and the run {run} is of implement")
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
-    assert_eq!(cases_of(&world, "designs").await, Some(vec![]));
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
+    assert_eq!(tasks_of(&world, "designs").await, Some(vec![]));
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_into_a_suite_that_does_not_exist_is_refused() {
+async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
 
@@ -526,23 +526,23 @@ async fn a_capture_into_a_suite_that_does_not_exist_is_refused() {
         &run,
         "gadgets",
         "Gadgets.\n",
-        SuiteChoice::Named(suite("nowhere")),
+        BenchmarkChoice::Named(benchmark("nowhere")),
     )
     .await;
 
     assert!(
-        matches!(refused, Err(CaptureError::NoSuchSuite(_))),
+        matches!(refused, Err(CaptureError::NoSuchBenchmark(_))),
         "{refused:?}"
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
         "there is no suite nowhere"
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_into_a_new_suite_makes_it_of_the_runs_stage() {
+async fn a_capture_into_a_new_benchmark_makes_it_of_the_runs_stage() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
 
@@ -551,21 +551,28 @@ async fn a_capture_into_a_new_suite_makes_it_of_the_runs_stage() {
         &run,
         "gadgets",
         "Gadgets.\n",
-        SuiteChoice::New(suite("fresh")),
+        BenchmarkChoice::New(benchmark("fresh")),
     )
     .await
     .unwrap();
 
-    let found = suites(&world).await.find(&suite("fresh")).await.unwrap();
-    assert_eq!(found.map(|suite| suite.stage), Some(ReplayStage::Implement));
+    let found = benchmarks(&world)
+        .await
+        .find(&benchmark("fresh"))
+        .await
+        .unwrap();
     assert_eq!(
-        cases_of(&world, "fresh").await,
+        found.map(|benchmark| benchmark.stage),
+        Some(TaskStage::Implement)
+    );
+    assert_eq!(
+        tasks_of(&world, "fresh").await,
         Some(vec![("gadgets".into(), run, "Gadgets.\n".into())])
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_suite_a_suite_already_has_the_name_of_is_refused() {
+async fn a_new_benchmark_a_benchmark_already_has_the_name_of_is_refused() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     capture(&world, &run, "first", "Gadgets.\n").await.unwrap();
@@ -575,12 +582,12 @@ async fn a_new_suite_a_suite_already_has_the_name_of_is_refused() {
         &run,
         "second",
         "Gadgets.\n",
-        SuiteChoice::New(suite(IMPLEMENTS)),
+        BenchmarkChoice::New(benchmark(IMPLEMENTS)),
     )
     .await;
 
     assert!(
-        matches!(refused, Err(CaptureError::SuiteTaken(_))),
+        matches!(refused, Err(CaptureError::BenchmarkTaken(_))),
         "{refused:?}"
     );
     assert_eq!(
@@ -588,13 +595,13 @@ async fn a_new_suite_a_suite_already_has_the_name_of_is_refused() {
         "a suite is already named implements"
     );
     assert_eq!(
-        entries(&cases(&world)),
+        entries(&tasks(&world)),
         BTreeSet::from(["first".to_string()])
     );
 }
 
 #[test_log::test(tokio::test)]
-async fn a_failed_capture_into_a_new_suite_leaves_no_suite() {
+async fn a_failed_capture_into_a_new_benchmark_leaves_no_benchmark() {
     let mut world = World::new().await;
     let (_, run, _) = implemented_on_a_branch(&mut world).await;
     forget_every_commit(&world).await;
@@ -604,16 +611,16 @@ async fn a_failed_capture_into_a_new_suite_leaves_no_suite() {
         &run,
         "gadgets",
         "Lost.\n",
-        SuiteChoice::New(suite("fresh")),
+        BenchmarkChoice::New(benchmark("fresh")),
     )
     .await;
 
     assert!(matches!(failed, Err(CaptureError::Failed(_))), "{failed:?}");
-    assert_eq!(cases_of(&world, "fresh").await, None);
+    assert_eq!(tasks_of(&world, "fresh").await, None);
 }
 
 #[test_log::test(tokio::test)]
-async fn a_run_captured_into_two_suites_gives_two_cases() {
+async fn a_run_captured_into_two_benchmarks_gives_two_tasks() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     capture(&world, &run, "gadgets", "Adds gadgets.\n")
@@ -625,13 +632,13 @@ async fn a_run_captured_into_two_suites_gives_two_cases() {
         &run,
         "gadgets-fast",
         "Adds gadgets fast.\n",
-        SuiteChoice::New(suite("fast")),
+        BenchmarkChoice::New(benchmark("fast")),
     )
     .await
     .unwrap();
 
     assert_eq!(
-        cases_of(&world, IMPLEMENTS).await,
+        tasks_of(&world, IMPLEMENTS).await,
         Some(vec![(
             "gadgets".into(),
             run.clone(),
@@ -639,7 +646,7 @@ async fn a_run_captured_into_two_suites_gives_two_cases() {
         )])
     );
     assert_eq!(
-        cases_of(&world, "fast").await,
+        tasks_of(&world, "fast").await,
         Some(vec![(
             "gadgets-fast".into(),
             run,
@@ -648,27 +655,27 @@ async fn a_run_captured_into_two_suites_gives_two_cases() {
     );
 }
 
-/// The capture of `run` of `world` as the case `gadgets` of the suite
+/// The capture of `run` of `world` as the task `gadgets` of the benchmark
 /// [`IMPLEMENTS`], checked and not yet written.
 #[track_caller]
 fn gadgets_capturable<'a>(
     world: &'a World,
     run: &'a str,
-) -> impl Future<Output = case::Capturable> + 'a {
+) -> impl Future<Output = task::Capturable> + 'a {
     let caller = Location::caller();
-    let (implements, run, gadgets) = (suite(IMPLEMENTS), id(run), "gadgets".parse().unwrap());
+    let (implements, run, gadgets) = (benchmark(IMPLEMENTS), id(run), "gadgets".parse().unwrap());
     async move {
-        let suites = suites(world).await;
-        suites
-            .make(&implements, ReplayStage::Implement)
+        let benchmarks = benchmarks(world).await;
+        benchmarks
+            .make(&implements, TaskStage::Implement)
             .await
             .unwrap_or_else(|e| panic!("making the suite at {caller}: {e:#}"));
-        case::capturable(
+        task::capturable(
             &runs(world).await,
-            &suites,
+            &benchmarks,
             &run,
             &gadgets,
-            &SuiteChoice::Named(implements),
+            &BenchmarkChoice::Named(implements),
         )
         .await
         .unwrap_or_else(|e| panic!("checking the capture at {caller}: {e}"))
@@ -680,15 +687,15 @@ async fn a_capture_whose_directory_cannot_be_moved_into_place_keeps_no_row() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let capturable = gadgets_capturable(&world, &run).await;
-    let before = cases(&world).join("gadgets");
+    let before = tasks(&world).join("gadgets");
     std::fs::create_dir_all(&before).unwrap();
     std::fs::write(before.join("criteria.md"), "Captured before suites.\n").unwrap();
 
-    let refused = case::capture(
+    let refused = task::capture(
         &*world.store,
         capturable,
         &Criteria::parse("Gadgets.\n").unwrap(),
-        &suites(&world).await,
+        &benchmarks(&world).await,
     )
     .await;
 
@@ -696,13 +703,13 @@ async fn a_capture_whose_directory_cannot_be_moved_into_place_keeps_no_row() {
         matches!(refused, Err(CaptureError::Taken(_))),
         "{refused:?}"
     );
-    assert_eq!(cases_of(&world, IMPLEMENTS).await, Some(vec![]));
+    assert_eq!(tasks_of(&world, IMPLEMENTS).await, Some(vec![]));
     assert_eq!(
         read(&before.join("criteria.md")),
         "Captured before suites.\n"
     );
     assert_eq!(
-        entries(&cases(&world)),
+        entries(&tasks(&world)),
         BTreeSet::from(["gadgets".to_string()])
     );
 }
@@ -712,7 +719,7 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let capturable = gadgets_capturable(&world, &run).await;
-    keep_case_row(
+    keep_task_row(
         &world.dir.path().join("work"),
         IMPLEMENTS,
         "gadgets",
@@ -720,11 +727,11 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
     )
     .await;
 
-    let refused = case::capture(
+    let refused = task::capture(
         &*world.store,
         capturable,
         &Criteria::parse("Gadgets.\n").unwrap(),
-        &suites(&world).await,
+        &benchmarks(&world).await,
     )
     .await;
 
@@ -732,7 +739,7 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
         matches!(refused, Err(CaptureError::Taken(_))),
         "{refused:?}"
     );
-    assert_eq!(entries(&cases(&world)), BTreeSet::new());
+    assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
 /// Runs `lw capture run name --suite implements --criteria FILE` in
@@ -835,7 +842,7 @@ async fn lw_capture_without_criteria_is_a_command_line_error() {
 async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_github() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
-    keep_suite(&work_dir.path().join(REPO), IMPLEMENTS, "implement").await;
+    keep_benchmark(&work_dir.path().join(REPO), IMPLEMENTS, "implement").await;
 
     let output = lw_capture(work_dir.path(), &run, "gadgets", " \n\t\n").await;
 
@@ -849,7 +856,7 @@ async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_gi
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_into_a_suite_that_does_not_exist_exits_4_saying_why() {
+async fn lw_capture_into_a_benchmark_that_does_not_exist_exits_4_saying_why() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
 
@@ -861,10 +868,10 @@ async fn lw_capture_into_a_suite_that_does_not_exist_exits_4_saying_why() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_into_a_suite_of_another_stage_exits_1_saying_why() {
+async fn lw_capture_into_a_benchmark_of_another_stage_exits_1_saying_why() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
-    keep_suite(&work_dir.path().join(REPO), IMPLEMENTS, "design").await;
+    keep_benchmark(&work_dir.path().join(REPO), IMPLEMENTS, "design").await;
 
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
@@ -879,7 +886,7 @@ async fn lw_capture_into_a_suite_of_another_stage_exits_1_saying_why() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_without_a_suite_is_a_command_line_error() {
+async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
     let file = tempfile::NamedTempFile::new().unwrap();
@@ -902,12 +909,12 @@ async fn lw_capture_without_a_suite_is_a_command_line_error() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_of_a_name_a_suites_case_has_exits_1_before_reaching_github() {
+async fn lw_capture_of_a_name_a_benchmarks_task_has_exits_1_before_reaching_github() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
     let repo = work_dir.path().join(REPO);
-    keep_suite(&repo, IMPLEMENTS, "implement").await;
-    keep_case_row(&repo, IMPLEMENTS, "gadgets", "9/implement-1").await;
+    keep_benchmark(&repo, IMPLEMENTS, "implement").await;
+    keep_task_row(&repo, IMPLEMENTS, "gadgets", "9/implement-1").await;
 
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 

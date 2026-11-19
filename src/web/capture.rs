@@ -1,4 +1,4 @@
-//! Capturing a run as a case from its page (`docs/specs/runs.md`, Run,
+//! Capturing a run as a task from its page (`docs/specs/runs.md`, Run,
 //! Capturing): the page's form, and the `POST` on the run's path that captures
 //! it.
 
@@ -14,26 +14,26 @@ use tracing::{info, warn};
 
 use super::html::{self, Html};
 use super::write::{Refused, Write, alert};
-use super::{run_path, suites};
+use super::{benchmarks, run_path};
 use crate::api::Sources;
-use crate::benchmarks::{SuiteName, Suites};
-use crate::case::{
-    self, CRITERIA_REQUIRED, CaptureError, CaseName, Criteria, Refusal, ReplayStage, SuiteChoice,
-};
+use crate::benchmarks::{BenchmarkName, Benchmarks};
 use crate::runs::RunId;
+use crate::task::{
+    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, TaskName, TaskStage,
+};
 
-/// The run page's offer to capture its run as a case.
+/// The run page's offer to capture its run as a task.
 pub(super) struct Offer {
     run: RunId,
-    /// The suites of the run's stage, by name.
-    suites: Vec<SuiteName>,
+    /// The benchmarks of the run's stage, by name.
+    benchmarks: Vec<BenchmarkName>,
 }
 
 impl Offer {
     /// The offer for run `id`, if it can be captured. A run whose records
     /// do not read is logged and offers none.
     pub(super) async fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
-        let run = match case::capturable_run(&sources.runs, id).await {
+        let run = match task::capturable_run(&sources.runs, id).await {
             Ok(run) => run,
             Err(e) => {
                 if e.refusal() == Refusal::Failed {
@@ -42,8 +42,8 @@ impl Offer {
                 return None;
             }
         };
-        let suites = match suites_of(&suites(sources), run.stage()).await {
-            Ok(suites) => suites,
+        let benchmarks = match benchmarks_of(&benchmarks(sources), run.stage()).await {
+            Ok(benchmarks) => benchmarks,
             Err(e) => {
                 warn!(run = %id, error = format!("{e:#}"), "reading the suites failed");
                 return None;
@@ -51,20 +51,20 @@ impl Offer {
         };
         Some(Offer {
             run: run.id().clone(),
-            suites,
+            benchmarks,
         })
     }
 
-    /// The form, its suite the first of the run's stage or else a new one,
+    /// The form, its benchmark the first of the run's stage or else a new one,
     /// its name filled in with the suggested one, and where it says what
     /// came of a capture.
     pub(super) fn html(&self, sources: &Sources) -> Html {
         let path = html::escape(&run_path(&self.run));
-        let name = html::escape(CaseName::suggested(&self.run).as_str());
+        let name = html::escape(TaskName::suggested(&self.run).as_str());
         html::built(format!(
             r##"<details class="capture-offer mb-3"><summary class="btn btn-sm">Add case</summary><form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><label class="select select-sm w-full"><span class="label">suite</span>{select}</label><label class="new-suite-name input input-sm w-full"><span class="label">new suite</span><input name="new-suite" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>{ready}</form><div id="capture-said" class="mt-2" role="status"></div></details>"##,
-            select = suite_select(&self.suites, None, ""),
-            pattern = html::escape(case::NAME_PATTERN),
+            select = benchmark_select(&self.benchmarks, None, ""),
+            pattern = html::escape(task::NAME_PATTERN),
             ready = Offer::ready_html(sources),
         ))
     }
@@ -92,7 +92,7 @@ impl Offer {
 
 const READY: &str = "capture-ready";
 
-const NEW_SUITE_UNNAMED: &str = "the new suite needs a name";
+const NEW_BENCHMARK_UNNAMED: &str = "the new suite needs a name";
 
 /// Whether `serve` has polled, so that a capture can run.
 pub(super) fn polled(sources: &Sources) -> bool {
@@ -102,63 +102,71 @@ pub(super) fn polled(sources: &Sources) -> bool {
 /// Why a capture cannot run yet.
 pub(super) const NOT_POLLED: &str = "the capture can't run before Linewright's first poll";
 
-/// The names of the suites of `stage`.
-async fn suites_of(suites: &Suites, stage: ReplayStage) -> anyhow::Result<Vec<SuiteName>> {
-    Ok(suites
+/// The names of the benchmarks of `stage`.
+async fn benchmarks_of(
+    benchmarks: &Benchmarks,
+    stage: TaskStage,
+) -> anyhow::Result<Vec<BenchmarkName>> {
+    Ok(benchmarks
         .list()
         .await?
         .into_iter()
-        .filter(|listed| listed.suite.stage == stage)
-        .map(|listed| listed.suite.name)
+        .filter(|listed| listed.benchmark.stage == stage)
+        .map(|listed| listed.benchmark.name)
         .collect())
 }
 
-/// The form's choice of a suite: each of `suites`, with `selected` chosen,
-/// or else the first, then a new one; with `attributes` added.
-fn suite_select(suites: &[SuiteName], selected: Option<&SuiteName>, attributes: &str) -> String {
+/// The form's choice of a benchmark: each of `benchmarks`, with `selected`
+/// chosen, or else the first, then a new one; with `attributes` added.
+fn benchmark_select(
+    benchmarks: &[BenchmarkName],
+    selected: Option<&BenchmarkName>,
+    attributes: &str,
+) -> String {
     let mut options = String::new();
-    for suite in suites {
-        let chosen = if Some(suite) == selected {
+    for benchmark in benchmarks {
+        let chosen = if Some(benchmark) == selected {
             " selected"
         } else {
             ""
         };
-        let suite = html::escape(suite.as_str());
+        let benchmark = html::escape(benchmark.as_str());
         let _ = write!(
             options,
-            r#"<option value="{suite}"{chosen}>{suite}</option>"#
+            r#"<option value="{benchmark}"{chosen}>{benchmark}</option>"#
         );
     }
     format!(
-        r#"<select id="{SUITE_SELECT}" name="suite"{attributes}>{options}<option class="new-suite" value="">a new suite</option></select>"#
+        r#"<select id="{BENCHMARK_SELECT}" name="suite"{attributes}>{options}<option class="new-suite" value="">a new suite</option></select>"#
     )
 }
 
-const SUITE_SELECT: &str = "capture-suite";
+const BENCHMARK_SELECT: &str = "capture-suite";
 
 /// What the form sends.
 #[derive(Deserialize)]
 struct CaptureForm {
-    /// Empty for a new suite.
+    /// Empty for a new benchmark.
     #[serde(default)]
-    suite: String,
+    #[serde(rename = "suite")]
+    benchmark: String,
     #[serde(default, rename = "new-suite")]
-    new_suite: String,
+    new_benchmark: String,
     #[serde(flatten)]
-    case: CaseFields,
+    task: TaskFields,
 }
 
-/// What a capture's form sends of the case.
+/// What a capture's form sends of the task.
 #[derive(Deserialize)]
-pub(super) struct CaseFields {
+pub(super) struct TaskFields {
     #[serde(default)]
     pub(super) name: String,
     #[serde(default)]
     pub(super) criteria: String,
 }
 
-/// Captures run `id` as the case the form in `body` names, with the store
-/// `serve` holds, and answers with what the page says of it: where the case
+/// Captures run `id` as the task the form in `body` names, with the store
+/// `serve` holds, and answers with what the page says of it: where the task
 /// was written or why it was not. Refused, writing nothing, unless the
 /// browser shows the request came from the web UI's own pages.
 pub(super) async fn capture(
@@ -173,21 +181,21 @@ pub(super) async fn capture(
         .parse()
         .map_err(|error: String| Write::Capture.refused(StatusCode::NOT_FOUND, &error))?;
     let form: CaptureForm = Write::Capture.read_form(&body)?;
-    let choice = match (form.suite.as_str(), form.new_suite.as_str()) {
-        ("", "") => Err(NEW_SUITE_UNNAMED.to_string()),
-        ("", new) => new.parse().map(SuiteChoice::New),
-        (named, _) => named.parse().map(SuiteChoice::Named),
+    let choice = match (form.benchmark.as_str(), form.new_benchmark.as_str()) {
+        ("", "") => Err(NEW_BENCHMARK_UNNAMED.to_string()),
+        ("", new) => new.parse().map(BenchmarkChoice::New),
+        (named, _) => named.parse().map(BenchmarkChoice::Named),
     }
     .map_err(|error| Write::Capture.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    let captured = capture_run(&sources, &run, &choice, &form.case)
+    let captured = capture_run(&sources, &run, &choice, &form.task)
         .await
         .map_err(NotCaptured::refused)?;
     let mut answer = captured.said(&run, &choice).0;
-    match suites_of(&suites(&sources), captured.stage).await {
+    match benchmarks_of(&benchmarks(&sources), captured.stage).await {
         Ok(names) => {
-            answer.push_str(&suite_select(
+            answer.push_str(&benchmark_select(
                 &names,
-                Some(choice.suite()),
+                Some(choice.benchmark()),
                 r#" hx-swap-oob="true""#,
             ));
         }
@@ -196,26 +204,30 @@ pub(super) async fn capture(
     Ok((StatusCode::OK, axum::response::Html(answer)).into_response())
 }
 
-/// A run captured as a case.
+/// A run captured as a task.
 pub(super) struct Captured {
-    /// The case's directory.
+    /// The task's directory.
     dir: PathBuf,
     /// The run's stage.
-    stage: ReplayStage,
+    stage: TaskStage,
 }
 
 impl Captured {
     /// What the page says of `run` captured as it, into `choice`.
-    pub(super) fn said(&self, run: &RunId, choice: &SuiteChoice) -> axum::response::Html<String> {
+    pub(super) fn said(
+        &self,
+        run: &RunId,
+        choice: &BenchmarkChoice,
+    ) -> axum::response::Html<String> {
         let new = match choice {
-            SuiteChoice::Named(_) => "",
-            SuiteChoice::New(_) => "new ",
+            BenchmarkChoice::Named(_) => "",
+            BenchmarkChoice::New(_) => "new ",
         };
         let said = format!(
             "Captured {} as the case <code>{}</code> in the {new}suite {}",
             html::escape(&run.to_string()),
             html::escape(&self.dir.display().to_string()),
-            html::escape(choice.suite().as_str()),
+            html::escape(choice.benchmark().as_str()),
         );
         alert("alert-success", &said)
     }
@@ -223,7 +235,7 @@ impl Captured {
 
 /// Why a capture did not happen.
 pub(super) enum NotCaptured {
-    /// The case's name is not in the form of a name, for the reason given.
+    /// The task's name is not in the form of a name, for the reason given.
     Name(String),
     NoCriteria,
     NotPolled,
@@ -259,26 +271,26 @@ impl NotCaptured {
     }
 }
 
-/// Captures `run` as the case `case` names into the suite `choice`, with
+/// Captures `run` as the task `task` names into the benchmark `choice`, with
 /// the store `serve` holds; or else says why it did not.
 pub(super) async fn capture_run(
     sources: &Sources,
     run: &RunId,
-    choice: &SuiteChoice,
-    case: &CaseFields,
+    choice: &BenchmarkChoice,
+    task: &TaskFields,
 ) -> Result<Captured, NotCaptured> {
-    let name: CaseName = case.name.parse().map_err(NotCaptured::Name)?;
-    let criteria = Criteria::parse(&case.criteria).ok_or(NotCaptured::NoCriteria)?;
+    let name: TaskName = task.name.parse().map_err(NotCaptured::Name)?;
+    let criteria = Criteria::parse(&task.criteria).ok_or(NotCaptured::NoCriteria)?;
     let served = sources
         .served
         .borrow()
         .clone()
         .ok_or(NotCaptured::NotPolled)?;
-    let suites = suites(sources);
-    let captured = match case::capturable(&sources.runs, &suites, run, &name, choice).await {
+    let benchmarks = benchmarks(sources);
+    let captured = match task::capturable(&sources.runs, &benchmarks, run, &name, choice).await {
         Ok(capturable) => {
             let stage = capturable.stage();
-            case::capture(served.store(), capturable, &criteria, &suites)
+            task::capture(served.store(), capturable, &criteria, &benchmarks)
                 .await
                 .map(|dir| Captured { dir, stage })
         }
@@ -286,7 +298,7 @@ pub(super) async fn capture_run(
     };
     match captured {
         Ok(captured) => {
-            info!(run = %run, case = %captured.dir.display(), suite = %choice.suite(), "captured a run as a case");
+            info!(run = %run, case = %captured.dir.display(), suite = %choice.benchmark(), "captured a run as a case");
             Ok(captured)
         }
         Err(error) => {

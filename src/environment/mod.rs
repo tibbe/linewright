@@ -4,8 +4,8 @@
 
 pub(crate) mod kept;
 pub mod lifecycle;
-pub mod replays;
 pub mod shown;
+pub mod trials;
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -881,9 +881,9 @@ async fn run(
 struct BuildDir {
     build: Build,
     retired: AtomicBool,
-    /// The hold on the environment of a replay the build is of, which no
-    /// replay removes while it is held.
-    _held: Option<replays::Held>,
+    /// The hold on the environment of a trial the build is of, which no
+    /// trial removes while it is held.
+    _held: Option<trials::Held>,
 }
 
 impl BuildDir {
@@ -895,9 +895,9 @@ impl BuildDir {
         }
     }
 
-    /// The build `build` of the environment of a replay, held by `held`
+    /// The build `build` of the environment of a trial, held by `held`
     /// and never retired.
-    fn held(build: Build, held: replays::Held) -> BuildDir {
+    fn held(build: Build, held: trials::Held) -> BuildDir {
         BuildDir {
             build,
             retired: AtomicBool::new(false),

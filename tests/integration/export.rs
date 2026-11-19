@@ -1,17 +1,17 @@
 //! Exporting a run, through the system: `lw export ID DIR` writes it as the
-//! output of a replay gives its run (`docs/specs/runs.md`, `lw export`).
+//! output of a trial gives its run (`docs/specs/runs.md`, `lw export`).
 
 use crate::common;
-use crate::replay::triage_case;
+use crate::trial::triage_task;
 
 use std::collections::BTreeSet;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use linewright::case::Case;
 use linewright::export;
-use linewright::replay::judge::{self, Judgeable, ReplayCopy};
+use linewright::task::Task;
+use linewright::trial::scorer::{self, Scoreable, TrialCopy};
 use serde_json::{Value, json};
 
 /// The paths of the files under `dir`, relative to it.
@@ -38,9 +38,9 @@ fn read_json(path: &Path) -> Value {
 }
 
 #[test_log::test(tokio::test)]
-async fn an_exported_run_is_read_by_the_judges_copy_as_a_replays_output() {
+async fn an_exported_run_is_read_by_the_scorers_copy_as_a_trials_output() {
     let mut world = World::new().await;
-    let (issue, case_dir) = triage_case(&mut world).await;
+    let (issue, task_dir) = triage_task(&mut world).await;
     let work = world.dir.path().join("work");
     let under = tempfile::tempdir().unwrap();
     let out = under.path().join("out");
@@ -65,11 +65,11 @@ async fn an_exported_run_is_read_by_the_judges_copy_as_a_replays_output() {
     assert!(!exported.is_empty());
     assert_eq!(exported, files_under(&work.join(session)));
     std::fs::write(out.join("case"), format!("{id}\n")).unwrap();
-    let case = Case::open(&case_dir).await.unwrap();
-    let replayed = judge::Replayed::open(&out, &case).await.unwrap();
-    assert_eq!(replayed.outcome(), Judgeable::Done);
+    let task = Task::open(&task_dir).await.unwrap();
+    let scoreable = scorer::ScoreableTrial::open(&out, &task).await.unwrap();
+    assert_eq!(scoreable.outcome(), Scoreable::Done);
     let into = tempfile::tempdir().unwrap();
-    let copy = ReplayCopy::make(&replayed, into.path()).await.unwrap();
+    let copy = TrialCopy::make(&scoreable, into.path()).await.unwrap();
     assert_eq!(std::fs::read_to_string(copy.outcome()).unwrap(), "done\n");
     let copied = copy
         .sessions()
@@ -134,7 +134,7 @@ async fn lw_export_writes_the_run_without_serve_and_says_where() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_export_refuses_a_directory_that_holds_anything_as_a_replay_does() {
+async fn lw_export_refuses_a_directory_that_holds_anything_as_a_trial_does() {
     let work_dir = triaged_in_work_dir().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("kept"), "").unwrap();

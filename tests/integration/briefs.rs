@@ -560,7 +560,7 @@ fn every_file_of_the_brief_has_its_values_placeholders() {
 }
 
 #[test_log::test]
-fn the_judges_files_are_read_by_the_judge_only() {
+fn the_scorers_files_are_read_by_the_scorer_only() {
     for path in [
         "prompts/judge.md",
         "outputs/judge.md",
@@ -568,7 +568,7 @@ fn the_judges_files_are_read_by_the_judge_only() {
     ] {
         let readers = prompts::readers(path).unwrap();
 
-        assert!(readers.read_by(&RunKind::Judge), "{path}");
+        assert!(readers.read_by(&RunKind::Scorer), "{path}");
         for kind in WorkKind::ALL {
             assert!(!readers.read_by(&RunKind::Stage(kind)), "{path}");
         }
@@ -594,18 +594,18 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
 }
 
 #[test_log::test]
-fn a_file_with_an_error_holds_the_judge_only_where_it_holds_every_run() {
-    let holds_the_judge = |path| prompts::readers(path).unwrap().read_by(&RunKind::Judge);
+fn a_file_with_an_error_holds_the_scorer_only_where_it_holds_every_run() {
+    let holds_the_scorer = |path| prompts::readers(path).unwrap().read_by(&RunKind::Scorer);
 
-    assert!(holds_the_judge("prompts/follow-ups/result-error.md"));
-    assert!(holds_the_judge("prompts/follow-ups/usage-limit-reset.md"));
+    assert!(holds_the_scorer("prompts/follow-ups/result-error.md"));
+    assert!(holds_the_scorer("prompts/follow-ups/usage-limit-reset.md"));
     for path in [
         "prompts/triage.md",
         "prompts/implement.md",
         "prompts/fix-ci.md",
         "prompts/follow-ups/late-feedback.md",
     ] {
-        assert!(!holds_the_judge(path), "{path}");
+        assert!(!holds_the_scorer(path), "{path}");
     }
 }
 

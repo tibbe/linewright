@@ -969,9 +969,9 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, New case: a "New" dialog starts afresh
+/// `docs/specs/benchmarks.md`, New task: a "New" dialog starts afresh
 /// with the regions of the page's stream it holds as the stream last sent
-/// them, New case's run chosen as it starts and its name suggested for it.
+/// them, New task's run chosen as it starts and its name suggested for it.
 #[test_log::test(tokio::test)]
 async fn a_new_dialog_starts_afresh_keeping_its_regions_as_the_stream_last_sent_them() {
     let page = r#"
@@ -1035,7 +1035,7 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, Experiment, The table: a row opens on click
+/// `docs/specs/benchmarks.md`, Benchmark run, The table: a row opens on click
 /// to the rows under it, and those to theirs, each staying as the reader left
 /// it through updates.
 #[test_log::test(tokio::test)]
@@ -1101,7 +1101,7 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, Suite: Adding a case.
+/// `docs/specs/benchmarks.md`, Benchmark: Adding a task.
 #[test_log::test(tokio::test)]
 async fn choosing_a_run_to_capture_fills_in_its_suggested_name_unless_one_was_typed() {
     let page = r#"
@@ -1129,7 +1129,7 @@ steps.join("\n")
     assert_eq!(names, ["1-implement-1", "mine", "1-implement-2"]);
 }
 
-/// `docs/specs/benchmarks.md`, Suite: Adding a case.
+/// `docs/specs/benchmarks.md`, Benchmark: Adding a task.
 #[test_log::test(tokio::test)]
 async fn the_run_chosen_to_capture_stays_chosen_when_an_update_brings_new_runs() {
     let page = r#"
@@ -1162,7 +1162,7 @@ steps.join("\n")
     assert_eq!(chosen, ["1/implement-1", "1/implement-3"]);
 }
 
-/// `docs/specs/benchmarks.md`, New case, Fields, and
+/// `docs/specs/benchmarks.md`, New task, Fields, and
 /// `docs/specs/design_system.md`, Making, A refusal: the name follows the
 /// run an update chooses unless the reader typed one, and the run sent
 /// stays chosen through updates.
@@ -1210,11 +1210,11 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, New experiment, Fields: the dialog counts
-/// its replays with the cases the suite has as it opens.
+/// `docs/specs/benchmarks.md`, New benchmark run, Fields: the dialog counts
+/// its trials with the tasks the benchmark has as it opens.
 #[test_log::test(tokio::test)]
-async fn opening_the_launch_counts_its_replays_with_the_suites_cases_as_the_stream_last_sent_them()
-{
+async fn opening_the_launch_counts_its_trials_with_the_benchmarks_tasks_as_the_stream_last_sent_them()
+ {
     let page = r#"
 var offer = element("DIV", { id: "new-experiment-offer", "data-cases": "3" });
 var count = { textContent: "" };
@@ -1244,7 +1244,7 @@ count.textContent
     );
 }
 
-/// Stand-ins for the New experiment dialog: `launch`, its form, holding the
+/// Stand-ins for the New benchmark run dialog: `launch`, its form, holding the
 /// configuration `configuration`, numbered 1, with its choice of a file of
 /// the brief `choice` and its boxes in `files`, each drawn from the page's
 /// template with `__N__` and `__PATH__` to fill in; `texts`, the region of
@@ -1252,7 +1252,7 @@ count.textContent
 /// `open()` opens the dialog, `choose(path)` chooses a file, and `boxes()`
 /// is each box the configuration holds, as its label, its field's name, its
 /// text and the text it started with.
-const NEW_EXPERIMENT: &str = r#"
+const NEW_BENCHMARK_RUN: &str = r#"
 var files = {
   boxes: [],
   append(box) { this.boxes.push(box); },
@@ -1311,7 +1311,7 @@ const boxes = () => files.boxes.map((box) => {
 }).join(" | ");
 "#;
 
-/// `docs/specs/benchmarks.md`, New experiment, Files of the brief: choosing
+/// `docs/specs/benchmarks.md`, New benchmark run, Files of the brief: choosing
 /// a file opens a box for its text, which starts as the text a run of the
 /// stage used when the dialog opened. Choosing another closes the box the
 /// last choice opened while its text is unchanged, so that a file the arrow
@@ -1336,7 +1336,7 @@ steps.push(boxes());
 steps.join("\n")
 "#;
 
-    let steps: Vec<String> = evaluated(&[BROWSER, FILTERS, NEW_EXPERIMENT, &script, asked])
+    let steps: Vec<String> = evaluated(&[BROWSER, FILTERS, NEW_BENCHMARK_RUN, &script, asked])
         .lines()
         .map(str::to_string)
         .collect();

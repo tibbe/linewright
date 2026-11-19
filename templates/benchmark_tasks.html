@@ -1,0 +1,40 @@
+{%- import "macros.html" as ui -%}
+<div id="cases">
+{%- if tasks.is_empty() %}
+<p class="px-4 pb-4">No cases</p>
+{%- else %}
+<table class="table">
+<thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for task in tasks %}
+{%- call ui::fold_row(task.row_id()) %}
+{%- for column in TasksColumn::ALL %}
+{%- match column %}
+{%- when TasksColumn::Name %}
+<th class="{{ column.align() }}">
+{%- match task.criteria %}
+{%- when CriteriaShown::Read { first_line, text: _ } %}
+{%- call ui::fold_button([task.criteria_id()]) %}{{ task.name }}{% endcall %}
+<div class="text-muted text-sm font-normal">{{ first_line }}</div>
+{%- when CriteriaShown::Unreadable(why) %}
+<span>{{ task.name }}</span>
+<div class="text-error text-sm font-normal">the criteria do not read: {{ why }}</div>
+{%- endmatch -%}
+</th>
+{%- when TasksColumn::CapturedFrom %}
+<td class="{{ column.align() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
+{%- when TasksColumn::Remove %}
+<td class="{{ column.align() }}">{% call ui::confirm(task.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}</td>
+{%- endmatch %}
+{%- endfor %}
+{%- endcall %}
+{%- if let CriteriaShown::Read { first_line: _, text } = task.criteria %}
+{%- call ui::fold_row(task.criteria_id(), of = task.row_id()) %}
+<td colspan="{{ TasksColumn::ALL.len() }}"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
+{%- endcall %}
+{%- endif %}
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</div>

@@ -17,8 +17,8 @@ use super::run_page::{Row, command_row, command_text, entry_row, output_html, st
 use super::shell::{Area, Frame, Hold, Read, Trail, frame_regions};
 use super::{Page, events, render};
 use crate::api::Sources;
+use crate::benchmark_runs::runner::BenchmarkRunsShown;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown, EnvironmentState};
-use crate::experiments::runner::ExperimentsShown;
 use crate::phrase::{Phrase, Status};
 use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
 
@@ -39,12 +39,12 @@ struct ServerRegion<'a> {
 /// The facts about Linewright itself as the page words them, each on a
 /// line, past times standing alone, as the page's script shows them
 /// relative. A hold's or a problem's value shows in its status.
-/// The environment's fact ends with `builds`, each a line. The replays and
-/// judges of experiments `replays` has in flight follow the runs in flight
+/// The environment's fact ends with `builds`, each a line. The trials and
+/// scorers of benchmark runs `trials` has in flight follow the runs in flight
 /// while there are any.
 fn facts(
     linewright: &Linewright,
-    replays: &ExperimentsShown,
+    trials: &BenchmarkRunsShown,
     mut builds: Vec<Html>,
 ) -> Vec<Fact<Phrase>> {
     let fact = |label, value| Fact {
@@ -93,10 +93,10 @@ fn facts(
                 vec![self::environment(environment, std::mem::take(&mut builds))]
             }
             LinewrightFact::RunsInFlight { runs, max_runs } => {
-                let replays = (replays.in_flight > 0).then(|| {
+                let trials = (trials.in_flight > 0).then(|| {
                     fact(
                         "Replays and judges of experiments in flight",
-                        format!("{} of {}", replays.in_flight, replays.max_replays).into(),
+                        format!("{} of {}", trials.in_flight, trials.max_trials).into(),
                     )
                 });
                 [
@@ -104,7 +104,7 @@ fn facts(
                         "Runs in flight",
                         format!("{runs} of {max_runs}").into(),
                     )),
-                    replays,
+                    trials,
                 ]
                 .into_iter()
                 .flatten()
@@ -222,7 +222,7 @@ async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
         .iter()
         .map(|build| build_html(build, &names))
         .collect();
-    let facts = facts(&read.linewright, &sources.experiments.shown(), builds)
+    let facts = facts(&read.linewright, &sources.benchmark_runs.shown(), builds)
         .into_iter()
         .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
         .collect();
@@ -304,9 +304,9 @@ mod tests {
     /// status.
     fn worded(
         linewright: &Linewright,
-        replays: &ExperimentsShown,
+        trials: &BenchmarkRunsShown,
     ) -> Vec<(&'static str, String, Option<Status>)> {
-        facts(linewright, replays, vec![])
+        facts(linewright, trials, vec![])
             .into_iter()
             .map(|fact| {
                 let (value, status) = match &fact.lines[..] {
@@ -341,7 +341,7 @@ mod tests {
     #[test_log::test]
     fn before_the_first_poll_ends_the_facts_always_shown_say_the_next_is_due() {
         assert_eq!(
-            worded(&serving(), &ExperimentsShown::default()),
+            worded(&serving(), &BenchmarkRunsShown::default()),
             [
                 ("Started", "2026-10-01 12:00:00 UTC".into(), None),
                 ("Polls", "none yet, next due now".into(), None),
@@ -380,14 +380,14 @@ mod tests {
             ..serving()
         };
 
-        let replays = ExperimentsShown {
+        let trials = BenchmarkRunsShown {
             in_flight: 2,
-            max_replays: 3,
-            ..ExperimentsShown::default()
+            max_trials: 3,
+            ..BenchmarkRunsShown::default()
         };
 
         assert_eq!(
-            worded(&linewright, &replays),
+            worded(&linewright, &trials),
             [
                 ("Started", "2026-10-01 12:00:00 UTC".into(), None),
                 (
@@ -544,7 +544,7 @@ mod tests {
         };
 
         assert_eq!(
-            worded(&linewright, &ExperimentsShown::default())[2],
+            worded(&linewright, &BenchmarkRunsShown::default())[2],
             (
                 "Failed polls",
                 "1, 2026-10-01 12:31:00 UTC: taking a snapshot: bad credentials".into(),

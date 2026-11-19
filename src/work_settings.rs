@@ -78,34 +78,34 @@ impl fmt::Display for Effort {
 }
 
 /// What a `[stage.NAME]` table is for: a stage of the pipeline, or the
-/// judge, whose session takes its settings as a stage's do
+/// scorer, whose session takes its settings as a stage's do
 /// (`docs/specs/operation.md`, Stages' settings).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StageKey {
     Work(WorkKind),
-    Judge,
+    Scorer,
 }
 
 impl StageKey {
-    /// The judge's `NAME`.
-    const JUDGE: &'static str = "judge";
+    /// The scorer's `NAME`.
+    const SCORER: &'static str = "judge";
 
     /// Its `NAME` in `[stage.NAME]`.
     pub fn name(self) -> &'static str {
         match self {
             StageKey::Work(kind) => kind.name(),
-            StageKey::Judge => StageKey::JUDGE,
+            StageKey::Scorer => StageKey::SCORER,
         }
     }
 }
 
-/// The error lists the names a table takes: the stages', then the judge's.
+/// The error lists the names a table takes: the stages', then the scorer's.
 impl std::str::FromStr for StageKey {
     type Err = String;
 
     fn from_str(name: &str) -> Result<StageKey, String> {
-        if name == StageKey::JUDGE {
-            return Ok(StageKey::Judge);
+        if name == StageKey::SCORER {
+            return Ok(StageKey::Scorer);
         }
         WorkKind::ALL
             .into_iter()
@@ -116,7 +116,7 @@ impl std::str::FromStr for StageKey {
                 format!(
                     "{name:?} is not a stage or the judge: one of {}, {}",
                     stages.join(", "),
-                    StageKey::JUDGE
+                    StageKey::SCORER
                 )
             })
     }
@@ -460,8 +460,8 @@ impl RepoSettings {
 pub enum RunKind<'a> {
     Stage(WorkKind),
     Automation(&'a Automation),
-    /// The judge's session, which takes `[stage.judge]`'s settings.
-    Judge,
+    /// The scorer's session, which takes `[stage.judge]`'s settings.
+    Scorer,
 }
 
 /// The environment each session is given.
@@ -469,13 +469,13 @@ pub enum RunKind<'a> {
 pub struct Environments {
     /// The whole pipeline's, which a build of the environment is given too.
     pub pipeline: Arc<Given>,
-    /// The stages, and the judge, whose tables add to `session-env` or
+    /// The stages, and the scorer, whose tables add to `session-env` or
     /// `session-pass-env`.
     stages: BTreeMap<StageKey, Arc<Given>>,
 }
 
 /// Linewright's environment, split by what the sessions of each stage, and
-/// of the judge, are given.
+/// of the scorer, are given.
 #[derive(Debug, Default)]
 pub struct Split {
     pub environments: Environments,
@@ -506,11 +506,11 @@ pub struct StageSet {
 pub enum TimeoutSetting {
     /// `session-timeout` in the automation's front matter.
     Automation,
-    /// `session-timeout` in the stage's table, or the judge's.
+    /// `session-timeout` in the stage's table, or the scorer's.
     Stage(StageKey),
     /// The whole pipeline's `session-timeout`.
     Pipeline,
-    /// `session-timeout` in a replay's configuration.
+    /// `session-timeout` in a trial's configuration.
     Configuration,
 }
 
@@ -656,7 +656,7 @@ impl WorkSettings {
         let (front_matter, stage) = match of {
             RunKind::Automation(automation) => (&automation.session, None),
             RunKind::Stage(stage) => (&none, Some(StageKey::Work(stage))),
-            RunKind::Judge => (&none, Some(StageKey::Judge)),
+            RunKind::Scorer => (&none, Some(StageKey::Scorer)),
         };
         let table = stage.and_then(|stage| self.stages.get(&stage));
         let stage_setting = stage.map_or(TimeoutSetting::Pipeline, TimeoutSetting::Stage);

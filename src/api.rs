@@ -21,7 +21,8 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
-use crate::benchmarks::{ExperimentId, Experiments, Shown};
+use crate::benchmark_runs::runner::BenchmarkRunsShown;
+use crate::benchmarks::{BenchmarkRunId, BenchmarkRuns, Shown};
 use crate::board::{self, Board};
 use crate::briefs::Briefs;
 use crate::clock::Clock;
@@ -30,7 +31,6 @@ use crate::drain::{Asked, Exiting, Stop, Taken, Was};
 use crate::ending::{self, Ends};
 use crate::environment::shown::{self as environment_shown, Followed, FollowingBuild};
 use crate::environment::{self, BuildId, BuildTally, RebuildTaken, Tallied};
-use crate::experiments::runner::ExperimentsShown;
 use crate::explain;
 use crate::host::HostName;
 use crate::item_facts::{self, ItemFacts};
@@ -238,7 +238,7 @@ pub struct Publish {
     pub served: watch::Sender<Option<Served>>,
     pub polling: watch::Sender<Option<Polling>>,
     pub environment: EnvironmentPublish,
-    pub experiments: ExperimentsPublish,
+    pub benchmark_runs: BenchmarkRunsPublish,
 }
 
 /// The local API's links to what `serve` publishes.
@@ -246,7 +246,7 @@ pub struct Links {
     pub served: watch::Receiver<Option<Served>>,
     pub polling: watch::Receiver<Option<Polling>>,
     pub environment: EnvironmentLink,
-    pub experiments: ExperimentsLink,
+    pub benchmark_runs: BenchmarkRunsLink,
 }
 
 impl Publish {
@@ -255,40 +255,40 @@ impl Publish {
         let (served, served_from) = watch::channel(None);
         let (polling, polling_from) = watch::channel(None);
         let (environment, environment_link) = EnvironmentPublish::new();
-        let (experiments, experiments_link) = ExperimentsPublish::new();
+        let (benchmark_runs, benchmark_runs_link) = BenchmarkRunsPublish::new();
         (
             Publish {
                 served,
                 polling,
                 environment,
-                experiments,
+                benchmark_runs,
             },
             Links {
                 served: served_from,
                 polling: polling_from,
                 environment: environment_link,
-                experiments: experiments_link,
+                benchmark_runs: benchmark_runs_link,
             },
         )
     }
 }
 
-/// `serve`'s end of [`ExperimentsLink`].
-pub struct ExperimentsPublish {
-    shown: watch::Sender<ExperimentsShown>,
+/// `serve`'s end of [`BenchmarkRunsLink`].
+pub struct BenchmarkRunsPublish {
+    shown: watch::Sender<BenchmarkRunsShown>,
     changed: Arc<Notify>,
 }
 
-impl ExperimentsPublish {
-    fn new() -> (ExperimentsPublish, ExperimentsLink) {
-        let (shown, shown_from) = watch::channel(ExperimentsShown::default());
+impl BenchmarkRunsPublish {
+    fn new() -> (BenchmarkRunsPublish, BenchmarkRunsLink) {
+        let (shown, shown_from) = watch::channel(BenchmarkRunsShown::default());
         let changed = Arc::new(Notify::new());
         (
-            ExperimentsPublish {
+            BenchmarkRunsPublish {
                 shown,
                 changed: changed.clone(),
             },
-            ExperimentsLink {
+            BenchmarkRunsLink {
                 shown: shown_from,
                 changed,
             },
@@ -296,7 +296,7 @@ impl ExperimentsPublish {
     }
 
     /// Publishes `shown`, if it changed.
-    pub fn shown(&self, shown: ExperimentsShown) {
+    pub fn shown(&self, shown: BenchmarkRunsShown) {
         self.shown.send_if_modified(|published| {
             let changed = *published != shown;
             if changed {
@@ -306,38 +306,38 @@ impl ExperimentsPublish {
         });
     }
 
-    /// Waits until an experiment is said to have changed since this was
+    /// Waits until a benchmark run is said to have changed since this was
     /// last waited for.
     pub async fn changed(&self) {
         self.changed.notified().await;
     }
 }
 
-/// How the local API tells `serve` that an experiment changed, and learns
-/// how `serve` shows the experiments.
+/// How the local API tells `serve` that a benchmark run changed, and learns
+/// how `serve` shows the benchmark runs.
 #[derive(Clone)]
-pub struct ExperimentsLink {
-    shown: watch::Receiver<ExperimentsShown>,
+pub struct BenchmarkRunsLink {
+    shown: watch::Receiver<BenchmarkRunsShown>,
     changed: Arc<Notify>,
 }
 
-impl ExperimentsLink {
-    /// How `serve` shows the experiments, as it last published.
-    pub fn shown(&self) -> ExperimentsShown {
+impl BenchmarkRunsLink {
+    /// How `serve` shows the benchmark runs, as it last published.
+    pub fn shown(&self) -> BenchmarkRunsShown {
         self.shown.borrow().clone()
     }
 
-    /// Tells `serve` that an experiment changed, such as one launched or
+    /// Tells `serve` that a benchmark run changed, such as one launched or
     /// cancelled, so that it acts on it before its next poll.
     pub fn changed(&self) {
         self.changed.notify_one();
     }
 }
 
-/// Linked to no `serve`: it shows no experiment.
-impl Default for ExperimentsLink {
-    fn default() -> ExperimentsLink {
-        ExperimentsPublish::new().1
+/// Linked to no `serve`: it shows no benchmark run.
+impl Default for BenchmarkRunsLink {
+    fn default() -> BenchmarkRunsLink {
+        BenchmarkRunsPublish::new().1
     }
 }
 
@@ -409,7 +409,7 @@ pub struct Sources {
     /// What a drain asked for goes through.
     pub ends: Ends,
     pub environment: EnvironmentLink,
-    pub experiments: ExperimentsLink,
+    pub benchmark_runs: BenchmarkRunsLink,
     /// What `serve` waits for before it exits.
     pub exiting: watch::Receiver<Vec<Remaining>>,
 }
@@ -427,8 +427,8 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/follow", get(follow_environment))
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
-        .route("/experiments/changed", post(take_experiments_changed))
-        .route("/experiments/{id}", get(answer_experiment))
+        .route("/experiments/changed", post(take_benchmark_runs_changed))
+        .route("/experiments/{id}", get(answer_benchmark_run))
         .route("/drain", post(take_drain))
         .route("/stop", get(answer_stop))
         .route("/exiting", get(answer_exiting));
@@ -720,28 +720,33 @@ async fn answer_rebuild(
     }
 }
 
-/// Tells `serve` that an experiment changed, such as one launched or
+/// Tells `serve` that a benchmark run changed, such as one launched or
 /// cancelled, so that it acts on it before its next poll.
-async fn take_experiments_changed(State(sources): State<Sources>) -> Response {
-    sources.experiments.changed();
+async fn take_benchmark_runs_changed(State(sources): State<Sources>) -> Response {
+    sources.benchmark_runs.changed();
     json_response(StatusCode::OK, &serde_json::json!({}))
 }
 
-/// How the experiment `id` shows: as `serve` shows it while it is open.
-async fn answer_experiment(
+/// How the benchmark run `id` shows: as `serve` shows it while it is open.
+async fn answer_benchmark_run(
     State(sources): State<Sources>,
     Resource(id): Resource<String>,
 ) -> Response {
-    let Ok(id) = id.parse::<ExperimentId>() else {
-        return no_such_experiment(&id);
+    let Ok(id) = id.parse::<BenchmarkRunId>() else {
+        return no_such_benchmark_run(&id);
     };
-    let experiments = Experiments::new(sources.runs.database().clone());
-    match experiments.show(id).await {
+    let benchmark_runs = BenchmarkRuns::new(sources.runs.database().clone());
+    match benchmark_runs.show(id).await {
         Ok(Some(record)) => {
-            let served = sources.experiments.shown().experiments.get(&id).cloned();
+            let served = sources
+                .benchmark_runs
+                .shown()
+                .benchmark_runs
+                .get(&id)
+                .cloned();
             json_response(StatusCode::OK, &Shown::of(record.state, served))
         }
-        Ok(None) => no_such_experiment(&id),
+        Ok(None) => no_such_benchmark_run(&id),
         Err(e) => {
             error!(error = format!("{e:#}"), "reading an experiment failed");
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
@@ -749,7 +754,7 @@ async fn answer_experiment(
     }
 }
 
-fn no_such_experiment(id: &impl std::fmt::Display) -> Response {
+fn no_such_benchmark_run(id: &impl std::fmt::Display) -> Response {
     error_response(
         StatusCode::NOT_FOUND,
         &format!("there is no experiment {id}"),

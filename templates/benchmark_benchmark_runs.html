@@ -1,0 +1,32 @@
+{%- import "macros.html" as ui -%}
+<div id="experiments">
+{%- if benchmark_runs.is_empty() %}
+<p class="px-4 pb-4">No experiments</p>
+{%- else %}
+<table class="table">
+<thead><tr>{% for column in BenchmarkRunsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for benchmark_run in benchmark_runs %}
+<tr>
+{%- for column in BenchmarkRunsColumn::ALL %}
+{%- match column %}
+{%- when BenchmarkRunsColumn::Launched %}
+<th class="{{ column.align() }}"><a class="link link-hover" href="{{ benchmark_run.href }}">{{ benchmark_run.launched }}</a></th>
+{%- when BenchmarkRunsColumn::State %}
+<td class="{{ column.align() }}">{% call ui::status(benchmark_run.status, benchmark_run.state) %}{% endcall %}</td>
+{%- when BenchmarkRunsColumn::Tasks %}
+<td class="{{ column.align() }}">{{ benchmark_run.tasks }}</td>
+{%- when BenchmarkRunsColumn::Configurations %}
+<td class="{{ column.align() }}">{{ benchmark_run.configurations }}</td>
+{%- when BenchmarkRunsColumn::Duration %}
+<td class="{{ column.align() }} whitespace-nowrap">{% match benchmark_run.duration %}{% when Some(duration) %}{{ duration }}{% when None %}–{% endmatch %}</td>
+{%- when BenchmarkRunsColumn::Cost %}
+<td class="{{ column.align() }} whitespace-nowrap">{{ benchmark_run.cost }}</td>
+{%- endmatch %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</div>

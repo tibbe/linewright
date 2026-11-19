@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layer {
-    /// A replay's configuration (`docs/specs/benchmarks.md`,
+    /// A trial's configuration (`docs/specs/benchmarks.md`,
     /// Configurations).
     Configuration,
     /// The repository's files, such as an automation's front matter.

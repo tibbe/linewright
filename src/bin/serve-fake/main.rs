@@ -58,7 +58,7 @@ async fn serve() -> Result<()> {
     let store =
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
-    seed::suites(&store, &config.work_dir.join(seed::REPO)).await?;
+    seed::benchmarks(&store, &config.work_dir.join(seed::REPO)).await?;
     seed::interrupted_run(&config.work_dir.join(seed::REPO)).await?;
     seed::close_done(&store)?;
     let winding_up = WindingUp::default();

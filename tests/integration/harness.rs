@@ -15,9 +15,9 @@ use linewright::harness::{
 };
 use linewright::reconcile::{Subject, WorkKind};
 use linewright::redaction::Redaction;
-use linewright::replay::{Gate, Upstream};
 use linewright::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 use linewright::transcript::{Course, Prompt, What};
+use linewright::trial::{Gate, Upstream};
 use linewright::work_settings::Effort;
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -562,7 +562,7 @@ fn given_etc_gh() -> Arc<Given> {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_replays_session_is_given_its_gates_gh_configuration_over_session_envs() {
+async fn a_trials_session_is_given_its_gates_gh_configuration_over_session_envs() {
     let dir = tempfile::tempdir().unwrap();
     let gate = Gate::start(&"acme/widgets".parse().unwrap(), Upstream::GitHub).unwrap();
     let harness = harness_done(dir.path());
@@ -580,7 +580,7 @@ async fn a_replays_session_is_given_its_gates_gh_configuration_over_session_envs
 }
 
 #[test_log::test(tokio::test)]
-async fn a_session_outside_a_replay_is_given_the_gh_configuration_session_env_sets() {
+async fn a_session_outside_a_trial_is_given_the_gh_configuration_session_env_sets() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());

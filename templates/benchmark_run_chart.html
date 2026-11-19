@@ -1,0 +1,23 @@
+<div id="chart" class="mt-3">
+{%- for plot in benchmark_run.chart %}
+<div class="plot relative aspect-[480/260] w-full" data-axis="{{ plot.axis.name() }}">
+{%- match plot.drawn %}
+{%- when Some(drawn) %}
+<svg class="size-full" viewBox="{{ drawn.view_box }}">
+<g class="text-base-300 stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.rules }}"/></g>
+<g class="text-muted stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.axes }}"/></g>
+<g class="text-muted fill-current text-xs" aria-hidden="true">
+{%- for tick in drawn.ticks %}
+<text x="{{ "{:.1}"|format(tick.x) }}" y="{{ "{:.1}"|format(tick.y) }}" text-anchor="{{ tick.anchor }}">{{ tick.label }}</text>
+{%- endfor %}
+</g>
+{%- for point in drawn.points %}
+<foreignObject class="overflow-visible" x="{{ "{:.1}"|format(point.x) }}" y="{{ "{:.1}"|format(point.y) }}" width="{{ POINT_WIDTH }}" height="{{ POINT_HEIGHT }}"><div class="point-box{% if point.named_left %} named-left{% endif %}"><button type="button" id="{{ point.id }}" class="point" data-tip="{{ point.tip }}"><span class="dot" aria-hidden="true"></span><span class="name">{{ point.name }}</span></button></div></foreignObject>
+{%- endfor %}
+</svg>
+{%- when None %}
+<p class="text-muted absolute inset-0 grid place-items-center">No results</p>
+{%- endmatch %}
+</div>
+{%- endfor %}
+</div>

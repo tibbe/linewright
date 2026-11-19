@@ -6,7 +6,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
-use crate::benchmarks::ExperimentState;
+use crate::benchmarks::BenchmarkRunState;
 use crate::environment::kept::Builds;
 use crate::pull_records::PullRecords;
 use tokio::process::{Child, Command};
@@ -323,11 +323,11 @@ async fn a_new_database_keeps_none_of_the_records_linewright_0_22_0_kept_in_file
     }
 }
 
-/// The schema before ends of experiments and the order of cases were kept.
+/// The schema before ends of benchmark runs and the order of tasks were kept.
 static BEFORE_ENDS_AND_ORDER: &[Migration] = MIGRATIONS.split_at(7).0;
 
 #[test_log::test(tokio::test)]
-async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown_and_cases_in_order()
+async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown_and_tasks_in_order()
  {
     let work_dir = tempfile::tempdir().unwrap();
     let before = Database::open_in(work_dir.path(), BEFORE_ENDS_AND_ORDER, Absent::Make)
@@ -348,16 +348,20 @@ async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown
 
     let db = Database::open(work_dir.path()).await.unwrap();
 
-    let suite = crate::benchmarks::Suites::new(db.clone())
+    let benchmark = crate::benchmarks::Benchmarks::new(db.clone())
         .show(&"board".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
-    let cases: Vec<&str> = suite.cases.iter().map(|case| case.name.as_str()).collect();
-    assert_eq!(cases, ["lanes", "columns"]);
-    let experiments = crate::benchmarks::Experiments::new(db);
+    let tasks: Vec<&str> = benchmark
+        .tasks
+        .iter()
+        .map(|task| task.name.as_str())
+        .collect();
+    assert_eq!(tasks, ["lanes", "columns"]);
+    let benchmark_runs = crate::benchmarks::BenchmarkRuns::new(db);
     let state = async |id: &str| {
-        experiments
+        benchmark_runs
             .show(id.parse().unwrap())
             .await
             .unwrap()
@@ -366,6 +370,9 @@ async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown
     };
     assert_eq!(
         (state("1").await, state("2").await),
-        (ExperimentState::Ended { at: None }, ExperimentState::Open)
+        (
+            BenchmarkRunState::Ended { at: None },
+            BenchmarkRunState::Open
+        )
     );
 }

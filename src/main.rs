@@ -7,18 +7,14 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::benchmarks::{
-    self, CancelRefusal, ConfigurationName, ExperimentAnswer, ExperimentId, ExperimentRecord,
-    ExperimentState, Experiments, LaunchRefusal, RemoveError, Repetitions, Shown, SuiteAnswer,
-    SuiteName, Suites, SuitesAnswer,
-};
-use linewright::case::{
-    self, CRITERIA_REQUIRED, CaptureError, Case, CaseName, Criteria, Refusal, ReplayStage,
-    SuiteChoice,
+    self, BenchmarkAnswer, BenchmarkName, BenchmarkRunAnswer, BenchmarkRunId, BenchmarkRunRecord,
+    BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer, CancelRefusal,
+    ConfigurationName, LaunchRefusal, RemoveError, Repetitions, Shown,
 };
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
-    AutomationCommand, Cli, Command, Config, EnvironmentCommand, ExperimentCommand, Invocation,
-    LogFormat, ResolveError, Settings, Since, SuiteCommand,
+    AutomationCommand, BenchmarkCommand, BenchmarkRunCommand, Cli, Command, Config,
+    EnvironmentCommand, Invocation, LogFormat, ResolveError, Settings, Since,
 };
 use linewright::database::Database;
 use linewright::domain::{Number, Timestamp};
@@ -30,14 +26,18 @@ use linewright::export::{self, ExportError};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
-use linewright::replay::judge::{self, JudgeRecord};
-use linewright::replay::{self, Configuration, Output, Under};
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use linewright::serving::{self, OnUsageLimit, Starting, briefs};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
+use linewright::task::{
+    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, Task, TaskName,
+    TaskStage,
+};
 use linewright::transcript::{self, After, InFlight, Verbosity};
+use linewright::trial::scorer::{self, ScorerRecord};
+use linewright::trial::{self, Configuration, Output, Under};
 use linewright::winding_up::{Remaining, WindingUp};
 use linewright::work_settings::RepoSettings;
 use linewright::{COMMAND, COMMIT, VERSION};
@@ -923,55 +923,60 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         Command::Capture {
             id,
             name,
-            suite,
+            benchmark,
             criteria,
             json,
         } => {
             let capture = Capture {
                 id,
                 name,
-                suite,
+                benchmark,
                 criteria,
             };
             return Ok(capture.run(&config, json).await);
         }
-        Command::Suites { json } => return Ok(list_suites(&config, json).await),
-        Command::Suite {
-            command: SuiteCommand::Show { name, json },
-        } => return Ok(show_suite(&config, &name, json).await),
-        Command::Suite {
-            command: SuiteCommand::Add { name, stage, json },
-        } => return Ok(make_suite(&config, &name, stage, json).await),
-        Command::Suite {
-            command: SuiteCommand::RemoveCase { name, case, json },
-        } => return Ok(remove_case(&config, &name, &case, json).await),
-        Command::Experiment {
-            command: ExperimentCommand::Show { id, json },
-        } => return Ok(show_experiment(&config, id, json).await),
-        Command::Experiment {
+        Command::Benchmarks { json } => return Ok(list_benchmarks(&config, json).await),
+        Command::Benchmark {
+            command: BenchmarkCommand::Show { name, json },
+        } => return Ok(show_benchmark(&config, &name, json).await),
+        Command::Benchmark {
+            command: BenchmarkCommand::Add { name, stage, json },
+        } => return Ok(make_benchmark(&config, &name, stage, json).await),
+        Command::Benchmark {
+            command: BenchmarkCommand::RemoveTask { name, task, json },
+        } => return Ok(remove_task(&config, &name, &task, json).await),
+        Command::BenchmarkRun {
+            command: BenchmarkRunCommand::Show { id, json },
+        } => return Ok(show_benchmark_run(&config, id, json).await),
+        Command::BenchmarkRun {
             command:
-                ExperimentCommand::Launch {
-                    suite,
+                BenchmarkRunCommand::Launch {
+                    benchmark,
                     configurations,
                     repetitions,
                     json,
                 },
         } => {
-            return Ok(
-                launch_experiment(&config, &suite, &configurations, repetitions, json).await,
-            );
+            return Ok(launch_benchmark_run(
+                &config,
+                &benchmark,
+                &configurations,
+                repetitions,
+                json,
+            )
+            .await);
         }
-        Command::Experiment {
-            command: ExperimentCommand::Cancel { id, json },
-        } => return Ok(cancel_experiment(&config, id, json).await),
-        Command::Replay {
-            case,
+        Command::BenchmarkRun {
+            command: BenchmarkRunCommand::Cancel { id, json },
+        } => return Ok(cancel_benchmark_run(&config, id, json).await),
+        Command::Trial {
+            task,
             out,
             configuration,
         } => {
-            return Ok(replay(
+            return Ok(trial(
                 &config,
-                &case,
+                &task,
                 &out,
                 configuration.as_deref(),
                 winding_up,
@@ -979,8 +984,8 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             )
             .await);
         }
-        Command::Judge { case, dir } => {
-            return Ok(judge(&config, &case, &dir, winding_up, log).await);
+        Command::Score { task, dir } => {
+            return Ok(score(&config, &task, &dir, winding_up, log).await);
         }
         Command::Automation {
             command: AutomationCommand::Run { name },
@@ -1016,20 +1021,22 @@ async fn export(config: &Config, id: &RunId, dir: &Path) -> u8 {
     )
 }
 
-/// The suites of the work directory's database, with or without `serve`:
+/// The benchmarks of the work directory's database, with or without `serve`:
 /// none when there is no database.
-async fn existing_suites(config: &Config) -> Result<Option<Suites>> {
+async fn existing_benchmarks(config: &Config) -> Result<Option<Benchmarks>> {
     let work_dir = config.repo_work_dir()?.resolve();
-    Ok(Database::open_existing(&work_dir).await?.map(Suites::new))
+    Ok(Database::open_existing(&work_dir)
+        .await?
+        .map(Benchmarks::new))
 }
 
-/// The suites of the work directory's database, made when there is none.
-async fn made_suites(config: &Config) -> Result<Suites> {
+/// The benchmarks of the work directory's database, made when there is none.
+async fn made_benchmarks(config: &Config) -> Result<Benchmarks> {
     let work_dir = config.repo_work_dir()?.resolve();
-    Ok(Suites::new(Database::open(&work_dir).await?))
+    Ok(Benchmarks::new(Database::open(&work_dir).await?))
 }
 
-fn no_such_suite(name: &SuiteName) -> (u8, String) {
+fn no_such_benchmark(name: &BenchmarkName) -> (u8, String) {
     refused(&RequestError::NotFound(format!("there is no suite {name}")))
 }
 
@@ -1049,51 +1056,57 @@ fn answer_text<T: serde::Serialize>(
     }
 }
 
-async fn list_suites(config: &Config, json: bool) -> u8 {
+async fn list_benchmarks(config: &Config, json: bool) -> u8 {
     let listed = async {
-        match existing_suites(config).await? {
-            Some(suites) => suites.list().await,
+        match existing_benchmarks(config).await? {
+            Some(benchmarks) => benchmarks.list().await,
             None => Ok(vec![]),
         }
     };
     print_answer(
         listed
             .await
-            .map(|suites| answer_text(&SuitesAnswer { suites }, json, benchmarks::render_suites))
+            .map(|benchmarks| {
+                answer_text(
+                    &BenchmarksAnswer { benchmarks },
+                    json,
+                    benchmarks::render_benchmarks,
+                )
+            })
             .map_err(|e| failed(&e)),
     )
 }
 
-async fn show_suite(config: &Config, name: &SuiteName, json: bool) -> u8 {
+async fn show_benchmark(config: &Config, name: &BenchmarkName, json: bool) -> u8 {
     let shown = async {
-        match existing_suites(config).await? {
-            Some(suites) => suites.show(name).await,
+        match existing_benchmarks(config).await? {
+            Some(benchmarks) => benchmarks.show(name).await,
             None => Ok(None),
         }
     };
     let shown = match shown.await {
         Ok(Some(shown)) => shown,
-        Ok(None) => return print_answer(Err(no_such_suite(name))),
+        Ok(None) => return print_answer(Err(no_such_benchmark(name))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let mut states = Vec::with_capacity(shown.experiments.len());
-    for record in &shown.experiments {
-        match experiment_shown(config, record).await {
+    let mut states = Vec::with_capacity(shown.benchmark_runs.len());
+    for record in &shown.benchmark_runs {
+        match benchmark_run_shown(config, record).await {
             Ok(state) => states.push(state),
             Err(refused) => return print_answer(Err(refused)),
         }
     }
-    let answer = SuiteAnswer::new(&shown, states);
-    print_answer(Ok(answer_text(&answer, json, benchmarks::render_suite)))
+    let answer = BenchmarkAnswer::new(&shown, states);
+    print_answer(Ok(answer_text(&answer, json, benchmarks::render_benchmark)))
 }
 
-/// How the experiment `record` shows: an open one as `serve` shows it, and
+/// How the benchmark run `record` shows: an open one as `serve` shows it, and
 /// as waiting for `serve` when it does not run.
-async fn experiment_shown(
+async fn benchmark_run_shown(
     config: &Config,
-    record: &ExperimentRecord,
+    record: &BenchmarkRunRecord,
 ) -> Result<Shown, (u8, String)> {
-    if record.state != ExperimentState::Open {
+    if record.state != BenchmarkRunState::Open {
         return Ok(Shown::without_serve(record.state));
     }
     let resource = format!("/api/experiments/{}", record.id);
@@ -1104,7 +1117,7 @@ async fn experiment_shown(
     Ok(answer.value().clone())
 }
 
-/// Tells `serve`, if it runs, that an experiment changed, so that it acts
+/// Tells `serve`, if it runs, that a benchmark run changed, so that it acts
 /// on it before its next poll.
 async fn nudge_serve(config: &Config) {
     let Ok(work_dir) = config.repo_work_dir() else {
@@ -1118,18 +1131,21 @@ async fn nudge_serve(config: &Config) {
     }
 }
 
-async fn make_suite(config: &Config, name: &SuiteName, stage: ReplayStage, json: bool) -> u8 {
-    let suites = match made_suites(config).await {
-        Ok(suites) => suites,
+async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage, json: bool) -> u8 {
+    let benchmarks = match made_benchmarks(config).await {
+        Ok(benchmarks) => benchmarks,
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
-        suites
+        benchmarks
             .make(name, stage)
             .await
-            .map(|suite| {
-                answer_text(&suite, json, |suite| {
-                    format!("Made the suite {}, of {}\n", suite.name, suite.stage)
+            .map(|benchmark| {
+                answer_text(&benchmark, json, |benchmark| {
+                    format!(
+                        "Made the suite {}, of {}\n",
+                        benchmark.name, benchmark.stage
+                    )
                 })
             })
             .map_err(|e| (FAILURE, format!("{e:#}"))),
@@ -1139,30 +1155,39 @@ async fn make_suite(config: &Config, name: &SuiteName, stage: ReplayStage, json:
 /// What `suite remove-case` answers.
 #[derive(serde::Serialize)]
 struct Removed<'a> {
-    suite: &'a SuiteName,
-    case: &'a CaseName,
+    #[serde(rename = "suite")]
+    benchmark: &'a BenchmarkName,
+    #[serde(rename = "case")]
+    task: &'a TaskName,
 }
 
-async fn remove_case(config: &Config, name: &SuiteName, case: &CaseName, json: bool) -> u8 {
-    let suites = match existing_suites(config).await {
-        Ok(Some(suites)) => suites,
-        Ok(None) => return print_answer(Err(no_such_suite(name))),
+async fn remove_task(config: &Config, name: &BenchmarkName, task: &TaskName, json: bool) -> u8 {
+    let benchmarks = match existing_benchmarks(config).await {
+        Ok(Some(benchmarks)) => benchmarks,
+        Ok(None) => return print_answer(Err(no_such_benchmark(name))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
-        suites
-            .remove_case(name, case)
+        benchmarks
+            .remove_task(name, task)
             .await
             .map(|()| {
-                answer_text(&Removed { suite: name, case }, json, |removed| {
-                    format!(
-                        "Removed the case {} from the suite {}\n",
-                        removed.case, removed.suite
-                    )
-                })
+                answer_text(
+                    &Removed {
+                        benchmark: name,
+                        task,
+                    },
+                    json,
+                    |removed| {
+                        format!(
+                            "Removed the case {} from the suite {}\n",
+                            removed.task, removed.benchmark
+                        )
+                    },
+                )
             })
             .map_err(|e| match e {
-                RemoveError::NoSuchSuite(_) | RemoveError::NoSuchCase { .. } => {
+                RemoveError::NoSuchBenchmark(_) | RemoveError::NoSuchTask { .. } => {
                     refused(&RequestError::NotFound(e.to_string()))
                 }
                 RemoveError::Failed(e) => failed(&e),
@@ -1170,16 +1195,16 @@ async fn remove_case(config: &Config, name: &SuiteName, case: &CaseName, json: b
     )
 }
 
-/// The experiments of the work directory's database, with or without
+/// The benchmark runs of the work directory's database, with or without
 /// `serve`: none when there is no database.
-async fn existing_experiments(config: &Config) -> Result<Option<Experiments>> {
+async fn existing_benchmark_runs(config: &Config) -> Result<Option<BenchmarkRuns>> {
     let work_dir = config.repo_work_dir()?.resolve();
     Ok(Database::open_existing(&work_dir)
         .await?
-        .map(Experiments::new))
+        .map(BenchmarkRuns::new))
 }
 
-fn no_such_experiment(id: ExperimentId) -> (u8, String) {
+fn no_such_benchmark_run(id: BenchmarkRunId) -> (u8, String) {
     refused(&RequestError::NotFound(format!(
         "there is no experiment {id}"
     )))
@@ -1188,18 +1213,20 @@ fn no_such_experiment(id: ExperimentId) -> (u8, String) {
 /// What `experiment launch` answers.
 #[derive(serde::Serialize)]
 struct LaunchedAnswer<'a> {
-    id: ExperimentId,
-    suite: &'a SuiteName,
-    replays: usize,
+    id: BenchmarkRunId,
+    #[serde(rename = "suite")]
+    benchmark: &'a BenchmarkName,
+    #[serde(rename = "replays")]
+    trials: usize,
 }
 
-/// Launches an experiment on the suite `suite` under `as-is` and the
-/// configurations in the directories `configurations`, refusing a suite that
-/// does not exist and then a configuration with an error before anything is
-/// written.
-async fn launch_experiment(
+/// Launches a benchmark run on the benchmark `benchmark` under `as-is` and the
+/// configurations in the directories `configurations`, refusing a benchmark
+/// that does not exist and then a configuration with an error before anything
+/// is written.
+async fn launch_benchmark_run(
     config: &Config,
-    suite: &SuiteName,
+    benchmark: &BenchmarkName,
     configurations: &[(ConfigurationName, PathBuf)],
     repetitions: Repetitions,
     json: bool,
@@ -1209,12 +1236,12 @@ async fn launch_experiment(
         let Some(db) = Database::open_existing(&work_dir).await? else {
             return Ok(None);
         };
-        let found = Suites::new(db.clone()).find(suite).await?;
+        let found = Benchmarks::new(db.clone()).find(benchmark).await?;
         anyhow::Ok(found.map(|_| db))
     };
     let db = match database.await {
         Ok(Some(db)) => db,
-        Ok(None) => return print_answer(Err(no_such_suite(suite))),
+        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let mut read_configurations = Vec::with_capacity(configurations.len());
@@ -1224,8 +1251,13 @@ async fn launch_experiment(
             Err(e) => return print_answer(Err((FAILURE, e.to_string()))),
         }
     }
-    let launched = Experiments::new(db)
-        .launch(suite, read_configurations, repetitions, SystemClock.now())
+    let launched = BenchmarkRuns::new(db)
+        .launch(
+            benchmark,
+            read_configurations,
+            repetitions,
+            SystemClock.now(),
+        )
         .await;
     if launched.is_ok() {
         nudge_serve(config).await;
@@ -1235,19 +1267,21 @@ async fn launch_experiment(
             .map(|launched| {
                 let answer = LaunchedAnswer {
                     id: launched.id,
-                    suite,
-                    replays: launched.replays,
+                    benchmark,
+                    trials: launched.trials,
                 };
                 answer_text(&answer, json, |answer| {
                     format!(
                         "Launched experiment {} on the suite {}: {} replays\n",
-                        answer.id, answer.suite, answer.replays
+                        answer.id, answer.benchmark, answer.trials
                     )
                 })
             })
             .map_err(|e| match e {
-                LaunchRefusal::NoSuchSuite(_) => refused(&RequestError::NotFound(e.to_string())),
-                LaunchRefusal::NoCases(_) | LaunchRefusal::DuplicateConfiguration(_) => {
+                LaunchRefusal::NoSuchBenchmark(_) => {
+                    refused(&RequestError::NotFound(e.to_string()))
+                }
+                LaunchRefusal::NoTasks(_) | LaunchRefusal::DuplicateConfiguration(_) => {
                     (FAILURE, e.to_string())
                 }
                 LaunchRefusal::Failed(e) => failed(&e),
@@ -1255,25 +1289,25 @@ async fn launch_experiment(
     )
 }
 
-/// Shows the experiment `id`: an open one as `serve` shows it, or as
+/// Shows the benchmark run `id`: an open one as `serve` shows it, or as
 /// waiting for `serve` when it does not run.
-async fn show_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
+async fn show_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> u8 {
     let shown = async {
-        match existing_experiments(config).await? {
-            Some(experiments) => experiments.show(id).await,
+        match existing_benchmark_runs(config).await? {
+            Some(benchmark_runs) => benchmark_runs.show(id).await,
             None => Ok(None),
         }
     };
     let record = match shown.await {
         Ok(Some(record)) => record,
-        Ok(None) => return print_answer(Err(no_such_experiment(id))),
+        Ok(None) => return print_answer(Err(no_such_benchmark_run(id))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    print_answer(experiment_shown(config, &record).await.map(|state| {
+    print_answer(benchmark_run_shown(config, &record).await.map(|state| {
         answer_text(
-            &ExperimentAnswer::new(&record, state),
+            &BenchmarkRunAnswer::new(&record, state),
             json,
-            benchmarks::render_experiment,
+            benchmarks::render_benchmark_run,
         )
     }))
 }
@@ -1281,16 +1315,16 @@ async fn show_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
 /// What `experiment cancel` answers.
 #[derive(serde::Serialize)]
 struct Cancelled {
-    id: ExperimentId,
+    id: BenchmarkRunId,
 }
 
-async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 {
-    let experiments = match existing_experiments(config).await {
-        Ok(Some(experiments)) => experiments,
-        Ok(None) => return print_answer(Err(no_such_experiment(id))),
+async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> u8 {
+    let benchmark_runs = match existing_benchmark_runs(config).await {
+        Ok(Some(benchmark_runs)) => benchmark_runs,
+        Ok(None) => return print_answer(Err(no_such_benchmark_run(id))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let cancelling = experiments.cancel(id, SystemClock.now()).await;
+    let cancelling = benchmark_runs.cancel(id, SystemClock.now()).await;
     if cancelling.is_ok() {
         nudge_serve(config).await;
     }
@@ -1302,7 +1336,7 @@ async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 
                 })
             })
             .map_err(|e| match e {
-                CancelRefusal::NoSuchExperiment(_) => no_such_experiment(id),
+                CancelRefusal::NoSuchBenchmarkRun(_) => no_such_benchmark_run(id),
                 CancelRefusal::NotOpen { .. } => (FAILURE, e.to_string()),
                 CancelRefusal::Failed(e) => failed(&e),
             }),
@@ -1312,8 +1346,8 @@ async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 
 /// What `capture` is asked to capture.
 struct Capture {
     id: RunId,
-    name: CaseName,
-    suite: SuiteName,
+    name: TaskName,
+    benchmark: BenchmarkName,
     /// The file that holds the criteria.
     criteria: PathBuf,
 }
@@ -1322,20 +1356,22 @@ struct Capture {
 #[derive(serde::Serialize)]
 struct Captured<'a> {
     run: &'a RunId,
-    case: &'a CaseName,
-    suite: &'a SuiteName,
+    #[serde(rename = "case")]
+    task: &'a TaskName,
+    #[serde(rename = "suite")]
+    benchmark: &'a BenchmarkName,
     dir: &'a Path,
 }
 
 impl Capture {
-    /// Captures run `id` as the case `name` of the suite `suite`, with the
-    /// criteria in the file `criteria`, refusing before connecting to
+    /// Captures run `id` as the task `name` of the benchmark `benchmark`, with
+    /// the criteria in the file `criteria`, refusing before connecting to
     /// GitHub what it can.
     async fn run(&self, config: &Config, json: bool) -> u8 {
         let Capture {
             id,
             name,
-            suite,
+            benchmark,
             criteria,
         } = self;
         let refusal = |e: CaptureError| match e.refusal() {
@@ -1351,9 +1387,9 @@ impl Capture {
             Ok(None) => return print_answer(Err(refusal(CaptureError::NoSuchRun(id.clone())))),
             Err(e) => return print_answer(Err(failed(&e))),
         };
-        let suites = Suites::new(runs.database().clone());
-        let choice = SuiteChoice::Named(suite.clone());
-        let capturable = match case::capturable(&runs, &suites, id, name, &choice).await {
+        let benchmarks = Benchmarks::new(runs.database().clone());
+        let choice = BenchmarkChoice::Named(benchmark.clone());
+        let capturable = match task::capturable(&runs, &benchmarks, id, name, &choice).await {
             Ok(capturable) => capturable,
             Err(e) => return print_answer(Err(refusal(e))),
         };
@@ -1376,13 +1412,13 @@ impl Capture {
             Err(e) => return print_answer(Err(failed(&e))),
         };
         print_answer(
-            case::capture(&github, capturable, &criteria, &suites)
+            task::capture(&github, capturable, &criteria, &benchmarks)
                 .await
                 .map(|dir| {
                     let captured = Captured {
                         run: id,
-                        case: name,
-                        suite,
+                        task: name,
+                        benchmark,
                         dir: &dir,
                     };
                     answer_text(&captured, json, |captured| {
@@ -1390,7 +1426,7 @@ impl Capture {
                             "Captured {} as the case {} in the suite {}\n",
                             captured.run,
                             captured.dir.display(),
-                            captured.suite
+                            captured.benchmark
                         )
                     })
                 })
@@ -1399,14 +1435,14 @@ impl Capture {
     }
 }
 
-/// Replays the case in the directory `case` into the output `out`, with
+/// Runs the task in the directory `task` into the output `out`, with
 /// the configuration in the directory `configuration` if one is given: 0
 /// once its run ended, whatever its outcome, and 1 when it did not run or
 /// end. A configuration with an error is refused before the output is
 /// made.
-async fn replay(
+async fn trial(
     config: &Config,
-    case: &Path,
+    task: &Path,
     out: &Path,
     configuration: Option<&Path>,
     winding_up: &WindingUp,
@@ -1424,10 +1460,10 @@ async fn replay(
         Ok(out) => out,
         Err(e) => return print_answer(Err(failed(&e.into()))),
     };
-    let replaying = replay::unless_signalled(
+    let running = trial::unless_signalled(
         Box::pin(async {
-            let case = match Case::open(case).await {
-                Ok(case) => case,
+            let task = match Task::open(task).await {
+                Ok(task) => task,
                 Err(e) => {
                     out.finished();
                     return print_answer(Err((
@@ -1438,9 +1474,9 @@ async fn replay(
             };
             log.begin();
             let ran = async {
-                let (harness, factory_config) = on_case(config, token, &case, winding_up).await?;
-                Box::pin(replay::run(
-                    &case,
+                let (harness, factory_config) = on_task(config, token, &task, winding_up).await?;
+                Box::pin(trial::run(
+                    &task,
                     &out,
                     Arc::new(harness),
                     factory_config,
@@ -1461,30 +1497,30 @@ async fn replay(
         }),
         |signal| out.signalled(signal),
     );
-    replaying
+    running
         .await
         .unwrap_or_else(|e| print_answer(Err(failed(&e))))
 }
 
 /// The harness and the factory config of a command that runs sessions on
-/// `case`, with `token` as their token, in the work directory of the case's
+/// `task`, with `token` as their token, in the work directory of the task's
 /// repository.
 ///
 /// # Errors
 ///
-/// As [`Starting::replaying`], and when Linewright's own program is not
+/// As [`Starting::running`], and when Linewright's own program is not
 /// found.
-async fn on_case(
+async fn on_task(
     config: &Config,
     token: SessionToken,
-    case: &Case,
+    task: &Task,
     winding_up: &WindingUp,
 ) -> Result<(ClaudeCode, FactoryConfig)> {
-    let starting = Starting::replaying(config, HARNESS_PROGRAM, || Ok(token)).await?;
+    let starting = Starting::running(config, HARNESS_PROGRAM, || Ok(token)).await?;
     let harness = starting.harness(own_program()?, Arc::new(SystemClock));
     let work_dir = RepoWorkDir {
         base: config.work_dir.clone(),
-        repo: case.properties().settings.repo.clone(),
+        repo: task.properties().settings.repo.clone(),
     };
     let database = Database::open(&work_dir.resolve()).await?;
     let factory_config = starting.factory_config(
@@ -1498,38 +1534,38 @@ async fn on_case(
     Ok((harness, factory_config))
 }
 
-/// Judges `dir`, the output of a replay of the case in the directory
-/// `case`, and keeps the judgement in it: 0 once the judge made one,
-/// whatever it is, and 1 when it made none or the case or the output is
+/// Scores `dir`, the output of a trial of the task in the directory
+/// `task`, and keeps the score in it: 0 once the scorer made one,
+/// whatever it is, and 1 when it made none or the task or the output is
 /// refused. A signal ends it at once with the signal's status, keeping
-/// nothing of the judge.
-async fn judge(config: &Config, case: &Path, dir: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
+/// nothing of the scorer.
+async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
     let token = match session_token() {
         Ok(token) => token,
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let case = match Case::open(case).await {
-        Ok(case) => case,
+    let task = match Task::open(task).await {
+        Ok(task) => task,
         Err(e) => return print_answer(Err((FAILURE, format!("the case cannot be judged: {e}")))),
     };
-    let replayed = match judge::Replayed::open(dir, &case).await {
-        Ok(replayed) => replayed,
+    let scoreable = match scorer::ScoreableTrial::open(dir, &task).await {
+        Ok(scoreable) => scoreable,
         Err(e) => return print_answer(Err((FAILURE, format!("the output cannot be judged: {e}")))),
     };
-    let record = match JudgeRecord::make(&replayed) {
+    let record = match ScorerRecord::make(&scoreable) {
         Ok(record) => record,
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let record_dir = record.dir().to_path_buf();
     log.begin();
-    let judging = replay::unless_signalled(
+    let scoring = trial::unless_signalled(
         Box::pin(async {
-            let (harness, factory_config) = on_case(config, token, &case, winding_up)
+            let (harness, factory_config) = on_task(config, token, &task, winding_up)
                 .await
-                .map_err(judge::Unjudged::Failed)?;
-            judge::run(
-                &case,
-                &replayed,
+                .map_err(scorer::Unscored::Failed)?;
+            scorer::run(
+                &task,
+                &scoreable,
                 record,
                 Arc::new(harness),
                 factory_config,
@@ -1538,19 +1574,19 @@ async fn judge(config: &Config, case: &Path, dir: &Path, winding_up: &WindingUp,
             .await
         }),
         |signal| {
-            judge::discard(&record_dir);
+            scorer::discard(&record_dir);
             complain("the judge made no judgement: a signal ended the command");
             signal.exit_status()
         },
     );
-    let judgement = match judging.await {
-        Ok(Ok(judgement)) => judgement,
-        Ok(Err(unjudged)) => return print_answer(Err((FAILURE, unjudged.to_string()))),
+    let score = match scoring.await {
+        Ok(Ok(score)) => score,
+        Ok(Err(unscored)) => return print_answer(Err((FAILURE, unscored.to_string()))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let summary = judgement.summary();
+    let summary = score.summary();
     print_answer(
-        judge::keep(&replayed, judgement)
+        scorer::keep(&scoreable, score)
             .map(|()| summary)
             .map_err(|e| failed(&e)),
     )
