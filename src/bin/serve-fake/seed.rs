@@ -305,7 +305,8 @@ enum SeedTrial {
 /// Launches on `board` an experiment the day before the clock starts, under
 /// `as-is` and `terse`, which sets a low effort, twice, and ends each of its
 /// trials as [`TRIALS`] says, twenty minutes after its launch: with passes,
-/// failures, a leak and replays without a judgement.
+/// failures, a leak and replays without a judgement. The first replay's
+/// output holds what its run and its judge left, as [`replay_output`] says.
 async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
@@ -377,6 +378,122 @@ async fn experiment(experiments: &Experiments, board: &SuiteName) -> Result<()> 
             .await?;
         experiments.step(&trial, judged, at).await?;
     }
+    let first = record
+        .trials
+        .keys()
+        .next()
+        .context("the experiment has trials")?;
+    let case = &record.cases[first.case];
+    let case_run = BOARD_CASES
+        .iter()
+        .find(|seeded| seeded.name == case.as_str())
+        .context("the replay's case is the seed's")?;
+    replay_output(
+        &experiments.output_dir(
+            launched.id,
+            &record.configurations[first.configuration],
+            case,
+            first.repetition,
+        ),
+        case_run,
+    )
+}
+
+/// Writes in `output` what the first replay of the seed's experiment left
+/// there as it replayed `case` and its judge judged it: the case it
+/// replays, its run's record and session, its judgement and its judge's
+/// session.
+fn replay_output(output: &Path, case: &SeedCase) -> Result<()> {
+    let run = run_of(case)?;
+    let session = format!("sessions/issue-{}/20260301T160005Z-design", CASES_ISSUE.0);
+    let judge = "judge/20260301T161000Z-judge";
+    let ran = json!({
+        "model": null,
+        "effort": null,
+        "layers": {"settings": {"model": "harness"}, "prompts": {}},
+    });
+    let mut session_entry = json!({"dir": session});
+    extend(&mut session_entry, &ran)?;
+    let record = json!({
+        "item": CASES_ISSUE.0,
+        "stage": "design",
+        "n": case.n,
+        "started_at": "2026-03-01T16:00:05Z",
+        "end": {"at": "2026-03-01T16:09:40Z", "ending": "done"},
+        "sessions": [session_entry],
+    });
+    let mut judge_session = json!({"record": judge, "cost": {}});
+    extend(&mut judge_session, &ran)?;
+    let judgement = json!({
+        "correctness": {
+            "reasoning": "The board names its columns as the criteria ask, and the tests pass.",
+            "verdict": "pass",
+        },
+        "leak": {
+            "reasoning": "No call read the case's pull request or its branch.",
+            "found": false,
+            "calls": [],
+        },
+        "session": judge_session,
+        "linewright": env!("CARGO_PKG_VERSION"),
+    });
+    let transcript = |at: &str, text: &str| -> String {
+        let started = json!({
+            "type": "system", "subtype": "init", "model": "claude-opus-5-5", "timestamp": at,
+        });
+        let said = json!({
+            "type": "assistant", "timestamp": at,
+            "message": {"content": [{"type": "text", "text": text}]},
+        });
+        format!("{started}\n{said}\n")
+    };
+    let files = [
+        (linewright::replay::CASE.to_string(), format!("{run}\n")),
+        (
+            format!("runs/items/{}/design-{}.json", CASES_ISSUE.0, case.n),
+            record.to_string(),
+        ),
+        (
+            format!("{session}/output.jsonl"),
+            transcript(
+                "2026-03-01T16:00:05Z",
+                "The board's columns now carry their names.",
+            ),
+        ),
+        (
+            format!("{session}/brief.md"),
+            "# Your task\n\nDesign the ticket below.\n".to_string(),
+        ),
+        (
+            linewright::replay::judge::JUDGEMENT.to_string(),
+            judgement.to_string(),
+        ),
+        (
+            format!("{judge}/output.jsonl"),
+            transcript(
+                "2026-03-01T16:10:00Z",
+                "The replay passes, and it read nothing it should not.",
+            ),
+        ),
+        (
+            format!("{judge}/brief.md"),
+            "# Your task\n\nJudge the replay.\n".to_string(),
+        ),
+    ];
+    for (path, text) in files {
+        let path = output.join(path);
+        std::fs::create_dir_all(path.parent().context("a file has a directory")?)?;
+        std::fs::write(path, text)?;
+    }
+    Ok(())
+}
+
+/// Adds the fields of the JSON object `more` to the JSON object `object`.
+fn extend(object: &mut Value, more: &Value) -> Result<()> {
+    object
+        .as_object_mut()
+        .context("a JSON object")?
+        .extend(more.as_object().context("a JSON object")?.clone());
     Ok(())
 }
 

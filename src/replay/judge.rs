@@ -41,7 +41,8 @@ mod copy;
 
 pub use copy::ReplayCopy;
 
-const JUDGEMENT: &str = "judgement.json";
+/// The part of an output that holds its judgement.
+pub const JUDGEMENT: &str = "judgement.json";
 
 /// How a replay's run ended, of the endings a judge judges.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
