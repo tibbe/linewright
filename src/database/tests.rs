@@ -6,6 +6,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
+use crate::benchmarks::ExperimentState;
 use crate::environment::kept::Builds;
 use crate::pull_records::PullRecords;
 use tokio::process::{Child, Command};
@@ -320,4 +321,41 @@ async fn a_new_database_keeps_none_of_the_records_linewright_0_22_0_kept_in_file
             text
         );
     }
+}
+
+/// The schema before ends of experiments were kept.
+static BEFORE_ENDS: &[Migration] = MIGRATIONS.split_at(7).0;
+
+#[test_log::test(tokio::test)]
+async fn a_database_from_before_ends_were_kept_opens_with_its_experiments_ended_without_one() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_ENDS, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO suites (name, stage) VALUES ('board', 'design');
+         INSERT INTO experiments (id, suite, launched_at, repetitions, state)
+             VALUES (1, 'board', '2026-11-17T12:00:00Z', 1, 'ended'),
+                 (2, 'board', '2026-11-17T13:00:00Z', 1, 'open')",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let experiments = crate::benchmarks::Experiments::new(db);
+    let state = async |id: &str| {
+        experiments
+            .show(id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap()
+            .state
+    };
+    assert_eq!(
+        (state("1").await, state("2").await),
+        (ExperimentState::Ended { at: None }, ExperimentState::Open)
+    );
 }

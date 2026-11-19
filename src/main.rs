@@ -1290,7 +1290,7 @@ async fn cancel_experiment(config: &Config, id: ExperimentId, json: bool) -> u8 
         Ok(None) => return print_answer(Err(no_such_experiment(id))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
-    let cancelling = experiments.cancel(id).await;
+    let cancelling = experiments.cancel(id, SystemClock.now()).await;
     if cancelling.is_ok() {
         nudge_serve(config).await;
     }

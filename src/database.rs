@@ -40,6 +40,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(PUSHED_BRANCHES_TABLES),
     Migration::Sql(SUITES_TABLES),
     Migration::Sql(EXPERIMENTS_TABLES),
+    Migration::Sql(EXPERIMENT_ENDS),
 ];
 
 /// The table of the release that made each schema version.
@@ -204,6 +205,11 @@ const EXPERIMENTS_TABLES: &str = "CREATE TABLE experiments (
         CHECK (unjudged IS NOT 'outcome' AND unjudged IS NOT 'judge' OR outcome IS NOT NULL),
         CHECK ((reason IS NOT NULL) = (unjudged IS 'judge'))
     ) STRICT;";
+
+/// When each experiment ended or was cancelled, kept from this version on: an
+/// experiment that ended before has none, and an open one never has one.
+const EXPERIMENT_ENDS: &str = "ALTER TABLE experiments
+    ADD COLUMN ended_at TEXT CHECK (state <> 'open' OR ended_at IS NULL)";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

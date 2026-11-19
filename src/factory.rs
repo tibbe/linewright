@@ -278,6 +278,7 @@ impl Factory {
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let experiments = ExperimentsRunner::new(
             Experiments::new(config.database.clone()),
+            clock.clone(),
             harness.clone(),
             FactoryConfig {
                 environments: config.replay_environments.clone(),

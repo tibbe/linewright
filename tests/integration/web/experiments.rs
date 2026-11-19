@@ -160,7 +160,10 @@ async fn the_suite_page_lists_its_experiments_latest_first_linking_to_each() {
     let pages = with_experiment().await;
     launched(&pages, "board", &[], 1, "2026-11-17T13:00:00Z").await;
     linewright::benchmarks::Experiments::new(pages.sources.runs.database().clone())
-        .cancel("2".parse().unwrap())
+        .cancel(
+            "2".parse().unwrap(),
+            "2026-11-17T14:00:00Z".parse().unwrap(),
+        )
         .await
         .unwrap();
 

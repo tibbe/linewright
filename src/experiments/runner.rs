@@ -18,6 +18,7 @@ use crate::benchmarks::{
     JudgementFigures, ReplayFigures, Shown, TrialChange, TrialRef,
 };
 use crate::case::{Case, CaseName};
+use crate::clock::Clock;
 use crate::factory::FactoryConfig;
 use crate::harness::{Harness, UsageLimit};
 use crate::replay::judge::{self, JudgeRecord, JudgeRefusal, Replayed};
@@ -51,6 +52,7 @@ pub type Finished = Result<(Id, TrialChange), JoinError>;
 #[derive(Clone)]
 struct StepContext {
     experiments: Experiments,
+    clock: Arc<dyn Clock>,
     harness: Arc<dyn Harness>,
     config: FactoryConfig,
     refusals: UnboundedSender<UsageLimit>,
@@ -79,9 +81,11 @@ pub struct ExperimentsRunner {
 impl ExperimentsRunner {
     /// Runs the steps of `experiments` with `harness` and `config`, a
     /// replay's, at most `max_replays` at once, their sessions waiting out
-    /// the usage limit and reporting it to `refusals`.
+    /// the usage limit and reporting it to `refusals`, and records when
+    /// each change happens by `clock`.
     pub fn new(
         experiments: Experiments,
+        clock: Arc<dyn Clock>,
         harness: Arc<dyn Harness>,
         config: FactoryConfig,
         max_replays: usize,
@@ -90,6 +94,7 @@ impl ExperimentsRunner {
         ExperimentsRunner {
             context: StepContext {
                 experiments,
+                clock,
                 harness,
                 config,
                 refusals,
@@ -147,7 +152,11 @@ impl ExperimentsRunner {
         let planned = plan(&open, self.in_flight.len(), self.max_replays, gate);
         for (id, shown) in &planned.shown {
             if *shown == Shown::Ended
-                && let Err(e) = self.context.experiments.end(*id).await
+                && let Err(e) = self
+                    .context
+                    .experiments
+                    .end(*id, self.context.clock.now())
+                    .await
             {
                 error!(
                     error = format!("{e:#}"),
@@ -180,7 +189,12 @@ impl ExperimentsRunner {
             Step::Replay(_) => TrialChange::ReplayStarts,
             Step::Judge(_) => TrialChange::JudgeStarts,
         };
-        if let Err(e) = self.context.experiments.step(&trial, starts).await {
+        if let Err(e) = self
+            .context
+            .experiments
+            .step(&trial, starts, self.context.clock.now())
+            .await
+        {
             error!(
                 error = format!("{e:#}"),
                 "starting a replay or judge failed"
@@ -273,7 +287,12 @@ impl ExperimentsRunner {
 
     /// Records `change` of `trial`, or keeps it to record at the next tick.
     async fn record(&mut self, trial: TrialRef, change: TrialChange) {
-        if let Err(e) = self.context.experiments.step(&trial, change.clone()).await {
+        if let Err(e) = self
+            .context
+            .experiments
+            .step(&trial, change.clone(), self.context.clock.now())
+            .await
+        {
             error!(
                 error = format!("{e:#}"),
                 "recording how a replay or judge ended failed; the next tick tries again"
