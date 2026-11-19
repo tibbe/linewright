@@ -201,7 +201,7 @@ async fn submitting_the_form_writes_the_task_and_says_where() {
     let (status, answer) = submit(&pages, "gadgets", "A good result ships gh.\n").await;
 
     assert_eq!(status, 200, "{}", said(&answer));
-    let dir = pages.path("cases/gadgets");
+    let dir = pages.path("tasks/gadgets");
     assert_eq!(
         said(&answer),
         format!(
@@ -369,7 +369,7 @@ async fn a_capture_into_a_new_benchmark_makes_it_and_says_so() {
         said(&answer),
         format!(
             "Captured 1/implement-1 as the case `{}` in the new suite fresh",
-            pages.path("cases/gadgets").display()
+            pages.path("tasks/gadgets").display()
         )
     );
     let refreshed = select(&answer, "select#capture-suite[hx-swap-oob]");

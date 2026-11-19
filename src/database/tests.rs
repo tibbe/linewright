@@ -6,9 +6,16 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
-use crate::benchmarks::BenchmarkRunState;
+use crate::benchmarks::{
+    BenchmarkRunId, BenchmarkRunState, ConfigurationName, NoScore, ScoreFigures, TrialEnd,
+    TrialFigures, TrialState,
+};
+use crate::cost::Usd;
 use crate::environment::kept::Builds;
 use crate::pull_records::PullRecords;
+use crate::results::Verdict;
+use crate::runs::OutcomeName;
+use crate::task::TaskName;
 use tokio::process::{Child, Command};
 
 /// The bytes of a database file's header that give its write and read
@@ -375,4 +382,321 @@ async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown
             BenchmarkRunState::Open
         )
     );
+}
+
+/// The schema of Linewright 0.24.0, which kept benchmarks as suites, tasks as
+/// cases and benchmark runs as experiments.
+static BEFORE_BENCHMARK_NAMES: &[Migration] = MIGRATIONS.split_at(9).0;
+
+/// The files of a work directory that Linewright 0.24.0 left: the task
+/// `lanes`, and benchmark run 1's copy of it, the output of its first trial
+/// with its score and its scorer's record, the output of a trial left as its
+/// scorer ran, and an environment of its trials.
+const FILES_OF_0_24_0: [(&str, &str); 10] = [
+    ("cases/lanes/case.json", r#"{"stage": "design"}"#),
+    ("cases/lanes/criteria.md", "Lanes for each stage.\n"),
+    (
+        "experiments/1/.kept/cases/lanes/case.json",
+        r#"{"stage": "design"}"#,
+    ),
+    (
+        "experiments/1/.kept/configurations/short/config.toml",
+        "model = \"short\"\n",
+    ),
+    ("experiments/1/as-is/lanes/1/case", "4/design-1\n"),
+    (
+        "experiments/1/as-is/lanes/1/judgement.json",
+        r#"{"session": {"record": "judge/20261117T120000Z-judge"}}"#,
+    ),
+    (
+        "experiments/1/as-is/lanes/1/judge/20261117T120000Z-judge/transcript.jsonl",
+        "{}\n",
+    ),
+    ("experiments/1/short/lanes/3/case", "4/design-1\n"),
+    (
+        "experiments/1/short/lanes/3/judge/20261117T130000Z-judge/transcript.jsonl",
+        "{}\n",
+    ),
+    ("replays/environments/abc123-f1f1/held", ""),
+];
+
+/// Writes [`FILES_OF_0_24_0`] into `work_dir`.
+#[track_caller]
+fn write_files_of_0_24_0(work_dir: &Path) {
+    for (path, text) in FILES_OF_0_24_0 {
+        let path = work_dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+}
+
+/// The paths of the files under `dir`, relative to it, in order.
+#[track_caller]
+fn files_under(dir: &Path) -> Vec<String> {
+    #[track_caller]
+    fn walk(dir: &Path, under: &Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, under, files);
+            } else {
+                files.push(path.strip_prefix(under).unwrap().display().to_string());
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files);
+    files.retain(|file| !file.starts_with("linewright.db"));
+    files.sort();
+    files
+}
+
+/// The files of [`FILES_OF_0_24_0`] at the paths this release keeps them.
+const FILES_UNDER_BENCHMARK_NAMES: [(&str, &str); 10] = [
+    (
+        "benchmark-runs/1/.kept/configurations/short/config.toml",
+        "model = \"short\"\n",
+    ),
+    (
+        "benchmark-runs/1/.kept/tasks/lanes/task.json",
+        r#"{"stage": "design"}"#,
+    ),
+    (
+        "benchmark-runs/1/as-is/lanes/1/judge/20261117T120000Z-judge/transcript.jsonl",
+        "{}\n",
+    ),
+    (
+        "benchmark-runs/1/as-is/lanes/1/score.json",
+        r#"{"session": {"record": "judge/20261117T120000Z-judge"}}"#,
+    ),
+    ("benchmark-runs/1/as-is/lanes/1/task", "4/design-1\n"),
+    (
+        "benchmark-runs/1/short/lanes/3/scorer/20261117T130000Z-judge/transcript.jsonl",
+        "{}\n",
+    ),
+    ("benchmark-runs/1/short/lanes/3/task", "4/design-1\n"),
+    ("tasks/lanes/criteria.md", "Lanes for each stage.\n"),
+    ("tasks/lanes/task.json", r#"{"stage": "design"}"#),
+    ("trials/environments/abc123-f1f1/held", ""),
+];
+
+#[track_caller]
+fn assert_files_under_benchmark_names(work_dir: &Path) {
+    assert_eq!(
+        files_under(work_dir),
+        FILES_UNDER_BENCHMARK_NAMES.map(|(path, _)| path)
+    );
+    for (path, text) in FILES_UNDER_BENCHMARK_NAMES {
+        assert_eq!(
+            std::fs::read_to_string(work_dir.join(path)).unwrap(),
+            text,
+            "{path}"
+        );
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_as_benchmarks_tasks_and_benchmark_runs()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_BENCHMARK_NAMES, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO suites (name, stage) VALUES ('board', 'design'), ('rows', 'triage');
+         INSERT INTO cases (name, suite, run, seq) VALUES ('lanes', 'board', '4/design-1', 1),
+             ('columns', 'board', '3/design-1', 2), ('stacks', 'rows', '5/triage-1', 1);
+         INSERT INTO experiments (id, suite, launched_at, repetitions, state, ended_at)
+             VALUES (1, 'board', '2026-11-17T12:00:00Z', 8, 'open', NULL),
+                 (2, 'board', '2026-11-17T13:00:00Z', 1, 'ended', '2026-11-17T14:00:00Z');
+         INSERT INTO experiment_cases (experiment, seq, name)
+             VALUES (1, 0, 'lanes'), (2, 0, 'columns');
+         INSERT INTO experiment_configurations (experiment, seq, name)
+             VALUES (1, 0, 'as-is'), (1, 1, 'short'), (2, 0, 'as-is');
+         INSERT INTO trials (experiment, repetition, case_seq, configuration_seq, state,
+                 outcome, money, seconds, correctness, leak, judge_money, unjudged, reason)
+             VALUES (1, 1, 0, 0, 'judged', 'done', 1.5, 60.0, 'pass', 0, 0.25, NULL, NULL),
+                 (1, 1, 0, 1, 'judged', 'handed-back', NULL, 30.0, 'fail', 1, NULL, NULL, NULL),
+                 (1, 2, 0, 0, 'unjudged', 'failed', 0.5, 10.0, NULL, NULL, NULL, 'outcome', NULL),
+                 (1, 2, 0, 1, 'unjudged', 'done', 0.75, 20.0, NULL, NULL, 0.125, 'judge',
+                     'it gave up'),
+                 (1, 3, 0, 0, 'unjudged', NULL, NULL, NULL, NULL, NULL, NULL, 'cancelled', NULL),
+                 (1, 3, 0, 1, 'judging', 'done', 2.0, 40.0, NULL, NULL, NULL, NULL, NULL),
+                 (1, 4, 0, 0, 'replayed', 'handed-back', 1.0, 50.0, NULL, NULL, NULL, NULL, NULL),
+                 (1, 4, 0, 1, 'replaying', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                 (1, 5, 0, 0, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+         INSERT INTO environments (dir) VALUES ('replays/environments/abc123-f1f1'),
+             ('environment');",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+    write_files_of_0_24_0(work_dir.path());
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let benchmarks = crate::benchmarks::Benchmarks::new(db.clone());
+    let listed: Vec<(String, usize)> = benchmarks
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|listed| (listed.benchmark.name.to_string(), listed.tasks))
+        .collect();
+    assert_eq!(listed, [("board".into(), 2), ("rows".into(), 1)]);
+    let board = benchmarks
+        .show(&"board".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let tasks: Vec<(&str, String)> = board
+        .tasks
+        .iter()
+        .map(|task| (task.name.as_str(), task.run.to_string()))
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("lanes", "4/design-1".into()),
+            ("columns", "3/design-1".into())
+        ]
+    );
+    let benchmark_runs = crate::benchmarks::BenchmarkRuns::new(db.clone());
+    let of_board: Vec<BenchmarkRunId> = benchmark_runs
+        .of_benchmark(&"board".parse().unwrap())
+        .await
+        .unwrap()
+        .iter()
+        .map(|record| record.id)
+        .collect();
+    assert_eq!(of_board, ["2".parse().unwrap(), "1".parse().unwrap()]);
+    let record = benchmark_runs
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            record
+                .tasks
+                .iter()
+                .map(TaskName::as_str)
+                .collect::<Vec<_>>(),
+            record
+                .configurations
+                .iter()
+                .map(ConfigurationName::as_str)
+                .collect::<Vec<_>>(),
+            record.state,
+        ),
+        (
+            vec!["lanes"],
+            vec!["as-is", "short"],
+            BenchmarkRunState::Open
+        )
+    );
+    let figures = |outcome: &str, money: Option<f64>, seconds: u64| TrialFigures {
+        outcome: serde_json::from_value::<OutcomeName>(serde_json::json!(outcome)).unwrap(),
+        money: money.map(|money| Usd::new(money).unwrap()),
+        time: Duration::from_secs(seconds),
+    };
+    assert_eq!(
+        record.trials.values().cloned().collect::<Vec<_>>(),
+        [
+            TrialState::Ended(TrialEnd::Scored {
+                run: figures("done", Some(1.5), 60),
+                score: ScoreFigures {
+                    correctness: Verdict::Pass,
+                    leak: false,
+                    scorer_money: Usd::new(0.25),
+                },
+            }),
+            TrialState::Ended(TrialEnd::Scored {
+                run: figures("handed-back", None, 30),
+                score: ScoreFigures {
+                    correctness: Verdict::Fail,
+                    leak: true,
+                    scorer_money: None,
+                },
+            }),
+            TrialState::Ended(TrialEnd::Unscored {
+                run: figures("failed", Some(0.5), 10),
+                why: NoScore::Outcome,
+            }),
+            TrialState::Ended(TrialEnd::Unscored {
+                run: figures("done", Some(0.75), 20),
+                why: NoScore::Scorer {
+                    reason: "it gave up".into(),
+                    scorer_money: Usd::new(0.125),
+                },
+            }),
+            TrialState::Ended(TrialEnd::Cancelled),
+            TrialState::Scoring {
+                run: figures("done", Some(2.0), 40),
+            },
+            TrialState::Ran {
+                run: figures("handed-back", Some(1.0), 50),
+            },
+            TrialState::Running,
+            TrialState::Pending,
+        ]
+    );
+    let environments: Vec<String> = sqlx::query_scalar("SELECT dir FROM environments ORDER BY dir")
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        environments,
+        ["environment", "trials/environments/abc123-f1f1"]
+    );
+    assert_files_under_benchmark_names(work_dir.path());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_move_of_the_work_directory_that_fails_leaves_the_schema_as_it_was_and_the_next_open_finishes_it()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_BENCHMARK_NAMES, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::raw_sql("INSERT INTO suites (name, stage) VALUES ('board', 'design')")
+        .execute(before.pool())
+        .await
+        .unwrap();
+    drop(before);
+    write_files_of_0_24_0(work_dir.path());
+    let in_the_way = work_dir.path().join("experiments/1/.kept/tasks");
+    std::fs::write(&in_the_way, "").unwrap();
+
+    let failed = Database::open(work_dir.path()).await;
+
+    let Err(OpenError::Failed(e)) = failed else {
+        panic!("{:?}", failed.map(|_| ()));
+    };
+    let message = format!("{e:#}");
+    assert!(
+        message.contains(".kept/cases and ") && message.contains(".kept/tasks exist"),
+        "{message}"
+    );
+    let unchanged = Database::open_in(work_dir.path(), BEFORE_BENCHMARK_NAMES, Absent::Leave)
+        .await
+        .unwrap();
+    let suites: Vec<String> = sqlx::query_scalar("SELECT name FROM suites")
+        .fetch_all(unchanged.pool())
+        .await
+        .unwrap();
+    assert_eq!(suites, ["board"]);
+    drop(unchanged);
+    std::fs::remove_file(work_dir.path().join("benchmark-runs/1/.kept/tasks")).unwrap();
+    let db = Database::open(work_dir.path()).await.unwrap();
+    let benchmarks: Vec<String> = crate::benchmarks::Benchmarks::new(db)
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|listed| listed.benchmark.name.to_string())
+        .collect();
+    assert_eq!(benchmarks, ["board"]);
+    assert_files_under_benchmark_names(work_dir.path());
 }

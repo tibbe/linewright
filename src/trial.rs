@@ -54,9 +54,9 @@ const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
 /// The directory, under the work directory, of the clones and the
 /// environments of trials.
-pub const TRIALS: &str = "replays";
+pub const TRIALS: &str = "trials";
 /// The part of an output that names the run whose task it runs.
-pub const TASK: &str = "case";
+pub const TASK: &str = "task";
 /// The directory of the output that keeps a copy of the configuration.
 const CONFIGURATION: &str = "configuration";
 const BUILD_LOG: &str = "build.log";
@@ -417,7 +417,7 @@ async fn run_unfinished(
             .context("keeping a copy of the configuration")?;
     }
     let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
-    in_own_dir(&work_dir, winding_up, "replay", async |own| {
+    in_own_dir(&work_dir, winding_up, "trial", async |own| {
         let ending = run_in(task, out, harness, config, configuration, under, own).await?;
         out.ended(ending)?;
         Ok(ending)

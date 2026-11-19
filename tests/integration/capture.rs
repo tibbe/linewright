@@ -21,7 +21,7 @@ fn runs(world: &World) -> impl Future<Output = Runs> + use<> {
 }
 
 fn tasks(world: &World) -> PathBuf {
-    world.dir.path().join("work").join("cases")
+    world.dir.path().join("work").join("tasks")
 }
 
 #[track_caller]
@@ -230,7 +230,7 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         entries(&dir),
         BTreeSet::from(
             [
-                "case.json",
+                "task.json",
                 "items.json",
                 "properties.json",
                 "repository.git",
@@ -240,7 +240,7 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         )
     );
     assert_eq!(
-        read_json(&dir.join("case.json")),
+        read_json(&dir.join("task.json")),
         json!({
             "stage": "implement",
             "item": ticket.0,
@@ -835,7 +835,7 @@ async fn lw_capture_without_criteria_is_a_command_line_error() {
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(output.stderr.contains("--criteria"), "{}", output.stderr);
-    assert!(!work_dir.path().join(REPO).join("cases").exists());
+    assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
 #[test_log::test(tokio::test)]
@@ -852,7 +852,7 @@ async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_gi
         "{}",
         output.stderr
     );
-    assert!(!work_dir.path().join(REPO).join("cases").exists());
+    assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
 #[test_log::test(tokio::test)]
@@ -864,7 +864,7 @@ async fn lw_capture_into_a_benchmark_that_does_not_exist_exits_4_saying_why() {
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
     assert_eq!(output.stderr, "lw: there is no suite implements\n");
-    assert!(!work_dir.path().join(REPO).join("cases").exists());
+    assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
 #[test_log::test(tokio::test)]
@@ -882,7 +882,7 @@ async fn lw_capture_into_a_benchmark_of_another_stage_exits_1_saying_why() {
             "lw: the suite implements holds cases of design, and the run {run} is of implement\n"
         )
     );
-    assert!(!work_dir.path().join(REPO).join("cases").exists());
+    assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
 #[test_log::test(tokio::test)]
@@ -920,5 +920,5 @@ async fn lw_capture_of_a_name_a_benchmarks_task_has_exits_1_before_reaching_gith
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert_eq!(output.stderr, "lw: a case is already named gadgets\n");
-    assert!(!repo.join("cases").exists());
+    assert!(!repo.join("tasks").exists());
 }

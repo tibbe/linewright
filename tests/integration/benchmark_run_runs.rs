@@ -202,7 +202,7 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
         record.trials
     );
     assert_eq!(
-        std::fs::read_to_string(repo.join("experiments/1/short/import/2/outcome")).unwrap(),
+        std::fs::read_to_string(repo.join("benchmark-runs/1/short/import/2/outcome")).unwrap(),
         "done\n"
     );
     let shown = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
@@ -248,7 +248,7 @@ async fn a_serve_killed_mid_trial_runs_it_again_into_a_new_output_when_restarted
     held.begun().await;
 
     killed.kill().await;
-    let out = repo.join("experiments/1/as-is/export/1");
+    let out = repo.join("benchmark-runs/1/as-is/export/1");
     std::fs::write(out.join("left-by-the-kill"), "").unwrap();
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);
@@ -291,7 +291,7 @@ async fn a_serve_killed_mid_scorer_scores_again_keeping_only_the_new_scorers_rec
     held.begun().await;
 
     killed.kill().await;
-    let scorers = repo.join("experiments/1/as-is/export/1/judge");
+    let scorers = repo.join("benchmark-runs/1/as-is/export/1/scorer");
     std::fs::create_dir_all(scorers.join("left-by-the-kill")).unwrap();
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);

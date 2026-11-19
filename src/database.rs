@@ -14,6 +14,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 
 use crate::domain::Timestamp;
 
+mod benchmark_names;
+
 /// The database's file, in the work directory.
 const DATABASE_FILE: &str = "linewright.db";
 
@@ -27,6 +29,11 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// A change of the schema, from the version before it to its own.
 pub(crate) enum Migration {
     Sql(&'static str),
+    /// A change of the files of the work directory that the database
+    /// refers to, given the work directory. It runs inside the schema's
+    /// change, which it rolls back by failing, so it must be idempotent:
+    /// the next open runs it again on what a failed run left.
+    WorkDir(fn(&Path) -> anyhow::Result<()>),
 }
 
 /// Every change of the schema, in order: the schema's version is how many of
@@ -42,6 +49,8 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(BENCHMARK_RUNS_TABLES),
     Migration::Sql(BENCHMARK_RUN_ENDS),
     Migration::Sql(TASKS_IN_ORDER),
+    Migration::Sql(benchmark_names::TABLES),
+    Migration::WorkDir(benchmark_names::move_files),
 ];
 
 /// The table of the release that made each schema version.
@@ -328,7 +337,7 @@ impl Database {
         let path = work_dir.join(DATABASE_FILE);
         let made = !exists(&path)?;
         let pool = connect(&path, absent).await?;
-        match settle(&pool, &lock, held, migrations).await {
+        match settle(&pool, work_dir, &lock, held, migrations).await {
             Ok(()) => Ok(Database {
                 pool,
                 work_dir: work_dir.into(),
@@ -400,6 +409,7 @@ impl Lock {
 /// <https://man7.org/linux/man-pages/man2/flock.2.html>
 async fn settle(
     pool: &SqlitePool,
+    work_dir: &Path,
     lock: &Lock,
     held: Held,
     migrations: &'static [Migration],
@@ -410,7 +420,7 @@ async fn settle(
         Standing::Behind(_) if held == Held::Shared && !lock.try_exclusive()? => {
             return Err(OpenError::OthersOpen);
         }
-        Standing::Behind(version) => migrate(pool, version, migrations).await?,
+        Standing::Behind(version) => migrate(pool, work_dir, lock, version, migrations).await?,
     }
     lock.shared().await?;
     match standing(pool, migrations).await? {
@@ -419,11 +429,15 @@ async fn settle(
     }
 }
 
-/// Runs the migrations after `version` in one `BEGIN IMMEDIATE` transaction,
-/// which ends by setting the version and recording this release as the one
-/// that made it.
+/// Runs the migrations after `version` on the database and on `work_dir` in
+/// one `BEGIN IMMEDIATE` transaction, which ends by setting the version and
+/// recording this release as the one that made it. It commits only once
+/// every migration has succeeded. A change of the work directory holds
+/// `lock` until it ends, even when the schema change is dropped first.
 async fn migrate(
     pool: &SqlitePool,
+    work_dir: &Path,
+    lock: &Lock,
     version: u32,
     migrations: &'static [Migration],
 ) -> anyhow::Result<()> {
@@ -432,11 +446,26 @@ async fn migrate(
         .await
         .context("beginning the database's schema change")?;
     for (index, migration) in migrations.iter().enumerate().skip(version as usize) {
-        let Migration::Sql(sql) = migration;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(*sql))
-            .execute(&mut *tx)
-            .await
-            .with_context(|| format!("changing the database's schema to version {}", index + 1))?;
+        let changing = || format!("changing the database's schema to version {}", index + 1);
+        match migration {
+            Migration::Sql(sql) => {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(*sql))
+                    .execute(&mut *tx)
+                    .await
+                    .with_context(changing)?;
+            }
+            Migration::WorkDir(change) => {
+                let (change, work_dir, held) = (*change, work_dir.to_path_buf(), lock.clone());
+                tokio::task::spawn_blocking(move || {
+                    let _held = held;
+                    change(&work_dir)
+                })
+                .await
+                .context("changing the work directory")
+                .flatten()
+                .with_context(changing)?;
+            }
+        }
     }
     let target = schema_version(migrations);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(

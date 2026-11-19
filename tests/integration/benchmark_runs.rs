@@ -26,7 +26,7 @@ fn board(work_dir: &Path) -> impl Future<Output = PathBuf> + use<> {
         "3/design-2",
         "Names them.\n",
     ));
-    let git = repo.join("cases/columns/commits.git");
+    let git = repo.join("tasks/columns/commits.git");
     std::fs::create_dir_all(git.join("objects")).unwrap();
     std::fs::write(git.join("HEAD"), "ref\n").unwrap();
     async move {
@@ -83,15 +83,15 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
         output.stdout,
         "Launched experiment 1 on the suite board: 8 replays\n"
     );
-    let kept = repo.join("experiments/1/.kept");
-    assert_eq!(names_in(&repo.join("experiments")), ["1"]);
-    assert_eq!(names_in(&kept.join("cases")), ["columns", "lanes"]);
+    let kept = repo.join("benchmark-runs/1/.kept");
+    assert_eq!(names_in(&repo.join("benchmark-runs")), ["1"]);
+    assert_eq!(names_in(&kept.join("tasks")), ["columns", "lanes"]);
     assert_eq!(
-        std::fs::read_to_string(kept.join("cases/columns/criteria.md")).unwrap(),
+        std::fs::read_to_string(kept.join("tasks/columns/criteria.md")).unwrap(),
         "Names them.\n"
     );
     assert_eq!(
-        std::fs::read_to_string(kept.join("cases/columns/commits.git/HEAD")).unwrap(),
+        std::fs::read_to_string(kept.join("tasks/columns/commits.git/HEAD")).unwrap(),
         "ref\n"
     );
     assert_eq!(names_in(&kept.join("configurations")), ["as-is", "short"]);
@@ -109,7 +109,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
 async fn lw_benchmark_run_launch_takes_an_id_past_a_directory_a_stopped_launch_left() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
-    std::fs::create_dir_all(repo.join("experiments/1/.kept")).unwrap();
+    std::fs::create_dir_all(repo.join("benchmark-runs/1/.kept")).unwrap();
 
     let output = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
 
@@ -119,7 +119,7 @@ async fn lw_benchmark_run_launch_takes_an_id_past_a_directory_a_stopped_launch_l
         "Launched experiment 2 on the suite board: 2 replays\n"
     );
     assert_eq!(
-        names_in(&repo.join("experiments/2/.kept/cases")),
+        names_in(&repo.join("benchmark-runs/2/.kept/tasks")),
         ["columns", "lanes"]
     );
 }
@@ -217,7 +217,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     assert_eq!(twice.stderr, "lw: two configurations are named short\n");
     assert_eq!(as_is.code, Some(1), "{}", as_is.stderr);
     assert_eq!(as_is.stderr, "lw: two configurations are named as-is\n");
-    let benchmark_runs = repo.join("experiments");
+    let benchmark_runs = repo.join("benchmark-runs");
     assert!(!benchmark_runs.exists() || names_in(&benchmark_runs).is_empty());
     let shown = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
     assert!(
@@ -266,7 +266,7 @@ async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch() {
     let launched = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
     assert_eq!(launched.code, Some(0), "{}", launched.stderr);
 
-    std::fs::write(repo.join("cases/lanes/criteria.md"), "Hides them.\n").unwrap();
+    std::fs::write(repo.join("tasks/lanes/criteria.md"), "Hides them.\n").unwrap();
     let removed = lw_in(
         work_dir.path(),
         &["suite", "remove-case", "board", "columns"],
@@ -274,7 +274,7 @@ async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch() {
     .await;
     assert_eq!(removed.code, Some(0), "{}", removed.stderr);
 
-    let kept = repo.join("experiments/1/.kept/cases");
+    let kept = repo.join("benchmark-runs/1/.kept/tasks");
     assert_eq!(names_in(&kept), ["columns", "lanes"]);
     assert_eq!(
         std::fs::read_to_string(kept.join("lanes/criteria.md")).unwrap(),
@@ -315,18 +315,18 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
         &repo,
         1,
         (1, 0, 0),
-        "state = 'judged', outcome = 'done', money = 0.3, seconds = 90, \
-         correctness = 'pass', leak = 0, judge_money = 0.05",
+        "state = 'scored', outcome = 'done', money = 0.3, seconds = 90, \
+         correctness = 'pass', leak = 0, scorer_money = 0.05",
     )
     .await;
     trial(
         &repo,
         1,
         (1, 0, 1),
-        "state = 'unjudged', outcome = 'failed', seconds = 30, unjudged = 'outcome'",
+        "state = 'unscored', outcome = 'failed', seconds = 30, unscored = 'outcome'",
     )
     .await;
-    trial(&repo, 1, (1, 1, 0), "state = 'replaying'").await;
+    trial(&repo, 1, (1, 1, 0), "state = 'running'").await;
 
     let text = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
     let json = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
@@ -477,7 +477,7 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
         &repo,
         1,
         (1, 0, 0),
-        "state = 'judged', outcome = 'done', seconds = 9, correctness = 'fail', leak = 0",
+        "state = 'scored', outcome = 'done', seconds = 9, correctness = 'fail', leak = 0",
     )
     .await;
     let cancelled = lw_in(work_dir.path(), &["experiment", "cancel", "1"]).await;

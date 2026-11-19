@@ -379,7 +379,7 @@ pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
         Purpose::Automation(name) => format!("automation-{name}"),
-        Purpose::Scorer => "judge".into(),
+        Purpose::Scorer => "scorer".into(),
     }
 }
 
@@ -395,7 +395,7 @@ pub(crate) fn new_record_dir(
     let kind = match purpose {
         Purpose::Work { kind, .. } => kind.name(),
         Purpose::Automation(_) => "automation",
-        Purpose::Scorer => "judge",
+        Purpose::Scorer => "scorer",
     };
     let base = format!("{}-{kind}", now.format("%Y%m%dT%H%M%SZ"));
     for n in 1.. {

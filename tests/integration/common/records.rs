@@ -321,7 +321,7 @@ pub fn keep_benchmark(
     let (name, stage) = (name.to_string(), stage.to_string());
     async move {
         let pool = pool.await;
-        sqlx::query("INSERT INTO suites (name, stage) VALUES (?, ?)")
+        sqlx::query("INSERT INTO benchmarks (name, stage) VALUES (?, ?)")
             .bind(name)
             .bind(stage)
             .execute(&pool)
@@ -347,8 +347,8 @@ pub fn keep_task_row(
     async move {
         let pool = pool.await;
         sqlx::query(
-            "INSERT INTO cases (name, suite, run, seq) VALUES (?1, ?2, ?3,
-                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM cases WHERE suite = ?2))",
+            "INSERT INTO tasks (name, benchmark, run, seq) VALUES (?1, ?2, ?3,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM tasks WHERE benchmark = ?2))",
         )
         .bind(name)
         .bind(benchmark)
@@ -370,7 +370,7 @@ pub fn keep_task(
     run: &str,
     criteria: &str,
 ) -> impl Future<Output = ()> + use<> {
-    let dir = work_dir.join("cases").join(name);
+    let dir = work_dir.join("tasks").join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("criteria.md"), criteria).unwrap();
     keep_task_row(work_dir, benchmark, name, run)
@@ -385,7 +385,7 @@ pub fn launched_at(work_dir: &Path, id: i64, at: &str) -> impl Future<Output = (
     let at = at.to_string();
     async move {
         let pool = pool.await;
-        sqlx::query("UPDATE experiments SET launched_at = ? WHERE id = ?")
+        sqlx::query("UPDATE benchmark_runs SET launched_at = ? WHERE id = ?")
             .bind(at)
             .bind(id)
             .execute(&pool)
@@ -410,7 +410,7 @@ pub fn trial(
     async move {
         let pool = pool.await;
         let statement = format!(
-            "UPDATE trials SET {set} WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?"
+            "UPDATE trials SET {set} WHERE benchmark_run = ? AND repetition = ? AND task_seq = ? AND configuration_seq = ?"
         );
         let updated = sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(id)

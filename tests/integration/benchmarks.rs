@@ -238,7 +238,7 @@ async fn lw_benchmark_remove_task_removes_the_task_and_its_directory() {
     );
     let listed = lw_in(work_dir.path(), &["suites"]).await;
     assert_eq!(listed.stdout, "board: implement, 1 case\n");
-    let left: Vec<String> = std::fs::read_dir(repo.join("cases"))
+    let left: Vec<String> = std::fs::read_dir(repo.join("tasks"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
@@ -279,7 +279,7 @@ async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exi
         "lw: the suite designs has no case lanes\n"
     );
     assert!(
-        repo.join("cases")
+        repo.join("tasks")
             .join("lanes")
             .join("criteria.md")
             .exists()
