@@ -16,13 +16,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
+use super::buttons::Verb;
 use super::capture::{NOT_POLLED, TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
 use super::making::{Answer, Making, task_not_made};
 use super::shell::{self, Frame, Heading, Missing, Place, Thing};
-use super::table::{Align, Column};
+use super::table::{Align, Column, Fold, View};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmarks, events, nothing_there, render,
@@ -70,13 +71,22 @@ impl TaskRow {
         format!("{}_criteria", self.row_id())
     }
 
+    /// What its row opens to: its whole criteria, where they read.
+    fn fold(&self) -> Fold {
+        let rows = match self.criteria {
+            CriteriaShown::Read { .. } => vec![self.criteria_id()],
+            CriteriaShown::Unreadable(_) => vec![],
+        };
+        Fold::of(rows, format!("Show the criteria of {}", self.name))
+    }
+
     /// The row of `task`, of the benchmark at `path`, removed after a
     /// confirmation (`docs/specs/benchmarks.md`, Remove task).
     fn of(task: TaskEntry, path: &str) -> TaskRow {
         TaskRow {
             remove: Confirmation {
                 id: format!("remove-{}", task.name),
-                label: "Remove",
+                verb: Verb::Remove,
                 question: format!("Remove the task {} and its directory?", task.name),
                 turn_down: TurnDown::Cancel,
                 action: format!("{path}/remove-task"),
@@ -104,7 +114,7 @@ impl TaskRow {
 
 /// A benchmark run's row.
 struct BenchmarkRunRow {
-    href: String,
+    view: View,
     launched: Html,
     status: Status,
     state: &'static str,
@@ -126,7 +136,10 @@ impl BenchmarkRunRow {
         let mut cost_text = dollars(cost.total);
         without(&mut cost_text, cost.none, "a cost");
         BenchmarkRunRow {
-            href: benchmark_run_path(record.id),
+            view: View {
+                href: benchmark_run_path(record.id),
+                name: format!("benchmark run {}", record.id),
+            },
             launched: html::time(record.launched_at),
             status,
             state,
@@ -149,27 +162,30 @@ enum BenchmarkRunsColumn {
     Configurations,
     Duration,
     Cost,
+    /// "View", linking to the benchmark run's Benchmark run.
+    View,
 }
 
 impl BenchmarkRunsColumn {
-    const ALL: [BenchmarkRunsColumn; 6] = [
+    const ALL: [BenchmarkRunsColumn; 7] = [
         BenchmarkRunsColumn::Launched,
         BenchmarkRunsColumn::State,
         BenchmarkRunsColumn::Tasks,
         BenchmarkRunsColumn::Configurations,
         BenchmarkRunsColumn::Duration,
         BenchmarkRunsColumn::Cost,
+        BenchmarkRunsColumn::View,
     ];
 
-    /// Empty for the column that names each row, which has no head.
     fn head(self) -> &'static str {
         match self {
-            BenchmarkRunsColumn::Launched => "",
+            BenchmarkRunsColumn::Launched => "Launched",
             BenchmarkRunsColumn::State => "State",
             BenchmarkRunsColumn::Tasks => "Tasks",
             BenchmarkRunsColumn::Configurations => "Configurations",
             BenchmarkRunsColumn::Duration => "Duration",
             BenchmarkRunsColumn::Cost => "Cost",
+            BenchmarkRunsColumn::View => "",
         }
     }
 
@@ -181,7 +197,8 @@ impl BenchmarkRunsColumn {
             BenchmarkRunsColumn::Launched
             | BenchmarkRunsColumn::State
             | BenchmarkRunsColumn::Tasks
-            | BenchmarkRunsColumn::Configurations => Column::Other,
+            | BenchmarkRunsColumn::Configurations
+            | BenchmarkRunsColumn::View => Column::Other,
         };
         Align::of(column).class()
     }
@@ -202,11 +219,11 @@ impl TasksColumn {
         TasksColumn::Remove,
     ];
 
-    /// Empty for the column that names each row and for "Remove"'s, which
-    /// have no head.
+    /// Empty for "Remove"'s, which has no head.
     fn head(self) -> &'static str {
         match self {
-            TasksColumn::Name | TasksColumn::Remove => "",
+            TasksColumn::Name => "Task",
+            TasksColumn::Remove => "",
             TasksColumn::CapturedFrom => "Captured from",
         }
     }

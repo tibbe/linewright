@@ -37,7 +37,7 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
 
     assert_eq!(
         runs_heads(&html),
-        ["Outcome", "Run", "Item", "Stage", "Started", "Duration"]
+        ["Outcome", "Run", "Item", "Stage", "Started", "Duration", ""]
     );
     assert_eq!(
         runs_shown(&html),
@@ -48,7 +48,8 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
                 "#2: Import fails",
                 "triage",
                 "2026-10-01 12:05:00 UTC",
-                "2m 30s"
+                "2m 30s",
+                "View"
             ],
             [
                 "done",
@@ -56,7 +57,8 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
                 "#1: Export fails",
                 "triage",
                 "2026-10-01 12:00:00 UTC",
-                "1m"
+                "1m",
+                "View"
             ],
         ]
     );
@@ -67,10 +69,25 @@ async fn the_runs_page_shows_the_runs_as_a_table_narrowed_by_its_filters() {
     assert_eq!(
         links,
         [
-            "/runs/2/triage-1",
             "/items/2",
-            "/runs/1/triage-1",
-            "/items/1"
+            "/runs/2/triage-1",
+            "/items/1",
+            "/runs/1/triage-1"
+        ]
+    );
+    assert_eq!(
+        views(&html, "#runs"),
+        [
+            (
+                "View".to_string(),
+                "View run 2/triage-1".to_string(),
+                "/runs/2/triage-1".to_string()
+            ),
+            (
+                "View".into(),
+                "View run 1/triage-1".into(),
+                "/runs/1/triage-1".into()
+            ),
         ]
     );
     assert_eq!(
@@ -156,7 +173,7 @@ async fn the_runs_pages_stream_lists_the_runs_again_as_one_starts_and_ends() {
     assert!(has_run(&running, "in flight", "1/triage-1"), "{running:?}");
     let ticking = select(
         region_of(&first, "runs"),
-        "#runs tbody td:last-child time[data-since]",
+        "#runs tbody td:nth-last-child(2) time[data-since]",
     );
     assert!(
         ticking.first().is_some_and(|time| time
@@ -218,7 +235,8 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
                 "automation hourly",
                 "",
                 "2026-10-01 13:05:00 UTC by hand",
-                "40s"
+                "40s",
+                "View"
             ],
             [
                 "done",
@@ -226,7 +244,8 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
                 "automation hourly",
                 "",
                 "2026-10-01 13:00:00 UTC",
-                "1m"
+                "1m",
+                "View"
             ],
         ]
     );
@@ -261,7 +280,8 @@ async fn the_runs_page_leaves_an_interrupted_runs_duration_empty() {
             "#1: Do the thing",
             "triage",
             "2026-10-01 11:00:00 UTC",
-            ""
+            "",
+            "View"
         ]
     );
     assert_no_status_by_colour_alone(&html);
@@ -341,18 +361,15 @@ async fn the_runs_page_says_why_a_narrowing_does_not_read() {
 /// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
 /// Tables.
 #[test_log::test(tokio::test)]
-async fn the_runs_table_is_in_a_card_named_runs_with_the_filters_in_its_bar_and_durations_aligned_right()
+async fn the_runs_table_is_in_a_card_showing_no_name_with_the_filters_in_a_row_and_durations_aligned_right()
  {
     let pages = two_issues_triaged().await;
 
     let html = pages.page("/runs").await;
 
     assert_eq!(
-        table_bars(&html),
-        [(
-            "Runs".to_string(),
-            vec!["item".to_string(), "stage".into(), "since".into()]
-        )]
+        table_cards(&html),
+        [unnamed_card(&[], &["item", "stage", "since"])]
     );
     assert_eq!(select(&html, ".table-card #runs table").len(), 1);
     let card = classes(&html, ".table-card");
@@ -363,7 +380,7 @@ async fn the_runs_table_is_in_a_card_named_runs_with_the_filters_in_its_bar_and_
         "{card:?}"
     );
     let start = "start";
-    let row = [start, start, start, start, start, "end"];
+    let row = [start, start, start, start, start, "end", start];
     assert_eq!(alignments(&html, "#runs"), [row, row, row]);
 }
 

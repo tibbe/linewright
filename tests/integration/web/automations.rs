@@ -158,13 +158,13 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
 /// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
 /// Tables.
 #[test_log::test(tokio::test)]
-async fn the_automations_table_is_in_a_card_named_automations_under_the_unparsed_files_its_rows_named_by_their_headers()
+async fn the_automations_table_is_in_a_card_showing_no_name_under_the_unparsed_files_its_rows_named_by_their_headers()
  {
     let pages = Pages::of(with(&[("weekly", WEEKLY), ("hourly", HOURLY)], true)).await;
 
     let html = pages.page("/automations").await;
 
-    assert_eq!(table_bars(&html), [("Automations".to_string(), vec![])]);
+    assert_eq!(table_cards(&html), [unnamed_card(&[], &[])]);
     assert_eq!(
         select(&html, "#automations .unparsed ~ .table-card table").len(),
         1
@@ -173,7 +173,7 @@ async fn the_automations_table_is_in_a_card_named_automations_under_the_unparsed
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "Schedule", "Last run", "Next run"]);
+    assert_eq!(heads, ["Automation", "Schedule", "Last run", "Next run"]);
     let names: Vec<String> = select(&html, "#automations tbody tr > th:first-child")
         .into_iter()
         .map(text)

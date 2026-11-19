@@ -27,7 +27,7 @@ use super::run_page::{
     PageOf, RunQuery, ShellRegions, Transcribed, transcript_events, transcript_page,
 };
 use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing, Within};
-use super::table::{Align, Column};
+use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_runs, events, nothing_there,
@@ -278,8 +278,7 @@ enum Row {
 struct FiguresRow {
     id: String,
     level: Level,
-    /// The rows it opens to, if any.
-    opens: Vec<String>,
+    fold: Fold,
     name: String,
     pass_rate: PassRate,
     /// Its cells under `ConfigurationsColumn::FIGURES`.
@@ -384,7 +383,7 @@ impl ConfigurationsColumn {
 
     fn head(self) -> &'static str {
         match self {
-            ConfigurationsColumn::Name => "",
+            ConfigurationsColumn::Name => "Configuration",
             ConfigurationsColumn::PassRate => "Pass rate",
             ConfigurationsColumn::MeanCost => "Mean cost",
             ConfigurationsColumn::TotalCost => "Total cost",
@@ -441,7 +440,7 @@ impl BenchmarkRunView {
             state,
             cancel: (record.state == BenchmarkRunState::Open).then(|| Confirmation {
                 id: "cancel-benchmark-run".into(),
-                label: "Cancel",
+                verb: Verb::Cancel,
                 question: format!(
                     "Cancel benchmark run {}? This stops its running trials and scorers.",
                     record.id
@@ -703,7 +702,10 @@ fn rows(
         rows.push(Row::Figures(FiguresRow {
             id: configuration_id.clone(),
             level: Level::Configuration,
-            opens: record.tasks.iter().map(task_id).collect(),
+            fold: Fold::of(
+                record.tasks.iter().map(task_id).collect(),
+                format!("Show the tasks of {}", configuration.name),
+            ),
             name: configuration.name.to_string(),
             pass_rate: PassRate::Text(
                 configuration
@@ -726,7 +728,10 @@ fn rows(
                 level: Level::Task {
                     of: configuration_id.clone(),
                 },
-                opens: trials.iter().map(|(key, _)| trial_id(key)).collect(),
+                fold: Fold::of(
+                    trials.iter().map(|(key, _)| trial_id(key)).collect(),
+                    format!("Show the trials of {task} under {}", configuration.name),
+                ),
                 name: task.to_string(),
                 pass_rate: PassRate::Text(passes_of(of_task.and_then(|of_task| of_task.passes))),
                 figures: of_task
@@ -794,11 +799,13 @@ fn trial_rows(
     let mut rows = vec![Row::Figures(FiguresRow {
         id,
         level: Level::Trial { of },
-        opens: if opens {
-            vec![details.id.clone()]
-        } else {
-            vec![]
-        },
+        fold: Fold::of(
+            opens.then(|| details.id.clone()).into_iter().collect(),
+            format!(
+                "Show the details of trial {} of {} under {}",
+                at.repetition, at.task, at.configuration
+            ),
+        ),
         name: format!("Trial {}", at.repetition),
         pass_rate: PassRate::Status { status, words },
         figures: [

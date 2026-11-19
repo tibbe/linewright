@@ -6,7 +6,7 @@
 {% call ui::facts(item.facts) %}{% endcall %}
 </section>
 {%- endblock %}
-{%- call(part) ui::table_card("Runs") %}
+{%- call(part) ui::table_card("Runs", shows_name = true) %}
 {%- if part == crate::web::table::Part::Table %}
 {%- call ui::runs(runs) %}{% endcall %}
 {%- endif %}

@@ -2,11 +2,11 @@
  * The web UI's script (docs/specs/design_system.md): it says since when the
  * page lost `serve`, shows times and durations in the page's language and the
  * reader's time zone, keeping them up, keeps a run's transcript at its latest
- * entry while the reader is there, opens and closes fold rows, keeps each
- * fold, fold row and confirmation as the reader opened or closed it through
- * updates, closes a confirmation as it goes ahead and a "New" dialog once
- * its thing is made, starts a "New" dialog's form afresh as it closes but
- * for the regions of the stream it holds,
+ * entry while the reader is there, opens and closes fold rows by their
+ * buttons, keeps each fold, fold row and confirmation as the reader opened or
+ * closed it through updates, closes a confirmation as it goes ahead and a
+ * "New" dialog once its thing is made, starts a "New" dialog's form afresh as
+ * it closes but for the regions of the stream it holds,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, adds and removes
@@ -260,17 +260,15 @@
     }
   }
 
-  /** What a click on acts on by itself, rather than on the row it is in. */
-  const interactive = "a, button, input, select, textarea, label, summary, dialog";
-
   /**
-   * Opens or closes a fold row on a click on it, but for a click on what acts
-   * by itself, such as a link (docs/specs/benchmarks.md, Benchmark, Tasks).
+   * Opens or closes a fold row on a click on its button, the one part of the
+   * row that opens it (docs/specs/design_system.md, Tables, Opening in place).
    */
   document.addEventListener("click", (event) => {
-    const row = event.target?.closest?.("tr[id]");
+    const clicked = event.target?.closest?.(foldButtonSelector);
+    const row = clicked?.closest("tr[id]");
     const button = foldButton(row);
-    if (!button || (event.target.closest(interactive) ?? button) !== button) return;
+    if (!button || button !== clicked) return;
     const open = button.getAttribute("aria-expanded") !== "true";
     button.setAttribute("aria-expanded", String(open));
     folds.set(row.id, open);
@@ -432,6 +430,23 @@
   // A form with more than one field to type in submits on no Enter:
   // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission
   applyOn("keydown", (event) => event.key === "Enter" && event.target.tagName === "INPUT");
+  // A search's own clear button and Escape empty it with no Enter, firing
+  // `search`, as Enter on it also does:
+  // https://developer.mozilla.org/en-US/docs/Web/API/HTMLInputElement/search_event
+  applyOn(
+    "search",
+    (event) =>
+      event.target.value === "" && addressFilters(event.target.name),
+  );
+
+  /** Whether the page's address carries a filter `name`. */
+  function addressFilters(name) {
+    const key = encodeURIComponent(name);
+    return location.search
+      .slice(1)
+      .split("&")
+      .some((pair) => pair.split("=")[0] === key);
+  }
 
   /** The run the reader chose to capture, if they chose one. */
   let chosenRun = null;

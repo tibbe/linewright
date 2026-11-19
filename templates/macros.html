@@ -52,32 +52,33 @@
 {%- endmacro -%}
 
 {#- A table in its card (`docs/specs/design_system.md`, Tables;
-    `docs/specs/web/design_system.md`, Tables), drawn as a board card is,
-    with a bar along its top and no line under the bar. At the bar's left
-    is `name`, which is empty for a table that fills a tab. At its right are
-    the filters, unless `filters_stream` is empty, applied as the page's
-    filters are to its address and to its stream at `filters_stream`; then
-    the buttons, if `buttons`. The caller draws each `crate::web::table::Part` it is given:
-    the filters' fields, the buttons, and the table, outside the bar. -#}
-{%- macro table_card(name, filters_stream = "", buttons = false) -%}
-<section class="table-card {% call card_look() %}{% endcall %} min-h-0 overflow-hidden">
-<div class="table-bar flex shrink-0 flex-wrap items-center gap-2 px-4 py-3">
-{%- if !name.is_empty() %}
+    `docs/specs/web/design_system.md`, Tables), named `name`. The card's top
+    holds `name` as its title at its left, if `shows_name`, and the buttons
+    at its right, if `buttons`. A card that shows no name is named `name` for
+    screen readers alone. The filters are in a row of their own under
+    the top, unless `filters_stream` is empty, applied as the page's filters
+    are to its address and to its stream at `filters_stream`. Then comes the
+    table. The caller draws each `crate::web::table::Part` it is given: the
+    filters' fields, the buttons and the table. -#}
+{%- macro table_card(name, shows_name, filters_stream = "", buttons = false) -%}
+<section class="table-card {% call card_look() %}{% endcall %} min-h-0 overflow-hidden{% if !shows_name && !buttons && filters_stream.is_empty() %} pt-3{% endif %}"{% if !shows_name %} aria-label="{{ name }}"{% endif %}>
+{%- if shows_name || buttons %}
+<div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4 py-3">
+{%- if shows_name %}
 <h2 class="card-title">{{ name }}</h2>
 {%- endif %}
-{%- if !filters_stream.is_empty() || buttons %}
+{%- if buttons %}
 <div class="ml-auto flex flex-wrap items-center gap-2">
+{{- caller(crate::web::table::Part::Buttons) }}
+</div>
+{%- endif %}
+</div>
+{%- endif %}
 {%- if !filters_stream.is_empty() %}
-<form class="flex flex-wrap items-center gap-2" data-filters="{{ filters_stream }}">
+<form class="table-filters flex shrink-0 flex-wrap items-center gap-2 px-4 pb-3{% if !shows_name && !buttons %} pt-3{% endif %}" data-filters="{{ filters_stream }}">
 {{- caller(crate::web::table::Part::Filters) }}
 </form>
 {%- endif %}
-{%- if buttons %}
-{{- caller(crate::web::table::Part::Buttons) }}
-{%- endif %}
-</div>
-{%- endif %}
-</div>
 {{ caller(crate::web::table::Part::Table) }}
 </section>
 {%- endmacro -%}
@@ -86,6 +87,14 @@
     with the keyboard `inputmode` asks for. -#}
 {%- macro filter_input(label, name, value, width = "w-32", placeholder = "", inputmode = "") -%}
 <label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
+{%- endmacro -%}
+
+{#- A filter that searches (`docs/specs/web/design_system.md`, Filters): a
+    search `input` with a magnifier at its start, named `label` for screen
+    readers and taking the spare width of its row, `value` empty while it is
+    unset. -#}
+{%- macro filter_search(label, name, value) -%}
+<label class="input input-sm grow"><svg class="size-[1em] shrink-0 opacity-60" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.75"/><path d="M10.5 10.5l3.25 3.25"/></svg><input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
 {%- endmacro -%}
 
 {#- A filter chosen from `options`, each its value and whether it is
@@ -101,13 +110,6 @@
 </select></label>
 {%- endmacro -%}
 
-{#- The button that asks for a confirmation (`docs/specs/design_system.md`,
-    Confirming), drawn with the classes `asking`, which opens its dialog,
-    drawn by `confirm_dialog`, with no request. -#}
-{%- macro confirm_button(confirmation, asking = "btn btn-sm") -%}
-<button class="{{ asking }}" type="button" command="show-modal" commandfor="{{ confirmation.id }}">{{ confirmation.label }}</button>
-{%- endmacro -%}
-
 {#- A confirmation's daisyUI `modal` (`docs/specs/design_system.md`,
     Confirming). Focus starts on turning it down, the least destructive
     answer. -#}
@@ -119,7 +121,7 @@
 <form method="dialog"><button class="btn btn-sm" autofocus>{{ confirmation.turn_down.label() }}</button></form>
 <form method="post" action="{{ confirmation.action }}" hx-post="{{ confirmation.action }}" hx-target="#{{ confirmation.said }}" hx-swap="innerHTML">
 {%- for (name, value) in confirmation.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor -%}
-<button class="btn btn-sm btn-error" type="submit">{{ confirmation.label }}</button></form>
+<button class="btn btn-sm btn-error" type="submit">{{ confirmation.verb.label() }}</button></form>
 </div>
 </div>
 </dialog>
@@ -180,19 +182,39 @@
 
 {#- A table's row `id` that opens to the rows under it, or one of those,
     under the row `of`, hidden until that row opens. The caller draws its
-    cells, the first holding `fold_button` where the row opens. -#}
+    cells, the first of a row in a table whose rows open drawn by
+    `fold_cell`. -#}
 {%- macro fold_row(id, of = "") -%}
 <tr id="{{ id }}"{% if !of.is_empty() %} data-fold-of="{{ of }}" hidden{% endif %}>
 {{- caller() -}}
 </tr>
 {%- endmacro -%}
 
-{#- The button in a fold row's first cell, which opens and closes the rows
-    `opens`, their ids. -#}
-{%- macro fold_button(opens) -%}
-<button class="fold cursor-pointer text-left" type="button" aria-expanded="false" aria-controls="{{ opens|join(" ") }}">
-{{- caller() -}}
-</button>
+{#- A row's leading cell (`docs/specs/design_system.md`, Tables, Opening in
+    place): the button that opens and closes the rows its
+    `crate::web::table::Fold` opens, with a chevron pointing right while they
+    are closed and down while they are open, or nothing where it opens
+    nothing. -#}
+{%- macro fold_cell(fold) -%}
+<td class="fold-cell w-0 pr-0">
+{%- match fold -%}
+{%- when crate::web::table::Fold::Opens(opens) -%}
+<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}"><svg class="chevron size-[1em] shrink-0 transition-transform group-aria-expanded:rotate-90" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+{%- when crate::web::table::Fold::Nothing -%}
+{%- endmatch -%}
+</td>
+{%- endmacro -%}
+
+{#- A row's `crate::web::table::View`, at the row's end. -#}
+{%- macro row_view(view) -%}
+<a class="row-view btn btn-ghost btn-xs" href="{{ view.href }}" aria-label="View {{ view.name }}">View</a>
+{%- endmacro -%}
+
+{#- A button on a table's row (`docs/specs/web/design_system.md`, Buttons):
+    its verb's label after its icon, opening the dialog `dialog` with no
+    request. -#}
+{%- macro row_button(verb, dialog) -%}
+<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}">{% call verb_icon(verb) %}{% endcall %}{{ verb.label() }}</button>
 {%- endmacro -%}
 
 {#- The classes of a board card's look (`docs/specs/web/board.md`, Board). -#}
@@ -228,6 +250,8 @@ card card-sm border border-base-300 bg-card shadow-sm
 <circle cx="8" cy="8" r="6.75"/><rect x="5.75" y="5.75" width="4.5" height="4.5" rx="0.5"/>
 {%- when crate::web::buttons::Verb::AddTask -%}
 <path d="M8 3v10M3 8h10"/>
+{%- when crate::web::buttons::Verb::Remove -%}
+<path d="M2.75 4.25h10.5M6.25 4.25v-1.5h3.5v1.5M4 4.25l.75 9h6.5l.75-9M6.75 7v3.75M9.25 7v3.75"/>
 {%- endmatch -%}
 </svg>
 {%- endmacro -%}
@@ -293,7 +317,7 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- when crate::web::runs_table::RunsColumn::Outcome -%}
 {% call status(row.status, row.word) %}{% endcall %}
 {%- when crate::web::runs_table::RunsColumn::Run -%}
-<a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a>
+<span class="whitespace-nowrap">{{ row.id|safe }}</span>
 {%- when crate::web::runs_table::RunsColumn::Item -%}
 {%- if let Some(item) = item -%}
 <div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>{% call item_cell(item) %}{% endcall %}</div>
@@ -304,6 +328,8 @@ card card-sm border border-base-300 bg-card shadow-sm
 <span class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-ghost badge-sm">by hand</span>{% endif %}</span>
 {%- when crate::web::runs_table::RunsColumn::Duration -%}
 {%- if let Some(duration) = row.duration %}<span class="whitespace-nowrap">{{ duration|safe }}</span>{% endif -%}
+{%- when crate::web::runs_table::RunsColumn::View -%}
+{% call row_view(row.view) %}{% endcall %}
 {%- endmatch -%}
 </td>
 {%- endfor %}

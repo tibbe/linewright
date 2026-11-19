@@ -4,17 +4,18 @@
 <p class="px-4 pb-4">No tasks</p>
 {%- else %}
 <table class="table">
-<thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr><th class="w-0"></th>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for task in tasks %}
 {%- call ui::fold_row(task.row_id()) %}
+{%- call ui::fold_cell(task.fold()) %}{% endcall %}
 {%- for column in TasksColumn::ALL %}
 {%- match column %}
 {%- when TasksColumn::Name %}
 <th class="{{ column.align() }}">
 {%- match task.criteria %}
 {%- when CriteriaShown::Read { first_line, text: _ } %}
-{%- call ui::fold_button([task.criteria_id()]) %}{{ task.name }}{% endcall %}
+<span>{{ task.name }}</span>
 <div class="text-muted text-sm font-normal">{{ first_line }}</div>
 {%- when CriteriaShown::Unreadable(why) %}
 <span>{{ task.name }}</span>
@@ -24,13 +25,13 @@
 {%- when TasksColumn::CapturedFrom %}
 <td class="{{ column.align() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
 {%- when TasksColumn::Remove %}
-<td class="{{ column.align() }}">{% call ui::confirm_button(task.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}{% call ui::confirm_dialog(task.remove) %}{% endcall %}</td>
+<td class="{{ column.align() }}">{% call ui::row_button(task.remove.verb, task.remove.id) %}{% endcall %}{% call ui::confirm_dialog(task.remove) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 {%- endcall %}
 {%- if let CriteriaShown::Read { first_line: _, text } = task.criteria %}
 {%- call ui::fold_row(task.criteria_id(), of = task.row_id()) %}
-<td colspan="{{ TasksColumn::ALL.len() }}"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
+<td colspan="{{ TasksColumn::ALL.len() + 1 }}"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
 {%- endcall %}
 {%- endif %}
 {%- endfor %}

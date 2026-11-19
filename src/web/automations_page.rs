@@ -117,10 +117,9 @@ impl AutomationsColumn {
         AutomationsColumn::NextRun,
     ];
 
-    /// Empty for the column that names each row, which has no head.
     fn head(self) -> &'static str {
         match self {
-            AutomationsColumn::Name => "",
+            AutomationsColumn::Name => "Automation",
             AutomationsColumn::Schedule => "Schedule",
             AutomationsColumn::LastRun => "Last run",
             AutomationsColumn::NextRun => "Next run",

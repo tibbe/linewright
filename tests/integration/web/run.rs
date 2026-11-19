@@ -765,7 +765,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     let runs = pages.page("/runs").await;
     let html = pages.page("/runs/weekly/1").await;
 
-    let links: Vec<&str> = select(&runs, "#runs tbody td:nth-child(2) a")
+    let links: Vec<&str> = select(&runs, "#runs tbody td:last-child a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();

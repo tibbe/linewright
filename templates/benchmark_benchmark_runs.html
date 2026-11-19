@@ -11,7 +11,7 @@
 {%- for column in BenchmarkRunsColumn::ALL %}
 {%- match column %}
 {%- when BenchmarkRunsColumn::Launched %}
-<th class="{{ column.align() }}"><a class="link link-hover" href="{{ benchmark_run.href }}">{{ benchmark_run.launched }}</a></th>
+<th class="{{ column.align() }}">{{ benchmark_run.launched }}</th>
 {%- when BenchmarkRunsColumn::State %}
 <td class="{{ column.align() }}">{% call ui::status(benchmark_run.status, benchmark_run.state) %}{% endcall %}</td>
 {%- when BenchmarkRunsColumn::Tasks %}
@@ -22,6 +22,8 @@
 <td class="{{ column.align() }} whitespace-nowrap">{% match benchmark_run.duration %}{% when Some(duration) %}{{ duration }}{% when None %}–{% endmatch %}</td>
 {%- when BenchmarkRunsColumn::Cost %}
 <td class="{{ column.align() }} whitespace-nowrap">{{ benchmark_run.cost }}</td>
+{%- when BenchmarkRunsColumn::View %}
+<td class="{{ column.align() }}">{% call ui::row_view(benchmark_run.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>
