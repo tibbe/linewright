@@ -298,8 +298,8 @@ async fn the_experiment_pages_grid_shows_the_passes_leaks_and_unjudged_of_each_c
     assert_eq!(
         rows(&html, "#grid"),
         [
-            ["columns", "2 of 2", "0 of 0, 1 leak, 1 unjudged"],
-            ["lanes", "0 of 0, 1 unjudged", "0 of 1"],
+            ["columns", "2 of 2", "–, 1 leak, 1 unjudged"],
+            ["lanes", "–, 1 unjudged", "0 of 1"],
         ]
     );
 }
@@ -357,7 +357,7 @@ async fn a_configuration_opens_to_its_cases_and_a_case_to_its_replays_with_their
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(cases, ["columns: 0 of 0", "lanes: 0 of 1"]);
+    assert_eq!(cases, ["columns: –", "lanes: 0 of 1"]);
     let replays = |configuration: ElementRef, case: usize| -> Vec<String> {
         let case = select_in(configuration, "details.case")[case];
         select_in(case, ".replay .replay-line")
