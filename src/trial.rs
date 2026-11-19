@@ -52,6 +52,9 @@ const WRITES: &str = "writes";
 /// The directory of the output that keeps the attachments.
 const ATTACHMENTS: &str = "attachments";
 const VERSION: &str = "version";
+/// The directory, under the work directory, of the clones and the
+/// environments of trials.
+pub const TRIALS: &str = "replays";
 /// The part of an output that names the run whose task it runs.
 pub const TASK: &str = "case";
 /// The directory of the output that keeps a copy of the configuration.
@@ -451,7 +454,7 @@ async fn in_own_dir<T>(
     prefix: &str,
     work: impl AsyncFnOnce(OwnDir<'_>) -> T,
 ) -> Result<T> {
-    let trials = Clones::new(&work_dir.join("replays"), winding_up);
+    let trials = Clones::new(&work_dir.join(TRIALS), winding_up);
     trials.sweep();
     let own = trials
         .make(prefix)

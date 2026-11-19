@@ -426,7 +426,7 @@ pub async fn capture(
         run: &run,
         api_version: &input.api_version,
     };
-    write("case.json", &json(&task)?)?;
+    write(TASK_FILE, &json(&task)?)?;
     write("items.json", &json(&input.items)?)?;
     write("properties.json", &json(&input.properties)?)?;
     write(CRITERIA_FILE, criteria.as_str().as_bytes())?;
@@ -643,6 +643,9 @@ pub fn read_criteria(dir: &Path) -> Result<Criteria, TaskRefusal> {
 
 const CRITERIA_FILE: &str = "criteria.md";
 
+/// The file, in a task's directory, of its stage, repository and run.
+const TASK_FILE: &str = "case.json";
+
 fn refusal(part: TaskPart, why: String) -> TaskRefusal {
     TaskRefusal { part, why }
 }
@@ -656,7 +659,7 @@ struct TaskFileRead {
 }
 
 fn read_task_file(dir: &Path) -> Result<TaskFileRead, TaskRefusal> {
-    let file: serde_json::Map<String, Value> = read_json(dir, "case.json", TaskPart::Stage)?;
+    let file: serde_json::Map<String, Value> = read_json(dir, TASK_FILE, TaskPart::Stage)?;
     let stage = TaskStage::try_from(task_field::<WorkKind>(&file, TaskPart::Stage, "stage")?)
         .map_err(|kind| {
             refusal(
@@ -670,7 +673,7 @@ fn read_task_file(dir: &Path) -> Result<TaskFileRead, TaskRefusal> {
         start: task_field(&file, TaskPart::Start, "start")?,
         run: task_field::<String>(&file, TaskPart::Run, "run")?
             .parse()
-            .map_err(|e| refusal(TaskPart::Run, format!("case.json's run: {e}")))?,
+            .map_err(|e| refusal(TaskPart::Run, format!("{TASK_FILE}'s run: {e}")))?,
     })
 }
 
@@ -682,8 +685,8 @@ fn task_field<T: DeserializeOwned>(
 ) -> Result<T, TaskRefusal> {
     let value = file
         .get(name)
-        .ok_or_else(|| refusal(part, format!("case.json gives no {name}")))?;
-    T::deserialize(value).map_err(|e| refusal(part, format!("case.json's {name}: {e}")))
+        .ok_or_else(|| refusal(part, format!("{TASK_FILE} gives no {name}")))?;
+    T::deserialize(value).map_err(|e| refusal(part, format!("{TASK_FILE}'s {name}: {e}")))
 }
 
 /// The JSON file `name` in `dir`, which holds `part`.
