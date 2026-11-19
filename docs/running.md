@@ -46,8 +46,8 @@ in `linewright.toml`, except `session-env`, which has no variable;
 add their variables to the whole pipeline's for that stage's sessions only,
 and a value the stage's `session-env` sets wins over the whole pipeline's.
 The stages are `triage`, `design`, `implement`, `rework`, `fix-ci` and
-`update`. The judge of a replay is no stage, but its session takes its settings
-from the table `[stage.judge]` as a stage's sessions do. These tables have no
+`update`. The scorer of a trial is no stage, but its session takes its settings
+from the table `[stage.scorer]` as a stage's sessions do. These tables have no
 flags or variables.
 
 ```toml
@@ -178,7 +178,7 @@ Linewright on itself in a locked-down container.
 `work-dir` holds Linewright's records of its runs and bookkeeping in one
 database, `linewright.db` in each repository's work directory, and beside it
 the runs' transcripts and attachments, the clones, the environment and the
-cases. Keep it on a local filesystem: the database does not work over NFS or
+tasks. Keep it on a local filesystem: the database does not work over NFS or
 SMB, and Linewright warns at startup when it finds one. Under Docker Desktop
 on macOS, put it in a named volume rather than a bind mount.
 
@@ -283,78 +283,79 @@ run it as a user, or in a container, that holds no credentials you don't mean
 sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `~/.git-credentials`.
 
-## Judging a replay
+## Scoring a trial
 
-`lw replay CASE --out DIR` runs a case's stage again
-([Capturing a case](tuning-briefs.md#capturing-a-case)), and `lw judge CASE DIR`
-then judges what it made against the case's criteria. A capture needs its
-criteria, as `lw capture ID NAME --suite SUITE --criteria FILE`, since they are
-what the judge judges by. The judge is an agent in a session of its own: it
-reads the replay's sessions and writes, and its clone has the branch the replay
-pushed checked out, or the default branch when it pushed none. It also looks for
-a leak: a session that learned how the work turned out, such as from the merged
-pull request, whose replay says nothing about the stage.
+`lw trial TASK --out DIR` runs a task's stage again
+([Capturing a task](tuning-briefs.md#capturing-a-task)), and `lw score TASK DIR`
+then scores what it made against the task's criteria. A capture needs its
+criteria, as `lw capture ID NAME --benchmark BENCHMARK --criteria FILE`, since
+they are what the scorer scores by. The scorer is an agent in a session of its
+own: it reads the trial's sessions and writes, and its clone has the branch the
+trial pushed checked out, or the default branch when it pushed none. It also
+looks for a leak: a session that learned how the work turned out, such as from
+the merged pull request, whose trial says nothing about the stage.
 
 ```sh
-lw replay cases/43-implement-2 --out out/43-1
-lw judge cases/43-implement-2 out/43-1
+lw trial tasks/43-implement-2 --out out/43-1
+lw score tasks/43-implement-2 out/43-1
 ```
 
-To try a change, give `lw replay` a configuration with
+To try a change, give `lw trial` a configuration with
 `--configuration CONFIG`: a directory laid out as `.linewright/`, whose
 `config.toml` sets only `model`, `effort` and `session-timeout`, with no
 tables, and whose `briefs/` holds files of the brief. Each of them overrides
 every other layer, flags and stage tables included, and the rest comes from
 those layers. Linewright refuses a configuration with an error before the
-replay starts, and keeps a copy of it in the output's `configuration/`. The
-judge does not take it.
+trial starts, and keeps a copy of it in the output's `configuration/`. The
+scorer does not take it.
 
-`lw judge` runs as `lw replay` does: it needs no `repo`, the case's repository
+`lw score` runs as `lw trial` does: it needs no `repo`, the task's repository
 on GitHub is kept from its `gh`, and its session takes its settings from
-`[stage.judge]` ([Stage settings](#stage-settings)). It judges only a replay
-whose run ended done or handed back, and refuses an output replayed from
-another case or one that already holds a judgement, which it leaves as it is,
-with its judge's record. It prints the verdict and whether it found a leak, and
-keeps the judgement in the output:
+`[stage.scorer]` ([Stage settings](#stage-settings)). It scores only a trial
+whose run ended done or handed back, and refuses an output of a trial of
+another task or one that already holds a score, which it leaves as it is,
+with its scorer's record. It prints the verdict and whether it found a leak, and
+keeps the score in the output:
 
 ```text
-judgement.json  the verdict (pass or fail), whether a leak was found and the
-                tool calls that show it, each with the judge's reasoning, the
-                judge's model and effort, and the version of Linewright
-judge/          the record of the judge's session, which judgement.json names
+score.json  the verdict (pass or fail), whether a leak was found and the tool
+            calls that show it, each with the scorer's reasoning, the
+            scorer's model and effort, and the version of Linewright
+scorer/     the record of the scorer's session, which score.json names
 ```
 
-A judge that gives up, fails, ends without a result Linewright accepts or is
-stopped keeps nothing. The command exits 0 when the judge made a judgement,
+A scorer that gives up, fails, ends without a result Linewright accepts or is
+stopped keeps nothing. The command exits 0 when the scorer made a score,
 whatever it is, and 1 when it made none or refused the output.
 
-## Experiments
+## Benchmark runs
 
-An experiment replays each case of a suite under several configurations, and
-judges each replay. `lw experiment launch SUITE` launches one under `as-is`,
-which changes nothing, and a configuration for each
-`--configuration NAME=DIR`, laid out as `lw replay` takes it, with
-`--repetitions N` replays of each case under each configuration, 1 by default:
+A benchmark run makes a trial of each task of a benchmark under several
+configurations, and scores each trial. `lw benchmark-run launch BENCHMARK`
+launches one under `as-is`, which changes nothing, and a configuration for each
+`--configuration NAME=DIR`, laid out as `lw trial` takes it, with
+`--repetitions N` trials of each task under each configuration, 1 by default:
 
 ```sh
-lw experiment launch implements --configuration short-brief=tries/short --repetitions 3
+lw benchmark-run launch implements --configuration short-brief=tries/short --repetitions 3
 ```
 
-The launch keeps a copy of each case of the suite and of each configuration
-under `experiments/ID/` in the work directory, so a later change to the suite, a
-case's criteria or a configuration's directory leaves the experiment as it was.
-It refuses a suite with no cases, a configuration with an error and two
-configurations with one name, `as-is` among them, and then writes nothing. The
-replays' outputs are to go in `experiments/ID/CONFIG/CASE/REP`.
+The launch keeps a copy of each task of the benchmark and of each configuration
+under `benchmark-runs/ID/` in the work directory, so a later change to the
+benchmark, a task's criteria or a configuration's directory leaves the
+benchmark run as it was. It refuses a benchmark with no tasks, a configuration
+with an error and two configurations with one name, `as-is` among them, and
+then writes nothing. The trials' outputs are to go in
+`benchmark-runs/ID/CONFIG/TASK/REP`.
 
-`lw experiment show ID` shows an experiment's state, each replay, and each
-configuration's results: its pass rate and passes for each case, of the replays
-with a judgement and no leak, the mean and total of its replays' cost and time,
-its leaks and its replays without a judgement, with the judges' cost apart.
-`lw suite show NAME` lists the suite's experiments, latest first, and
-`lw experiment cancel ID` cancels one, stopping its replays and judges in
+`lw benchmark-run show ID` shows a benchmark run's state, each trial, and each
+configuration's results: its pass rate and passes for each task, of the trials
+with a score and no leak, the mean and total of its trials' cost and time, its
+leaks and its trials without a score, with the scorers' cost apart.
+`lw benchmark show NAME` lists the benchmark's benchmark runs, latest first,
+and `lw benchmark-run cancel ID` cancels one, stopping its trials and scorers in
 flight. The commands work whether `serve` is running or not, and exit 4 for a
-suite or an experiment that does not exist.
+benchmark or a benchmark run that does not exist.
 
 The web UI does the same from a suite's page: it lists the suite's
 experiments and launches one, with `as-is` first and each other configuration
@@ -367,14 +368,14 @@ configuration's figures, which open to its cases and their replays, and from
 each replay to the transcripts of its run and of its judge. It cancels an
 open experiment too.
 
-`serve` runs the experiments' replays and judges, oldest experiment first, a
-replay's judge before the next replay, and at most `max-replays` of them at
-once (1 unless set). None starts while a run of the pipeline waits for a place
-under `max-runs`. A drain and the usage limit hold them as they hold runs, and
-the other holds do not. An experiment shows what it waits for: a place under
-`max-replays`, the pipeline, a drain or the usage limit. An open experiment
-waits while no `serve` runs, and a replay or judge that a stop interrupted
-starts again once `serve` does, a replay into a new output.
+`serve` runs the benchmark runs' trials and scorers, oldest benchmark run
+first, a trial's scorer before the next trial, and at most `max-trials` of them
+at once (1 unless set). None starts while a run of the pipeline waits for a
+place under `max-runs`. A drain and the usage limit hold them as they hold
+runs, and the other holds do not. A benchmark run shows what it waits for: a
+place under `max-trials`, the pipeline, a drain or the usage limit. An open
+benchmark run waits while no `serve` runs, and a trial or scorer that a stop
+interrupted starts again once `serve` does, a trial into a new output.
 
 ## Monitoring
 
@@ -392,9 +393,9 @@ work directory when no `serve` runs. They exit 3 when they need a `serve` and
 none runs for the repository, and 4 when #N or the run ID names nothing.
 
 `lw export ID DIR` writes a run's outcome, briefs, transcripts and attachments
-into DIR as plain files, in the form a replay's output gives its run, whether
+into DIR as plain files, in the form a trial's output gives its run, whether
 or not `serve` runs. DIR is made if missing and refused unless empty, as a
-replay's output is. A run in flight is written as it is when the command
+trial's output is. A run in flight is written as it is when the command
 starts. It exits 4 when the run ID names nothing.
 
 ## The web UI

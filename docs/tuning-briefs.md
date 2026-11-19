@@ -13,21 +13,21 @@ result schema is tried by editing `briefs/results/` and rebuilding.
 A change to a file's placeholders, which Linewright refuses unless the code
 changes with it, is a change to the spec (`docs/specs/runs.md`, "Contract").
 
-## Capturing a case
+## Capturing a task
 
-A triage, design or implement run that went badly is worth keeping as a case,
+A triage, design or implement run that went badly is worth keeping as a task,
 to try a change to its stage's brief against (`docs/specs/benchmarks.md`). Find
 the run's ID with `lw runs N`, such as `43/implement-2`, and capture it into a
-suite of its stage, under a name of lowercase letters, digits and hyphens
+benchmark of its stage, under a name of lowercase letters, digits and hyphens
 starting with a letter or a digit, with what a good result would have been:
 
 ```sh
-lw suite add implements implement
-lw capture 43/implement-2 43-implement-2 --suite implements --criteria good-result.md
+lw benchmark add implements implement
+lw capture 43/implement-2 43-implement-2 --benchmark implements --criteria good-result.md
 ```
 
 It works whether `serve` is running or not, with the token `serve` uses: the
-commits are fetched from GitHub. The case is written to `tasks/43-implement-2/`
+commits are fetched from GitHub. The task is written to `tasks/43-implement-2/`
 under the work directory:
 
 ```text
@@ -35,20 +35,21 @@ task.json        the stage, the item, the start, the run and the API version
 items.json       the items the run was given, as GitHub's REST API gave them
 properties.json  the repository's properties, as GitHub's API gave them
 repository.git/  a bare repository of the branch heads it was given
-criteria.md      the criteria, which a case needs
+criteria.md      the criteria, which a task needs
 ```
 
-A case is a plain directory: copy it to where you tune the briefs, and edit its
+A task is a plain directory: copy it to where you tune the briefs, and edit its
 `criteria.md` as you like. Only a run that recorded its whole input at its start
 can be captured: a run recorded before Linewright recorded the repository's
-properties is refused. A name a case already has is refused too, and so is a
-suite of another stage. A capture that fails, such as for a commit GitHub no
+properties is refused. A name a task already has is refused too, and so is a
+benchmark of another stage. A capture that fails, such as for a commit GitHub no
 longer has, writes nothing.
 
-`lw suites` lists the suites, `lw suite show NAME` shows a suite's cases with
-their criteria and its experiments, and `lw suite remove-case NAME CASE` removes
-a case, its directory with it. A case captured before suites is in none. The web
-UI does the same from its suites page, at `/suites`: it lists the suites and
-makes one, and each suite's page shows its cases, captures a run of its stage
-into it and removes a case. An experiment compares configurations on a suite's
-cases ([Experiments](running.md#experiments)).
+`lw benchmarks` lists the benchmarks, `lw benchmark show NAME` shows a
+benchmark's tasks with their criteria and its benchmark runs, and
+`lw benchmark remove-task NAME TASK` removes a task, its directory with it. A
+task captured before benchmarks is in none. The web UI does the same from its
+suites page, at `/suites`: it lists the suites and makes one, and each suite's
+page shows its cases, captures a run of its stage into it and removes a case.
+A benchmark run compares configurations on a benchmark's tasks
+([Benchmark runs](running.md#benchmark-runs)).
