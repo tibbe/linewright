@@ -49,7 +49,8 @@ longer has, writes nothing.
 benchmark's tasks with their criteria and its benchmark runs, and
 `lw benchmark remove-task NAME TASK` removes a task, its directory with it. A
 task captured before benchmarks is in none. The web UI does the same from its
-suites page, at `/suites`: it lists the suites and makes one, and each suite's
-page shows its cases, captures a run of its stage into it and removes a case.
+benchmarks page, at `/benchmarks`: it lists the benchmarks and makes one, and
+each benchmark's page shows its tasks, captures a run of its stage into it and
+removes a task.
 A benchmark run compares configurations on a benchmark's tasks
 ([Benchmark runs](running.md#benchmark-runs)).

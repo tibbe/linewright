@@ -357,16 +357,16 @@ and `lw benchmark-run cancel ID` cancels one, stopping its trials and scorers in
 flight. The commands work whether `serve` is running or not, and exit 4 for a
 benchmark or a benchmark run that does not exist.
 
-The web UI does the same from a suite's page: it lists the suite's
-experiments and launches one, with `as-is` first and each other configuration
-given a name, its `model`, `effort` and `session-timeout`, and the text of any
-file of the brief, which starts as a run of the stage would use it when the
-form opens; only the files you change go into it. Each experiment's page
-follows it as it runs, with a chart of each configuration's mean cost against
-its pass rate, the passes of each case under each configuration, and each
-configuration's figures, which open to its cases and their replays, and from
-each replay to the transcripts of its run and of its judge. It cancels an
-open experiment too.
+The web UI does the same from a benchmark's page: it lists the benchmark's
+benchmark runs and launches one, with `as-is` first and each other
+configuration given a name, its `model`, `effort` and `session-timeout`, and
+the text of any file of the brief, which starts as a run of the stage would use
+it when the form opens; only the files you change go into it. Each benchmark
+run's page follows it as it runs, with a chart of each configuration's mean cost
+against its pass rate, the passes of each task under each configuration, and
+each configuration's figures, which open to its tasks and their trials, and from
+each trial to the transcripts of its run and of its scorer. It cancels an open
+benchmark run too.
 
 `serve` runs the benchmark runs' trials and scorers, oldest benchmark run
 first, a trial's scorer before the next trial, and at most `max-trials` of them
