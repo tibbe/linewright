@@ -873,6 +873,41 @@ async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
     );
 }
 
+/// `docs/specs/design_system.md`, Tables, Pages, Links: a page link applies
+/// to the address and the stream as a filter does, a link opened in a new tab
+/// is left to the browser, and changing a filter goes back to the first page.
+#[test_log::test(tokio::test)]
+async fn a_page_link_applies_to_the_address_and_the_stream_and_a_filter_then_drops_the_page() {
+    let applied = applied_after_each(&[
+        r#"
+var link = element("A", { href: "/runs?stage=triage&page=2", "data-stream": "/events/runs?stage=triage&page=2" });
+link.closest = (selector) => (selector === "nav.pages a[data-stream]" ? link : null);
+const click = event(link, { button: 0 });
+fire("click", click);
+steps.push(click.prevented);"#,
+        r#"const opened = event(link, { button: 0, ctrlKey: true }); fire("click", opened); steps.push(opened.prevented);"#,
+        r#"stage.value = "design"; fire("change", event(stage));"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            "true".to_string(),
+            format!(
+                "/runs?stage=triage&page=2 | {}",
+                restarted("/events/runs?stage=triage&page=2")
+            ),
+            "false".to_string(),
+            "-".to_string(),
+            format!(
+                "/runs?stage=design | {}",
+                restarted("/events/runs?stage=design")
+            ),
+        ]
+    );
+}
+
 /// `docs/specs/web/design_system.md`, Filters: a search the reader clears by
 /// its own button or by Escape, which fire `search` and no Enter, unsets its
 /// filter; a `search` the reader's Enter already applied applies nothing more.

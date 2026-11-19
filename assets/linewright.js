@@ -8,7 +8,9 @@
  * "New" dialog once its thing is made, starts a "New" dialog's form afresh as
  * it closes but for the regions of the stream it holds,
  * keeps the options of the page's filters up and
- * applies the filters as they are chosen, fills in a capture's name for the
+ * applies the filters as they are chosen and a table's page links
+ * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
+ * reader opens elsewhere, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, adds and removes
  * New benchmark run's configurations, opens the boxes of the files of the brief
  * they give and counts their trials, and shows the page's tooltip.
@@ -396,22 +398,38 @@
   }
 
   /**
+   * The page's address takes `address`, and its stream restarts at
+   * `streamAt`. The stream's element is swapped out for one at `streamAt`,
+   * and htmx's cleanup of the old one ends its stream (`htmx_before_cleanup`
+   * in hx-sse.js).
+   */
+  function applyQuery(address, streamAt) {
+    history.replaceState(null, "", address);
+    const old = stream();
+    const fresh = old.cloneNode(false);
+    fresh.setAttribute("hx-sse:connect", streamAt);
+    streaming = false;
+    htmx.swap({ target: old, swap: "outerHTML", text: fresh.outerHTML });
+  }
+
+  /**
    * Applies `form`'s filters (docs/specs/design_system.md, Filters): the
    * page's address and its stream, at the form's `data-filters`, take their
-   * query. The stream's element is swapped out for one at the new query, and
-   * htmx's cleanup of the old one ends its stream (`htmx_before_cleanup` in
-   * hx-sse.js).
+   * query, and so drop the table's pages.
    */
   function applyFilters(form) {
     const query = filterQuery(form.elements);
     const withQuery = (path) => (query ? `${path}?${query}` : path);
-    history.replaceState(null, "", withQuery(location.pathname));
-    const old = stream();
-    const fresh = old.cloneNode(false);
-    fresh.setAttribute("hx-sse:connect", withQuery(form.getAttribute("data-filters")));
-    streaming = false;
-    htmx.swap({ target: old, swap: "outerHTML", text: fresh.outerHTML });
+    applyQuery(withQuery(location.pathname), withQuery(form.getAttribute("data-filters")));
   }
+
+  document.addEventListener("click", (event) => {
+    const link = event.target?.closest?.("nav.pages a[data-stream]");
+    if (!link || event.button !== 0) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    applyQuery(link.getAttribute("href"), link.getAttribute("data-stream"));
+  });
 
   /**
    * Applies the filters of the form an event of `type` came from, for an
