@@ -583,6 +583,40 @@ pub async fn interrupted_run(work_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// How many earlier runs [`earlier_runs`] records, enough for Runs to show
+/// more than one page (`docs/specs/design_system.md`, Tables, Pages).
+const EARLIER_RUNS: i64 = 60;
+
+/// Records the earlier triage runs of the tasks' issue, each done in a minute,
+/// an hour apart up to the day before the clock starts.
+///
+/// # Errors
+///
+/// When the database cannot be written.
+pub async fn earlier_runs(work_dir: &Path) -> Result<()> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(work_dir.join("linewright.db"))
+        .foreign_keys(true);
+    let pool = sqlx::SqlitePool::connect_with(options).await?;
+    for n in 1..=EARLIER_RUNS {
+        let (day, hour) = (25 + n / 24, n % 24);
+        let started = format!("2026-02-{day:02}T{hour:02}:00:00Z");
+        let ended = format!("2026-02-{day:02}T{hour:02}:01:00Z");
+        sqlx::query(
+            "INSERT INTO runs (kind, item, stage, n, started_at, ended_at, ending)
+             VALUES ('item', ?, 'triage', ?, ?, ?, 'done')",
+        )
+        .bind(i64::try_from(TASKS_ISSUE.0)?)
+        .bind(n)
+        .bind(started)
+        .bind(ended)
+        .execute(&pool)
+        .await?;
+    }
+    pool.close().await;
+    Ok(())
+}
+
 /// What the fake agent does in each stage.
 pub fn scenario() -> Scenario {
     Scenario {
