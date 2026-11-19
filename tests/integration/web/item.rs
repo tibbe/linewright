@@ -250,7 +250,16 @@ async fn the_item_page_shows_the_latest_ten_runs_and_links_to_all_of_them_on_the
         tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
         "{tables:?}"
     );
-    assert_eq!(select(&html, "#item ~ #runs .scroll-box").len(), 1);
+    assert_eq!(table_bars(&html), [("Runs".to_string(), vec![])]);
+    assert_eq!(
+        select(&html, "#item ~ .table-card #runs .scroll-box").len(),
+        1
+    );
+    let start = "start";
+    let row = vec![start, start, start, start, "end"];
+    let mut aligned = vec![row; 11];
+    aligned.push(vec!["none"]);
+    assert_eq!(alignments(&html, "#runs"), aligned);
 }
 
 #[test_log::test(tokio::test)]

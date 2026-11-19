@@ -51,6 +51,37 @@
 </form>
 {%- endmacro -%}
 
+{#- A table in its card (`docs/specs/design_system.md`, Tables;
+    `docs/specs/web/design_system.md`, Tables), drawn as a board card is,
+    with a bar along its top and no line under the bar. At the bar's left
+    is `name`, which is empty for a table that fills a tab. At its right are
+    the filters, unless `filters_stream` is empty, applied as the page's
+    filters are to its address and to its stream at `filters_stream`; then
+    the buttons, if `buttons`. The caller draws each `crate::web::table::Part` it is given:
+    the filters' fields, the buttons, and the table, outside the bar. -#}
+{%- macro table_card(name, filters_stream = "", buttons = false) -%}
+<section class="table-card {% call card_look() %}{% endcall %} min-h-0 overflow-hidden">
+<div class="table-bar flex shrink-0 flex-wrap items-center gap-2 px-4 py-3">
+{%- if !name.is_empty() %}
+<h2 class="card-title">{{ name }}</h2>
+{%- endif %}
+{%- if !filters_stream.is_empty() || buttons %}
+<div class="ml-auto flex flex-wrap items-center gap-2">
+{%- if !filters_stream.is_empty() %}
+<form class="flex flex-wrap items-center gap-2" data-filters="{{ filters_stream }}">
+{{- caller(crate::web::table::Part::Filters) }}
+</form>
+{%- endif %}
+{%- if buttons %}
+{{- caller(crate::web::table::Part::Buttons) }}
+{%- endif %}
+</div>
+{%- endif %}
+</div>
+{{ caller(crate::web::table::Part::Table) }}
+</section>
+{%- endmacro -%}
+
 {#- A filter typed in, `value` empty while it is unset, `width` wide and
     with the keyboard `inputmode` asks for. -#}
 {%- macro filter_input(label, name, value, width = "w-32", placeholder = "", inputmode = "") -%}
@@ -152,40 +183,54 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- endmatch -%}
 {%- endmacro -%}
 
-{#- A list of runs (`docs/specs/runs.md`, Runs) in the page's scroll box,
-    its heads pinned (`docs/specs/web/design_system.md`, Tables). A title is
-    on one line, cut as a name is, and whole in the page's tooltip while it
-    is cut, as a board card's is. A cut list's last row spans the table. -#}
+{#- A list of runs (`docs/specs/runs.md`, Runs), the region `runs`, in the
+    page's scroll box,
+    its heads pinned, each column aligned as its kind is
+    (`docs/specs/design_system.md`, Tables). A title is on one line, cut as
+    a name is, and whole in the page's tooltip while it is cut, as a board
+    card's is. A cut list's last row spans the table. -#}
 {%- macro runs(shown) -%}
+<div id="runs" class="flex min-h-0 flex-1 flex-col">
 {%- match shown %}
 {%- when crate::web::runs_table::RunsShown::Table(table) %}
 <div class="scroll-box">
 <table class="table table-pin-rows">
-<thead><tr>{% for head in table.heads() %}<th>{{ head }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in table.columns() %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for (item, row) in table.rows() %}
 <tr>
-<td>{% call status(row.status, row.word) %}{% endcall %}</td>
-<td><a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a></td>
-{%- if let Some(item) = item %}
-<td><div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>
-{%- call item_cell(item) %}{% endcall -%}
-</div></td>
-{%- endif %}
-<td>{% if let Some(stage) = row.stage %}{{ stage }}{% endif %}</td>
-<td class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-ghost badge-sm">by hand</span>{% endif %}</td>
-<td class="whitespace-nowrap">{% if let Some(duration) = row.duration %}{{ duration|safe }}{% endif %}</td>
+{%- for column in table.columns() %}
+<td class="{{ column.align() }}">
+{%- match column -%}
+{%- when crate::web::runs_table::RunsColumn::Outcome -%}
+{% call status(row.status, row.word) %}{% endcall %}
+{%- when crate::web::runs_table::RunsColumn::Run -%}
+<a class="link link-hover whitespace-nowrap" href="{{ row.href }}">{{ row.id|safe }}</a>
+{%- when crate::web::runs_table::RunsColumn::Item -%}
+{%- if let Some(item) = item -%}
+<div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>{% call item_cell(item) %}{% endcall %}</div>
+{%- endif -%}
+{%- when crate::web::runs_table::RunsColumn::Stage -%}
+{%- if let Some(stage) = row.stage %}{{ stage }}{% endif -%}
+{%- when crate::web::runs_table::RunsColumn::Started -%}
+<span class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-ghost badge-sm">by hand</span>{% endif %}</span>
+{%- when crate::web::runs_table::RunsColumn::Duration -%}
+{%- if let Some(duration) = row.duration %}<span class="whitespace-nowrap">{{ duration|safe }}</span>{% endif -%}
+{%- endmatch -%}
+</td>
+{%- endfor %}
 </tr>
 {%- endfor %}
 {%- if let Some(left_out) = table.left_out() %}
-<tr class="left-out"><td colspan="{{ table.columns() }}">left out: {{ left_out.earlier }}; <a class="link" href="{{ left_out.href }}">show them all</a></td></tr>
+<tr class="left-out"><td colspan="{{ table.column_count() }}">left out: {{ left_out.earlier }}; <a class="link" href="{{ left_out.href }}">show them all</a></td></tr>
 {%- endif %}
 </tbody>
 </table>
 </div>
 {%- when crate::web::runs_table::RunsShown::NoRuns %}
-<p>No runs</p>
+<p class="px-4 pb-4">No runs</p>
 {%- when crate::web::runs_table::RunsShown::Unlisted(error) %}
-<p>{{ error }}</p>
+<p class="px-4 pb-4">{{ error }}</p>
 {%- endmatch %}
+</div>
 {%- endmacro -%}

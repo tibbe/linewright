@@ -155,9 +155,36 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
     assert_eq!(events_path(&html), Some("/events/automations"));
 }
 
+/// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
+/// Tables.
 #[test_log::test(tokio::test)]
-async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under_the_unparsed_files()
+async fn the_automations_table_is_in_a_card_named_automations_under_the_unparsed_files_its_rows_named_by_their_headers()
  {
+    let pages = Pages::of(with(&[("weekly", WEEKLY), ("hourly", HOURLY)], true)).await;
+
+    let html = pages.page("/automations").await;
+
+    assert_eq!(table_bars(&html), [("Automations".to_string(), vec![])]);
+    assert_eq!(
+        select(&html, "#automations .unparsed ~ .table-card table").len(),
+        1
+    );
+    let heads: Vec<String> = select(&html, "#automations thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(heads, ["", "Schedule", "Last run", "Next run"]);
+    let names: Vec<String> = select(&html, "#automations tbody tr > th:first-child")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(names, ["hourly", "weekly"]);
+    let row = ["start"; 4];
+    assert_eq!(alignments(&html, "#automations"), [row, row, row]);
+}
+
+#[test_log::test(tokio::test)]
+async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways() {
     let pages = Pages::of(with(&[("weekly", WEEKLY)], true)).await;
 
     let html = pages.page("/automations").await;
@@ -168,8 +195,6 @@ async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways_under
         tables[0].contains(&"table") && tables[0].contains(&"table-pin-rows"),
         "{tables:?}"
     );
-    let after_the_unparsed = select(&html, "#automations .unparsed ~ .scroll-box");
-    assert_eq!(after_the_unparsed.len(), 1);
 }
 
 #[test_log::test(tokio::test)]

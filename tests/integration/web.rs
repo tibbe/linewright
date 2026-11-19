@@ -754,6 +754,56 @@ fn runs_shown(html: &Html) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The table cards on `html` (`docs/specs/design_system.md`, Tables), each
+/// as a reader reads its bar: the name at its left, then the names of the
+/// filters and the labels of the buttons at its right, in order.
+#[track_caller]
+fn table_bars(html: &Html) -> Vec<(String, Vec<String>)> {
+    select(html, ".table-card > .table-bar")
+        .into_iter()
+        .map(|bar| {
+            let name = select_in(bar, ".card-title")
+                .into_iter()
+                .map(text)
+                .collect();
+            let right = select_in(bar, "[name], button")
+                .into_iter()
+                .map(|field| match field.attr("name") {
+                    Some(field_name) => field_name.to_string(),
+                    None => text(field),
+                })
+                .collect();
+            (name, right)
+        })
+        .collect()
+}
+
+/// How each cell of the table `table` on `html` aligns, its head row
+/// first, "start" or "end" as its class says, and "none" for a cell that
+/// says neither.
+#[track_caller]
+fn alignments(html: &Html, table: &str) -> Vec<Vec<&'static str>> {
+    select(html, &format!("{table} tr"))
+        .into_iter()
+        .map(|row| {
+            select_in(row, "th, td")
+                .into_iter()
+                .map(|cell| {
+                    let classes: Vec<&str> = cell.value().classes().collect();
+                    match (
+                        classes.contains(&"text-left"),
+                        classes.contains(&"text-right"),
+                    ) {
+                        (true, false) => "start",
+                        (false, true) => "end",
+                        _ => "none",
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Whether `rows` holds the run `id` with the outcome `outcome`.
 fn has_run(rows: &[Vec<String>], outcome: &str, id: &str) -> bool {
     rows.iter()

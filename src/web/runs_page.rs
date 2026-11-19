@@ -14,7 +14,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::names::Names;
-use super::runs_table::RunsShown;
+use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{Area, Frame, Trail, frame_regions};
 use super::{Page, events, given, render, unanswered, with_filters};
 use crate::api::{self, Sources};
@@ -151,12 +151,6 @@ struct RunsPage {
     frame: Frame,
     filters: Filters,
     runs: RunsShown,
-}
-
-#[derive(Template)]
-#[template(path = "runs.html", block = "runs")]
-struct RunsRegion<'a> {
-    runs: &'a RunsShown,
 }
 
 pub(super) async fn runs_page(

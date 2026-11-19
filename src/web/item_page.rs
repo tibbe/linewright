@@ -12,7 +12,7 @@ use super::cards::{self, card_line, lane_head};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
-use super::runs_table::RunsShown;
+use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{Area, Frame, Trail, crumbs_region, frame_regions, title_region};
 use super::{ErrorPage, Missing, Page, events, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
@@ -246,12 +246,6 @@ struct ItemPage {
 #[template(path = "item.html", block = "item")]
 struct ItemRegion<'a> {
     item: &'a ItemShown,
-}
-
-#[derive(Template)]
-#[template(path = "item.html", block = "runs")]
-struct RunsRegion<'a> {
-    runs: &'a RunsShown,
 }
 
 /// Item `number`'s page, under Board and named by its number and `title`,

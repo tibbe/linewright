@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::names::Names;
 use super::shell::{Area, Frame, Read, Trail, frame_regions};
+use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path};
 use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
@@ -97,6 +98,45 @@ struct RowShown {
     schedule: String,
     last_run: LastRunShown,
     next_run: Html,
+}
+
+/// A column of the table of automations, the first naming each row.
+#[derive(Clone, Copy)]
+enum AutomationsColumn {
+    Name,
+    Schedule,
+    LastRun,
+    NextRun,
+}
+
+impl AutomationsColumn {
+    const ALL: [AutomationsColumn; 4] = [
+        AutomationsColumn::Name,
+        AutomationsColumn::Schedule,
+        AutomationsColumn::LastRun,
+        AutomationsColumn::NextRun,
+    ];
+
+    /// Empty for the column that names each row, which has no head.
+    fn head(self) -> &'static str {
+        match self {
+            AutomationsColumn::Name => "",
+            AutomationsColumn::Schedule => "Schedule",
+            AutomationsColumn::LastRun => "Last run",
+            AutomationsColumn::NextRun => "Next run",
+        }
+    }
+
+    /// The class that aligns the column's head and cells as its kind does.
+    fn align(self) -> &'static str {
+        let column = match self {
+            AutomationsColumn::Name
+            | AutomationsColumn::Schedule
+            | AutomationsColumn::LastRun
+            | AutomationsColumn::NextRun => Column::Other,
+        };
+        Align::of(column).class()
+    }
 }
 
 enum LastRunShown {

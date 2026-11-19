@@ -187,9 +187,14 @@
   }
 }
 
-/* In the utilities layer, as daisyUI's `.input` that it hides is
+/* In the utilities layer, as daisyUI's `.input` that it hides and its
+   `.table-pin-rows` whose background it paints over are
    (https://daisyui.com/docs/install/standalone/). */
 @layer utilities {
+  .table-card .table-pin-rows thead tr {
+    @apply bg-card;
+  }
+
   form.capture:not(:has(option.new-suite:checked)) .new-suite-name {
     @apply hidden;
   }

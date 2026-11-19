@@ -19,6 +19,7 @@ mod server_page;
 mod shell;
 mod suite_page;
 mod suites_page;
+mod table;
 mod write;
 
 use shell::{Frame, Trail};

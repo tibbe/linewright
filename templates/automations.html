@@ -3,7 +3,6 @@
 {%- block main -%}
 {% block automations -%}
 <section id="automations" class="flex min-h-0 flex-1 flex-col">
-<h1>Automations</h1>
 {%- if !automations.unparsed.is_empty() %}
 <ul class="unparsed mb-4 space-y-1">
 {%- for file in automations.unparsed %}
@@ -11,18 +10,25 @@
 {%- endfor %}
 </ul>
 {%- endif %}
+{%- call(part) ui::table_card("Automations") %}
+{%- if part == crate::web::table::Part::Table %}
 {%- if automations.rows.is_empty() %}
-<p>No automations</p>
+<p class="px-4 pb-4">No automations</p>
 {%- else %}
 <div class="scroll-box">
 <table class="table table-pin-rows">
-<thead><tr><th>Name</th><th>Schedule</th><th>Last run</th><th>Next run</th></tr></thead>
+<thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for row in automations.rows %}
 <tr>
-<th>{{ row.name }}</th>
-<td>{{ row.schedule }}</td>
-<td>
+{%- for column in AutomationsColumn::ALL %}
+{%- match column %}
+{%- when AutomationsColumn::Name %}
+<th class="{{ column.align() }}">{{ row.name }}</th>
+{%- when AutomationsColumn::Schedule %}
+<td class="{{ column.align() }}">{{ row.schedule }}</td>
+{%- when AutomationsColumn::LastRun %}
+<td class="{{ column.align() }}">
 {%- match row.last_run -%}
 {%- when LastRunShown::Run { id, href, status, word, about } -%}
 <a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(status, word) %}{% endcall %}
@@ -30,13 +36,18 @@
 {{ phrase|safe }}
 {%- endmatch -%}
 </td>
-<td>{{ row.next_run|safe }}</td>
+{%- when AutomationsColumn::NextRun %}
+<td class="{{ column.align() }}">{{ row.next_run|safe }}</td>
+{%- endmatch %}
+{%- endfor %}
 </tr>
 {%- endfor %}
 </tbody>
 </table>
 </div>
 {%- endif %}
+{%- endif %}
+{%- endcall %}
 </section>
 {%- endblock %}
 {%- endblock -%}
