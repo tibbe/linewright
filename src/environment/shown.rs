@@ -49,7 +49,31 @@ pub enum Attention {
     NoneYet,
 }
 
+/// The environment's state, as the first that holds of these
+/// (`docs/specs/operation.md`, Server, The environment's status).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentState {
+    /// A build runs.
+    Building,
+    /// Its latest build failed.
+    LatestFailed,
+    /// There is none yet.
+    NoneYet,
+    /// It was built.
+    Built,
+}
+
 impl EnvironmentShown {
+    /// Its state: the first of [`EnvironmentState`]'s that holds.
+    pub fn state(&self) -> EnvironmentState {
+        match (self.building_since, self.latest_failed, &self.built) {
+            (Some(_), _, _) => EnvironmentState::Building,
+            (None, Some(_), _) => EnvironmentState::LatestFailed,
+            (None, None, None) => EnvironmentState::NoneYet,
+            (None, None, Some(_)) => EnvironmentState::Built,
+        }
+    }
+
     /// Why it asks for attention, if it does: with no environment yet, or
     /// after a failed latest build.
     pub fn attention(&self) -> Option<Attention> {

@@ -17,7 +17,7 @@ use super::run_page::{Row, command_row, command_text, entry_row, output_html, st
 use super::shell::{Area, Frame, Hold, Read, Trail, frame_regions};
 use super::{Page, events, render};
 use crate::api::Sources;
-use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown};
+use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown, EnvironmentState};
 use crate::experiments::runner::ExperimentsShown;
 use crate::phrase::{Phrase, Status};
 use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
@@ -128,27 +128,43 @@ fn facts(
 }
 
 /// What the environment was built from, a build in progress, a latest
-/// build that failed and then `builds`, each on a line.
+/// build that failed and then `builds`, each on a line. The line that names
+/// the environment's state shows in its status.
 fn environment(environment: &EnvironmentShown, builds: Vec<Html>) -> Fact<Phrase> {
-    let built = match &environment.built {
-        Some(built) => Piece::Text(
-            Phrase::from("built from ")
+    let (status, stating) = match environment.state() {
+        EnvironmentState::Building => (Status::InFlight, EnvironmentLine::Building),
+        EnvironmentState::LatestFailed => (Status::Failed, EnvironmentLine::LatestFailed),
+        EnvironmentState::NoneYet => (Status::Paused, EnvironmentLine::BuiltOrNone),
+        EnvironmentState::Built => (Status::Done, EnvironmentLine::BuiltOrNone),
+    };
+    let line_of = |line, words| {
+        if line == stating {
+            Piece::Status { status, words }
+        } else {
+            Piece::Text(words)
+        }
+    };
+    let built = line_of(
+        EnvironmentLine::BuiltOrNone,
+        match &environment.built {
+            Some(built) => Phrase::from("built from ")
                 .code(shown::short(&built.commit))
                 .text(" ")
                 .time(built.at),
-        ),
-        None => Piece::Status {
-            status: Status::Waiting,
-            words: "none yet".into(),
+            None => "none yet".into(),
         },
-    };
-    let building = environment.building_since.map(|since| Piece::Status {
-        status: Status::InFlight,
-        words: Phrase::from("building since ").time(since),
+    );
+    let building = environment.building_since.map(|since| {
+        line_of(
+            EnvironmentLine::Building,
+            Phrase::from("building since ").time(since),
+        )
     });
-    let failed = environment.latest_failed.map(|at| Piece::Status {
-        status: Status::Failed,
-        words: Phrase::from("the latest build failed ").time(at),
+    let failed = environment.latest_failed.map(|at| {
+        line_of(
+            EnvironmentLine::LatestFailed,
+            Phrase::from("the latest build failed ").time(at),
+        )
     });
     Fact {
         label: "Environment",
@@ -159,6 +175,16 @@ fn environment(environment: &EnvironmentShown, builds: Vec<Html>) -> Fact<Phrase
             .map(|piece| vec![piece])
             .collect(),
     }
+}
+
+/// A line of the Environment fact that can name the environment's state,
+/// and then shows in its status.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvironmentLine {
+    /// What it was built from, or that there is none yet.
+    BuiltOrNone,
+    Building,
+    LatestFailed,
 }
 
 /// The last poll that succeeded and the next.
@@ -379,7 +405,7 @@ mod tests {
                 (
                     "Usage limit",
                     "in force until 2026-10-01 15:00:00 UTC".into(),
-                    Some(Status::Cancelled)
+                    Some(Status::Paused)
                 ),
                 (
                     "Repository file",
@@ -389,7 +415,7 @@ mod tests {
                 (
                     "Drain",
                     "started 2026-10-01 12:32:00 UTC, deadline 2026-10-01 14:32:00 UTC".into(),
-                    Some(Status::InFlight)
+                    Some(Status::Paused)
                 ),
                 ("Runs in flight", "1 of 4".into(), None),
                 (
@@ -400,6 +426,108 @@ mod tests {
                 ("Last webhook delivery accepted", "none yet".into(), None),
                 ("Webhook deliveries refused", "2".into(), None),
             ]
+        );
+    }
+
+    /// The Environment fact of `environment`, each line as the commands
+    /// print its times, with the status it shows in, for lines of one piece.
+    #[track_caller]
+    fn environment_lines(environment: &EnvironmentShown) -> Vec<(String, Option<Status>)> {
+        self::environment(environment, vec![])
+            .lines
+            .into_iter()
+            .map(|line| match &line[..] {
+                [Piece::Text(text)] => (text.to_string(), None),
+                [Piece::Status { status, words }] => (words.to_string(), Some(*status)),
+                _ => panic!("a line of other than one text or status"),
+            })
+            .collect()
+    }
+
+    fn built() -> shown::BuiltShown {
+        shown::BuiltShown {
+            commit: "0123456789abcdef".into(),
+            at: at("2026-10-01T11:00:00Z"),
+        }
+    }
+
+    /// `docs/specs/operation.md`, Server, The environment's status: a build
+    /// running comes first, even after a failed latest build.
+    #[test_log::test]
+    fn the_environment_shows_in_flight_on_its_building_line_while_a_build_runs() {
+        let environment = EnvironmentShown {
+            built: None,
+            building_since: Some(at("2026-10-01T12:10:00Z")),
+            latest_failed: Some(at("2026-10-01T12:05:00Z")),
+        };
+
+        assert_eq!(
+            environment_lines(&environment),
+            [
+                ("none yet".into(), None),
+                (
+                    "building since 2026-10-01 12:10:00 UTC".into(),
+                    Some(Status::InFlight)
+                ),
+                (
+                    "the latest build failed 2026-10-01 12:05:00 UTC".into(),
+                    None
+                ),
+            ]
+        );
+    }
+
+    #[test_log::test]
+    fn the_environment_shows_failed_on_its_failed_line_after_a_failed_latest_build() {
+        let environment = EnvironmentShown {
+            built: Some(built()),
+            building_since: None,
+            latest_failed: Some(at("2026-10-01T12:05:00Z")),
+        };
+
+        assert_eq!(
+            environment_lines(&environment),
+            [
+                (
+                    "built from `0123456789ab` 2026-10-01 11:00:00 UTC".into(),
+                    None
+                ),
+                (
+                    "the latest build failed 2026-10-01 12:05:00 UTC".into(),
+                    Some(Status::Failed)
+                ),
+            ]
+        );
+    }
+
+    #[test_log::test]
+    fn the_environment_shows_paused_while_there_is_none_yet() {
+        let environment = EnvironmentShown {
+            built: None,
+            building_since: None,
+            latest_failed: None,
+        };
+
+        assert_eq!(
+            environment_lines(&environment),
+            [("none yet".into(), Some(Status::Paused))]
+        );
+    }
+
+    #[test_log::test]
+    fn the_environment_shows_done_on_what_it_was_built_from_otherwise() {
+        let environment = EnvironmentShown {
+            built: Some(built()),
+            building_since: None,
+            latest_failed: None,
+        };
+
+        assert_eq!(
+            environment_lines(&environment),
+            [(
+                "built from `0123456789ab` 2026-10-01 11:00:00 UTC".into(),
+                Some(Status::Done)
+            )]
         );
     }
 

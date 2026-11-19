@@ -96,7 +96,7 @@ async fn the_server_page_follows_a_build_shows_those_that_ended_and_asks_for_att
         environment.value.starts_with("none yet")
             && environment.value.contains("the latest build failed ")
             && environment.value.contains("build 1: started ")
-            && environment.tone.as_deref() == Some("warning"),
+            && environment.tone.as_deref() == Some("error"),
         "{environment:?}"
     );
     let failed_fold = select(&failed, "#server .build details")[0];

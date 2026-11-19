@@ -266,17 +266,15 @@ impl Hold {
         }
     }
 
-    /// Its status (`docs/specs/web/design_system.md`, Status): a usage limit
-    /// shows neutral, the status it shares with a cancelled run.
+    /// Its status (`docs/specs/shell.md`, Notices).
     pub(super) fn status(&self) -> Status {
         match self {
-            Hold::UsageLimit { .. } => Status::Cancelled,
-            Hold::Drain(_) => Status::InFlight,
-            Hold::WebhooksRefused { .. } => Status::Waiting,
+            Hold::UsageLimit { .. } | Hold::Drain(_) => Status::Paused,
             Hold::Environment(Attention::FirstBuilding(_)) => Status::InFlight,
-            Hold::Environment(Attention::NoneYet) => Status::Waiting,
+            Hold::Environment(Attention::NoneYet) => Status::Paused,
             Hold::Environment(Attention::LatestFailed(_)) => Status::Failed,
-            Hold::PollsFailed(_)
+            Hold::WebhooksRefused { .. }
+            | Hold::PollsFailed(_)
             | Hold::UnparsedAutomation(_)
             | Hold::UnusableFile(_)
             | Hold::AutomationFailed { .. } => Status::Failed,
@@ -399,4 +397,100 @@ pub(super) fn crumbs_region(page: &Page) -> (&'static str, String) {
 /// The frame's regions, which every page's stream sends before its own.
 pub(super) fn frame_regions(frame: &Frame) -> Vec<(&'static str, String)> {
     vec![("holds", render(&HoldsRegion { frame }))]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::environment::shown::BuiltShown;
+
+    #[track_caller]
+    fn at(time: &str) -> Timestamp {
+        time.parse().unwrap()
+    }
+
+    /// The status of the environment's notice, if it has one, with a setup
+    /// command and `environment`.
+    #[track_caller]
+    fn environment_status(environment: EnvironmentShown) -> Option<Status> {
+        let linewright = Linewright {
+            serving_since: at("2026-10-01T12:00:00Z"),
+            polls: None,
+            failed_polls: None,
+            usage_limit_resets_at: None,
+            unusable_files: vec![],
+            drain: None,
+            environment: Some(environment),
+            runs_in_flight: 0,
+            max_runs: 4,
+            webhooks: None,
+        };
+        match &Hold::of(&linewright, None)[..] {
+            [] => None,
+            [hold] => Some(hold.status()),
+            holds => panic!("{} notices", holds.len()),
+        }
+    }
+
+    /// `docs/specs/shell.md`, Notices: a setup command's rows.
+    #[test_log::test]
+    fn the_environments_notice_shows_as_the_notices_table_gives() {
+        let built = Some(BuiltShown {
+            commit: "abc1234".into(),
+            at: at("2026-10-01T11:00:00Z"),
+        });
+        let building_since = Some(at("2026-10-01T12:10:00Z"));
+        let latest_failed = Some(at("2026-10-01T12:05:00Z"));
+        let cases = [
+            (
+                "a failed latest build, with an environment and a build running",
+                EnvironmentShown {
+                    built: built.clone(),
+                    building_since,
+                    latest_failed,
+                },
+                Some(Status::Failed),
+            ),
+            (
+                "a failed latest build, with none yet",
+                EnvironmentShown {
+                    built: None,
+                    building_since: None,
+                    latest_failed,
+                },
+                Some(Status::Failed),
+            ),
+            (
+                "none yet, while it builds",
+                EnvironmentShown {
+                    built: None,
+                    building_since,
+                    latest_failed: None,
+                },
+                Some(Status::InFlight),
+            ),
+            (
+                "none yet, otherwise",
+                EnvironmentShown {
+                    built: None,
+                    building_since: None,
+                    latest_failed: None,
+                },
+                Some(Status::Paused),
+            ),
+            (
+                "built, with a build running",
+                EnvironmentShown {
+                    built,
+                    building_since,
+                    latest_failed: None,
+                },
+                None,
+            ),
+        ];
+
+        for (case, environment, expected) in cases {
+            assert_eq!(environment_status(environment), expected, "{case}");
+        }
+    }
 }

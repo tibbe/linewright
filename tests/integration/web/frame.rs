@@ -223,11 +223,8 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     assert_eq!(holds(&html), held);
     let alert = select(&html, "#holds .alert")[0];
     assert!(
-        !alert
-            .value()
-            .classes()
-            .any(|class| class.starts_with("alert-")),
-        "a usage limit shows neutral: {}",
+        has_classes(alert, &["alert-outline"]),
+        "a usage limit shows paused: {}",
         alert.html()
     );
     for path in ["/", "/runs", "/server"] {
@@ -240,7 +237,7 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         Some(&ServerFact {
             label: "Usage limit".into(),
             value: "in force until 2026-10-13 07:50:00 UTC".into(),
-            tone: Some("neutral".into()),
+            tone: Some("muted".into()),
         }),
         "{facts:?}"
     );
@@ -284,7 +281,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         )]
     );
     assert!(
-        has_classes(select(&html, "#holds .alert")[0], &["alert-info"]),
+        has_classes(select(&html, "#holds .alert")[0], &["alert-outline"]),
         "{}",
         html.html()
     );
@@ -294,7 +291,7 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
         Some(&ServerFact {
             label: "Drain".into(),
             value: "started 2026-10-01 12:00:20 UTC".into(),
-            tone: Some("info".into()),
+            tone: Some("muted".into()),
         }),
         "{facts:?}"
     );
@@ -319,7 +316,7 @@ async fn a_refused_delivery_is_a_hold_linking_to_the_server_page() {
         )]
     );
     assert!(
-        has_classes(select(&html, "#holds .alert")[0], &["alert-warning"]),
+        has_classes(select(&html, "#holds .alert")[0], &["alert-error"]),
         "{}",
         html.html()
     );
