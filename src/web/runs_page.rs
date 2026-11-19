@@ -14,6 +14,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::names::Names;
+use super::pages::{PageHref, Requested};
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Place};
 use super::{Page, events, given, render, unanswered, with_filters};
@@ -23,10 +24,19 @@ use crate::domain::{Number, Timestamp};
 use crate::reconcile::WorkKind;
 use crate::runs;
 
+/// What the page's address carries: the filters and the page of the table.
+#[derive(Deserialize)]
+pub(super) struct RunsQuery {
+    #[serde(flatten)]
+    filters: FilterQuery,
+    #[serde(default)]
+    page: Requested,
+}
+
 /// The filters as the page's address carries them, an empty one leaving the
 /// list unnarrowed by it.
 #[derive(Deserialize)]
-pub(super) struct FilterQuery {
+struct FilterQuery {
     #[serde(default)]
     item: String,
     #[serde(default)]
@@ -40,6 +50,8 @@ struct Narrowing {
     /// Trimmed, to fill the filters in again.
     fields: FilterQuery,
     narrowed: Result<Narrowed, String>,
+    /// The page of the table the address asks for.
+    page: Requested,
 }
 
 struct Narrowed {
@@ -50,7 +62,8 @@ struct Narrowed {
 }
 
 impl Narrowing {
-    fn of(fields: &FilterQuery) -> Narrowing {
+    fn of(query: &RunsQuery) -> Narrowing {
+        let fields = &query.filters;
         let fields = FilterQuery {
             item: fields.item.trim().to_string(),
             stage: fields.stage.trim().to_string(),
@@ -59,13 +72,27 @@ impl Narrowing {
         Narrowing {
             narrowed: Narrowed::of(&fields),
             fields,
+            page: query.page,
         }
     }
 
-    /// The fields given, as the query of `path`.
-    fn path(&self, path: &str) -> String {
+    /// The fields given and the page `page`, as the query of `path`.
+    fn path(&self, path: &str, page: Requested) -> String {
         let FilterQuery { item, stage, since } = &self.fields;
-        with_filters(path, &[("item", item), ("stage", stage), ("since", since)])
+        with_filters(
+            path,
+            &[
+                ("item", item),
+                ("stage", stage),
+                ("since", since),
+                ("page", &page.field()),
+            ],
+        )
+    }
+
+    /// Where the link to page `page` of the table leads.
+    fn href(&self, page: Requested) -> PageHref {
+        PageHref::at(self.path("/runs", page))
     }
 }
 
@@ -132,7 +159,9 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsSh
                 &sources.work_dir.repo,
                 view.as_ref().map(|view| &*view.snapshot),
             );
-            let runs = RunsShown::all(&listing, &names);
+            let runs = RunsShown::all(&listing, &names, narrowing.page, |page| {
+                narrowing.href(page)
+            });
             (StatusCode::OK, runs)
         }
         Err(runs::ListError::NoRuns(_)) => (StatusCode::OK, RunsShown::NoRuns),
@@ -156,16 +185,16 @@ struct RunsPage {
 fn page(narrowing: &Narrowing) -> Page {
     Page::new(
         Place::Navigation(Area::Runs),
-        narrowing.path("/events/runs"),
+        narrowing.path("/events/runs", narrowing.page),
     )
     .filling_the_viewport()
 }
 
 pub(super) async fn runs_page(
     State(sources): State<Sources>,
-    Query(fields): Query<FilterQuery>,
+    Query(query): Query<RunsQuery>,
 ) -> Response {
-    let narrowing = Narrowing::of(&fields);
+    let narrowing = Narrowing::of(&query);
     let (status, runs) = listed(&sources, &narrowing).await;
     let page = RunsPage {
         page: page(&narrowing),
@@ -181,9 +210,9 @@ pub(super) async fn runs_page(
 pub(super) async fn runs_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
-    Query(fields): Query<FilterQuery>,
+    Query(query): Query<RunsQuery>,
 ) -> Response {
-    let narrowing = Arc::new(Narrowing::of(&fields));
+    let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
         let sources = sources.clone();
         let narrowing = narrowing.clone();

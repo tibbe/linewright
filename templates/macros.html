@@ -82,6 +82,42 @@
 </section>
 {%- endmacro -%}
 
+{#- The pages under a table (`docs/specs/design_system.md`, Tables, Pages;
+    `docs/specs/web/design_system.md`, Tables), of a
+    `crate::web::pages::PagesShown`: which rows show at the left, then
+    "Previous", the numbers and "Next" at the right in a `join`. Each link
+    leads to its page's address, and the script applies it to the page's
+    stream at its `data-stream` as it applies a filter. A disabled end and
+    "…" are no links. -#}
+{%- macro pages(shown) -%}
+<nav class="pages flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-3" aria-label="{{ shown.label }}">
+<span class="pages-showing text-muted text-sm">{{ shown.showing }}</span>
+<div class="join">
+{%- call page_end("Previous", shown.previous) %}{% endcall %}
+{%- for item in shown.items %}
+{%- match item %}
+{%- when crate::web::pages::PageItem::Page { number, href, current } %}
+<a class="join-item btn btn-sm{% if current %} btn-active{% endif %}" href="{{ href.page }}" data-stream="{{ href.stream }}"{% if current %} aria-current="page"{% endif %}>{{ number }}</a>
+{%- when crate::web::pages::PageItem::Gap %}
+<span class="join-item btn btn-sm btn-disabled">…</span>
+{%- endmatch %}
+{%- endfor %}
+{%- call page_end("Next", shown.next) %}{% endcall %}
+</div>
+</nav>
+{%- endmacro -%}
+
+{#- "Previous" or "Next" among a table's pages: a link to `href`, or a
+    disabled button where there is no page there. -#}
+{%- macro page_end(label, href) -%}
+{%- match href %}
+{%- when Some(href) %}
+<a class="join-item btn btn-sm" href="{{ href.page }}" data-stream="{{ href.stream }}">{{ label }}</a>
+{%- when None %}
+<button class="join-item btn btn-sm" type="button" disabled>{{ label }}</button>
+{%- endmatch %}
+{%- endmacro -%}
+
 {#- A filter typed in, `value` empty while it is unset, `width` wide and
     with the keyboard `inputmode` asks for. -#}
 {%- macro filter_input(label, name, value, width = "w-32", placeholder = "", inputmode = "") -%}
@@ -370,6 +406,9 @@ card card-sm {% call card_surface(colour) %}{% endcall %}
 </tbody>
 </table>
 </div>
+{%- if let Some(pages) = table.pages() %}
+{%- call pages(pages) %}{% endcall %}
+{%- endif %}
 {%- when crate::web::runs_table::RunsShown::NoRuns %}
 <p class="px-4 pb-4">No runs</p>
 {%- when crate::web::runs_table::RunsShown::Unlisted(error) %}

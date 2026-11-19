@@ -4,15 +4,17 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
 use super::names::Names;
+use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Place, Read};
 use super::table::{Align, Column};
-use super::{ErrorPage, Page, events, render, run_path};
+use super::{ErrorPage, Page, events, render, run_path, with_filters};
 use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
 use crate::phrase::{Phrase, Status};
@@ -87,10 +89,12 @@ impl Automations {
     }
 }
 
-/// The automations, ready for the page.
+/// The automations, ready for the page: a page of their rows, with the pages
+/// under them.
 struct AutomationsShown {
     unparsed: Vec<Html>,
     rows: Vec<RowShown>,
+    pages: Option<PagesShown>,
 }
 
 struct RowShown {
@@ -150,16 +154,16 @@ enum LastRunShown {
 }
 
 impl AutomationsShown {
-    fn of(automations: &Automations, names: &Names) -> AutomationsShown {
+    fn of(automations: &Automations, names: &Names, requested: Requested) -> AutomationsShown {
         let html = |phrase: &Phrase| html::phrase(phrase, names);
+        let pages = Pages::of(automations.rows.len(), requested);
         AutomationsShown {
             unparsed: automations
                 .unparsed
                 .iter()
                 .map(|file| html(&status::does_not_parse(file)))
                 .collect(),
-            rows: automations
-                .rows
+            rows: automations.rows[pages.range()]
                 .iter()
                 .map(|row| RowShown {
                     name: row.name.clone(),
@@ -185,6 +189,9 @@ impl AutomationsShown {
                     next_run: html(&status::describe_next_run(row.next_run)),
                 })
                 .collect(),
+            pages: pages.shown("automations", |page| {
+                PageHref::at(path("/automations", page))
+            }),
         }
     }
 }
@@ -203,28 +210,45 @@ struct AutomationsRegion<'a> {
     automations: &'a AutomationsShown,
 }
 
-/// The frame and the automations, from one read of `serve`'s view and the
-/// runs; `None` for the automations before the first poll.
-async fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
+/// What the page's address carries: the page of the table.
+#[derive(Deserialize)]
+pub(super) struct AutomationsQuery {
+    #[serde(default)]
+    page: Requested,
+}
+
+/// `path` with the page `page` as its query.
+fn path(path: &str, page: Requested) -> String {
+    with_filters(path, &[("page", &page.field())])
+}
+
+/// The frame and the `requested` page of the automations, from one read of
+/// `serve`'s view and the runs; `None` for the automations before the first
+/// poll.
+async fn shown(sources: &Sources, requested: Requested) -> (Frame, Option<AutomationsShown>) {
     let read = Read::of(sources).await;
-    let automations = read
-        .automations
-        .as_ref()
-        .map(|automations| AutomationsShown::of(automations, &read.names(&sources.work_dir.repo)));
+    let automations = read.automations.as_ref().map(|automations| {
+        AutomationsShown::of(automations, &read.names(&sources.work_dir.repo), requested)
+    });
     (Frame::of_read(sources, &read), automations)
 }
 
-fn page() -> Page {
+/// The automations page, its stream's on the `requested` page.
+fn page(requested: Requested) -> Page {
     Page::new(
         Place::Navigation(Area::Automations),
-        "/events/automations".into(),
+        path("/events/automations", requested),
     )
     .filling_the_viewport()
 }
 
-pub(super) async fn automations_page(State(sources): State<Sources>) -> Response {
-    let page = page();
-    match shown(&sources).await {
+pub(super) async fn automations_page(
+    State(sources): State<Sources>,
+    Query(query): Query<AutomationsQuery>,
+) -> Response {
+    let requested = query.page;
+    let page = page(requested);
+    match shown(&sources, requested).await {
         (frame, Some(automations)) => AutomationsPage {
             page,
             frame,
@@ -248,12 +272,14 @@ pub(super) async fn automations_page(State(sources): State<Sources>) -> Response
 pub(super) async fn automations_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
+    Query(query): Query<AutomationsQuery>,
 ) -> Response {
+    let requested = query.page;
     let regions = move || {
         let sources = sources.clone();
         async move {
-            let (frame, automations) = shown(&sources).await;
-            let mut regions = shell::regions(&frame, &page());
+            let (frame, automations) = shown(&sources, requested).await;
+            let mut regions = shell::regions(&frame, &page(requested));
             if let Some(automations) = automations {
                 regions.push((
                     "automations",

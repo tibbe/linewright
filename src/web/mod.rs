@@ -17,6 +17,7 @@ mod item_page;
 mod launch;
 mod making;
 mod names;
+mod pages;
 mod run_page;
 mod runs_page;
 mod runs_table;

@@ -8,7 +8,7 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -22,12 +22,13 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
 use super::making::{Answer, Making, task_not_made};
+use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
 use super::table::{Align, Column, Fold, View};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmarks, events, nothing_there, render,
-    run_path,
+    run_path, with_filters,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -237,12 +238,43 @@ impl TasksColumn {
     }
 }
 
-/// A benchmark as its page shows it.
+/// A benchmark as its page shows it: a page of each of its tables.
 struct Shown {
     benchmark: Benchmark,
+    /// How many tasks it has, on every page.
+    task_count: usize,
     tasks: Vec<TaskRow>,
+    tasks_nav: Option<PagesShown>,
     /// Latest first.
     benchmark_runs: Vec<BenchmarkRunRow>,
+    benchmark_runs_nav: Option<PagesShown>,
+}
+
+/// The page of each of the page's tables that its address asks for.
+#[derive(Clone, Copy, Deserialize)]
+pub(super) struct Paging {
+    #[serde(rename = "runs-page", default)]
+    benchmark_runs: Requested,
+    #[serde(rename = "tasks-page", default)]
+    tasks: Requested,
+}
+
+impl Paging {
+    /// The pages, as the query of `path`.
+    fn path(self, path: &str) -> String {
+        with_filters(
+            path,
+            &[
+                ("runs-page", &self.benchmark_runs.field()),
+                ("tasks-page", &self.tasks.field()),
+            ],
+        )
+    }
+
+    /// Where a link to these pages of benchmark `name` leads.
+    fn href(self, name: &BenchmarkName) -> PageHref {
+        PageHref::at(self.path(&benchmark_path(name)))
+    }
 }
 
 /// A run New task offers to capture.
@@ -259,7 +291,9 @@ struct BenchmarkPage {
     frame: Frame,
     path: String,
     tasks: Vec<TaskRow>,
+    tasks_nav: Option<PagesShown>,
     benchmark_runs: Vec<BenchmarkRunRow>,
+    benchmark_runs_nav: Option<PagesShown>,
     /// "New" on the benchmark runs, which opens the New benchmark run dialog.
     new_benchmark_run_offer: Html,
     /// The New benchmark run dialog's form.
@@ -289,12 +323,14 @@ impl BenchmarkPage {
 #[template(path = "benchmark_tasks.html")]
 struct TasksRegion<'a> {
     tasks: &'a [TaskRow],
+    tasks_nav: Option<&'a PagesShown>,
 }
 
 #[derive(Template)]
 #[template(path = "benchmark_benchmark_runs.html")]
 struct BenchmarkRunsRegion<'a> {
     benchmark_runs: &'a [BenchmarkRunRow],
+    benchmark_runs_nav: Option<&'a PagesShown>,
 }
 
 /// "New" on the benchmark runs of a benchmark with `tasks` tasks, if it has
@@ -431,32 +467,49 @@ fn no_such(name: &str) -> String {
     format!("there is no benchmark {name}")
 }
 
-/// Benchmark `name` with its tasks, in its order, and its benchmark runs,
-/// latest first.
-async fn shown(sources: &Sources, name: &str) -> Result<Shown, Unshown> {
+/// Benchmark `name` with the pages `paging` asks for of its tasks, in its
+/// order, and of its benchmark runs, latest first.
+async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, Unshown> {
     let parsed: BenchmarkName = name.parse().map_err(|_| Unshown::NoSuch)?;
     match benchmarks(sources).show(&parsed).await {
         Ok(Some(BenchmarkShown {
             benchmark,
             tasks,
             benchmark_runs,
-        })) => Ok(Shown {
-            tasks: {
-                let path = benchmark_path(&benchmark.name);
-                tasks
+        })) => {
+            let tasks_page = Pages::of(tasks.len(), paging.tasks);
+            let benchmark_runs_page = Pages::of(benchmark_runs.len(), paging.benchmark_runs);
+            let path = benchmark_path(&benchmark.name);
+            let now = sources.clock.now();
+            Ok(Shown {
+                task_count: tasks.len(),
+                tasks: tasks_page
+                    .shows(tasks)
                     .into_iter()
                     .map(|task| TaskRow::of(task, &path))
-                    .collect()
-            },
-            benchmark,
-            benchmark_runs: {
-                let now = sources.clock.now();
-                benchmark_runs
+                    .collect(),
+                tasks_nav: tasks_page.shown("tasks", |page| {
+                    Paging {
+                        tasks: page,
+                        ..paging
+                    }
+                    .href(&benchmark.name)
+                }),
+                benchmark_runs: benchmark_runs_page
+                    .shows(benchmark_runs)
                     .iter()
                     .map(|record| BenchmarkRunRow::of(sources, record, now))
-                    .collect()
-            },
-        }),
+                    .collect(),
+                benchmark_runs_nav: benchmark_runs_page.shown("benchmark runs", |page| {
+                    Paging {
+                        benchmark_runs: page,
+                        ..paging
+                    }
+                    .href(&benchmark.name)
+                }),
+                benchmark,
+            })
+        }
         Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
     }
@@ -499,38 +552,43 @@ async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunChoice> {
 }
 
 /// The page of `benchmark`: its heading, its name with its stage under it
-/// (`docs/specs/benchmarks.md`, Benchmark, Heading).
-fn page(benchmark: &Benchmark) -> Page {
+/// (`docs/specs/benchmarks.md`, Benchmark, Heading), its stream's on the
+/// pages `paging` asks for.
+fn page(benchmark: &Benchmark, paging: Paging) -> Page {
     let heading = Heading {
         line: Some(html::escape(&benchmark.stage.to_string())),
         ..Heading::named(benchmark.name.as_str())
     };
     Page::new(
         Place::Alone(Area::Benchmarks, Thing::Found(heading)),
-        format!("/events{}", benchmark_path(&benchmark.name)),
+        paging.href(&benchmark.name).stream,
     )
 }
 
 pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
     Path(name): Path<String>,
+    Query(paging): Query<Paging>,
 ) -> Response {
     let frame = Frame::of(&sources).await;
-    match shown(&sources, &name).await {
+    match shown(&sources, &name, paging).await {
         Ok(Shown {
             benchmark,
+            task_count,
             tasks,
+            tasks_nav,
             benchmark_runs,
+            benchmark_runs_nav,
         }) => {
             let path = benchmark_path(&benchmark.name);
             let new_task = NewTaskForm::blank(&sources, &benchmark.name, benchmark.stage).await;
             let new_benchmark_run =
-                NewBenchmarkRunForm::blank(&sources, &benchmark.name, tasks.len());
+                NewBenchmarkRunForm::blank(&sources, &benchmark.name, task_count);
             BenchmarkPage {
-                page: page(&benchmark),
+                page: page(&benchmark, paging),
                 frame,
                 new_benchmark_run_offer: html::rendered(&NewBenchmarkRunRegion {
-                    tasks: tasks.len(),
+                    tasks: task_count,
                 }),
                 added_configuration: new_benchmark_run.added(),
                 added_file: NewBenchmarkRunForm::added_file(),
@@ -539,12 +597,14 @@ pub(super) async fn benchmark_page(
                 new_task: html::rendered(&new_task),
                 path,
                 tasks,
+                tasks_nav,
                 benchmark_runs,
+                benchmark_runs_nav,
             }
             .into_response()
         }
         Err(unshown) => {
-            let events = format!("/events/benchmarks/{name}");
+            let events = paging.path(&format!("/events/benchmarks/{name}"));
             match unshown {
                 Unshown::NoSuch => nothing_there(
                     |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events),
@@ -578,6 +638,7 @@ pub(super) async fn benchmark_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Path(name): Path<String>,
+    Query(paging): Query<Paging>,
 ) -> Response {
     let regions = move || {
         let sources = sources.clone();
@@ -586,24 +647,34 @@ pub(super) async fn benchmark_events(
             let frame = Frame::of(&sources).await;
             let Ok(Shown {
                 benchmark,
+                task_count,
                 tasks,
+                tasks_nav,
                 benchmark_runs,
-            }) = shown(&sources, &name).await
+                benchmark_runs_nav,
+            }) = shown(&sources, &name, paging).await
             else {
                 return vec![shell::holds(&frame)];
             };
-            let mut regions = shell::regions(&frame, &page(&benchmark));
+            let mut regions = shell::regions(&frame, &page(&benchmark, paging));
             regions.push((
                 "benchmark-runs",
                 render(&BenchmarkRunsRegion {
                     benchmark_runs: &benchmark_runs,
+                    benchmark_runs_nav: benchmark_runs_nav.as_ref(),
                 }),
             ));
             regions.push((
                 "new-benchmark-run-offer",
-                render(&NewBenchmarkRunRegion { tasks: tasks.len() }),
+                render(&NewBenchmarkRunRegion { tasks: task_count }),
             ));
-            regions.push(("tasks", render(&TasksRegion { tasks: &tasks })));
+            regions.push((
+                "tasks",
+                render(&TasksRegion {
+                    tasks: &tasks,
+                    tasks_nav: tasks_nav.as_ref(),
+                }),
+            ));
             regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
             let runs = runs_of(&sources, benchmark.stage).await;
             regions.push((

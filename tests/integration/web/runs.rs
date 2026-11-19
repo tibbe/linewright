@@ -435,3 +435,129 @@ async fn the_runs_and_item_pages_show_a_handed_back_runs_outcome_in_warning() {
         assert_no_status_by_colour_alone(&html);
     }
 }
+
+/// #1, triaged in `count` runs, the `n`th started `n` minutes after noon.
+async fn triaged_in_runs(count: u32) -> Pages {
+    let pages = Pages::of(view(vec![ticket(1, "Export fails")], vec![])).await;
+    for n in 1..=count {
+        pages
+            .record(&json!({
+                "item": 1,
+                "stage": "triage",
+                "n": n,
+                "started_at": format!("2026-10-01T12:{n:02}:00Z"),
+                "end": {"at": format!("2026-10-01T12:{n:02}:30Z"), "ending": "done"},
+                "sessions": [],
+            }))
+            .await;
+    }
+    pages
+}
+
+/// The run IDs of the table of runs on `html`, in order.
+#[track_caller]
+fn run_ids(html: &Html) -> Vec<String> {
+    runs_shown(html)
+        .into_iter()
+        .map(|row| row[1].clone())
+        .collect()
+}
+
+/// `docs/specs/design_system.md`, Tables, Pages;
+/// `docs/specs/web/design_system.md`, Tables.
+#[test_log::test(tokio::test)]
+async fn the_runs_page_shows_its_runs_25_at_a_time_with_the_pages_under_the_table() {
+    let pages = triaged_in_runs(30).await;
+
+    let first = pages.page("/runs").await;
+    let second = pages.page("/runs?stage=triage&page=2").await;
+
+    let newest: Vec<String> = (6..=30).rev().map(|n| format!("1/triage-{n}")).collect();
+    assert_eq!(run_ids(&first), newest);
+    assert_eq!(
+        pages_nav(&first, "#runs"),
+        Some(PagesNav {
+            label: "Pages of runs".into(),
+            showing: "Showing 1–25 of 30 runs".into(),
+            items: vec![
+                no_link("Previous"),
+                page_link("1*", "/runs", "/events/runs"),
+                page_link("2", "/runs?page=2", "/events/runs?page=2"),
+                page_link("Next", "/runs?page=2", "/events/runs?page=2"),
+            ],
+        })
+    );
+    assert_eq!(
+        run_ids(&second),
+        [
+            "1/triage-5",
+            "1/triage-4",
+            "1/triage-3",
+            "1/triage-2",
+            "1/triage-1"
+        ]
+    );
+    assert_eq!(
+        pages_nav(&second, "#runs").unwrap().items,
+        [
+            page_link(
+                "Previous",
+                "/runs?stage=triage",
+                "/events/runs?stage=triage"
+            ),
+            page_link("1", "/runs?stage=triage", "/events/runs?stage=triage"),
+            page_link(
+                "2*",
+                "/runs?stage=triage&page=2",
+                "/events/runs?stage=triage&page=2"
+            ),
+            no_link("Next"),
+        ]
+    );
+    assert_eq!(
+        events_path(&second),
+        Some("/events/runs?stage=triage&page=2")
+    );
+    assert_eq!(
+        select(&second, "form[data-filters]")[0].attr("data-filters"),
+        Some("/events/runs")
+    );
+}
+
+/// `docs/specs/design_system.md`, Tables, Pages, Updates.
+#[test_log::test(tokio::test)]
+async fn the_runs_pages_stream_keeps_the_readers_page_number_as_runs_come() {
+    let pages = triaged_in_runs(26).await;
+    let mut events = stream(&pages, "/events/runs?page=2").await;
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run_ids(region_of(&regions(&first), "runs")), ["1/triage-1"]);
+
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 27,
+            "started_at": "2026-10-01T12:40:00Z",
+            "end": {"at": "2026-10-01T12:40:30Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
+    let runs = loop {
+        let event = tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Some((_, runs)) = regions(&event).into_iter().find(|(id, _)| id == "runs") {
+            break runs;
+        }
+    };
+
+    assert_eq!(run_ids(&runs), ["1/triage-2", "1/triage-1"]);
+    assert_eq!(
+        pages_nav(&runs, "#runs").unwrap().showing,
+        "Showing 26–27 of 27 runs"
+    );
+}

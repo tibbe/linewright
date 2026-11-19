@@ -1057,6 +1057,84 @@ async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_th
     assert_eq!(named, ["b", "a", "c"]);
 }
 
+/// `docs/specs/design_system.md`, Tables, Pages: the table pages its
+/// configurations alone, each carrying its rows, and the grid its tasks.
+#[test_log::test(tokio::test)]
+async fn the_configurations_and_the_grid_each_show_their_rows_25_at_a_time_on_a_page_of_their_own()
+{
+    let pages = with_benchmarks().await;
+    for n in 1..=26 {
+        keep_task(
+            &pages.path(""),
+            "board",
+            &format!("task-{n:02}"),
+            "1/implement-1",
+            "Does it.\n",
+        )
+        .await;
+    }
+    let names: Vec<String> = (1..=26).map(|n| format!("c-{n:02}")).collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    launched(&pages, "board", &names, 1, "2026-11-17T12:00:00Z").await;
+
+    let html = pages
+        .page("/benchmark-runs/1?configurations-page=2&tasks-page=2")
+        .await;
+
+    let configurations: Vec<String> = fold_rows(&html, None)
+        .into_iter()
+        .map(|(_, _, cells)| cells[0].clone())
+        .collect();
+    assert_eq!(configurations, ["c-25", "c-26"]);
+    assert_eq!(fold_rows(&html, Some("configuration-c-25")).len(), 28);
+    assert_eq!(
+        pages_nav(&html, "#configurations"),
+        Some(PagesNav {
+            label: "Pages of configurations".into(),
+            showing: "Showing 26–27 of 27 configurations".into(),
+            items: vec![
+                page_link(
+                    "Previous",
+                    "/benchmark-runs/1?tasks-page=2",
+                    "/events/benchmark-runs/1?cancels&tasks-page=2"
+                ),
+                page_link(
+                    "1",
+                    "/benchmark-runs/1?tasks-page=2",
+                    "/events/benchmark-runs/1?cancels&tasks-page=2"
+                ),
+                page_link(
+                    "2*",
+                    "/benchmark-runs/1?configurations-page=2&tasks-page=2",
+                    "/events/benchmark-runs/1?cancels&configurations-page=2&tasks-page=2"
+                ),
+                no_link("Next"),
+            ],
+        })
+    );
+    let tasks: Vec<String> = rows(&html, "#grid")
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect();
+    assert_eq!(tasks, ["task-24", "task-25", "task-26"]);
+    assert_eq!(select(&html, "#grid thead th").len(), 28);
+    assert_eq!(
+        pages_nav(&html, "#grid").unwrap().showing,
+        "Showing 26–28 of 28 tasks"
+    );
+    assert_eq!(
+        events_path(&html),
+        Some("/events/benchmark-runs/1?cancels&configurations-page=2&tasks-page=2")
+    );
+    let mut events = stream(&pages, "/events/benchmark-runs/1?tasks-page=2").await;
+    let sent = regions(&events.recv().await.unwrap());
+    assert_eq!(
+        fold_rows(region_of(&sent, "configurations"), None).len(),
+        25
+    );
+    assert_eq!(rows(region_of(&sent, "grid"), "#grid").len(), 3);
+}
+
 /// `docs/specs/benchmarks.md`, Benchmark run, The grid.
 #[test_log::test(tokio::test)]
 async fn the_grid_shows_the_passes_leaks_and_unscored_of_each_task_and_configuration() {

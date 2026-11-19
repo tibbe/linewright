@@ -37,5 +37,8 @@
 {%- endfor %}
 </tbody>
 </table>
+{%- if let Some(pages) = tasks_nav %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
 {%- endif %}
 </div>

@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
+use std::ops::Range;
 use std::path::{Path as FilePath, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +24,7 @@ use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
+use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_page::{
     PageOf, RunQuery, ShellRegions, Transcribed, transcript_events, transcript_page,
 };
@@ -31,7 +33,7 @@ use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
     ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_runs, events, nothing_there,
-    render, with_query,
+    render, with_filters, with_query,
 };
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
@@ -151,13 +153,15 @@ struct BenchmarkRunView {
     /// Its cancelling, while it is open (`docs/specs/benchmarks.md`,
     /// Benchmark run, Heading).
     cancel: Option<Confirmation>,
-    path: String,
     facts: Vec<Fact>,
     chart: [Plot; 2],
-    /// The configurations' rows, ranked, each followed by the rows it
-    /// opens to.
+    /// A page of the configurations' rows, ranked, each followed by the rows
+    /// it opens to.
     rows: Vec<Row>,
+    configurations_nav: Option<PagesShown>,
+    /// A page of the grid's rows.
     grid: Grid,
+    grid_nav: Option<PagesShown>,
 }
 
 /// A fact (`docs/specs/benchmarks.md`, Benchmark run, Facts): its label and
@@ -424,16 +428,24 @@ fn transcript_path(
 }
 
 impl BenchmarkRunView {
+    /// Of `record`, on the pages `paging` asks for, its links to other pages
+    /// leading to the stream of a page that draws the dialog "Cancel" opens
+    /// where `cancels`.
     fn of(
         sources: &Sources,
         record: &BenchmarkRunRecord,
         shown: &Shown,
         outputs: &Outputs,
+        paging: Paging,
+        cancels: bool,
     ) -> BenchmarkRunView {
         let results = results::results(record);
         let ranked = ranked(&results.configurations);
         let (status, state) = state_status(shown);
         let path = benchmark_run_path(record.id);
+        let configurations_page = Pages::of(ranked.len(), paging.configurations);
+        let grid_page = Pages::of(record.tasks.len(), paging.tasks);
+        let href = |asked: Paging| asked.href(&path, cancels);
         BenchmarkRunView {
             id: record.id,
             status,
@@ -450,7 +462,18 @@ impl BenchmarkRunView {
                 fields: vec![],
                 said: "benchmark-run-said",
             }),
-            path,
+            configurations_nav: configurations_page.shown("configurations", |page| {
+                href(Paging {
+                    configurations: page,
+                    ..paging
+                })
+            }),
+            grid_nav: grid_page.shown("tasks", |page| {
+                href(Paging {
+                    tasks: page,
+                    ..paging
+                })
+            }),
             facts: facts(
                 record,
                 shown,
@@ -459,8 +482,13 @@ impl BenchmarkRunView {
                 &Names::of(&sources.work_dir.repo, None),
             ),
             chart: [Axis::Cost, Axis::Time].map(|axis| plot(axis, &ranked)),
-            rows: rows(sources, record, &ranked, outputs),
-            grid: grid(record, &ranked),
+            rows: rows(
+                sources,
+                record,
+                &ranked[configurations_page.range()],
+                outputs,
+            ),
+            grid: grid(record, &ranked, grid_page.range()),
         }
     }
 }
@@ -618,19 +646,22 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
     }
 }
 
-/// The grid of `record`: a row for each task, a cell for each of the
-/// `ranked` configurations.
-fn grid(record: &BenchmarkRunRecord, ranked: &[(usize, &ConfigurationResults)]) -> Grid {
+/// The grid of `record`: a row for each of its tasks in `tasks`, by index, a
+/// cell for each of the `ranked` configurations.
+fn grid(
+    record: &BenchmarkRunRecord,
+    ranked: &[(usize, &ConfigurationResults)],
+    tasks: Range<usize>,
+) -> Grid {
     Grid {
         configurations: ranked
             .iter()
             .map(|(_, configuration)| configuration.name.clone())
             .collect(),
-        rows: record
-            .tasks
+        rows: record.tasks[tasks.clone()]
             .iter()
-            .enumerate()
-            .map(|(k, task)| GridRow {
+            .zip(tasks)
+            .map(|(task, k)| GridRow {
                 task: task.clone(),
                 cells: ranked
                     .iter()
@@ -912,6 +943,47 @@ const CANCELS: &str = "cancels";
 pub(super) struct StreamQuery {
     /// Set where the page draws the dialog "Cancel" opens.
     cancels: Option<String>,
+    #[serde(flatten)]
+    paging: Paging,
+}
+
+/// The page of each of the page's tables that its address asks for: of
+/// Configurations and of the grid's tasks.
+#[derive(Clone, Copy, serde::Deserialize)]
+pub(super) struct Paging {
+    #[serde(rename = "configurations-page", default)]
+    configurations: Requested,
+    #[serde(rename = "tasks-page", default)]
+    tasks: Requested,
+}
+
+impl Paging {
+    /// Where a link to these pages of the benchmark run at `path` leads, its
+    /// stream that of a page that draws the dialog "Cancel" opens where
+    /// `cancels`.
+    fn href(self, path: &str, cancels: bool) -> PageHref {
+        let query = with_filters(
+            "",
+            &[
+                ("configurations-page", &self.configurations.field()),
+                ("tasks-page", &self.tasks.field()),
+            ],
+        );
+        let query = query.trim_start_matches('?');
+        let stream_query = if cancels {
+            [CANCELS, query]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("&")
+        } else {
+            query.to_string()
+        };
+        PageHref {
+            page: with_query(path, query),
+            stream: with_query(&format!("/events{path}"), &stream_query),
+        }
+    }
 }
 
 /// The name of Benchmark run's screen, its last crumb.
@@ -921,8 +993,9 @@ impl BenchmarkRunView {
     /// Its page, of `record`: under its benchmark, its heading its name and
     /// its state, and "Cancel" among the screen's buttons while it is open
     /// (`docs/specs/benchmarks.md`, Benchmark run, Heading), where `cancels`,
-    /// the page drawing the dialog "Cancel" opens.
-    fn page(&self, record: &BenchmarkRunRecord, cancels: bool) -> Page {
+    /// the page drawing the dialog "Cancel" opens; its stream's on the pages
+    /// `paging` asks for.
+    fn page(&self, record: &BenchmarkRunRecord, cancels: bool, paging: Paging) -> Page {
         let heading = Heading {
             state: Some((self.status, self.state)),
             ..Heading::named(benchmark_run_name(self.id))
@@ -936,14 +1009,9 @@ impl BenchmarkRunView {
                 dialog: cancel.id.clone(),
             })
             .collect();
-        let events = format!("/events{}", self.path);
         Page::new(
             benchmark_crumbs(record).screen(BENCHMARK_RUN, Thing::Found(heading)),
-            if cancels {
-                with_query(&events, CANCELS)
-            } else {
-                events
-            },
+            paging.href(&benchmark_run_path(self.id), cancels).stream,
         )
         .buttons(buttons)
     }
@@ -1033,22 +1101,30 @@ fn benchmark_crumbs(record: &BenchmarkRunRecord) -> Within {
 pub(super) async fn benchmark_run_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
+    Query(paging): Query<Paging>,
 ) -> Response {
     let frame = Frame::of(&sources).await;
     match record_of(&sources, &id).await {
         Ok(record) => {
             let shown = shown_of(&sources, &record);
-            let benchmark_run =
-                BenchmarkRunView::of(&sources, &record, &shown, &Outputs::default());
+            let cancels = record.state == BenchmarkRunState::Open;
+            let benchmark_run = BenchmarkRunView::of(
+                &sources,
+                &record,
+                &shown,
+                &Outputs::default(),
+                paging,
+                cancels,
+            );
             BenchmarkRunPage {
-                page: benchmark_run.page(&record, benchmark_run.cancel.is_some()),
+                page: benchmark_run.page(&record, cancels, paging),
                 frame,
                 benchmark_run,
             }
             .into_response()
         }
         Err(unshown) => {
-            let events = format!("/events/benchmark-runs/{id}");
+            let events = paging.href(&format!("/benchmark-runs/{id}"), false).stream;
             let page = |thing| {
                 Page::new(
                     Place::within(Area::Benchmarks).screen(BENCHMARK_RUN, thing),
@@ -1080,6 +1156,7 @@ pub(super) async fn benchmark_run_events(
     Query(query): Query<StreamQuery>,
 ) -> Response {
     let cancels = query.cancels.is_some();
+    let paging = query.paging;
     let outputs = Outputs::default();
     let regions = move || {
         let (sources, id, outputs) = (sources.clone(), id.clone(), outputs.clone());
@@ -1089,8 +1166,9 @@ pub(super) async fn benchmark_run_events(
                 return vec![shell::holds(&frame)];
             };
             let shown = shown_of(&sources, &record);
-            let benchmark_run = BenchmarkRunView::of(&sources, &record, &shown, &outputs);
-            let mut regions = shell::regions(&frame, &benchmark_run.page(&record, cancels));
+            let benchmark_run =
+                BenchmarkRunView::of(&sources, &record, &shown, &outputs, paging, cancels);
+            let mut regions = shell::regions(&frame, &benchmark_run.page(&record, cancels, paging));
             regions.extend(benchmark_run.regions());
             regions
         }
