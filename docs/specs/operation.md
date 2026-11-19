@@ -359,7 +359,7 @@ image the operator builds with those in it.
 
 ## Serving the UI
 
-`serve` serves the UI ([Navigation](navigation.md)) on `ui-address`, a
+`serve` serves the UI ([Shell](shell.md)) on `ui-address`, a
 host and port, and serves none when `ui-address` is empty.
 
 - **Access.** Whoever reaches the port; who reaches it is the operator's to
@@ -373,12 +373,13 @@ host and port, and serves none when `ui-address` is empty.
 
 | Screen | Reached from                                                                                      | Purpose                               |
 | ------ | ------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| Server | the navigation ([Chrome](navigation.md#chrome)), and the notice of a hold or problem it tells more of | see the facts about Linewright itself |
+| Server | the navigation ([Shell](shell.md)), and the notice of a hold or problem it tells more of | see the facts about Linewright itself |
 
 ### Server
 
 - **Layout.** The facts
-  about Linewright itself ([Facts](design_system.md#facts)).
+  about Linewright itself ([Facts](design_system.md#facts)), as a list of
+  labels, each with its value beside it.
 - **Builds.** A build of the environment shows as a transcript's maintenance
   command does, and opens the same way ([Run](runs.md#run)); a build in progress
   is followed.
@@ -415,6 +416,8 @@ that answers a question, or asks `serve` to act, logs nothing.
 
 ## Out of scope
 
+- Acting from the UI on `serve` or on the work, but for capturing a run and
+  for suites and experiments.
 - Caps on what the repository's file may set, such as the models it may
   choose.
 - The repository's file naming the variables a stage's sessions get, even

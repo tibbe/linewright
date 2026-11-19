@@ -79,7 +79,7 @@ An item's state ([State](repository.md#state)) is shown in these words.
 
 | Screen | Reached from                                                    | Purpose                                                                             |
 | ------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Board  | the navigation ([Chrome](navigation.md#chrome)), and opening the UI | see where every managed item stands, and which need a person                        |
+| Board  | the navigation ([Shell](shell.md)), and opening the UI | see where every managed item stands, and which need a person                        |
 | Item   | an item named on any screen ([Naming items](#naming-items))     | see where one item stands, what it waits for, the items it relates to and its runs |
 
 ### Board
@@ -229,6 +229,7 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
 
 - **Layout.** #N's heading at the top, then its facts
   ([Facts](design_system.md#facts)) in the order below, then its runs.
+- **Facts.** A list of labels, each with its value beside it.
 - **Heading.** #N's number and title as on its card, and under them when
   `serve` last read #N, such as "as of 2 minutes ago".
 - **Runs.** #N's latest ten runs, as a list of runs ([Runs](runs.md#runs-1))

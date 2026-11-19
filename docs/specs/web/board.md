@@ -13,3 +13,8 @@
   draws in `base-100`, `base-200` or `base-300`, such as a button, an input
   or an alert.
 - **Person** is a `select`.
+
+## Item
+
+- **The facts** are drawn as a card is, their labels in a column of their
+  own.

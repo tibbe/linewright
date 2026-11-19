@@ -106,7 +106,7 @@ The session ends with a result that matches
 
 | Screen      | Reached from                                                                                                                                         | Purpose                                         |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| Automations | the navigation ([Chrome](navigation.md#chrome)), an automation's name where a screen names its run, and the notice of an automation file that does not parse | see each automation, its last run and its next |
+| Automations | the navigation ([Shell](shell.md)), an automation's name where a screen names its run, and the notice of an automation file that does not parse | see each automation, its last run and its next |
 
 ### Automations
 

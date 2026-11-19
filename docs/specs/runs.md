@@ -419,7 +419,7 @@ session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
 
 | Screen | Reached from                                                                                                                         | Purpose                                                                    |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Runs   | the navigation ([Chrome](navigation.md#chrome)), and the last row of Item's runs ([Item](board.md#item))                               | find a run                                                                 |
+| Runs   | the navigation ([Shell](shell.md)), and the last row of Item's runs ([Item](board.md#item))                               | find a run                                                                 |
 | Run    | a run in a list of runs, on Automations or on Suite, and the notice of an automation whose last run failed                          | read a run's transcripts, follow a run in flight, and capture it as a case |
 
 ### Runs
@@ -498,6 +498,7 @@ session ([The output of a replay](benchmarks.md#the-output-of-a-replay)).
   it, such as a container its maintenance command started.
 - A bound on how long a plain clone of a branch takes, which the network sets.
 - Removing old runs, with their transcripts and attachments.
-- Showing what a run cost, in the UI or in the output of `runs` and `logs`.
+- Showing what a run cost, on Runs and Run or in the output of `runs` and
+  `logs`.
 - A link of its own to each transcript entry.
 - Pricing tokens at prices other than the harness's own.

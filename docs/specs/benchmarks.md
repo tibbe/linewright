@@ -93,7 +93,7 @@ case of it, whatever its outcome.
   case.
 - **Into a suite.** A capture puts the case into a suite of the run's stage
   ([Suites](#suites)).
-- **From the UI.** [Run](runs.md#run) and [Suite](#suite).
+- **From the UI.** [Run](runs.md#run) and [New case](#new-case).
 - **From the command line.** `lw capture ID NAME --suite SUITE --criteria
   FILE`. It works whether or not `serve` is running, and exits as the
   monitoring commands do ([Output](operation.md#output)).
@@ -115,6 +115,8 @@ the UI, captures runs of its stage into it and runs experiments on it.
 - **One suite for each case.** A case belongs to the suite it was captured
   into. A run captured into two suites gives two cases, each with its own
   criteria.
+- **The order of its cases.** The order in which they were captured into it,
+  oldest first.
 - **Removing a case.** Removing a case from its suite removes the case.
 
 ## Replaying
@@ -297,7 +299,7 @@ An experiment replays each case of a suite under each of its configurations,
 and judges each replay. Its repetitions are how many times it replays each
 case under each configuration.
 
-- **From the UI.** [Suite](#suite) launches an experiment, and
+- **From the UI.** [New experiment](#new-experiment) launches an experiment, and
   [Experiment](#experiment) follows it, shows its results and cancels it.
 - **The configurations.** The first configuration is `as-is`, which holds
   nothing ([Configurations](#configurations)). The maintainer adds the others,
@@ -314,7 +316,8 @@ case under each configuration.
   [Usage limit](runs.md#usage-limit), [Stopping](operation.md#stopping)). The
   other holds do not hold them. An experiment that `serve` does not run waits.
 - **Order.** The replays start one repetition at a time. In a repetition, they
-  start case by case, and for each case, configuration by configuration. Thus
+  start case by case, in the order of the suite's cases ([Suites](#suites)),
+  and for each case, configuration by configuration. Thus
   all the configurations have replays of the same cases when an experiment
   stops early.
 - **Replays at once.** At most `max-replays` replays and judges of experiments
@@ -350,10 +353,10 @@ The results of an experiment give these figures for each configuration.
 | cost      | the mean and the total of the cost of its replays that have a cost ([Cost](runs.md#cost)), and how many have none |
 | time      | the mean and the total of the time of its replays                                                         |
 | leaks     | how many of its replays have a judgement with a leak                                                      |
-| unjudged  | how many of its replays have no judgement                                                                 |
+| unjudged  | how many of its replays have no judgement for a reason that [A replay without a judgement](#experiments) gives |
 
-- **No replays to count.** A pass rate, or a mean, with no replays to count
-  is absent.
+- **No replays to count.** A pass rate, the passes of a case, or a mean,
+  with no replays to count is absent.
 - **The judges.** The cost of the judges, from the records of their sessions,
   is a figure of the experiment, apart from the configurations.
 
@@ -375,75 +378,164 @@ experiment that does not exist is as an item or run that does not exist.
 
 ## Screens
 
-| Screen            | Reached from                                                    | Purpose                                                                                  |
-| ----------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Suites            | the navigation ([Chrome](navigation.md#chrome))                   | see the suites, and make one                                                             |
-| Suite             | a suite on Suites, and the suite in Experiment's heading        | see a suite's cases and experiments, capture a run into it, and launch an experiment on it |
-| Experiment        | an experiment on Suite, and a suite's last experiment on Suites | follow an experiment, see its results, and cancel it                                     |
-| Remove case       | "Remove" on a case, on Suite                                    | confirm removing the case                                                                |
-| Cancel experiment | "Cancel the experiment", on Experiment                          | confirm cancelling the experiment                                                        |
+| Screen            | Reached from                                                    | Purpose                                                                                    |
+| ----------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Suites            | the navigation ([Shell](shell.md))                              | find a suite                                                                               |
+| New suite         | "New" on Suites                                                 | make a suite                                                                               |
+| Suite             | a suite on Suites                                               | see a suite's experiments and cases                                                        |
+| New case          | "New" on Suite's cases                                          | capture a run into the suite                                                               |
+| New experiment    | "New" on Suite's experiments                                    | launch an experiment on the suite                                                          |
+| Experiment        | an experiment on Suite, and a suite's last experiment on Suites | follow an experiment, see its results, and cancel it                                       |
+| Remove case       | "Remove" on a case, on Suite                                    | confirm removing the case                                                                  |
+| Cancel experiment | "Cancel", on Experiment                                         | confirm cancelling the experiment                                                          |
 
 ### Suites
 
-- **Layout.** A row per
-  suite, and "New", which makes a suite.
-- **Making a suite.** It asks for the suite's name and stage
-  ([Suites](#suites)), then "Create".
+- **Layout.** The table "Suites" ([Tables](design_system.md#tables)), with the
+  filters and "New" ([Making](design_system.md#making)).
+- **Filters.** Filters for the suite's name and its stage narrow the list.
+  The filter for the name keeps each suite whose name holds the text typed,
+  whatever its letter case.
+- **The table.** A row per suite, in the order of their names.
 
-| Column          | Holds                                                         |
-| --------------- | ------------------------------------------------------------- |
-| Suite           | the suite's name, linking to its Suite                        |
-| Stage           | the suite's stage                                             |
-| Cases           | how many cases it holds                                       |
-| Last experiment | its latest experiment and when it was launched, linking to it |
+  | Column          | Holds                                                |
+  | --------------- | ---------------------------------------------------- |
+  |                 | the suite's name, linking to its Suite               |
+  | Stage           | the suite's stage                                    |
+  | Last experiment | when its last experiment was launched, linking to it, and nothing for a suite with none |
+
+### New suite
+
+- **Layout.** A dialog titled "New suite" ([Making](design_system.md#making)).
+- **Fields.** "Name" and "Stage" ([Suites](#suites)), then "Create". "Stage"
+  starts on the first stage, triage.
+- **Refusals.** The message for a name that a suite has is "A suite named
+  NAME already exists." The message for a name that is not in the form of a
+  name ([Capturing](#capturing)) is "A name holds only lowercase letters,
+  digits and hyphens, and starts with a letter or a digit."
 
 ### Suite
 
-- **Layout.** Suite
-  NAME's cases, then its experiments, latest first, with "Add case" and
-  "Run".
-- **Cases.** A row per case: its name, the run it was captured from, linking
-  to its Run, and the first line of its criteria, which opens on click
-  to the whole criteria, and "Remove".
-- **Adding a case.** "Add case" captures a run of the suite's stage, as Run
-  does ([Run](runs.md#run)). The maintainer chooses the run from a list of
-  the runs of that stage.
-- **Experiments.** A row per experiment: when it was launched, its state and
-  the pass rate of each configuration, linking to its Experiment.
-- **Launching.** "Run" launches an experiment, on a suite with cases. The launch
-  asks for the configurations and the repetitions ([Experiments](#experiments)),
-  and shows how many replays they make, then "Run experiment".
-- **A configuration.** `as-is` comes first and holds nothing. Each other
-  configuration has a name. It can set `model`, `effort` and
-  `session-timeout`, and give the text of any file of the brief. The text of a
-  file starts as the text that a run of the stage would use as the launch
-  opens. A file whose text the maintainer does not change is not part of the
-  configuration.
+- **Layout.** The heading at the top, then the suite's experiments and its
+  cases, each in a tab of its own.
+- **Heading.** The suite's name, with its stage under it.
+- **Tabs.** "Experiments", then "Cases". The screen opens on Experiments, or
+  on Cases while the suite has no experiments.
+- **Experiments.** A table that fills the tab
+  ([Tables](design_system.md#tables)), with a row per experiment, latest
+  first, and "New" on a suite with cases ([Making](design_system.md#making)).
+
+  | Column         | Holds                                           |
+  | -------------- | ----------------------------------------------- |
+  |                | when it was launched, linking to its Experiment |
+  | State          | its state ([Experiment](#experiment))           |
+  | Cases          | how many cases it replays                       |
+  | Configurations | how many configurations it has                  |
+  | Duration       | its duration ([Experiment](#experiment))        |
+  | Cost           | its cost ([Experiment](#experiment))            |
+
+- **Cases.** A table that fills the tab ([Tables](design_system.md#tables)),
+  with a row per case in the suite's order ([Suites](#suites)), and "New"
+  ([Making](design_system.md#making)). A case's row opens on click to the whole
+  of its criteria.
+
+  | Column        | Holds                                                         |
+  | ------------- | ------------------------------------------------------------- |
+  |               | the case's name, with the first line of its criteria under it |
+  | Captured from | the run it was captured from, linking to its Run              |
+  |               | "Remove"                                                      |
+
+### New case
+
+- **Layout.** A dialog titled "New case in NAME"
+  ([Making](design_system.md#making)).
+- **Fields.** The fields below, then "Add case".
+
+  | Field    | Holds                                                                                                      |
+  | -------- | ---------------------------------------------------------------------------------------------------------- |
+  | Run      | a choice of the runs of the suite's stage that Linewright can capture ([Capturing](#capturing)), latest first, or "No runs" when there is none, and then "Add case" is disabled |
+  | Name     | the case's name, which Linewright makes from the run's ID as on Run ([Run](runs.md#run)) |
+  | Criteria | the criteria                                                                                               |
+
+- **Refusals.** The message for a name that a case has is "A case named NAME
+  already exists." The message for a case without criteria is "A case needs
+  criteria." The message for a name that is not in the form of a name is as
+  on [New suite](#new-suite).
+
+### New experiment
+
+- **Layout.** A dialog titled "New experiment on NAME"
+  ([Making](design_system.md#making)).
+- **Fields.** "Configurations", then "Repetitions"
+  ([Experiments](#experiments)), then how many replays they make, such as "2
+  configurations × 4 cases × 3 repetitions: 24 replays". Then "Run
+  experiment".
+- **Configurations.** Each configuration but `as-is` has "Name", and can set
+  "model", "effort" and "session-timeout", and give the text of any file of the
+  brief. Each such configuration has "Remove". "Add a configuration" adds one at
+  the end.
+- **Files of the brief.** A configuration has "Files of the brief", a choice of
+  the files that a layer of the brief can hold ([Briefs](operation.md#briefs)).
+  When the maintainer chooses one, a box for its text opens. Its text starts as
+  the text that a run of the stage uses when the dialog opens. A file whose text
+  the maintainer does not change is not part of the configuration.
+- **Refusals.** A refusal of a configuration names the configuration.
 
 ### Experiment
 
-- **Layout.** Experiment ID's heading at the top, then its results
-  ([Results](#results)): the chart, the grid and the table.
-- **Heading.** The suite, linking to its Suite, when the experiment was
-  launched, its state, and how many of its replays have ended of all its
-  replays. A waiting experiment says what it waits for, such as "waiting for
-  the usage limit, until 14:30".
+- **Layout.** The heading at the top, then the experiment's facts, then its
+  results ([Results](#results)): the chart, the table and the grid.
+- **Heading.** Experiment ID and its state. While the experiment is running
+  or waiting, "Cancel" is at its right.
 - **State.** The state shows as a status
   ([Status](design_system.md#status)): running as in flight, waiting as
   paused, ended as done and cancelled as cancelled.
-- **Cancelling.** While the experiment is running or waiting, its heading
-  holds "Cancel the experiment".
-- **The chart.** A point for each configuration. The horizontal axis is the
-  mean cost of a replay, and the vertical axis is the pass rate.
-- **The grid.** A row for each case and a column for each configuration. A
-  cell shows the passes of the case under the configuration, such as "2 of
-  3". A cell also shows its leaks and its replays without a judgement, if it
-  has any.
-- **The table.** A row for each configuration, with its figures. Each row
-  opens on click to the configuration's cases. Each case opens on click to
-  its replays. A replay shows its state, its judgement with the reasoning of
-  the judge, its cost and its time. It opens on click to the transcripts of
-  its run and of its judge, shown as Run shows a run's.
+- **Facts.** The experiment's facts are side by side in a row, each with its
+  label above its value.
+
+  | Fact        | Holds                                                                                   | Shown                          |
+  | ----------- | --------------------------------------------------------------------------------------- | ------------------------------ |
+  | Launched    | when the experiment was launched                                                        | always                         |
+  | Ended       | when it ended or was cancelled                                                          | once it has ended or cancelled |
+  | Duration    | the time from its launch to its end or its cancelling; while it runs or waits, the time up to now         | always                         |
+  | Replays     | how many of its replays have ended, of all its replays. A replay has ended once its run has ended, whether or not its judge has. | always |
+  | Cost        | the sum of the cost of the tokens of its replays and its judges ([Cost](runs.md#cost)). After the sum, how many of its replays have no cost, if any. | always |
+  | Judges      | the cost of the tokens of its judges ([Results](#results)) | always |
+  | Waiting for | what it waits for, such as "the usage limit, until 14:30"                               | while it waits                 |
+
+- **The chart.** A point for each configuration, labelled with its name. The
+  vertical axis is the pass rate. The horizontal axis is the mean cost of a
+  replay or its mean time. The reader chooses which above the chart, at its
+  left, after "Pass rate vs": "Mean cost" or "Mean time". It starts as "Mean
+  cost".
+- **A point.** On hover, a point shows its configuration's name, pass rate
+  and mean. A configuration with no pass rate, or no mean on the horizontal
+  axis, has no point. A chart with no points shows "No results".
+- **The table.** "Configurations": a row for each configuration, highest pass
+  rate first. Configurations with the same pass rate are in the order of the
+  experiment. Those with no pass rate are last, in the order of the experiment.
+  A configuration's row opens on click to a row for each case. A case's row
+  opens on click to a row for each of its replays. Cases and replays are in the
+  order in which the experiment starts them ([Experiments](#experiments)).
+
+  | Column     | For a configuration                         | For a case                                  | For a replay                                                                              |
+  | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+  |            | its name                                    | the case's name                             | its repetition, such as "Replay 2"                                                        |
+  | Pass rate  | its pass rate                               | its passes, such as "2 of 3"                | its judgement; before it has one, "waiting", "replaying" or "judging"; or why it has none |
+  | Mean cost  | the mean of its cost                        | the same, of its replays of the case        | its cost                                                                                  |
+  | Total cost | the total of its cost, and how many of its replays have no cost | the same, of its replays of the case      |                                                                                           |
+  | Mean time  | the mean of its time                        | the same, of its replays of the case        | its time                                                                                  |
+  | Total time | the total of its time                       | the same, of its replays of the case        |                                                                                           |
+  | Leaks      | its leaks                                   | its replays of the case with a leak         |                                                                                           |
+  | Unjudged   | its unjudged replays                        | its unjudged replays of the case            |                                                                                           |
+
+- **A replay.** A replay's row opens on click to the reasoning of its judge, if
+  it has a judgement. It also opens to the transcripts of its run and of its
+  judge, as Run shows a run's, once each has started.
+- **The grid.** "Passes by case": a row for each case and a column for each
+  configuration, in the order of the table. A cell shows the passes of the case
+  under the configuration, such as "2 of 3". A cell also shows its leaks and its
+  replays without a judgement, if it has any.
 
 ### Remove case
 
