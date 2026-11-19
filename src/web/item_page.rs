@@ -13,7 +13,8 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::RunsShown;
-use super::{ErrorPage, Frame, Missing, Page, events, frame_regions, nothing_there, render};
+use super::shell::{Area, Frame, Trail, crumbs_region, frame_regions, title_region};
+use super::{ErrorPage, Missing, Page, events, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
 use crate::domain::{Number, Snapshot};
@@ -253,28 +254,34 @@ struct RunsRegion<'a> {
     runs: &'a RunsShown,
 }
 
+/// Item `number`'s page, under Board and named by its number and `title`,
+/// if known (`docs/specs/shell.md`, Breadcrumbs).
+fn page(number: Number, title: Option<&str>) -> Page {
+    let name = match title {
+        Some(title) => format!("{number} {title}"),
+        None => number.to_string(),
+    };
+    let trail = Trail::within(Area::Board).here(name);
+    Page::new(trail, format!("/events/items/{}", number.0)).filling_the_viewport()
+}
+
 pub(super) async fn item_page(
     State(sources): State<Sources>,
     Path(number): Path<Number>,
 ) -> Response {
-    let page = Page::new(
-        format!("{number} · {}", sources.work_dir.repo),
-        format!("/events/items/{}", number.0),
-    )
-    .filling_the_viewport();
     let frame = Frame::of(&sources).await;
     match api::item_facts(&sources, number).await {
         Ok((facts, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
+                page: page(number, Some(&facts.title)),
                 item: ItemShown::of(&facts, &names),
                 runs: item_runs(&sources, number, &names).await,
-                page,
                 frame,
             }
             .into_response()
         }
-        Err(e) => error_page(page, frame, &e),
+        Err(e) => error_page(page(number, None), frame, &e),
     }
 }
 
@@ -328,6 +335,9 @@ pub(super) async fn item_events(
                     in_view.now,
                 );
                 let item = ItemShown::of(&facts, &names);
+                let page = page(number, Some(&facts.title));
+                regions.push(crumbs_region(&page));
+                regions.push(title_region(&page));
                 regions.push(("item", render(&ItemRegion { item: &item })));
             }
             let runs = item_runs(&sources, number, &names).await;

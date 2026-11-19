@@ -11,6 +11,7 @@ mod run;
 mod runs;
 mod script;
 mod serving;
+mod shell;
 mod suites;
 
 use std::time::Duration;

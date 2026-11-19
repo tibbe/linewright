@@ -10,7 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::html::{self, Html};
 use super::names::Names;
-use super::{ErrorPage, Frame, Page, Read, events, frame_regions, render, run_path};
+use super::shell::{Area, Frame, Read, Trail, frame_regions};
+use super::{ErrorPage, Page, events, render, run_path};
 use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
 use crate::phrase::{Phrase, Status};
@@ -175,11 +176,8 @@ async fn shown(sources: &Sources) -> (Frame, Option<AutomationsShown>) {
 }
 
 pub(super) async fn automations_page(State(sources): State<Sources>) -> Response {
-    let page = Page::new(
-        format!("Automations · {}", sources.work_dir.repo),
-        "/events/automations".into(),
-    )
-    .filling_the_viewport();
+    let page = Page::new(Trail::of(Area::Automations), "/events/automations".into())
+        .filling_the_viewport();
     match shown(&sources).await {
         (frame, Some(automations)) => AutomationsPage {
             page,

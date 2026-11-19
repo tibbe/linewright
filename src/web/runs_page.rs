@@ -15,7 +15,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::names::Names;
 use super::runs_table::RunsShown;
-use super::{Frame, Page, events, frame_regions, given, render, unanswered, with_filters};
+use super::shell::{Area, Frame, Trail, frame_regions};
+use super::{Page, events, given, render, unanswered, with_filters};
 use crate::api::{self, Sources};
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
@@ -165,11 +166,8 @@ pub(super) async fn runs_page(
     let narrowing = Narrowing::of(&fields);
     let (status, runs) = listed(&sources, &narrowing).await;
     let page = RunsPage {
-        page: Page::new(
-            format!("Runs · {}", sources.work_dir.repo),
-            narrowing.path("/events/runs"),
-        )
-        .filling_the_viewport(),
+        page: Page::new(Trail::of(Area::Runs), narrowing.path("/events/runs"))
+            .filling_the_viewport(),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         runs,

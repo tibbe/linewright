@@ -14,7 +14,8 @@ use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
-use super::{Frame, Hold, Page, Read, events, frame_regions, render};
+use super::shell::{Area, Frame, Hold, Read, Trail, frame_regions};
+use super::{Page, events, render};
 use crate::api::Sources;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown};
 use crate::experiments::runner::ExperimentsShown;
@@ -235,10 +236,7 @@ fn build_html(build: &BuildShown, names: &Names) -> Html {
 pub(super) async fn server_page(State(sources): State<Sources>) -> Response {
     let (frame, facts) = shown(&sources).await;
     ServerPage {
-        page: Page::new(
-            format!("Server · {}", sources.work_dir.repo),
-            "/events/server".into(),
-        ),
+        page: Page::new(Trail::of(Area::Server), "/events/server".into()),
         frame,
         facts,
     }

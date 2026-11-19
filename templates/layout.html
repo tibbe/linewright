@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
 {#- A navigation link, its label under its icon in the rail. -#}
-{%- macro nav_link(href, icon, label) -%}
-<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ href }}">{% call ui::nav_icon(icon) %}{% endcall %}<span>{{ label }}</span></a></li>
+{%- macro nav_link(area) -%}
+<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ area.href() }}">{% call ui::nav_icon(area) %}{% endcall %}<span>{{ area.name() }}</span></a></li>
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -9,7 +9,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title id="title">{{ page.title }}</title>
+{% block title %}<title id="title">{{ page.title() }}</title>{% endblock %}
 <link rel="stylesheet" href="{{ page.assets.css }}">
 <script src="{{ page.assets.htmx }}"></script>
 <script src="{{ page.assets.sse }}"></script>
@@ -31,6 +31,20 @@
 </div>
 {%- endblock %}
 <p id="lost" class="alert alert-warning mx-page mt-2 shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
+{% block crumbs -%}
+<nav id="crumbs" class="breadcrumbs shrink-0 px-page pt-2 text-sm" aria-label="Breadcrumb">
+<ul>
+{%- for crumb in page.trail.shown() %}
+{%- match crumb.href %}
+{%- when Some(href) %}
+<li><a class="link link-hover" href="{{ href }}">{{ crumb.name }}</a></li>
+{%- when None %}
+<li><span aria-current="page">{{ crumb.name }}</span></li>
+{%- endmatch %}
+{%- endfor %}
+</ul>
+</nav>
+{%- endblock %}
 <main class="px-page py-4{% if page.fills_viewport %} flex min-h-0 flex-1 flex-col{% endif %}">
 {% block main %}{% endblock %}
 </main>
@@ -40,11 +54,9 @@
 <nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 p-4 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
 <a class="repo link link-hover flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-6 rounded-full lg:max-2xl:size-8"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
 <ul class="menu w-full p-0">
-{%- call nav_link("/", crate::web::NavIcon::Board, "Board") %}{% endcall %}
-{%- call nav_link("/runs", crate::web::NavIcon::Runs, "Runs") %}{% endcall %}
-{%- call nav_link("/automations", crate::web::NavIcon::Automations, "Automations") %}{% endcall %}
-{%- call nav_link("/suites", crate::web::NavIcon::Suites, "Suites") %}{% endcall %}
-{%- call nav_link("/server", crate::web::NavIcon::Server, "Server") %}{% endcall %}
+{%- for area in crate::web::shell::Area::ALL %}
+{%- call nav_link(area) %}{% endcall %}
+{%- endfor %}
 </ul>
 </nav>
 </div>

@@ -259,7 +259,7 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
         .collect();
     assert_eq!(links, ["/items/3", "/items/1", "/items/4"]);
     let title = select(&html, "title");
-    assert_eq!(text(title[0]), "(2) Board · owner/widgets");
+    assert_eq!(text(title[0]), "(2) Board · Linewright");
     assert_no_status_by_colour_alone(&html);
 }
 
@@ -318,7 +318,7 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
     assert_eq!(ids, ["title", "board"]);
     assert_eq!(
         text(select(&changed[0].1, "title")[0]),
-        "(1) Board · owner/widgets"
+        "(1) Board · Linewright"
     );
     let lanes: Vec<String> = board_shown(&changed[1].1)
         .into_iter()
@@ -375,7 +375,7 @@ async fn the_board_narrowed_to_a_person_shows_their_cards_and_counts_the_whole_b
         ]]
     );
     assert_eq!(select(&html, "#finished").len(), 0);
-    assert_eq!(text(select(&html, "title")[0]), "(2) Board · owner/widgets");
+    assert_eq!(text(select(&html, "title")[0]), "(2) Board · Linewright");
     assert_eq!(
         person_select(&html),
         [
