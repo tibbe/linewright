@@ -454,10 +454,44 @@ fn replay_view(
 ) -> ReplayView {
     let repetition = key.repetition.get();
     let path = |of| transcript_path(record.id, configuration, case, repetition, of);
+    let ReplayShown {
+        status,
+        word,
+        judgement,
+        replay,
+    } = replay_shown(state);
+    let output = experiments(sources).output_dir(record.id, configuration, case, key.repetition);
+    let began = outputs.began(&output);
+    let reasoning = matches!(state, TrialState::Ended(TrialEnd::Judged { .. }))
+        .then(|| outputs.reasoning(&output))
+        .flatten();
+    let judged = reasoning.is_some() || matches!(state, TrialState::Judging { .. });
+    ReplayView {
+        repetition,
+        status,
+        state: word,
+        said: said(judgement, replay),
+        reasoning,
+        run_href: began.then(|| path(Of::Run)),
+        judge_href: judged.then(|| path(Of::Judge)),
+    }
+}
+
+/// What a replay's row says of its state: its Pass rate's status and word
+/// (`docs/specs/benchmarks.md`, Experiment, A replay's status), its
+/// judgement or why it has none, and its replay's figures, once it has them.
+struct ReplayShown<'a> {
+    status: Status,
+    word: &'static str,
+    judgement: Option<String>,
+    replay: Option<&'a ReplayFigures>,
+}
+
+fn replay_shown(state: &TrialState) -> ReplayShown<'_> {
     let (status, word, judgement, replay) = match state {
-        TrialState::Pending => (Status::Waiting, "pending", None, None),
+        TrialState::Pending => (Status::Paused, "waiting", None, None),
         TrialState::Replaying => (Status::InFlight, "replaying", None, None),
-        TrialState::Replayed { replay } => (Status::Paused, "replayed", None, Some(replay)),
+        TrialState::Replayed { replay } => (Status::Paused, "waiting", None, Some(replay)),
         TrialState::Judging { replay } => (Status::InFlight, "judging", None, Some(replay)),
         TrialState::Ended(TrialEnd::Judged { replay, judgement }) => {
             let leak = if judgement.leak { ", with a leak" } else { "" };
@@ -474,13 +508,18 @@ fn replay_view(
             )
         }
         TrialState::Ended(TrialEnd::Unjudged { replay, why }) => {
-            let why = match why {
-                NoJudgement::Outcome => "its run is not done or handed back".to_string(),
-                NoJudgement::Judge { reason, .. } => format!("the judge made none: {reason}"),
-                NoJudgement::Cancelled => "cancelled".into(),
+            let (status, why) = match why {
+                NoJudgement::Outcome => (
+                    replay.outcome.status(),
+                    "its run is not done or handed back".to_string(),
+                ),
+                NoJudgement::Judge { reason, .. } => {
+                    (Status::Failed, format!("the judge made none: {reason}"))
+                }
+                NoJudgement::Cancelled => (Status::Cancelled, "cancelled".into()),
             };
             (
-                Status::Cancelled,
+                status,
                 "unjudged",
                 Some(format!("no judgement: {why}")),
                 Some(replay),
@@ -493,20 +532,11 @@ fn replay_view(
             None,
         ),
     };
-    let output = experiments(sources).output_dir(record.id, configuration, case, key.repetition);
-    let began = outputs.began(&output);
-    let reasoning = matches!(state, TrialState::Ended(TrialEnd::Judged { .. }))
-        .then(|| outputs.reasoning(&output))
-        .flatten();
-    let judged = reasoning.is_some() || matches!(state, TrialState::Judging { .. });
-    ReplayView {
-        repetition,
+    ReplayShown {
         status,
-        state: word,
-        said: said(judgement, replay),
-        reasoning,
-        run_href: began.then(|| path(Of::Run)),
-        judge_href: judged.then(|| path(Of::Judge)),
+        word,
+        judgement,
+        replay,
     }
 }
 
@@ -908,4 +938,132 @@ pub(super) async fn replay_events(
         false,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::benchmarks::JudgementFigures;
+
+    #[track_caller]
+    fn ended(outcome: &str) -> ReplayFigures {
+        ReplayFigures {
+            outcome: serde_json::from_value(outcome.into()).unwrap(),
+            money: None,
+            time: Duration::from_secs(60),
+        }
+    }
+
+    fn judged(correctness: Verdict, leak: bool) -> TrialState {
+        TrialState::Ended(TrialEnd::Judged {
+            replay: ended("done"),
+            judgement: JudgementFigures {
+                correctness,
+                leak,
+                judge_money: None,
+            },
+        })
+    }
+
+    #[track_caller]
+    fn unjudged(outcome: &str, why: NoJudgement) -> TrialState {
+        TrialState::Ended(TrialEnd::Unjudged {
+            replay: ended(outcome),
+            why,
+        })
+    }
+
+    /// `docs/specs/benchmarks.md`, Experiment, A replay's status, and the
+    /// Pass rate column's word.
+    #[test_log::test]
+    fn each_replay_shows_as_the_status_its_state_gives() {
+        let states = [
+            TrialState::Pending,
+            TrialState::Replayed {
+                replay: ended("done"),
+            },
+            TrialState::Replaying,
+            TrialState::Judging {
+                replay: ended("done"),
+            },
+            judged(Verdict::Pass, false),
+            judged(Verdict::Pass, true),
+            judged(Verdict::Fail, false),
+            unjudged(
+                "done",
+                NoJudgement::Judge {
+                    reason: "it gave up".into(),
+                    judge_money: None,
+                },
+            ),
+        ];
+
+        let shown: Vec<(Status, &str)> = states
+            .iter()
+            .map(|state| {
+                let shown = replay_shown(state);
+                (shown.status, shown.word)
+            })
+            .collect();
+
+        assert_eq!(
+            shown,
+            [
+                (Status::Paused, "waiting"),
+                (Status::Paused, "waiting"),
+                (Status::InFlight, "replaying"),
+                (Status::InFlight, "judging"),
+                (Status::Done, "judged"),
+                (Status::Failed, "judged"),
+                (Status::Failed, "judged"),
+                (Status::Failed, "unjudged"),
+            ]
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, Experiment, A replay's status: as its
+    /// run's outcome does (`docs/specs/runs.md`, Ending).
+    #[test_log::test]
+    fn a_replay_whose_run_is_not_done_or_handed_back_shows_as_its_runs_outcome() {
+        let outcomes = [
+            "failed",
+            "cancelled",
+            "usage-limit",
+            "interrupted",
+            "handed-back",
+        ];
+
+        let shown: Vec<Status> = outcomes
+            .map(|outcome| unjudged(outcome, NoJudgement::Outcome))
+            .iter()
+            .map(|state| replay_shown(state).status)
+            .collect();
+
+        assert_eq!(
+            shown,
+            [
+                Status::Failed,
+                Status::Cancelled,
+                Status::Cancelled,
+                Status::Cancelled,
+                Status::Waiting,
+            ]
+        );
+    }
+
+    /// A replay of a cancelled experiment shows as a cancelled run does
+    /// (`docs/specs/runs.md`, Ending).
+    #[test_log::test]
+    fn a_replay_its_experiments_cancel_left_without_a_judgement_shows_cancelled() {
+        let states = [
+            unjudged("done", NoJudgement::Cancelled),
+            TrialState::Ended(TrialEnd::Cancelled),
+        ];
+
+        let shown = states.map(|state| replay_shown(&state).status);
+
+        assert_eq!(shown, [Status::Cancelled; 2]);
+    }
 }

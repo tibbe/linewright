@@ -445,7 +445,16 @@ async fn a_configuration_opens_to_its_cases_and_a_case_to_its_replays_with_their
             "repetition 2 replaying",
         ]
     );
-    assert_eq!(replays(configurations[1], 1)[1], "repetition 2 pending");
+    assert_eq!(replays(configurations[1], 1)[1], "repetition 2 waiting");
+    let waiting = select_in(
+        select_in(configurations[1], "details.case")[1],
+        ".replay .badge",
+    )[1];
+    assert!(
+        has_classes(waiting, &["badge-outline"]),
+        "{}",
+        waiting.html()
+    );
     let first = select_in(select_in(configurations[0], "details.case")[0], ".replay")[0];
     let reasoning: Vec<String> = select_in(first, ".reasoning p")
         .into_iter()
