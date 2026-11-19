@@ -1,0 +1,11 @@
+{%- import "macros.html" as ui -%}
+<div id="buttons" class="flex shrink-0 flex-wrap items-center gap-2{% if page.place.has_crumbs() %} ml-auto{% endif %}">
+{%- for button in page.buttons %}
+{%- match button %}
+{%- when crate::web::buttons::ScreenButton::New { dialog } %}
+<button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ dialog }}">New</button>
+{%- when crate::web::buttons::ScreenButton::Act { verb, dialog } %}
+<button class="btn btn-sm" type="button" command="show-modal" commandfor="{{ dialog }}">{% call ui::verb_icon(verb) %}{% endcall %}{{ verb.label() }}</button>
+{%- endmatch %}
+{%- endfor %}
+</div>

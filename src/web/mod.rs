@@ -6,6 +6,7 @@ mod benchmark_page;
 mod benchmark_run_page;
 mod benchmarks_page;
 mod board_page;
+mod buttons;
 mod capture;
 mod cards;
 mod confirmation;
@@ -23,7 +24,8 @@ mod shell;
 mod table;
 mod write;
 
-use shell::{Frame, Trail};
+use buttons::ScreenButton;
+use shell::{Frame, Missing, Place, Thing};
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -48,7 +50,6 @@ use tracing::{info, warn};
 
 use crate::api::{Sources, Unanswered};
 use crate::benchmarks::{BenchmarkName, BenchmarkRunId, BenchmarkRuns, Benchmarks};
-use crate::domain::Number;
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::runs::RunId;
@@ -270,8 +271,11 @@ async fn asset(Path(name): Path<String>) -> Response {
 
 /// What every page's layout holds.
 struct Page {
-    /// Where the page is, which its breadcrumbs and its title show.
-    trail: Trail,
+    /// Where the page is, which its breadcrumbs, its heading and its title
+    /// show.
+    place: Place,
+    /// The screen's buttons, in order.
+    buttons: Vec<ScreenButton>,
     /// The count of cards in Needs a person, on Board.
     needing_a_person: Option<usize>,
     /// The path of the page's event stream.
@@ -291,10 +295,11 @@ struct PageAssets {
 }
 
 impl Page {
-    fn new(trail: Trail, events: String) -> Page {
+    fn new(place: Place, events: String) -> Page {
         let path = |name| HASHED.names[name].as_str();
         Page {
-            trail,
+            place,
+            buttons: vec![],
             needing_a_person: None,
             events,
             fills_viewport: false,
@@ -307,6 +312,11 @@ impl Page {
         }
     }
 
+    /// The page with the screen's buttons `buttons`, in order.
+    fn buttons(self, buttons: Vec<ScreenButton>) -> Page {
+        Page { buttons, ..self }
+    }
+
     /// The page, its title led by `count`, of cards in Needs a person
     /// (`docs/specs/board.md`, Board, Needing a person).
     fn needing_a_person(self, count: usize) -> Page {
@@ -316,10 +326,10 @@ impl Page {
         }
     }
 
-    /// Its title: its trail's, led by the count of cards in Needs a person
+    /// Its title: its place's, led by the count of cards in Needs a person
     /// where it has one.
     fn title(&self) -> String {
-        let title = self.trail.title();
+        let title = self.place.title();
         match self.needing_a_person {
             Some(count) => format!("({count}) {title}"),
             None => title,
@@ -344,29 +354,6 @@ struct ErrorPage {
     error: String,
 }
 
-/// What a link named that does not exist, as the screens name it
-/// (`docs/specs/design_system.md`, Screen states, Nothing there). A run,
-/// benchmark or benchmark run is named as the path gave it, whether or not it
-/// parses.
-#[derive(Clone)]
-enum Missing {
-    Item(Number),
-    Run(String),
-    Benchmark(String),
-    BenchmarkRun(String),
-}
-
-impl std::fmt::Display for Missing {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Missing::Item(number) => write!(f, "No such item {number}"),
-            Missing::Run(id) => write!(f, "No such run {id}"),
-            Missing::Benchmark(name) => write!(f, "No such benchmark {name}"),
-            Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
-        }
-    }
-}
-
 #[derive(Template, WebTemplate)]
 #[template(path = "nothing_there.html")]
 struct NothingThere {
@@ -377,11 +364,16 @@ struct NothingThere {
     missing: Missing,
 }
 
-/// The screen of `missing`, standing in for the page's `region`, answered
-/// with 404.
-fn nothing_there(page: Page, frame: Frame, region: &'static str, missing: Missing) -> Response {
+/// The screen of `missing`, the page `page` gives of it, standing in for
+/// the page's `region`, answered with 404.
+fn nothing_there(
+    page: impl FnOnce(Thing) -> Page,
+    missing: Missing,
+    frame: Frame,
+    region: &'static str,
+) -> Response {
     let page = NothingThere {
-        page,
+        page: page(Thing::Missing(missing.clone())),
         frame,
         region,
         missing,

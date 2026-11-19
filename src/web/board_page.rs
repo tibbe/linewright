@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
 use super::names::Names;
-use super::shell::{Area, Frame, Trail, frame_regions, title_region};
+use super::shell::{self, Area, Frame, Place};
 use super::{Page, events, given, render, with_filters};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane};
@@ -191,7 +191,7 @@ struct PeopleRegion<'a> {
 /// The board's page, its stream's narrowed to `person`, if set, and its
 /// title counting `needing_a_person`.
 fn page(person: Option<&Login>, needing_a_person: usize) -> Page {
-    Page::new(Trail::of(Area::Board), events_path(person))
+    Page::new(Place::Navigation(Area::Board), events_path(person))
         .needing_a_person(needing_a_person)
         .filling_the_viewport()
 }
@@ -229,7 +229,7 @@ pub(super) async fn board_page(
     .into_response()
 }
 
-/// The board's regions: the frame's, the tab's title, the board narrowed
+/// The board's regions: the shell's, the board narrowed
 /// to its person, if set, and the people Person is chosen from.
 pub(super) async fn board_events(
     State(sources): State<Sources>,
@@ -242,10 +242,11 @@ pub(super) async fn board_events(
         let person = person.clone();
         async move {
             let repo = &sources.work_dir.repo;
-            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let frame = Frame::of(&sources).await;
             let shown =
                 BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
-            regions.push(title_region(&page(person.as_ref(), shown.needing_a_person)));
+            let mut regions =
+                shell::regions(&frame, &page(person.as_ref(), shown.needing_a_person));
             regions.push((
                 "board",
                 render(&BoardRegion {

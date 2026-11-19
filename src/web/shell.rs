@@ -1,6 +1,7 @@
 //! What every screen has around it (`docs/specs/shell.md`): the navigation,
-//! the notices and the breadcrumbs, and each screen's title
-//! (`docs/specs/design_system.md`, Titles).
+//! the notices, the breadcrumbs, the heading card and the screen's buttons,
+//! and each screen's title (`docs/specs/design_system.md`, Titles and
+//! Headings).
 
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use super::html::{self, Html};
 use super::names::Names;
 use super::{Page, render, run_path};
 use crate::api::{self, Sources};
-use crate::domain::{Repo, Snapshot, Timestamp};
+use crate::domain::{Number, Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::phrase::{Phrase, Status};
 use crate::repo_files::FileError;
@@ -48,6 +49,18 @@ impl Area {
         }
     }
 
+    /// The name of its screen's own crumb (`docs/specs/shell.md`,
+    /// Breadcrumbs, Names).
+    pub(super) fn listing(self) -> &'static str {
+        match self {
+            Area::Board => "All items",
+            Area::Runs => "All runs",
+            Area::Automations => "All automations",
+            Area::Benchmarks => "All benchmarks",
+            Area::Server => "Status",
+        }
+    }
+
     /// The path of its screen.
     pub(super) fn href(self) -> &'static str {
         match self {
@@ -60,20 +73,110 @@ impl Area {
     }
 }
 
-/// Where a screen is (`docs/specs/shell.md`, Breadcrumbs): the screen of the
-/// navigation for an area, or a screen within an area, under a crumb for
-/// each thing in it that the screen belongs to.
-pub(super) enum Trail {
-    Area(Area),
+/// Which of the spec's kinds of screen a page is (`docs/specs/shell.md`,
+/// Breadcrumbs; `docs/specs/design_system.md`, Headings), which decides its
+/// breadcrumbs, its heading card and its title.
+#[derive(Clone)]
+pub(super) enum Place {
+    /// A screen of the navigation: its crumbs are the area, linked, then
+    /// what it lists, such as "All runs". It has no heading card.
+    Navigation(Area),
+    /// A screen of one thing that belongs to others: its crumbs are the
+    /// area, linked, each crumb, linked, then `screen`, such as "Benchmark
+    /// run". `crumbs` lacks what Linewright could not find.
     Within {
         area: Area,
         crumbs: Vec<Crumb>,
-        /// The screen's own name.
-        here: String,
+        screen: &'static str,
+        thing: Thing,
     },
+    /// A screen of one thing that belongs to no other, such as Run: it has
+    /// no breadcrumbs, and its heading's name is its `h1`.
+    Alone(Thing),
+}
+
+/// What a screen of one thing shows of it.
+#[derive(Clone)]
+pub(super) enum Thing {
+    Found(Heading),
+    /// The link named what does not exist: the screen shows "No such" and
+    /// no heading card.
+    Missing(Missing),
+}
+
+impl Thing {
+    /// Its name in the screen's title: its heading's, or the one its link
+    /// gave.
+    fn name(&self) -> String {
+        match self {
+            Thing::Found(heading) => heading.title.clone(),
+            Thing::Missing(missing) => missing.name(),
+        }
+    }
+}
+
+/// A heading card (`docs/specs/design_system.md`, Headings).
+#[derive(Clone)]
+pub(super) struct Heading {
+    /// Plain text, for the screen's title and for the crumb of a screen
+    /// under it, such as "Benchmark run 14".
+    pub(super) title: String,
+    pub(super) name: Html,
+    /// The badge of the screen's state, where the screen gives it there.
+    pub(super) state: Option<(Status, &'static str)>,
+    /// The line under the name, such as the benchmark's stage.
+    pub(super) line: Option<Html>,
+}
+
+impl Heading {
+    /// The heading named `title`, with no state and no line.
+    pub(super) fn named(title: impl Into<String>) -> Heading {
+        let title = title.into();
+        Heading {
+            name: html::escape(&title),
+            title,
+            state: None,
+            line: None,
+        }
+    }
+}
+
+/// What a link named that does not exist, as the screens name it
+/// (`docs/specs/design_system.md`, Screen states, Nothing there). A run,
+/// benchmark or benchmark run is named as the path gave it, whether or not it
+/// parses.
+#[derive(Clone)]
+pub(super) enum Missing {
+    Item(Number),
+    Run(String),
+    Benchmark(String),
+    BenchmarkRun(String),
+}
+
+impl Missing {
+    /// The name the link gave, as the heading of what it names would.
+    fn name(&self) -> String {
+        match self {
+            Missing::Item(number) => number.to_string(),
+            Missing::Run(id) | Missing::Benchmark(id) => id.clone(),
+            Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Missing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Missing::Item(number) => write!(f, "No such item {number}"),
+            Missing::Run(id) => write!(f, "No such run {id}"),
+            Missing::Benchmark(name) => write!(f, "No such benchmark {name}"),
+            Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
+        }
+    }
 }
 
 /// A crumb that links to its screen.
+#[derive(Clone)]
 pub(super) struct Crumb {
     name: String,
     href: String,
@@ -86,17 +189,13 @@ pub(super) struct Within {
 }
 
 /// A crumb as the breadcrumbs draw it: the screen's own has no link.
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct CrumbShown<'a> {
     pub(super) name: &'a str,
     pub(super) href: Option<&'a str>,
 }
 
-impl Trail {
-    /// The screen of the navigation for `area`.
-    pub(super) fn of(area: Area) -> Trail {
-        Trail::Area(area)
-    }
-
+impl Place {
     /// The crumbs of a screen within `area`, starting from its screen.
     pub(super) fn within(area: Area) -> Within {
         Within {
@@ -105,31 +204,56 @@ impl Trail {
         }
     }
 
-    /// The crumbs in order, the screen's own last.
-    pub(super) fn shown(&self) -> Vec<CrumbShown<'_>> {
+    /// Its crumbs in order, the screen's own last; none on a screen of one
+    /// thing that belongs to no other.
+    pub(super) fn crumbs(&self) -> Vec<CrumbShown<'_>> {
+        let (area, crumbs, screen): (Area, &[Crumb], &str) = match self {
+            Place::Navigation(area) => (*area, &[], area.listing()),
+            Place::Within {
+                area,
+                crumbs,
+                screen,
+                ..
+            } => (*area, crumbs, screen),
+            Place::Alone(_) => return vec![],
+        };
+        let area = CrumbShown {
+            name: area.name(),
+            href: Some(area.href()),
+        };
+        let crumbs = crumbs.iter().map(|crumb| CrumbShown {
+            name: &crumb.name,
+            href: Some(&crumb.href),
+        });
+        let screen = CrumbShown {
+            name: screen,
+            href: None,
+        };
+        std::iter::once(area)
+            .chain(crumbs)
+            .chain(std::iter::once(screen))
+            .collect()
+    }
+
+    /// Whether it has breadcrumbs, whose last crumb is then the page's `h1`
+    /// and at whose right are the screen's buttons.
+    pub(super) fn has_crumbs(&self) -> bool {
+        !matches!(self, Place::Alone(_))
+    }
+
+    /// What a screen of one thing shows of it.
+    fn thing(&self) -> Option<&Thing> {
         match self {
-            Trail::Area(area) => vec![CrumbShown {
-                name: area.name(),
-                href: None,
-            }],
-            Trail::Within { area, crumbs, here } => {
-                let area = CrumbShown {
-                    name: area.name(),
-                    href: Some(area.href()),
-                };
-                let crumbs = crumbs.iter().map(|crumb| CrumbShown {
-                    name: &crumb.name,
-                    href: Some(&crumb.href),
-                });
-                let here = CrumbShown {
-                    name: here,
-                    href: None,
-                };
-                std::iter::once(area)
-                    .chain(crumbs)
-                    .chain(std::iter::once(here))
-                    .collect()
-            }
+            Place::Navigation(_) => None,
+            Place::Within { thing, .. } | Place::Alone(thing) => Some(thing),
+        }
+    }
+
+    /// Its heading card, on a screen of one thing that Linewright found.
+    pub(super) fn heading(&self) -> Option<&Heading> {
+        match self.thing()? {
+            Thing::Found(heading) => Some(heading),
+            Thing::Missing(_) => None,
         }
     }
 
@@ -137,8 +261,8 @@ impl Trail {
     /// (`docs/specs/design_system.md`, Titles).
     pub(super) fn title(&self) -> String {
         let name = match self {
-            Trail::Area(area) => area.name(),
-            Trail::Within { here, .. } => here,
+            Place::Navigation(area) => area.name().to_string(),
+            Place::Within { thing, .. } | Place::Alone(thing) => thing.name(),
         };
         format!("{name} · Linewright")
     }
@@ -154,12 +278,13 @@ impl Within {
         self
     }
 
-    /// The trail of the screen `name`, after the crumbs.
-    pub(super) fn here(self, name: impl Into<String>) -> Trail {
-        Trail::Within {
+    /// The place of the screen `screen` of `thing`, after the crumbs.
+    pub(super) fn screen(self, screen: &'static str, thing: Thing) -> Place {
+        Place::Within {
             area: self.area,
             crumbs: self.crumbs,
-            here: name.into(),
+            screen,
+            thing,
         }
     }
 }
@@ -377,32 +502,166 @@ struct TitleRegion<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "layout.html", block = "crumbs")]
+#[template(path = "shell_crumbs.html")]
 struct CrumbsRegion<'a> {
     page: &'a Page,
 }
 
-/// The region of `page`'s title, which the stream of a page whose title can
-/// change sends.
-pub(super) fn title_region(page: &Page) -> (&'static str, String) {
-    ("title", render(&TitleRegion { page }))
+#[derive(Template)]
+#[template(path = "shell_heading.html")]
+struct HeadingRegion<'a> {
+    page: &'a Page,
 }
 
-/// The region of `page`'s breadcrumbs, which the stream of a page whose
-/// trail can change sends.
-pub(super) fn crumbs_region(page: &Page) -> (&'static str, String) {
-    ("crumbs", render(&CrumbsRegion { page }))
+#[derive(Template)]
+#[template(path = "shell_buttons.html")]
+struct ButtonsRegion<'a> {
+    page: &'a Page,
 }
 
-/// The frame's regions, which every page's stream sends before its own.
-pub(super) fn frame_regions(frame: &Frame) -> Vec<(&'static str, String)> {
-    vec![("holds", render(&HoldsRegion { frame }))]
+/// The regions of the shell, which every page's stream sends before its
+/// own: the notices, the title, the breadcrumbs, the heading card and the
+/// screen's buttons. Each that `page` lacks is sent empty, so that its id is
+/// always there to morph.
+pub(super) fn regions(frame: &Frame, page: &Page) -> Vec<(&'static str, String)> {
+    vec![
+        holds(frame),
+        ("title", render(&TitleRegion { page })),
+        ("crumbs", render(&CrumbsRegion { page })),
+        ("heading", render(&HeadingRegion { page })),
+        ("buttons", render(&ButtonsRegion { page })),
+    ]
+}
+
+/// The region of the notices alone, for a stream that could not read what
+/// its screen is of this time, which leaves the rest of the shell as it
+/// last sent it.
+pub(super) fn holds(frame: &Frame) -> (&'static str, String) {
+    ("holds", render(&HoldsRegion { frame }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::environment::shown::BuiltShown;
+
+    /// A crumb linking to `href`.
+    fn link<'a>(name: &'a str, href: &'a str) -> CrumbShown<'a> {
+        CrumbShown {
+            name,
+            href: Some(href),
+        }
+    }
+
+    /// The crumb of the screen itself.
+    fn here(name: &str) -> CrumbShown<'_> {
+        CrumbShown { name, href: None }
+    }
+
+    /// `docs/specs/shell.md`, Breadcrumbs, Names; `docs/specs/design_system.md`,
+    /// Titles.
+    #[test_log::test]
+    fn a_screen_of_the_navigation_ends_its_crumbs_in_what_it_lists_and_is_titled_by_its_area() {
+        let cases = [
+            (
+                Area::Board,
+                ("Board", "/"),
+                "All items",
+                "Board · Linewright",
+            ),
+            (
+                Area::Runs,
+                ("Runs", "/runs"),
+                "All runs",
+                "Runs · Linewright",
+            ),
+            (
+                Area::Automations,
+                ("Automations", "/automations"),
+                "All automations",
+                "Automations · Linewright",
+            ),
+            (
+                Area::Benchmarks,
+                ("Benchmarks", "/benchmarks"),
+                "All benchmarks",
+                "Benchmarks · Linewright",
+            ),
+            (
+                Area::Server,
+                ("Server", "/server"),
+                "Status",
+                "Server · Linewright",
+            ),
+        ];
+
+        for (area, (name, href), listing, title) in cases {
+            let place = Place::Navigation(area);
+
+            assert_eq!(
+                place.crumbs(),
+                [link(name, href), here(listing)],
+                "{area:?}"
+            );
+            assert_eq!(place.title(), title, "{area:?}");
+            assert!(place.heading().is_none(), "{area:?}");
+        }
+    }
+
+    /// `docs/specs/shell.md`, Breadcrumbs: "Benchmarks › design-cuts ›
+    /// Benchmark run" on Benchmark run.
+    #[test_log::test]
+    fn a_screen_within_others_ends_its_crumbs_in_its_screen_and_is_titled_by_its_heading() {
+        let place = Place::within(Area::Benchmarks)
+            .under("design-cuts", "/benchmarks/design-cuts")
+            .screen(
+                "Benchmark run",
+                Thing::Found(Heading::named("Benchmark run 14")),
+            );
+
+        assert_eq!(
+            place.crumbs(),
+            [
+                link("Benchmarks", "/benchmarks"),
+                link("design-cuts", "/benchmarks/design-cuts"),
+                here("Benchmark run"),
+            ]
+        );
+        assert_eq!(place.title(), "Benchmark run 14 · Linewright");
+        assert_eq!(
+            place.heading().map(|heading| heading.title.as_str()),
+            Some("Benchmark run 14")
+        );
+    }
+
+    #[test_log::test]
+    fn a_screen_of_one_thing_alone_has_no_crumbs_and_is_titled_by_its_heading() {
+        let place = Place::Alone(Thing::Found(Heading::named("43/rework-9")));
+
+        assert_eq!(place.crumbs(), []);
+        assert!(!place.has_crumbs());
+        assert_eq!(place.title(), "43/rework-9 · Linewright");
+    }
+
+    /// `docs/specs/shell.md`, Breadcrumbs, No such thing.
+    #[test_log::test]
+    fn a_missing_things_screen_has_no_crumb_for_it_and_is_titled_by_the_name_its_link_gave() {
+        let within = Place::within(Area::Benchmarks).screen(
+            "Benchmark run",
+            Thing::Missing(Missing::BenchmarkRun("9".into())),
+        );
+        let alone = Place::Alone(Thing::Missing(Missing::Item(Number(812))));
+
+        assert_eq!(
+            within.crumbs(),
+            [link("Benchmarks", "/benchmarks"), here("Benchmark run")]
+        );
+        assert_eq!(within.title(), "Benchmark run 9 · Linewright");
+        assert!(within.heading().is_none());
+        assert_eq!(alone.crumbs(), []);
+        assert_eq!(alone.title(), "#812 · Linewright");
+        assert!(alone.heading().is_none());
+    }
 
     #[track_caller]
     fn at(time: &str) -> Timestamp {

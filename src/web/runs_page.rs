@@ -15,12 +15,11 @@ use tokio_util::sync::CancellationToken;
 
 use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{Area, Frame, Trail, frame_regions};
+use super::shell::{self, Area, Frame, Place};
 use super::{Page, events, given, render, unanswered, with_filters};
 use crate::api::{self, Sources};
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
-use crate::phrase::Status;
 use crate::reconcile::WorkKind;
 use crate::runs;
 
@@ -153,6 +152,15 @@ struct RunsPage {
     runs: RunsShown,
 }
 
+/// The runs page, its stream's narrowed as `narrowing` says.
+fn page(narrowing: &Narrowing) -> Page {
+    Page::new(
+        Place::Navigation(Area::Runs),
+        narrowing.path("/events/runs"),
+    )
+    .filling_the_viewport()
+}
+
 pub(super) async fn runs_page(
     State(sources): State<Sources>,
     Query(fields): Query<FilterQuery>,
@@ -160,8 +168,7 @@ pub(super) async fn runs_page(
     let narrowing = Narrowing::of(&fields);
     let (status, runs) = listed(&sources, &narrowing).await;
     let page = RunsPage {
-        page: Page::new(Trail::of(Area::Runs), narrowing.path("/events/runs"))
-            .filling_the_viewport(),
+        page: page(&narrowing),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         runs,
@@ -169,7 +176,7 @@ pub(super) async fn runs_page(
     (status, page).into_response()
 }
 
-/// The runs page's regions: the frame's and the list, listed again as runs
+/// The runs page's regions: the shell's and the list, listed again as runs
 /// start and end.
 pub(super) async fn runs_events(
     State(sources): State<Sources>,
@@ -181,7 +188,7 @@ pub(super) async fn runs_events(
         let sources = sources.clone();
         let narrowing = narrowing.clone();
         async move {
-            let mut regions = frame_regions(&Frame::of(&sources).await);
+            let mut regions = shell::regions(&Frame::of(&sources).await, &page(&narrowing));
             let (_, runs) = listed(&sources, &narrowing).await;
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions

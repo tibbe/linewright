@@ -75,13 +75,13 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
     let html = pages.page("/items/1").await;
 
     assert_eq!(
-        select(&html, "#item h1")
+        select(&html, "#heading h1")
             .into_iter()
             .map(text)
             .collect::<Vec<_>>(),
         ["#1: Do the thing"]
     );
-    let links: Vec<(&str, &str)> = select(&html, "#item h1 a")
+    let links: Vec<(&str, &str)> = select(&html, "#heading h1 a")
         .into_iter()
         .map(|a| {
             (
@@ -97,10 +97,10 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
             ("https://github.com/owner/widgets/issues/1", "#1 on GitHub"),
         ]
     );
-    let as_of = select(&html, "#item .as-of");
+    let as_of = select(&html, "#heading .line");
     assert_eq!(as_of.len(), 1, "{}", html.html());
     assert_eq!(text(as_of[0]), "as of 2026-10-01 12:00:00 UTC");
-    assert_in_muted_text(&html, "#item .as-of");
+    assert_in_muted_text(&html, "#heading .line");
     assert_eq!(
         select_in(as_of[0], "time")[0].attr("datetime"),
         Some("2026-10-01T12:00:00Z")
@@ -327,8 +327,13 @@ async fn the_item_pages_stream_sends_every_region_then_those_serves_view_changed
         .unwrap();
     let first = regions(&first);
     let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["holds", "crumbs", "title", "item", "runs"]);
-    let before = item_facts(&first[3].1);
+    assert_eq!(
+        ids,
+        [
+            "holds", "title", "crumbs", "heading", "buttons", "item", "runs"
+        ]
+    );
+    let before = item_facts(region_of(&first, "item"));
     let quiet = tokio::time::timeout(Duration::from_millis(2500), events.recv()).await;
     assert!(quiet.is_err(), "sent with nothing changed: {quiet:?}");
 

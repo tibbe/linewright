@@ -14,24 +14,25 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
+use futures_util::future::BoxFuture;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
+use super::buttons::{ScreenButton, Verb};
 use super::capture::Offer;
 use super::html::{self, Html};
 use super::names::Names;
 use super::runs_table::ItemCell;
-use super::shell::{Area, Frame, Trail, frame_regions};
+use super::shell::{self, Frame, Heading, Missing, Thing};
 use super::{
-    ErrorPage, Missing, Page, Sent, nothing_there, render, run_path, samples, unanswered,
-    with_query,
+    ErrorPage, Page, Sent, nothing_there, render, run_path, samples, unanswered, with_query,
 };
 use crate::api::{self, EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
 use crate::phrase::Status;
-use crate::runs::{self, Ran, RunId};
+use crate::runs::{self, Ran, Recorded, RunId};
 use crate::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
 use crate::transcript::{
     self, After, Call, Change, Changed, CloneEnded, Course, End, Entry, EntryAt, Feed, INTERRUPTED,
@@ -67,17 +68,7 @@ impl Patch {
 
 /// A run's transcript as the page shows it, built up from its changes.
 struct RunView {
-    /// What its heading names: the run's ID, or what stands for it.
-    name: String,
-    /// What the run is of, as the Item column of a list of runs names it
-    /// (`docs/specs/runs.md`, Run, Heading).
-    item: Html,
     verbose: bool,
-    /// The number of sessions the run had when its transcript started, once
-    /// it has.
-    sessions_started: Option<usize>,
-    /// Whether it ran by hand, once its transcript has started.
-    by_hand: bool,
     sessions: Vec<SessionView>,
 }
 
@@ -148,26 +139,11 @@ enum Kind<'a> {
 }
 
 impl RunView {
-    fn new(name: String, item: Html, verbose: bool) -> RunView {
+    fn new(verbose: bool) -> RunView {
         RunView {
-            name,
-            item,
             verbose,
-            sessions_started: None,
-            by_hand: false,
             sessions: vec![],
         }
-    }
-
-    /// That the run's transcript started, with `sessions` sessions, giving
-    /// what it changes on the page.
-    fn start(&mut self, sessions: usize, by_hand: bool) -> Vec<Patch> {
-        self.sessions_started = Some(sessions);
-        self.by_hand = by_hand;
-        vec![Patch::Replace {
-            id: "run".into(),
-            html: self.heading(),
-        }]
     }
 
     /// Takes the next change to the transcript, of a session whose
@@ -207,20 +183,6 @@ impl RunView {
         session.change(change, model)
     }
 
-    fn heading(&self) -> String {
-        let none = if self.sessions_started == Some(0) {
-            " (it started no session)"
-        } else {
-            ""
-        };
-        let by_hand = if self.by_hand { ", by hand" } else { "" };
-        format!(
-            r#"<hgroup id="run"><h1>{}{by_hand}{none}</h1><p class="text-muted">{}</p></hgroup>"#,
-            html::escape(&self.name),
-            self.item,
-        )
-    }
-
     /// The transcript as the page shows it whole, its sessions as `feed`
     /// has read them.
     fn html(&self, feed: &Feed) -> String {
@@ -234,7 +196,7 @@ impl RunView {
                 session.html(model)
             })
             .collect();
-        format!(r#"{}<div id="sessions">{sessions}</div>"#, self.heading())
+        format!(r#"<div id="sessions">{sessions}</div>"#)
     }
 }
 
@@ -1011,11 +973,18 @@ pub(super) struct RunQuery {
     verbose: Option<String>,
     /// For the page's stream, while the run is in flight.
     follow: Option<Follow>,
+    /// For the page's stream: set where the page draws the capture's dialog.
+    capture: Option<String>,
 }
 
 impl RunQuery {
     pub(super) fn verbose(&self) -> bool {
         self.verbose.is_some()
+    }
+
+    /// Whether the stream's page draws the capture's dialog.
+    fn captures(&self) -> bool {
+        self.capture.is_some()
     }
 }
 
@@ -1024,26 +993,20 @@ impl RunQuery {
 struct RunPage {
     page: Page,
     frame: Frame,
-    /// What the page says of the transcript above it, empty on a run's
-    /// own page.
-    context: Html,
     verbose: bool,
     /// The page with the switch the other way.
     switched: String,
-    /// The offer to capture the run, empty for one that cannot be.
+    /// The dialog of the capture, which "Add task" opens, empty for a run
+    /// that cannot be captured.
     capture: Html,
     transcript: String,
 }
 
-/// A run whose transcript a page shows: where it is kept, which it is,
-/// what its heading names in place of its ID, if anything, and what it is
-/// of, as its heading says under that.
+/// A run whose transcript a page shows: where it is kept and which it is.
 #[derive(Clone)]
 pub(super) struct Transcribed {
     pub(super) kept: KeptRuns,
     pub(super) which: Which,
-    pub(super) name: Option<String>,
-    pub(super) of: Html,
     /// What its page names as missing where its run does not exist, if it
     /// is that page's own run.
     pub(super) missing: Option<Missing>,
@@ -1058,8 +1021,6 @@ impl Transcribed {
                 id: id.clone(),
                 item: None,
             },
-            name: None,
-            of: item_line(sources, id),
             missing: Some(Missing::Run(id.to_string())),
         }
     }
@@ -1123,11 +1084,7 @@ impl FollowedRun {
         after: Option<Made>,
     ) -> Result<FollowedRun, LogsError> {
         let records = RunRecords::start(transcribed.kept.clone(), &transcribed.which).await?;
-        let name = transcribed
-            .name
-            .clone()
-            .unwrap_or_else(|| records.run().to_string());
-        let view = RunView::new(name, transcribed.of.clone(), verbose);
+        let view = RunView::new(verbose);
         Ok(FollowedRun {
             records,
             page: PageFollower {
@@ -1174,10 +1131,9 @@ struct PageLayout<'a> {
 }
 
 impl Layout for PageLayout<'_> {
-    fn began(&mut self, sessions: usize) {
-        let patches = self.view.start(sessions, self.records.started().by_hand());
+    fn began(&mut self, _sessions: usize) {
         if let Some(made) = self.numbering.next(transcript::START) {
-            self.made.push((made, patches));
+            self.made.push((made, vec![]));
         }
     }
 
@@ -1208,6 +1164,57 @@ fn events(run: &RunId, made: Vec<(Made, Vec<Patch>)>) -> Vec<Event> {
             Event::default().id(id.to_string()).data(data)
         })
         .collect()
+}
+
+/// Run `recorded`'s heading (`docs/specs/runs.md`, Run, Heading): its ID,
+/// then ", by hand" for an automation's run by hand, and "(it started no
+/// session)" for a run that ended without a session, with its item under
+/// them.
+fn run_heading(sources: &Sources, recorded: &Recorded) -> Heading {
+    let id = recorded.id.to_string();
+    let by_hand = if recorded.started().by_hand() {
+        ", by hand"
+    } else {
+        ""
+    };
+    let none = if recorded.state != runs::State::InFlight && recorded.sessions.is_empty() {
+        " (it started no session)"
+    } else {
+        ""
+    };
+    Heading {
+        name: html::escape(&format!("{id}{by_hand}{none}")),
+        title: id,
+        state: None,
+        line: Some(item_line(sources, &recorded.id)),
+    }
+}
+
+/// What run `run`'s page shows of it: its heading, or that there is no
+/// such run; `None` where its record does not read.
+async fn run_thing(sources: &Sources, run: &RunId) -> Option<Thing> {
+    match sources.runs.try_read_run(run).await {
+        Ok(Some(recorded)) => Some(Thing::Found(run_heading(sources, &recorded))),
+        Ok(None) => Some(Thing::Missing(Missing::Run(run.to_string()))),
+        Err(_) => None,
+    }
+}
+
+/// The id of the capture's dialog.
+const CAPTURE: &str = "capture";
+
+/// The page at `place`, its stream at `events`, with "Add task" among the
+/// screen's buttons where it draws the capture's dialog
+/// (`docs/specs/runs.md`, Run, Capturing).
+fn transcript_page_at(place: shell::Place, events: String, captures: bool) -> Page {
+    let buttons = captures
+        .then(|| ScreenButton::Act {
+            verb: Verb::AddTask,
+            dialog: CAPTURE.into(),
+        })
+        .into_iter()
+        .collect();
+    Page::new(place, events).buttons(buttons)
 }
 
 /// What `id` is of, as the Item column of a list of runs names it, its item
@@ -1245,8 +1252,15 @@ async fn read(
 }
 
 /// The page at `path`, its stream's with `prefix`, in the view `verbose`
-/// says, following from `follow` if given.
-fn page_path(path: &str, prefix: &str, verbose: bool, follow: Option<&Follow>) -> String {
+/// says, following from `follow` if given, and for a stream, with
+/// `captures` whether the page draws the capture's dialog.
+fn page_path(
+    path: &str,
+    prefix: &str,
+    verbose: bool,
+    follow: Option<&Follow>,
+    captures: bool,
+) -> String {
     let mut query = form_urlencoded::Serializer::new(String::new());
     if verbose {
         query.append_pair("verbose", "");
@@ -1254,47 +1268,57 @@ fn page_path(path: &str, prefix: &str, verbose: bool, follow: Option<&Follow>) -
     if let Some(follow) = follow {
         query.append_pair("follow", &follow.to_string());
     }
+    if captures {
+        query.append_pair("capture", "");
+    }
     with_query(&format!("{prefix}{path}"), &query.finish())
 }
 
-/// The page of the transcript `transcribed` names, at `path` and `trail`,
-/// with `context` above it and `capture` by its heading; or, where it cannot
-/// be shown, why, standing in for it.
+/// The page of the transcript `transcribed` names, at `path` and `place`,
+/// with `capture` the dialog its "Add task" opens, if it offers one; or,
+/// where it cannot be shown, why, standing in for it.
 pub(super) async fn transcript_page(
     sources: &Sources,
     path: &str,
-    trail: Trail,
-    context: Html,
+    place: shell::Place,
     transcribed: Result<Transcribed, (StatusCode, String)>,
     verbose: bool,
-    capture: Html,
+    capture: Option<Html>,
 ) -> Response {
     let frame = Frame::of(sources).await;
     let shown = match transcribed {
         Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.missing) {
             (Err(RunError::NoSuchRun(_)), Some(missing)) => {
-                let page = Page::new(trail, format!("/events{path}"));
-                return nothing_there(page, frame, "transcript", missing);
+                let events = format!("/events{path}");
+                return nothing_there(
+                    |thing| Page::new(shell::Place::Alone(thing), events),
+                    missing,
+                    frame,
+                    "transcript",
+                );
             }
             (shown, _) => shown,
         },
         Err((status, error)) => Err(RunError::Other { status, error }),
     };
     match shown {
-        Ok((transcript, follow)) => RunPage {
-            page: Page::new(trail, page_path(path, "/events", verbose, follow.as_ref())),
-            frame,
-            context,
-            verbose,
-            switched: page_path(path, "", !verbose, None),
-            capture,
-            transcript,
+        Ok((transcript, follow)) => {
+            let captures = capture.is_some();
+            let events = page_path(path, "/events", verbose, follow.as_ref(), captures);
+            RunPage {
+                page: transcript_page_at(place, events, captures),
+                frame,
+                verbose,
+                switched: page_path(path, "", !verbose, None, false),
+                capture: capture.unwrap_or_default(),
+                transcript,
+            }
+            .into_response()
         }
-        .into_response(),
         Err(e) => {
             let (status, error) = e.answer();
             let page = ErrorPage {
-                page: Page::new(trail, format!("/events{path}")),
+                page: Page::new(place, format!("/events{path}")),
                 frame,
                 region: "transcript",
                 error,
@@ -1309,21 +1333,28 @@ pub(super) async fn run_page(
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
 ) -> Response {
-    let trail = Trail::within(Area::Runs).here(id.as_str());
+    let events = format!("/events/runs/{id}");
     let Ok(run) = id.parse::<RunId>() else {
-        let page = Page::new(trail, format!("/events/runs/{id}"));
         let frame = Frame::of(&sources).await;
-        return nothing_there(page, frame, "transcript", Missing::Run(id));
+        let page = |thing| Page::new(shell::Place::Alone(thing), events);
+        return nothing_there(page, Missing::Run(id), frame, "transcript");
+    };
+    let thing = match run_thing(&sources, &run).await {
+        Some(Thing::Missing(missing)) => {
+            let frame = Frame::of(&sources).await;
+            let page = |thing| Page::new(shell::Place::Alone(thing), events);
+            return nothing_there(page, missing, frame, "transcript");
+        }
+        Some(found) => found,
+        None => Thing::Found(Heading::named(id)),
     };
     let capture = Offer::of(&sources, &run)
         .await
-        .map(|offer| offer.html(&sources))
-        .unwrap_or_default();
+        .map(|offer| offer.html(&sources, CAPTURE));
     transcript_page(
         &sources,
         &run_path(&run),
-        trail,
-        Html::default(),
+        shell::Place::Alone(thing),
         Ok(Transcribed::run(&sources, &run)),
         query.verbose(),
         capture,
@@ -1333,9 +1364,11 @@ pub(super) async fn run_page(
 
 const LAST_EVENT_ID: &str = "last-event-id";
 
-/// The run page's regions: the frame's and, while the run is in flight, the
+/// The run page's regions: the shell's, with "Add task" where the page
+/// draws the capture's dialog, and while the run is in flight, the
 /// transcript's lines after those the page showed, or after the
-/// `Last-Event-ID` a reconnecting reader gives.
+/// `Last-Event-ID` a reconnecting reader gives. A run missing as the stream
+/// starts stays so, as its page shows it.
 pub(super) async fn run_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -1345,9 +1378,28 @@ pub(super) async fn run_events(
 ) -> Response {
     let run = id.parse::<RunId>().ok();
     let transcribed = run.as_ref().map(|run| Transcribed::run(&sources, run));
-    let offered = match &run {
-        Some(run) => Offer::of(&sources, run).await.is_some(),
+    let found = match &run {
+        Some(run) => !matches!(run_thing(&sources, run).await, Some(Thing::Missing(_))),
         None => false,
+    };
+    let captures = query.captures();
+    let page: PageOf = {
+        let sources = sources.clone();
+        Box::new(move || {
+            let (sources, run, id) = (sources.clone(), run.clone(), id.clone());
+            let events = format!("/events/runs/{id}");
+            Box::pin(async move {
+                let thing = match &run {
+                    Some(run) if found => run_thing(&sources, run).await?,
+                    _ => Thing::Missing(Missing::Run(id)),
+                };
+                Some(transcript_page_at(
+                    shell::Place::Alone(thing),
+                    events,
+                    captures,
+                ))
+            })
+        })
     };
     transcript_events(
         sources,
@@ -1355,14 +1407,26 @@ pub(super) async fn run_events(
         transcribed.as_ref(),
         &query,
         &headers,
-        offered,
+        ShellRegions { page, captures },
     )
     .await
 }
 
-/// The regions of the page of the transcript `transcribed` names: the
-/// frame's, with `offered` whether a capture can run yet, and while the
-/// run is in flight the transcript's lines after those the page showed,
+/// The page of a transcript's stream, made again each time the stream
+/// looks for what changed; `None` where what it shows did not read, which
+/// leaves the shell as the stream last sent it.
+pub(super) type PageOf = Box<dyn Fn() -> BoxFuture<'static, Option<Page>> + Send + Sync>;
+
+/// What a transcript's stream sends besides the transcript: the shell's
+/// regions of its page, and with `captures`, whether the page draws the
+/// capture's dialog, whether a capture can run yet.
+pub(super) struct ShellRegions {
+    pub(super) page: PageOf,
+    pub(super) captures: bool,
+}
+
+/// The regions of the page of the transcript `transcribed` names: those of
+/// `shell`, and while the run is in flight the transcript's lines after those the page showed,
 /// or after the `Last-Event-ID` a reconnecting reader gives.
 pub(super) async fn transcript_events(
     sources: Sources,
@@ -1370,7 +1434,7 @@ pub(super) async fn transcript_events(
     transcribed: Option<&Transcribed>,
     query: &RunQuery,
     headers: &HeaderMap,
-    offered: bool,
+    shell: ShellRegions,
 ) -> Response {
     let resumed = headers
         .get(LAST_EVENT_ID)
@@ -1410,7 +1474,7 @@ pub(super) async fn transcript_events(
         sent: Sent::default(),
         samples: samples(),
         transcript,
-        offered,
+        shell,
         sources,
         stopping,
     };
@@ -1426,8 +1490,7 @@ struct RunStream {
     samples: tokio::time::Interval,
     /// `None` once the run has ended, or with the page not following it.
     transcript: Option<FollowedRun>,
-    /// Whether the page offers to capture the run.
-    offered: bool,
+    shell: ShellRegions,
     sources: Sources,
     stopping: CancellationToken,
 }
@@ -1460,8 +1523,12 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    let mut regions = frame_regions(&Frame::of(&self.sources).await);
-                    if self.offered {
+                    let frame = Frame::of(&self.sources).await;
+                    let mut regions = match (self.shell.page)().await {
+                        Some(page) => shell::regions(&frame, &page),
+                        None => vec![shell::holds(&frame)],
+                    };
+                    if self.shell.captures {
                         regions.push(Offer::region(&self.sources));
                     }
                     let changed = self.sent.changed(regions);

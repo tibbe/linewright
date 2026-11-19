@@ -457,31 +457,6 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
-/// Each disclosure in `main` whose form's class is in `forms`, in the
-/// page's order: the label of the button that opens it, whether it starts
-/// open, and the label of its form's submit button.
-#[track_caller]
-fn disclosures(html: &Html, forms: &[&str]) -> Vec<(String, bool, String)> {
-    let mut disclosures = vec![];
-    for details in select(html, "main details") {
-        let Some(form) = select_in(details, ":scope > form").into_iter().next() else {
-            continue;
-        };
-        if !forms.iter().any(|class| has_classes(form, &[class])) {
-            continue;
-        }
-        let summary = select_in(details, ":scope > summary");
-        let submit = select_in(form, "button[type=submit]");
-        assert_eq!((summary.len(), submit.len()), (1, 1), "{}", details.html());
-        disclosures.push((
-            text(summary[0]),
-            details.attr("open").is_some(),
-            text(submit[0]),
-        ));
-    }
-    disclosures
-}
-
 /// A confirmation (`docs/specs/design_system.md`, Confirming) as a reader
 /// meets it: the label of the button that asks, the question, the label of
 /// the button that turns it down, and where going ahead posts and what.
@@ -494,27 +469,23 @@ struct Confirmation {
     fields: Vec<(String, String)>,
 }
 
-/// Each confirmation in `main`, by the button that asks, but for "New" in a
-/// table's bar, which opens a dialog that makes a thing; checking that the
-/// button opens its dialog as a modal with no request, that the dialog is
-/// named by its question, that focus starts on turning it down, and that the
-/// button that goes ahead has the asking button's label.
+/// Each confirmation on the page, by the button that asks, but for the
+/// buttons that open a "New" dialog or the capture's; checking that the button opens its dialog
+/// as a modal with no request, that the dialog is named by its question,
+/// that focus starts on turning it down, and that the button that goes ahead
+/// has the asking button's label.
 #[track_caller]
 fn confirmations(html: &Html) -> Vec<Confirmation> {
     let mut confirmations = vec![];
-    for asking in select(html, "main button[command=show-modal]") {
-        let in_bar = asking
-            .ancestors()
-            .filter_map(ElementRef::wrap)
-            .any(|bar| has_classes(bar, &["table-bar"]));
-        if in_bar {
-            continue;
-        }
+    for asking in select(html, "button[command=show-modal]") {
         assert_eq!(asking.attr("type"), Some("button"), "{}", asking.html());
         let id = asking.attr("commandfor").expect("the dialog it opens");
         let dialogs = select(html, &format!("[id='{id}']"));
         assert_eq!(dialogs.len(), 1, "one element {id}");
         let dialog = dialogs[0];
+        if !select_in(dialog, "form[data-new], form.capture").is_empty() {
+            continue;
+        }
         assert_eq!(dialog.value().name(), "dialog", "{}", dialog.html());
         assert!(has_classes(dialog, &["modal"]), "{}", dialog.html());
         let question = dialog.attr("aria-labelledby").expect("its question");
@@ -757,6 +728,16 @@ fn regions(event: &str) -> Vec<(String, Html)> {
             )
         })
         .collect()
+}
+
+/// The region `id` of `regions`.
+#[track_caller]
+fn region_of<'a>(regions: &'a [(String, Html)], id: &str) -> &'a Html {
+    regions
+        .iter()
+        .find(|(region, _)| region == id)
+        .map(|(_, html)| html)
+        .unwrap_or_else(|| panic!("no {id}: {regions:?}"))
 }
 
 /// The column heads of the table of runs, as a reader reads them.

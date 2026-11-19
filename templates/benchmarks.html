@@ -1,13 +1,12 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-{%- call(part) ui::table_card("Benchmarks", filters_stream = "/events/benchmarks", buttons = true) %}
+{%- call(part) ui::table_card("Benchmarks", filters_stream = "/events/benchmarks") %}
 {%- match part %}
 {%- when crate::web::table::Part::Filters %}
 {%- call ui::filter_input("Name", "name", filters.name, width = "w-40") %}{% endcall %}
 {%- call ui::filter_select("Stage", "stage", "All stages", filters.stages) %}{% endcall %}
 {%- when crate::web::table::Part::Buttons %}
-{%- call ui::new_button("new-benchmark") %}{% endcall %}
 {%- when crate::web::table::Part::Table %}
 {%- include "benchmarks_table.html" %}
 {%- endmatch %}

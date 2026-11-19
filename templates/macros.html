@@ -101,12 +101,17 @@
 </select></label>
 {%- endmacro -%}
 
-{#- A confirmation (`docs/specs/design_system.md`, Confirming): the button
-    that asks, drawn with the classes `asking`, and the daisyUI `modal` it
-    opens with no request. Focus starts on turning it down, the least
-    destructive answer. -#}
-{%- macro confirm(confirmation, asking = "btn btn-sm") -%}
+{#- The button that asks for a confirmation (`docs/specs/design_system.md`,
+    Confirming), drawn with the classes `asking`, which opens its dialog,
+    drawn by `confirm_dialog`, with no request. -#}
+{%- macro confirm_button(confirmation, asking = "btn btn-sm") -%}
 <button class="{{ asking }}" type="button" command="show-modal" commandfor="{{ confirmation.id }}">{{ confirmation.label }}</button>
+{%- endmacro -%}
+
+{#- A confirmation's daisyUI `modal` (`docs/specs/design_system.md`,
+    Confirming). Focus starts on turning it down, the least destructive
+    answer. -#}
+{%- macro confirm_dialog(confirmation) -%}
 <dialog id="{{ confirmation.id }}" class="modal" aria-labelledby="{{ confirmation.id }}_question">
 <div class="modal-box">
 <p id="{{ confirmation.id }}_question">{{ confirmation.question }}</p>
@@ -198,18 +203,31 @@ card card-sm border border-base-300 bg-card shadow-sm
 {%- macro icon(status) -%}
 <svg class="icon size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
 {%- match status -%}
-{%- when Status::Done -%}
+{%- when crate::phrase::Status::Done -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M5 8.25l2 2 4-4.25"/>
-{%- when Status::Failed -%}
+{%- when crate::phrase::Status::Failed -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5"/>
-{%- when Status::InFlight -%}
+{%- when crate::phrase::Status::InFlight -%}
 <circle cx="8" cy="8" r="6.75"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/>
-{%- when Status::Waiting -%}
+{%- when crate::phrase::Status::Waiting -%}
 <circle cx="8" cy="8" r="6.75" stroke-dasharray="2.5 2"/>
-{%- when Status::Cancelled -%}
+{%- when crate::phrase::Status::Cancelled -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M3.25 12.75l9.5-9.5"/>
-{%- when Status::Paused -%}
+{%- when crate::phrase::Status::Paused -%}
 <circle cx="8" cy="8" r="6.75"/><path d="M6.5 5.5v5M9.5 5.5v5"/>
+{%- endmatch -%}
+</svg>
+{%- endmacro -%}
+
+{#- The icon of a button's verb (`docs/specs/web/design_system.md`,
+    Buttons), drawn as the statuses' icons are, before its label. -#}
+{%- macro verb_icon(verb) -%}
+<svg class="size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+{%- match verb -%}
+{%- when crate::web::buttons::Verb::Cancel -%}
+<circle cx="8" cy="8" r="6.75"/><rect x="5.75" y="5.75" width="4.5" height="4.5" rx="0.5"/>
+{%- when crate::web::buttons::Verb::AddTask -%}
+<path d="M8 3v10M3 8h10"/>
 {%- endmatch -%}
 </svg>
 {%- endmacro -%}

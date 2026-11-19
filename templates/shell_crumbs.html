@@ -1,0 +1,12 @@
+<nav id="crumbs" class="breadcrumbs min-w-0 py-0 text-sm" aria-label="Breadcrumb"{% if !page.place.has_crumbs() %} hidden{% endif %}>
+<ul>
+{%- for crumb in page.place.crumbs() %}
+{%- match crumb.href %}
+{%- when Some(href) %}
+<li><a class="link link-hover" href="{{ href }}">{{ crumb.name }}</a></li>
+{%- when None %}
+<li><h1 aria-current="page">{{ crumb.name }}</h1></li>
+{%- endmatch %}
+{%- endfor %}
+</ul>
+</nav>

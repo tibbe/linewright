@@ -1,6 +1,10 @@
 {%- extends "layout.html" -%}
 {%- block main -%}
 <section id="{{ region }}">
-<h1>{{ missing }}</h1>
+{%- if page.place.has_crumbs() %}
+<p>{{ missing }}</p>
+{%- else %}
+<h1 class="text-xl font-semibold">{{ missing }}</h1>
+{%- endif %}
 </section>
 {%- endblock -%}

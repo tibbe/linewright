@@ -160,13 +160,22 @@
   /**
    * Closes a confirmation as the reader goes ahead
    * (docs/specs/design_system.md, Confirming), so that it sends its request
-   * once.
+   * once. A dialog whose form answers within it, such as the capture's
+   * (docs/specs/runs.md, Run, Capturing), stays open to show the answer.
    */
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (form.method === "dialog" || isNewForm(form)) return;
-    form.closest?.("dialog")?.close();
+    const dialog = form.closest?.("dialog");
+    if (answersWithin(form, dialog)) return;
+    dialog?.close();
   });
+
+  /** Whether `form` puts its answer in `dialog`. */
+  const answersWithin = (form, dialog) => {
+    const target = form.getAttribute?.("hx-target");
+    return Boolean(target && dialog?.querySelector?.(target));
+  };
 
   /**
    * Keeps the run a capture sent chosen, as the reader chose it, through the

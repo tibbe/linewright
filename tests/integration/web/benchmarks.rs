@@ -35,8 +35,7 @@ pub(super) async fn with_benchmarks() -> Pages {
 /// `docs/specs/benchmarks.md`, Benchmarks; `docs/specs/design_system.md`,
 /// Tables.
 #[test_log::test(tokio::test)]
-async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_its_filters_and_new()
-{
+async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_its_filters() {
     let pages = with_benchmarks().await;
     launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
     launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
@@ -47,7 +46,7 @@ async fn the_benchmarks_page_shows_a_row_per_benchmark_by_name_in_a_card_with_it
         table_bars(&html),
         [(
             "Benchmarks".to_string(),
-            vec!["name".to_string(), "stage".into(), "New".into()]
+            vec!["name".to_string(), "stage".into()]
         )]
     );
     let heads: Vec<String> = select(&html, "#benchmarks thead th")
@@ -199,7 +198,7 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
 
     let html = pages.page("/benchmarks").await;
 
-    let new = select(&html, ".table-bar button[command=show-modal]");
+    let new = select(&html, "#buttons button[command=show-modal]");
     assert_eq!(new.len(), 1);
     assert_eq!(text(new[0]), "New");
     assert_eq!(new[0].attr("type"), Some("button"));
@@ -210,7 +209,7 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
     assert!(has_classes(dialog, &["modal"]), "{}", dialog.html());
     assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
     assert_eq!(
-        select(&html, "#benchmarks dialog, .table-bar dialog").len(),
+        select(&html, "#benchmarks dialog, #buttons dialog").len(),
         0
     );
     let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
@@ -418,8 +417,8 @@ async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_whi
 
     let html = pages.page("/benchmarks/board").await;
 
-    assert_eq!(text(select(&html, "main h1")[0]), "board");
-    assert_eq!(text(select(&html, "main h1 + p")[0]), "implement");
+    assert_eq!(text(select(&html, "#heading h1")[0]), "board");
+    assert_eq!(text(select(&html, "#heading .line")[0]), "implement");
     assert_eq!(
         tabs(&html),
         [

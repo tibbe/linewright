@@ -312,7 +312,12 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
         .unwrap();
 
     let first: Vec<String> = regions(&first).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(first, ["holds", "title", "board", "people"]);
+    assert_eq!(
+        first,
+        [
+            "holds", "title", "crumbs", "heading", "buttons", "board", "people"
+        ]
+    );
     let changed = regions(&next);
     let ids: Vec<&str> = changed.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["title", "board"]);
@@ -511,13 +516,18 @@ async fn the_boards_stream_narrowed_to_a_person_sends_their_cards_and_the_people
 
     let first = regions(&first);
     let ids: Vec<&str> = first.iter().map(|(id, _)| id.as_str()).collect();
-    assert_eq!(ids, ["holds", "title", "board", "people"]);
-    let cards: Vec<String> = select(&first[2].1, "#board .card h3")
+    assert_eq!(
+        ids,
+        [
+            "holds", "title", "crumbs", "heading", "buttons", "board", "people"
+        ]
+    );
+    let cards: Vec<String> = select(region_of(&first, "board"), "#board .card h3")
         .into_iter()
         .map(text)
         .collect();
     assert_eq!(cards, ["#3: Part one"]);
-    let people: Vec<&str> = select(&first[3].1, "datalist#people option")
+    let people: Vec<&str> = select(region_of(&first, "people"), "datalist#people option")
         .into_iter()
         .filter_map(|option| option.attr("value"))
         .collect();

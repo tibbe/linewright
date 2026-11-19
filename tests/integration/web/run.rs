@@ -103,7 +103,7 @@ async fn implemented_after(maintenance: &str, maintenance_log: Option<&str>) -> 
 /// with its text cut to `chars` characters, and with `io` its fold's input
 /// and result too, as a reader reads them.
 fn transcript_shown(html: &Html, chars: usize, io: bool) -> Vec<String> {
-    select(html, "#transcript h1, #transcript h2, #transcript .entry")
+    select(html, "#heading h1, #transcript h2, #transcript .entry")
         .into_iter()
         .map(|shown| {
             if shown.value().name() == "h2" {
@@ -673,7 +673,7 @@ async fn the_run_page_follows_a_run_in_flight_from_where_it_was_read_to_and_resu
 /// The run's heading, then each session's, as [`read_line`] reads an
 /// entry's line.
 fn heading(html: &Html) -> Vec<String> {
-    select(html, "#transcript h1, #transcript h2")
+    select(html, "#heading h1, #transcript h2")
         .into_iter()
         .map(|heading| match heading.value().name() {
             "h2" => read_line(heading, usize::MAX),
@@ -685,14 +685,14 @@ fn heading(html: &Html) -> Vec<String> {
 /// The line under the run page's heading that names the run's item, and
 /// where its links go.
 fn item_line(html: &Html) -> (String, Vec<String>) {
-    let line = select(html, "#transcript hgroup#run > p");
+    let line = select(html, "#heading .line");
     assert_eq!(line.len(), 1, "one item line");
     (text(line[0]), hrefs(select_in(line[0], "a")))
 }
 
 /// Where the links in the run page's heading itself go.
 fn heading_links(html: &Html) -> Vec<String> {
-    hrefs(select(html, "#transcript h1 a"))
+    hrefs(select(html, "#heading h1 a"))
 }
 
 #[test_log::test(tokio::test)]
@@ -722,23 +722,21 @@ async fn the_run_page_heads_an_items_run_with_its_whole_id_and_names_its_item_un
     assert_eq!(item_line(&html), ("#1: Ship gh".to_string(), links));
 }
 
+/// `docs/specs/runs.md`, Run, Heading, kept up by the page's stream.
 #[test_log::test(tokio::test)]
-async fn the_run_pages_stream_swaps_in_the_whole_heading_when_the_runs_header_comes() {
+async fn the_run_pages_stream_sends_its_heading_with_its_item_under_it() {
     let pages = implemented_as_recorded().await;
-    let mut events = stream_with_ids(&pages, "/events/runs/1/implement-1?follow=start", None).await;
+    let mut events = stream(&pages, "/events/runs/1/implement-1").await;
 
-    let sent = transcript_events(&mut events, |sent| !sent.is_empty()).await;
+    let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
 
-    let [(target, swap, heading)] = &patches(&sent[0].1)[..] else {
-        panic!("one patch for the header: {sent:?}")
-    };
-    assert_eq!((target.as_str(), swap.as_str()), ("#run", "outerHTML"));
-    let swapped: Vec<String> = select(heading, "hgroup#run > h1")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(swapped, ["1/implement-1"]);
-    assert_eq!(text(select(heading, "hgroup#run > p")[0]), "#1: Ship gh");
+    let first = regions(&first);
+    let (_, heading) = first.iter().find(|(id, _)| id == "heading").unwrap();
+    assert_eq!(text(select(heading, "h1")[0]), "1/implement-1");
+    assert_eq!(text(select(heading, ".line")[0]), "#1: Ship gh");
 }
 
 #[test_log::test(tokio::test)]
