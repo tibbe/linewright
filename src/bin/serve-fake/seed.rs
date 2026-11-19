@@ -325,7 +325,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
     let record = benchmark_runs
         .show(launched.id)
         .await?
-        .context("the seed's experiment is kept")?;
+        .context("the seed's benchmark run is kept")?;
     let at = launched_at + chrono::TimeDelta::minutes(20);
     let usd = |money: f64| Usd::new(money).context("a cost is a number of dollars");
     for (key, seeded) in record.trials.keys().zip(&TRIALS) {
@@ -369,7 +369,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
                 scorer_money: Some(usd(0.03)?),
             }),
             SeedTrial::ScorerMadeNone { .. } => TrialChange::ScorerMakesNone {
-                reason: "the judge's session ended without a judgement: it timed out".into(),
+                reason: "the scorer's session ended without a score: it timed out".into(),
                 scorer_money: Some(usd(0.02)?),
             },
         };
@@ -382,12 +382,12 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
         .trials
         .keys()
         .next()
-        .context("the experiment has trials")?;
+        .context("the benchmark run has trials")?;
     let task = &record.tasks[first.task];
     let task_run = BOARD_TASKS
         .iter()
         .find(|seeded| seeded.name == task.as_str())
-        .context("the replay's case is the seed's")?;
+        .context("the trial's task is the seed's")?;
     trial_output(
         &benchmark_runs.output_dir(
             launched.id,
@@ -430,7 +430,7 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
             "verdict": "pass",
         },
         "leak": {
-            "reasoning": "No call read the case's pull request or its branch.",
+            "reasoning": "No call read the task's pull request or its branch.",
             "found": false,
             "calls": [],
         },
@@ -472,7 +472,7 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
             format!("{scorer}/output.jsonl"),
             transcript(
                 "2026-03-01T16:10:00Z",
-                "The replay passes, and it read nothing it should not.",
+                "The trial passes, and it read nothing it should not.",
             ),
         ),
         (
@@ -590,7 +590,7 @@ pub fn scenario() -> Scenario {
             ("triage".into(), triaging()),
             ("design".into(), designing()),
             ("implement".into(), implementing()),
-            ("judge".into(), scoring()),
+            ("scorer".into(), scoring()),
         ]),
         ..Scenario::default()
     }
@@ -682,7 +682,7 @@ fn scoring() -> Vec<Step> {
     let mut steps = session(
         BRISK_MILLIS,
         vec![
-            said("I'll read the replay's outcome and its writes against the criteria."),
+            said("I'll read the trial's outcome and its writes against the criteria."),
             called("j1", "Read", &json!({"file_path": "outcome"})),
             returned("j1", "done"),
         ],

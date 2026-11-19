@@ -290,7 +290,7 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
         let read = text(&served.page(&transcript).await);
         assert!(
             read.contains("The board's columns now carry their names.")
-                || read.contains("The replay passes, and it read nothing it should not."),
+                || read.contains("The trial passes, and it read nothing it should not."),
             "{transcript}: {read}"
         );
     }

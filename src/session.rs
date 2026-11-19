@@ -341,7 +341,7 @@ pub(crate) enum Beside {
 impl Beside {
     fn name(self) -> &'static str {
         match self {
-            Beside::Trial => "replay",
+            Beside::Trial => "trial",
         }
     }
 }

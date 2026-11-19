@@ -89,7 +89,7 @@ fn scoring<'a>(
             .await
             .unwrap_or_else(|e| panic!("opening the output at {caller}: {e}"));
         let record = ScorerRecord::make(&scoreable)
-            .unwrap_or_else(|e| panic!("making the judge's record at {caller}: {e}"));
+            .unwrap_or_else(|e| panic!("making the scorer's record at {caller}: {e}"));
         let mut config = config(&under.join("work").join(REPO)).await;
         adjust(&mut config);
         let winding_up = config.winding_up.clone();
@@ -105,7 +105,7 @@ fn scoring<'a>(
         let kept = scored.map(|score: Score| {
             let summary = score.summary();
             scorer::keep(&scoreable, score)
-                .unwrap_or_else(|e| panic!("keeping the judgement at {caller}: {e}"));
+                .unwrap_or_else(|e| panic!("keeping the score at {caller}: {e}"));
             summary
         });
         winding_up.wait().await;
@@ -256,12 +256,12 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     })
     .await;
 
-    let gave_up = gave_up.expect_err("a judge that gives up makes no judgement");
+    let gave_up = gave_up.expect_err("a scorer that gives up makes no score");
     assert_eq!(
         gave_up.to_string(),
-        "the judge gave up: The output is empty."
+        "the scorer gave up: The output is empty."
     );
-    let unmatched = unmatched.expect_err("a result never accepted is no judgement");
+    let unmatched = unmatched.expect_err("a result never accepted is no score");
     assert!(unmatched.to_string().contains("/leak"), "{unmatched}");
     assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
@@ -292,7 +292,7 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
 
     let kept = scorer::keep(&scoreable, score);
 
-    let refused = kept.expect_err("a judgement is never kept over another");
+    let refused = kept.expect_err("a score is never kept over another");
     assert!(
         matches!(
             refused.downcast_ref::<scorer::ScoreRefusal>(),
@@ -600,7 +600,7 @@ fn bin_with_git() -> tempfile::TempDir {
     bin
 }
 
-/// Runs `lw judge` on the task `task` and the output `out`, with `bin` on
+/// Runs `lw score` on the task `task` and the output `out`, with `bin` on
 /// its path, from a work directory of its own.
 #[track_caller]
 fn lw_score<'a>(bin: &'a Path, task: &'a Path, out: &'a Path) -> impl Future<Output = Output> + 'a {
@@ -611,7 +611,7 @@ fn lw_score<'a>(bin: &'a Path, task: &'a Path, out: &'a Path) -> impl Future<Out
         lw_isolated(
             bin,
             work.path(),
-            &["judge", task.to_str().unwrap(), out.to_str().unwrap()],
+            &["score", task.to_str().unwrap(), out.to_str().unwrap()],
             &[],
         )
         .await
@@ -648,7 +648,7 @@ async fn lw_score_refuses_an_output_whose_run_did_not_end_done_or_handed_back() 
 
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
-        ran.stderr.contains("the output cannot be judged: ") && ran.stderr.contains("`failed`"),
+        ran.stderr.contains("the output cannot be scored: ") && ran.stderr.contains("`failed`"),
         "{}",
         ran.stderr
     );
@@ -673,7 +673,7 @@ async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
         ran.stderr.contains(
-            "the output cannot be judged: the output already holds a score, `score.json`"
+            "the output cannot be scored: the output already holds a score, `score.json`"
         ),
         "{}",
         ran.stderr
@@ -707,7 +707,7 @@ async fn lw_score_whose_scorer_gives_up_exits_1_saying_why_and_keeps_nothing() {
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
         ran.stderr
-            .contains("the judge gave up: The output is empty."),
+            .contains("the scorer gave up: The output is empty."),
         "{}",
         ran.stderr
     );
@@ -731,7 +731,7 @@ async fn a_signal_ends_lw_score_at_once_saying_why_and_keeping_nothing_of_its_sc
     let work = tempfile::tempdir().unwrap();
     let stderr = work.path().join("stderr.log");
     let mut scorer = lw_command(bin.path(), work.path(), work.path())
-        .arg("judge")
+        .arg("score")
         .arg(&task)
         .arg(&out)
         .stderr(std::fs::File::create(&stderr).unwrap())
@@ -749,12 +749,12 @@ async fn a_signal_ends_lw_score_at_once_saying_why_and_keeping_nothing_of_its_sc
     assert!(sent.success());
     let status = tokio::time::timeout(std::time::Duration::from_secs(10), scorer.wait())
         .await
-        .expect("the judge did not end at once")
+        .expect("the scorer did not end at once")
         .unwrap();
     let stderr = std::fs::read_to_string(&stderr).unwrap();
     assert_eq!(status.code(), Some(128 + 15), "{status}: {stderr}");
     assert!(
-        stderr.contains("the judge made no judgement: a signal ended the command"),
+        stderr.contains("the scorer made no score: a signal ended the command"),
         "{stderr}"
     );
     assert_eq!(entries(&out), vec!["outcome", "task"]);
@@ -771,7 +771,7 @@ async fn lw_help_lists_score() {
     assert!(
         ran.stdout
             .lines()
-            .any(|line| line.trim_start().starts_with("judge ")),
+            .any(|line| line.trim_start().starts_with("score ")),
         "{}",
         ran.stdout
     );
@@ -796,7 +796,7 @@ async fn a_scorer_of_a_trial_with_a_configuration_runs_without_it() {
         scorer_models
             .lock()
             .unwrap()
-            .push(("judge", call.spec.model.clone()));
+            .push(("scorer", call.spec.model.clone()));
         Ok(scored_as("pass", &[]))
     });
     let under = tempfile::tempdir().unwrap();
@@ -821,7 +821,7 @@ async fn a_scorer_of_a_trial_with_a_configuration_runs_without_it() {
         *models.lock().unwrap(),
         vec![
             ("triage", Some("configuration-model".to_string())),
-            ("judge", None),
+            ("scorer", None),
         ]
     );
     let score = score_in(&scoreable.out);

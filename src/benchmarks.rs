@@ -43,7 +43,7 @@ impl std::str::FromStr for BenchmarkName {
     type Err = String;
 
     fn from_str(name: &str) -> Result<BenchmarkName, String> {
-        task::check_name(name, "a suite's").map(|()| BenchmarkName(name.to_string()))
+        task::check_name(name, "a benchmark's").map(|()| BenchmarkName(name.to_string()))
     }
 }
 
@@ -87,7 +87,6 @@ impl ChosenBenchmark {
 pub struct BenchmarkListed {
     #[serde(flatten)]
     pub benchmark: Benchmark,
-    #[serde(rename = "cases")]
     pub tasks: usize,
 }
 
@@ -114,7 +113,7 @@ pub struct TaskEntry {
 /// Why a benchmark was not made.
 #[derive(Debug, thiserror::Error)]
 pub enum MakeError {
-    #[error("a suite is already named {0}")]
+    #[error("a benchmark is already named {0}")]
     Taken(BenchmarkName),
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
@@ -123,9 +122,9 @@ pub enum MakeError {
 /// Why a task was not removed.
 #[derive(Debug, thiserror::Error)]
 pub enum RemoveError {
-    #[error("there is no suite {0}")]
+    #[error("there is no benchmark {0}")]
     NoSuchBenchmark(BenchmarkName),
-    #[error("the suite {benchmark} has no case {task}")]
+    #[error("the benchmark {benchmark} has no task {task}")]
     NoSuchTask {
         benchmark: BenchmarkName,
         task: TaskName,
@@ -259,7 +258,7 @@ impl Benchmarks {
         benchmark: &BenchmarkName,
         task: &TaskName,
     ) -> Result<(), RemoveError> {
-        let removing = format!("removing the case {task} from the suite {benchmark}");
+        let removing = format!("removing the task {task} from the benchmark {benchmark}");
         let mut tx = self
             .db
             .pool()
@@ -290,7 +289,7 @@ impl Benchmarks {
         let tasks_dir = self.tasks_dir();
         let place = tasks_dir.join(task.as_str());
         std::fs::create_dir_all(&tasks_dir)
-            .context("creating the cases' directory")
+            .context("creating the tasks' directory")
             .context(removing.clone())?;
         let bin = tempfile::Builder::new()
             .prefix(".removing-")
@@ -302,7 +301,7 @@ impl Benchmarks {
             Err(e) if e.kind() == ErrorKind::NotFound => {}
             Err(e) => {
                 return Err(anyhow::Error::from(e)
-                    .context(format!("moving {} out of the cases", place.display()))
+                    .context(format!("moving {} out of the tasks", place.display()))
                     .context(removing)
                     .into());
             }
@@ -311,7 +310,7 @@ impl Benchmarks {
             if binned.exists()
                 && let Err(back) = std::fs::rename(&binned, &place)
             {
-                tracing::warn!(case = %task, error = %back, "putting back a case whose removal failed failed");
+                tracing::warn!(task = %task, error = %back, "putting back a task whose removal failed failed");
                 let _kept = bin.keep();
             }
             return Err(anyhow::Error::from(e).context(removing).into());
@@ -333,7 +332,10 @@ impl Benchmarks {
         built: &Path,
     ) -> Result<PathBuf, CaptureError> {
         let benchmark = chosen.benchmark();
-        let keeping = format!("keeping the case {name} in the suite {}", benchmark.name);
+        let keeping = format!(
+            "keeping the task {name} in the benchmark {}",
+            benchmark.name
+        );
         let mut tx = self
             .db
             .pool()
@@ -378,13 +380,13 @@ impl Benchmarks {
             }
             Err(e) => {
                 return Err(anyhow::Error::from(std::io::Error::from(e))
-                    .context(format!("moving the case into {}", place.display()))
+                    .context(format!("moving the task into {}", place.display()))
                     .into());
             }
         }
         if let Err(e) = tx.commit().await {
             if let Err(back) = std::fs::rename(&place, built) {
-                tracing::warn!(case = %name, error = %back, "taking back a case whose row was not kept failed");
+                tracing::warn!(task = %name, error = %back, "taking back a task whose row was not kept failed");
             }
             return Err(anyhow::Error::from(e).context(keeping).into());
         }
@@ -407,12 +409,12 @@ async fn insert_benchmark<'c>(
         Ok(_) => Ok(()),
         Err(e) if unique_violation(&e) => Err(MakeError::Taken(benchmark.name.clone())),
         Err(e) => Err(anyhow::Error::from(e)
-            .context(format!("making the suite {}", benchmark.name))
+            .context(format!("making the benchmark {}", benchmark.name))
             .into()),
     }
 }
 
-const READING: &str = "reading the suites";
+const READING: &str = "reading the benchmarks";
 
 /// The benchmark a row holds.
 fn benchmark_of(name: &str, stage: &str) -> Result<Benchmark> {
@@ -430,24 +432,23 @@ fn foreign_key_violation(e: &sqlx::Error) -> bool {
     matches!(e, sqlx::Error::Database(e) if e.is_foreign_key_violation())
 }
 
-/// What `suites` answers.
+/// What `benchmarks` answers.
 #[derive(Serialize)]
 pub struct BenchmarksAnswer {
-    #[serde(rename = "suites")]
     pub benchmarks: Vec<BenchmarkListed>,
 }
 
-/// The benchmarks as `suites` prints them: a line for each.
+/// The benchmarks as `benchmarks` prints them: a line for each.
 pub fn render_benchmarks(answer: &BenchmarksAnswer) -> String {
     if answer.benchmarks.is_empty() {
-        return "suites: none\n".into();
+        return "benchmarks: none\n".into();
     }
     let mut text = String::new();
     for listed in &answer.benchmarks {
         let tasks = match listed.tasks {
-            0 => "no cases".to_string(),
-            1 => "1 case".to_string(),
-            n => format!("{n} cases"),
+            0 => "no tasks".to_string(),
+            1 => "1 task".to_string(),
+            n => format!("{n} tasks"),
         };
         let _ = writeln!(
             text,
@@ -458,18 +459,16 @@ pub fn render_benchmarks(answer: &BenchmarksAnswer) -> String {
     text
 }
 
-/// What `suite show NAME` answers.
+/// What `benchmark show NAME` answers.
 #[derive(Serialize)]
 pub struct BenchmarkAnswer {
     #[serde(flatten)]
     pub benchmark: Benchmark,
-    #[serde(rename = "cases")]
     pub tasks: Vec<TaskAnswer>,
-    #[serde(rename = "experiments")]
     pub benchmark_runs: Vec<BenchmarkRunSummary>,
 }
 
-/// A task as `suite show NAME` answers it: its criteria, or why they do not
+/// A task as `benchmark show NAME` answers it: its criteria, or why they do not
 /// read.
 #[derive(Serialize)]
 pub struct TaskAnswer {
@@ -515,19 +514,19 @@ impl BenchmarkAnswer {
     }
 }
 
-/// A benchmark as `suite show NAME` prints it: its facts, then each task with
+/// A benchmark as `benchmark show NAME` prints it: its facts, then each task with
 /// its run, and its criteria indented under it, then each benchmark run, latest
 /// first.
 pub fn render_benchmark(answer: &BenchmarkAnswer) -> String {
     let mut text = format!(
-        "suite: {}\nstage: {}\n",
+        "benchmark: {}\nstage: {}\n",
         answer.benchmark.name, answer.benchmark.stage
     );
     if answer.tasks.is_empty() {
-        text.push_str("cases: none\n");
+        text.push_str("tasks: none\n");
     }
     for task in &answer.tasks {
-        let _ = writeln!(text, "case {}: captured from {}", task.name, task.run);
+        let _ = writeln!(text, "task {}: captured from {}", task.name, task.run);
         match &task.criteria {
             CriteriaAnswer::Criteria(criteria) => {
                 for line in criteria.lines() {
@@ -541,7 +540,7 @@ pub fn render_benchmark(answer: &BenchmarkAnswer) -> String {
         }
     }
     if answer.benchmark_runs.is_empty() {
-        text.push_str("experiments: none\n");
+        text.push_str("benchmark runs: none\n");
     }
     for benchmark_run in &answer.benchmark_runs {
         text.push_str(&answers::render_summary(benchmark_run));

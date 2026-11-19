@@ -312,7 +312,7 @@ async fn a_trials_run_reads_back_from_its_output_as_the_trial_wrote_it() {
     let read = RunFiles::new(&ran_trial.out)
         .read(&id)
         .unwrap()
-        .expect("the replay's run is read");
+        .expect("the trial's run is read");
     assert_eq!(
         read.state,
         State::Ended {
@@ -346,7 +346,7 @@ fn cost_without_time(ran_trial: &RanTrial) -> Value {
             .as_ref()
             .and_then(Value::as_f64)
             .is_some_and(|s| s >= 0.0),
-        "the replay's time: {seconds:?}"
+        "the trial's time: {seconds:?}"
     );
     cost
 }
@@ -812,7 +812,7 @@ async fn without_linewrights_token_lw_trial_exits_1_naming_its_variables_and_run
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -843,7 +843,7 @@ async fn lw_trial_refuses_a_task_without_criteria_naming_them() {
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -855,7 +855,7 @@ async fn lw_trial_refuses_a_task_without_criteria_naming_them() {
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
         ran.stderr
-            .contains("the case cannot be replayed: the case's criteria: "),
+            .contains("the task cannot be run: the task's criteria: "),
         "{}",
         ran.stderr
     );
@@ -875,7 +875,7 @@ async fn lw_trial_gives_sessions_linewrights_token_with_repo_set_or_unset() {
     let unset_ran = lw_isolated(
         bin.path(),
         work.path(),
-        &["replay", task_arg, "--out", unset.to_str().unwrap()],
+        &["trial", task_arg, "--out", unset.to_str().unwrap()],
         &[],
     )
     .await;
@@ -885,7 +885,7 @@ async fn lw_trial_gives_sessions_linewrights_token_with_repo_set_or_unset() {
         &[
             "--repo",
             "someone/else",
-            "replay",
+            "trial",
             task_arg,
             "--out",
             other.to_str().unwrap(),
@@ -926,7 +926,7 @@ async fn lw_trial_warns_that_sessions_given_linewrights_token_can_write_to_githu
         &[
             "--log-format",
             "json",
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -957,7 +957,7 @@ async fn lw_trial_gives_sessions_the_separate_token_when_it_is_set() {
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -993,7 +993,7 @@ async fn lw_trial_does_not_count_gh_config_dir_among_the_variables_sessions_are_
         &[
             "--log-format",
             "json",
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -1028,7 +1028,7 @@ async fn lw_trial_refuses_a_task_that_lacks_a_part_with_status_1_naming_the_part
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -1039,7 +1039,7 @@ async fn lw_trial_refuses_a_task_that_lacks_a_part_with_status_1_naming_the_part
 
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
-        ran.stderr.contains("the case's properties"),
+        ran.stderr.contains("the task's properties"),
         "{}",
         ran.stderr
     );
@@ -1060,7 +1060,7 @@ async fn lw_trial_refuses_an_output_that_holds_anything_with_status_1() {
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),
@@ -1092,7 +1092,7 @@ async fn a_signal_ends_lw_trial_at_once_leaving_its_output_interrupted() {
     let work = tempfile::tempdir().unwrap();
     let out = work.path().join("out");
     let mut trial = lw_command(bin.path(), work.path(), work.path())
-        .arg("replay")
+        .arg("trial")
         .arg(&task)
         .arg("--out")
         .arg(&out)
@@ -1122,7 +1122,7 @@ async fn a_signal_ends_lw_trial_at_once_leaving_its_output_interrupted() {
     assert!(sent.success());
     let status = tokio::time::timeout(std::time::Duration::from_secs(10), trial.wait())
         .await
-        .expect("the replay did not end at once")
+        .expect("the trial did not end at once")
         .unwrap();
     assert_eq!(status.code(), Some(128 + 15), "{status}");
     assert_eq!(
@@ -1170,7 +1170,7 @@ async fn lw_help_lists_trial() {
     assert!(
         ran.stdout
             .lines()
-            .any(|line| line.trim_start().starts_with("replay ")),
+            .any(|line| line.trim_start().starts_with("trial ")),
         "{}",
         ran.stdout
     );
@@ -1186,7 +1186,7 @@ async fn a_signal_during_the_build_ends_the_build_with_lw_trial() {
     let pid = work.path().join("build.pid");
     let setup = format!("echo $$ > {}; exec sleep 300", pid.display());
     let mut trial = lw_command(bin.path(), work.path(), work.path())
-        .arg("replay")
+        .arg("trial")
         .arg(&task)
         .arg("--out")
         .arg(work.path().join("out"))
@@ -1206,7 +1206,7 @@ async fn a_signal_during_the_build_ends_the_build_with_lw_trial() {
     assert!(sent.success());
     let status = tokio::time::timeout(std::time::Duration::from_secs(10), trial.wait())
         .await
-        .expect("the replay did not end at once")
+        .expect("the trial did not end at once")
         .unwrap();
     let stderr = std::fs::read_to_string(work.path().join("stderr.log")).unwrap();
     assert_eq!(status.code(), Some(128 + 15), "{status}: {stderr}");
@@ -1412,7 +1412,7 @@ async fn lw_trial_refuses_a_configuration_with_an_error_naming_the_file_before_i
         bin.path(),
         work.path(),
         &[
-            "replay",
+            "trial",
             task.to_str().unwrap(),
             "--out",
             out.to_str().unwrap(),

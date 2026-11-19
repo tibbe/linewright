@@ -36,7 +36,7 @@ impl std::str::FromStr for BenchmarkRunId {
             .then(|| id.parse::<i64>().ok())
             .flatten()
             .and_then(BenchmarkRunId::positive)
-            .ok_or_else(|| format!("{id:?} is not an experiment's ID: it is a positive number"))
+            .ok_or_else(|| format!("{id:?} is not a benchmark run's ID: it is a positive number"))
     }
 }
 
@@ -52,7 +52,7 @@ impl BenchmarkRunId {
     }
 
     fn from_row(id: i64) -> Result<BenchmarkRunId> {
-        BenchmarkRunId::positive(id).with_context(|| format!("{id} is not an experiment's ID"))
+        BenchmarkRunId::positive(id).with_context(|| format!("{id} is not a benchmark run's ID"))
     }
 }
 
@@ -130,10 +130,10 @@ impl BenchmarkRunState {
         let at = ended_at.map(database::parse_time).transpose()?;
         match (name, at) {
             ("open", None) => Ok(BenchmarkRunState::Open),
-            ("open", Some(_)) => anyhow::bail!("an open experiment has an end"),
+            ("open", Some(_)) => anyhow::bail!("an open benchmark run has an end"),
             ("ended", at) => Ok(BenchmarkRunState::Ended { at }),
             ("cancelled", at) => Ok(BenchmarkRunState::Cancelled { at }),
-            (name, _) => anyhow::bail!("{name:?} is not an experiment's state"),
+            (name, _) => anyhow::bail!("{name:?} is not a benchmark run's state"),
         }
     }
 }
@@ -272,9 +272,9 @@ const CONFIGURATIONS: &str = "configurations";
 /// Why a benchmark run was not launched.
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchRefusal {
-    #[error("there is no suite {0}")]
+    #[error("there is no benchmark {0}")]
     NoSuchBenchmark(BenchmarkName),
-    #[error("the suite {0} has no cases")]
+    #[error("the benchmark {0} has no tasks")]
     NoTasks(BenchmarkName),
     #[error("two configurations are named {0}")]
     DuplicateConfiguration(ConfigurationName),
@@ -293,9 +293,9 @@ pub struct Launched {
 /// Why a benchmark run was not cancelled.
 #[derive(Debug, thiserror::Error)]
 pub enum CancelRefusal {
-    #[error("there is no experiment {0}")]
+    #[error("there is no benchmark run {0}")]
     NoSuchBenchmarkRun(BenchmarkRunId),
-    #[error("experiment {id} is {}", state.name())]
+    #[error("benchmark run {id} is {}", state.name())]
     NotOpen {
         id: BenchmarkRunId,
         state: BenchmarkRunState,
@@ -333,7 +333,7 @@ pub struct BenchmarkRuns {
     db: Database,
 }
 
-const READING: &str = "reading the experiments";
+const READING: &str = "reading the benchmark runs";
 
 impl BenchmarkRuns {
     pub fn new(db: Database) -> BenchmarkRuns {
@@ -400,7 +400,7 @@ impl BenchmarkRuns {
                 return Err(LaunchRefusal::DuplicateConfiguration(name.clone()));
             }
         }
-        let launching = format!("launching an experiment on the suite {benchmark}");
+        let launching = format!("launching a benchmark run on the benchmark {benchmark}");
         let mut conn = self.db.pool().acquire().await.context(launching.clone())?;
         let tasks = benchmark_tasks(&mut conn, benchmark).await;
         drop(conn);
@@ -451,7 +451,7 @@ impl BenchmarkRuns {
             let before = TaskDir::of(&from)?;
             tree::copy(&from, &kept_task(dir.path(), task))
                 .await
-                .with_context(|| format!("copying the case {task} from {}", from.display()))?;
+                .with_context(|| format!("copying the task {task} from {}", from.display()))?;
             copied.push(before);
         }
         let as_is = kept_configuration(dir.path(), &ConfigurationName::as_is());
@@ -484,7 +484,7 @@ impl BenchmarkRuns {
                 TaskDir::of(&tasks_dir.join(task.as_str())).ok().as_ref() == Some(copied)
             });
         if !unchanged {
-            anyhow::bail!("the suite's cases changed as they were copied: launch again");
+            anyhow::bail!("the benchmark's tasks changed as they were copied: launch again");
         }
         let id = BenchmarkRunId::from_row(next_id(&mut tx, &self.benchmark_runs_dir()).await?)?;
         let trials = insert_benchmark_run(
@@ -506,10 +506,10 @@ impl BenchmarkRuns {
             rustix::fs::RenameFlags::NOREPLACE,
         )
         .map_err(std::io::Error::from)
-        .with_context(|| format!("moving the experiment into {}", place.display()))?;
+        .with_context(|| format!("moving the benchmark run into {}", place.display()))?;
         if let Err(e) = tx.commit().await {
             if let Err(back) = std::fs::rename(&place, built.dir.path()) {
-                tracing::warn!(experiment = %id, error = %back, "taking back an experiment whose rows were not kept failed");
+                tracing::warn!(benchmark_run = %id, error = %back, "taking back a benchmark run whose rows were not kept failed");
             }
             return Err(e.into());
         }
@@ -591,7 +591,7 @@ impl BenchmarkRuns {
     /// Cancels the open benchmark run `id` at `at`. Its trials stand as they
     /// are.
     pub async fn cancel(&self, id: BenchmarkRunId, at: Timestamp) -> Result<(), CancelRefusal> {
-        let cancelling = format!("cancelling experiment {id}");
+        let cancelling = format!("cancelling benchmark run {id}");
         let mut tx = self
             .db
             .pool()
@@ -682,7 +682,7 @@ impl BenchmarkRuns {
     pub async fn step(&self, trial: &TrialRef, change: TrialChange, at: Timestamp) -> Result<()> {
         let TrialRef { benchmark_run, key } = trial;
         let stepping = format!(
-            "recording a change of the trial {}/{}/{} of experiment {benchmark_run}",
+            "recording a change of the trial {}/{}/{} of benchmark run {benchmark_run}",
             key.repetition, key.task, key.configuration
         );
         let stepped = async {
@@ -767,7 +767,7 @@ async fn end_if_done(conn: &mut SqliteConnection, id: BenchmarkRunId, at: Timest
     .bind(id.0)
     .execute(&mut *conn)
     .await
-    .with_context(|| format!("recording that experiment {id} ended"))?;
+    .with_context(|| format!("recording that benchmark run {id} ended"))?;
     Ok(())
 }
 
@@ -902,7 +902,7 @@ async fn next_id(conn: &mut SqliteConnection, benchmark_runs_dir: &Path) -> Resu
         }
     }
     last.checked_add(1)
-        .context("there is no ID left for an experiment")
+        .context("there is no ID left for a benchmark run")
 }
 
 /// Inserts the rows of the benchmark run `id` on `tasks` of the benchmark
@@ -999,7 +999,7 @@ async fn read_record(
     let Some((benchmark, stage, launched_at, repetitions, state, ended_at)) = row else {
         return Ok(None);
     };
-    let reading = || format!("reading experiment {id}");
+    let reading = || format!("reading benchmark run {id}");
     let tasks: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM benchmark_run_tasks WHERE benchmark_run = ? ORDER BY seq",
     )
@@ -1034,7 +1034,7 @@ async fn read_record(
             .keys()
             .find(|key| key.task >= tasks.len() || key.configuration >= configurations.len())
         {
-            anyhow::bail!("a trial is of a case or a configuration it lacks: {key:?}");
+            anyhow::bail!("a trial is of a task or a configuration it lacks: {key:?}");
         }
         Ok::<_, anyhow::Error>(BenchmarkRunRecord {
             id,
@@ -1093,7 +1093,7 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
         _ => None,
     };
     let with_trial = |figures: Option<TrialFigures>| {
-        figures.with_context(|| format!("a trial {state} has no replay"))
+        figures.with_context(|| format!("a trial {state} has no run"))
     };
     let scorer_money = money(row.try_get("scorer_money")?)?;
     let unscored: Option<String> = row.try_get("unscored")?;
@@ -1118,7 +1118,7 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
                         .with_context(|| format!("{correctness:?} is not a correctness"))?,
                     leak: row
                         .try_get::<Option<bool>, _>("leak")?
-                        .context("a judged trial has no leak")?,
+                        .context("a scored trial has no leak")?,
                     scorer_money,
                 },
             })
@@ -1134,10 +1134,10 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
                         scorer_money,
                     },
                     ("cancelled", None) => NoScore::Cancelled,
-                    _ => anyhow::bail!("{why:?} is not why a trial has no judgement"),
+                    _ => anyhow::bail!("{why:?} is not why a trial has no score"),
                 },
             }),
-            (why, ..) => anyhow::bail!("{why:?} is not why a trial has no judgement"),
+            (why, ..) => anyhow::bail!("{why:?} is not why a trial has no score"),
         },
         other => anyhow::bail!("{other:?} is not a trial's state"),
     };
@@ -1257,7 +1257,7 @@ mod tests {
     async fn launch(benchmark_runs: &BenchmarkRuns) -> Result<Launched, LaunchRefusal> {
         benchmark_runs
             .launch(
-                &"board".parse().expect("a suite's name"),
+                &"board".parse().expect("a benchmark's name"),
                 vec![],
                 Repetitions::MIN,
                 "2026-11-17T12:00:00Z".parse().expect("a time"),
@@ -1318,8 +1318,8 @@ mod tests {
             let record = benchmark_runs
                 .show(trial.benchmark_run)
                 .await
-                .unwrap_or_else(|e| panic!("reading the experiment at {caller}: {e:#}"))
-                .unwrap_or_else(|| panic!("no experiment at {caller}"));
+                .unwrap_or_else(|e| panic!("reading the benchmark run at {caller}: {e:#}"))
+                .unwrap_or_else(|| panic!("no benchmark run at {caller}"));
             (record.state, record.trials[&trial.key].clone())
         }
     }
@@ -1582,7 +1582,7 @@ mod tests {
             .execute(benchmark_runs.db.pool())
             .await;
 
-        assert!(ended.is_err(), "an open experiment was kept with an end");
+        assert!(ended.is_err(), "an open benchmark run was kept with an end");
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 0)).await.0,
             BenchmarkRunState::Open

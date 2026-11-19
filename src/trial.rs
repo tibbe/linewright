@@ -537,7 +537,7 @@ async fn run_in(
         .store
         .snapshot(shell.policy.windows(now), &scope)
         .await
-        .context("taking a snapshot of the case")?;
+        .context("taking a snapshot of the task")?;
     let work = task.stage().work(issue);
     let running = RunFiles::new(out.path())
         .begin(
@@ -549,7 +549,7 @@ async fn run_in(
         )
         .await?;
     out.in_flight(running.id())?;
-    info!(run = %running.id(), case = %task.run(), "replaying");
+    info!(run = %running.id(), task = %task.run(), "running a trial");
     let with = shell.run_with(&setting.repo, RunKind::Stage(kind));
     let with = match configuration {
         Some(configuration) => configuration.over(with, &setting.repo, &shell.operator_briefs),
@@ -612,7 +612,7 @@ impl Setting {
         let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(task.start()));
         let seeded = LocalStore::from_task(root, repository, task, clock.clone())
             .await
-            .context("seeding the model of GitHub from the case")?;
+            .context("seeding the model of GitHub from the task")?;
         let store: Arc<dyn Store> = Arc::new(seeded);
         let properties = task.properties();
         let mut settings = properties.settings.clone();
@@ -621,14 +621,14 @@ impl Setting {
         }
         let repo = RepoLayer::read(store.as_ref(), &settings.default_branch, &config.briefs)
             .await
-            .context("reading Linewright's files in the case")?;
+            .context("reading Linewright's files in the task")?;
         if let Some(file) = holding(&repo.unusable, kind).first() {
             let (refused, held) = match kind {
-                RunKind::Scorer => ("judged", "the judge"),
-                RunKind::Stage(_) | RunKind::Automation(_) => ("replayed", "the run"),
+                RunKind::Scorer => ("scored", "the scorer"),
+                RunKind::Stage(_) | RunKind::Automation(_) => ("run", "the run"),
             };
             bail!(
-                "the case cannot be {refused}: {} on its default branch would hold {held}: {}",
+                "the task cannot be {refused}: {} on its default branch would hold {held}: {}",
                 file.path,
                 file.error
             );
@@ -636,7 +636,7 @@ impl Setting {
         let head = task
             .heads()
             .get(&settings.default_branch)
-            .context("the case lacks the head of its default branch")?;
+            .context("the task lacks the head of its default branch")?;
         let builder = environment::Builder {
             store: store.clone(),
             harness,
@@ -744,7 +744,7 @@ pub async fn unless_signalled<T>(
     let status = on_signal(signal);
     #[expect(
         clippy::exit,
-        reason = "a signal ends a replay or its judge at once, leaving in the output what it did"
+        reason = "a signal ends a trial or its scorer at once, leaving in the output what it did"
     )]
     std::process::exit(status);
 }

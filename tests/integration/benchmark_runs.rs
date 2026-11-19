@@ -67,7 +67,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
     let output = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -81,7 +81,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "Launched experiment 1 on the suite board: 8 replays\n"
+        "Launched benchmark run 1 on the benchmark board: 8 trials\n"
     );
     let kept = repo.join("benchmark-runs/1/.kept");
     assert_eq!(names_in(&repo.join("benchmark-runs")), ["1"]);
@@ -111,12 +111,12 @@ async fn lw_benchmark_run_launch_takes_an_id_past_a_directory_a_stopped_launch_l
     let repo = board(work_dir.path()).await;
     std::fs::create_dir_all(repo.join("benchmark-runs/1/.kept")).unwrap();
 
-    let output = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "Launched experiment 2 on the suite board: 2 replays\n"
+        "Launched benchmark run 2 on the benchmark board: 2 trials\n"
     );
     assert_eq!(
         names_in(&repo.join("benchmark-runs/2/.kept/tasks")),
@@ -131,14 +131,14 @@ async fn lw_benchmark_run_launch_with_no_configuration_runs_as_is_once() {
 
     let output = lw_in(
         work_dir.path(),
-        &["experiment", "launch", "board", "--json"],
+        &["benchmark-run", "launch", "board", "--json"],
     )
     .await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&output.stdout).unwrap(),
-        json!({"id": 1, "suite": "board", "replays": 2})
+        json!({"id": 1, "benchmark": "board", "trials": 2})
     );
 }
 
@@ -157,7 +157,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     let no_benchmark = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "lanes",
             "--configuration",
@@ -165,11 +165,11 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
         ],
     )
     .await;
-    let no_tasks = lw_in(work_dir.path(), &["experiment", "launch", "empty"]).await;
+    let no_tasks = lw_in(work_dir.path(), &["benchmark-run", "launch", "empty"]).await;
     let with_an_error = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -180,7 +180,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     let twice = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -193,7 +193,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     let as_is = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -203,9 +203,9 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     .await;
 
     assert_eq!(no_benchmark.code, Some(4), "{}", no_benchmark.stderr);
-    assert_eq!(no_benchmark.stderr, "lw: there is no suite lanes\n");
+    assert_eq!(no_benchmark.stderr, "lw: there is no benchmark lanes\n");
     assert_eq!(no_tasks.code, Some(1), "{}", no_tasks.stderr);
-    assert_eq!(no_tasks.stderr, "lw: the suite empty has no cases\n");
+    assert_eq!(no_tasks.stderr, "lw: the benchmark empty has no tasks\n");
     assert_eq!(with_an_error.code, Some(1), "{}", with_an_error.stderr);
     assert!(
         with_an_error.stderr.contains("cannot be used")
@@ -219,9 +219,9 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     assert_eq!(as_is.stderr, "lw: two configurations are named as-is\n");
     let benchmark_runs = repo.join("benchmark-runs");
     assert!(!benchmark_runs.exists() || names_in(&benchmark_runs).is_empty());
-    let shown = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
+    let shown = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
     assert!(
-        shown.stdout.ends_with("experiments: none\n"),
+        shown.stdout.ends_with("benchmark runs: none\n"),
         "{}",
         shown.stdout
     );
@@ -234,13 +234,19 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
 
     let no_dir = lw_in(
         work_dir.path(),
-        &["experiment", "launch", "board", "--configuration", "short"],
+        &[
+            "benchmark-run",
+            "launch",
+            "board",
+            "--configuration",
+            "short",
+        ],
     )
     .await;
     let named = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -250,7 +256,7 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
     .await;
     let none = lw_in(
         work_dir.path(),
-        &["experiment", "launch", "board", "--repetitions", "0"],
+        &["benchmark-run", "launch", "board", "--repetitions", "0"],
     )
     .await;
 
@@ -263,13 +269,13 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
 async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
-    let launched = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
+    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
     assert_eq!(launched.code, Some(0), "{}", launched.stderr);
 
     std::fs::write(repo.join("tasks/lanes/criteria.md"), "Hides them.\n").unwrap();
     let removed = lw_in(
         work_dir.path(),
-        &["suite", "remove-case", "board", "columns"],
+        &["benchmark", "remove-task", "board", "columns"],
     )
     .await;
     assert_eq!(removed.code, Some(0), "{}", removed.stderr);
@@ -284,10 +290,10 @@ async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch() {
         std::fs::read_to_string(kept.join("columns/criteria.md")).unwrap(),
         "Names them.\n"
     );
-    let shown = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["cases"],
+        serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["tasks"],
         json!(["lanes", "columns"])
     );
 }
@@ -301,7 +307,7 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     let launched = lw_in(
         work_dir.path(),
         &[
-            "experiment",
+            "benchmark-run",
             "launch",
             "board",
             "--configuration",
@@ -328,16 +334,16 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     .await;
     trial(&repo, 1, (1, 1, 0), "state = 'running'").await;
 
-    let text = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
-    let json = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     for line in [
         "launched: 2026-11-17 12:00:00 UTC",
         "state: waiting for serve",
-        "replays ended: 2 of 4",
-        "replay as-is/lanes/1: judged pass, run done, cost $0.30, took 1m 30s, judge's cost $0.05",
-        "replay short/columns/1: pending",
+        "trials ended: 2 of 4",
+        "trial as-is/lanes/1: scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05",
+        "trial short/columns/1: pending",
     ] {
         assert!(
             text.stdout.lines().any(|shown| shown == line),
@@ -352,30 +358,30 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     assert_eq!(json.get("ended_at"), None);
     assert_eq!(json["configurations"], json!(["as-is", "short"]));
     assert_eq!(
-        json["replays"][0],
+        json["trials"][0],
         json!({
             "repetition": 1,
-            "case": "lanes",
+            "task": "lanes",
             "configuration": "as-is",
-            "state": "judged",
+            "state": "scored",
             "outcome": "done",
             "cost": 0.3,
             "seconds": 90.0,
             "correctness": "pass",
             "leak": false,
-            "judge_cost": 0.05,
+            "scorer_cost": 0.05,
         })
     );
     assert_eq!(
-        json["replays"][1],
+        json["trials"][1],
         json!({
             "repetition": 1,
-            "case": "lanes",
+            "task": "lanes",
             "configuration": "short",
-            "state": "unjudged",
+            "state": "unscored",
             "outcome": "failed",
             "seconds": 30.0,
-            "unjudged": "outcome",
+            "unscored": "outcome",
         })
     );
     let none = json!({"mean": null, "total": 0.0, "none": 0});
@@ -387,31 +393,34 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
             "cost": {"mean": 0.3, "total": 0.3, "none": 0},
             "time": {"mean": 90.0, "total": 90.0, "none": 0},
             "leaks": 0,
-            "unjudged": 0,
-            "cases": [
+            "unscored": 0,
+            "tasks": [
                 {
-                    "case": "lanes",
+                    "task": "lanes",
                     "passes": {"pass": 1, "of": 1},
                     "cost": {"mean": 0.3, "total": 0.3, "none": 0},
                     "time": {"mean": 90.0, "total": 90.0, "none": 0},
                     "leaks": 0,
-                    "unjudged": 0,
+                    "unscored": 0,
                 },
                 {
-                    "case": "columns",
+                    "task": "columns",
                     "passes": null,
                     "cost": none,
                     "time": none,
                     "leaks": 0,
-                    "unjudged": 0,
+                    "unscored": 0,
                 },
             ],
         })
     );
-    assert_eq!(json["results"]["replays_ended"], 2);
+    assert_eq!(json["results"]["trials_ended"], 2);
     assert_eq!(json["results"]["all"], 4);
     assert_eq!(json["results"]["cost"], json!({"total": 0.35, "none": 1}));
-    assert_eq!(json["results"]["judges"], json!({"total": 0.05, "none": 0}));
+    assert_eq!(
+        json["results"]["scorers"],
+        json!({"total": 0.05, "none": 0})
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -419,17 +428,17 @@ async fn lw_benchmark_run_show_of_a_benchmark_run_that_does_not_exist_exits_4() 
     let work_dir = tempfile::tempdir().unwrap();
     board(work_dir.path()).await;
 
-    let missing = lw_in(work_dir.path(), &["experiment", "show", "3"]).await;
+    let missing = lw_in(work_dir.path(), &["benchmark-run", "show", "3"]).await;
     let no_database = lw_in(
         tempfile::tempdir().unwrap().path(),
-        &["experiment", "show", "3"],
+        &["benchmark-run", "show", "3"],
     )
     .await;
-    let cancel = lw_in(work_dir.path(), &["experiment", "cancel", "3"]).await;
+    let cancel = lw_in(work_dir.path(), &["benchmark-run", "cancel", "3"]).await;
 
     for output in [missing, no_database, cancel] {
         assert_eq!(output.code, Some(4), "{}", output.stderr);
-        assert_eq!(output.stderr, "lw: there is no experiment 3\n");
+        assert_eq!(output.stderr, "lw: there is no benchmark run 3\n");
     }
 }
 
@@ -437,28 +446,28 @@ async fn lw_benchmark_run_show_of_a_benchmark_run_that_does_not_exist_exits_4() 
 async fn lw_benchmark_run_cancel_cancels_an_open_benchmark_run_once() {
     let work_dir = tempfile::tempdir().unwrap();
     board(work_dir.path()).await;
-    let launched = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
+    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
     assert_eq!(launched.code, Some(0), "{}", launched.stderr);
 
-    let cancelled = lw_in(work_dir.path(), &["experiment", "cancel", "1"]).await;
-    let again = lw_in(work_dir.path(), &["experiment", "cancel", "1", "--json"]).await;
+    let cancelled = lw_in(work_dir.path(), &["benchmark-run", "cancel", "1"]).await;
+    let again = lw_in(work_dir.path(), &["benchmark-run", "cancel", "1", "--json"]).await;
 
     assert_eq!(cancelled.code, Some(0), "{}", cancelled.stderr);
-    assert_eq!(cancelled.stdout, "Cancelled experiment 1\n");
+    assert_eq!(cancelled.stdout, "Cancelled benchmark run 1\n");
     assert_eq!(again.code, Some(1), "{}", again.stderr);
-    assert_eq!(again.stderr, "lw: experiment 1 is cancelled\n");
-    let shown = lw_in(work_dir.path(), &["experiment", "show", "1"]).await;
+    assert_eq!(again.stderr, "lw: benchmark run 1 is cancelled\n");
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
     assert!(
         shown.stdout.contains("\nstate: cancelled\n"),
         "{}",
         shown.stdout
     );
     assert!(
-        shown.stdout.contains("\nreplay as-is/columns/1: pending\n"),
+        shown.stdout.contains("\ntrial as-is/columns/1: pending\n"),
         "{}",
         shown.stdout
     );
-    let json = lw_in(work_dir.path(), &["experiment", "show", "1", "--json"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
     let json: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
     assert!(json["ended_at"].is_string(), "{json}");
 }
@@ -468,7 +477,7 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
     for _ in 0..2 {
-        let launched = lw_in(work_dir.path(), &["experiment", "launch", "board"]).await;
+        let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
         assert_eq!(launched.code, Some(0), "{}", launched.stderr);
     }
     launched_at(&repo, 1, "2026-11-16T09:00:00Z").await;
@@ -480,23 +489,23 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
         "state = 'scored', outcome = 'done', seconds = 9, correctness = 'fail', leak = 0",
     )
     .await;
-    let cancelled = lw_in(work_dir.path(), &["experiment", "cancel", "1"]).await;
+    let cancelled = lw_in(work_dir.path(), &["benchmark-run", "cancel", "1"]).await;
     assert_eq!(cancelled.code, Some(0), "{}", cancelled.stderr);
 
-    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert!(
         text.stdout.ends_with(
-            "experiment 2: waiting for serve, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n\
-             experiment 1: cancelled, launched 2026-11-16 09:00:00 UTC, pass rates as-is 0%\n"
+            "benchmark run 2: waiting for serve, launched 2026-11-17 12:00:00 UTC, pass rates as-is none\n\
+             benchmark run 1: cancelled, launched 2026-11-16 09:00:00 UTC, pass rates as-is 0%\n"
         ),
         "{}",
         text.stdout
     );
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap()["experiments"],
+        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap()["benchmark_runs"],
         json!([
             {
                 "id": 2,

@@ -427,8 +427,8 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/follow", get(follow_environment))
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
-        .route("/experiments/changed", post(take_benchmark_runs_changed))
-        .route("/experiments/{id}", get(answer_benchmark_run))
+        .route("/benchmark-runs/changed", post(take_benchmark_runs_changed))
+        .route("/benchmark-runs/{id}", get(answer_benchmark_run))
         .route("/drain", post(take_drain))
         .route("/stop", get(answer_stop))
         .route("/exiting", get(answer_exiting));
@@ -748,7 +748,7 @@ async fn answer_benchmark_run(
         }
         Ok(None) => no_such_benchmark_run(&id),
         Err(e) => {
-            error!(error = format!("{e:#}"), "reading an experiment failed");
+            error!(error = format!("{e:#}"), "reading a benchmark run failed");
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
         }
     }
@@ -757,7 +757,7 @@ async fn answer_benchmark_run(
 fn no_such_benchmark_run(id: &impl std::fmt::Display) -> Response {
     error_response(
         StatusCode::NOT_FOUND,
-        &format!("there is no experiment {id}"),
+        &format!("there is no benchmark run {id}"),
     )
 }
 

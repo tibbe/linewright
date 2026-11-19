@@ -548,7 +548,7 @@ impl Factory {
                     .memory
                     .drained(self.runs.len() + self.benchmark_runs.in_flight())
                 {
-                    info!("drained: no run, replay or judge is in flight");
+                    info!("drained: no run, trial or scorer is in flight");
                     self.environment.exit().await;
                     return ServeEnd::Drained;
                 }

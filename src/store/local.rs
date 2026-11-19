@@ -325,7 +325,7 @@ impl LocalStore {
             ],
         )
         .await
-        .context("copying the case's repository")?;
+        .context("copying the task's repository")?;
         store.state().seed(task.items());
         Ok(store)
     }

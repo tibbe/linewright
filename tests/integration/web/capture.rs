@@ -240,7 +240,7 @@ async fn a_taken_name_is_refused_and_says_so() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: a case is already named gadgets"
+        "Not captured: a task is already named gadgets"
     );
 }
 
@@ -253,7 +253,7 @@ async fn a_name_that_is_not_a_tasks_is_refused_and_says_so() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: \"../Gadgets\" is not a case's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
+        "Not captured: \"../Gadgets\" is not a task's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -404,7 +404,7 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: the suite designs holds cases of design, and the run 1/implement-1 is of \
+        "Not captured: the benchmark designs holds tasks of design, and the run 1/implement-1 is of \
          implement"
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());

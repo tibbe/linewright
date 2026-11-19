@@ -58,7 +58,7 @@ struct StepContext {
     refusals: UnboundedSender<UsageLimit>,
 }
 
-/// The trials and scorers of benchmark runs in flight, at most `max-replays`.
+/// The trials and scorers of benchmark runs in flight, at most `max-trials`.
 pub struct BenchmarkRunsRunner {
     context: StepContext,
     max_trials: usize,
@@ -136,7 +136,7 @@ impl BenchmarkRunsRunner {
             Err(e) => {
                 error!(
                     error = format!("{e:#}"),
-                    "reading the open experiments failed"
+                    "reading the open benchmark runs failed"
                 );
                 return;
             }
@@ -146,7 +146,7 @@ impl BenchmarkRunsRunner {
             if !step.benchmark_run_cancelled
                 && !open.iter().any(|record| record.id == benchmark_run)
             {
-                info!(experiment = %benchmark_run, ?step.step, "its experiment was cancelled: stopping a replay or judge");
+                info!(benchmark_run = %benchmark_run, ?step.step, "its benchmark run was cancelled: stopping a trial or scorer");
                 step.benchmark_run_cancelled = true;
                 step.cancel.cancel();
             }
@@ -162,7 +162,7 @@ impl BenchmarkRunsRunner {
             {
                 error!(
                     error = format!("{e:#}"),
-                    "recording an experiment's end failed"
+                    "recording a benchmark run's end failed"
                 );
             }
         }
@@ -183,7 +183,7 @@ impl BenchmarkRunsRunner {
         let Some(at) = StepAt::of(record, trial) else {
             error!(
                 ?trial,
-                "a trial is of a case or a configuration its experiment lacks"
+                "a trial is of a task or a configuration its benchmark run lacks"
             );
             return;
         };
@@ -199,7 +199,7 @@ impl BenchmarkRunsRunner {
         {
             error!(
                 error = format!("{e:#}"),
-                "starting a replay or judge failed"
+                "starting a trial or scorer failed"
             );
             return;
         }
@@ -209,7 +209,7 @@ impl BenchmarkRunsRunner {
             cancel: cancel.clone(),
             usage_limit: OnUsageLimit::WaitOut(context.refusals.clone()),
         };
-        info!(experiment = %trial.benchmark_run, case = %at.task, configuration = %at.configuration, repetition = trial.key.repetition, ?step, "a step of an experiment starts");
+        info!(benchmark_run = %trial.benchmark_run, task = %at.task, configuration = %at.configuration, repetition = trial.key.repetition, ?step, "a step of a benchmark run starts");
         let task = self.steps.spawn(async move {
             match step {
                 Step::Trial(_) => context.trial(&at, &under).await,
@@ -239,7 +239,7 @@ impl BenchmarkRunsRunner {
         let (id, change) = match ended {
             Ok((id, change)) => (id, Some(change)),
             Err(e) => {
-                error!(error = %e, "a replay or judge of an experiment panicked");
+                error!(error = %e, "a trial or scorer of a benchmark run panicked");
                 (e.id(), None)
             }
         };
@@ -254,7 +254,7 @@ impl BenchmarkRunsRunner {
         if self.stopping && !benchmark_run_cancelled {
             info!(
                 ?step,
-                "a replay or judge stopped: it starts again with serve"
+                "a trial or scorer stopped: it starts again with serve"
             );
             return;
         }
@@ -265,7 +265,7 @@ impl BenchmarkRunsRunner {
                 Err(e) => {
                     warn!(
                         error = format!("{e:#}"),
-                        "reading whether an experiment is open failed"
+                        "reading whether a benchmark run is open failed"
                     );
                     false
                 }
@@ -279,7 +279,7 @@ impl BenchmarkRunsRunner {
                 time: std::time::Duration::ZERO,
             }),
             (false, None, Step::Scorer(_)) => TrialChange::ScorerMakesNone {
-                reason: "the judge panicked".into(),
+                reason: "the scorer panicked".into(),
                 scorer_money: None,
             },
         };
@@ -296,7 +296,7 @@ impl BenchmarkRunsRunner {
         {
             error!(
                 error = format!("{e:#}"),
-                "recording how a replay or judge ended failed; the next tick tries again"
+                "recording how a trial or scorer ended failed; the next tick tries again"
             );
             self.unrecorded.push((trial, change));
         }
@@ -368,7 +368,7 @@ impl StepContext {
                 .task_dir(at.trial.benchmark_run, &at.task),
         )
         .await
-        .context("opening the experiment's copy of the case")
+        .context("opening the benchmark run's copy of the task")
     }
 
     /// Runs `at`'s task under its configuration into a new output, one a
@@ -387,7 +387,7 @@ impl StepContext {
             Err(e) => (Err(e.into()), None),
         };
         let outcome = outcome.unwrap_or_else(|e| {
-            error!(error = format!("{e:#}"), dir = %dir.display(), "a replay of an experiment failed");
+            error!(error = format!("{e:#}"), dir = %dir.display(), "a trial of a benchmark run failed");
             Ending::Failed
         });
         TrialChange::RunEnds(TrialFigures {
@@ -407,7 +407,7 @@ impl StepContext {
                 .configuration_dir(at.trial.benchmark_run, &at.configuration);
             Some(
                 Configuration::read(&dir)
-                    .context("reading the experiment's copy of the configuration")?,
+                    .context("reading the benchmark run's copy of the configuration")?,
             )
         };
         Box::pin(trial::run(
@@ -429,24 +429,24 @@ impl StepContext {
         let dir = self.output_dir(at);
         let task = match self.task(at).await {
             Ok(task) => task,
-            Err(e) => return scorer_makes_none(format!("the case cannot be judged: {e:#}")),
+            Err(e) => return scorer_makes_none(format!("the task cannot be scored: {e:#}")),
         };
         let scoreable = match ScoreableTrial::open(&dir, &task).await {
             Ok(scoreable) => scoreable,
             Err(ScoreRefusal::Scored) => {
                 return match scorer::kept(&dir) {
                     Ok(Some(score)) => TrialChange::Scored(score),
-                    Ok(None) => scorer_makes_none("the output's judgement went missing".into()),
+                    Ok(None) => scorer_makes_none("the output's score went missing".into()),
                     Err(e) => scorer_makes_none(format!("{e:#}")),
                 };
             }
-            Err(e) => return scorer_makes_none(format!("the output cannot be judged: {e}")),
+            Err(e) => return scorer_makes_none(format!("the output cannot be scored: {e}")),
         };
         let discarding = scoreable.clone();
         if let Err(e) =
             tokio::task::spawn_blocking(move || scorer::discard_unkept(&discarding)).await
         {
-            warn!(error = %e, "removing the judges' records a stop left failed");
+            warn!(error = %e, "removing the scorers' records a stop left failed");
         }
         let record = match ScorerRecord::make(&scoreable) {
             Ok(record) => record,
@@ -468,7 +468,7 @@ impl StepContext {
                 match scorer::keep(&scoreable, score) {
                     Ok(()) => TrialChange::Scored(figures),
                     Err(e) => TrialChange::ScorerMakesNone {
-                        reason: format!("keeping the judgement: {e:#}"),
+                        reason: format!("keeping the score: {e:#}"),
                         scorer_money: figures.scorer_money,
                     },
                 }

@@ -136,7 +136,7 @@ pub async fn prepare(
                 .next_id(&builder.database, &lock)
                 .await
                 .map_err(Unprepared::Unavailable)?;
-            info!(%head, "the environment of a replay is building");
+            info!(%head, "the environment of a trial is building");
             let start = Start::Commit(head);
             let started = Instant::now();
             let built =
@@ -217,7 +217,7 @@ async fn sweep(base: &Path, db: &Database, now: Timestamp, max_age: TimeDelta) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
-            warn!(error = %e, "listing the environments of replays failed");
+            warn!(error = %e, "listing the environments of trials failed");
             return;
         }
     };
@@ -225,7 +225,7 @@ async fn sweep(base: &Path, db: &Database, now: Timestamp, max_age: TimeDelta) {
         let dir = match entry {
             Ok(entry) => entry.path(),
             Err(e) => {
-                warn!(error = %e, "listing the environments of replays failed");
+                warn!(error = %e, "listing the environments of trials failed");
                 continue;
             }
         };
@@ -239,7 +239,7 @@ async fn sweep(base: &Path, db: &Database, now: Timestamp, max_age: TimeDelta) {
             warn!(
                 error = format!("{e:#}"),
                 dir = %dir.display(),
-                "removing an environment of a replay failed"
+                "removing an environment of a trial failed"
             );
         }
     }
@@ -275,7 +275,7 @@ async fn remove_if_outlived(
     if !outlived(built, now, max_age) {
         return Ok(());
     }
-    info!(dir = %dir.display(), "an environment of a replay is removed");
+    info!(dir = %dir.display(), "an environment of a trial is removed");
     builds.forget(db).await?;
     let aside = base.join(format!("{REMOVED}{}", uuid::Uuid::new_v4()));
     std::fs::rename(dir, &aside).context("setting the environment aside")?;
@@ -287,5 +287,5 @@ async fn remove_if_outlived(
 async fn remove_off_runtime(dir: PathBuf) -> Result<()> {
     tokio::task::spawn_blocking(move || kept::remove(&dir))
         .await
-        .context("removing an environment of a replay")?
+        .context("removing an environment of a trial")?
 }

@@ -25,20 +25,20 @@ async fn lw_benchmarks_lists_each_benchmark_with_its_stage_and_how_many_tasks() 
     keep_task(&repo, "board", "columns", "3/implement-1", "Names them.\n").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
 
-    let text = lw_in(work_dir.path(), &["suites"]).await;
-    let json = lw_in(work_dir.path(), &["suites", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let json = lw_in(work_dir.path(), &["benchmarks", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert_eq!(
         text.stdout,
-        "board: implement, 2 cases\ntriage-basics: triage, no cases\n"
+        "board: implement, 2 tasks\ntriage-basics: triage, no tasks\n"
     );
     assert_eq!(json.code, Some(0), "{}", json.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap(),
-        json!({"suites": [
-            {"name": "board", "stage": "implement", "cases": 2},
-            {"name": "triage-basics", "stage": "triage", "cases": 0},
+        json!({"benchmarks": [
+            {"name": "board", "stage": "implement", "tasks": 2},
+            {"name": "triage-basics", "stage": "triage", "tasks": 0},
         ]})
     );
 }
@@ -47,22 +47,22 @@ async fn lw_benchmarks_lists_each_benchmark_with_its_stage_and_how_many_tasks() 
 async fn lw_benchmarks_with_no_database_lists_none() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let output = lw_in(work_dir.path(), &["suites"]).await;
+    let output = lw_in(work_dir.path(), &["benchmarks"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "suites: none\n");
+    assert_eq!(output.stdout, "benchmarks: none\n");
 }
 
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_add_makes_a_benchmark_of_its_stage() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let output = lw_in(work_dir.path(), &["suite", "add", "board", "design"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark", "add", "board", "design"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    assert_eq!(output.stdout, "Made the suite board, of design\n");
-    let listed = lw_in(work_dir.path(), &["suites"]).await;
-    assert_eq!(listed.stdout, "board: design, no cases\n");
+    assert_eq!(output.stdout, "Made the benchmark board, of design\n");
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    assert_eq!(listed.stdout, "board: design, no tasks\n");
 }
 
 #[test_log::test(tokio::test)]
@@ -71,12 +71,12 @@ async fn lw_benchmark_add_of_a_name_a_benchmark_has_exits_1_saying_why() {
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "add", "board", "design"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark", "add", "board", "design"]).await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: a suite is already named board\n");
-    let listed = lw_in(work_dir.path(), &["suites"]).await;
-    assert_eq!(listed.stdout, "board: implement, no cases\n");
+    assert_eq!(output.stderr, "lw: a benchmark is already named board\n");
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    assert_eq!(listed.stdout, "board: implement, no tasks\n");
 }
 
 #[test_log::test(tokio::test)]
@@ -84,8 +84,8 @@ async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_name_not_a_benchmarks_is_a
  {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let rework = lw_in(work_dir.path(), &["suite", "add", "board", "rework"]).await;
-    let named = lw_in(work_dir.path(), &["suite", "add", "Board", "design"]).await;
+    let rework = lw_in(work_dir.path(), &["benchmark", "add", "board", "rework"]).await;
+    let named = lw_in(work_dir.path(), &["benchmark", "add", "Board", "design"]).await;
 
     assert_eq!(rework.code, Some(2), "{}", rework.stderr);
     assert!(
@@ -118,16 +118,16 @@ async fn lw_benchmark_show_shows_its_tasks_with_their_criteria_in_the_order_they
     .await;
     keep_task(&repo, "board", "columns", "3/implement-2", "Names them.\n").await;
 
-    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert_eq!(
         text.stdout,
-        "suite: board\nstage: implement\n\
-         case lanes: captured from 4/implement-1\n  Stacks them.\n\n  On a phone.\n\
-         case columns: captured from 3/implement-2\n  Names them.\n\
-         experiments: none\n"
+        "benchmark: board\nstage: implement\n\
+         task lanes: captured from 4/implement-1\n  Stacks them.\n\n  On a phone.\n\
+         task columns: captured from 3/implement-2\n  Names them.\n\
+         benchmark runs: none\n"
     );
     assert_eq!(json.code, Some(0), "{}", json.stderr);
     assert_eq!(
@@ -135,11 +135,11 @@ async fn lw_benchmark_show_shows_its_tasks_with_their_criteria_in_the_order_they
         json!({
             "name": "board",
             "stage": "implement",
-            "cases": [
+            "tasks": [
                 {"name": "lanes", "run": "4/implement-1", "criteria": "Stacks them.\n\nOn a phone.\n"},
                 {"name": "columns", "run": "3/implement-2", "criteria": "Names them.\n"},
             ],
-            "experiments": [],
+            "benchmark_runs": [],
         })
     );
 }
@@ -151,19 +151,19 @@ async fn lw_benchmark_show_says_when_a_tasks_criteria_do_not_read() {
     keep_benchmark(&repo, "board", "implement").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", " \n").await;
 
-    let text = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
-    let json = lw_in(work_dir.path(), &["suite", "show", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark", "show", "board", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert_eq!(
         text.stdout,
-        "suite: board\nstage: implement\n\
-         case lanes: captured from 4/implement-1\n  \
+        "benchmark: board\nstage: implement\n\
+         task lanes: captured from 4/implement-1\n  \
          the criteria do not read: criteria.md holds only white space\n\
-         experiments: none\n"
+         benchmark runs: none\n"
     );
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap()["cases"][0],
+        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap()["tasks"][0],
         json!({
             "name": "lanes",
             "run": "4/implement-1",
@@ -178,12 +178,12 @@ async fn lw_benchmark_show_of_a_benchmark_with_no_tasks_says_so() {
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "triage").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "show", "board"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "suite: board\nstage: triage\ncases: none\nexperiments: none\n"
+        "benchmark: board\nstage: triage\ntasks: none\nbenchmark runs: none\n"
     );
 }
 
@@ -193,12 +193,12 @@ async fn lw_benchmark_show_shows_a_benchmark_named_as_a_subcommand() {
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "add", "triage").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "show", "add"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark", "show", "add"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "suite: add\nstage: triage\ncases: none\nexperiments: none\n"
+        "benchmark: add\nstage: triage\ntasks: none\nbenchmark runs: none\n"
     );
 }
 
@@ -208,16 +208,16 @@ async fn lw_benchmark_show_of_a_benchmark_that_does_not_exist_exits_4() {
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "triage").await;
 
-    let missing = lw_in(work_dir.path(), &["suite", "show", "lanes"]).await;
+    let missing = lw_in(work_dir.path(), &["benchmark", "show", "lanes"]).await;
     let no_database = lw_in(
         tempfile::tempdir().unwrap().path(),
-        &["suite", "show", "lanes"],
+        &["benchmark", "show", "lanes"],
     )
     .await;
 
     for output in [missing, no_database] {
         assert_eq!(output.code, Some(4), "{}", output.stderr);
-        assert_eq!(output.stderr, "lw: there is no suite lanes\n");
+        assert_eq!(output.stderr, "lw: there is no benchmark lanes\n");
     }
 }
 
@@ -229,15 +229,19 @@ async fn lw_benchmark_remove_task_removes_the_task_and_its_directory() {
     keep_task(&repo, "board", "columns", "3/implement-2", "Names them.\n").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "remove-case", "board", "lanes"]).await;
+    let output = lw_in(
+        work_dir.path(),
+        &["benchmark", "remove-task", "board", "lanes"],
+    )
+    .await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "Removed the case lanes from the suite board\n"
+        "Removed the task lanes from the benchmark board\n"
     );
-    let listed = lw_in(work_dir.path(), &["suites"]).await;
-    assert_eq!(listed.stdout, "board: implement, 1 case\n");
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    assert_eq!(listed.stdout, "board: implement, 1 task\n");
     let left: Vec<String> = std::fs::read_dir(repo.join("tasks"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -255,28 +259,31 @@ async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exi
 
     let no_benchmark = lw_in(
         work_dir.path(),
-        &["suite", "remove-case", "nowhere", "lanes"],
+        &["benchmark", "remove-task", "nowhere", "lanes"],
     )
     .await;
     let no_task = lw_in(
         work_dir.path(),
-        &["suite", "remove-case", "board", "columns"],
+        &["benchmark", "remove-task", "board", "columns"],
     )
     .await;
     let other_benchmark = lw_in(
         work_dir.path(),
-        &["suite", "remove-case", "designs", "lanes"],
+        &["benchmark", "remove-task", "designs", "lanes"],
     )
     .await;
 
     assert_eq!(no_benchmark.code, Some(4), "{}", no_benchmark.stderr);
-    assert_eq!(no_benchmark.stderr, "lw: there is no suite nowhere\n");
+    assert_eq!(no_benchmark.stderr, "lw: there is no benchmark nowhere\n");
     assert_eq!(no_task.code, Some(4), "{}", no_task.stderr);
-    assert_eq!(no_task.stderr, "lw: the suite board has no case columns\n");
+    assert_eq!(
+        no_task.stderr,
+        "lw: the benchmark board has no task columns\n"
+    );
     assert_eq!(other_benchmark.code, Some(4), "{}", other_benchmark.stderr);
     assert_eq!(
         other_benchmark.stderr,
-        "lw: the suite designs has no case lanes\n"
+        "lw: the benchmark designs has no task lanes\n"
     );
     assert!(
         repo.join("tasks")
@@ -284,10 +291,10 @@ async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exi
             .join("criteria.md")
             .exists()
     );
-    let listed = lw_in(work_dir.path(), &["suites"]).await;
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
-        "board: implement, 1 case\ndesigns: design, no cases\n"
+        "board: implement, 1 task\ndesigns: design, no tasks\n"
     );
 }
 
@@ -300,12 +307,12 @@ async fn lw_benchmark_add_and_remove_task_answer_in_json() {
 
     let added = lw_in(
         work_dir.path(),
-        &["suite", "add", "designs", "design", "--json"],
+        &["benchmark", "add", "designs", "design", "--json"],
     )
     .await;
     let removed = lw_in(
         work_dir.path(),
-        &["suite", "remove-case", "board", "lanes", "--json"],
+        &["benchmark", "remove-task", "board", "lanes", "--json"],
     )
     .await;
 
@@ -317,7 +324,7 @@ async fn lw_benchmark_add_and_remove_task_answer_in_json() {
     assert_eq!(removed.code, Some(0), "{}", removed.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&removed.stdout).unwrap(),
-        json!({"suite": "board", "case": "lanes"})
+        json!({"benchmark": "board", "task": "lanes"})
     );
 }
 
@@ -328,9 +335,13 @@ async fn lw_benchmark_remove_task_removes_a_task_whose_directory_is_gone() {
     keep_benchmark(&repo, "board", "implement").await;
     keep_task_row(&repo, "board", "lanes", "4/implement-1").await;
 
-    let output = lw_in(work_dir.path(), &["suite", "remove-case", "board", "lanes"]).await;
+    let output = lw_in(
+        work_dir.path(),
+        &["benchmark", "remove-task", "board", "lanes"],
+    )
+    .await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let listed = lw_in(work_dir.path(), &["suites"]).await;
-    assert_eq!(listed.stdout, "board: implement, no cases\n");
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    assert_eq!(listed.stdout, "board: implement, no tasks\n");
 }
