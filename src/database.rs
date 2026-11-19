@@ -41,6 +41,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(SUITES_TABLES),
     Migration::Sql(EXPERIMENTS_TABLES),
     Migration::Sql(EXPERIMENT_ENDS),
+    Migration::Sql(CASES_IN_ORDER),
 ];
 
 /// The table of the release that made each schema version.
@@ -210,6 +211,20 @@ const EXPERIMENTS_TABLES: &str = "CREATE TABLE experiments (
 /// experiment that ended before has none, and an open one never has one.
 const EXPERIMENT_ENDS: &str = "ALTER TABLE experiments
     ADD COLUMN ended_at TEXT CHECK (state <> 'open' OR ended_at IS NULL)";
+
+/// Each case's place in its suite's order, the order of their captures: one
+/// more than the highest in its suite at its capture. The cases kept before
+/// were inserted in that order, so their row IDs give it.
+const CASES_IN_ORDER: &str = "CREATE TABLE cases_in_order (
+        name TEXT PRIMARY KEY,
+        suite TEXT NOT NULL REFERENCES suites (name),
+        run TEXT NOT NULL,
+        seq INTEGER NOT NULL CHECK (seq > 0),
+        UNIQUE (suite, seq)
+    ) STRICT;
+    INSERT INTO cases_in_order (name, suite, run, seq) SELECT name, suite, run, rowid FROM cases;
+    DROP TABLE cases;
+    ALTER TABLE cases_in_order RENAME TO cases;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

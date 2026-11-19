@@ -90,7 +90,7 @@ pub struct SuiteListed {
     pub cases: usize,
 }
 
-/// A suite, with its cases by name and its experiments, latest first.
+/// A suite, with its cases in its order and its experiments, latest first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SuiteShown {
     pub suite: Suite,
@@ -204,7 +204,7 @@ impl Suites {
             .transpose()
     }
 
-    /// The suite `name` with its cases, by name, each with its criteria as
+    /// The suite `name` with its cases, in its order, each with its criteria as
     /// its directory holds them now, and its experiments, latest first;
     /// `None` when there is no such suite.
     pub async fn show(&self, name: &SuiteName) -> Result<Option<SuiteShown>> {
@@ -212,7 +212,7 @@ impl Suites {
             return Ok(None);
         };
         let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT name, run FROM cases WHERE suite = ? ORDER BY name")
+            sqlx::query_as("SELECT name, run FROM cases WHERE suite = ? ORDER BY seq")
                 .bind(name.as_str())
                 .fetch_all(self.db.pool())
                 .await
@@ -329,12 +329,15 @@ impl Suites {
                 Err(MakeError::Failed(e)) => return Err(e.context(keeping).into()),
             }
         }
-        let inserted = sqlx::query("INSERT INTO cases (name, suite, run) VALUES (?, ?, ?)")
-            .bind(name.as_str())
-            .bind(suite.name.as_str())
-            .bind(run.to_string())
-            .execute(&mut *tx)
-            .await;
+        let inserted = sqlx::query(
+            "INSERT INTO cases (name, suite, run, seq) VALUES (?1, ?2, ?3,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM cases WHERE suite = ?2))",
+        )
+        .bind(name.as_str())
+        .bind(suite.name.as_str())
+        .bind(run.to_string())
+        .execute(&mut *tx)
+        .await;
         match inserted {
             Ok(_) => {}
             Err(e) if unique_violation(&e) => return Err(CaptureError::Taken(name.clone())),
