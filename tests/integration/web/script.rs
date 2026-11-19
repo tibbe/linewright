@@ -1210,8 +1210,8 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, Suite, Experiments: the launch counts its
-/// replays with the cases the suite has as the dialog opens.
+/// `docs/specs/benchmarks.md`, New experiment, Fields: the dialog counts
+/// its replays with the cases the suite has as it opens.
 #[test_log::test(tokio::test)]
 async fn opening_the_launch_counts_its_replays_with_the_suites_cases_as_the_stream_last_sent_them()
 {
@@ -1240,6 +1240,115 @@ count.textContent
 
     assert_eq!(
         counted,
-        ["6 replays: 3 cases, 1 configuration, 2 repetitions"]
+        ["1 configuration × 3 cases × 2 repetitions: 6 replays"]
+    );
+}
+
+/// Stand-ins for the New experiment dialog: `launch`, its form, holding the
+/// configuration `configuration`, numbered 1, with its choice of a file of
+/// the brief `choice` and its boxes in `files`, each drawn from the page's
+/// template with `__N__` and `__PATH__` to fill in; `texts`, the region of
+/// the texts of the files of the brief, which `serve(texts)` updates;
+/// `open()` opens the dialog, `choose(path)` chooses a file, and `boxes()`
+/// is each box the configuration holds, as its label, its field's name, its
+/// text and the text it started with.
+const NEW_EXPERIMENT: &str = r#"
+var files = {
+  boxes: [],
+  append(box) { this.boxes.push(box); },
+  querySelectorAll: (selector) =>
+    selector === "textarea" ? files.boxes.map((box) => box.querySelector("textarea")) : [],
+};
+function drawn() {
+  const label = Object.assign(element("LABEL", {}), {
+    children: [], htmlFor: "new-experiment-c__N__-briefs/__PATH__", textContent: "__PATH__",
+  });
+  const area = Object.assign(element("TEXTAREA", {}), {
+    name: "c__N__.briefs/__PATH__", id: "new-experiment-c__N__-briefs/__PATH__", value: "",
+  });
+  const started = Object.assign(element("INPUT", {}), { name: "c__N__.started/__PATH__", value: "" });
+  const box = element("DIV", {});
+  box.querySelectorAll = () => [label, area, started];
+  box.querySelector = (selector) =>
+    selector === "textarea" ? area : selector === "input[type=hidden]" ? started : null;
+  box.remove = () => { files.boxes = files.boxes.filter((held) => held !== box); };
+  box.label = label;
+  return box;
+}
+var template = { content: { firstElementChild: { cloneNode: drawn } } };
+var texts = element("DIV", { id: "brief-texts" });
+function serve(given) { texts.attributes["data-texts"] = JSON.stringify(given); }
+var count = { textContent: "" };
+var launch = Object.assign(element("FORM", {}), {
+  elements: { repetitions: { value: "1" } },
+  querySelectorAll: (selector) => (selector === "fieldset.configuration" ? [configuration] : []),
+  querySelector: (selector) => (selector === ".replay-count" ? count : null),
+});
+var configuration = Object.assign(element("FIELDSET", {}), {
+  dataset: { n: "1" },
+  querySelector: (selector) => (selector === ".files" ? files : null),
+});
+var choice = Object.assign(element("SELECT", {}), { value: "" });
+choice.classList = { contains: (name) => name === "brief-file" };
+choice.closest = (selector) =>
+  selector === "form.launch" ? launch : selector === "fieldset.configuration" ? configuration : null;
+var dialog = element("DIALOG", {});
+dialog.querySelector = (selector) => (selector === "form.launch" ? launch : null);
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-experiment" });
+opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
+const byId = document.getElementById;
+document.getElementById = (id) =>
+  id === "new-experiment" ? dialog
+    : id === "brief-texts" ? texts
+    : id === "brief-file-template" ? template
+    : byId(id);
+const open = () => fire("click", event(opening));
+const choose = (path) => { choice.value = path; fire("change", event(choice)); };
+const boxes = () => files.boxes.map((box) => {
+  const area = box.querySelector("textarea");
+  const started = box.querySelector("input[type=hidden]");
+  return `${box.label.textContent} ${area.name}: ${area.value} (started ${started.value})`;
+}).join(" | ");
+"#;
+
+/// `docs/specs/benchmarks.md`, New experiment, Files of the brief: choosing
+/// a file opens a box for its text, which starts as the text a run of the
+/// stage used when the dialog opened. Choosing another closes the box the
+/// last choice opened while its text is unchanged, so that a file the arrow
+/// keys pass opens no box.
+#[test_log::test(tokio::test)]
+async fn choosing_a_file_of_the_brief_opens_its_box_with_its_text_as_the_dialog_opened() {
+    let script = served_script().await;
+    let asked = r#"
+const steps = [];
+serve({ "prompts/design.md": "design as opened", "prompts/fix-ci.md": "fix-ci as opened" });
+open();
+serve({ "prompts/design.md": "design as serve read it later" });
+choose("prompts/design.md");
+steps.push(boxes());
+choose("prompts/fix-ci.md");
+steps.push(boxes());
+files.boxes[0].querySelector("textarea").value = "mine";
+choose("prompts/design.md");
+steps.push(boxes());
+choose("prompts/fix-ci.md");
+steps.push(boxes());
+steps.join("\n")
+"#;
+
+    let steps: Vec<String> = evaluated(&[BROWSER, FILTERS, NEW_EXPERIMENT, &script, asked])
+        .lines()
+        .map(str::to_string)
+        .collect();
+
+    assert_eq!(
+        steps,
+        [
+            "prompts/design.md c1.briefs/prompts/design.md: design as opened (started design as opened)",
+            "prompts/fix-ci.md c1.briefs/prompts/fix-ci.md: fix-ci as opened (started fix-ci as opened)",
+            "prompts/fix-ci.md c1.briefs/prompts/fix-ci.md: mine (started fix-ci as opened) | \
+             prompts/design.md c1.briefs/prompts/design.md: design as opened (started design as opened)",
+            "prompts/fix-ci.md c1.briefs/prompts/fix-ci.md: mine (started fix-ci as opened)",
+        ]
     );
 }

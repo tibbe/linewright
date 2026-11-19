@@ -9,8 +9,9 @@
  * for the regions of the stream it holds,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
- * run chosen and keeps that run chosen through updates, builds a launch's
- * configurations and counts its replays, and shows the page's tooltip.
+ * run chosen and keeps that run chosen through updates, adds and removes
+ * New experiment's configurations, opens the boxes of the files of the brief
+ * they give and counts their replays, and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -223,7 +224,9 @@
     const dialog = document.getElementById(opening.getAttribute("commandfor"));
     startAfresh(dialog);
     const launch = dialog?.querySelector?.("form.launch");
-    if (launch) countReplays(launch);
+    if (!launch) return;
+    openedTexts.set(launch, briefTexts());
+    countReplays(launch);
   });
 
   /** A fold row's button. */
@@ -311,6 +314,7 @@
    */
   function swapped(entries) {
     fillOptions();
+    for (const form of document.querySelectorAll("form.launch")) countReplays(form);
     keepFolds();
     keepRun();
     tick();
@@ -461,22 +465,28 @@
   }
 
   /**
-   * The launch form's configurations (docs/specs/benchmarks.md, Suite,
-   * Launching): each added from the page's template, numbered for its fields'
-   * names, and each file of the brief it changes starting as the replays would
-   * have it without the configuration.
+   * The texts of the files of the brief, by path, as a run of the stage uses
+   * them, as the stream last sent them.
    */
-  let configurations = 0;
+  const briefTexts = () =>
+    JSON.parse(document.getElementById("brief-texts")?.getAttribute("data-texts") || "{}");
 
-  /** The texts of the files of the brief, by path, as the form starts them. */
-  const briefTexts = () => JSON.parse(document.getElementById("brief-texts")?.textContent || "{}");
+  /**
+   * The texts of the files of the brief as New experiment's form `form` was
+   * opened, by form, from which each file it opens starts
+   * (docs/specs/benchmarks.md, New experiment, Files of the brief).
+   */
+  const openedTexts = new Map();
+
+  /** The number the last configuration added took, for its fields' names. */
+  let configurations = 0;
 
   /** `n` and the noun for one or for many. */
   const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
   /**
-   * Says how many replays the launch `form` makes, of the cases the suite
-   * has as the stream last sent them.
+   * Says how many replays New experiment's form `form` makes, of the cases
+   * the suite has as the stream last sent them.
    */
   function countReplays(form) {
     const cases =
@@ -485,10 +495,10 @@
     const typed = form.elements.repetitions.value.trim();
     const repetitions = /^[0-9]+$/.test(typed) ? Math.max(1, Number(typed)) : 1;
     form.querySelector(".replay-count").textContent =
-      `${counted(cases * configured * repetitions, "replay", "replays")}: ` +
-      `${counted(cases, "case", "cases")}, ` +
-      `${counted(configured, "configuration", "configurations")}, ` +
-      `${counted(repetitions, "repetition", "repetitions")}`;
+      `${counted(configured, "configuration", "configurations")} × ` +
+      `${counted(cases, "case", "cases")} × ` +
+      `${counted(repetitions, "repetition", "repetitions")}: ` +
+      `${counted(configured * cases * repetitions, "replay", "replays")}`;
   }
 
   document.addEventListener("input", (event) => {
@@ -496,55 +506,109 @@
     if (form && event.target.name === "repetitions") countReplays(form);
   });
 
+  /**
+   * Fills in what the server drew with `__N__` for a number and `__PATH__`
+   * for a path, in `element` and the fields and labels it holds, with `n`
+   * and `path`.
+   */
+  function fillIn(element, n, path) {
+    const filled = (text) => text.replaceAll("__N__", n).replaceAll("__PATH__", path);
+    for (const field of [element, ...element.querySelectorAll("[name], [id], label")]) {
+      if (field.name) field.name = filled(field.name);
+      if (field.id) field.id = filled(field.id);
+      if (field.htmlFor) field.htmlFor = filled(field.htmlFor);
+      if (field.tagName === "LABEL" && !field.children.length) {
+        field.textContent = filled(field.textContent);
+      }
+    }
+  }
+
+  /** The texts of the files of the brief New experiment's form `form` starts from. */
+  const startingTexts = (form) => openedTexts.get(form) ?? briefTexts();
+
+  /**
+   * Adds a configuration at the end of `form` from the page's template,
+   * numbered past every configuration it holds, offering the files of the
+   * brief the form starts from.
+   */
+  function addConfiguration(form) {
+    const template = document.getElementById("configuration-template");
+    const held = Array.from(form.querySelectorAll("fieldset.configuration[data-n]"), (fieldset) =>
+      Number(fieldset.dataset.n),
+    );
+    configurations = Math.max(configurations, ...held) + 1;
+    const n = String(configurations);
+    const fieldset = template.content.firstElementChild.cloneNode(true);
+    fieldset.dataset.n = n;
+    fillIn(fieldset, n, "");
+    const choice = fieldset.querySelector("select.brief-file");
+    const unchosen = choice.options[0];
+    choice.replaceChildren(
+      unchosen,
+      ...Object.keys(startingTexts(form)).map((path) => new Option(path, path)),
+    );
+    form.querySelector(".configurations").append(fieldset);
+    fieldset.querySelector("input")?.focus();
+    countReplays(form);
+  }
+
   document.addEventListener("click", (event) => {
     const button = event.target?.closest?.("button");
     const form = button?.closest("form.launch");
     if (!form) return;
     if (button.classList.contains("add-configuration")) {
-      const template = document.getElementById("configuration-template");
-      configurations += 1;
-      const n = String(configurations);
-      const fieldset = template.content.firstElementChild.cloneNode(true);
-      fieldset.dataset.n = n;
-      for (const field of fieldset.querySelectorAll("[name]")) {
-        field.name = field.name.replace("__N__", n);
-      }
-      form.querySelector(".configurations").append(fieldset);
-      fieldset.querySelector("input")?.focus();
-      countReplays(form);
+      addConfiguration(form);
     } else if (button.classList.contains("remove-configuration")) {
       button.closest("fieldset.configuration").remove();
       countReplays(form);
-    } else if (button.classList.contains("add-file")) {
-      const fieldset = button.closest("fieldset.configuration");
-      const path = fieldset.querySelector("select.brief-file").value;
-      if (!path) return;
-      const name = `c${fieldset.dataset.n}.briefs/${path}`;
-      const files = fieldset.querySelector(".files");
-      const given = Array.from(files.querySelectorAll("textarea")).find((area) => area.name === name);
-      if (given) {
-        given.focus();
-        return;
-      }
-      const label = document.createElement("label");
-      label.className = "flex flex-col gap-1";
-      const caption = document.createElement("span");
-      caption.className = "text-muted text-sm";
-      caption.textContent = path;
-      const area = document.createElement("textarea");
-      area.className = "textarea textarea-sm w-full font-mono";
-      area.name = name;
-      area.rows = 12;
-      const text = briefTexts()[path] ?? "";
-      area.value = text;
-      const started = document.createElement("input");
-      started.type = "hidden";
-      started.name = `c${fieldset.dataset.n}.started/${path}`;
-      started.value = text;
-      label.append(caption, area, started);
-      files.append(label);
-      area.focus();
     }
+  });
+
+  /**
+   * The box each choice of a file of the brief last opened, while the reader
+   * has not changed its text, by choice: choosing another file closes it, so
+   * that the arrow keys, which choose each file they pass, leave a box only
+   * for the file they stop on.
+   */
+  const untouched = new Map();
+
+  /** Whether the text of `box` is still the text it started with. */
+  function isUntouched(box) {
+    const area = box.querySelector("textarea");
+    const started = box.querySelector("input[type=hidden]");
+    return !!area && !!started && area.value === started.value;
+  }
+
+  /**
+   * Opens the box of the file of the brief chosen in `select`, unless its
+   * configuration has one, its text starting as the dialog was opened
+   * (docs/specs/benchmarks.md, New experiment, Files of the brief).
+   */
+  function openFile(select) {
+    const path = select.value;
+    const last = untouched.get(select);
+    untouched.delete(select);
+    if (last && isUntouched(last)) last.remove();
+    if (!path) return;
+    const form = select.closest("form.launch");
+    const fieldset = select.closest("fieldset.configuration");
+    const n = fieldset.dataset.n;
+    const files = fieldset.querySelector(".files");
+    const name = `c${n}.briefs/${path}`;
+    if (Array.from(files.querySelectorAll("textarea")).some((area) => area.name === name)) return;
+    const box = document
+      .getElementById("brief-file-template")
+      .content.firstElementChild.cloneNode(true);
+    fillIn(box, n, path);
+    const text = startingTexts(form)[path] ?? "";
+    box.querySelector("textarea").value = text;
+    box.querySelector("input[type=hidden]").value = text;
+    files.append(box);
+    untouched.set(select, box);
+  }
+
+  document.addEventListener("change", (event) => {
+    if (event.target?.classList?.contains("brief-file")) openFile(event.target);
   });
 
   /**

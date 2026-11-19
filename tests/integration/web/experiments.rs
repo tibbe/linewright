@@ -580,34 +580,187 @@ const IMPLEMENT: &str = include_str!("../../../briefs/prompts/implement.md");
 /// Linewright's own text of the brief's file `prompts/fix-ci.md`.
 const FIX_CI: &str = include_str!("../../../briefs/prompts/fix-ci.md");
 
+/// A configuration of the New experiment dialog but `as-is`, as a reader
+/// meets it: its name, model, effort and session-timeout, and each file of
+/// the brief it gives, with its text and the text it started with.
+#[derive(Debug, PartialEq)]
+struct ConfigurationShown {
+    name: String,
+    model: String,
+    effort: String,
+    session_timeout: String,
+    files: Vec<(String, String, String)>,
+}
+
+/// The New experiment dialog's form as a reader meets it: its
+/// configurations but `as-is`, its repetitions, how many replays they make,
+/// and the refusal above its buttons, if any.
+#[derive(Debug, PartialEq)]
+struct LaunchShown {
+    configurations: Vec<ConfigurationShown>,
+    repetitions: String,
+    count: String,
+    refusal: Option<String>,
+}
+
+/// What the form `form` of the New experiment dialog shows.
+#[track_caller]
+fn launch_form(form: &Html) -> LaunchShown {
+    let refusals = select(form, ".alert");
+    assert!(refusals.len() <= 1, "{}", form.html());
+    let configurations = select(form, "fieldset.configuration:not(.as-is)")
+        .into_iter()
+        .map(|fieldset| {
+            let values = field_values(select_in(fieldset, "input[name], select[name]"));
+            let value = |key: &str| {
+                let found: Vec<&String> = values
+                    .iter()
+                    .filter(|(name, _)| name.split_once('.').map(|(_, k)| k) == Some(key))
+                    .map(|(_, value)| value)
+                    .collect();
+                assert_eq!(found.len(), 1, "{key} in {}", fieldset.html());
+                found[0].clone()
+            };
+            let files = select_in(fieldset, "textarea[name]")
+                .into_iter()
+                .map(|area| {
+                    let name = area.attr("name").unwrap();
+                    let (number, path) = name.split_once(".briefs/").unwrap();
+                    let started_field = format!("{number}.started/{path}");
+                    let started = values
+                        .iter()
+                        .find(|(field, _)| *field == started_field)
+                        .map(|(_, text)| text.clone())
+                        .unwrap_or_default();
+                    (path.to_string(), area.text().collect(), started)
+                })
+                .collect();
+            ConfigurationShown {
+                name: value("name"),
+                model: value("model"),
+                effort: value("effort"),
+                session_timeout: value("session-timeout"),
+                files,
+            }
+        })
+        .collect();
+    LaunchShown {
+        configurations,
+        repetitions: field_values(select(form, "input[name=repetitions]"))[0]
+            .1
+            .clone(),
+        count: text(select(form, ".replay-count")[0]),
+        refusal: refusals.first().map(|refusal| text(*refusal)),
+    }
+}
+
+/// What the reader reads in the New experiment dialog's form, in order,
+/// leaving out what each configuration but `as-is` holds: its title, each
+/// label, `as-is`, each button and how many replays it makes.
+fn read_in_order(form: ElementRef) -> Vec<String> {
+    select_in(
+        form,
+        "legend, label, .label, button, .replay-count, fieldset.configuration:not(.as-is)",
+    )
+    .into_iter()
+    .filter(|element| {
+        !element.ancestors().filter_map(ElementRef::wrap).any(|up| {
+            up.value().name() == "fieldset"
+                && up.value().classes().any(|c| c == "configuration")
+                && !up.value().classes().any(|c| c == "as-is")
+        })
+    })
+    .map(|element| {
+        if element.value().name() == "fieldset" {
+            "a configuration".to_string()
+        } else {
+            text(element)
+        }
+    })
+    .collect()
+}
+
+/// `docs/specs/benchmarks.md`, New experiment; `docs/specs/design_system.md`,
+/// Dialogs and Making.
 #[test_log::test(tokio::test)]
-async fn the_suite_page_offers_to_launch_an_experiment_as_is_first_and_counts_its_replays() {
+async fn new_opens_the_new_experiment_dialog_with_as_is_first_the_repetitions_and_the_replays_they_make()
+ {
     let pages = with_suites().await;
 
     let html = pages.page("/suites/board").await;
 
-    let form = select(&html, "form.launch");
-    assert_eq!(form.len(), 1);
-    assert_eq!(form[0].attr("hx-post"), Some("/suites/board/launch"));
+    let dialog = select(&html, "dialog#new-experiment");
+    assert_eq!(dialog.len(), 1, "{}", html.html());
+    let dialog = dialog[0];
+    assert!(has_classes(dialog, &["modal"]));
+    assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
+    assert_eq!(select(&html, "#experiments dialog").len(), 0);
+    let legend = select_in(dialog, "form > fieldset > legend.fieldset-legend");
+    assert_eq!(text(legend[0]), "New experiment on board");
+    assert_eq!(dialog.attr("aria-labelledby"), legend[0].attr("id"));
+    let form = select_in(dialog, "form[hx-post]")[0];
+    assert_eq!(form.attr("hx-post"), Some("/suites/board/launch"));
+    assert_eq!(form.attr("hx-target"), Some("this"));
+    assert!(form.attr("data-new").is_some());
     assert_eq!(
-        select(&html, "#new-experiment-offer")[0].attr("data-cases"),
-        Some("2")
+        read_in_order(form),
+        [
+            "New experiment on board",
+            "Configurations",
+            "as-is",
+            "Add a configuration",
+            "Repetitions",
+            "1 configuration × 2 cases × 1 repetition: 2 replays",
+            "Cancel",
+            "Run experiment",
+        ]
+    );
+    assert!(has_classes(
+        select_in(form, "fieldset.configuration")[0],
+        &["as-is"]
+    ));
+    assert_eq!(
+        select_in(form, "fieldset.as-is :is(input, select, textarea)").len(),
+        0
     );
     assert_eq!(
-        select_in(form[0], "input[name=repetitions]")[0].attr("value"),
-        Some("1")
+        launch_form(&Html::parse_fragment(&form.inner_html())),
+        LaunchShown {
+            configurations: vec![],
+            repetitions: "1".into(),
+            count: "1 configuration × 2 cases × 1 repetition: 2 replays".into(),
+            refusal: None,
+        }
     );
-    let configurations: Vec<String> = select_in(form[0], "fieldset.configuration legend")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(configurations, ["as-is"]);
-    assert_eq!(
-        text(select_in(form[0], ".replay-count")[0]),
-        "2 replays: 2 cases, 1 configuration, 1 repetition"
-    );
+    let buttons = select_in(form, ".modal-action button");
+    assert_eq!(buttons[0].attr("command"), Some("close"));
+    assert_eq!(buttons[0].attr("commandfor"), Some("new-experiment"));
+    assert!(has_classes(buttons[1], &["btn-primary"]));
+    assert_eq!(buttons[1].attr("type"), Some("submit"));
+
     let template = select(&html, "template#configuration-template");
-    let fields: Vec<&str> = select_in(template[0], "input, select")
+    assert_eq!(template.len(), 1);
+    let added = Html::parse_fragment(&template[0].inner_html());
+    let labels: Vec<String> = select(&added, "label").into_iter().map(text).collect();
+    assert_eq!(
+        labels,
+        [
+            "Name",
+            "model",
+            "effort",
+            "session-timeout",
+            "Files of the brief"
+        ]
+    );
+    for label in select(&added, "label") {
+        let field = label.attr("for").unwrap();
+        assert_eq!(
+            select(&added, &format!("[id='{field}']")).len(),
+            1,
+            "{field}"
+        );
+    }
+    let fields: Vec<&str> = select(&added, "[name]")
         .into_iter()
         .filter_map(|field| field.attr("name"))
         .collect();
@@ -620,10 +773,24 @@ async fn the_suite_page_offers_to_launch_an_experiment_as_is_first_and_counts_it
             "c__N__.session-timeout"
         ]
     );
-    let name = select_in(template[0], "input[name='c__N__.name']");
-    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
+    let efforts: Vec<String> = select(&added, "select[name='c__N__.effort'] option")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(
+        efforts,
+        ["as it is", "low", "medium", "high", "xhigh", "max"]
+    );
+    let files: Vec<&str> = select(&added, "select.brief-file option")
+        .into_iter()
+        .filter_map(|option| option.attr("value"))
+        .collect();
+    assert!(files.contains(&"prompts/implement.md"), "{files:?}");
+    assert_eq!(files[0], "");
+    let removes: Vec<String> = select(&added, "button").into_iter().map(text).collect();
+    assert_eq!(removes, ["Remove"]);
     let texts: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(&select(&html, "script#brief-texts")[0].inner_html()).unwrap();
+        serde_json::from_str(select(&html, "#brief-texts")[0].attr("data-texts").unwrap()).unwrap();
     assert_eq!(texts["prompts/implement.md"], IMPLEMENT);
     assert_eq!(
         texts["plugin/skills/tdd/SKILL.md"],
@@ -631,11 +798,34 @@ async fn the_suite_page_offers_to_launch_an_experiment_as_is_first_and_counts_it
     );
 }
 
+/// `docs/specs/benchmarks.md`, New experiment, Files of the brief: the
+/// page's stream sends the texts a run of the stage uses, from which the
+/// dialog starts a file.
 #[test_log::test(tokio::test)]
-async fn a_suite_with_no_cases_offers_no_launch_and_a_launch_on_it_is_refused() {
+async fn the_suite_pages_stream_sends_the_texts_of_the_files_of_the_brief() {
+    let pages = with_suites().await;
+    let mut events = stream(&pages, "/events/suites/board").await;
+
+    let first = events.recv().await.unwrap();
+
+    let texts = regions(&first)
+        .into_iter()
+        .find(|(id, _)| id == "brief-texts")
+        .map(|(_, region)| region)
+        .expect("the texts of the files of the brief");
+    let texts: std::collections::BTreeMap<String, String> = serde_json::from_str(
+        select(&texts, "#brief-texts")[0]
+            .attr("data-texts")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(texts["prompts/design.md"], DESIGN);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_launch_on_a_suite_with_no_cases_is_refused() {
     let pages = with_suites().await;
 
-    let html = pages.page("/suites/triage-basics").await;
     let (status, answer) = post(
         &pages,
         "/suites/triage-basics/launch",
@@ -644,90 +834,241 @@ async fn a_suite_with_no_cases_offers_no_launch_and_a_launch_on_it_is_refused() 
     )
     .await;
 
-    assert_eq!(disclosures(&html, &["launch"]), []);
     assert_eq!(status, 422);
     assert_eq!(
-        said(&answer),
-        "Not launched: the suite triage-basics has no cases"
+        launch_form(&answer),
+        LaunchShown {
+            configurations: vec![],
+            repetitions: "1".into(),
+            count: "1 configuration × 0 cases × 1 repetition: 0 replays".into(),
+            refusal: Some("The suite triage-basics has no cases.".into()),
+        }
+    );
+    assert_eq!(
+        text(select(&answer, "legend")[0]),
+        "New experiment on triage-basics"
     );
     assert!(!pages.path("experiments/1").exists());
 }
 
+/// A configuration named `name` that sets nothing.
+fn named(name: &str) -> ConfigurationShown {
+    ConfigurationShown {
+        name: name.into(),
+        model: String::new(),
+        effort: String::new(),
+        session_timeout: String::new(),
+        files: vec![],
+    }
+}
+
+/// The configurations a launch sends, those its refused form shows, and the
+/// start of its refusal.
+type Refusal = (
+    &'static [(&'static str, &'static str)],
+    Vec<ConfigurationShown>,
+    &'static str,
+);
+
+/// `docs/specs/benchmarks.md`, New experiment, Refusals;
+/// `docs/specs/design_system.md`, Making, A refusal.
 #[test_log::test(tokio::test)]
-async fn a_launch_with_a_configuration_with_an_error_or_a_name_taken_is_refused() {
+async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refused() {
     let pages = with_suites().await;
-    let refusals: [(&[(&str, &str)], &str); 5] = [
+    let refusals: [Refusal; 6] = [
         (
-            &[
-                ("repetitions", "1"),
-                ("c1.name", "short"),
-                ("c1.effort", "huge"),
-            ],
-            "Not launched: the configuration short cannot be used: config.toml: ",
+            &[("c1.name", "short"), ("c1.session-timeout", "soon")],
+            vec![ConfigurationShown {
+                session_timeout: "soon".into(),
+                ..named("short")
+            }],
+            "The configuration short cannot be used: config.toml: ",
         ),
         (
             &[
-                ("repetitions", "1"),
                 ("c1.name", "short"),
                 ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
             ],
-            "Not launched: the configuration short cannot be used: briefs/prompts/implement.md: ",
+            vec![ConfigurationShown {
+                files: vec![(
+                    "prompts/implement.md".into(),
+                    "Implement {{nothing}}.\n".into(),
+                    String::new(),
+                )],
+                ..named("short")
+            }],
+            "The configuration short cannot be used: briefs/prompts/implement.md: ",
         ),
         (
-            &[("repetitions", "1"), ("c1.name", "as-is")],
-            "Not launched: two configurations are named as-is",
+            &[("c1.name", "as-is")],
+            vec![named("as-is")],
+            "Two configurations are named as-is.",
         ),
         (
-            &[
-                ("repetitions", "1"),
-                ("c1.name", "short"),
-                ("c2.name", "short"),
-            ],
-            "Not launched: two configurations are named short",
+            &[("c1.name", "short"), ("c2.name", "short")],
+            vec![named("short"), named("short")],
+            "Two configurations are named short.",
         ),
         (
-            &[("repetitions", "1"), ("c1.name", "Short")],
-            "Not launched: \"Short\" is not a configuration's name",
+            &[("c1.name", "Short")],
+            vec![named("Short")],
+            "\"Short\" cannot name a configuration. A name holds only lowercase letters, digits \
+             and hyphens, and starts with a letter or a digit.",
+        ),
+        (
+            &[("c1.name", "short"), ("c2.name", " ")],
+            vec![named("short"), named(" ")],
+            "The 3rd configuration needs a name.",
         ),
     ];
 
-    for (fields, refused) in refusals {
-        let (status, answer) = post(&pages, "/suites/board/launch", &[SAME_ORIGIN], fields).await;
+    for (fields, configurations, refused) in refusals {
+        let mut sent = vec![("repetitions", "1")];
+        sent.extend_from_slice(fields);
+        let (status, headers, answer) =
+            post_answer(&pages, "/suites/board/launch", &[SAME_ORIGIN], &sent).await;
         assert_eq!(status, 422, "{fields:?}");
-        let answer = said(&answer);
-        assert!(answer.starts_with(refused), "{answer}");
+        assert!(headers.get("hx-trigger").is_none());
+        let shown = launch_form(&answer);
+        assert!(
+            shown
+                .refusal
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with(refused),
+            "{shown:?}"
+        );
+        assert_eq!(shown.configurations, configurations, "{fields:?}");
     }
     let (no_repetitions, answer) = post(
         &pages,
         "/suites/board/launch",
         &[SAME_ORIGIN],
-        &[("repetitions", "0")],
+        &[("repetitions", "0"), ("c1.name", "short")],
     )
     .await;
     assert_eq!(no_repetitions, 422);
     assert_eq!(
-        said(&answer),
-        "Not launched: the repetitions are a whole number, 1 or more"
+        launch_form(&answer),
+        LaunchShown {
+            configurations: vec![named("short")],
+            repetitions: "0".into(),
+            count: "2 configurations × 2 cases × 1 repetition: 4 replays".into(),
+            refusal: Some("The repetitions are a whole number, 1 or more.".into()),
+        }
     );
-    let (other_site, _) = post(
+    assert!(!pages.path("experiments/1").exists());
+}
+
+/// `docs/specs/design_system.md`, Making, A refusal: the fields keep every
+/// configuration, its settings and its files' texts.
+#[test_log::test(tokio::test)]
+async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_files() {
+    let pages = with_suites().await;
+    let design = format!("{DESIGN}\nCut the work finely.\n");
+
+    let (status, answer) = post(
         &pages,
         "/suites/board/launch",
-        &[CROSS_SITE],
-        &[("repetitions", "1")],
+        &[SAME_ORIGIN],
+        &[
+            ("repetitions", "3"),
+            ("c1.name", "short"),
+            ("c1.model", "haiku"),
+            ("c1.effort", "high"),
+            ("c1.session-timeout", "30m"),
+            ("c1.briefs/prompts/fix-ci.md", FIX_CI),
+            ("c1.started/prompts/fix-ci.md", FIX_CI),
+            ("c1.briefs/prompts/design.md", &design.replace('\n', "\r\n")),
+            ("c1.started/prompts/design.md", DESIGN),
+            ("c4.name", "Careful"),
+            ("c4.effort", "max"),
+        ],
     )
     .await;
-    assert_eq!(other_site, 403);
+    assert_eq!(status, 422);
+    assert_eq!(
+        launch_form(&answer),
+        LaunchShown {
+            configurations: vec![
+                ConfigurationShown {
+                    name: "short".into(),
+                    model: "haiku".into(),
+                    effort: "high".into(),
+                    session_timeout: "30m".into(),
+                    files: vec![
+                        ("prompts/fix-ci.md".into(), FIX_CI.into(), FIX_CI.into()),
+                        ("prompts/design.md".into(), design, DESIGN.into()),
+                    ],
+                },
+                ConfigurationShown {
+                    effort: "max".into(),
+                    ..named("Careful")
+                },
+            ],
+            repetitions: "3".into(),
+            count: "3 configurations × 2 cases × 3 repetitions: 18 replays".into(),
+            refusal: Some(
+                "\"Careful\" cannot name a configuration. A name holds only lowercase letters, \
+                 digits and hyphens, and starts with a letter or a digit."
+                    .into()
+            ),
+        }
+    );
+    assert_eq!(
+        select(&answer, "fieldset.configuration")[0]
+            .select(&Selector::parse("legend").unwrap())
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["as-is"]
+    );
     assert!(!pages.path("experiments/1").exists());
 }
 
 #[test_log::test(tokio::test)]
-async fn launching_keeps_each_configuration_with_its_settings_and_only_the_files_changed() {
+async fn a_launch_from_another_site_is_refused_keeping_the_form_as_sent() {
+    let pages = with_suites().await;
+
+    let (cross_site, cross_site_answer) = post(
+        &pages,
+        "/suites/board/launch",
+        &[CROSS_SITE],
+        &[
+            ("repetitions", "2"),
+            ("c1.name", "short"),
+            ("c1.model", "haiku"),
+        ],
+    )
+    .await;
+
+    assert_eq!(cross_site, 403);
+    assert_eq!(
+        launch_form(&cross_site_answer),
+        LaunchShown {
+            configurations: vec![ConfigurationShown {
+                model: "haiku".into(),
+                ..named("short")
+            }],
+            repetitions: "2".into(),
+            count: "2 configurations × 2 cases × 2 repetitions: 8 replays".into(),
+            refusal: Some("a launch is taken only from the web UI's own pages".into()),
+        }
+    );
+    assert!(!pages.path("experiments/1").exists());
+}
+
+/// `docs/specs/benchmarks.md`, New experiment; `docs/specs/design_system.md`,
+/// Making.
+#[test_log::test(tokio::test)]
+async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_experiment_shows() {
     let pages = with_suites().await;
     let design = format!("{DESIGN}\nCut the work finely.\n");
     let implement = IMPLEMENT.replace('\n', "\r\n");
     let fix_ci = format!("{FIX_CI}\nAs the page started it.\n");
+    let mut events = stream(&pages, "/events/suites/board").await;
+    events.recv().await.unwrap();
 
-    let (status, answer) = post(
+    let (status, headers, answer) = post_answer(
         &pages,
         "/suites/board/launch",
         &[SAME_ORIGIN],
@@ -747,12 +1088,30 @@ async fn launching_keeps_each_configuration_with_its_settings_and_only_the_files
     )
     .await;
 
-    assert_eq!(status, 200, "{}", said(&answer));
+    assert_eq!(status, 200, "{}", answer.html());
+    assert_eq!(headers.get("hx-trigger").unwrap(), "made");
     assert_eq!(
-        said(&answer),
-        "Launched experiment 1 on the suite board: 12 replays"
+        launch_form(&answer),
+        LaunchShown {
+            configurations: vec![],
+            repetitions: "1".into(),
+            count: "1 configuration × 2 cases × 1 repetition: 2 replays".into(),
+            refusal: None,
+        }
     );
-    assert_eq!(hrefs(select(&answer, "a")), ["/experiments/1"]);
+    let experiments = loop {
+        let event = events.recv().await.unwrap();
+        if let Some((_, region)) = regions(&event)
+            .into_iter()
+            .find(|(id, _)| id == "experiments")
+        {
+            break region;
+        }
+    };
+    assert_eq!(
+        hrefs(select(&experiments, "tbody tr > th a")),
+        ["/experiments/1"]
+    );
     let kept = pages.path("experiments/1/.kept/configurations");
     let files = |name: &str| -> Vec<String> {
         let dir = kept.join(name);

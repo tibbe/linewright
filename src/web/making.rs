@@ -8,8 +8,9 @@ use axum::response::{IntoResponse, Response};
 
 use super::capture::NotCaptured;
 use super::render;
-use crate::benchmarks::{MakeError, SuiteName};
+use crate::benchmarks::{ConfigurationName, LaunchRefusal, MakeError, SuiteName};
 use crate::case::{CaptureError, CaseName};
+use crate::repo_files::FileError;
 
 /// A dialog's form as drawn: the fields as the reader left them, and why
 /// Linewright refused, if it did.
@@ -105,4 +106,65 @@ const CRITERIA_NEEDED: &str = "A case needs criteria.";
 /// The refusal of a case named as one that exists.
 fn case_taken(name: &CaseName) -> String {
     format!("A case named {name} already exists.")
+}
+
+/// The refusal of repetitions that are not a whole number, 1 or more.
+pub(super) const REPETITIONS: &str = "The repetitions are a whole number, 1 or more.";
+
+/// The refusal of a configuration with no name, the configuration `added`
+/// after `as-is`, counting from 0. It is named by its place in the New
+/// experiment dialog, where `as-is` is 1st.
+pub(super) fn configuration_unnamed(added: usize) -> String {
+    const AFTER_AS_IS: usize = 2;
+    format!(
+        "The {} configuration needs a name.",
+        ordinal(added + AFTER_AS_IS)
+    )
+}
+
+/// `n` as an ordinal, such as "2nd" or "11th".
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// The refusal of a configuration named `typed`, which is not in the form
+/// of a name.
+pub(super) fn configuration_misnamed(typed: &str) -> String {
+    format!("\"{typed}\" cannot name a configuration. {NOT_A_NAME}")
+}
+
+/// The refusal of configuration `name`, whose files have `errors`.
+pub(super) fn configuration_unusable(name: &ConfigurationName, errors: &[FileError]) -> String {
+    let listed: Vec<String> = errors
+        .iter()
+        .map(|file| format!("{}: {}", file.path, file.error))
+        .collect();
+    format!(
+        "The configuration {name} cannot be used: {}",
+        listed.join("; ")
+    )
+}
+
+/// The status and the refusal of an experiment that was not launched, or
+/// why launching it failed.
+pub(super) fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
+    match refusal {
+        LaunchRefusal::NoSuchSuite(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
+        LaunchRefusal::NoCases(name) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("The suite {name} has no cases."),
+        ),
+        LaunchRefusal::DuplicateConfiguration(name) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Two configurations are named {name}."),
+        ),
+        LaunchRefusal::Failed(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+    }
 }
