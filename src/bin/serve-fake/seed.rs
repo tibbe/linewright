@@ -406,7 +406,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
 fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
     let run = run_of(task)?;
     let session = format!("sessions/issue-{}/20260301T160005Z-design", TASKS_ISSUE.0);
-    let scorer = "judge/20260301T161000Z-judge";
+    let scorer = "scorer/20260301T161000Z-scorer";
     let ran = json!({
         "model": null,
         "effort": null,

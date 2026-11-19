@@ -24,7 +24,7 @@ mod item;
 pub use item::{IssueState, Merge, TaskItem, TaskItemKind, TaskPull, TaskPullState};
 
 /// The directory, under the work directory, that holds the tasks.
-pub const TASKS: &str = "cases";
+pub const TASKS: &str = "tasks";
 
 /// A task's name: one or more lowercase letters, digits and hyphens,
 /// starting with a letter or a digit.
@@ -224,7 +224,7 @@ impl fmt::Display for Uncapturable<'_> {
     }
 }
 
-/// What `case.json` holds.
+/// What `task.json` holds.
 #[derive(Serialize)]
 struct TaskFile<'a> {
     stage: WorkKind,
@@ -644,13 +644,13 @@ pub fn read_criteria(dir: &Path) -> Result<Criteria, TaskRefusal> {
 const CRITERIA_FILE: &str = "criteria.md";
 
 /// The file, in a task's directory, of its stage, repository and run.
-const TASK_FILE: &str = "case.json";
+const TASK_FILE: &str = "task.json";
 
 fn refusal(part: TaskPart, why: String) -> TaskRefusal {
     TaskRefusal { part, why }
 }
 
-/// What `case.json` gives.
+/// What `task.json` gives.
 struct TaskFileRead {
     stage: TaskStage,
     item: Number,
@@ -677,7 +677,7 @@ fn read_task_file(dir: &Path) -> Result<TaskFileRead, TaskRefusal> {
     })
 }
 
-/// The field `name` of `case.json`, which holds `part`.
+/// The field `name` of `task.json`, which holds `part`.
 fn task_field<T: DeserializeOwned>(
     file: &serde_json::Map<String, Value>,
     part: TaskPart,

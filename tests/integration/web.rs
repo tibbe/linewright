@@ -425,7 +425,7 @@ fn said(html: &Html) -> String {
 /// The tasks under `pages`' work directory, by name.
 #[track_caller]
 fn tasks(pages: &Pages) -> Vec<String> {
-    match std::fs::read_dir(pages.path("cases")) {
+    match std::fs::read_dir(pages.path("tasks")) {
         Ok(entries) => {
             let mut names: Vec<String> = entries
                 .map(|entry| entry.unwrap().file_name().into_string().unwrap())

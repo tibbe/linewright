@@ -62,7 +62,7 @@ pub(crate) fn triage_output<'a>(
             .to_string();
         let out = under.join("out");
         std::fs::create_dir(&out).unwrap();
-        std::fs::write(out.join("case"), format!("{run}\n")).unwrap();
+        std::fs::write(out.join("task"), format!("{run}\n")).unwrap();
         std::fs::write(out.join("outcome"), format!("{outcome}\n")).unwrap();
         (task, out)
     }
@@ -116,14 +116,14 @@ fn scoring<'a>(
 /// The score kept in the output `out`.
 #[track_caller]
 fn score_in(out: &Path) -> Value {
-    let text = std::fs::read_to_string(out.join("judgement.json")).unwrap();
+    let text = std::fs::read_to_string(out.join("score.json")).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
 /// The names in the scorers' directory of the output `out`.
 #[track_caller]
 fn scorer_records(out: &Path) -> Vec<String> {
-    let dir = out.join("judge");
+    let dir = out.join("scorer");
     if !dir.exists() {
         return vec![];
     }
@@ -175,7 +175,10 @@ async fn a_scorer_keeps_its_score_in_the_output_with_its_record() {
     );
     assert_eq!(kept["linewright"], json!(lw_version()));
     let record = kept["session"]["record"].as_str().unwrap().to_string();
-    assert!(record.starts_with("judge/"), "{record}");
+    assert!(
+        record.starts_with("scorer/") && record.ends_with("-scorer"),
+        "{record}"
+    );
     assert!(out.join(&record).join("brief.md").is_file(), "{record}");
     assert_eq!(kept["session"]["model"], json!("judge-model"));
     assert_eq!(kept["session"]["effort"], json!("high"));
@@ -187,11 +190,11 @@ async fn a_scorer_keeps_its_score_in_the_output_with_its_record() {
     assert_eq!(harness.scorer_prompts().len(), 1);
     assert_eq!(
         scorer_records(&out),
-        vec![record.strip_prefix("judge/").unwrap().to_string()]
+        vec![record.strip_prefix("scorer/").unwrap().to_string()]
     );
     assert_eq!(
         entries(&out),
-        vec!["case", "judge", "judgement.json", "outcome"]
+        vec!["outcome", "score.json", "scorer", "task"]
     );
 }
 
@@ -260,7 +263,7 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     );
     let unmatched = unmatched.expect_err("a result never accepted is no judgement");
     assert!(unmatched.to_string().contains("/leak"), "{unmatched}");
-    assert_eq!(entries(&out), vec!["case", "outcome"]);
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -285,7 +288,7 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
     .await
     .unwrap();
     winding_up.wait().await;
-    std::fs::write(out.join("judgement.json"), "{}\n").unwrap();
+    std::fs::write(out.join("score.json"), "{}\n").unwrap();
 
     let kept = scorer::keep(&scoreable, score);
 
@@ -298,10 +301,10 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
         "{refused:#}"
     );
     assert_eq!(
-        std::fs::read_to_string(out.join("judgement.json")).unwrap(),
+        std::fs::read_to_string(out.join("score.json")).unwrap(),
         "{}\n"
     );
-    assert_eq!(entries(&out), vec!["case", "judgement.json", "outcome"]);
+    assert_eq!(entries(&out), vec!["outcome", "score.json", "task"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -432,22 +435,22 @@ async fn an_output_is_refused_naming_its_outcome_or_its_task_part() {
         std::fs::write(copy.join("outcome"), "failed\n").unwrap();
     });
     let no_task = changed("no-case", &|copy| {
-        std::fs::remove_file(copy.join("case")).unwrap();
+        std::fs::remove_file(copy.join("task")).unwrap();
     });
     let other = changed("other", &|copy| {
-        std::fs::write(copy.join("case"), "99/triage-1\n").unwrap();
+        std::fs::write(copy.join("task"), "99/triage-1\n").unwrap();
     });
     let handed_back = changed("handed-back", &|copy| {
         std::fs::write(copy.join("outcome"), "handed-back\n").unwrap();
     });
     let holds_one = changed("judged", &|copy| {
-        std::fs::write(copy.join("judgement.json"), "{}\n").unwrap();
+        std::fs::write(copy.join("score.json"), "{}\n").unwrap();
     });
     let scored_as_a_dir = changed("judged-as-a-dir", &|copy| {
-        std::fs::create_dir(copy.join("judgement.json")).unwrap();
+        std::fs::create_dir(copy.join("score.json")).unwrap();
     });
     let dangling = changed("dangling", &|copy| {
-        std::os::unix::fs::symlink(copy.join("nowhere"), copy.join("judgement.json")).unwrap();
+        std::os::unix::fs::symlink(copy.join("nowhere"), copy.join("score.json")).unwrap();
     });
     let mut refusals = vec![];
 
@@ -468,16 +471,13 @@ async fn an_output_is_refused_naming_its_outcome_or_its_task_part() {
 
     assert!(refusals[0].contains("`interrupted`"), "{}", refusals[0]);
     assert!(refusals[1].contains("`failed`"), "{}", refusals[1]);
-    assert!(refusals[2].contains("no `case` part"), "{}", refusals[2]);
+    assert!(refusals[2].contains("no `task` part"), "{}", refusals[2]);
     assert!(refusals[3].contains("99/triage-1"), "{}", refusals[3]);
     assert!(refusals[3].contains(&run), "{}", refusals[3]);
     assert_eq!(refusals[4], "");
     assert_eq!(refusals[5], "");
     for refusal in &refusals[6..] {
-        assert_eq!(
-            refusal,
-            "the output already holds a judgement, `judgement.json`"
-        );
+        assert_eq!(refusal, "the output already holds a score, `score.json`");
     }
 }
 
@@ -653,18 +653,18 @@ async fn lw_score_refuses_an_output_whose_run_did_not_end_done_or_handed_back() 
         ran.stderr
     );
     assert!(!bin.path().join("tokens.log").exists());
-    assert_eq!(entries(&out), vec!["case", "outcome"]);
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]
 async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
     let under = tempfile::tempdir().unwrap();
     let (task, out) = triage_output(under.path(), "done").await;
-    let record = out.join("judge/20261117T120000Z");
+    let record = out.join("scorer/20261117T120000Z");
     std::fs::create_dir_all(&record).unwrap();
     std::fs::write(record.join("brief.md"), "Judge it.\n").unwrap();
-    let earlier = r#"{"session": {"record": "judge/20261117T120000Z"}}"#;
-    std::fs::write(out.join("judgement.json"), earlier).unwrap();
+    let earlier = r#"{"session": {"record": "scorer/20261117T120000Z"}}"#;
+    std::fs::write(out.join("score.json"), earlier).unwrap();
     let bin = bin_with_git();
     fake_claude(bin.path(), &scored_as("pass", &[]));
 
@@ -673,7 +673,7 @@ async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
         ran.stderr.contains(
-            "the output cannot be judged: the output already holds a judgement, `judgement.json`"
+            "the output cannot be judged: the output already holds a score, `score.json`"
         ),
         "{}",
         ran.stderr
@@ -681,14 +681,14 @@ async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
     assert_eq!(ran.stdout, "");
     assert!(!bin.path().join("tokens.log").exists());
     assert_eq!(
-        std::fs::read_to_string(out.join("judgement.json")).unwrap(),
+        std::fs::read_to_string(out.join("score.json")).unwrap(),
         earlier
     );
     assert_eq!(scorer_records(&out), vec!["20261117T120000Z"]);
     assert_eq!(entries(&record), vec!["brief.md"]);
     assert_eq!(
         entries(&out),
-        vec!["case", "judge", "judgement.json", "outcome"]
+        vec!["outcome", "score.json", "scorer", "task"]
     );
 }
 
@@ -712,7 +712,7 @@ async fn lw_score_whose_scorer_gives_up_exits_1_saying_why_and_keeps_nothing() {
         ran.stderr
     );
     assert_eq!(ran.stdout, "");
-    assert_eq!(entries(&out), vec!["case", "outcome"]);
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -757,7 +757,7 @@ async fn a_signal_ends_lw_score_at_once_saying_why_and_keeping_nothing_of_its_sc
         stderr.contains("the judge made no judgement: a signal ended the command"),
         "{stderr}"
     );
-    assert_eq!(entries(&out), vec!["case", "outcome"]);
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]

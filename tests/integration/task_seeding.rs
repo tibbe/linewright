@@ -132,7 +132,7 @@ async fn the_store_seeded_from_a_task_gives_back_what_the_task_holds() {
 
     let again = world.dir.path().join("again");
     std::fs::create_dir(&again).unwrap();
-    for file in ["case.json", "criteria.md"] {
+    for file in ["task.json", "criteria.md"] {
         std::fs::copy(dir.join(file), again.join(file)).unwrap();
     }
     let items = store.record_items(&numbers(&task)).await.unwrap();
@@ -272,10 +272,10 @@ fn copy_task(dir: &Path, to: &Path) {
     assert!(status.success(), "copying {}", dir.display());
 }
 
-/// Sets the field `name` of the task's `case.json` to `value`.
+/// Sets the field `name` of the task's `task.json` to `value`.
 #[track_caller]
 fn set_in_task_file(dir: &Path, name: &str, value: serde_json::Value) {
-    let path = dir.join("case.json");
+    let path = dir.join("task.json");
     let mut file: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     file[name] = value;
@@ -347,7 +347,7 @@ async fn a_task_lacking_a_part_or_holding_one_that_does_not_read_is_refused_nami
             forgotten_history,
             TaskPart::Repository,
         ),
-        ("no case.json", remove("case.json"), TaskPart::Stage),
+        ("no task.json", remove("task.json"), TaskPart::Stage),
         ("no items.json", remove("items.json"), TaskPart::Items),
         (
             "no properties.json",
@@ -360,8 +360,8 @@ async fn a_task_lacking_a_part_or_holding_one_that_does_not_read_is_refused_nami
             TaskPart::Repository,
         ),
         (
-            "case.json not JSON",
-            write("case.json", b"{"),
+            "task.json not JSON",
+            write("task.json", b"{"),
             TaskPart::Stage,
         ),
         (
@@ -498,7 +498,7 @@ fn task_with_a_rebased_pull() -> impl Future<Output = (DesignTask, PathBuf, Numb
         let dir = design.world.dir.path().join("with-the-pull");
         let items = ok(store.record_items(&numbers).await, caller, "recording");
         let written = std::fs::create_dir(&dir)
-            .and_then(|()| std::fs::copy(design.dir.join("case.json"), dir.join("case.json")))
+            .and_then(|()| std::fs::copy(design.dir.join("task.json"), dir.join("task.json")))
             .and_then(|_| std::fs::copy(design.dir.join("criteria.md"), dir.join("criteria.md")))
             .and_then(|_| {
                 std::fs::copy(

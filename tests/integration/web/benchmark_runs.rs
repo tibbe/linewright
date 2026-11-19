@@ -64,34 +64,34 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
         let trials: [((i64, i64, i64), &'static str); 7] = [
             (
                 (1, 0, 0),
-                "state = 'judged', outcome = 'done', money = 0.3, seconds = 90, \
-             correctness = 'pass', leak = 0, judge_money = 0.05",
+                "state = 'scored', outcome = 'done', money = 0.3, seconds = 90, \
+             correctness = 'pass', leak = 0, scorer_money = 0.05",
             ),
             (
                 (1, 0, 1),
-                "state = 'judged', outcome = 'handed-back', money = 0.1, seconds = 10, \
-             correctness = 'fail', leak = 1, judge_money = 0.02",
+                "state = 'scored', outcome = 'handed-back', money = 0.1, seconds = 10, \
+             correctness = 'fail', leak = 1, scorer_money = 0.02",
             ),
             (
                 (1, 1, 0),
-                "state = 'unjudged', outcome = 'failed', seconds = 30, unjudged = 'outcome'",
+                "state = 'unscored', outcome = 'failed', seconds = 30, unscored = 'outcome'",
             ),
             (
                 (1, 1, 1),
-                "state = 'judged', outcome = 'done', money = 0.2, seconds = 20, \
-             correctness = 'fail', leak = 0, judge_money = 0.03",
+                "state = 'scored', outcome = 'done', money = 0.2, seconds = 20, \
+             correctness = 'fail', leak = 0, scorer_money = 0.03",
             ),
             (
                 (2, 0, 0),
-                "state = 'judged', outcome = 'done', money = 0.5, seconds = 30, \
+                "state = 'scored', outcome = 'done', money = 0.5, seconds = 30, \
              correctness = 'pass', leak = 0",
             ),
             (
                 (2, 0, 1),
-                "state = 'unjudged', outcome = 'done', money = 0.4, seconds = 40, \
-             unjudged = 'judge', reason = 'it gave up', judge_money = 0.01",
+                "state = 'unscored', outcome = 'done', money = 0.4, seconds = 40, \
+             unscored = 'scorer', reason = 'it gave up', scorer_money = 0.01",
             ),
-            ((2, 1, 0), "state = 'replaying'"),
+            ((2, 1, 0), "state = 'running'"),
         ];
         for (key, set) in trials {
             trial(&work_dir, 1, key, set).await;
@@ -113,7 +113,7 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
             .as_object_mut()
             .unwrap_or_else(|| panic!("a JSON object at {caller}"))
             .extend(ran.as_object().unwrap().clone());
-        let mut session = json!({"record": "judge/20261117T120200Z-judge", "cost": {}});
+        let mut session = json!({"record": "scorer/20261117T120200Z-scorer", "cost": {}});
         session
             .as_object_mut()
             .unwrap_or_else(|| panic!("a JSON object at {caller}"))
@@ -124,10 +124,10 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
             "session": session,
             "linewright": "0.1.0",
         });
-        let output = "experiments/1/as-is/columns/1";
+        let output = "benchmark-runs/1/as-is/columns/1";
         let turn = include_str!("../fixtures/transcript/turn-1.jsonl");
         pages.write(&[
-            (&format!("{output}/case"), "1/implement-1\n"),
+            (&format!("{output}/task"), "1/implement-1\n"),
             (&format!("{output}/outcome"), "done\n"),
             (
                 &format!("{output}/runs/items/1/implement-1.json"),
@@ -141,13 +141,13 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
                 &format!("{output}/sessions/issue-1/20261117T120005Z-implement/brief.md"),
                 "# Your task\n\nImplement the ticket below.\n",
             ),
-            (&format!("{output}/judgement.json"), &score.to_string()),
+            (&format!("{output}/score.json"), &score.to_string()),
             (
-                &format!("{output}/judge/20261117T120200Z-judge/output.jsonl"),
+                &format!("{output}/scorer/20261117T120200Z-scorer/output.jsonl"),
                 turn,
             ),
             (
-                &format!("{output}/judge/20261117T120200Z-judge/brief.md"),
+                &format!("{output}/scorer/20261117T120200Z-scorer/brief.md"),
                 "# Your task\n\nJudge the replay.\n",
             ),
         ]);
@@ -400,7 +400,7 @@ async fn an_ended_benchmark_run_says_when_it_ended_and_how_long_it_took() {
             &pages.path(""),
             1,
             key,
-            "state = 'unjudged', outcome = 'failed', seconds = 5, unjudged = 'outcome'",
+            "state = 'unscored', outcome = 'failed', seconds = 5, unscored = 'outcome'",
         )
         .await;
     }
@@ -441,7 +441,7 @@ async fn an_ended_benchmark_run_says_when_it_ended_and_how_long_it_took() {
 async fn a_benchmark_run_whose_end_was_not_kept_shows_its_end_and_duration_absent() {
     let pages = with_benchmark_run().await;
     let pool = back_door(&pages.path("")).await;
-    sqlx::query("UPDATE experiments SET state = 'ended', ended_at = NULL WHERE id = 1")
+    sqlx::query("UPDATE benchmark_runs SET state = 'ended', ended_at = NULL WHERE id = 1")
         .execute(&pool)
         .await
         .unwrap();
@@ -897,7 +897,7 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
 #[test_log::test(tokio::test)]
 async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_started() {
     let pages = with_benchmark_run().await;
-    pages.write(&[("experiments/1/short/columns/2/case", "1/implement-1\n")]);
+    pages.write(&[("benchmark-runs/1/short/columns/2/task", "1/implement-1\n")]);
 
     let html = pages.page("/experiments/1").await;
 
@@ -960,8 +960,8 @@ async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_th
     let pages = with_benchmarks().await;
     launched(&pages, "board", &["a", "b", "c"], 1, "2026-11-17T12:00:00Z").await;
     let work_dir = pages.path("");
-    let pass = "state = 'judged', outcome = 'done', seconds = 10, correctness = 'pass', leak = 0";
-    let fail = "state = 'judged', outcome = 'done', seconds = 10, correctness = 'fail', leak = 0";
+    let pass = "state = 'scored', outcome = 'done', seconds = 10, correctness = 'pass', leak = 0";
+    let fail = "state = 'scored', outcome = 'done', seconds = 10, correctness = 'fail', leak = 0";
     for (key, set) in [
         ((1, 0, 1), pass),
         ((1, 1, 1), fail),
@@ -1110,7 +1110,7 @@ async fn the_benchmark_run_pages_stream_sends_the_benchmark_run_as_it_changes() 
         &pages.path(""),
         1,
         (2, 1, 0),
-        "state = 'unjudged', outcome = 'failed', seconds = 5, unjudged = 'outcome'",
+        "state = 'unscored', outcome = 'failed', seconds = 5, unscored = 'outcome'",
     )
     .await;
 
@@ -1414,7 +1414,7 @@ async fn a_launch_on_a_benchmark_with_no_tasks_is_refused() {
         text(select(&answer, "legend")[0]),
         "New experiment on triage-basics"
     );
-    assert!(!pages.path("experiments/1").exists());
+    assert!(!pages.path("benchmark-runs/1").exists());
 }
 
 /// A configuration named `name` that sets nothing.
@@ -1523,7 +1523,7 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
             refusal: Some("The repetitions are a whole number, 1 or more.".into()),
         }
     );
-    assert!(!pages.path("experiments/1").exists());
+    assert!(!pages.path("benchmark-runs/1").exists());
 }
 
 /// `docs/specs/design_system.md`, Making, A refusal: the fields keep every
@@ -1588,7 +1588,7 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
             .collect::<Vec<_>>(),
         ["as-is"]
     );
-    assert!(!pages.path("experiments/1").exists());
+    assert!(!pages.path("benchmark-runs/1").exists());
 }
 
 #[test_log::test(tokio::test)]
@@ -1620,7 +1620,7 @@ async fn a_launch_from_another_site_is_refused_keeping_the_form_as_sent() {
             refusal: Some("a launch is taken only from the web UI's own pages".into()),
         }
     );
-    assert!(!pages.path("experiments/1").exists());
+    assert!(!pages.path("benchmark-runs/1").exists());
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark run;
@@ -1678,7 +1678,7 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
         hrefs(select(&benchmark_runs, "tbody tr > th a")),
         ["/experiments/1"]
     );
-    let kept = pages.path("experiments/1/.kept/configurations");
+    let kept = pages.path("benchmark-runs/1/.kept/configurations");
     let files = |name: &str| -> Vec<String> {
         let dir = kept.join(name);
         let mut files: Vec<String> = files_under(&dir)

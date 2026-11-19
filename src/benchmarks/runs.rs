@@ -1,4 +1,4 @@
-//! Benchmark runs, kept in the database and in `experiments/` under the work
+//! Benchmark runs, kept in the database and in `benchmark-runs/` under the work
 //! directory (`docs/specs/benchmarks.md`, Benchmark runs).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -260,7 +260,7 @@ impl BenchmarkRunRecord {
 }
 
 /// The directory, under the work directory, that holds the benchmark runs.
-pub const BENCHMARK_RUNS: &str = "experiments";
+pub const BENCHMARK_RUNS: &str = "benchmark-runs";
 
 /// The directory, in a benchmark run's, of what it kept at its launch: hidden,
 /// as no configuration's name is.
@@ -525,7 +525,7 @@ impl BenchmarkRuns {
     /// The benchmark `benchmark`'s benchmark runs, latest first.
     pub async fn of_benchmark(&self, benchmark: &BenchmarkName) -> Result<Vec<BenchmarkRunRecord>> {
         self.records_of(
-            "SELECT id FROM experiments WHERE suite = ? ORDER BY id DESC",
+            "SELECT id FROM benchmark_runs WHERE benchmark = ? ORDER BY id DESC",
             Some(benchmark.as_str()),
         )
         .await
@@ -535,8 +535,8 @@ impl BenchmarkRuns {
     /// benchmark's name: none for a benchmark with no benchmark run.
     pub async fn latest(&self) -> Result<BTreeMap<BenchmarkName, (BenchmarkRunId, Timestamp)>> {
         let rows: Vec<(String, i64, String)> = sqlx::query_as(
-            "SELECT suite, id, launched_at FROM experiments
-             WHERE id IN (SELECT MAX(id) FROM experiments GROUP BY suite)",
+            "SELECT benchmark, id, launched_at FROM benchmark_runs
+             WHERE id IN (SELECT MAX(id) FROM benchmark_runs GROUP BY benchmark)",
         )
         .fetch_all(self.db.pool())
         .await
@@ -559,7 +559,7 @@ impl BenchmarkRuns {
     /// start order.
     pub async fn open(&self) -> Result<Vec<BenchmarkRunRecord>> {
         self.records_of(
-            "SELECT id FROM experiments WHERE state = 'open' ORDER BY id",
+            "SELECT id FROM benchmark_runs WHERE state = 'open' ORDER BY id",
             None,
         )
         .await
@@ -603,7 +603,7 @@ impl BenchmarkRuns {
             Some(BenchmarkRunState::Open) => {}
             Some(state) => return Err(CancelRefusal::NotOpen { id, state }),
         }
-        sqlx::query("UPDATE experiments SET state = 'cancelled', ended_at = ? WHERE id = ?")
+        sqlx::query("UPDATE benchmark_runs SET state = 'cancelled', ended_at = ? WHERE id = ?")
             .bind(database::time_text(at))
             .bind(id.0)
             .execute(&mut *tx)
@@ -628,22 +628,23 @@ impl BenchmarkRuns {
             let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
             sqlx::query(
                 "UPDATE trials SET state = CASE state
-                     WHEN 'replaying' THEN 'pending'
-                     WHEN 'judging' THEN 'replayed'
+                     WHEN 'running' THEN 'pending'
+                     WHEN 'scoring' THEN 'ran'
                  END
-                 WHERE state IN ('replaying', 'judging')
-                     AND experiment IN (SELECT id FROM experiments WHERE state = 'open')",
+                 WHERE state IN ('running', 'scoring')
+                     AND benchmark_run IN (SELECT id FROM benchmark_runs WHERE state = 'open')",
             )
             .execute(&mut *tx)
             .await?;
             let left = sqlx::query(
-                "SELECT trials.* FROM trials JOIN experiments ON experiments.id = trials.experiment
-                 WHERE trials.state IN ('replaying', 'judging') AND experiments.state != 'open'",
+                "SELECT trials.* FROM trials
+                 JOIN benchmark_runs ON benchmark_runs.id = trials.benchmark_run
+                 WHERE trials.state IN ('running', 'scoring') AND benchmark_runs.state != 'open'",
             )
             .fetch_all(&mut *tx)
             .await?;
             for row in &left {
-                let benchmark_run = BenchmarkRunId::from_row(row.try_get("experiment")?)?;
+                let benchmark_run = BenchmarkRunId::from_row(row.try_get("benchmark_run")?)?;
                 let (key, state) = decode(row)?;
                 write_trial(
                     &mut tx,
@@ -688,7 +689,7 @@ impl BenchmarkRuns {
             let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
             let row = sqlx::query(
                 "SELECT * FROM trials
-                 WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?",
+                 WHERE benchmark_run = ? AND repetition = ? AND task_seq = ? AND configuration_seq = ?",
             )
             .bind(benchmark_run.0)
             .bind(key.repetition.get())
@@ -717,8 +718,8 @@ async fn write_trial(
     let columns = Columns::of(state);
     sqlx::query(
         "UPDATE trials SET state = ?, outcome = ?, money = ?, seconds = ?,
-             correctness = ?, leak = ?, judge_money = ?, unjudged = ?, reason = ?
-         WHERE experiment = ? AND repetition = ? AND case_seq = ? AND configuration_seq = ?",
+             correctness = ?, leak = ?, scorer_money = ?, unscored = ?, reason = ?
+         WHERE benchmark_run = ? AND repetition = ? AND task_seq = ? AND configuration_seq = ?",
     )
     .bind(columns.state)
     .bind(columns.outcome)
@@ -744,7 +745,7 @@ async fn read_state(
     id: BenchmarkRunId,
 ) -> Result<Option<BenchmarkRunState>> {
     let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT state, ended_at FROM experiments WHERE id = ?")
+        sqlx::query_as("SELECT state, ended_at FROM benchmark_runs WHERE id = ?")
             .bind(id.0)
             .fetch_optional(&mut *conn)
             .await?;
@@ -756,10 +757,10 @@ async fn read_state(
 /// its trials is left to end.
 async fn end_if_done(conn: &mut SqliteConnection, id: BenchmarkRunId, at: Timestamp) -> Result<()> {
     sqlx::query(
-        "UPDATE experiments SET state = 'ended', ended_at = ?
+        "UPDATE benchmark_runs SET state = 'ended', ended_at = ?
          WHERE id = ? AND state = 'open' AND NOT EXISTS (
              SELECT 1 FROM trials
-             WHERE experiment = ? AND state NOT IN ('judged', 'unjudged'))",
+             WHERE benchmark_run = ? AND state NOT IN ('scored', 'unscored'))",
     )
     .bind(database::time_text(at))
     .bind(id.0)
@@ -860,7 +861,7 @@ async fn benchmark_tasks(
     conn: &mut SqliteConnection,
     benchmark: &BenchmarkName,
 ) -> Result<Option<Vec<TaskName>>> {
-    let found: Option<String> = sqlx::query_scalar("SELECT name FROM suites WHERE name = ?")
+    let found: Option<String> = sqlx::query_scalar("SELECT name FROM benchmarks WHERE name = ?")
         .bind(benchmark.as_str())
         .fetch_optional(&mut *conn)
         .await
@@ -869,7 +870,7 @@ async fn benchmark_tasks(
         return Ok(None);
     }
     let names: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM cases WHERE suite = ? ORDER BY seq")
+        sqlx::query_scalar("SELECT name FROM tasks WHERE benchmark = ? ORDER BY seq")
             .bind(benchmark.as_str())
             .fetch_all(&mut *conn)
             .await
@@ -885,7 +886,7 @@ async fn benchmark_tasks(
 /// directory in `benchmark_runs_dir` named as one, such as one a launch left
 /// there as it stopped.
 async fn next_id(conn: &mut SqliteConnection, benchmark_runs_dir: &Path) -> Result<i64> {
-    let kept: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM experiments")
+    let kept: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(id), 0) FROM benchmark_runs")
         .fetch_one(&mut *conn)
         .await?;
     let mut last = kept;
@@ -917,7 +918,7 @@ async fn insert_benchmark_run(
     at: Timestamp,
 ) -> Result<usize> {
     sqlx::query(
-        "INSERT INTO experiments (id, suite, launched_at, repetitions, state)
+        "INSERT INTO benchmark_runs (id, benchmark, launched_at, repetitions, state)
          VALUES (?, ?, ?, ?, 'open')",
     )
     .bind(id.0)
@@ -927,7 +928,7 @@ async fn insert_benchmark_run(
     .execute(&mut *conn)
     .await?;
     for (i, task) in tasks.iter().enumerate() {
-        sqlx::query("INSERT INTO experiment_cases (experiment, seq, name) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO benchmark_run_tasks (benchmark_run, seq, name) VALUES (?, ?, ?)")
             .bind(id.0)
             .bind(seq(i))
             .bind(task.as_str())
@@ -936,7 +937,7 @@ async fn insert_benchmark_run(
     }
     for (i, configuration) in configurations.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO experiment_configurations (experiment, seq, name) VALUES (?, ?, ?)",
+            "INSERT INTO benchmark_run_configurations (benchmark_run, seq, name) VALUES (?, ?, ?)",
         )
         .bind(id.0)
         .bind(seq(i))
@@ -949,7 +950,7 @@ async fn insert_benchmark_run(
         for task in 0..tasks.len() {
             for configuration in 0..configurations.len() {
                 sqlx::query(
-                    "INSERT INTO trials (experiment, repetition, case_seq, configuration_seq, state)
+                    "INSERT INTO trials (benchmark_run, repetition, task_seq, configuration_seq, state)
                      VALUES (?, ?, ?, ?, 'pending')",
                 )
                 .bind(id.0)
@@ -986,10 +987,10 @@ async fn read_record(
     id: BenchmarkRunId,
 ) -> Result<Option<BenchmarkRunRecord>> {
     let row: Option<(String, String, String, i64, String, Option<String>)> = sqlx::query_as(
-        "SELECT experiments.suite, suites.stage, experiments.launched_at,
-                experiments.repetitions, experiments.state, experiments.ended_at
-         FROM experiments JOIN suites ON suites.name = experiments.suite
-         WHERE experiments.id = ?",
+        "SELECT benchmark_runs.benchmark, benchmarks.stage, benchmark_runs.launched_at,
+                benchmark_runs.repetitions, benchmark_runs.state, benchmark_runs.ended_at
+         FROM benchmark_runs JOIN benchmarks ON benchmarks.name = benchmark_runs.benchmark
+         WHERE benchmark_runs.id = ?",
     )
     .bind(id.0)
     .fetch_optional(&mut *conn)
@@ -999,20 +1000,21 @@ async fn read_record(
         return Ok(None);
     };
     let reading = || format!("reading experiment {id}");
-    let tasks: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM experiment_cases WHERE experiment = ? ORDER BY seq")
-            .bind(id.0)
-            .fetch_all(&mut *conn)
-            .await
-            .with_context(reading)?;
-    let configurations: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM experiment_configurations WHERE experiment = ? ORDER BY seq",
+    let tasks: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM benchmark_run_tasks WHERE benchmark_run = ? ORDER BY seq",
     )
     .bind(id.0)
     .fetch_all(&mut *conn)
     .await
     .with_context(reading)?;
-    let trials = sqlx::query("SELECT * FROM trials WHERE experiment = ?")
+    let configurations: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM benchmark_run_configurations WHERE benchmark_run = ? ORDER BY seq",
+    )
+    .bind(id.0)
+    .fetch_all(&mut *conn)
+    .await
+    .with_context(reading)?;
+    let trials = sqlx::query("SELECT * FROM trials WHERE benchmark_run = ?")
         .bind(id.0)
         .fetch_all(&mut *conn)
         .await
@@ -1076,7 +1078,7 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
             .ok()
             .and_then(NonZeroU32::new)
             .with_context(|| format!("{repetition} is not a repetition"))?,
-        task: place(row.try_get("case_seq")?)?,
+        task: place(row.try_get("task_seq")?)?,
         configuration: place(row.try_get("configuration_seq")?)?,
     };
     let state: String = row.try_get("state")?;
@@ -1093,19 +1095,19 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
     let with_trial = |figures: Option<TrialFigures>| {
         figures.with_context(|| format!("a trial {state} has no replay"))
     };
-    let scorer_money = money(row.try_get("judge_money")?)?;
-    let unscored: Option<String> = row.try_get("unjudged")?;
+    let scorer_money = money(row.try_get("scorer_money")?)?;
+    let unscored: Option<String> = row.try_get("unscored")?;
     let reason: Option<String> = row.try_get("reason")?;
     let trial = match state.as_str() {
         "pending" => TrialState::Pending,
-        "replaying" => TrialState::Running,
-        "replayed" => TrialState::Ran {
+        "running" => TrialState::Running,
+        "ran" => TrialState::Ran {
             run: with_trial(trial)?,
         },
-        "judging" => TrialState::Scoring {
+        "scoring" => TrialState::Scoring {
             run: with_trial(trial)?,
         },
-        "judged" => {
+        "scored" => {
             let correctness: Option<String> = row.try_get("correctness")?;
             TrialState::Ended(TrialEnd::Scored {
                 run: with_trial(trial)?,
@@ -1121,13 +1123,13 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
                 },
             })
         }
-        "unjudged" => match (unscored.as_deref(), reason, trial) {
+        "unscored" => match (unscored.as_deref(), reason, trial) {
             (Some("cancelled"), None, None) => TrialState::Ended(TrialEnd::Cancelled),
             (Some(why), reason, Some(trial)) => TrialState::Ended(TrialEnd::Unscored {
                 run: trial,
                 why: match (why, reason) {
                     ("outcome", None) => NoScore::Outcome,
-                    ("judge", Some(reason)) => NoScore::Scorer {
+                    ("scorer", Some(reason)) => NoScore::Scorer {
                         reason,
                         scorer_money,
                     },
@@ -1164,14 +1166,14 @@ impl Columns {
         };
         let (name, run) = match state {
             TrialState::Pending => ("pending", None),
-            TrialState::Running => ("replaying", None),
-            TrialState::Ran { run } => ("replayed", Some(run)),
-            TrialState::Scoring { run } => ("judging", Some(run)),
+            TrialState::Running => ("running", None),
+            TrialState::Ran { run } => ("ran", Some(run)),
+            TrialState::Scoring { run } => ("scoring", Some(run)),
             TrialState::Ended(TrialEnd::Scored { run, score }) => {
                 columns.correctness = Some(score.correctness.name());
                 columns.leak = Some(score.leak);
                 columns.scorer_money = score.scorer_money.map(f64::from);
-                ("judged", Some(run))
+                ("scored", Some(run))
             }
             TrialState::Ended(TrialEnd::Unscored { run, why }) => {
                 columns.unscored = Some(match why {
@@ -1182,15 +1184,15 @@ impl Columns {
                     } => {
                         columns.reason = Some(reason.clone());
                         columns.scorer_money = scorer_money.map(f64::from);
-                        "judge"
+                        "scorer"
                     }
                     NoScore::Cancelled => "cancelled",
                 });
-                ("unjudged", Some(run))
+                ("unscored", Some(run))
             }
             TrialState::Ended(TrialEnd::Cancelled) => {
                 columns.unscored = Some("cancelled");
-                ("unjudged", None)
+                ("unscored", None)
             }
         };
         columns.state = name;
@@ -1227,20 +1229,22 @@ mod tests {
             let db = Database::open(work_dir)
                 .await
                 .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-            sqlx::query("INSERT INTO suites (name, stage) VALUES ('board', 'design')")
+            sqlx::query("INSERT INTO benchmarks (name, stage) VALUES ('board', 'design')")
                 .execute(db.pool())
                 .await
-                .unwrap_or_else(|e| panic!("keeping the suite at {caller}: {e}"));
+                .unwrap_or_else(|e| panic!("keeping the benchmark at {caller}: {e}"));
             for (seq, task, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
                 std::fs::create_dir_all(work_dir.join(task::TASKS).join(task))
-                    .unwrap_or_else(|e| panic!("making the case at {caller}: {e}"));
-                sqlx::query("INSERT INTO cases (name, suite, run, seq) VALUES (?, 'board', ?, ?)")
-                    .bind(task)
-                    .bind(run)
-                    .bind(seq)
-                    .execute(db.pool())
-                    .await
-                    .unwrap_or_else(|e| panic!("keeping the case at {caller}: {e}"));
+                    .unwrap_or_else(|e| panic!("making the task at {caller}: {e}"));
+                sqlx::query(
+                    "INSERT INTO tasks (name, benchmark, run, seq) VALUES (?, 'board', ?, ?)",
+                )
+                .bind(task)
+                .bind(run)
+                .bind(seq)
+                .execute(db.pool())
+                .await
+                .unwrap_or_else(|e| panic!("keeping the task at {caller}: {e}"));
             }
             let benchmark_runs = BenchmarkRuns::new(db);
             let launched = launch(&benchmark_runs)
@@ -1572,7 +1576,7 @@ mod tests {
         let work_dir = tempfile::tempdir().unwrap();
         let (benchmark_runs, id) = launched(work_dir.path()).await;
 
-        let ended = sqlx::query("UPDATE experiments SET ended_at = ? WHERE id = ?")
+        let ended = sqlx::query("UPDATE benchmark_runs SET ended_at = ? WHERE id = ?")
             .bind(database::time_text(later()))
             .bind(id.0)
             .execute(benchmark_runs.db.pool())

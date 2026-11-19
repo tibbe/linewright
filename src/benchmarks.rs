@@ -169,7 +169,7 @@ impl Benchmarks {
     /// Whether a task has the name `name`: a task of a benchmark, or a
     /// directory in the tasks, such as of a task captured into no benchmark.
     pub async fn has_task(&self, name: &TaskName) -> Result<bool> {
-        let row: Option<String> = sqlx::query_scalar("SELECT name FROM cases WHERE name = ?")
+        let row: Option<String> = sqlx::query_scalar("SELECT name FROM tasks WHERE name = ?")
             .bind(name.as_str())
             .fetch_optional(self.db.pool())
             .await
@@ -185,9 +185,9 @@ impl Benchmarks {
     /// Every benchmark, by name, with how many tasks it holds.
     pub async fn list(&self) -> Result<Vec<BenchmarkListed>> {
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT suites.name, suites.stage, COUNT(cases.name) FROM suites
-             LEFT JOIN cases ON cases.suite = suites.name
-             GROUP BY suites.name ORDER BY suites.name",
+            "SELECT benchmarks.name, benchmarks.stage, COUNT(tasks.name) FROM benchmarks
+             LEFT JOIN tasks ON tasks.benchmark = benchmarks.name
+             GROUP BY benchmarks.name ORDER BY benchmarks.name",
         )
         .fetch_all(self.db.pool())
         .await
@@ -204,11 +204,12 @@ impl Benchmarks {
 
     /// The benchmark `name`, if there is one.
     pub async fn find(&self, name: &BenchmarkName) -> Result<Option<Benchmark>> {
-        let stage: Option<String> = sqlx::query_scalar("SELECT stage FROM suites WHERE name = ?")
-            .bind(name.as_str())
-            .fetch_optional(self.db.pool())
-            .await
-            .context(READING)?;
+        let stage: Option<String> =
+            sqlx::query_scalar("SELECT stage FROM benchmarks WHERE name = ?")
+                .bind(name.as_str())
+                .fetch_optional(self.db.pool())
+                .await
+                .context(READING)?;
         stage
             .map(|stage| benchmark_of(name.as_str(), &stage))
             .transpose()
@@ -222,7 +223,7 @@ impl Benchmarks {
             return Ok(None);
         };
         let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT name, run FROM cases WHERE suite = ? ORDER BY seq")
+            sqlx::query_as("SELECT name, run FROM tasks WHERE benchmark = ? ORDER BY seq")
                 .bind(name.as_str())
                 .fetch_all(self.db.pool())
                 .await
@@ -265,15 +266,16 @@ impl Benchmarks {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .context(removing.clone())?;
-        let found: Option<String> = sqlx::query_scalar("SELECT name FROM suites WHERE name = ?")
-            .bind(benchmark.as_str())
-            .fetch_optional(&mut *tx)
-            .await
-            .context(removing.clone())?;
+        let found: Option<String> =
+            sqlx::query_scalar("SELECT name FROM benchmarks WHERE name = ?")
+                .bind(benchmark.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .context(removing.clone())?;
         if found.is_none() {
             return Err(RemoveError::NoSuchBenchmark(benchmark.clone()));
         }
-        let deleted = sqlx::query("DELETE FROM cases WHERE name = ? AND suite = ?")
+        let deleted = sqlx::query("DELETE FROM tasks WHERE name = ? AND benchmark = ?")
             .bind(task.as_str())
             .bind(benchmark.as_str())
             .execute(&mut *tx)
@@ -346,8 +348,8 @@ impl Benchmarks {
             }
         }
         let inserted = sqlx::query(
-            "INSERT INTO cases (name, suite, run, seq) VALUES (?1, ?2, ?3,
-                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM cases WHERE suite = ?2))",
+            "INSERT INTO tasks (name, benchmark, run, seq) VALUES (?1, ?2, ?3,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM tasks WHERE benchmark = ?2))",
         )
         .bind(name.as_str())
         .bind(benchmark.name.as_str())
@@ -396,7 +398,7 @@ async fn insert_benchmark<'c>(
     executor: impl sqlx::SqliteExecutor<'c>,
     benchmark: &Benchmark,
 ) -> Result<(), MakeError> {
-    let inserted = sqlx::query("INSERT INTO suites (name, stage) VALUES (?, ?)")
+    let inserted = sqlx::query("INSERT INTO benchmarks (name, stage) VALUES (?, ?)")
         .bind(benchmark.name.as_str())
         .bind(benchmark.stage.name())
         .execute(executor)

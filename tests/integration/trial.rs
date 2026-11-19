@@ -219,9 +219,9 @@ async fn a_triage_task_is_run_into_its_output() {
         ran_trial.read("version"),
         String::from_utf8(version.stdout).unwrap()
     );
-    assert_eq!(ran_trial.read("case"), format!("{}/triage-1\n", issue.0));
+    assert_eq!(ran_trial.read("task"), format!("{}/triage-1\n", issue.0));
     assert_eq!(harness.prompts(WorkKind::Triage).len(), 1);
-    let trials = under.path().join("work").join(REPO).join("replays");
+    let trials = under.path().join("work").join(REPO).join("trials");
     assert_eq!(entries(&trials.join("clones")), Vec::<String>::new());
     assert_eq!(
         entries(&ran_trial.out.join(format!("runs/items/{}", issue.0))),
@@ -908,7 +908,7 @@ async fn lw_trial_gives_sessions_linewrights_token_with_repo_set_or_unset() {
         tokens,
         "GH_TOKEN=linewright-token GITHUB_TOKEN=linewright-token\n".repeat(2)
     );
-    assert!(work.path().join(REPO).join("replays").is_dir());
+    assert!(work.path().join(REPO).join("trials").is_dir());
     assert!(!work.path().join("someone").exists());
 }
 
@@ -1148,7 +1148,7 @@ async fn a_trial_removes_the_directory_of_one_a_signal_ended() {
         .path()
         .join("work")
         .join(REPO)
-        .join("replays/clones/replay-left");
+        .join("trials/clones/trial-left");
     std::fs::create_dir_all(left.join("store")).unwrap();
     let harness = Arc::new(ScriptedHarness::default());
     harness.on(WorkKind::Triage, |_| Ok(triaged()));

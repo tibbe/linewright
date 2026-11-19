@@ -163,7 +163,7 @@ pub enum Command {
         command: AutomationCommand,
     },
     /// Capture run ID, such as 43/implement-2, as the case NAME of the suite
-    /// SUITE, in `cases/` under the work directory.
+    /// SUITE, in `tasks/` under the work directory.
     Capture {
         id: RunId,
         /// Lowercase letters, digits and hyphens, starting with a letter or a

@@ -42,7 +42,7 @@ mod copy;
 pub use copy::TrialCopy;
 
 /// The part of an output that holds its score.
-pub const SCORE: &str = "judgement.json";
+pub const SCORE: &str = "score.json";
 
 /// How a trial's run ended, of the endings a scorer scores.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,13 +73,13 @@ pub enum ScoreRefusal {
         "the replay's outcome is `{0}`: only a replay whose run ended done or handed back is judged"
     )]
     Outcome(String),
-    #[error("the output has no `{TASK}` part, which names the run its case was captured from")]
+    #[error("the output has no `{TASK}` part, which names the run its task was captured from")]
     NoTask,
-    #[error("the output's `{TASK}` part names the run {named}, not {task}, the run of the case")]
+    #[error("the output's `{TASK}` part names the run {named}, not {task}, the run of the task")]
     OtherRun { named: String, task: RunId },
     #[error("the output's `{part}` part cannot be read: {error}")]
     Unreadable { part: &'static str, error: String },
-    #[error("the output already holds a judgement, `{SCORE}`")]
+    #[error("the output already holds a score, `{SCORE}`")]
     Scored,
 }
 
@@ -212,7 +212,7 @@ async fn holds(repository: &Path, branch: &str) -> bool {
 }
 
 /// The record of a scorer's session: its directory under the output's
-/// `judge/`, and what the session ran with and what it cost once it is
+/// `scorer/`, and what the session ran with and what it cost once it is
 /// opened. It is removed when dropped, unless the score that names it
 /// is kept.
 #[derive(Debug)]
@@ -424,7 +424,7 @@ pub fn discard_unkept(scoreable: &ScoreableTrial) {
     }
 }
 
-/// Removes the scorer's record in `dir`, and the output's `judge/` with it
+/// Removes the scorer's record in `dir`, and the output's `scorer/` with it
 /// when that holds no other, logging when it cannot.
 pub fn discard(dir: &Path) {
     let mut removed = std::fs::remove_dir_all(dir);
@@ -474,7 +474,7 @@ impl RecordsSessions for ScorerRecord {
 }
 
 /// What a scorer decided about a trial, made only from its accepted
-/// result. Kept as `judgement.json` in the output, its record with it.
+/// result. Kept as `score.json` in the output, its record with it.
 #[derive(Debug, Serialize)]
 pub struct Score {
     correctness: Correctness,
@@ -599,7 +599,7 @@ pub async fn run(
 ) -> Result<Score, Unscored> {
     let redaction = config.secrets.redaction().clone();
     let (work_dir, winding_up) = (config.work_dir.clone(), config.winding_up.clone());
-    let scored = in_own_dir(&work_dir, winding_up, "judge", async |own| {
+    let scored = in_own_dir(&work_dir, winding_up, "scorer", async |own| {
         scorer_in(task, scoreable, &record, harness, &config, under, own).await
     })
     .await

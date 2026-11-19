@@ -64,7 +64,7 @@ async fn an_exported_run_is_read_by_the_scorers_copy_as_a_trials_output() {
     let exported = files_under(&out.join(session));
     assert!(!exported.is_empty());
     assert_eq!(exported, files_under(&work.join(session)));
-    std::fs::write(out.join("case"), format!("{id}\n")).unwrap();
+    std::fs::write(out.join("task"), format!("{id}\n")).unwrap();
     let task = Task::open(&task_dir).await.unwrap();
     let scoreable = scorer::ScoreableTrial::open(&out, &task).await.unwrap();
     assert_eq!(scoreable.outcome(), Scoreable::Done);

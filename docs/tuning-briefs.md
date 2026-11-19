@@ -27,11 +27,11 @@ lw capture 43/implement-2 43-implement-2 --suite implements --criteria good-resu
 ```
 
 It works whether `serve` is running or not, with the token `serve` uses: the
-commits are fetched from GitHub. The case is written to `cases/43-implement-2/`
+commits are fetched from GitHub. The case is written to `tasks/43-implement-2/`
 under the work directory:
 
 ```text
-case.json        the stage, the item, the start, the run and the API version
+task.json        the stage, the item, the start, the run and the API version
 items.json       the items the run was given, as GitHub's REST API gave them
 properties.json  the repository's properties, as GitHub's API gave them
 repository.git/  a bare repository of the branch heads it was given
