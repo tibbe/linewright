@@ -1,6 +1,6 @@
 {%- import "macros.html" as ui -%}
-<div id="new-experiment-offer" class="contents" data-cases="{{ tasks }}">
+<div id="new-benchmark-run-offer" class="contents" data-tasks="{{ tasks }}">
 {%- if tasks > 0 %}
-{%- call ui::new_button("new-experiment") %}{% endcall %}
+{%- call ui::new_button("new-benchmark-run") %}{% endcall %}
 {%- endif %}
 </div>

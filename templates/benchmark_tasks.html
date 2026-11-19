@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
-<div id="cases">
+<div id="tasks">
 {%- if tasks.is_empty() %}
-<p class="px-4 pb-4">No cases</p>
+<p class="px-4 pb-4">No tasks</p>
 {%- else %}
 <table class="table">
 <thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>

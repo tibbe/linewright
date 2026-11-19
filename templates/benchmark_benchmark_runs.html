@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
-<div id="experiments">
+<div id="benchmark-runs">
 {%- if benchmark_runs.is_empty() %}
-<p class="px-4 pb-4">No experiments</p>
+<p class="px-4 pb-4">No benchmark runs</p>
 {%- else %}
 <table class="table">
 <thead><tr>{% for column in BenchmarkRunsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>

@@ -115,38 +115,44 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(automations_page::automations_events),
         )
         .route(
-            "/suites",
+            "/benchmarks",
             get(benchmarks_page::benchmarks_page).post(benchmarks_page::make_benchmark),
         )
-        .route("/events/suites", get(benchmarks_page::benchmarks_events))
         .route(
-            "/suites/{name}",
+            "/events/benchmarks",
+            get(benchmarks_page::benchmarks_events),
+        )
+        .route(
+            "/benchmarks/{name}",
             get(benchmark_page::benchmark_page).post(benchmark_page::add_task),
         )
         .route(
-            "/suites/{name}/remove-case",
+            "/benchmarks/{name}/remove-task",
             post(benchmark_page::remove_task),
         )
-        .route("/suites/{name}/launch", post(launch::launch))
+        .route("/benchmarks/{name}/launch", post(launch::launch))
         .route(
-            "/events/suites/{name}",
+            "/events/benchmarks/{name}",
             get(benchmark_page::benchmark_events),
         )
         .route(
-            "/experiments/{id}",
+            "/benchmark-runs/{id}",
             get(benchmark_run_page::benchmark_run_page),
         )
         .route(
-            "/events/experiments/{id}",
+            "/events/benchmark-runs/{id}",
             get(benchmark_run_page::benchmark_run_events),
         )
-        .route("/experiments/{id}/cancel", post(benchmark_run_page::cancel))
         .route(
-            "/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
+            "/benchmark-runs/{id}/cancel",
+            post(benchmark_run_page::cancel),
+        )
+        .route(
+            "/benchmark-runs/{id}/{configuration}/{task}/{repetition}/{of}",
             get(benchmark_run_page::trial_page),
         )
         .route(
-            "/events/experiments/{id}/{configuration}/{case}/{repetition}/{of}",
+            "/events/benchmark-runs/{id}/{configuration}/{task}/{repetition}/{of}",
             get(benchmark_run_page::trial_events),
         )
         .route("/server", get(server_page::server_page))
@@ -355,8 +361,8 @@ impl std::fmt::Display for Missing {
         match self {
             Missing::Item(number) => write!(f, "No such item {number}"),
             Missing::Run(id) => write!(f, "No such run {id}"),
-            Missing::Benchmark(name) => write!(f, "No such suite {name}"),
-            Missing::BenchmarkRun(id) => write!(f, "No such experiment {id}"),
+            Missing::Benchmark(name) => write!(f, "No such benchmark {name}"),
+            Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
         }
     }
 }
@@ -409,12 +415,12 @@ fn benchmark_runs(sources: &Sources) -> BenchmarkRuns {
 
 /// The path of benchmark run `id`'s page.
 fn benchmark_run_path(id: BenchmarkRunId) -> String {
-    format!("/experiments/{id}")
+    format!("/benchmark-runs/{id}")
 }
 
 /// The path of benchmark `name`'s page.
 fn benchmark_path(name: &BenchmarkName) -> String {
-    format!("/suites/{name}")
+    format!("/benchmarks/{name}")
 }
 
 /// `path` with `query`, if there is one.

@@ -43,7 +43,7 @@ impl Area {
             Area::Board => "Board",
             Area::Runs => "Runs",
             Area::Automations => "Automations",
-            Area::Benchmarks => "Suites",
+            Area::Benchmarks => "Benchmarks",
             Area::Server => "Server",
         }
     }
@@ -54,7 +54,7 @@ impl Area {
             Area::Board => "/",
             Area::Runs => "/runs",
             Area::Automations => "/automations",
-            Area::Benchmarks => "/suites",
+            Area::Benchmarks => "/benchmarks",
             Area::Server => "/server",
         }
     }
@@ -133,7 +133,7 @@ impl Trail {
         }
     }
 
-    /// The screen's title, such as "Experiment 14 · Linewright"
+    /// The screen's title, such as "Benchmark run 14 · Linewright"
     /// (`docs/specs/design_system.md`, Titles).
     pub(super) fn title(&self) -> String {
         let name = match self {

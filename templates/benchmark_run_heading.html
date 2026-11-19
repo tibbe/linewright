@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
-<section id="experiment" class="mb-6">
+<section id="benchmark-run" class="mb-6">
 <header class="mb-4 flex flex-wrap items-center gap-3">
-<h1 class="mb-0">Experiment {{ benchmark_run.id }}</h1>
+<h1 class="mb-0">Benchmark run {{ benchmark_run.id }}</h1>
 {% call ui::status(benchmark_run.status, benchmark_run.state) %}{% endcall %}
 {%- if let Some(cancel) = benchmark_run.cancel %}
 <div class="ml-auto">{% call ui::confirm(cancel) %}{% endcall %}</div>

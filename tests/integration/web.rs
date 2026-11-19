@@ -434,7 +434,7 @@ fn tasks(pages: &Pages) -> Vec<String> {
             names
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-        Err(e) => panic!("reading the cases: {e}"),
+        Err(e) => panic!("reading the tasks: {e}"),
     }
 }
 

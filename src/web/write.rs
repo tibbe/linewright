@@ -35,8 +35,8 @@ impl Write {
     fn noun(self) -> &'static str {
         match self {
             Write::Capture => "a capture",
-            Write::MakeBenchmark => "a new suite",
-            Write::RemoveTask => "a case's removal",
+            Write::MakeBenchmark => "a new benchmark",
+            Write::RemoveTask => "a task's removal",
             Write::Launch => "a launch",
             Write::Cancel => "a cancel",
         }

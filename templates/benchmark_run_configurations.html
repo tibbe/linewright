@@ -29,7 +29,7 @@
 {%- if details.links() %}
 <p class="mt-1 flex gap-4 text-sm">
 {%- if let Some(href) = details.run_href %}<a class="link" href="{{ href }}">Run's transcript</a>{% endif %}
-{%- if let Some(href) = details.scorer_href %}<a class="link" href="{{ href }}">Judge's transcript</a>{% endif -%}
+{%- if let Some(href) = details.scorer_href %}<a class="link" href="{{ href }}">Scorer's transcript</a>{% endif -%}
 </p>
 {%- endif %}
 </td>

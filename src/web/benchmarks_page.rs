@@ -160,7 +160,7 @@ impl BenchmarksColumn {
         match self {
             BenchmarksColumn::Name => "",
             BenchmarksColumn::Stage => "Stage",
-            BenchmarksColumn::LastBenchmarkRun => "Last experiment",
+            BenchmarksColumn::LastBenchmarkRun => "Last benchmark run",
         }
     }
 
@@ -256,7 +256,7 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
         }
         Err(e) => {
             let error = format!("{e:#}");
-            warn!(error, "reading the suites failed");
+            warn!(error, "reading the benchmarks failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 BenchmarksShown::Unlisted(error),
@@ -274,7 +274,7 @@ pub(super) async fn benchmarks_page(
     let page = BenchmarksPage {
         page: Page::new(
             Trail::of(Area::Benchmarks),
-            narrowing.path("/events/suites"),
+            narrowing.path("/events/benchmarks"),
         ),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
@@ -299,7 +299,7 @@ pub(super) async fn benchmarks_events(
             let mut regions = frame_regions(&Frame::of(&sources).await);
             let (_, benchmarks) = listed(&sources, &narrowing).await;
             regions.push((
-                "suites",
+                "benchmarks",
                 render(&BenchmarksRegion {
                     benchmarks: &benchmarks,
                 }),
@@ -363,7 +363,7 @@ pub(super) async fn make_benchmark(
     };
     match benchmarks(&sources).make(&name, stage).await {
         Ok(benchmark) => {
-            info!(suite = %benchmark.name, stage = %benchmark.stage, "made a suite");
+            info!(benchmark = %benchmark.name, stage = %benchmark.stage, "made a benchmark");
             Answer::Made {
                 blank: NewBenchmarkForm {
                     new_benchmark: Making::blank(),
@@ -374,7 +374,7 @@ pub(super) async fn make_benchmark(
             let status = match &e {
                 MakeError::Taken(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 MakeError::Failed(e) => {
-                    warn!(suite = %name, error = format!("{e:#}"), "making a suite failed");
+                    warn!(benchmark = %name, error = format!("{e:#}"), "making a benchmark failed");
                     StatusCode::INTERNAL_SERVER_ERROR
                 }
             };
