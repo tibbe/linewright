@@ -22,7 +22,7 @@ use crate::work_settings::SetupSettings;
 /// The directory of the environments of trials, in a repository's work
 /// directory `work_dir`.
 pub fn dir(work_dir: &Path) -> PathBuf {
-    work_dir.join("replays").join("environments")
+    work_dir.join(crate::trial::TRIALS).join("environments")
 }
 
 /// The file a trial holds a shared lock on, in an environment's directory.
