@@ -5,7 +5,8 @@
  * entry while the reader is there, opens and closes fold rows, keeps each
  * fold, fold row and confirmation as the reader opened or closed it through
  * updates, closes a confirmation as it goes ahead and a "New" dialog once
- * its thing is made, starts a "New" dialog's form afresh as it closes,
+ * its thing is made, starts a "New" dialog's form afresh as it closes but
+ * for the regions of the stream it holds,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, builds a launch's
@@ -167,6 +168,16 @@
   });
 
   /**
+   * Keeps the run a capture sent chosen, as the reader chose it, through the
+   * updates after a refusal (docs/specs/design_system.md, Making).
+   */
+  document.addEventListener("submit", (event) => {
+    for (const select of event.target?.querySelectorAll?.("select[name=run]") ?? []) {
+      chosenRun = select.options[select.selectedIndex]?.value ?? chosenRun;
+    }
+  });
+
+  /**
    * Whether `form` is a "New" dialog's (docs/specs/design_system.md, Making),
    * which answers into itself and stays open on a refusal.
    */
@@ -177,10 +188,23 @@
     Array.from(document.querySelectorAll("dialog form[data-new]"), (form) => [form, form.innerHTML]),
   );
 
-  /** Starts the form of `dialog`, if it is a "New" dialog's, as it starts. */
+  /**
+   * Starts the form of `dialog`, if it is a "New" dialog's, as it starts,
+   * but for the regions of the page's stream it holds, which stay as the
+   * stream last sent them (docs/specs/benchmarks.md, New case): its run is
+   * chosen as it starts, the first, with the name suggested for it.
+   */
   function startAfresh(dialog) {
     const form = dialog?.querySelector?.("form[data-new]");
-    if (form && blanks.has(form)) form.innerHTML = blanks.get(form);
+    if (!form || !blanks.has(form)) return;
+    const regions = Array.from(form.querySelectorAll("[data-region]"));
+    form.innerHTML = blanks.get(form);
+    for (const region of regions) form.querySelector(`[id="${region.id}"]`)?.replaceWith(region);
+    for (const select of form.querySelectorAll("select[name=run]")) {
+      chosenRun = null;
+      select.selectedIndex = 0;
+      suggestName(select, true);
+    }
   }
 
   /** Closes a "New" dialog once its thing is made. */
@@ -195,7 +219,11 @@
   document.addEventListener("close", (event) => startAfresh(event.target), true);
   document.addEventListener("click", (event) => {
     const opening = event.target?.closest?.("button[command=show-modal]");
-    if (opening) startAfresh(document.getElementById(opening.getAttribute("commandfor")));
+    if (!opening) return;
+    const dialog = document.getElementById(opening.getAttribute("commandfor"));
+    startAfresh(dialog);
+    const launch = dialog?.querySelector?.("form.launch");
+    if (launch) countReplays(launch);
   });
 
   /** A fold row's button. */
@@ -396,32 +424,39 @@
   let chosenRun = null;
 
   /**
-   * Fills a capture's name with the name suggested for the run chosen
-   * (docs/specs/benchmarks.md, Suite), unless the name holds one
-   * the reader typed: one suggested for none of the runs.
+   * Fills the name of the capture of run choice `select` with the name
+   * suggested for the run chosen (docs/specs/benchmarks.md, New case), unless,
+   * but for `always`, the name holds one the reader typed: one suggested for
+   * none of the runs.
    */
+  function suggestName(select, always) {
+    const name = Array.from(select.form?.elements ?? []).find((field) => field.name === "name");
+    const suggested = (option) => option.getAttribute("data-name");
+    const chosen = select.options[select.selectedIndex];
+    if (!name || !chosen) return;
+    if (always || name.value === "" || Array.from(select.options, suggested).includes(name.value)) {
+      name.value = suggested(chosen) ?? name.value;
+    }
+  }
+
   document.addEventListener("change", (event) => {
     const select = event.target;
     if (select?.tagName !== "SELECT" || select.name !== "run" || !select.form) return;
-    const name = Array.from(select.form.elements).find((field) => field.name === "name");
-    const suggested = (option) => option.getAttribute("data-name");
     const chosen = select.options[select.selectedIndex];
     if (!chosen) return;
     chosenRun = chosen.value;
-    if (!name) return;
-    if (name.value === "" || Array.from(select.options, suggested).includes(name.value)) {
-      name.value = suggested(chosen) ?? name.value;
-    }
+    suggestName(select, false);
   });
 
   /**
    * Chooses again the run the reader chose to capture, while an update
-   * still offers it.
+   * still offers it, and suggests a name for the run chosen.
    */
   function keepRun() {
     for (const select of document.querySelectorAll("select[name=run]")) {
       const at = Array.from(select.options).findIndex((option) => option.value === chosenRun);
       if (at !== -1) select.selectedIndex = at;
+      suggestName(select, false);
     }
   }
 
@@ -439,9 +474,13 @@
   /** `n` and the noun for one or for many. */
   const counted = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-  /** Says how many replays the launch `form` makes. */
+  /**
+   * Says how many replays the launch `form` makes, of the cases the suite
+   * has as the stream last sent them.
+   */
   function countReplays(form) {
-    const cases = Number(form.getAttribute("data-cases")) || 0;
+    const cases =
+      Number(document.getElementById("new-experiment-offer")?.getAttribute("data-cases")) || 0;
     const configured = form.querySelectorAll("fieldset.configuration").length;
     const typed = form.elements.repetitions.value.trim();
     const repetitions = /^[0-9]+$/.test(typed) ? Math.max(1, Number(typed)) : 1;

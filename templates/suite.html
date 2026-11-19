@@ -1,42 +1,54 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-<h1>Suite {{ suite.name }}</h1>
-<p class="text-muted mb-4">cases of {{ suite.stage }}</p>
-<div id="suite-said" class="mb-3 max-w-xl" role="status"></div>
-<div class="mb-6 flex flex-wrap items-start gap-x-2 gap-y-3">
-<details class="capture-offer"><summary class="btn btn-sm">Add case</summary>
-<form class="capture mt-2 flex max-w-xl flex-col gap-2" method="post" action="{{ path }}" hx-post="{{ path }}" hx-target="#capture-said" hx-swap="innerHTML">
-{% block runs -%}
-<div id="capture-runs">
-{%- if runs.is_empty() %}
-<p class="text-muted">No runs of {{ suite.stage }}</p>
-{%- else %}
-<label class="select select-sm w-full"><span class="label">run</span><select name="run">
-{%- for run in runs %}
-<option value="{{ run.id }}" data-name="{{ run.name }}">{{ run.id }}</option>
-{%- endfor %}
-</select></label>
-{%- endif %}
+<h1>{{ suite.name }}</h1>
+<p class="text-muted mb-4">{{ suite.stage }}</p>
+<div id="suite-said" class="mb-3 max-w-xl empty:hidden" role="status"></div>
+<div role="tablist" class="tabs tabs-border">
+<input type="radio" name="suite-tab" role="tab" class="tab" aria-label="Experiments"{% if !self.opens_on_cases() %} checked{% endif %}>
+<div role="tabpanel" class="tab-content pt-4">
+{%- call(part) ui::table_card("", buttons = true) %}
+{%- match part %}
+{%- when crate::web::table::Part::Buttons %}
+{{ new_experiment }}
+{%- when crate::web::table::Part::Table %}
+{%- include "suite_experiments.html" %}
+{%- when crate::web::table::Part::Filters %}
+{%- endmatch %}
+{%- endcall %}
 </div>
-{%- endblock %}
-<label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{% if let Some(run) = runs.first() %}{{ run.name }}{% endif %}" required pattern="{{ crate::case::NAME_PATTERN }}" autocomplete="off"></label>
-<textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea>
-{{ ready|safe }}
-</form>
-<div id="capture-said" class="mt-2 max-w-xl" role="status"></div>
-</details>
-{%- if let Some(launch) = launch %}
-<details class="launch-offer"><summary class="btn btn-sm">Run</summary>
-<form class="launch mt-2 flex max-w-3xl flex-col gap-3" method="post" action="{{ path }}/launch" hx-post="{{ path }}/launch" hx-target="#launch-said" hx-swap="innerHTML" data-cases="{{ launch.cases }}">
+<input type="radio" name="suite-tab" role="tab" class="tab" aria-label="Cases"{% if self.opens_on_cases() %} checked{% endif %}>
+<div role="tabpanel" class="tab-content pt-4">
+{%- call(part) ui::table_card("", buttons = true) %}
+{%- match part %}
+{%- when crate::web::table::Part::Buttons %}
+{%- call ui::new_button("new-case") %}{% endcall %}
+{%- when crate::web::table::Part::Table %}
+{%- include "suite_cases.html" %}
+{%- when crate::web::table::Part::Filters %}
+{%- endmatch %}
+{%- endcall %}
+</div>
+</div>
+{%- call ui::new_dialog("new-case", path) %}
+{{ new_case }}
+{%- endcall %}
+<dialog id="new-experiment" class="modal" aria-labelledby="new-experiment-title">
+<div class="modal-box max-w-3xl">
+<h2 id="new-experiment-title" class="mb-3 text-base font-semibold">New experiment on {{ suite.name }}</h2>
+<form class="launch flex flex-col gap-3" method="post" action="{{ path }}/launch" hx-post="{{ path }}/launch" hx-target="#suite-said" hx-swap="innerHTML">
 <label class="input input-sm w-fit"><span class="label">repetitions</span><input class="w-20" type="number" name="repetitions" value="1" min="1" required></label>
 <fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-muted text-sm">It holds nothing: the stage as it is.</p></fieldset>
 <div class="configurations flex flex-col gap-3"></div>
 <div><button class="add-configuration btn btn-sm" type="button">Add a configuration</button></div>
 <p class="replay-count" aria-live="polite">{{ launch.count }}</p>
-<div><button class="btn btn-sm btn-primary" type="submit">Run experiment</button></div>
+<div class="modal-action">
+<button class="btn" type="button" command="close" commandfor="new-experiment">Cancel</button>
+<button class="btn btn-primary" type="submit">Run experiment</button>
+</div>
 </form>
-<div id="launch-said" class="mt-2 max-w-xl" role="status"></div>
+</div>
+</dialog>
 <template id="configuration-template">
 <fieldset class="configuration fieldset rounded-box border border-base-300 p-3">
 <legend class="fieldset-legend">a configuration</legend>
@@ -55,68 +67,4 @@
 </fieldset>
 </template>
 <script type="application/json" id="brief-texts">{{ launch.texts }}</script>
-</details>
-{%- endif %}
-</div>
-{% block cases -%}
-<section id="cases" class="mb-6">
-<h2>Cases</h2>
-{%- if cases.is_empty() %}
-<p>No cases</p>
-{%- else %}
-<table class="table">
-<thead><tr><th>Case</th><th>Run</th><th>Criteria</th><th><span class="sr-only">Remove</span></th></tr></thead>
-<tbody>
-{%- for case in cases %}
-{%- call ui::fold_row(case.row_id()) %}
-{%- match case.criteria %}
-{%- when CriteriaShown::Read { first_line: _, text: _ } %}
-<th>{% call ui::fold_button([case.criteria_id()]) %}{{ case.name }}{% endcall %}</th>
-{%- when CriteriaShown::Unreadable(_) %}
-<th>{{ case.name }}</th>
-{%- endmatch %}
-<td><a class="link link-hover" href="{{ case.run_href }}">{{ case.run }}</a></td>
-<td>
-{%- match case.criteria -%}
-{%- when CriteriaShown::Read { first_line, text: _ } -%}
-{{ first_line }}
-{%- when CriteriaShown::Unreadable(why) -%}
-<span class="text-error">the criteria do not read: {{ why }}</span>
-{%- endmatch -%}
-</td>
-<td>{% call ui::confirm(case.remove, "btn btn-xs btn-ghost text-error") %}{% endcall %}</td>
-{%- endcall %}
-{%- if let CriteriaShown::Read { first_line: _, text } = case.criteria %}
-{%- call ui::fold_row(case.criteria_id(), of = case.row_id()) %}
-<td colspan="4"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
-{%- endcall %}
-{%- endif %}
-{%- endfor %}
-</tbody>
-</table>
-{%- endif %}
-</section>
-{%- endblock %}
-{% block experiments -%}
-<section id="experiments" class="mb-6">
-<h2>Experiments</h2>
-{%- if experiments.is_empty() %}
-<p>No experiments</p>
-{%- else %}
-<table class="table">
-<thead><tr><th>Experiment</th><th>Launched</th><th>State</th><th>Pass rates</th></tr></thead>
-<tbody>
-{%- for experiment in experiments %}
-<tr>
-<th><a class="link link-hover" href="{{ experiment.href }}">experiment {{ experiment.id }}</a></th>
-<td>{{ experiment.launched }}</td>
-<td>{% call ui::status(experiment.status, experiment.state) %}{% endcall %}</td>
-<td>{{ experiment.pass_rates }}</td>
-</tr>
-{%- endfor %}
-</tbody>
-</table>
-{%- endif %}
-</section>
-{%- endblock %}
 {%- endblock -%}

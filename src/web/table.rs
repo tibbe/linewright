@@ -5,6 +5,7 @@
 /// What a column holds, as far as it decides how the column aligns.
 #[derive(Clone, Copy)]
 pub(super) enum Column {
+    Money,
     Duration,
     Other,
 }
@@ -16,10 +17,11 @@ pub(super) enum Align {
 }
 
 impl Align {
-    /// Durations align right, every other column left.
+    /// Amounts of money and durations align right, every other column
+    /// left.
     pub(super) fn of(column: Column) -> Align {
         match column {
-            Column::Duration => Align::End,
+            Column::Money | Column::Duration => Align::End,
             Column::Other => Align::Start,
         }
     }

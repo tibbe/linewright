@@ -6,8 +6,10 @@ use askama::Template;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 
+use super::capture::NotCaptured;
 use super::render;
 use crate::benchmarks::{MakeError, SuiteName};
+use crate::case::{CaptureError, CaseName};
 
 /// A dialog's form as drawn: the fields as the reader left them, and why
 /// Linewright refused, if it did.
@@ -81,4 +83,26 @@ pub(super) fn suite_not_made(error: &MakeError) -> String {
 /// (`docs/specs/benchmarks.md`, New suite, Refusals).
 fn suite_taken(name: &SuiteName) -> String {
     format!("A suite named {name} already exists.")
+}
+
+/// The refusal of a case that was not made (`docs/specs/benchmarks.md`, New
+/// case, Refusals), or why making it was refused otherwise or failed.
+pub(super) fn case_not_made(not: &NotCaptured) -> String {
+    match not {
+        NotCaptured::Name(_) => NOT_A_NAME.into(),
+        NotCaptured::NoCriteria => CRITERIA_NEEDED.into(),
+        NotCaptured::Capture {
+            error: CaptureError::Taken(name),
+            ..
+        } => case_taken(name),
+        NotCaptured::NotPolled | NotCaptured::Capture { .. } => not.why().into(),
+    }
+}
+
+/// The refusal of a case without criteria.
+const CRITERIA_NEEDED: &str = "A case needs criteria.";
+
+/// The refusal of a case named as one that exists.
+fn case_taken(name: &CaseName) -> String {
+    format!("A case named {name} already exists.")
 }

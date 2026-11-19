@@ -493,7 +493,8 @@ struct Confirmation {
     fields: Vec<(String, String)>,
 }
 
-/// Each confirmation in `main`, by the button that asks, checking that the
+/// Each confirmation in `main`, by the button that asks, but for "New" in a
+/// table's bar, which opens a dialog that makes a thing; checking that the
 /// button opens its dialog as a modal with no request, that the dialog is
 /// named by its question, that focus starts on turning it down, and that the
 /// button that goes ahead has the asking button's label.
@@ -501,6 +502,13 @@ struct Confirmation {
 fn confirmations(html: &Html) -> Vec<Confirmation> {
     let mut confirmations = vec![];
     for asking in select(html, "main button[command=show-modal]") {
+        let in_bar = asking
+            .ancestors()
+            .filter_map(ElementRef::wrap)
+            .any(|bar| has_classes(bar, &["table-bar"]));
+        if in_bar {
+            continue;
+        }
         assert_eq!(asking.attr("type"), Some("button"), "{}", asking.html());
         let id = asking.attr("commandfor").expect("the dialog it opens");
         let dialogs = select(html, &format!("[id='{id}']"));

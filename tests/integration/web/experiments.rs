@@ -155,6 +155,8 @@ pub(super) fn with_experiment() -> impl Future<Output = Pages> {
     }
 }
 
+/// `docs/specs/benchmarks.md`, Suite, Experiments; `docs/specs/design_system.md`,
+/// Tables and Status.
 #[test_log::test(tokio::test)]
 async fn the_suite_page_lists_its_experiments_latest_first_linking_to_each() {
     let pages = with_experiment().await;
@@ -169,26 +171,78 @@ async fn the_suite_page_lists_its_experiments_latest_first_linking_to_each() {
 
     let html = pages.page("/suites/board").await;
 
+    let heads: Vec<String> = select(&html, "#experiments thead th")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(
+        heads,
+        ["", "State", "Cases", "Configurations", "Duration", "Cost"]
+    );
     assert_eq!(
         rows(&html, "#experiments"),
         [
             [
-                "experiment 2",
                 "2026-11-17 13:00:00 UTC",
                 "cancelled",
-                "as-is none"
+                "2",
+                "1",
+                "1h",
+                "$0.00"
             ],
             [
-                "experiment 1",
                 "2026-11-17 12:00:00 UTC",
                 "waiting",
-                "as-is 100%, short 0%"
+                "2",
+                "2",
+                "0s",
+                "$1.61, 1 without a cost",
             ],
         ]
     );
+    let launches: Vec<&str> = select(&html, "#experiments tbody tr > th:first-child a")
+        .into_iter()
+        .filter_map(|link| link.attr("href"))
+        .collect();
+    assert_eq!(launches, ["/experiments/2", "/experiments/1"]);
     assert_eq!(
-        hrefs(select(&html, "#experiments tbody a")),
-        ["/experiments/2", "/experiments/1"]
+        select(&html, "#experiments tbody tr:nth-child(2) time[data-since]")[0].attr("data-since"),
+        Some("2026-11-17T12:00:00Z")
+    );
+    for state in select(&html, "#experiments tbody td:nth-child(2)") {
+        assert_eq!(select_in(state, ".badge").len(), 1, "{}", state.html());
+    }
+    assert_no_status_by_colour_alone(&html);
+    let alignments = alignments(&html, "#experiments");
+    assert!(
+        alignments
+            .iter()
+            .all(|row| row == &["start", "start", "start", "start", "end", "end"]),
+        "{alignments:?}"
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Experiments, and New experiment.
+#[test_log::test(tokio::test)]
+async fn new_experiment_shows_in_the_experiments_bar_only_on_a_suite_with_cases() {
+    let pages = with_suites().await;
+
+    let board = pages.page("/suites/board").await;
+    let empty = pages.page("/suites/triage-basics").await;
+
+    let new = select(&board, "#new-experiment-offer button[command=show-modal]");
+    assert_eq!(new.len(), 1, "{}", board.html());
+    assert_eq!(text(new[0]), "New");
+    let dialog = new[0].attr("commandfor").unwrap();
+    assert_eq!(
+        select(&board, &format!("dialog[id='{dialog}'] form.launch")).len(),
+        1
+    );
+    assert_eq!(
+        select(&empty, "#new-experiment-offer button").len(),
+        0,
+        "{}",
+        empty.html()
     );
 }
 
@@ -526,7 +580,10 @@ async fn the_suite_page_offers_to_launch_an_experiment_as_is_first_and_counts_it
     let form = select(&html, "form.launch");
     assert_eq!(form.len(), 1);
     assert_eq!(form[0].attr("hx-post"), Some("/suites/board/launch"));
-    assert_eq!(form[0].attr("data-cases"), Some("2"));
+    assert_eq!(
+        select(&html, "#new-experiment-offer")[0].attr("data-cases"),
+        Some("2")
+    );
     assert_eq!(
         select_in(form[0], "input[name=repetitions]")[0].attr("value"),
         Some("1")

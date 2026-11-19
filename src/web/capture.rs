@@ -76,8 +76,7 @@ impl Offer {
     }
 
     pub(super) fn ready_html(sources: &Sources) -> Html {
-        let polled = sources.served.borrow().is_some();
-        let (disabled, note) = if polled {
+        let (disabled, note) = if polled(sources) {
             ("", String::new())
         } else {
             (
@@ -95,7 +94,13 @@ const READY: &str = "capture-ready";
 
 const NEW_SUITE_UNNAMED: &str = "the new suite needs a name";
 
-const NOT_POLLED: &str = "the capture can't run before Linewright's first poll";
+/// Whether `serve` has polled, so that a capture can run.
+pub(super) fn polled(sources: &Sources) -> bool {
+    sources.served.borrow().is_some()
+}
+
+/// Why a capture cannot run yet.
+pub(super) const NOT_POLLED: &str = "the capture can't run before Linewright's first poll";
 
 /// The names of the suites of `stage`.
 async fn suites_of(suites: &Suites, stage: ReplayStage) -> anyhow::Result<Vec<SuiteName>> {
@@ -146,9 +151,10 @@ struct CaptureForm {
 /// What a capture's form sends of the case.
 #[derive(Deserialize)]
 pub(super) struct CaseFields {
-    name: String,
     #[serde(default)]
-    criteria: String,
+    pub(super) name: String,
+    #[serde(default)]
+    pub(super) criteria: String,
 }
 
 /// Captures run `id` as the case the form in `body` names, with the store
@@ -173,7 +179,9 @@ pub(super) async fn capture(
         (named, _) => named.parse().map(SuiteChoice::Named),
     }
     .map_err(|error| Write::Capture.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    let captured = capture_run(&sources, &run, &choice, &form.case).await?;
+    let captured = capture_run(&sources, &run, &choice, &form.case)
+        .await
+        .map_err(NotCaptured::refused)?;
     let mut answer = captured.said(&run, &choice).0;
     match suites_of(&suites(&sources), captured.stage).await {
         Ok(names) => {
@@ -213,6 +221,44 @@ impl Captured {
     }
 }
 
+/// Why a capture did not happen.
+pub(super) enum NotCaptured {
+    /// The case's name is not in the form of a name, for the reason given.
+    Name(String),
+    NoCriteria,
+    NotPolled,
+    /// The capture was refused or failed, for `why`, redacted.
+    Capture {
+        error: CaptureError,
+        why: String,
+    },
+}
+
+impl NotCaptured {
+    /// The status the capture that did not happen is answered with.
+    pub(super) fn status(&self) -> StatusCode {
+        match self {
+            NotCaptured::Name(_) | NotCaptured::NoCriteria => StatusCode::UNPROCESSABLE_ENTITY,
+            NotCaptured::NotPolled => StatusCode::SERVICE_UNAVAILABLE,
+            NotCaptured::Capture { error, .. } => status_of(error),
+        }
+    }
+
+    /// Why, in the capture's own words.
+    pub(super) fn why(&self) -> &str {
+        match self {
+            NotCaptured::Name(why) | NotCaptured::Capture { why, .. } => why,
+            NotCaptured::NoCriteria => CRITERIA_REQUIRED,
+            NotCaptured::NotPolled => NOT_POLLED,
+        }
+    }
+
+    /// It in the capture's own words, in an alert.
+    fn refused(self) -> Refused {
+        Write::Capture.refused(self.status(), self.why())
+    }
+}
+
 /// Captures `run` as the case `case` names into the suite `choice`, with
 /// the store `serve` holds; or else says why it did not.
 pub(super) async fn capture_run(
@@ -220,19 +266,14 @@ pub(super) async fn capture_run(
     run: &RunId,
     choice: &SuiteChoice,
     case: &CaseFields,
-) -> Result<Captured, Refused> {
-    let not_captured = |status, why: &str| Write::Capture.refused(status, why);
-    let name: CaseName = case
-        .name
-        .parse()
-        .map_err(|error: String| not_captured(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    let criteria = Criteria::parse(&case.criteria)
-        .ok_or_else(|| not_captured(StatusCode::UNPROCESSABLE_ENTITY, CRITERIA_REQUIRED))?;
+) -> Result<Captured, NotCaptured> {
+    let name: CaseName = case.name.parse().map_err(NotCaptured::Name)?;
+    let criteria = Criteria::parse(&case.criteria).ok_or(NotCaptured::NoCriteria)?;
     let served = sources
         .served
         .borrow()
         .clone()
-        .ok_or_else(|| not_captured(StatusCode::SERVICE_UNAVAILABLE, NOT_POLLED))?;
+        .ok_or(NotCaptured::NotPolled)?;
     let suites = suites(sources);
     let captured = match case::capturable(&sources.runs, &suites, run, &name, choice).await {
         Ok(capturable) => {
@@ -248,10 +289,10 @@ pub(super) async fn capture_run(
             info!(run = %run, case = %captured.dir.display(), suite = %choice.suite(), "captured a run as a case");
             Ok(captured)
         }
-        Err(e) => {
-            let why = served.redaction().apply(&e.why());
+        Err(error) => {
+            let why = served.redaction().apply(&error.why());
             warn!(run = %run, case = %name, error = why, "a capture failed");
-            Err(not_captured(status_of(&e), &why))
+            Err(NotCaptured::Capture { error, why })
         }
     }
 }

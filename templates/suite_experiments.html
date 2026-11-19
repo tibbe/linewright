@@ -1,0 +1,32 @@
+{%- import "macros.html" as ui -%}
+<div id="experiments">
+{%- if experiments.is_empty() %}
+<p class="px-4 pb-4">No experiments</p>
+{%- else %}
+<table class="table">
+<thead><tr>{% for column in ExperimentsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for experiment in experiments %}
+<tr>
+{%- for column in ExperimentsColumn::ALL %}
+{%- match column %}
+{%- when ExperimentsColumn::Launched %}
+<th class="{{ column.align() }}"><a class="link link-hover" href="{{ experiment.href }}">{{ experiment.launched }}</a></th>
+{%- when ExperimentsColumn::State %}
+<td class="{{ column.align() }}">{% call ui::status(experiment.status, experiment.state) %}{% endcall %}</td>
+{%- when ExperimentsColumn::Cases %}
+<td class="{{ column.align() }}">{{ experiment.cases }}</td>
+{%- when ExperimentsColumn::Configurations %}
+<td class="{{ column.align() }}">{{ experiment.configurations }}</td>
+{%- when ExperimentsColumn::Duration %}
+<td class="{{ column.align() }} whitespace-nowrap">{% match experiment.duration %}{% when Some(duration) %}{{ duration }}{% when None %}–{% endmatch %}</td>
+{%- when ExperimentsColumn::Cost %}
+<td class="{{ column.align() }} whitespace-nowrap">{{ experiment.cost }}</td>
+{%- endmatch %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</div>

@@ -344,36 +344,76 @@ async fn a_refused_suite_answers_the_form_as_sent_with_the_reason() {
     );
 }
 
-/// `docs/specs/benchmarks.md`, Suite, Layout, Adding a case and Launching.
+/// The tabs of the Suite page `html`, in order: each one's label, whether
+/// it is checked, and the ids of the regions its panel holds.
+#[track_caller]
+fn tabs(html: &Html) -> Vec<(String, bool, Vec<String>)> {
+    let lists = select(html, "main [role=tablist]");
+    assert_eq!(lists.len(), 1, "{}", html.html());
+    assert!(has_classes(lists[0], &["tabs", "tabs-border"]));
+    select_in(lists[0], ":scope > input.tab")
+        .into_iter()
+        .map(|tab| {
+            assert_eq!(tab.attr("type"), Some("radio"));
+            let panel = tab
+                .next_siblings()
+                .find_map(ElementRef::wrap)
+                .expect("the tab's panel");
+            assert!(has_classes(panel, &["tab-content"]), "{}", panel.html());
+            (
+                tab.attr("aria-label").unwrap_or_default().to_string(),
+                tab.attr("checked").is_some(),
+                select_in(panel, "[id]:is(#experiments, #cases)")
+                    .into_iter()
+                    .filter_map(|region| region.attr("id").map(str::to_string))
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Heading and Tabs;
+/// `docs/specs/web/benchmarks.md`, Suite.
 #[test_log::test(tokio::test)]
-async fn the_suite_page_opens_adding_a_case_and_running_from_under_its_heading_above_its_cases() {
+async fn the_suite_page_heads_with_its_name_and_stage_and_opens_on_cases_while_it_has_no_experiments()
+ {
     let pages = with_suites().await;
 
     let html = pages.page("/suites/board").await;
 
+    assert_eq!(text(select(&html, "main h1")[0]), "board");
+    assert_eq!(text(select(&html, "main h1 + p")[0]), "implement");
     assert_eq!(
-        disclosures(&html, &["capture", "launch"]),
+        tabs(&html),
         [
-            ("Add case".to_string(), false, "Add case".to_string()),
-            ("Run".to_string(), false, "Run experiment".to_string()),
+            (
+                "Experiments".to_string(),
+                false,
+                vec!["experiments".to_string()]
+            ),
+            ("Cases".to_string(), true, vec!["cases".to_string()]),
         ]
     );
-    let order: Vec<&str> = select(&html, "main h1, main details:has(> form), main section")
+    assert_eq!(select(&html, "#experiments [role=tablist], #cases [role=tablist], #experiments input.tab, #cases input.tab").len(), 0);
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Tabs.
+#[test_log::test(tokio::test)]
+async fn the_suite_page_opens_on_experiments_once_it_has_one() {
+    let pages = with_suites().await;
+    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+
+    let html = pages.page("/suites/board").await;
+
+    let opened: Vec<(String, bool)> = tabs(&html)
         .into_iter()
-        .filter_map(|element| match element.value().name() {
-            "h1" => Some("heading"),
-            "details" => Some("disclosure"),
-            _ => element.attr("id"),
-        })
+        .map(|(label, checked, _)| (label, checked))
         .collect();
     assert_eq!(
-        order,
+        opened,
         [
-            "heading",
-            "disclosure",
-            "disclosure",
-            "cases",
-            "experiments"
+            ("Experiments".to_string(), true),
+            ("Cases".to_string(), false)
         ]
     );
 }
@@ -481,32 +521,77 @@ async fn a_suite_that_does_not_exist_answers_404() {
     assert_eq!(cases(&pages), ["columns", "lanes"]);
 }
 
+/// `docs/specs/benchmarks.md`, Suite, Cases; `docs/specs/design_system.md`,
+/// Tables.
 #[test_log::test(tokio::test)]
-async fn the_suite_page_shows_each_case_with_its_run_and_the_first_line_of_its_criteria() {
+async fn the_suite_page_shows_each_case_in_capture_order_with_the_first_line_of_its_criteria_and_its_run()
+ {
     let pages = with_suites().await;
+    keep_case(
+        &pages.path(""),
+        "board",
+        "aisles",
+        "1/implement-1",
+        "\n  Walks the aisles.\nSlowly.\n",
+    )
+    .await;
 
     let html = pages.page("/suites/board").await;
 
-    assert_eq!(text(select(&html, "h1")[0]), "Suite board");
     assert_eq!(events_path(&html), Some("/events/suites/board"));
-    let cases = select(&html, "#cases tbody tr:not([data-fold-of])");
-    assert_eq!(cases.len(), 2);
-    let names: Vec<String> = cases
-        .iter()
-        .map(|row| text(select_in(*row, "th")[0]))
+    let heads: Vec<String> = select(&html, "#cases thead th")
+        .into_iter()
+        .map(text)
         .collect();
-    assert_eq!(names, ["columns", "lanes"]);
+    assert_eq!(heads, ["", "Captured from", ""]);
+    let cases = select(&html, "#cases tbody tr:not([data-fold-of])");
+    let shown: Vec<(String, String, String)> = cases
+        .iter()
+        .map(|row| {
+            let header = select_in(*row, ":scope > th")[0];
+            let cells = select_in(*row, ":scope > td");
+            (
+                text(header),
+                text(cells[0]),
+                text(select_in(cells[1], "button[command=show-modal]")[0]),
+            )
+        })
+        .collect();
     assert_eq!(
-        hrefs(select(&html, "#cases tbody a")),
-        ["/runs/1/implement-1", "/runs/1/implement-2"]
+        shown,
+        [
+            (
+                "columns Names the columns.".to_string(),
+                "1/implement-1".to_string(),
+                "Remove".to_string()
+            ),
+            (
+                "lanes Stacks them.".into(),
+                "1/implement-2".into(),
+                "Remove".into()
+            ),
+            (
+                "aisles Walks the aisles.".into(),
+                "1/implement-1".into(),
+                "Remove".into()
+            ),
+        ]
     );
-    assert_eq!(text(select_in(cases[0], "td")[1]), "Names the columns.");
+    assert_eq!(
+        hrefs(select(&html, "#cases tbody td a")),
+        [
+            "/runs/1/implement-1",
+            "/runs/1/implement-2",
+            "/runs/1/implement-1"
+        ]
+    );
     let criteria = select(&html, "#cases tbody tr[data-fold-of]");
-    assert_eq!(criteria.len(), 2);
+    assert_eq!(criteria.len(), 3);
     assert_eq!(
         select_in(criteria[0], "pre")[0].text().collect::<String>(),
         "Names the columns.\nAnd orders them.\n"
     );
+    assert_eq!(select_in(criteria[0], "td")[0].attr("colspan"), Some("3"));
 }
 
 /// `docs/specs/benchmarks.md`, Suite, Cases: a case's row opens on click to
@@ -567,7 +652,8 @@ async fn each_case_is_removed_after_a_confirmation_naming_it() {
     assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
 }
 
-/// `docs/specs/design_system.md`, Screen states, Empty.
+/// `docs/specs/design_system.md`, Screen states, Empty;
+/// `docs/specs/benchmarks.md`, New case, Fields.
 #[test_log::test(tokio::test)]
 async fn a_suite_with_no_cases_experiments_or_runs_of_its_stage_says_so() {
     let pages = with_suites().await;
@@ -576,10 +662,12 @@ async fn a_suite_with_no_cases_experiments_or_runs_of_its_stage_says_so() {
 
     assert_eq!(text(select(&html, "#cases p")[0]), "No cases");
     assert_eq!(text(select(&html, "#experiments p")[0]), "No experiments");
-    assert_eq!(
-        text(select(&html, "#capture-runs p")[0]),
-        "No runs of triage"
-    );
+    let run = select(&html, "dialog#new-case select[name=run]");
+    assert!(run[0].attr("disabled").is_some(), "{}", run[0].html());
+    assert_eq!(text(run[0]), "No runs");
+    let add = select(&html, "dialog#new-case button[type=submit]");
+    assert_eq!(text(add[0]), "Add case");
+    assert!(add[0].attr("disabled").is_some(), "{}", add[0].html());
 }
 
 #[test_log::test(tokio::test)]
@@ -598,7 +686,7 @@ async fn removing_a_case_removes_it_from_the_page_and_from_the_cases() {
     assert_eq!(said(&answer), "Removed the case columns");
     assert_eq!(cases(&pages), ["lanes"]);
     let html = pages.page("/suites/board").await;
-    let names: Vec<String> = select(&html, "#cases tbody th")
+    let names: Vec<String> = select(&html, "#cases tbody th button")
         .into_iter()
         .map(text)
         .collect();
@@ -693,33 +781,92 @@ fn with_runs() -> impl Future<Output = Pages> {
     }
 }
 
+/// A "New" dialog's form as a reader meets it: the name and value of each
+/// field, and the refusal above its buttons, if any.
+type FormShown<'a> = (Vec<(&'a str, String)>, Option<String>);
+
+/// The New case dialog's form as a reader meets it: the value of each field,
+/// a select's its chosen option's, and the refusal above its buttons, if any.
+#[track_caller]
+fn new_case_form(form: &Html) -> FormShown<'_> {
+    let refusals = select(form, ".alert");
+    assert!(refusals.len() <= 1, "{}", form.html());
+    let mut fields = field_values(select(form, "input[name], select[name]"));
+    fields.extend(
+        select(form, "textarea[name]")
+            .into_iter()
+            .map(|area| (area.attr("name").unwrap(), area.text().collect())),
+    );
+    (fields, refusals.first().map(|refusal| text(*refusal)))
+}
+
+/// `docs/specs/benchmarks.md`, New case; `docs/specs/design_system.md`,
+/// Dialogs and Making.
 #[test_log::test(tokio::test)]
-async fn the_suite_page_offers_to_capture_a_run_of_its_stage_that_can_be_captured_picked_from_a_list()
- {
+async fn new_opens_the_new_case_dialog_offering_the_runs_of_the_suites_stage_that_can_be_captured()
+{
     let pages = with_runs().await;
 
     let html = pages.page("/suites/board").await;
 
-    let form = select(&html, "form.capture");
-    assert_eq!(form.len(), 1);
-    assert_eq!(form[0].attr("hx-post"), Some("/suites/board"));
-    let runs: Vec<(Option<&str>, Option<&str>)> = select_in(form[0], "select[name=run] option")
+    let buttons: Vec<&str> = select(&html, ".table-bar button[command=show-modal]")
+        .into_iter()
+        .filter_map(|button| button.attr("commandfor"))
+        .collect();
+    assert_eq!(buttons, ["new-experiment", "new-case"]);
+    let dialog = select(&html, "dialog#new-case")[0];
+    assert!(has_classes(dialog, &["modal"]));
+    assert_eq!(select_in(dialog, ".modal-backdrop").len(), 0);
+    assert_eq!(select(&html, "#cases dialog#new-case").len(), 0);
+    let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
+    assert_eq!(text(legend[0]), "New case in board");
+    assert_eq!(dialog.attr("aria-labelledby"), legend[0].attr("id"));
+    let form = select_in(dialog, "form[hx-post]")[0];
+    assert_eq!(form.attr("hx-post"), Some("/suites/board"));
+    assert_eq!(form.attr("hx-target"), Some("this"));
+    let labels: Vec<String> = select_in(form, "fieldset label")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(labels, ["Run", "Name", "Criteria"]);
+    for label in select_in(form, "fieldset label") {
+        let field = label.attr("for").unwrap();
+        assert_eq!(
+            select_in(form, &format!("[id='{field}']")).len(),
+            1,
+            "{field}"
+        );
+    }
+    let runs: Vec<(Option<&str>, Option<&str>)> = select_in(form, "select[name=run] option")
         .into_iter()
         .map(|option| (option.attr("value"), option.attr("data-name")))
         .collect();
     assert_eq!(runs, [(Some("1/implement-2"), Some("1-implement-2"))]);
-    let name = select_in(form[0], "input[name=name]");
-    assert_eq!(name[0].attr("value"), Some("1-implement-2"));
-    assert_eq!(name[0].attr("pattern"), Some(NAME_PATTERN));
-    assert_eq!(select_in(form[0], "select[name=suite]").len(), 0);
-    assert_eq!(select_in(form[0], "textarea[name=criteria]").len(), 1);
+    assert_eq!(
+        new_case_form(&Html::parse_fragment(&form.inner_html())),
+        (
+            vec![
+                ("run", String::new()),
+                ("name", "1-implement-2".into()),
+                ("criteria", String::new())
+            ],
+            None
+        )
+    );
+    let actions = select_in(form, ".modal-action button");
+    let action_labels: Vec<String> = actions.iter().map(|button| text(*button)).collect();
+    assert_eq!(action_labels, ["Cancel", "Add case"]);
+    assert!(has_classes(actions[1], &["btn-primary"]));
+    assert!(actions[1].attr("disabled").is_none());
 }
 
+/// `docs/specs/benchmarks.md`, New case; `docs/specs/design_system.md`,
+/// Making.
 #[test_log::test(tokio::test)]
-async fn adding_a_case_captures_the_run_into_the_suite_and_the_page_then_shows_it_last() {
+async fn adding_a_case_answers_the_form_as_it_starts_closing_the_dialog_and_the_case_shows_last() {
     let pages = with_runs().await;
 
-    let (status, answer) = post(
+    let (status, headers, answer) = post_answer(
         &pages,
         "/suites/board",
         &[SAME_ORIGIN],
@@ -731,28 +878,58 @@ async fn adding_a_case_captures_the_run_into_the_suite_and_the_page_then_shows_i
     )
     .await;
 
-    assert_eq!(status, 200, "{}", said(&answer));
+    assert_eq!(status, 200, "{}", answer.html());
+    assert_eq!(headers.get("hx-trigger").unwrap(), "made");
     assert_eq!(
-        said(&answer),
-        format!(
-            "Captured 1/implement-2 as the case `{}` in the suite board",
-            pages.path("cases/gadgets").display()
+        new_case_form(&answer),
+        (
+            vec![
+                ("run", String::new()),
+                ("name", "1-implement-2".into()),
+                ("criteria", String::new())
+            ],
+            None
         )
     );
+    assert_eq!(text(select(&answer, "legend")[0]), "New case in board");
     assert_eq!(cases(&pages), ["columns", "gadgets", "lanes"]);
     let html = pages.page("/suites/board").await;
-    let names: Vec<String> = select(&html, "#cases tbody th")
+    let names: Vec<String> = select(&html, "#cases tbody th button")
         .into_iter()
         .map(text)
         .collect();
     assert_eq!(names, ["columns", "lanes", "gadgets"]);
 }
 
+/// `docs/specs/benchmarks.md`, New case, Refusals;
+/// `docs/specs/design_system.md`, Making, A refusal.
 #[test_log::test(tokio::test)]
-async fn adding_a_run_of_another_stage_is_refused_and_writes_nothing() {
+async fn a_refused_case_answers_the_form_as_sent_with_the_reason() {
     let pages = with_runs().await;
+    let sent = |name: &'static str, criteria: &'static str| {
+        [
+            ("run", "1/implement-2"),
+            ("name", name),
+            ("criteria", criteria),
+        ]
+    };
+    let as_sent = |name: &str, criteria: &str| {
+        vec![
+            ("run", "1/implement-2".to_string()),
+            ("name", name.to_string()),
+            ("criteria", criteria.to_string()),
+        ]
+    };
 
-    let (status, answer) = post(
+    let mut answers = vec![];
+    for fields in [
+        sent("columns", "Ships gh.\n"),
+        sent("Gadgets 2", "Ships gh.\n"),
+        sent("gadgets", "  \n"),
+    ] {
+        answers.push(post_answer(&pages, "/suites/board", &[SAME_ORIGIN], &fields).await);
+    }
+    let (other_stage, _, other_stage_form) = post_answer(
         &pages,
         "/suites/board",
         &[SAME_ORIGIN],
@@ -763,12 +940,72 @@ async fn adding_a_run_of_another_stage_is_refused_and_writes_nothing() {
         ],
     )
     .await;
+    let (cross_site, _, cross_site_form) = post_answer(
+        &pages,
+        "/suites/board",
+        &[CROSS_SITE],
+        &sent("gadgets", "Ships gh.\n"),
+    )
+    .await;
 
-    assert_eq!(status, 422);
+    let refused: Vec<(u16, bool, FormShown)> = answers
+        .iter()
+        .map(|(status, headers, form)| {
+            (
+                *status,
+                headers.get("hx-trigger").is_some(),
+                new_case_form(form),
+            )
+        })
+        .collect();
     assert_eq!(
-        said(&answer),
-        "Not captured: the suite board holds cases of implement, and the run 1/design-1 is of \
-         design"
+        refused,
+        [
+            (
+                422,
+                false,
+                (
+                    as_sent("columns", "Ships gh.\n"),
+                    Some("A case named columns already exists.".into())
+                )
+            ),
+            (
+                422,
+                false,
+                (
+                    as_sent("Gadgets 2", "Ships gh.\n"),
+                    Some(
+                        "A name holds only lowercase letters, digits and hyphens, and starts \
+                         with a letter or a digit."
+                            .into()
+                    )
+                )
+            ),
+            (
+                422,
+                false,
+                (
+                    as_sent("gadgets", "  \n"),
+                    Some("A case needs criteria.".into())
+                )
+            ),
+        ]
+    );
+    assert_eq!(other_stage, 422);
+    assert_eq!(
+        new_case_form(&other_stage_form).1,
+        Some(
+            "the suite board holds cases of implement, and the run 1/design-1 is of design".into()
+        )
+    );
+    assert_eq!(cross_site, 403);
+    assert_eq!(
+        new_case_form(&cross_site_form).0,
+        [
+            ("run", String::new()),
+            ("name", "gadgets".into()),
+            ("criteria", "Ships gh.\n".into())
+        ]
     );
     assert_eq!(cases(&pages), ["columns", "lanes"]);
 }
@@ -793,7 +1030,10 @@ async fn the_suite_pages_stream_sends_its_cases_as_they_change() {
             break cases;
         }
     };
-    let names: Vec<String> = select(&cases, "tbody th").into_iter().map(text).collect();
+    let names: Vec<String> = select(&cases, "tbody th button")
+        .into_iter()
+        .map(text)
+        .collect();
     assert_eq!(names, ["columns"]);
 }
 
@@ -806,18 +1046,79 @@ async fn the_suite_pages_stream_sends_the_runs_to_capture_as_they_change() {
 
     record_run(&pages, "implement", 3, "2026-10-13T12:00:00Z", Some(&head)).await;
 
-    let runs = loop {
-        let event = events.recv().await.unwrap();
-        if let Some((_, runs)) = regions(&event)
-            .into_iter()
-            .find(|(id, _)| id == "capture-runs")
-        {
-            break runs;
-        }
-    };
+    let runs = next_region(&mut events, "new-case-run").await;
     let offered: Vec<Option<&str>> = select(&runs, "select[name=run] option")
         .into_iter()
         .map(|option| option.attr("value"))
         .collect();
     assert_eq!(offered, [Some("1/implement-3"), Some("1/implement-2")]);
+}
+
+/// The region `id` of the next event of `events` that sends it.
+#[track_caller]
+fn next_region<'a>(
+    events: &'a mut tokio::sync::mpsc::UnboundedReceiver<String>,
+    id: &'a str,
+) -> impl Future<Output = Html> + 'a {
+    let caller = Location::caller();
+    async move {
+        loop {
+            let event = events
+                .recv()
+                .await
+                .unwrap_or_else(|| panic!("the stream ended before {id}, at {caller}"));
+            if let Some((_, region)) = regions(&event).into_iter().find(|(sent, _)| sent == id) {
+                return region;
+            }
+        }
+    }
+}
+
+/// `docs/specs/benchmarks.md`, Suite, Experiments, and New case, Fields.
+#[test_log::test(tokio::test)]
+async fn the_suite_pages_stream_offers_new_experiment_once_it_has_a_case_and_add_case_once_it_has_a_run()
+ {
+    let pages = with_suites().await;
+    let mut events = stream(&pages, "/events/suites/triage-basics").await;
+    let first = events.recv().await.unwrap();
+    let sent = regions(&first);
+    let region = |id: &str| {
+        sent.iter()
+            .find(|(sent, _)| sent == id)
+            .map(|(_, region)| region.clone())
+            .unwrap()
+    };
+    assert_eq!(select(&region("new-experiment-offer"), "button").len(), 0);
+    let unready = region("new-case-ready");
+    assert!(
+        select(&unready, "button[type=submit]")[0]
+            .attr("disabled")
+            .is_some()
+    );
+
+    let head = committed(&pages).await;
+    record_run(&pages, "triage", 1, "2026-10-13T09:00:00Z", Some(&head)).await;
+    let ready = next_region(&mut events, "new-case-ready").await;
+    keep_case(
+        &pages.path(""),
+        "triage-basics",
+        "sorts",
+        "1/triage-1",
+        "Sorts it.\n",
+    )
+    .await;
+    let offer = next_region(&mut events, "new-experiment-offer").await;
+
+    let add = select(&ready, "button[type=submit]");
+    assert_eq!(text(add[0]), "Add case");
+    assert!(add[0].attr("disabled").is_none(), "{}", ready.html());
+    let new: Vec<String> = select(&offer, "button[command=show-modal]")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(new, ["New"]);
+    assert_eq!(
+        select(&offer, "#new-experiment-offer")[0].attr("data-cases"),
+        Some("1")
+    );
 }
