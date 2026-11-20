@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::apply::hand_back::{self, FollowUps, HandBack, LogTail, SendBack, Stopped};
+use crate::apply::hand_back::{FollowUps, HandBack, LogTail, SendBack, Stopped};
 use crate::attachments::Dir;
 use crate::bash_command;
 use crate::briefs::Briefs;
@@ -24,6 +24,7 @@ use crate::reconcile::Subject;
 use crate::redaction::Redaction;
 use crate::results::{self, ParseError};
 use crate::run::RunWith;
+use crate::runs::UnexpectedEnd;
 use crate::secrets::Secrets;
 use crate::store::{Identity, Store};
 use crate::transcript::{self, MaintenanceStatus};
@@ -77,6 +78,12 @@ pub(crate) enum Failure {
         note: String,
     },
     HandBack(HandBack),
+    /// The session ended unexpectedly.
+    Ended {
+        ended: Ended,
+        /// What the hand-back adds after the reason.
+        note: String,
+    },
     Apply {
         error: anyhow::Error,
         /// What the hand-back adds after the reason.
@@ -84,6 +91,33 @@ pub(crate) enum Failure {
     },
     Cancelled,
     UsageLimit(UsageLimit),
+}
+
+/// How a session ended unexpectedly, and the end of the log that shows it
+/// (docs/specs/runs.md, Ending, "Unexpected ends").
+#[derive(Debug, PartialEq, Eq)]
+pub struct Ended {
+    pub end: UnexpectedEnd,
+    pub log_tail: Option<LogTail>,
+}
+
+impl Ended {
+    /// A session's end for `end`, with no log.
+    pub(crate) fn without_log(end: UnexpectedEnd) -> Ended {
+        Ended {
+            end,
+            log_tail: None,
+        }
+    }
+}
+
+impl From<Ended> for Failure {
+    fn from(ended: Ended) -> Failure {
+        Failure::Ended {
+            ended,
+            note: String::new(),
+        }
+    }
 }
 
 /// A run's cancellation, which only a run in session takes: a cancelled run
@@ -187,6 +221,13 @@ impl Failure {
                 note: before,
             } => Failure::Apply {
                 error,
+                note: before + note,
+            },
+            Failure::Ended {
+                ended,
+                note: before,
+            } => Failure::Ended {
+                ended,
                 note: before + note,
             },
             Failure::HandBack(hand_back) => Failure::HandBack(HandBack {
@@ -587,8 +628,8 @@ where
                         session: turn.session.clone(),
                         prompt: followup,
                     },
-                    SendBack::HandBack(hand_back) => {
-                        let failure = Failure::HandBack(hand_back);
+                    SendBack::Ends(ended) => {
+                        let failure = Failure::from(ended);
                         return Err(unbegun(failure.noted(note.as_deref().unwrap_or_default())));
                     }
                 }
@@ -618,6 +659,14 @@ async fn take_turn(
     mut next: NextTurn,
 ) -> Result<Turn, Failure> {
     let subject = purpose_name(&spec.purpose);
+    let dir = spec.dir.clone();
+    let ended = |end, log_tail: &str| -> Failure {
+        Ended {
+            end,
+            log_tail: LogTail::session(&scrub(log_tail, &dir)),
+        }
+        .into()
+    };
     loop {
         let turn = match &next {
             NextTurn::Start => {
@@ -636,16 +685,20 @@ async fn take_turn(
                 return Err(infra(anyhow::anyhow!(reason)));
             }
             Err(SessionError::TimedOut { log_tail }) => {
-                return Err(Failure::HandBack(hand_back::timed_out(
-                    &ctx.with.settings.timeout_setting,
-                    LogTail::session(&scrub(&log_tail, &spec.dir)),
-                )));
+                return Err(ended(timed_out(&ctx.with.settings), &log_tail));
             }
-            Err(SessionError::Failed { reason, log_tail }) => {
-                return Err(Failure::HandBack(hand_back::session_failed(
-                    &reason,
-                    &scrub(&log_tail, &spec.dir),
-                )));
+            Err(SessionError::Errored {
+                kind,
+                result,
+                log_tail,
+            }) => {
+                return Err(ended(
+                    UnexpectedEnd::HarnessError { kind, result },
+                    &log_tail,
+                ));
+            }
+            Err(SessionError::NoResult { why, log_tail }) => {
+                return Err(ended(UnexpectedEnd::NoResult { why }, &log_tail));
             }
         };
         let _ = sessions.report_refusal.send(limit);
@@ -724,11 +777,17 @@ impl Unmade {
     fn failure(self, settings: &SessionSettings) -> Failure {
         match self {
             Unmade::Cancelled => Failure::Cancelled,
-            Unmade::TimedOut => {
-                Failure::HandBack(hand_back::timed_out(&settings.timeout_setting, None))
-            }
+            Unmade::TimedOut => Ended::without_log(timed_out(settings)).into(),
             Unmade::Failed(error) => infra(error.context("making the session's clone")),
         }
+    }
+}
+
+/// The end of a session that reached the timeout `settings` give it.
+fn timed_out(settings: &SessionSettings) -> UnexpectedEnd {
+    UnexpectedEnd::TimedOut {
+        after: settings.session_timeout.value,
+        setting: settings.timeout_setting,
     }
 }
 
@@ -976,10 +1035,11 @@ async fn run_maintenance(
             );
             Ok(())
         }
-        AfterMaintenance::TimesOut => Err(Failure::HandBack(hand_back::timed_out(
-            &settings.timeout_setting,
-            LogTail::maintenance(&scrub(&ran.output, &ws.dir)),
-        ))),
+        AfterMaintenance::TimesOut => Err(Ended {
+            end: timed_out(settings),
+            log_tail: LogTail::maintenance(&scrub(&ran.output, &ws.dir)),
+        }
+        .into()),
         AfterMaintenance::Cancelled => Err(Failure::Cancelled),
     }
 }

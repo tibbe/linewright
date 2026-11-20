@@ -1057,8 +1057,8 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     let (ticket, pr) = world.ticket_in_review().await;
     world.rework_asked(pr);
     world.harness.on(WorkKind::Rework, |_| {
-        Err(linewright::harness::SessionError::Failed {
-            reason: "it crashed".into(),
+        Err(linewright::harness::SessionError::NoResult {
+            why: "it crashed".into(),
             log_tail: String::new(),
         })
     });
@@ -1759,8 +1759,8 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
     let endings: [(Ending, &str); 4] = [
         (
             || {
-                Err(SessionError::Failed {
-                    reason: "it crashed".into(),
+                Err(SessionError::NoResult {
+                    why: "it crashed".into(),
                     log_tail: String::new(),
                 })
             },
@@ -1995,8 +1995,8 @@ async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_unc
     let endings: [(Ending, &str); 4] = [
         (
             || {
-                Err(SessionError::Failed {
-                    reason: "it crashed".into(),
+                Err(SessionError::NoResult {
+                    why: "it crashed".into(),
                     log_tail: String::new(),
                 })
             },

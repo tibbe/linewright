@@ -1068,13 +1068,10 @@ async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
         .await
         .unwrap_err();
 
-    let SessionError::Failed { reason, .. } = error else {
-        panic!("expected a failure, got {error:?}");
+    let SessionError::NoResult { why, .. } = error else {
+        panic!("expected no result, got {error:?}");
     };
-    assert_eq!(
-        reason,
-        "the harness exited (exit status: 0) without a result"
-    );
+    assert_eq!(why, "the harness exited (exit status: 0) without a result");
 }
 
 #[test_log::test(tokio::test)]
@@ -1291,8 +1288,8 @@ async fn a_failed_sessions_log_tail_has_its_secrets_redacted() {
         .await
         .unwrap_err();
 
-    let SessionError::Failed { log_tail, .. } = error else {
-        panic!("expected a failure, got {error:?}");
+    let SessionError::NoResult { log_tail, .. } = error else {
+        panic!("expected no result, got {error:?}");
     };
     assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }
@@ -1313,12 +1310,12 @@ async fn a_failed_sessions_reason_has_its_secrets_redacted() {
         .await
         .unwrap_err();
 
-    let SessionError::Failed { reason, .. } = error else {
-        panic!("expected a failure, got {error:?}");
+    let SessionError::Errored { kind, result, .. } = error else {
+        panic!("expected an error, got {error:?}");
     };
     assert_eq!(
-        reason,
-        "the session ended with `error_max_turns`: stuck on [redacted]"
+        (kind.as_str(), result.as_deref()),
+        ("error_max_turns", Some("stuck on [redacted]"))
     );
 }
 
@@ -1333,8 +1330,8 @@ async fn a_secret_that_holds_another_is_redacted_whole() {
         .await
         .unwrap_err();
 
-    let SessionError::Failed { log_tail, .. } = error else {
-        panic!("expected a failure, got {error:?}");
+    let SessionError::NoResult { log_tail, .. } = error else {
+        panic!("expected no result, got {error:?}");
     };
     assert_eq!(log_tail, "GH_TOKEN=[redacted]");
 }
@@ -1405,7 +1402,7 @@ async fn what_a_session_started_has_ended_once_it_crashes() {
         .await
         .unwrap_err();
 
-    assert!(matches!(error, SessionError::Failed { .. }), "{error:?}");
+    assert!(matches!(error, SessionError::NoResult { .. }), "{error:?}");
     assert!(has_ended(left_process(dir.path())));
 }
 

@@ -35,11 +35,11 @@ use crate::results::{
     self, AutomationResult, Cut, DesignResult, ImplementResult, IssueWork, Posts, PullWorkResult,
     SpecGap, SpecGaps, TriageResult,
 };
-use crate::runs::{Ending, Running};
+use crate::runs::{Ending, Running, UnexpectedEnd};
 use crate::secrets::Held;
 use crate::session::{
-    Cancellation, Failure, Refused, Rejection, SessionCtx, Sessions, Workspace, converse, infra,
-    lock_set_whole, open_on_default_branch, open_session, parse_retry,
+    Cancellation, Ended, Failure, Refused, Rejection, SessionCtx, Sessions, Workspace, converse,
+    infra, lock_set_whole, open_on_default_branch, open_session, parse_retry,
 };
 use crate::spec_gap::{self, FiledGaps};
 use crate::spec_glob::SpecGlob;
@@ -358,7 +358,10 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 warn!(subject = ?subject, error, "infrastructure failure; retrying once");
             }
             Err(Failure::Infrastructure { error: e, note }) => {
-                break hand_back::failed_twice(&e, &note);
+                let ended = Ended::without_log(UnexpectedEnd::Infrastructure {
+                    error: format!("{e:#}"),
+                });
+                break hand_back::unexpected(ended, &note);
             }
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
@@ -373,6 +376,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
                 return Ending::UsageLimit;
             }
             Err(Failure::Apply { error: e, note }) => break hand_back::recording_failed(&e, &note),
+            Err(Failure::Ended { ended, note }) => break hand_back::unexpected(ended, &note),
             Err(Failure::HandBack(hand_back)) => break hand_back,
         }
     };
@@ -1650,22 +1654,37 @@ pub(crate) async fn automation(
         Ok(_) => Ending::Done,
         Err(Failure::UsageLimit(_)) => Ending::UsageLimit,
         Err(Failure::Cancelled) => Ending::Cancelled,
-        Err(Failure::Infrastructure { .. } | Failure::Apply { .. } | Failure::HandBack { .. }) => {
-            Ending::Failed
-        }
+        Err(
+            Failure::Infrastructure { .. }
+            | Failure::Apply { .. }
+            | Failure::HandBack { .. }
+            | Failure::Ended { .. },
+        ) => Ending::Failed,
     };
     ctx.run.end(shell.sessions.clock.now(), ending).await;
     match ended {
         Ok(result) => Ok(AutomationEnd::Finished(result)),
         Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
         Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
-        Err(Failure::HandBack(HandBack {
+        Err(Failure::HandBack(hand_back)) => Err(hand_back_error(hand_back)),
+        Err(Failure::Ended {
+            ended: session_ended,
+            note,
+        }) => Err(hand_back_error(hand_back::unexpected(session_ended, &note))),
+        Err(Failure::Cancelled) => Err(anyhow::anyhow!("the run was cancelled")),
+    }
+}
+
+/// An automation run's error for what would be the hand-back `hand_back`:
+/// its reason, with its log tail under it.
+fn hand_back_error(hand_back: HandBack) -> anyhow::Error {
+    match hand_back {
+        HandBack {
             reason,
             log_tail: Some(log_tail),
             ..
-        })) => Err(with_tail(&anyhow::anyhow!(reason), &log_tail)),
-        Err(Failure::HandBack(HandBack { reason, .. })) => Err(anyhow::anyhow!(reason)),
-        Err(Failure::Cancelled) => Err(anyhow::anyhow!("the run was cancelled")),
+        } => with_tail(&anyhow::anyhow!(reason), &log_tail),
+        HandBack { reason, .. } => anyhow::anyhow!(reason),
     }
 }
 

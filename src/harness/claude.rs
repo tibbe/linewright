@@ -617,16 +617,13 @@ impl ClaudeCode {
                     event.result.unwrap_or(event.subtype)
                 )))
             }
-            Some(event) => Err(SessionError::Failed {
-                reason: format!(
-                    "the session ended with `{}`{}",
-                    event.subtype,
-                    event.result.map(|r| format!(": {r}")).unwrap_or_default()
-                ),
+            Some(event) => Err(SessionError::Errored {
+                kind: event.subtype,
+                result: event.result,
                 log_tail: log.tail(),
             }),
-            None => Err(SessionError::Failed {
-                reason: match status {
+            None => Err(SessionError::NoResult {
+                why: match status {
                     Ok(status) => format!("the harness exited ({status}) without a result"),
                     Err(e) => format!("the harness could not be waited for: {e}"),
                 },

@@ -26,7 +26,7 @@ use crate::reconcile::{EndedRun, WorkKind};
 use crate::records;
 use crate::session::{self, RecordsSessions};
 use crate::status::Paint;
-use crate::work_settings::{Effort, SessionSettings, Setting};
+use crate::work_settings::{Effort, SessionSettings, Setting, TimeoutSetting};
 use files::{End, Record, RecordedSession, RunFiles};
 use rows::{Change, RunRow};
 
@@ -212,6 +212,30 @@ pub enum Ending {
     Cancelled,
     UsageLimit,
     Failed,
+}
+
+/// Why a session ended unexpectedly, other than its agent giving up: one
+/// variant for each row of docs/specs/runs.md, Ending, "Unexpected ends", in
+/// its order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnexpectedEnd {
+    /// It reached its timeout, `after`, which `setting` gives.
+    TimedOut {
+        after: std::time::Duration,
+        setting: TimeoutSetting,
+    },
+    /// Its last result was still not accepted after `follow_ups`, the last
+    /// of which was `why`.
+    NotAccepted { why: String, follow_ups: u32 },
+    /// It failed on its infrastructure, and again on the retry, with `error`.
+    Infrastructure { error: String },
+    /// The harness ended it with the error `kind`, saying `result`.
+    HarnessError {
+        kind: String,
+        result: Option<String>,
+    },
+    /// The harness stopped without a result, `why`.
+    NoResult { why: String },
 }
 
 /// A session of a run: where its records are, and what Linewright kept of
