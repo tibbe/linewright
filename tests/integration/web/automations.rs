@@ -399,3 +399,30 @@ async fn the_automations_page_shows_its_automations_25_at_a_time() {
     );
     assert_eq!(events_path(&second), Some("/events/automations?page=2"));
 }
+
+/// `docs/specs/web/design_system.md`, Colour scheme; `docs/specs/web/shell.md`,
+/// A notice: an automation file that does not parse is a problem, an `alert`
+/// in `alert-error` with `failed`'s icon first, not text coloured `error`.
+#[test_log::test(tokio::test)]
+async fn an_unparsed_automation_file_is_an_error_alert_with_faileds_icon_first() {
+    let pages = Pages::of(with(&[("weekly", WEEKLY)], true)).await;
+
+    let html = pages.page("/automations").await;
+
+    let files = select(&html, "#automations .unparsed li");
+    assert_eq!(files.len(), 1, "{}", html.html());
+    let file = files[0];
+    assert!(
+        has_classes(file, &["alert", "alert-error"]),
+        "{}",
+        file.html()
+    );
+    assert!(!file.html().contains("text-error"), "{}", file.html());
+    let icon = select_in(file, ":scope > svg:first-child");
+    assert_eq!(
+        icon.first().and_then(|icon| icon.attr("data-icon")),
+        Some("x-circle"),
+        "{}",
+        file.html()
+    );
+}

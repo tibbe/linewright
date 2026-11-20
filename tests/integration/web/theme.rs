@@ -86,6 +86,48 @@ fn the_stylesheet_sets_no_colour_but_in_its_themes() {
     );
 }
 
+/// `docs/specs/web/design_system.md`, Colour scheme: a fill is drawn only
+/// behind its content colour, so the stylesheet colours no text, outline,
+/// border or ring in one.
+#[test_log::test]
+fn the_stylesheet_colours_nothing_in_a_fill_but_its_background() {
+    const FILLS: [&str; 8] = [
+        "primary",
+        "secondary",
+        "accent",
+        "neutral",
+        "info",
+        "success",
+        "warning",
+        "error",
+    ];
+    let coloured: Vec<&str> = STYLES
+        .split_whitespace()
+        .map(|class| class.trim_end_matches(';'))
+        .filter(|class| {
+            let utility = class.rsplit(':').next().unwrap_or(class);
+            [
+                "text-",
+                "outline-",
+                "border-",
+                "ring-",
+                "decoration-",
+                "fill-",
+                "stroke-",
+            ]
+            .iter()
+            .filter_map(|prefix| utility.strip_prefix(prefix))
+            .any(|colour| {
+                FILLS
+                    .iter()
+                    .any(|fill| colour.split('/').next() == Some(*fill))
+            })
+        })
+        .collect();
+
+    assert!(coloured.is_empty(), "{coloured:?}");
+}
+
 /// `docs/specs/web/components.md`, Inline code: `font-mono` at
 /// `text-[0.9em]`, on `bg-base-content/10`, with `rounded-sm` corners and a
 /// padding of `px-1`.

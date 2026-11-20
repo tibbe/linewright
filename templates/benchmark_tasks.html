@@ -20,7 +20,7 @@
 <div class="text-base-content/60 text-sm font-normal">{{ first_line }}</div>
 {%- when CriteriaShown::Unreadable(why) %}
 <span>{{ task.name }}</span>
-<div class="text-error text-sm font-normal">the criteria do not read: {{ why }}</div>
+<div class="text-base-content/60 flex items-center gap-1 text-sm font-normal">{% call ui::icon(crate::web::icons::status_icon(&crate::phrase::Status::Failed), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>the criteria do not read: {{ why }}</span></div>
 {%- endmatch -%}
 </th>
 {%- when TasksColumn::CapturedFrom %}

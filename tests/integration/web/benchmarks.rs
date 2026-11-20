@@ -1397,6 +1397,38 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
     );
 }
 
+/// `docs/specs/web/design_system.md`, Colour scheme and Icons: a task whose
+/// criteria do not read says so in secondary text after `failed`'s icon,
+/// never in text coloured `error`, whose fill is drawn only behind its
+/// content colour.
+#[test_log::test(tokio::test)]
+async fn a_task_whose_criteria_do_not_read_says_so_in_secondary_text_after_faileds_icon() {
+    let pages = with_benchmarks().await;
+    keep_task(&pages.path(""), "board", "blank", "1/implement-1", "  \n").await;
+
+    let html = pages.page("/benchmarks/board").await;
+
+    let said: Vec<ElementRef> = select(&html, "#tasks tbody th > div")
+        .into_iter()
+        .filter(|line| text(*line).contains("the criteria do not read"))
+        .collect();
+    assert_eq!(said.len(), 1, "{}", html.html());
+    let said = said[0];
+    assert!(
+        has_classes(said, &["text-base-content/60"]),
+        "{}",
+        said.html()
+    );
+    assert!(!said.html().contains("text-error"), "{}", said.html());
+    let icon = select_in(said, ":scope > svg:first-child");
+    assert_eq!(
+        icon.first().and_then(|icon| icon.attr("data-icon")),
+        Some("x-circle"),
+        "{}",
+        said.html()
+    );
+}
+
 /// `docs/specs/web/design_system.md`, Making: the reason for a refusal is a
 /// daisyUI `alert` in the `alert-error` style, and what was done one in
 /// `alert-success`, each as daisyUI draws it.
