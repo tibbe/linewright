@@ -21,12 +21,12 @@ pub struct Results {
     /// configurations'.
     pub scorers: Total,
     /// How many of its trials have ended: those whose run has, whether or
-    /// not their scorer has.
+    /// not their scorer has, a run the cancel stopped among them.
     pub trials_ended: usize,
     /// How many trials it makes.
     pub all: usize,
-    /// The cost of its trials and its scorers, in US dollars, and how many of
-    /// its trials have none.
+    /// The cost of all its trials and its scorers, in US dollars, and how
+    /// many of its trials that have ended have none.
     pub cost: Total,
 }
 
@@ -53,7 +53,7 @@ pub struct Figures {
     /// How many of the trials have a score with a leak.
     pub leaks: usize,
     /// How many of the trials have no score for a reason the spec
-    /// gives: their run's outcome, their scorer, or a cancel after their run.
+    /// gives: their run's outcome or their scorer.
     pub unscored: usize,
 }
 
@@ -101,6 +101,7 @@ pub struct Total {
 /// The results of `record`, of the trials that have ended.
 pub fn results(record: &BenchmarkRunRecord) -> Results {
     let mut scorers = Sum::default();
+    let mut stopped = Sum::default();
     let mut tallies: Vec<Vec<Tally>> = record
         .configurations
         .iter()
@@ -121,6 +122,9 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
             | TrialState::Scoring { run }
             | TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(run))) => {
                 tally.trial(run);
+            }
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(run))) => {
+                stopped.add(run.money.map(f64::from));
             }
             TrialState::Ended(TrialEnd::Scored { run, score }) => {
                 tally.trial(run);
@@ -143,7 +147,12 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
             }
         }
     }
-    let trials_ended = tallies.iter().flatten().map(|tally| tally.ended).sum();
+    let trials_ended = tallies
+        .iter()
+        .flatten()
+        .map(|tally| tally.ended)
+        .sum::<usize>()
+        + stopped.count();
     let configurations: Vec<ConfigurationResults> = record
         .configurations
         .iter()
@@ -180,8 +189,8 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
     Results {
         configurations,
         cost: Total {
-            total: trials_cost + scorers.total,
-            none: without_cost,
+            total: trials_cost + stopped.total + scorers.total,
+            none: without_cost + stopped.none,
         },
         scorers: Total {
             total: scorers.total,
@@ -253,6 +262,11 @@ impl Sum {
             }
             None => self.none += 1,
         }
+    }
+
+    /// How many figures it summed and how many were absent.
+    fn count(&self) -> usize {
+        self.counted + self.none
     }
 
     fn and(self, other: &Sum) -> Sum {
@@ -643,6 +657,49 @@ mod tests {
         approx(Some(as_is.figures.time.total), 30.0);
         approx(Some(results.cost.total), 0.5);
         assert_eq!(results.trials_ended, 1);
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: the run
+    /// of a trial in flight that the cancel stopped has ended and keeps its
+    /// cost, which counts in the benchmark run's, but in no configuration's
+    /// figures.
+    #[test_log::test]
+    fn a_run_the_cancel_stopped_has_ended_and_counts_in_the_benchmark_runs_cost_alone() {
+        let stopped = |money: Option<f64>| {
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(TrialFigures {
+                outcome: OutcomeName::Ended(Ending::Cancelled),
+                money: money.and_then(Usd::new),
+                time: Duration::from_secs(40),
+            })))
+        };
+        let record = benchmark_run(
+            &["columns"],
+            &[],
+            3,
+            vec![
+                (
+                    key(1, 0, 0),
+                    scored(trial(Some(1.0), 10), Verdict::Pass, false, None),
+                ),
+                (key(2, 0, 0), stopped(Some(0.25))),
+                (key(3, 0, 0), stopped(None)),
+            ],
+        );
+
+        let results = results(&record);
+
+        assert_eq!((results.trials_ended, results.all), (3, 3));
+        approx(Some(results.cost.total), 1.25);
+        assert_eq!(results.cost.none, 1);
+        let as_is = &results.configurations[0];
+        approx(Some(as_is.figures.cost.total), 1.0);
+        assert_eq!(as_is.figures.cost.none, 0);
+        approx(Some(as_is.figures.time.total), 10.0);
+        assert_eq!(as_is.figures.time.none, 0);
+        assert_eq!(as_is.figures.unscored, 0);
+        approx(as_is.pass_rate, 1.0);
+        approx(Some(as_is.tasks[0].figures.cost.total), 1.0);
+        assert_eq!(as_is.tasks[0].figures.unscored, 0);
     }
 
     #[test_log::test]
