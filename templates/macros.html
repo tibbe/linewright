@@ -171,7 +171,7 @@
 {#- The button "New" in a table's bar (`docs/specs/design_system.md`,
     Making), which opens the dialog `id` with no request. -#}
 {%- macro new_button(id) -%}
-<button class="btn btn-sm" type="button" command="show-modal" commandfor="{{ id }}">New</button>
+<button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ id }}">New</button>
 {%- endmacro -%}
 
 {#- A "New" dialog (`docs/specs/design_system.md`, Dialogs and Making;
@@ -206,7 +206,7 @@
 <div class="alert alert-error mt-2" role="alert"><span>{{ refusal }}</span></div>
 {%- endif %}
 <div class="modal-action">
-<button class="btn" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
+<button class="btn btn-sm" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
 {% call new_submit(verb, region, disabled, note) %}{% endcall %}
 </div>
 {%- endmacro -%}
@@ -217,7 +217,7 @@
 {%- macro new_submit(verb, region = "", disabled = false, note = "") -%}
 {%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>
 {%- if !note.is_empty() %}<span class="text-base-content/60 self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
-<button class="btn btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
+<button class="btn btn-sm btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
 {%- if !region.is_empty() %}</div>{% endif %}
 {%- endmacro -%}
 

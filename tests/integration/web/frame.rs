@@ -235,7 +235,7 @@ fn foot_button(html: &Html) -> (String, String) {
     assert_eq!(buttons.len(), 1, "{}", html.html());
     let button = buttons[0];
     assert!(
-        has_classes(button, &["btn", "btn-ghost", "btn-circle"]),
+        has_classes(button, &["btn", "btn-ghost", "btn-circle", "btn-sm"]),
         "{}",
         button.html()
     );
@@ -260,7 +260,8 @@ fn foot_button(html: &Html) -> (String, String) {
 }
 
 /// `docs/specs/web/shell.md`, Expanding and collapsing: the foot button is
-/// a `btn-ghost` `btn-circle`, from `lg` alone, named in a `tooltip-right`
+/// a small (`docs/specs/web/design_system.md`, Buttons) `btn-ghost`
+/// `btn-circle`, from `lg` alone, named in a `tooltip-right`
 /// for what it does on the navigation the page is drawn with.
 #[test_log::test(tokio::test)]
 async fn the_foot_button_collapses_the_sidebar_and_expands_the_rail() {

@@ -587,3 +587,29 @@ async fn runs_verbose_switch_is_a_toggle_and_its_jump_a_button_fixed_at_the_bott
         jump[0].html()
     );
 }
+
+/// `docs/specs/web/design_system.md`, Buttons and Making: every button, the
+/// navigation's and the dialogs' too, is a small `btn-sm`, but a row's,
+/// which is a `btn-xs`; and "New" is a `btn-primary`, wherever it is.
+#[test_log::test(tokio::test)]
+async fn every_button_is_small_and_new_is_primary() {
+    let pages = with_a_run().await;
+
+    for path in PATHS {
+        let html = pages.page(path).await;
+        for button in select(&html, ".btn") {
+            assert!(
+                has_classes(button, &["btn-sm"]) || has_classes(button, &["btn-ghost", "btn-xs"]),
+                "{path}: {}",
+                button.html()
+            );
+            if text(button) == "New" {
+                assert!(
+                    has_classes(button, &["btn-primary"]),
+                    "{path}: {}",
+                    button.html()
+                );
+            }
+        }
+    }
+}
