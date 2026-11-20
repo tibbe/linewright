@@ -1396,3 +1396,27 @@ async fn the_benchmark_pages_stream_offers_new_benchmark_run_once_it_has_a_task_
         Some("1")
     );
 }
+
+/// `docs/specs/web/design_system.md`, Making: the reason for a refusal is a
+/// daisyUI `alert` in the `alert-error` style, and what was done one in
+/// `alert-success`, each as daisyUI draws it.
+#[test_log::test(tokio::test)]
+async fn a_writes_answer_is_an_alert_in_its_style_as_daisyui_draws_it() {
+    let pages = with_benchmarks().await;
+
+    for (benchmark, style) in [("triage-basics", "alert-error"), ("board", "alert-success")] {
+        let (_, answer) = post(
+            &pages,
+            &format!("/benchmarks/{benchmark}/remove-task"),
+            &[SAME_ORIGIN],
+            &[("task", "columns")],
+        )
+        .await;
+
+        let alerts = select(&answer, ".alert");
+        assert_eq!(alerts.len(), 1, "{}", answer.html());
+        let mut classes: Vec<&str> = alerts[0].value().classes().collect();
+        classes.sort_unstable();
+        assert_eq!(classes, ["alert", style], "{benchmark}");
+    }
+}
