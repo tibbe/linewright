@@ -1,7 +1,7 @@
 //! What every screen has around it (`docs/specs/shell.md`): the navigation,
-//! the notices, the breadcrumbs, the heading card and the screen's buttons,
-//! and each screen's title (`docs/specs/design_system.md`, Titles and
-//! Headings).
+//! the notices, the breadcrumbs, the heading card with what a dialog made
+//! under it, and the screen's buttons, and each screen's title
+//! (`docs/specs/design_system.md`, Titles and Headings).
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -662,7 +662,9 @@ struct ButtonsRegion<'a> {
 /// The regions of the shell, which every page's stream sends before its
 /// own: the notices, the title, the breadcrumbs, the heading card and the
 /// screen's buttons. Each that `page` lacks is sent empty, so that its id is
-/// always there to morph.
+/// always there to morph. The `#made` under the heading card is none of them,
+/// so that what a dialog made stays there until the reader leaves
+/// (`docs/specs/design_system.md`, Making, What was made).
 pub(super) fn regions(frame: &Frame, page: &Page) -> Vec<(&'static str, String)> {
     vec![
         holds(frame),
