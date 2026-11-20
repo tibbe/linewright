@@ -7,8 +7,8 @@ use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunState, ConfigurationName, NoScore, ScoreFigures, TrialEnd,
-    TrialFigures, TrialState,
+    BenchmarkRunId, BenchmarkRunState, Cancelled, ConfigurationName, NoScore, ScoreFigures,
+    TrialEnd, TrialFigures, TrialState,
 };
 use crate::cost::Usd;
 use crate::environment::kept::Builds;
@@ -630,7 +630,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
                 why: "it gave up".into(),
                 scorer_money: Usd::new(0.125),
             })),
-            TrialState::Ended(TrialEnd::Cancelled { run: None }),
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
             TrialState::Scoring {
                 run: figures("done", Some(2.0), 40),
             },

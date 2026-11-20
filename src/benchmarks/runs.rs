@@ -177,7 +177,7 @@ impl TrialState {
     pub fn run(&self) -> Option<&TrialFigures> {
         match self {
             TrialState::Pending | TrialState::Running => None,
-            TrialState::Ended(TrialEnd::Cancelled { run }) => run.as_ref(),
+            TrialState::Ended(TrialEnd::Cancelled(cancelled)) => cancelled.run(),
             TrialState::Ran { run }
             | TrialState::Scoring { run }
             | TrialState::Ended(TrialEnd::Scored { run, .. }) => Some(run),
@@ -193,7 +193,7 @@ impl TrialState {
             | TrialState::Running
             | TrialState::Ran { .. }
             | TrialState::Scoring { .. }
-            | TrialState::Ended(TrialEnd::Unscored(_) | TrialEnd::Cancelled { .. }) => None,
+            | TrialState::Ended(TrialEnd::Unscored(_) | TrialEnd::Cancelled(_)) => None,
         }
     }
 
@@ -218,9 +218,33 @@ pub enum TrialEnd {
     },
     /// Its run ended, and has no score for a reason.
     Unscored(NoScore),
-    /// No reason: its benchmark run was cancelled first, with the figures of
-    /// its run if its run had ended.
-    Cancelled { run: Option<TrialFigures> },
+    /// Its benchmark run's cancel ended it.
+    Cancelled(Cancelled),
+}
+
+/// A trial its benchmark run's cancel ended: no score and no reason.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cancelled {
+    /// With no figures of its run: its run had not started, or left none.
+    BeforeRun,
+    /// With the figures of its run, which had ended or which the cancel
+    /// stopped, and before its scorer made a score.
+    AfterRun(TrialFigures),
+}
+
+impl Cancelled {
+    /// A cancelled trial with the figures of its run, `run`, if it has them.
+    pub fn of(run: Option<TrialFigures>) -> Cancelled {
+        run.map_or(Cancelled::BeforeRun, Cancelled::AfterRun)
+    }
+
+    /// The figures of its run, if it has them.
+    pub fn run(&self) -> Option<&TrialFigures> {
+        match self {
+            Cancelled::BeforeRun => None,
+            Cancelled::AfterRun(run) => Some(run),
+        }
+    }
 }
 
 /// What the results need of a trial.
@@ -852,15 +876,15 @@ impl TrialState {
                 }))
             }
             (TrialState::Pending, TrialChange::Cancelled { stopped: None }) => {
-                TrialState::Ended(TrialEnd::Cancelled { run: None })
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
             }
             (TrialState::Running, TrialChange::Cancelled { stopped }) => {
-                TrialState::Ended(TrialEnd::Cancelled { run: stopped })
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::of(stopped)))
             }
             (
                 TrialState::Ran { run } | TrialState::Scoring { run },
                 TrialChange::Cancelled { stopped: None },
-            ) => TrialState::Ended(TrialEnd::Cancelled { run: Some(run) }),
+            ) => TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(run))),
             (state, change) => anyhow::bail!(
                 "a trial {} cannot change by {change:?}",
                 Columns::of(&state).state
@@ -1174,7 +1198,9 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
             })
         }
         "unscored" => match (unscored.as_deref(), reason, trial) {
-            (Some("cancelled"), None, run) => TrialState::Ended(TrialEnd::Cancelled { run }),
+            (Some("cancelled"), None, run) => {
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::of(run)))
+            }
             (Some(cause), reason, Some(run)) => {
                 TrialState::Ended(TrialEnd::Unscored(match (cause, reason) {
                     ("outcome", None) => NoScore::Outcome(run),
@@ -1237,9 +1263,9 @@ impl Columns {
                 });
                 ("unscored", Some(no_score.run()))
             }
-            TrialState::Ended(TrialEnd::Cancelled { run }) => {
+            TrialState::Ended(TrialEnd::Cancelled(cancelled)) => {
                 columns.unscored = Some("cancelled");
-                ("unscored", run.as_ref())
+                ("unscored", cancelled.run())
             }
         };
         columns.state = name;
@@ -1364,9 +1390,9 @@ mod tests {
             TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(figures(
                 Ending::Failed,
             )))),
-            TrialState::Ended(TrialEnd::Cancelled {
-                run: Some(figures(Ending::Done)),
-            }),
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+                Ending::Done,
+            )))),
         ];
 
         let began = states.map(|state| state.scorer_began());
@@ -1536,15 +1562,52 @@ mod tests {
 
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 0)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled {
-                run: Some(figures(Ending::Done)),
-            })
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+                Ending::Done
+            ))))
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled {
-                run: Some(figures(Ending::Cancelled)),
-            })
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+                Ending::Cancelled
+            ))))
+        );
+    }
+
+    /// A kept cancelled row is `unscored = 'cancelled'`, with its run's
+    /// figures when it has them.
+    #[test_log::test(tokio::test)]
+    async fn kept_cancelled_trials_read_as_cancelled_before_or_after_their_run() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (benchmark_runs, id) = launched(work_dir.path()).await;
+        for (task, run) in [(0, Some(("done", 0.25, 12.5))), (1, None)] {
+            sqlx::query(
+                "UPDATE trials SET state = 'unscored', unscored = 'cancelled',
+                     outcome = ?, money = ?, seconds = ?
+                 WHERE benchmark_run = ? AND task_seq = ?",
+            )
+            .bind(run.map(|(outcome, ..)| outcome))
+            .bind(run.map(|(_, money, _)| money))
+            .bind(run.map(|(.., seconds)| seconds))
+            .bind(id.0)
+            .bind(task)
+            .execute(benchmark_runs.db.pool())
+            .await
+            .unwrap();
+        }
+
+        let after = state_of(&benchmark_runs, trial(id, 0)).await.1;
+        let before = state_of(&benchmark_runs, trial(id, 1)).await.1;
+
+        assert_eq!(
+            after,
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+                Ending::Done
+            ))))
+        );
+        assert_eq!(
+            before,
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
         );
     }
 
@@ -1627,14 +1690,14 @@ mod tests {
             state_of(&benchmark_runs, trial(id, 0)).await,
             (
                 BenchmarkRunState::Cancelled { at: Some(later()) },
-                TrialState::Ended(TrialEnd::Cancelled { run: None })
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
             )
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled {
-                run: Some(figures(Ending::Done)),
-            })
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+                Ending::Done
+            ))))
         );
     }
 

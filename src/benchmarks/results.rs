@@ -8,7 +8,9 @@ use serde::Serialize;
 use crate::results::Verdict;
 use crate::task::TaskName;
 
-use super::{BenchmarkRunRecord, ConfigurationName, NoScore, TrialEnd, TrialFigures, TrialState};
+use super::{
+    BenchmarkRunRecord, Cancelled, ConfigurationName, NoScore, TrialEnd, TrialFigures, TrialState,
+};
 
 /// A benchmark run's results.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -114,10 +116,10 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
         match state {
             TrialState::Pending
             | TrialState::Running
-            | TrialState::Ended(TrialEnd::Cancelled { run: None }) => {}
+            | TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)) => {}
             TrialState::Ran { run }
             | TrialState::Scoring { run }
-            | TrialState::Ended(TrialEnd::Cancelled { run: Some(run) }) => {
+            | TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(run))) => {
                 tally.trial(run);
             }
             TrialState::Ended(TrialEnd::Scored { run, score }) => {
@@ -546,7 +548,7 @@ mod tests {
                 ),
                 (
                     key(1, 2, 0),
-                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                    TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
                 ),
             ],
         );
@@ -591,13 +593,14 @@ mod tests {
                 ),
                 (
                     key(3, 0, 0),
-                    TrialState::Ended(TrialEnd::Cancelled {
-                        run: Some(trial(Some(0.1), 10)),
-                    }),
+                    TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(trial(
+                        Some(0.1),
+                        10,
+                    )))),
                 ),
                 (
                     key(4, 0, 0),
-                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                    TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
                 ),
             ],
         );
@@ -609,7 +612,8 @@ mod tests {
     }
 
     /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a
-    /// cancelled trial has no reason, but its run's cost and time count.
+    /// cancelled trial has no reason, but its run's cost and time count, and it
+    /// has ended once its run has.
     #[test_log::test]
     fn a_cancelled_trial_is_not_unscored_and_the_run_it_had_counts() {
         let record = benchmark_run(
@@ -619,13 +623,14 @@ mod tests {
             vec![
                 (
                     key(1, 0, 0),
-                    TrialState::Ended(TrialEnd::Cancelled {
-                        run: Some(trial(Some(0.5), 30)),
-                    }),
+                    TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(trial(
+                        Some(0.5),
+                        30,
+                    )))),
                 ),
                 (
                     key(2, 0, 0),
-                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                    TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
                 ),
             ],
         );
@@ -637,6 +642,7 @@ mod tests {
         approx(Some(as_is.figures.cost.total), 0.5);
         approx(Some(as_is.figures.time.total), 30.0);
         approx(Some(results.cost.total), 0.5);
+        assert_eq!(results.trials_ended, 1);
     }
 
     #[test_log::test]

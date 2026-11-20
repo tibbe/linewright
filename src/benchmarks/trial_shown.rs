@@ -25,7 +25,7 @@ impl TrialShown<'_> {
     pub fn of(benchmark_run: BenchmarkRunState, trial: &TrialState) -> TrialShown<'_> {
         let cancelled = matches!(benchmark_run, BenchmarkRunState::Cancelled { .. });
         match trial {
-            TrialState::Ended(TrialEnd::Cancelled { .. }) => TrialShown::Cancelled,
+            TrialState::Ended(TrialEnd::Cancelled(_)) => TrialShown::Cancelled,
             TrialState::Pending
             | TrialState::Running
             | TrialState::Ran { .. }
@@ -103,7 +103,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::benchmarks::{ScoreFigures, TrialFigures};
+    use crate::benchmarks::{Cancelled, ScoreFigures, TrialFigures};
 
     #[track_caller]
     fn ended(outcome: &str) -> TrialFigures {
@@ -148,9 +148,7 @@ mod tests {
             (
                 "it is cancelled",
                 CANCELLED,
-                TrialState::Ended(TrialEnd::Cancelled {
-                    run: Some(ended("done")),
-                }),
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(ended("done")))),
             ),
             (
                 "a restart interrupted its run or its scorer, which has not started again",
@@ -265,7 +263,7 @@ mod tests {
             TrialState::Running,
             TrialState::Ran { run: ended("done") },
             TrialState::Scoring { run: ended("done") },
-            TrialState::Ended(TrialEnd::Cancelled { run: None }),
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
             scored(Verdict::Pass, false),
             unscored(NoScore::Outcome(ended("failed"))),
         ];

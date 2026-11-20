@@ -215,8 +215,8 @@ impl From<&TrialState> for TrialAnswer {
                     },
                 },
             },
-            TrialState::Ended(TrialEnd::Cancelled { run }) => TrialAnswer::Unscored {
-                run: run.as_ref().map(Into::into),
+            TrialState::Ended(TrialEnd::Cancelled(cancelled)) => TrialAnswer::Unscored {
+                run: cancelled.run().map(Into::into),
                 why: WhyUnscored::Cancelled,
             },
         }
@@ -463,7 +463,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::benchmarks::{Benchmark, ScoreFigures, TrialKey};
+    use crate::benchmarks::{Benchmark, Cancelled, ScoreFigures, TrialKey};
     use crate::runs::Ending;
 
     #[track_caller]
@@ -527,7 +527,7 @@ mod tests {
             ),
             (
                 key(2, 0),
-                TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
             ),
             (key(2, 1), TrialState::Running),
         ]);
