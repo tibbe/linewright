@@ -109,7 +109,7 @@ fn task_taken(name: &TaskName) -> String {
 }
 
 /// The refusal of repetitions that are not a whole number, 1 or more.
-pub(super) const REPETITIONS: &str = "The repetitions are a whole number, 1 or more.";
+pub(super) const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 
 /// The refusal of a configuration with no name, the configuration `added`
 /// after `as-is`, counting from 0. It is named by its place in the New
@@ -134,22 +134,15 @@ fn ordinal(n: usize) -> String {
     format!("{n}{suffix}")
 }
 
-/// The refusal of a configuration named `typed`, which is not in the form
-/// of a name.
-pub(super) fn configuration_misnamed(typed: &str) -> String {
-    format!("\"{typed}\" cannot name a configuration. {NOT_A_NAME}")
-}
-
-/// The refusal of configuration `name`, whose files have `errors`.
+/// The refusal of configuration `name`, whose files have `errors`, for the
+/// first of them.
 pub(super) fn configuration_unusable(name: &ConfigurationName, errors: &[FileError]) -> String {
-    let listed: Vec<String> = errors
-        .iter()
-        .map(|file| format!("{}: {}", file.path, file.error))
-        .collect();
-    format!(
-        "The configuration {name} cannot be used: {}",
-        listed.join("; ")
-    )
+    match errors.first() {
+        Some(FileError { path, error }) => {
+            format!("The configuration {name} has an error in {path}: {error}")
+        }
+        None => format!("The configuration {name} has an error."),
+    }
 }
 
 /// The status and the refusal of a benchmark run that was not launched, or
