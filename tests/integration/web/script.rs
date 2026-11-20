@@ -924,6 +924,101 @@ steps.push(click.prevented);"#,
     );
 }
 
+/// The Benchmark page's tabs, Runs open, for `applied_after_each`'s steps:
+/// `tabs()` is each tab's href, the open one marked `*`, and each panel's
+/// id, the hidden one marked `-`.
+const TABS: &str = r#"
+var tablist = element("DIV", { role: "tablist" });
+function tab(href, panel, open) {
+  const tab = element("A", { href, "aria-controls": panel, "aria-selected": String(open) });
+  tab.classList = { toggle(name, on) { tab.active = on; } };
+  tab.active = open;
+  tab.closest = (selector) =>
+    selector === "[role=tablist] a[role=tab][aria-controls]" ? tab : selector === "[role=tablist]" ? tablist : null;
+  folds[panel] = { id: panel, hidden: !open };
+  return tab;
+}
+var runs = tab("/benchmarks/board/runs?runs-page=2", "runs-panel", true);
+var tasks = tab("/benchmarks/board/tasks?runs-page=2", "tasks-panel", false);
+tablist.querySelectorAll = () => [runs, tasks];
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) =>
+  selector === "[role=tablist] a[role=tab][aria-controls]" ? [runs, tasks] : others(selector);
+function tabs() {
+  return [runs, tasks]
+    .map((tab) => {
+      const open = tab.active && tab.attributes["aria-selected"] === "true";
+      const panel = folds[tab.attributes["aria-controls"]];
+      return `${open ? "*" : ""}${tab.attributes.href} ${panel.hidden ? "-" : ""}${panel.id}`;
+    })
+    .join(", ");
+}
+"#;
+
+/// `docs/specs/design_system.md`, Tabs; `docs/specs/web/design_system.md`, A
+/// tab: a tab opens in place, its panel shown and the other's hidden, and the
+/// address becomes its with no reload; one the reader opens elsewhere is left
+/// to the browser.
+#[test_log::test(tokio::test)]
+async fn a_tab_opens_in_place_and_the_address_becomes_its() {
+    let applied = applied_after_each(&[
+        TABS,
+        r#"const opened = event(tasks, { button: 0, ctrlKey: true }); fire("click", opened); steps.push(opened.prevented); steps.push(tabs());"#,
+        r#"const click = event(tasks, { button: 0 }); fire("click", click); steps.push(click.prevented); steps.push(tabs());"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            "-",
+            "false",
+            "*/benchmarks/board/runs?runs-page=2 runs-panel, /benchmarks/board/tasks?runs-page=2 -tasks-panel",
+            "-",
+            "true",
+            "/benchmarks/board/runs?runs-page=2 -runs-panel, */benchmarks/board/tasks?runs-page=2 tasks-panel",
+            "/benchmarks/board/tasks?runs-page=2",
+        ]
+    );
+}
+
+/// `docs/specs/design_system.md`, Tabs, Links: a tab's link carries the
+/// pages a page link applied.
+#[test_log::test(tokio::test)]
+async fn a_page_link_carries_its_pages_into_the_tab_links() {
+    let applied = applied_after_each(&[
+        TABS,
+        r#"
+var link = element("A", { href: "/benchmarks/board/runs?runs-page=3&tasks-page=2", "data-stream": "/events/benchmarks/board?runs-page=3&tasks-page=2" });
+link.closest = (selector) => (selector === "nav.pages a[data-stream]" ? link : null);
+fire("click", event(link, { button: 0 }));
+steps.push(tabs());"#,
+        r#"
+link.attributes.href = "/benchmarks/board/runs";
+link.attributes["data-stream"] = "/events/benchmarks/board";
+fire("click", event(link, { button: 0 }));
+steps.push(tabs());"#,
+    ])
+    .await;
+
+    assert_eq!(
+        applied,
+        [
+            "-".to_string(),
+            "*/benchmarks/board/runs?runs-page=3&tasks-page=2 runs-panel, /benchmarks/board/tasks?runs-page=3&tasks-page=2 -tasks-panel".to_string(),
+            format!(
+                "/benchmarks/board/runs?runs-page=3&tasks-page=2 | {}",
+                restarted("/events/benchmarks/board?runs-page=3&tasks-page=2")
+            ),
+            "*/benchmarks/board/runs runs-panel, /benchmarks/board/tasks -tasks-panel".to_string(),
+            format!(
+                "/benchmarks/board/runs | {}",
+                restarted("/events/benchmarks/board")
+            ),
+        ]
+    );
+}
+
 /// `docs/specs/web/design_system.md`, Filters: a search the reader clears by
 /// its own button or by Escape, which fire `search` and no Enter, unsets its
 /// filter; a `search` the reader's Enter already applied applies nothing more.

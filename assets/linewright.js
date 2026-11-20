@@ -10,7 +10,8 @@
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen and a table's page links
  * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
- * reader opens elsewhere, fills in a capture's name for the
+ * reader opens elsewhere, opens a tab in place at its address, fills in a
+ * capture's name for the
  * run chosen and keeps that run chosen through updates, adds and removes
  * New benchmark run's configurations, opens the boxes of the files of the brief
  * they give and counts their trials, collapses and expands the navigation,
@@ -398,14 +399,26 @@
       .join("&");
   }
 
+  /** A tab: a link to its address that opens its panel in place. */
+  const TAB = "[role=tablist] a[role=tab][aria-controls]";
+
+  /** `address`'s query, with its `?`, or else nothing. */
+  const queryOf = (address) => (address.includes("?") ? address.slice(address.indexOf("?")) : "");
+
+  /** `address` without its query. */
+  const withoutQuery = (address) => address.slice(0, address.length - queryOf(address).length);
+
   /**
-   * The page's address takes `address`, and its stream restarts at
-   * `streamAt`. The stream's element is swapped out for one at `streamAt`,
-   * and htmx's cleanup of the old one ends its stream (`htmx_before_cleanup`
-   * in hx-sse.js).
+   * The page's address takes `address`, each tab link its query, and the
+   * stream restarts at `streamAt`. The stream's element is swapped out for
+   * one at `streamAt`, and htmx's cleanup of the old one ends its stream
+   * (`htmx_before_cleanup` in hx-sse.js).
    */
   function applyQuery(address, streamAt) {
     history.replaceState(null, "", address);
+    for (const tab of document.querySelectorAll(TAB)) {
+      tab.setAttribute("href", withoutQuery(tab.getAttribute("href")) + queryOf(address));
+    }
     const old = stream();
     const fresh = old.cloneNode(false);
     fresh.setAttribute("hx-sse:connect", streamAt);
@@ -430,6 +443,30 @@
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     applyQuery(link.getAttribute("href"), link.getAttribute("data-stream"));
+  });
+
+  /**
+   * Opens `tab`, a link to a tab's address (docs/specs/design_system.md,
+   * Tabs): its panel shows in place of the others and the page's address
+   * becomes its, with no reload, so the stream and what the reader opened
+   * stay.
+   */
+  function openTab(tab) {
+    for (const other of tab.closest("[role=tablist]").querySelectorAll(TAB)) {
+      const open = other === tab;
+      other.classList.toggle("tab-active", open);
+      other.setAttribute("aria-selected", String(open));
+      document.getElementById(other.getAttribute("aria-controls")).hidden = !open;
+    }
+    history.replaceState(null, "", tab.getAttribute("href"));
+  }
+
+  document.addEventListener("click", (event) => {
+    const tab = event.target?.closest?.(TAB);
+    if (!tab || event.button !== 0) return;
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openTab(tab);
   });
 
   /**

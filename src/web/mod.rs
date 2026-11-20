@@ -26,6 +26,7 @@ mod shell;
 mod table;
 mod write;
 
+use benchmark_page::BenchmarkTab;
 use buttons::ScreenButton;
 use shell::{Frame, Missing, Navigation, Place, Thing};
 
@@ -130,10 +131,17 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(benchmark_page::benchmark_page).post(benchmark_page::add_task),
         )
         .route(
-            "/benchmarks/{name}/remove-task",
-            post(benchmark_page::remove_task),
+            "/benchmarks/{name}/{tab}",
+            get(benchmark_page::benchmark_tab_page),
         )
-        .route("/benchmarks/{name}/launch", post(launch::launch))
+        .route(
+            "/benchmarks/{name}/remove-task",
+            get(no_such_page).post(benchmark_page::remove_task),
+        )
+        .route(
+            "/benchmarks/{name}/launch",
+            get(no_such_page).post(launch::launch),
+        )
         .route(
             "/events/benchmarks/{name}",
             get(benchmark_page::benchmark_events),
@@ -168,7 +176,7 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         .route(Navigation::PATH, post(shell::remember_navigation))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))
-        .fallback(|| async { (StatusCode::NOT_FOUND, "no such page") })
+        .fallback(no_such_page)
         .layer(middleware::from_fn_with_state(hosts, misdirected))
         .layer(Extension(stopping))
         .with_state(sources)
@@ -419,6 +427,17 @@ fn benchmark_run_path(id: BenchmarkRunId) -> String {
 /// The path of benchmark `name`'s page.
 fn benchmark_path(name: &BenchmarkName) -> String {
     format!("/benchmarks/{name}")
+}
+
+/// The path of tab `tab` of benchmark `name`'s page
+/// (`docs/specs/web/design_system.md`, A tab).
+fn benchmark_tab_path(name: &BenchmarkName, tab: BenchmarkTab) -> String {
+    format!("{}/{}", benchmark_path(name), tab.segment())
+}
+
+/// The answer to a path that is no page's.
+async fn no_such_page() -> Response {
+    (StatusCode::NOT_FOUND, "no such page").into_response()
 }
 
 /// `path` with `query`, if there is one.
