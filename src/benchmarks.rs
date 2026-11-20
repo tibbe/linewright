@@ -13,7 +13,7 @@ pub use answers::{
 };
 pub use runs::{
     BENCHMARK_RUNS, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns,
-    CancelRefusal, ConfigurationName, LaunchRefusal, NoScore, Repetitions, ScoreFigures,
+    CancelRefusal, Cancelled, ConfigurationName, LaunchRefusal, NoScore, Repetitions, ScoreFigures,
     TrialChange, TrialEnd, TrialFigures, TrialKey, TrialRef, TrialState,
 };
 pub use trial_shown::TrialShown;

@@ -15,7 +15,7 @@ use std::time::Duration;
 use common::*;
 use linewright::api::Sources;
 use linewright::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, Cancelled,
     ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
 };
 use linewright::clock::Clock as _;
@@ -450,7 +450,7 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
     assert!(
         matches!(
             &record.trials[&key(0, 0)],
-            TrialState::Ended(TrialEnd::Cancelled { run: Some(run) })
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(run)))
                 if run.outcome == OutcomeName::Ended(Ending::Cancelled)
         ),
         "the cancel keeps the run it stopped: {:?}",
