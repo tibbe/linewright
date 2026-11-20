@@ -189,7 +189,7 @@ fn numbered_lines(to: u32) -> String {
     1,
     Some(hand_back_of(
         HandBackKind::Stall,
-        "The session's result still could not be used after 1 follow-up(s).\n\nAnswer with JSON.",
+        "The session ended unexpectedly: its result was not accepted: Answer with JSON.",
         Some(log(Logged::Session, "I think it's a bug.")),
     ))
 )]
@@ -198,7 +198,7 @@ fn numbered_lines(to: u32) -> String {
     0,
     Some(hand_back_of(
         HandBackKind::Stall,
-        "The session's result still could not be used after 0 follow-up(s).\n\nAnswer with JSON.",
+        "The session ended unexpectedly: its result was not accepted: Answer with JSON.",
         Some(log(Logged::Session, "I think it's a bug.")),
     ))
 )]
@@ -212,7 +212,11 @@ fn a_result_sent_back(
         follow_ups.send_back(result_retries, "Answer with JSON.", "Done.\n");
     }
 
-    let sent = follow_ups.send_back(result_retries, "Answer with JSON.", "I think it's a bug.\n");
+    let sent = follow_ups.send_back(
+        result_retries,
+        "Answer with JSON.\n",
+        "I think it's a bug.\n",
+    );
 
     let handed_back = match sent {
         SendBack::Retry => None,
@@ -549,41 +553,45 @@ fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
 #[rstest]
 #[case::a_stages_setting(
     TimeoutSetting::Stage(StageKey::Work(WorkKind::Implement)),
+    30 * 60,
     Some(log(Logged::Session, "Still reading the spec.")),
     hand_back_of(
         HandBackKind::Stall,
-        "The session ended unexpectedly: it timed out. The work may need cutting smaller, or \
-         `session-timeout` in `[stage.implement]` may need to be longer.",
+        "The session ended unexpectedly: it timed out after 30m. The work may need cutting \
+         smaller, or `session-timeout` in `[stage.implement]` may need to be longer.",
         Some(log(Logged::Session, "Still reading the spec.")),
     )
 )]
 #[case::the_pipelines_setting_in_maintenance(
     TimeoutSetting::Pipeline,
+    90 * 60 + 15,
     Some(log(Logged::Maintenance, "npm install")),
     hand_back_of(
         HandBackKind::Stall,
-        "The session ended unexpectedly: it timed out. The work may need cutting smaller, or \
-         `session-timeout` may need to be longer.",
+        "The session ended unexpectedly: it timed out after 1h 30m. The work may need cutting \
+         smaller, or `session-timeout` may need to be longer.",
         Some(log(Logged::Maintenance, "npm install")),
     )
 )]
 #[case::an_automations_setting_with_no_log(
     TimeoutSetting::Automation,
+    45,
     None,
     hand_back_of(
         HandBackKind::Stall,
-        "The session ended unexpectedly: it timed out. The work may need cutting smaller, or \
-         `session-timeout` in the automation's front matter may need to be longer.",
+        "The session ended unexpectedly: it timed out after 45s. The work may need cutting \
+         smaller, or `session-timeout` in the automation's front matter may need to be longer.",
         None,
     )
 )]
-fn a_timed_out_session_stalls(
+fn a_timed_out_session_stalls_saying_after_how_long(
     #[case] setting: TimeoutSetting,
+    #[case] seconds: u64,
     #[case] log_tail: Option<LogTail>,
     #[case] expected: HandBack,
 ) {
     let end = UnexpectedEnd::TimedOut {
-        after: std::time::Duration::from_mins(30),
+        after: std::time::Duration::from_secs(seconds),
         setting,
     };
 
@@ -591,55 +599,76 @@ fn a_timed_out_session_stalls(
 }
 
 #[rstest]
-#[case::with_its_log(
-    "Out of memory.\n",
-    hand_back_of(
-        HandBackKind::Stall,
-        "The session ended unexpectedly: it crashed",
-        Some(log(Logged::Session, "Out of memory.")),
-    )
+#[case::its_result_not_accepted(
+    UnexpectedEnd::NotAccepted {
+        why: "Answer with JSON.".into(),
+    },
+    "The session ended unexpectedly: its result was not accepted: Answer with JSON."
 )]
-#[case::with_no_log(
-    "",
-    hand_back_of(
-        HandBackKind::Stall,
-        "The session ended unexpectedly: it crashed",
-        None
-    )
+#[case::its_result_not_accepted_for_a_why_with_no_full_stop(
+    UnexpectedEnd::NotAccepted {
+        why: "the result is not JSON".into(),
+    },
+    "The session ended unexpectedly: its result was not accepted: the result is not JSON."
 )]
-fn a_session_that_ended_unexpectedly_stalls(#[case] session_log: &str, #[case] expected: HandBack) {
+#[case::its_result_not_accepted_for_a_why_ending_a_block_of_code(
+    UnexpectedEnd::NotAccepted {
+        why: "Answer with:\n\n```json\n{}\n```".into(),
+    },
+    "The session ended unexpectedly: its result was not accepted: Answer with:\n\n```json\n{}\n```"
+)]
+#[case::its_infrastructure_failing(
+    UnexpectedEnd::Infrastructure {
+        error: "cloning: connection reset".into(),
+    },
+    "The session ended unexpectedly: it failed on its infrastructure: cloning: connection reset."
+)]
+#[case::the_harness_ending_it_with_an_error(
+    UnexpectedEnd::HarnessError {
+        kind: "error_max_turns".into(),
+    },
+    "The session ended unexpectedly: the harness ended it with `error_max_turns`."
+)]
+#[case::the_harness_stopping_without_a_result(
+    UnexpectedEnd::NoResult,
+    "The session ended unexpectedly: the harness stopped without a result."
+)]
+fn a_session_that_ended_unexpectedly_stalls_saying_why(
+    #[case] end: UnexpectedEnd,
+    #[case] reason: &str,
+) {
     let ended = Ended {
-        end: UnexpectedEnd::NoResult {
-            why: "it crashed".into(),
-        },
-        log_tail: LogTail::session(session_log),
+        end,
+        log_tail: LogTail::session("Out of memory.\n"),
     };
 
-    assert_eq!(unexpected(ended, ""), expected);
+    assert_eq!(
+        unexpected(ended, ""),
+        hand_back_of(
+            HandBackKind::Stall,
+            reason,
+            Some(log(Logged::Session, "Out of memory."))
+        )
+    );
 }
 
-#[rstest]
-#[case::with_the_errors_causes(
-    "",
-    "The run failed twice on its infrastructure: cloning: connection reset"
-)]
-#[case::with_a_note(
-    "\n\nThe work so far is on the branch `7-gadgets`.",
-    "The run failed twice on its infrastructure: cloning: connection reset\n\n\
-     The work so far is on the branch `7-gadgets`."
-)]
-fn a_run_that_failed_twice_on_its_infrastructure_stalls(#[case] note: &str, #[case] reason: &str) {
-    let error = anyhow::anyhow!("connection reset").context("cloning");
+#[test_log::test]
+fn the_note_follows_the_reason_of_an_unexpected_end() {
     let ended = Ended {
         end: UnexpectedEnd::Infrastructure {
-            error: format!("{error:#}"),
+            error: "cloning: connection reset".into(),
         },
         log_tail: None,
     };
 
     assert_eq!(
-        unexpected(ended, note),
-        hand_back_of(HandBackKind::Stall, reason, None)
+        unexpected(ended, "\n\nThe work so far is on the branch `7-gadgets`."),
+        hand_back_of(
+            HandBackKind::Stall,
+            "The session ended unexpectedly: it failed on its infrastructure: cloning: \
+             connection reset.\n\nThe work so far is on the branch `7-gadgets`.",
+            None
+        )
     );
 }
 

@@ -692,13 +692,15 @@ async fn take_turn(
                 result,
                 log_tail,
             }) => {
-                return Err(ended(
-                    UnexpectedEnd::HarnessError { kind, result },
-                    &log_tail,
-                ));
+                warn!(
+                    subject,
+                    kind, result, "the harness ended the session with an error"
+                );
+                return Err(ended(UnexpectedEnd::HarnessError { kind }, &log_tail));
             }
             Err(SessionError::NoResult { why, log_tail }) => {
-                return Err(ended(UnexpectedEnd::NoResult { why }, &log_tail));
+                warn!(subject, why, "the harness stopped without a result");
+                return Err(ended(UnexpectedEnd::NoResult, &log_tail));
             }
         };
         let _ = sessions.report_refusal.send(limit);

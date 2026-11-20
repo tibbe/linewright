@@ -777,7 +777,7 @@ async fn a_copy_of_the_environment_that_fails_is_an_infrastructure_failure() {
     let issue = world.issue(ticket);
     let comment = last_comment(&issue);
     assert!(
-        comment.contains("The run failed twice on its infrastructure"),
+        comment.contains("it failed on its infrastructure: "),
         "{comment}"
     );
 }

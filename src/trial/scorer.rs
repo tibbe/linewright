@@ -27,7 +27,7 @@ use crate::results::{self, Correctness, Leak, ScorerResult};
 use crate::run::RunWith;
 use crate::runs::{
     Ending, OutcomeName, Ran, Recorded, RunId, SessionEntry, SessionKept, SessionReports, Started,
-    State,
+    State, UnexpectedEnd,
 };
 use crate::session::{
     self, Beside, Cancellation, Ended, Failure, RecordsSessions, SessionCtx, Sessions, converse,
@@ -520,38 +520,37 @@ impl Score {
     }
 }
 
-/// Why a scorer made no score.
+/// Why a scorer made no score: one variant for each row of
+/// `docs/specs/benchmarks.md`, Scoring, "A scorer that makes no score", but
+/// the signal, which ends the command before it has one, and `Failed` for
+/// the causes the table leaves out. `Display` gives the row's words.
 #[derive(Debug)]
 pub enum Unscored {
-    GaveUp(String),
-    /// Its session ended unexpectedly.
-    Ended(Ended),
     UsageLimit {
         resets_at: Timestamp,
     },
+    GaveUp(String),
+    /// Its session ended unexpectedly.
+    Ended(Ended),
     Failed(anyhow::Error),
 }
 
 impl fmt::Display for Unscored {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Unscored::GaveUp(reason) => write!(f, "the scorer gave up: {reason}"),
+            Unscored::UsageLimit { resets_at } => write!(
+                f,
+                "The scorer's session reached the usage limit, which resets at {resets_at}."
+            ),
+            Unscored::GaveUp(reason) => write!(f, "The scorer gave up: {reason}"),
             Unscored::Ended(Ended { end, log_tail }) => {
-                write!(
-                    f,
-                    "the scorer's session ended without a score: {}",
-                    hand_back::ended_reason(end)
-                )?;
+                write!(f, "The scorer's session ended without a score: {end}")?;
                 match log_tail {
                     Some(tail) => write!(f, "\n\n{}", tail.text()),
                     None => Ok(()),
                 }
             }
-            Unscored::UsageLimit { resets_at } => write!(
-                f,
-                "the scorer's session reached the usage limit, which resets at {resets_at}"
-            ),
-            Unscored::Failed(error) => write!(f, "the scorer could not score: {error:#}"),
+            Unscored::Failed(error) => write!(f, "The scorer could not score: {error:#}"),
         }
     }
 }
@@ -717,6 +716,11 @@ async fn scorer_in(
                     "the scorer's session failed on its infrastructure; retrying once"
                 );
                 record.restart().map_err(Unscored::Failed)?;
+            }
+            Err(Failure::Infrastructure { error, .. }) => {
+                let error = config.secrets.redaction().apply(&format!("{error:#}"));
+                let end = UnexpectedEnd::Infrastructure { error };
+                return Err(Unscored::Ended(Ended::without_log(end)));
             }
             ended => break ended?,
         }

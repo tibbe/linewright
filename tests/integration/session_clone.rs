@@ -98,7 +98,7 @@ async fn a_clone_that_cannot_be_made_twice_hands_the_item_back_from_a_run_with_a
     assert!(labels(&issue).contains(&"ready-for-human"));
     let comment = last_comment(&issue);
     assert!(
-        comment.contains("The run failed twice on its infrastructure"),
+        comment.contains("it failed on its infrastructure: "),
         "{comment}"
     );
 }
@@ -128,7 +128,7 @@ async fn a_fetch_into_the_copy_of_the_environment_that_fails_twice_hands_the_ite
     let issue = world.issue(ticket);
     let comment = last_comment(&issue);
     assert!(
-        comment.contains("The run failed twice on its infrastructure"),
+        comment.contains("it failed on its infrastructure: "),
         "{comment}"
     );
 }
@@ -155,7 +155,7 @@ async fn a_clone_still_being_made_at_its_sessions_deadline_is_the_session_timing
     let comment = last_comment(&issue);
     assert!(
         comment.contains(
-            "The session ended unexpectedly: it timed out. The work may need cutting \
+            "The session ended unexpectedly: it timed out after 1s. The work may need cutting \
              smaller, or `session-timeout` may need to be longer."
         ),
         "{comment}"

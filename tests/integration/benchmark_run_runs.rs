@@ -16,7 +16,7 @@ use common::*;
 use linewright::api::Sources;
 use linewright::benchmarks::{
     BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks,
-    ConfigurationName, TrialEnd, TrialKey, TrialState,
+    ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
 };
 use linewright::clock::Clock as _;
 use linewright::ending::Ends;
@@ -222,6 +222,35 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
             shown.stdout
         );
     }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_trial_whose_scorer_makes_no_score_keeps_why_as_lw_score_says_it() {
+    let (world, work_dir) = with_benchmark(1).await;
+    world.harness.on_scorer(|_| {
+        Ok(json!({"outcome": "gave-up", "reason": "The output is empty."}).to_string())
+    });
+    let repo = work_dir.path().join(REPO);
+    let (benchmark_runs, id) = launch(&repo, vec![], 1).await;
+
+    let serving = serve(world.factory);
+    let record = rests(&benchmark_runs, id, |record| {
+        matches!(record.state, BenchmarkRunState::Ended { at: Some(_) })
+    })
+    .await;
+    serving.stop().await;
+
+    let whys: Vec<_> = record
+        .trials
+        .values()
+        .map(|trial| {
+            let TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer { why, .. })) = trial else {
+                panic!("expected no score from the scorer, got {trial:?}");
+            };
+            why.as_str()
+        })
+        .collect();
+    assert_eq!(whys, vec!["The scorer gave up: The output is empty."; 2]);
 }
 
 /// Holds the first triage session open until the gate releases it, then

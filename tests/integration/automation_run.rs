@@ -227,7 +227,10 @@ async fn a_session_that_fails_fails_the_run() {
             .unwrap_err()
     );
 
-    assert!(error.contains("it crashed"), "{error}");
+    assert!(
+        error.contains("The session ended unexpectedly: the harness stopped without a result."),
+        "{error}"
+    );
 }
 
 #[test_log::test(tokio::test)]
