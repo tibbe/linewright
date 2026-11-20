@@ -16,8 +16,8 @@ use super::benchmark_page::benchmark_for_making;
 use super::benchmark_runs;
 use super::html::{self, Html};
 use super::making::{
-    Answer, Making, NOT_A_NAME, REPETITIONS, configuration_unnamed, configuration_unusable,
-    launch_refused,
+    Answer, MadeShown, Making, NOT_A_NAME, REPETITIONS, configuration_unnamed,
+    configuration_unusable, launch_refused,
 };
 use super::write::Write;
 use crate::api::Sources;
@@ -444,7 +444,10 @@ pub(super) async fn launch(
             sources.benchmark_runs.changed();
             info!(benchmark_run = %launched.id, benchmark = %benchmark, trials = launched.trials, "launched a benchmark run");
             form.making = Making::blank();
-            Answer::Made { blank: form }
+            Answer::Made {
+                blank: form,
+                shown: MadeShown::OnScreen,
+            }
         }
         Err(refusal) => {
             if let LaunchRefusal::Failed(e) = &refusal {

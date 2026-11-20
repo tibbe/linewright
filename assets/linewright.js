@@ -5,8 +5,9 @@
  * entry while the reader is there, opens and closes fold rows by their
  * buttons, keeps each fold, fold row and confirmation as the reader opened or
  * closed it through updates, closes a confirmation as it goes ahead and a
- * "New" dialog once its thing is made, starts a "New" dialog's form afresh as
- * it closes but for the regions of the stream it holds,
+ * dialog that makes a thing once it is made, starts such a dialog's form
+ * afresh as it closes, as the answer to the last thing made started it, but
+ * for the regions of the stream it holds,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen and a table's page links
  * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
@@ -164,22 +165,13 @@
   /**
    * Closes a confirmation as the reader goes ahead
    * (docs/specs/design_system.md, Confirming), so that it sends its request
-   * once. A dialog whose form answers within it, such as the capture's
-   * (docs/specs/runs.md, Run, Capturing), stays open to show the answer.
+   * once.
    */
   document.addEventListener("submit", (event) => {
     const form = event.target;
     if (form.method === "dialog" || isNewForm(form)) return;
-    const dialog = form.closest?.("dialog");
-    if (answersWithin(form, dialog)) return;
-    dialog?.close();
+    form.closest?.("dialog")?.close();
   });
-
-  /** Whether `form` puts its answer in `dialog`. */
-  const answersWithin = (form, dialog) => {
-    const target = form.getAttribute?.("hx-target");
-    return Boolean(target && dialog?.querySelector?.(target));
-  };
 
   /**
    * Keeps the run a capture sent chosen, as the reader chose it, through the
@@ -192,18 +184,22 @@
   });
 
   /**
-   * Whether `form` is a "New" dialog's (docs/specs/design_system.md, Making),
-   * which answers into itself and stays open on a refusal.
+   * Whether `form` is a dialog's that makes a thing
+   * (docs/specs/design_system.md, Making), which answers into itself and
+   * stays open on a refusal.
    */
   const isNewForm = (form) => form.hasAttribute?.("data-new") ?? false;
 
-  /** What each "New" dialog's form holds as it starts, by form. */
+  /**
+   * What each making dialog's form holds as it starts, by form: as the page
+   * drew it, until a thing is made, and then as the answer to it started it.
+   */
   const blanks = new Map(
     Array.from(document.querySelectorAll("dialog form[data-new]"), (form) => [form, form.innerHTML]),
   );
 
   /**
-   * Starts the form of `dialog`, if it is a "New" dialog's, as it starts,
+   * Starts the form of `dialog`, if it is a making dialog's, as it starts,
    * but for the regions of the page's stream it holds, which stay as the
    * stream last sent them (docs/specs/benchmarks.md, New task): its run is
    * chosen as it starts, the first, with the name suggested for it.
@@ -221,11 +217,18 @@
     }
   }
 
-  /** Closes a "New" dialog once its thing is made. */
-  document.addEventListener("made", (event) => event.target?.closest?.("dialog")?.close());
+  /**
+   * Closes a making dialog once its thing is made, its form starting from
+   * then as the answer, swapped in before htmx sends `made`, started it.
+   */
+  document.addEventListener("made", (event) => {
+    const form = event.target;
+    if (blanks.has(form)) blanks.set(form, form.innerHTML);
+    form?.closest?.("dialog")?.close();
+  });
 
   /**
-   * Starts a "New" dialog's form afresh as the dialog closes, however it
+   * Starts a making dialog's form afresh as the dialog closes, however it
    * closes, and as it opens, after any answer that came once it had closed.
    * `close` does not bubble:
    * https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element
