@@ -17,13 +17,13 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use chrono::TimeDelta;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::{error, info, warn};
 
 use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
-use crate::cost::{RunCost, Usd};
+use crate::cost::{RunCost, Spend, Usd};
 use crate::domain::{Item, Scope};
 use crate::ending::Signal;
 use crate::environment::trials::{self, BuildLog};
@@ -138,6 +138,43 @@ struct TrialCost {
     seconds: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     run: Option<RunCost>,
+}
+
+/// What a trial spent, as its output in `dir` kept it once the trial ended;
+/// `None`, which it logs, when that does not read, such as after a hard kill.
+pub fn kept_spent(dir: &Path) -> Option<Spent> {
+    /// The parts of [`TrialCost`] that [`Spent`] holds.
+    #[derive(Deserialize)]
+    struct KeptCost {
+        seconds: f64,
+        run: Option<KeptRunCost>,
+    }
+    /// The part of [`RunCost`] that [`Spent`] holds.
+    #[derive(Deserialize)]
+    struct KeptRunCost {
+        all: Option<Spend>,
+    }
+    let path = dir.join(COST);
+    let kept = std::fs::read_to_string(&path)
+        .map_err(anyhow::Error::from)
+        .and_then(|text| Ok(serde_json::from_str::<KeptCost>(&text)?))
+        .and_then(|kept| {
+            Ok(Spent {
+                time: std::time::Duration::try_from_secs_f64(kept.seconds)?,
+                money: kept.run.and_then(|run| run.all).and_then(|all| all.usd),
+            })
+        });
+    match kept {
+        Ok(spent) => Some(spent),
+        Err(e) => {
+            warn!(
+                error = format!("{e:#}"),
+                path = %path.display(),
+                "reading what a trial spent failed"
+            );
+            None
+        }
+    }
 }
 
 /// Why a directory cannot take a trial's output.

@@ -389,6 +389,10 @@ async fn a_trial_keeps_its_time_and_what_its_run_cost() {
         cost,
         json!({"run": {"models": {"claude-opus-5-5": spent}, "all": spent}})
     );
+    assert_eq!(
+        trial::kept_spent(&ran_trial.out).map(|kept| kept.money),
+        Some(Usd::new(1.25))
+    );
 }
 
 #[test_log::test(tokio::test)]

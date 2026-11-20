@@ -18,10 +18,10 @@ use crate::cost::Usd;
 use crate::database::{self, Database};
 use crate::domain::Timestamp;
 use crate::results::Verdict;
-use crate::runs::{Ending, OutcomeName};
+use crate::runs::{Ending, OutcomeName, Unended};
 use crate::task::{self, TaskName};
 use crate::tree;
-use crate::trial::Configuration;
+use crate::trial::{self, Configuration};
 
 /// A benchmark run's ID: a positive number, given at its launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -225,24 +225,32 @@ pub enum TrialEnd {
 /// A trial its benchmark run's cancel ended: no score and no reason.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Cancelled {
-    /// With no figures of its run: its run had not started, or left none.
+    /// Before its run started.
     BeforeRun,
-    /// With the figures of its run, which had ended or which the cancel
-    /// stopped, and before its scorer made a score.
+    /// The cancel stopped its run, with what that run spent until it
+    /// stopped. Its outcome is never done or handed back.
+    RunStopped(TrialFigures),
+    /// Its run ended, to be scored, and the cancel came before its scorer
+    /// made a score.
     AfterRun(TrialFigures),
 }
 
 impl Cancelled {
-    /// A cancelled trial with the figures of its run, `run`, if it has them.
-    pub fn of(run: Option<TrialFigures>) -> Cancelled {
-        run.map_or(Cancelled::BeforeRun, Cancelled::AfterRun)
+    /// A cancelled trial whose run ended with `run`: after its run when
+    /// that run is to be scored, and stopped by the cancel otherwise.
+    pub fn of_run(run: TrialFigures) -> Cancelled {
+        if run.scoreable() {
+            Cancelled::AfterRun(run)
+        } else {
+            Cancelled::RunStopped(run)
+        }
     }
 
     /// The figures of its run, if it has them.
     pub fn run(&self) -> Option<&TrialFigures> {
         match self {
             Cancelled::BeforeRun => None,
-            Cancelled::AfterRun(run) => Some(run),
+            Cancelled::RunStopped(run) | Cancelled::AfterRun(run) => Some(run),
         }
     }
 }
@@ -402,8 +410,9 @@ pub enum TrialChange {
         why: String,
         scorer_money: Option<Usd>,
     },
-    /// Not ended, its benchmark run is cancelled, with the figures of the
-    /// run the cancel stopped, if it stopped one.
+    /// Not ended, its benchmark run is cancelled. Of a running trial, with
+    /// the figures of the run the cancel stopped: without them, its run
+    /// stopped with no money and no time.
     Cancelled { stopped: Option<TrialFigures> },
 }
 
@@ -704,7 +713,8 @@ impl BenchmarkRuns {
     /// Turns each trial a stop left running back into pending, and each
     /// left scoring back into ran, so that they start again. Of a
     /// benchmark run no longer open, such as one cancelled as it stopped, they
-    /// end as cancelled instead.
+    /// end as cancelled instead, a running one with what its output kept of
+    /// its cost.
     pub async fn interrupted(&self) -> Result<()> {
         let interrupting = async {
             let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
@@ -719,8 +729,16 @@ impl BenchmarkRuns {
             .execute(&mut *tx)
             .await?;
             let left = sqlx::query(
-                "SELECT trials.* FROM trials
+                "SELECT trials.*, benchmark_run_tasks.name AS task_name,
+                     benchmark_run_configurations.name AS configuration_name
+                 FROM trials
                  JOIN benchmark_runs ON benchmark_runs.id = trials.benchmark_run
+                 JOIN benchmark_run_tasks
+                     ON benchmark_run_tasks.benchmark_run = trials.benchmark_run
+                     AND benchmark_run_tasks.seq = trials.task_seq
+                 JOIN benchmark_run_configurations
+                     ON benchmark_run_configurations.benchmark_run = trials.benchmark_run
+                     AND benchmark_run_configurations.seq = trials.configuration_seq
                  WHERE trials.state IN ('running', 'scoring') AND benchmark_runs.state != 'open'",
             )
             .fetch_all(&mut *tx)
@@ -728,11 +746,22 @@ impl BenchmarkRuns {
             for row in &left {
                 let benchmark_run = BenchmarkRunId::from_row(row.try_get("benchmark_run")?)?;
                 let (key, state) = decode(row)?;
+                let stopped = if state == TrialState::Running {
+                    let output = self.output_dir(
+                        benchmark_run,
+                        &parsed(&row.try_get::<String, _>("configuration_name")?)?,
+                        &parsed(&row.try_get::<String, _>("task_name")?)?,
+                        key.repetition,
+                    );
+                    Some(interrupted_run(trial::kept_spent(&output)))
+                } else {
+                    None
+                };
                 write_trial(
                     &mut tx,
                     benchmark_run,
                     &key,
-                    &state.changed(TrialChange::Cancelled { stopped: None })?,
+                    &state.changed(TrialChange::Cancelled { stopped })?,
                 )
                 .await?;
             }
@@ -879,7 +908,9 @@ impl TrialState {
                 TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
             }
             (TrialState::Running, TrialChange::Cancelled { stopped }) => {
-                TrialState::Ended(TrialEnd::Cancelled(Cancelled::of(stopped)))
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::of_run(
+                    stopped.unwrap_or_else(|| interrupted_run(None)),
+                )))
             }
             (
                 TrialState::Ran { run } | TrialState::Scoring { run },
@@ -890,6 +921,16 @@ impl TrialState {
                 Columns::of(&state).state
             ),
         })
+    }
+}
+
+/// The figures of a run a stop interrupted, which spent `spent`; with no
+/// money and no time when what it spent is not known.
+fn interrupted_run(spent: Option<trial::Spent>) -> TrialFigures {
+    TrialFigures {
+        outcome: OutcomeName::Unended(Unended::Interrupted),
+        money: spent.and_then(|spent| spent.money),
+        time: spent.map_or(Duration::ZERO, |spent| spent.time),
     }
 }
 
@@ -1198,9 +1239,9 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
             })
         }
         "unscored" => match (unscored.as_deref(), reason, trial) {
-            (Some("cancelled"), None, run) => {
-                TrialState::Ended(TrialEnd::Cancelled(Cancelled::of(run)))
-            }
+            (Some("cancelled"), None, run) => TrialState::Ended(TrialEnd::Cancelled(
+                run.map_or(Cancelled::BeforeRun, Cancelled::of_run),
+            )),
             (Some(cause), reason, Some(run)) => {
                 TrialState::Ended(TrialEnd::Unscored(match (cause, reason) {
                     ("outcome", None) => NoScore::Outcome(run),
@@ -1568,47 +1609,51 @@ mod tests {
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(figures(
                 Ending::Cancelled
             ))))
         );
     }
 
     /// A kept cancelled row is `unscored = 'cancelled'`, with its run's
-    /// figures when it has them.
+    /// figures when it has them, whose outcome tells a run that ended from one
+    /// the cancel stopped.
     #[test_log::test(tokio::test)]
-    async fn kept_cancelled_trials_read_as_cancelled_before_or_after_their_run() {
+    async fn kept_cancelled_trials_read_as_cancelled_before_their_run_after_it_or_stopping_it() {
         let work_dir = tempfile::tempdir().unwrap();
         let (benchmark_runs, id) = launched(work_dir.path()).await;
-        for (task, run) in [(0, Some(("done", 0.25, 12.5))), (1, None)] {
+        let cases = [
+            (
+                Some(("done", 0.25, 12.5)),
+                Cancelled::AfterRun(figures(Ending::Done)),
+            ),
+            (
+                Some(("cancelled", 0.25, 12.5)),
+                Cancelled::RunStopped(figures(Ending::Cancelled)),
+            ),
+            (None, Cancelled::BeforeRun),
+        ];
+
+        for (run, cancelled) in cases {
             sqlx::query(
                 "UPDATE trials SET state = 'unscored', unscored = 'cancelled',
                      outcome = ?, money = ?, seconds = ?
-                 WHERE benchmark_run = ? AND task_seq = ?",
+                 WHERE benchmark_run = ? AND task_seq = 0",
             )
             .bind(run.map(|(outcome, ..)| outcome))
             .bind(run.map(|(_, money, _)| money))
             .bind(run.map(|(.., seconds)| seconds))
             .bind(id.0)
-            .bind(task)
             .execute(benchmark_runs.db.pool())
             .await
             .unwrap();
+
+            assert_eq!(
+                state_of(&benchmark_runs, trial(id, 0)).await.1,
+                TrialState::Ended(TrialEnd::Cancelled(cancelled)),
+                "{run:?}"
+            );
         }
-
-        let after = state_of(&benchmark_runs, trial(id, 0)).await.1;
-        let before = state_of(&benchmark_runs, trial(id, 1)).await.1;
-
-        assert_eq!(
-            after,
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
-                Ending::Done
-            ))))
-        );
-        assert_eq!(
-            before,
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
-        );
     }
 
     #[test_log::test(tokio::test)]
@@ -1667,6 +1712,9 @@ mod tests {
         );
     }
 
+    /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a run
+    /// that a stop left in flight, of a benchmark run cancelled while `serve`
+    /// was down, stopped and keeps what its output says it cost.
     #[test_log::test(tokio::test)]
     async fn the_trials_a_stop_interrupted_of_a_cancelled_benchmark_run_end_cancelled() {
         let work_dir = tempfile::tempdir().unwrap();
@@ -1682,6 +1730,18 @@ mod tests {
             ],
         )
         .await;
+        let output = benchmark_runs.output_dir(
+            id,
+            &ConfigurationName::as_is(),
+            &"columns".parse().unwrap(),
+            NonZeroU32::MIN,
+        );
+        std::fs::create_dir_all(&output).unwrap();
+        std::fs::write(
+            output.join("cost.json"),
+            r#"{"seconds": 12.5, "run": {"seconds": 10, "models": {}, "all": {"usd": 0.25}}}"#,
+        )
+        .unwrap();
         benchmark_runs.cancel(id, later()).await.unwrap();
 
         benchmark_runs.interrupted().await.unwrap();
@@ -1690,7 +1750,11 @@ mod tests {
             state_of(&benchmark_runs, trial(id, 0)).await,
             (
                 BenchmarkRunState::Cancelled { at: Some(later()) },
-                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(TrialFigures {
+                    outcome: OutcomeName::Unended(Unended::Interrupted),
+                    money: Usd::new(0.25),
+                    time: Duration::from_millis(12_500),
+                })))
             )
         );
         assert_eq!(
@@ -1698,6 +1762,26 @@ mod tests {
             TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
                 Ending::Done
             ))))
+        );
+    }
+
+    /// Without a cost its output kept, a stopped run has no money and no time.
+    #[test_log::test(tokio::test)]
+    async fn a_trial_a_stop_interrupted_of_a_cancelled_benchmark_run_with_no_kept_cost_has_none() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (benchmark_runs, id) = launched(work_dir.path()).await;
+        steps(&benchmark_runs, trial(id, 0), vec![TrialChange::RunStarts]).await;
+        benchmark_runs.cancel(id, later()).await.unwrap();
+
+        benchmark_runs.interrupted().await.unwrap();
+
+        assert_eq!(
+            state_of(&benchmark_runs, trial(id, 0)).await.1,
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(TrialFigures {
+                outcome: OutcomeName::Unended(Unended::Interrupted),
+                money: None,
+                time: Duration::ZERO,
+            })))
         );
     }
 

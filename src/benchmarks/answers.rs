@@ -529,7 +529,21 @@ mod tests {
                 key(2, 0),
                 TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
             ),
-            (key(2, 1), TrialState::Running),
+            (
+                key(2, 1),
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(trial(
+                    Ending::Cancelled,
+                    Some(0.04),
+                    15,
+                )))),
+            ),
+            (
+                TrialKey {
+                    repetition: NonZeroU32::new(2).unwrap(),
+                    ..key(2, 1)
+                },
+                TrialState::Running,
+            ),
         ]);
         let record = BenchmarkRunRecord {
             id: "7".parse().unwrap(),
@@ -538,7 +552,7 @@ mod tests {
                 stage: TaskStage::Design,
             },
             launched_at: "2026-11-17T12:00:00Z".parse().unwrap(),
-            repetitions: NonZeroU32::MIN,
+            repetitions: NonZeroU32::new(2).unwrap(),
             state: BenchmarkRunState::Cancelled {
                 at: Some("2026-11-17T12:30:00Z".parse().unwrap()),
             },
@@ -566,9 +580,9 @@ mod tests {
              launched: 2026-11-17 12:00:00 UTC\n\
              ended: 2026-11-17 12:30:00 UTC\n\
              state: cancelled\n\
-             repetitions: 1\n\
-             trials ended: 4 of 6\n\
-             cost: $0.66, 1 without a cost\n\
+             repetitions: 2\n\
+             trials ended: 5 of 7\n\
+             cost: $0.70, 1 without a cost\n\
              scorers' cost: $0.06, 1 without a cost\n\
              configuration as-is:\n  \
                pass rate: 100%\n  \
@@ -623,7 +637,8 @@ mod tests {
              trial as-is/lanes/1: scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
              trial short/lanes/1: no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
              trial as-is/rows/1: no score: cancelled\n\
-             trial short/rows/1: running\n"
+             trial short/rows/1: no score: cancelled, run cancelled, cost $0.04, took 15s\n\
+             trial short/rows/2: running\n"
         );
     }
 

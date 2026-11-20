@@ -19,13 +19,14 @@ use linewright::benchmarks::{
     ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
 };
 use linewright::clock::Clock as _;
+use linewright::cost::Usd;
 use linewright::ending::Ends;
 use linewright::factory::{Factory, ServeEnd};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, OutcomeName, RepoWorkDir};
 use linewright::store::local::LocalStore;
 use linewright::task::{self, BenchmarkChoice, Criteria, TaskName};
-use linewright::trial::Configuration;
+use linewright::trial::{self, Configuration};
 use linewright::webhook::Pending;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -447,14 +448,28 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
         "{:?}",
         record.state
     );
-    assert!(
-        matches!(
-            &record.trials[&key(0, 0)],
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(run)))
-                if run.outcome == OutcomeName::Ended(Ending::Cancelled)
-        ),
-        "the cancel keeps the run it stopped: {:?}",
-        record.trials[&key(0, 0)]
+    let TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(run))) =
+        &record.trials[&key(0, 0)]
+    else {
+        panic!(
+            "the cancel stopped the trial's run: {:?}",
+            record.trials[&key(0, 0)]
+        );
+    };
+    let kept = trial::kept_spent(&benchmark_runs.output_dir(
+        id,
+        &ConfigurationName::as_is(),
+        &record.tasks[0],
+        NonZeroU32::MIN,
+    ))
+    .expect("the stopped trial's output keeps its cost");
+    assert_eq!(run.outcome, OutcomeName::Ended(Ending::Cancelled));
+    assert_eq!(
+        run.money,
+        Some(Usd::ZERO),
+        "the run keeps what it cost: nothing, its one turn held open"
     );
+    assert_eq!(run.money, kept.money, "as its output kept it");
+    assert!(run.time > Duration::ZERO, "the run keeps its time: {run:?}");
     assert_eq!(record.trials[&key(1, 0)], TrialState::Pending);
 }
