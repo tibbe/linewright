@@ -107,6 +107,7 @@ order:
 | the drain, since when, and its deadline if set | while one is under way |
 | the environment: the commit it was built from and when, a build in progress and since when, and the latest build if it failed, with when ([Environment](sessions.md#environment)) | with a setup command |
 | the runs in flight out of `max-runs`           | always                 |
+| the trials and scorers of benchmark runs in flight out of `max-trials` | while there are any |
 | the time of the last webhook delivery accepted | with webhooks on       |
 | the webhook deliveries refused since `serve` started | with webhooks on |
 
@@ -380,6 +381,10 @@ host and port, and serves none when `ui-address` is empty.
 - **Layout.** The facts
   about Linewright itself ([Facts](design_system.md#facts)), as a list of
   labels, each with its value beside it.
+- **The facts.** Server shows each fact about Linewright that `status` shows,
+  when `status` shows it ([`lw status`](#lw-status)). It shows the environment
+  with its builds, as `environment` shows them
+  ([`lw environment`](sessions.md#lw-environment)).
 - **Builds.** A build of the environment shows as a transcript's maintenance
   command does, and opens the same way ([Run](runs.md#run)); a build in progress
   is followed.
@@ -392,20 +397,6 @@ host and port, and serves none when `ui-address` is empty.
   | its latest build failed         | failed    |
   | there is no environment yet     | paused    |
   | otherwise                       | done      |
-
-| Fact                                                            | Shown                  |
-| --------------------------------------------------------------- | ---------------------- |
-| since when `serve` has run                                      | always                 |
-| the last poll and the next                                      | always                 |
-| the polls failed since the last that succeeded, with the last error | while there are any |
-| the usage limit and when it resets                              | while one is in force  |
-| a file of the repository's Linewright cannot use, and its error | while there is one     |
-| the drain, since when, and its deadline if set                  | while one is under way |
-| the environment and its builds, as `environment` shows them ([`lw environment`](sessions.md#lw-environment)) | with a setup command   |
-| the runs in flight out of `max-runs`                            | always                 |
-| the trials and scorers of benchmark runs in flight out of `max-trials` | while there are any |
-| the time of the last webhook delivery accepted                  | with webhooks on       |
-| the webhook deliveries refused since `serve` started            | with webhooks on       |
 
 ## The log
 

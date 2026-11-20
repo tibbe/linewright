@@ -113,12 +113,12 @@ The session ends with a result that matches
 - **Layout.** Each
   automation file that does not parse, then a row per automation.
 
-| Part     | Holds                                                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------ |
-| name     | the automation's name                                                                                  |
-| schedule | when it runs, in words                                                                                 |
-| last run | its last run, with its outcome, linking to its Run; or, before its first, when Linewright first saw it |
-| next run | when it runs next                                                                                      |
+| Column     | Holds                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| Automation | the automation's name                                                                                  |
+| Schedule   | when it runs, in words                                                                                 |
+| Last run   | its last run, with its outcome, linking to its Run; or, before its first, when Linewright first saw it |
+| Next run   | when it runs next                                                                                      |
 
 ## Out of scope
 

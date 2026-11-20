@@ -143,6 +143,8 @@ The web UI follows daisyUI, with two themes of its own.
   `modal` on a `<dialog>` that `showModal()` opens, with no `modal-backdrop`.
   This modal already closes as [Dialogs](../design_system.md#dialogs) says.
 - **The button that goes ahead** in a confirmation is a `btn-error`.
+- **A tab** is at the address of its screen, then `/` and the tab's name in
+  lowercase, such as `/benchmarks/NAME/tasks`.
 
 | Screen      | Address           |
 | ----------- | ----------------- |
@@ -158,12 +160,14 @@ The web UI follows daisyUI, with two themes of its own.
 
 ## Making
 
-- **The dialog of "New"** holds a `fieldset`, with the dialog's title as its
-  `fieldset-legend`. Each field is an `input`, a `select` or a
-  `textarea` under its `label`, and the buttons are in the `modal-action`.
+- **The dialog in which the reader makes a thing** holds a `fieldset`, with the
+  dialog's title as its `fieldset-legend`. Each field is an `input`, a `select`
+  or a `textarea` under its `label`, and the buttons are in the `modal-action`.
 - **"New"**, and the button that makes the thing, are each a `btn-primary`.
 - **The reason for a refusal** is a daisyUI `alert` in the `alert-error`
   style.
+- **What was made**, on a screen that does not show it, is a daisyUI `alert` in
+  the `alert-success` style.
 
 ## Layout
 
@@ -184,8 +188,9 @@ The web UI follows daisyUI, with two themes of its own.
 
 ## Tables
 
-- **A table** is a daisyUI `table`. In a table whose first column names each
-  row, a row's first cell is a `th`.
+- **A table** is a daisyUI `table`. The cell that names a row is a `th`,
+  wherever it sits. The head of the column of the buttons that open rows in
+  place is an empty `th`.
 - **Scrolling.** A table is in a wrapper with `overflow-x-auto`, as daisyUI's
   table is. As the table scrolls sideways, the top of its card and its filters
   stay in place.
