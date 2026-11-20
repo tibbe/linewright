@@ -491,12 +491,24 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   until the reader scrolls up, and then offers "Jump to the latest entry".
 - **Capturing.** A run that can be captured
   ([Capturing](benchmarks.md#capturing)) has "Add task" with the screen's
-  buttons ([Shell](shell.md)). The capture asks for these, then "Add task", then
-  says where the task was written, or why it was not:
-  - the benchmark: one of the benchmarks of the run's stage, or a new one;
-  - the task's name, filled in with the run ID's letters and digits joined
-    by hyphens, such as `43-implement-2`;
-  - the criteria.
+  buttons ([Shell](shell.md)). It opens a dialog titled "Add task to a
+  benchmark" ([Making](design_system.md#making)), with these fields, then "Add
+  task":
+
+  | Field          | Holds                                                                                                   |
+  | -------------- | ------------------------------------------------------------------------------------------------------- |
+  | Benchmark      | a choice of the benchmarks of the run's stage, then "New benchmark"                                     |
+  | Benchmark name | the name of the new benchmark, shown while "New benchmark" is chosen                                    |
+  | Name           | the task's name, filled in with the run ID's letters and digits joined by hyphens, such as `43-implement-2` |
+  | Criteria       | the criteria                                                                                            |
+
+  - **A new benchmark's refusals.** Linewright refuses a new benchmark as on
+    [New benchmark](benchmarks.md#new-benchmark). The message for a new
+    benchmark with an empty name is "The new benchmark needs a name."
+  - **What was made.** The message is "Captured run ID as the task NAME in the
+    benchmark BENCHMARK." For a new benchmark, the message is "Captured run ID
+    as the task NAME in the new benchmark BENCHMARK." BENCHMARK links to the
+    benchmark's Tasks.
 
 ## Out of scope
 

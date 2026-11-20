@@ -116,8 +116,11 @@
     the row is closed and down while it is open. A screen reader reads the
     button as what it opens, such as "Show the tasks of opus-high". A row with
     nothing to open to has no button there, and its first cell keeps its place.
-- **The first column.** A first column that names each row has a head. Its
-  cells are the rows' headers, in bold.
+    The column of these buttons has an empty head.
+- **The column that names each row.** A column that names each row is the
+  first column. In a table whose rows open in place, it is the second column,
+  after the column of the buttons that open them. It has a head. Its cells are
+  the rows' headers, in bold.
 - **Alignment.** Amounts of money and durations align right. Every other
   column aligns left.
 - A title in a table is on one line.
@@ -132,6 +135,12 @@
     ([Filters](#filters)). Changing a filter goes back to the first page.
   - **Updates.** When the table gets rows or loses them, the reader stays on the
     page that they are on. A page that no longer exists shows as the last page.
+
+## Tabs
+
+- **Links.** A screen's link carries the tab that it shows, as it carries its
+  filters ([Filters](#filters)). A link with no tab opens on the tab that the
+  screen opens on.
 
 ## Facts
 
@@ -163,11 +172,15 @@
 - **New.** A table that the reader can add to has "New" with its screen's
   buttons ([Shell](shell.md)), or, for a table in a tab, in its card
   ([Tables](#tables)).
-- **The dialog.** "New" opens a dialog ([Dialogs](#dialogs)). The dialog
-  shows each field with its label above it, then "Cancel" and the button that
-  makes the thing.
+- **The dialog.** A button with which the reader starts to make a thing, such
+  as "New", or "Add task" on Run, opens a dialog ([Dialogs](#dialogs)). The
+  dialog shows each field with its label above it, then "Cancel" and the button
+  that makes the thing.
 - **Making.** When the reader clicks the button that makes the thing and
   Linewright makes it, the dialog closes.
+- **What was made.** When a screen does not show what its dialog made, it
+  shows a message under its heading. The message says what was made and links
+  to it. It stays until the reader leaves the screen.
 - **A refusal.** When Linewright refuses, the dialog stays open and shows the
   reason above its buttons. The fields keep what the reader typed or chose.
 

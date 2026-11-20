@@ -104,6 +104,22 @@ task of it, whatever its outcome.
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
+- **Before the first poll.** In the UI, Linewright refuses a capture until its
+  first poll since `serve` started.
+- **Refusals on a screen.** [New task](#new-task) and [Run](runs.md#run) give
+  these messages for a capture's refusals. A name that is empty gets the message
+  for no name where there is one, and not the message for a name out of form.
+
+  | Refusal                                              | Message                                                       |
+  | ---------------------------------------------------- | ------------------------------------------------------------- |
+  | a name that a task has                               | "A task named NAME already exists."                           |
+  | no criteria                                          | "A task needs criteria."                                      |
+  | a name that is not in the form of a name             | as on [New benchmark](#new-benchmark)                         |
+  | a run of a stage other than the benchmark's          | "Run ID is of STAGE, and BENCHMARK holds tasks of STAGE."     |
+  | a run that recorded no input                         | "Run ID recorded no input."                                   |
+  | a run whose record lacks a part                      | "The record of run ID lacks PART."                            |
+  | a run that does not exist                            | "No such run ID."                                             |
+  | a capture before Linewright's first poll             | "Linewright can't capture a run before its first poll."       |
 
 ## Benchmarks
 
@@ -337,8 +353,11 @@ makes a trial of each task under each configuration.
 - **Interrupted trials.** A trial whose run or scorer a restart interrupts has
   no reason. It starts again ([After a restart](#benchmark-runs)).
 - **Cancelled trials.** When the maintainer cancels a benchmark run, each of its
-  trials with no score and no reason is cancelled. A cancelled trial has no
-  reason, also when the cancel stops its run or its scorer.
+  trials with no score and no reason is cancelled, and the run of each of its
+  trials in flight stops and has ended. A cancelled trial has no reason, also
+  when the cancel stops its run or its scorer. The trial keeps what its run cost
+  until it stopped. The figures of a configuration ([Results](#results)) do not
+  count a trial whose run stopped then or did not start.
 - **After a restart.** Once `serve` runs, the benchmark run starts again each
   trial and each scorer that the restart interrupted, a trial into a new
   output.
@@ -472,11 +491,6 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Name     | the task's name, which Linewright makes from the run's ID as on Run ([Run](runs.md#run)) |
   | Criteria | the criteria                                                                                               |
 
-- **Refusals.** The message for a name that a task has is "A task named NAME
-  already exists." The message for a task without criteria is "A task needs
-  criteria." The message for a name that is not in the form of a name is as
-  on [New benchmark](#new-benchmark).
-
 ### New benchmark run
 
 - **Layout.** A dialog titled "New benchmark run on NAME"
@@ -493,7 +507,19 @@ benchmark run that does not exist is as an item or run that does not exist.
   When the maintainer chooses one, a box for its text opens. Its text starts as
   the text that a run of the stage uses when the dialog opens. A file whose text
   the maintainer does not change is not part of the configuration.
-- **Refusals.** A refusal of a configuration names the configuration.
+- **Refusals.** A refusal names a configuration by its name. While the
+  configuration has no name, the refusal names it by its place in the dialog,
+  where `as-is` is the 1st. A name that is empty gets the message for no name.
+  The messages are:
+
+  | Refusal                                                        | Message                                                    |
+  | -------------------------------------------------------------- | ---------------------------------------------------------- |
+  | a benchmark with no tasks                                      | "The benchmark NAME has no tasks."                         |
+  | a configuration with no name                                   | "The 3rd configuration needs a name.", with its place      |
+  | a name that is not in the form of a name                       | as on [New benchmark](#new-benchmark)                      |
+  | two configurations with the same name                          | "Two configurations are named NAME."                       |
+  | a configuration with an error ([Configurations](#configurations)) | "The configuration NAME has an error in FILE: ERROR"    |
+  | repetitions that are not a whole number, 1 or more              | "Repetitions are a whole number, 1 or more."               |
 
 ### Benchmark run
 
@@ -514,7 +540,7 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Ended       | when it ended or was cancelled                                                          | once it has ended or cancelled |
   | Duration    | the time from its launch to its end or its cancelling; while it runs or waits, the time up to now         | always                         |
   | Trials     | how many of its trials have ended, of all its trials. A trial has ended once its run has ended, whether or not its scorer has. | always |
-  | Cost        | the sum of the cost of the tokens of its trials and its scorers ([Cost](runs.md#cost)). After the sum, how many of its trials have no cost, if any. | always |
+  | Cost        | the sum of the cost of the tokens of all its trials and of its scorers ([Cost](runs.md#cost)). After the sum, how many of its trials that have ended have no cost, if any. | always |
   | Scorers      | the cost of the tokens of its scorers ([Results](#results)) | always |
   | Waiting for | what it waits for, such as "the usage limit, until 14:30"                               | while it waits                 |
 
