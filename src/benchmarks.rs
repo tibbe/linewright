@@ -5,6 +5,7 @@
 mod answers;
 pub mod results;
 mod runs;
+mod trial_shown;
 
 pub use answers::{
     BenchmarkRunAnswer, BenchmarkRunSummary, Shown, WaitingFor, dollars, duration, mean, percent,
@@ -15,6 +16,7 @@ pub use runs::{
     CancelRefusal, ConfigurationName, LaunchRefusal, NoScore, Repetitions, ScoreFigures,
     TrialChange, TrialEnd, TrialFigures, TrialKey, TrialRef, TrialState,
 };
+pub use trial_shown::TrialShown;
 
 use std::fmt;
 use std::fmt::Write as _;

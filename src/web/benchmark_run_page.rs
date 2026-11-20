@@ -38,14 +38,13 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationName,
-    NoScore, Shown, TrialEnd, TrialFigures, TrialKey, TrialState, dollars, duration, percent,
-    without,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationName, Shown,
+    TrialKey, TrialShown, TrialState, dollars, duration, percent, without,
 };
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
 use crate::phrase::Status;
-use crate::results::{Leak, Verdict};
+use crate::results::Leak;
 use crate::runs::RunId;
 use crate::runs::files::RunFiles;
 use crate::task::TaskName;
@@ -832,6 +831,7 @@ fn rows(
                     &trial,
                     trial_id(key),
                     id.clone(),
+                    record.state,
                     state,
                     outputs,
                 ));
@@ -841,30 +841,25 @@ fn rows(
     rows
 }
 
-/// The row of the trial `at`, `id` under the row `of`, and the row it
-/// opens to, if it has anything to open to.
+/// The row of the trial `at` in the state `state`, of a benchmark run in the
+/// state `benchmark_run`, `id` under the row `of`, and the row it opens to, if
+/// it has anything to open to.
 fn trial_rows(
     sources: &Sources,
     at: &TrialAt,
     id: String,
     of: String,
+    benchmark_run: BenchmarkRunState,
     state: &TrialState,
     outputs: &Outputs,
 ) -> Vec<Row> {
-    let TrialShown { status, words, run } = trial_shown(state);
+    let shown = TrialShown::of(benchmark_run, state);
+    let run = state.run();
     let output =
         benchmark_runs(sources).output_dir(at.id, &at.configuration, &at.task, at.repetition);
     let began = outputs.began(&output);
-    let reasoning = matches!(state, TrialState::Ended(TrialEnd::Scored { .. }))
-        .then(|| outputs.reasoning(&output))
-        .flatten();
-    let scorer_began = matches!(
-        state,
-        TrialState::Scoring { .. }
-            | TrialState::Ended(
-                TrialEnd::Scored { .. } | TrialEnd::Unscored(NoScore::Scorer { .. })
-            )
-    );
+    let reasoning = state.score().and_then(|_| outputs.reasoning(&output));
+    let scorer_began = state.scorer_began();
     let details = TrialDetails {
         id: format!("{id}_details"),
         of: id.clone(),
@@ -885,7 +880,10 @@ fn trial_rows(
             ),
         ),
         name: format!("Trial {}", at.repetition),
-        pass_rate: PassRate::Status { status, words },
+        pass_rate: PassRate::Status {
+            status: shown.status(),
+            words: shown.name(),
+        },
         figures: [
             run.and_then(|run| run.money)
                 .map_or_else(absent, |money| dollars(money.into())),
@@ -900,54 +898,6 @@ fn trial_rows(
         rows.push(Row::Trial(details));
     }
     rows
-}
-
-/// What a trial's row says of its state: its Pass rate's status and words
-/// (`docs/specs/benchmarks.md`, Benchmark run, The table and A trial's
-/// status), and its run's figures, once it has them.
-struct TrialShown<'a> {
-    status: Status,
-    words: String,
-    run: Option<&'a TrialFigures>,
-}
-
-fn trial_shown(state: &TrialState) -> TrialShown<'_> {
-    let (status, words, run) = match state {
-        TrialState::Pending => (Status::Paused, "waiting".into(), None),
-        TrialState::Running => (Status::InFlight, "running".into(), None),
-        TrialState::Ran { run } => (Status::Paused, "waiting".into(), Some(run)),
-        TrialState::Scoring { run } => (Status::InFlight, "scoring".into(), Some(run)),
-        TrialState::Ended(TrialEnd::Scored { run, score }) => {
-            let leak = if score.leak { ", with a leak" } else { "" };
-            let status = if score.correctness == Verdict::Pass && !score.leak {
-                Status::Done
-            } else {
-                Status::Failed
-            };
-            (
-                status,
-                format!("{}{leak}", score.correctness.name()),
-                Some(run),
-            )
-        }
-        TrialState::Ended(TrialEnd::Unscored(no_score)) => {
-            let (status, why) = match no_score {
-                NoScore::Outcome(run) => (
-                    run.outcome.status(),
-                    "its run is not done or handed back".to_string(),
-                ),
-                NoScore::Scorer { why, .. } => {
-                    (Status::Failed, format!("the scorer made none: {why}"))
-                }
-                NoScore::Cancelled(_) => (Status::Cancelled, "cancelled".into()),
-            };
-            (status, format!("no score: {why}"), Some(no_score.run()))
-        }
-        TrialState::Ended(TrialEnd::Cancelled) => {
-            (Status::Cancelled, "no score: cancelled".into(), None)
-        }
-    };
-    TrialShown { status, words, run }
 }
 
 #[derive(Template, WebTemplate)]
@@ -1531,123 +1481,7 @@ pub(super) async fn trial_events(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use crate::benchmarks::ScoreFigures;
-
-    #[track_caller]
-    fn ended(outcome: &str) -> TrialFigures {
-        TrialFigures {
-            outcome: serde_json::from_value(outcome.into()).unwrap(),
-            money: None,
-            time: Duration::from_secs(60),
-        }
-    }
-
-    fn scored(correctness: Verdict, leak: bool) -> TrialState {
-        TrialState::Ended(TrialEnd::Scored {
-            run: ended("done"),
-            score: ScoreFigures {
-                correctness,
-                leak,
-                scorer_money: None,
-            },
-        })
-    }
-
-    fn unscored(no_score: NoScore) -> TrialState {
-        TrialState::Ended(TrialEnd::Unscored(no_score))
-    }
-
-    /// `docs/specs/benchmarks.md`, Benchmark run, A trial's status, and the
-    /// Pass rate column's word.
-    #[test_log::test]
-    fn each_trial_shows_as_the_status_its_state_gives() {
-        let states = [
-            TrialState::Pending,
-            TrialState::Ran { run: ended("done") },
-            TrialState::Running,
-            TrialState::Scoring { run: ended("done") },
-            scored(Verdict::Pass, false),
-            scored(Verdict::Pass, true),
-            scored(Verdict::Fail, false),
-            unscored(NoScore::Scorer {
-                run: ended("done"),
-                why: "it gave up".into(),
-                scorer_money: None,
-            }),
-        ];
-
-        let shown: Vec<(Status, String)> = states
-            .iter()
-            .map(|state| {
-                let shown = trial_shown(state);
-                (shown.status, shown.words)
-            })
-            .collect();
-
-        assert_eq!(
-            shown,
-            [
-                (Status::Paused, "waiting".into()),
-                (Status::Paused, "waiting".into()),
-                (Status::InFlight, "running".into()),
-                (Status::InFlight, "scoring".into()),
-                (Status::Done, "pass".into()),
-                (Status::Failed, "pass, with a leak".into()),
-                (Status::Failed, "fail".into()),
-                (
-                    Status::Failed,
-                    "no score: the scorer made none: it gave up".into()
-                ),
-            ]
-        );
-    }
-
-    /// `docs/specs/benchmarks.md`, Benchmark run, A trial's status: as its
-    /// run's outcome does (`docs/specs/runs.md`, Ending).
-    #[test_log::test]
-    fn a_trial_whose_run_is_not_done_or_handed_back_shows_as_its_runs_outcome() {
-        let outcomes = [
-            "failed",
-            "cancelled",
-            "usage-limit",
-            "interrupted",
-            "handed-back",
-        ];
-
-        let shown: Vec<Status> = outcomes
-            .map(|outcome| unscored(NoScore::Outcome(ended(outcome))))
-            .iter()
-            .map(|state| trial_shown(state).status)
-            .collect();
-
-        assert_eq!(
-            shown,
-            [
-                Status::Failed,
-                Status::Cancelled,
-                Status::Cancelled,
-                Status::Cancelled,
-                Status::Waiting,
-            ]
-        );
-    }
-
-    /// A trial of a cancelled benchmark run shows as a cancelled run does
-    /// (`docs/specs/runs.md`, Ending).
-    #[test_log::test]
-    fn a_trial_its_benchmark_runs_cancel_left_without_a_score_shows_cancelled() {
-        let states = [
-            unscored(NoScore::Cancelled(ended("done"))),
-            TrialState::Ended(TrialEnd::Cancelled),
-        ];
-
-        let shown = states.map(|state| trial_shown(&state).status);
-
-        assert_eq!(shown, [Status::Cancelled; 2]);
-    }
 
     /// A configuration `name` at a pass rate of 50%, with `mean` both its
     /// mean cost and its mean time.
