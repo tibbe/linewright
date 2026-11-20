@@ -669,8 +669,8 @@ fn text(element: ElementRef) -> String {
 
 /// The item page's facts, each label and its value's text, in order.
 fn item_facts(html: &Html) -> Vec<(String, String)> {
-    let labels = select(html, "#item dl > dt");
-    let values = select(html, "#item dl > dd");
+    let labels = select(html, "#item dl > div > dt");
+    let values = select(html, "#item dl > div > dd");
     assert_eq!(labels.len(), values.len(), "{}", html.html());
     labels
         .into_iter()

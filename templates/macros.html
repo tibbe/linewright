@@ -10,14 +10,17 @@
 <span class="status-text {{ status.accent() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
-{#- A page's facts (`docs/specs/web/design_system.md`, Facts), in a card, their labels in a column of their own in secondary text, and
-    each line of a value a block of its own. An item among them is shown as
-    its card is, its card status's icon in place of its line. -#}
+{#- A page's facts (`docs/specs/web/components.md`, Facts), in a card, each a
+    row of its label at the start, in secondary text, and its value at the
+    end, each line of the value a block of its own, its text read from
+    the start. An item among them is
+    shown as its card is, its card status's icon in place of its line. -#}
 {%- macro facts(facts) -%}
-<dl class="{% call card_look() %}{% endcall %} grid w-fit grid-cols-[max-content_1fr] gap-x-6 gap-y-2 p-4">
+<dl class="{% call card_look() %}{% endcall %} grid w-fit gap-3 p-4 text-sm">
 {%- for fact in facts %}
-<dt class="text-base-content/60">{{ fact.label }}</dt>
-<dd>
+<div class="flex justify-between gap-6">
+<dt class="shrink-0 text-base-content/60">{{ fact.label }}</dt>
+<dd class="flex min-w-0 flex-col items-end">
 {%- for line in fact.lines -%}
 <div>
 {%- for piece in line -%}
@@ -37,6 +40,7 @@
 </div>
 {%- endfor -%}
 </dd>
+</div>
 {%- endfor %}
 </dl>
 {%- endmacro -%}
