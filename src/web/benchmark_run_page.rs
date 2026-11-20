@@ -208,11 +208,29 @@ impl Axis {
         }
     }
 
+    /// Its scale where the largest mean is 0: $1 for cost and 1 second for
+    /// time (`docs/specs/web/components.md`, Chart, The scale).
+    fn least_scale(self) -> f64 {
+        match self {
+            Axis::Cost | Axis::Time => 1.0,
+        }
+    }
+
     /// `value` along it, in words.
     fn words(self, value: f64) -> String {
         match self {
             Axis::Cost => dollars(value),
             Axis::Time => duration(value),
+        }
+    }
+
+    /// `value` along it as a tick's label: in words, but for a time under 10
+    /// seconds, which is to a tenth of a second so that no two ticks read
+    /// alike.
+    fn tick(self, value: f64) -> String {
+        match self {
+            Axis::Time if value < 10.0 => format!("{}s", (value * 10.0).round() / 10.0),
+            Axis::Cost | Axis::Time => self.words(value),
         }
     }
 }
@@ -224,33 +242,53 @@ struct Plot {
     drawn: Option<Drawn>,
 }
 
-/// What a plot with points draws: its SVG's `viewBox`, the lines across it
-/// at a pass rate of 100% and of 50%, its axes, its ticks and its points.
+/// What a plot with points draws: the lines across it at a pass rate of 100%
+/// and of 50%, its axes, its ticks along the pass rate and along the mean,
+/// and its points.
+///
+/// Each place in it is a percentage of its frame's width and height, from
+/// its axes' corner at 0% across and 100% down, and an offset from it in
+/// pixels. Its ticks are in the margin around the frame.
 struct Drawn {
-    view_box: String,
-    rules: String,
-    axes: String,
-    ticks: Vec<Tick>,
+    rules: Vec<Line>,
+    axes: Vec<Line>,
+    rate_ticks: Vec<Tick>,
+    mean_ticks: Vec<Tick>,
     points: Vec<Point>,
 }
 
-/// A tick's label, at `x`, `y` in the chart's SVG.
+/// A line of the chart, from `x1`, `y1` to `x2`, `y2`, in percent of the
+/// frame.
+struct Line {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+}
+
+/// A tick's label, at `x`, `y` in percent of the frame, moved by `dx`, `dy`
+/// pixels.
 struct Tick {
     x: f64,
     y: f64,
+    dx: f64,
+    dy: f64,
     anchor: &'static str,
     label: String,
 }
 
 /// A configuration's point (`docs/specs/benchmarks.md`, Benchmark run, A
-/// point), drawn in the `foreignObject` at `x`, `y` in the chart's SVG,
-/// `POINT_WIDTH` by `POINT_HEIGHT`, whose dot sits at the point's place.
+/// point), at `x`, `y` in percent of the frame. It is drawn in a
+/// `foreignObject` `POINT_WIDTH` by `POINT_HEIGHT` pixels, `dx`, `dy` pixels
+/// from its place, so that its dot sits at that place.
 struct Point {
     id: String,
     name: ConfigurationName,
     tip: String,
     x: f64,
     y: f64,
+    dx: f64,
+    dy: f64,
     /// Whether its name is at its dot's left, so that it stays inside the
     /// chart.
     named_left: bool,
@@ -558,12 +596,6 @@ fn ranked(configurations: &[ConfigurationResults]) -> Vec<(usize, &Configuration
     ranked
 }
 
-const CHART_WIDTH: f64 = 480.0;
-const CHART_HEIGHT: f64 = 260.0;
-const CHART_LEFT: f64 = 48.0;
-const CHART_RIGHT: f64 = 24.0;
-const CHART_TOP: f64 = 16.0;
-const CHART_BOTTOM: f64 = 32.0;
 const POINT_WIDTH: f64 = 160.0;
 const POINT_HEIGHT: f64 = 16.0;
 
@@ -584,35 +616,39 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
         return Plot { axis, drawn: None };
     }
     let most = at.iter().map(|(_, mean, _)| *mean).fold(0.0_f64, f64::max);
-    let scale = if most > 0.0 { most * 1.1 } else { 1.0 };
-    let (left, right) = (CHART_LEFT, CHART_WIDTH - CHART_RIGHT);
-    let (top, bottom) = (CHART_TOP, CHART_HEIGHT - CHART_BOTTOM);
-    let x = |mean: f64| left + mean / scale * (right - left);
-    let y = |rate: f64| top + (1.0 - rate) * (bottom - top);
-    let mut ticks: Vec<Tick> = [0.0, 0.5, 1.0]
+    let scale = if most > 0.0 {
+        most * 1.1
+    } else {
+        axis.least_scale()
+    };
+    let x = |mean: f64| mean / scale * 100.0;
+    let y = |rate: f64| (1.0 - rate) * 100.0;
+    let rate_ticks = [0.0, 0.5, 1.0]
         .into_iter()
         .map(|rate| Tick {
-            x: left - 6.0,
-            y: y(rate) + 4.0,
+            x: 0.0,
+            y: y(rate),
+            dx: -6.0,
+            dy: 4.0,
             anchor: "end",
             label: percent(Some(rate)),
         })
         .collect();
-    ticks.extend(
-        [(0.0, "middle"), (0.5, "middle"), (1.0, "end")]
-            .into_iter()
-            .map(|(share, anchor)| Tick {
-                x: x(share * scale),
-                y: bottom + 18.0,
-                anchor,
-                label: axis.words(share * scale),
-            }),
-    );
+    let mean_ticks = [(0.0, "middle"), (0.5, "middle"), (1.0, "end")]
+        .into_iter()
+        .map(|(share, anchor)| Tick {
+            x: x(share * scale),
+            y: 100.0,
+            dx: 0.0,
+            dy: 18.0,
+            anchor,
+            label: axis.tick(share * scale),
+        })
+        .collect();
     let points = at
         .into_iter()
         .map(|(configuration, mean, rate)| {
-            let (at_x, at_y) = (x(mean), y(rate));
-            let named_left = at_x > left + (right - left) * 0.6;
+            let named_left = x(mean) > 60.0;
             Point {
                 id: format!("point-{}-{}", axis.name(), configuration.name),
                 name: configuration.name.clone(),
@@ -623,24 +659,39 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
                     axis.label().to_lowercase(),
                     axis.words(mean)
                 ),
-                x: if named_left {
-                    at_x - POINT_WIDTH + POINT_HEIGHT / 2.0
+                x: x(mean),
+                y: y(rate),
+                dx: if named_left {
+                    POINT_HEIGHT / 2.0 - POINT_WIDTH
                 } else {
-                    at_x - POINT_HEIGHT / 2.0
+                    -POINT_HEIGHT / 2.0
                 },
-                y: at_y - POINT_HEIGHT / 2.0,
+                dy: -POINT_HEIGHT / 2.0,
                 named_left,
             }
         })
         .collect();
-    let half = y(0.5);
+    let across = |height: f64| Line {
+        x1: 0.0,
+        y1: height,
+        x2: 100.0,
+        y2: height,
+    };
     Plot {
         axis,
         drawn: Some(Drawn {
-            view_box: format!("0 0 {CHART_WIDTH} {CHART_HEIGHT}"),
-            rules: format!("M{left} {top}H{right}M{left} {half}H{right}"),
-            axes: format!("M{left} {top}V{bottom}H{right}"),
-            ticks,
+            rules: vec![across(0.0), across(50.0)],
+            axes: vec![
+                Line {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: 0.0,
+                    y2: 100.0,
+                },
+                across(100.0),
+            ],
+            rate_ticks,
+            mean_ticks,
             points,
         }),
     }
@@ -1606,5 +1657,74 @@ mod tests {
         let shown = states.map(|state| trial_shown(&state).status);
 
         assert_eq!(shown, [Status::Cancelled; 2]);
+    }
+
+    /// A configuration `name` at a pass rate of 50%, with `mean` both its
+    /// mean cost and its mean time.
+    fn configuration(name: &str, mean: f64) -> ConfigurationResults {
+        let figure = results::Mean {
+            mean: Some(mean),
+            total: mean,
+            none: 0,
+        };
+        ConfigurationResults {
+            name: name.parse().unwrap(),
+            pass_rate: Some(0.5),
+            figures: Figures {
+                cost: figure.clone(),
+                time: figure,
+                leaks: 0,
+                unscored: 0,
+            },
+            tasks: Vec::new(),
+        }
+    }
+
+    /// The labels of the horizontal axis's ticks of the chart along `axis`
+    /// of configurations at `means`.
+    #[track_caller]
+    fn horizontal_ticks(axis: Axis, means: &[f64]) -> Vec<String> {
+        let configurations: Vec<ConfigurationResults> = means
+            .iter()
+            .enumerate()
+            .map(|(at, mean)| configuration(&format!("c{at}"), *mean))
+            .collect();
+        let ranked: Vec<(usize, &ConfigurationResults)> =
+            configurations.iter().enumerate().collect();
+        let drawn = plot(axis, &ranked).drawn.expect("a plot with points");
+        drawn
+            .mean_ticks
+            .iter()
+            .map(|tick| tick.label.clone())
+            .collect()
+    }
+
+    /// `docs/specs/web/components.md`, Chart, The scale and Ticks: the
+    /// horizontal axis runs from 0 to 110% of the largest mean, with ticks at
+    /// 0, half the scale and the scale.
+    #[test_log::test]
+    fn the_horizontal_scale_runs_to_110_percent_of_the_largest_mean() {
+        assert_eq!(
+            horizontal_ticks(Axis::Cost, &[0.5, 2.0]),
+            ["$0.00", "$1.10", "$2.20"]
+        );
+        assert_eq!(
+            horizontal_ticks(Axis::Time, &[30.0, 200.0]),
+            ["0s", "1m 50s", "3m 40s"]
+        );
+    }
+
+    /// `docs/specs/web/components.md`, Chart, The scale: where the largest
+    /// mean is 0, the scale runs to $1 for cost and to 1 second for time.
+    #[test_log::test]
+    fn with_a_largest_mean_of_0_the_scale_runs_to_a_dollar_or_a_second() {
+        assert_eq!(
+            horizontal_ticks(Axis::Cost, &[0.0]),
+            ["$0.00", "$0.50", "$1.00"]
+        );
+        assert_eq!(
+            horizontal_ticks(Axis::Time, &[0.0, 0.0]),
+            ["0s", "0.5s", "1s"]
+        );
     }
 }
