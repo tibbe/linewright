@@ -463,7 +463,7 @@ async fn cancelled_benchmark_run(
         .await
         .context("cancelling the seed's benchmark run")?;
     benchmark_runs
-        .step(&first, TrialChange::Cancelled, at)
+        .step(&first, TrialChange::Cancelled { stopped: None }, at)
         .await?;
     Ok(())
 }

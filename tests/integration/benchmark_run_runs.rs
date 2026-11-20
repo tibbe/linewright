@@ -22,7 +22,7 @@ use linewright::clock::Clock as _;
 use linewright::ending::Ends;
 use linewright::factory::{Factory, ServeEnd};
 use linewright::reconcile::WorkKind;
-use linewright::runs::RepoWorkDir;
+use linewright::runs::{Ending, OutcomeName, RepoWorkDir};
 use linewright::store::local::LocalStore;
 use linewright::task::{self, BenchmarkChoice, Criteria, TaskName};
 use linewright::trial::Configuration;
@@ -447,9 +447,14 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
         "{:?}",
         record.state
     );
-    assert_eq!(
-        record.trials[&key(0, 0)],
-        TrialState::Ended(TrialEnd::Cancelled { run: None })
+    assert!(
+        matches!(
+            &record.trials[&key(0, 0)],
+            TrialState::Ended(TrialEnd::Cancelled { run: Some(run) })
+                if run.outcome == OutcomeName::Ended(Ending::Cancelled)
+        ),
+        "the cancel keeps the run it stopped: {:?}",
+        record.trials[&key(0, 0)]
     );
     assert_eq!(record.trials[&key(1, 0)], TrialState::Pending);
 }

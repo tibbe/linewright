@@ -271,7 +271,10 @@ impl BenchmarkRunsRunner {
                 }
             };
         let change = match (cancelled, change, step) {
-            (true, _, _) => TrialChange::Cancelled,
+            (true, Some(TrialChange::RunEnds(run)), _) => {
+                TrialChange::Cancelled { stopped: Some(run) }
+            }
+            (true, _, _) => TrialChange::Cancelled { stopped: None },
             (false, Some(change), _) => change,
             (false, None, Step::Trial(_)) => TrialChange::RunEnds(TrialFigures {
                 outcome: OutcomeName::Ended(Ending::Failed),
