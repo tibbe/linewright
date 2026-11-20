@@ -243,9 +243,18 @@ A run ends in one of these outcomes, each with its name in JSON.
   secret ([Secrets](operation.md#secrets)) is one such reason, whether
   Linewright finds the secret or GitHub refuses the push over it, and its
   reason names the variable, the file and, in a commit, the commit.
-- **Unexpected ends.** Any unexpected end (a crash, a timeout, the agent
-  giving up, a result still not accepted) hands the run's item back with the
-  reason and the tail of the log.
+- **Unexpected ends.** Any unexpected end (a crash, a timeout, the agent giving
+  up, a result still not accepted) hands the run's item back with the reason and
+  the tail of the log. Except when the agent gives up, the reason for the end is
+  in the words of the first row that fits:
+
+  | The session ends as | The reason |
+  | --- | --- |
+  | it reaches its `session-timeout` | "it timed out after DURATION", where DURATION is the `session-timeout`, such as "30m" |
+  | Linewright cannot accept its last result ([A result Linewright can't accept](#ending)) | "its result was not accepted: WHY", where WHY is what Linewright last sent back to the session |
+  | it fails on its infrastructure, and again on the retry ([Retries](#ending)) | "it failed on its infrastructure: ERROR", where ERROR is what the part that failed gives, such as the harness's API |
+  | the harness ends it with an error | "the harness ended it with `KIND`", where KIND is the harness's name for the error, such as `error_max_turns` |
+  | the harness stops without a result, such as in a crash | "the harness stopped without a result" |
 - **Retries.** A failure is retried once first only when a retry could end
   differently, as an infrastructure failure could. One a retry cannot change
   is handed back at once, and the comment says what the maintainer can do

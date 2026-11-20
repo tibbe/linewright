@@ -92,6 +92,8 @@
   holds the icon and the state's name. A status among a screen's facts is the
   exception ([Facts](#facts)). For example, a running benchmark run shows as
   "running", with the icon of in flight, in its colour.
+- **A badge's words.** The state's name in a badge gives no reason or
+  detail: "no score", not why there is none.
 
 ## Tables
 

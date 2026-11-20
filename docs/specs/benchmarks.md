@@ -287,10 +287,16 @@ The scorer is an agent in a session of its own.
 
 - **An output with a score.** Linewright refuses to score an output that
   holds a score.
-- **A scorer that makes no score.** The scorer makes no score if it
-  gives up, if a signal ends the command, or if its session ends without a
-  result that Linewright accepts. The command then says why, and keeps nothing
-  of that scorer.
+- **A scorer that makes no score.** The scorer makes no score in these cases.
+  The command then says why, and keeps nothing of that scorer. The first row
+  that fits gives why:
+
+  | The scorer makes no score if | Why |
+  | --- | --- |
+  | a signal ends the command | "A signal ended the scorer." |
+  | its session ends for the usage limit ([Usage limit](runs.md#usage-limit)) | "The scorer's session reached the usage limit, which resets at TIME." |
+  | it gives up | "The scorer gave up: REASON", where REASON is the reason the scorer gives |
+  | its session ends without a result that Linewright accepts | "The scorer's session ended without a score: REASON", where REASON is the reason for the end ([Ending](runs.md#ending)), then the tail of its log |
 - **The exit status of the command.** The command succeeds when the scorer
   made a score, whatever the score.
 
@@ -325,9 +331,14 @@ makes a trial of each task under each configuration.
 - **Trials at once.** At most `max-trials` trials and scorers of benchmark runs
   run at once. None starts while a run of the pipeline waits for a place
   under `max-runs`.
-- **A trial without a score.** A trial has no score when its run is
-  not done or handed back, or when its scorer makes no score. The
-  benchmark run shows the reason. Linewright does not run it again.
+- **A trial without a score.** A trial has no score when its build fails, when
+  its run is not done or handed back, or when its scorer makes no score. The
+  benchmark run shows the reason, and Linewright does not run the trial again.
+- **Interrupted trials.** A trial whose run or scorer a restart interrupts has
+  no reason. It starts again ([After a restart](#benchmark-runs)).
+- **Cancelled trials.** When the maintainer cancels a benchmark run, each of its
+  trials with no score and no reason is cancelled. A cancelled trial has no
+  reason, also when the cancel stops its run or its scorer.
 - **After a restart.** Once `serve` runs, the benchmark run starts again each
   trial and each scorer that the restart interrupted, a trial into a new
   output.
@@ -342,7 +353,7 @@ makes a trial of each task under each configuration.
 | waiting   | the hold ends, or a place frees up         | running   | the next trial or scorer starts         |
 | running   | its last trial or scorer ends              | ended     | its results are complete                |
 | running   | the maintainer cancels it                  | cancelled | its trials and scorers in flight stop   |
-| waiting   | the maintainer cancels it                  | cancelled | none                                    |
+| waiting   | the maintainer cancels it                  | cancelled | its trials and scorers in flight stop   |
 
 ### Results
 
@@ -525,7 +536,7 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Column     | For a configuration                         | For a task                                  | For a trial                                                                              |
   | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
   | Configuration | its name                                 | the task's name                             | its repetition, such as "Trial 2"                                                        |
-  | Pass rate  | its pass rate                               | its passes, such as "2 of 3"                | its score; before it has one, "waiting", "running" or "scoring"; or why it has none |
+  | Pass rate  | its pass rate                               | its passes, such as "2 of 3"                | its state's name ([A trial's status](#benchmark-run))                                          |
   | Mean cost  | the mean of its cost                        | the same, of its trials of the task        | its cost                                                                                  |
   | Total cost | the total of its cost, and how many of its trials have no cost | the same, of its trials of the task      |                                                                                           |
   | Mean time  | the mean of its time                        | the same, of its trials of the task        | its time                                                                                  |
@@ -534,19 +545,46 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Unscored   | its unscored trials                        | its unscored trials of the task            |                                                                                           |
 
 - **A trial's status.** A trial's Pass rate shows as a status
-  ([Status](design_system.md#status)):
+  ([Status](design_system.md#status)). The first row that fits the trial gives
+  the name of its state and its status:
 
-  | The trial                                  | Shows as                                     |
-  | ------------------------------------------ | -------------------------------------------- |
-  | "waiting"                                  | paused                                       |
-  | "running" or "scoring"                     | in flight                                    |
-  | a score that passes with no leak           | done                                         |
-  | any other score                            | failed                                       |
-  | no score, as its scorer made none          | failed                                       |
-  | no score, as its run is not done or handed back | as its run's outcome does ([Ending](runs.md#ending)) |
-- **A trial.** A trial's row opens to the reasoning of its scorer, if
-  it has a score. It also opens to the transcripts of its run and of its
-  scorer, as Run shows a run's, once each has started.
+  | The trial | Name | Shows as |
+  | --- | --- | --- |
+  | it is cancelled ([Cancelled trials](#benchmark-runs)) | "cancelled" | cancelled |
+  | a restart interrupted its run or its scorer, which has not started again | "waiting" | paused |
+  | its build failed | "no score" | failed |
+  | its run ended, but not done or handed back | "no score" | as its run's outcome does ([Ending](runs.md#ending)) |
+  | its scorer made no score | "no score" | failed |
+  | its score passes, with no leak | "pass" | done |
+  | its score fails, with no leak | "fail" | failed |
+  | its score has a leak | "leak" | failed |
+  | its scorer is running | "scoring" | in flight |
+  | its run ended done or handed back | "waiting" | paused |
+  | its build or its run is running | "running" | in flight |
+  | it has not started | "waiting" | paused |
+
+- **A trial's row** opens to the trial's details. A screen reader reads its
+  button as "Show the details of trial N of TASK under CONFIGURATION".
+- **A trial's score.** If the trial has a score ([Scoring](#scoring)), its row
+  opens to a line for each of these parts:
+
+  | Label | Value |
+  | --- | --- |
+  | "Correctness" | "pass" or "fail", then the reasoning of the scorer |
+  | "Leak" | "yes" or "no", then the reasoning of the scorer and the tool calls that show it |
+
+- **A trial's reason.** If the trial has a reason for no score
+  ([A trial without a score](#benchmark-runs)), its row opens to it:
+
+  | It has no score, as | The reason |
+  | --- | --- |
+  | its build failed | "No score. The build of its environment failed." |
+  | its run is not done or handed back | "No score. The run's outcome: OUTCOME", where OUTCOME is the run's outcome ([Ending](runs.md#ending)) |
+  | its scorer made none | "No score.", then why its scorer made none ([Scoring](#scoring)) |
+
+- **A trial's transcripts.** A trial's row also opens to the transcripts of its
+  run and of its scorer, as Run shows a run's, once each has started. Each is
+  under its heading, "Run" or "Scorer".
 - **The grid.** "Passes by task": a row for each task, under the head "Task",
   and a column for each configuration, in the order of the table. A cell shows
   the passes of the task under the configuration, such as "2 of 3". A cell also
