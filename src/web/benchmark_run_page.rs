@@ -38,8 +38,8 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationName, Shown,
-    TrialKey, TrialShown, TrialState, dollars, duration, percent, without,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationName,
+    ScoreFigures, Shown, TrialKey, TrialShown, TrialState, dollars, duration, percent, without,
 };
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
@@ -95,10 +95,11 @@ enum Score {
     Read(Option<Arc<Reasoning>>),
 }
 
-/// What a scorer said of a trial.
+/// What a scorer said of a trial: its reasoning on its correctness, and
+/// on a leak, with the tool calls that show one it found.
 struct Reasoning {
     correctness: String,
-    leak: String,
+    leak: Leak,
 }
 
 impl Outputs {
@@ -129,9 +130,7 @@ impl Outputs {
             Ok(kept) => kept.map(|kept| {
                 Arc::new(Reasoning {
                     correctness: kept.correctness.reasoning,
-                    leak: match kept.leak {
-                        Leak::None { reasoning } | Leak::Found { reasoning, .. } => reasoning,
-                    },
+                    leak: kept.leak,
                 })
             }),
             Err(e) => {
@@ -361,29 +360,73 @@ enum PassRate {
     /// trial's status).
     Status {
         status: Status,
-        words: String,
+        words: &'static str,
     },
 }
 
-/// What a trial's row opens to: its scorer's reasoning, and the links to
-/// the transcripts that have started.
+/// What a trial's row opens to (`docs/specs/benchmarks.md`, Benchmark run,
+/// A trial's row): its score's lines or its reason for none, and the links
+/// to the transcripts that have started, each under its heading.
 struct TrialDetails {
     id: String,
     of: String,
-    reasoning: Option<Arc<Reasoning>>,
+    said: Option<Said>,
     run_href: Option<String>,
     scorer_href: Option<String>,
 }
 
 impl TrialDetails {
-    /// Whether it links to a transcript.
-    fn links(&self) -> bool {
-        self.run_href.is_some() || self.scorer_href.is_some()
-    }
-
     /// Whether it holds nothing to open to.
     fn is_empty(&self) -> bool {
-        self.reasoning.is_none() && !self.links()
+        self.said.is_none() && self.run_href.is_none() && self.scorer_href.is_none()
+    }
+}
+
+/// What a trial's details say of its score: its lines (`docs/specs/benchmarks.md`,
+/// Benchmark run, A trial's score), or its reason for none.
+enum Said {
+    Score {
+        correctness: ScoreLine,
+        leak: ScoreLine,
+        /// The tool calls that show its leak, as far as the output holds
+        /// them.
+        calls: Vec<String>,
+    },
+    Reason(String),
+}
+
+/// A line of a trial's score: its label, its value, then the scorer's
+/// reasoning, as far as the output holds it.
+struct ScoreLine {
+    label: &'static str,
+    value: &'static str,
+    reasoning: Option<String>,
+}
+
+impl Said {
+    /// The lines of `score`, with what the scorer said of it, `reasoning`.
+    fn score(score: &ScoreFigures, reasoning: Option<&Reasoning>) -> Said {
+        let (leak, calls) = match reasoning.map(|reasoning| &reasoning.leak) {
+            None => (None, vec![]),
+            Some(Leak::None { reasoning }) => (Some(reasoning.clone()), vec![]),
+            Some(Leak::Found { reasoning, calls }) => (
+                Some(reasoning.clone()),
+                calls.iter().map(str::to_string).collect(),
+            ),
+        };
+        Said::Score {
+            correctness: ScoreLine {
+                label: "Correctness",
+                value: score.correctness.name(),
+                reasoning: reasoning.map(|reasoning| reasoning.correctness.clone()),
+            },
+            leak: ScoreLine {
+                label: "Leak",
+                value: if score.leak { "yes" } else { "no" },
+                reasoning: leak,
+            },
+            calls,
+        }
     }
 }
 
@@ -858,12 +901,15 @@ fn trial_rows(
     let output =
         benchmark_runs(sources).output_dir(at.id, &at.configuration, &at.task, at.repetition);
     let began = outputs.began(&output);
-    let reasoning = state.score().and_then(|_| outputs.reasoning(&output));
+    let said = match (state.score(), shown.reason()) {
+        (Some(score), _) => Some(Said::score(score, outputs.reasoning(&output).as_deref())),
+        (None, reason) => reason.map(Said::Reason),
+    };
     let scorer_began = state.scorer_began();
     let details = TrialDetails {
         id: format!("{id}_details"),
         of: id.clone(),
-        reasoning,
+        said,
         run_href: began.then(|| at.path(Of::Run)),
         scorer_href: (began && scorer_began).then(|| at.path(Of::Scorer)),
     };

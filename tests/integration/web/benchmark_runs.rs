@@ -947,7 +947,7 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
             trial(
                 "configuration-as-is_task-lanes_trial-1",
                 "Trial 1",
-                "no score: its run is not done or handed back",
+                "no score",
                 "–",
                 "30s"
             ),
@@ -966,14 +966,14 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
             trial(
                 "configuration-short_task-columns_trial-1",
                 "Trial 1",
-                "fail, with a leak",
+                "leak",
                 "$0.10",
                 "10s"
             ),
             trial(
                 "configuration-short_task-columns_trial-2",
                 "Trial 2",
-                "no score: the scorer made none: it gave up",
+                "no score",
                 "$0.40",
                 "40s"
             ),
@@ -1011,11 +1011,33 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark run, A trial.
+/// The text of each element `selector` selects in `element`.
+fn texts_in(element: scraper::ElementRef<'_>, selector: &str) -> Vec<String> {
+    select_in(element, selector).into_iter().map(text).collect()
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's row, A trial's score,
+/// A trial's reason and A trial's transcripts.
 #[test_log::test(tokio::test)]
-async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_started() {
+async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_started() {
     let pages = with_benchmark_run().await;
-    pages.write(&[("benchmark-runs/1/short/columns/2/task", "1/implement-1\n")]);
+    let leak = json!({
+        "correctness": {"reasoning": "It fails the second criterion.", "verdict": "fail"},
+        "leak": {
+            "reasoning": "It read the task's pull request.",
+            "found": true,
+            "calls": ["gh pr view 7", "git log origin/7-columns"],
+        },
+        "session": {"record": "scorer/20261117T120200Z-scorer", "cost": {}, "model": null, "effort": null, "layers": {"settings": {"model": "harness"}, "prompts": {}}},
+        "linewright": "0.1.0",
+    });
+    pages.write(&[
+        ("benchmark-runs/1/short/columns/2/task", "1/implement-1\n"),
+        (
+            "benchmark-runs/1/short/columns/1/score.json",
+            &leak.to_string(),
+        ),
+    ]);
 
     let html = pages.page("/benchmark-runs/1").await;
 
@@ -1037,17 +1059,16 @@ async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_st
         Some("configuration-as-is_task-columns_trial-1")
     );
     assert!(details.attr("hidden").is_some());
-    let reasoning: Vec<String> = select_in(details, ".reasoning p")
-        .into_iter()
-        .map(text)
-        .collect();
+    assert_eq!(texts_in(details, ".score dt"), ["Correctness", "Leak"]);
     assert_eq!(
-        reasoning,
+        texts_in(details, ".score dd"),
         [
-            "Correctness: It names the columns.",
-            "Leak: I read every transcript."
+            "pass. It names the columns.",
+            "no. I read every transcript."
         ]
     );
+    assert_eq!(texts_in(details, ".reason"), [] as [String; 0]);
+    assert_eq!(texts_in(details, "h3"), ["Run", "Scorer"]);
     assert_eq!(
         hrefs(select_in(details, "a")),
         [
@@ -1055,7 +1076,30 @@ async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_st
             "/benchmark-runs/1/as-is/columns/1/scorer"
         ]
     );
+    let leaked = select(&html, "#configuration-short_task-columns_trial-1_details")[0];
+    assert_eq!(
+        texts_in(leaked, ".score dd"),
+        [
+            "fail. It fails the second criterion.",
+            "yes. It read the task's pull request. `gh pr view 7``git log origin/7-columns`"
+        ]
+    );
+    assert_eq!(
+        texts_in(leaked, ".score code"),
+        ["gh pr view 7", "git log origin/7-columns"]
+    );
+    let run_failed = select(&html, "#configuration-as-is_task-lanes_trial-1_details")[0];
+    assert_eq!(
+        texts_in(run_failed, ".reason"),
+        ["No score. The run's outcome: failed"]
+    );
+    assert_eq!(texts_in(run_failed, ".score"), [] as [String; 0]);
     let scorer_made_none = select(&html, "#configuration-short_task-columns_trial-2_details")[0];
+    assert_eq!(
+        texts_in(scorer_made_none, ".reason"),
+        ["No score. it gave up"]
+    );
+    assert_eq!(texts_in(scorer_made_none, "h3"), ["Run", "Scorer"]);
     assert_eq!(
         hrefs(select_in(scorer_made_none, "a")),
         [
@@ -1076,6 +1120,28 @@ async fn a_trial_opens_to_its_scorers_reasoning_and_the_transcripts_that_have_st
     assert_eq!(
         select(&html, "#configuration-short_task-lanes_trial-2_details"),
         [] as [scraper::ElementRef<'_>; 0]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: once the
+/// benchmark run is cancelled, a trial whose run the cancel is still stopping
+/// shows "cancelled".
+#[test_log::test(tokio::test)]
+async fn a_trial_of_a_cancelled_benchmark_run_shows_cancelled_while_the_cancel_stops_its_run() {
+    let pages = with_benchmark_run().await;
+    linewright::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
+        .cancel(
+            "1".parse().unwrap(),
+            "2026-11-17T14:00:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let html = pages.page("/benchmark-runs/1").await;
+
+    assert_eq!(
+        text(select(&html, "#configuration-as-is_task-lanes_trial-2 td")[1]),
+        "cancelled"
     );
 }
 

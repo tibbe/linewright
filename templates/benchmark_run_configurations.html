@@ -23,15 +23,27 @@
 {%- when Row::Trial(details) %}
 {%- call ui::fold_row(details.id, of = details.of) %}
 <td colspan="{{ ConfigurationsColumn::ALL.len() + 1 }}">
-{%- if let Some(reasoning) = details.reasoning %}
-<div class="reasoning max-w-3xl space-y-1 text-sm"><p><span class="text-base-content/60">Correctness:</span> {{ reasoning.correctness }}</p><p><span class="text-base-content/60">Leak:</span> {{ reasoning.leak }}</p></div>
+<div class="max-w-3xl space-y-3 text-sm">
+{%- match details.said %}
+{%- when Some(Said::Score { correctness, leak, calls }) %}
+<dl class="score space-y-1">
+<div class="flex gap-3"><dt class="w-24 shrink-0 text-base-content/60">{{ correctness.label }}</dt><dd class="min-w-0"><span class="font-semibold">{{ correctness.value }}</span>{% if let Some(reasoning) = correctness.reasoning %}. {{ reasoning }}{% endif %}</dd></div>
+<div class="flex gap-3"><dt class="w-24 shrink-0 text-base-content/60">{{ leak.label }}</dt><dd class="min-w-0 space-y-1"><p><span class="font-semibold">{{ leak.value }}</span>{% if let Some(reasoning) = leak.reasoning %}. {{ reasoning }}{% endif %}</p>
+{%- if !calls.is_empty() %}
+<ul class="space-y-1">{% for call in calls %}<li><code class="whitespace-pre-wrap break-words">{{ call }}</code></li>{% endfor %}</ul>
+{%- endif %}</dd></div>
+</dl>
+{%- when Some(Said::Reason(reason)) %}
+<p class="reason whitespace-pre-wrap">{{ reason }}</p>
+{%- when None %}
+{%- endmatch %}
+{%- if let Some(href) = details.run_href %}
+<section class="transcript-link"><h3 class="font-semibold">Run</h3><a class="link" href="{{ href }}">Run's transcript</a></section>
 {%- endif %}
-{%- if details.links() %}
-<p class="mt-1 flex gap-4 text-sm">
-{%- if let Some(href) = details.run_href %}<a class="link" href="{{ href }}">Run's transcript</a>{% endif %}
-{%- if let Some(href) = details.scorer_href %}<a class="link" href="{{ href }}">Scorer's transcript</a>{% endif -%}
-</p>
+{%- if let Some(href) = details.scorer_href %}
+<section class="transcript-link"><h3 class="font-semibold">Scorer</h3><a class="link" href="{{ href }}">Scorer's transcript</a></section>
 {%- endif %}
+</div>
 </td>
 {%- endcall %}
 {%- endmatch %}
