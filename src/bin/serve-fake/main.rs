@@ -6,7 +6,9 @@
 //! `playwright-cli` command that sets the browser's clock to its own. It keeps
 //! all it writes in a temporary directory it removes once a signal stops it,
 //! but for the work directory when `SERVE_FAKE_WORK_DIR` names one: so that
-//! one release can serve the work directory another left.
+//! one release can serve the work directory another left. With
+//! `SERVE_FAKE_UNPOLLED` set, each poll fails, so that the web UI stays as it
+//! is before Linewright's first poll.
 //!
 //! It runs `lw` and `fake-claude` from beside itself, as
 //! `cargo build --features fake-claude` leaves them.
@@ -62,6 +64,9 @@ async fn serve() -> Result<()> {
     seed::interrupted_run(&config.work_dir.join(seed::REPO)).await?;
     seed::earlier_runs(&config.work_dir.join(seed::REPO)).await?;
     seed::close_done(&store)?;
+    if std::env::var_os(UNPOLLED).is_some() {
+        store.fail_reads("serve-fake was started with SERVE_FAKE_UNPOLLED");
+    }
     let winding_up = WindingUp::default();
     let url = format!("http://127.0.0.1:{port}/");
     serving::serve(
@@ -125,6 +130,9 @@ fn fake_agent(dir: &Path, fake_claude: &Path, clock: &dyn Clock) -> Result<Strin
 
 /// The variable that names the work directory to keep.
 const WORK_DIR: &str = "SERVE_FAKE_WORK_DIR";
+
+/// The variable that, set, fails each poll.
+const UNPOLLED: &str = "SERVE_FAKE_UNPOLLED";
 
 /// Serving the seed's repository from `dir` on `port`, with the work
 /// directory [`WORK_DIR`] names or one in `dir`, each stage's sessions told
