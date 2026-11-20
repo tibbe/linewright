@@ -180,6 +180,35 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
     );
 }
 
+/// Asserts that the one notice in `html` is an alert of the classes
+/// `classes`, its status's icon `icon` first and its link a daisyUI `link` at
+/// its end: `docs/specs/web/shell.md`, A notice.
+#[track_caller]
+fn assert_notice(html: &Html, classes: &[&str], icon: &str) {
+    let notices = select(html, "#holds > *");
+    assert_eq!(notices.len(), 1, "{}", html.html());
+    let notice = notices[0];
+    assert_eq!(
+        notice.value().classes().collect::<Vec<_>>(),
+        classes,
+        "{}",
+        notice.html()
+    );
+    let parts: Vec<ElementRef> = notice.children().filter_map(ElementRef::wrap).collect();
+    assert_eq!(
+        parts.first().and_then(|first| first.attr("data-icon")),
+        Some(icon),
+        "{}",
+        notice.html()
+    );
+    let last = parts.last().expect("a link");
+    assert!(
+        last.value().name() == "a" && has_classes(*last, &["link"]),
+        "{}",
+        notice.html()
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_page() {
     let pages = Pages::of(View {
@@ -195,12 +224,7 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         "/server".to_string(),
     )];
     assert_eq!(holds(&html), held);
-    let alert = select(&html, "#holds .alert")[0];
-    assert!(
-        has_classes(alert, &["alert-outline"]),
-        "a usage limit shows paused: {}",
-        alert.html()
-    );
+    assert_notice(&html, &["alert"], "pause-circle");
     for path in ["/", "/runs", "/server"] {
         assert_eq!(holds(&pages.page(path).await), held, "{path}");
     }
@@ -211,7 +235,7 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         Some(&ServerFact {
             label: "Usage limit".into(),
             value: "in force until 2026-10-13 07:50:00 UTC".into(),
-            tone: Some("muted".into()),
+            tone: Some("base-content/60".into()),
         }),
         "{facts:?}"
     );
@@ -221,7 +245,7 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
         "{}",
         server.html()
     );
-    assert_in_muted_text(&server, "#server dt");
+    assert_in_secondary_text(&server, "#server dt");
     let usage_limit = select(&server, "#server dd")[2];
     assert_eq!(
         select_in(usage_limit, ".status-text svg.icon").len(),
@@ -254,18 +278,14 @@ async fn a_drain_under_way_is_a_hold_linking_to_the_server_page() {
             "/server".to_string()
         )]
     );
-    assert!(
-        has_classes(select(&html, "#holds .alert")[0], &["alert-outline"]),
-        "{}",
-        html.html()
-    );
+    assert_notice(&html, &["alert"], "pause-circle");
     let facts = server_facts(&pages.page("/server").await);
     assert_eq!(
         facts.get(2),
         Some(&ServerFact {
             label: "Drain".into(),
             value: "started 2026-10-01 12:00:20 UTC".into(),
-            tone: Some("muted".into()),
+            tone: Some("base-content/60".into()),
         }),
         "{facts:?}"
     );
@@ -289,11 +309,7 @@ async fn a_refused_delivery_is_a_hold_linking_to_the_server_page() {
             "/server".to_string()
         )]
     );
-    assert!(
-        has_classes(select(&html, "#holds .alert")[0], &["alert-error"]),
-        "{}",
-        html.html()
-    );
+    assert_notice(&html, &["alert", "alert-error"], "x-circle");
 }
 
 #[test_log::test(tokio::test)]
@@ -446,10 +462,13 @@ pub(super) fn server_facts(html: &Html) -> Vec<ServerFact> {
                 status
                     .value()
                     .classes()
-                    .find_map(|class| {
-                        class
+                    .find_map(|class| match class {
+                        "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]" => {
+                            Some("base-content/60")
+                        }
+                        _ => class
                             .strip_prefix("[--tone:var(--color-")
-                            .and_then(|colour| colour.strip_suffix(")]"))
+                            .and_then(|colour| colour.strip_suffix(")]")),
                     })
                     .map(str::to_string)
             }),

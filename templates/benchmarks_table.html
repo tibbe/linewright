@@ -5,6 +5,7 @@
 {%- if rows.is_empty() %}
 <p class="px-4 pb-4">No benchmarks</p>
 {%- else %}
+<div class="overflow-x-auto">
 <table class="table">
 <thead><tr>{% for column in BenchmarksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -26,6 +27,7 @@
 {%- endfor %}
 </tbody>
 </table>
+</div>
 {%- if let Some(pages) = pages %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}

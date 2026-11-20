@@ -69,28 +69,50 @@ fn each_theme_sets_exactly_the_variables_of_the_specs_table() {
     assert_eq!(theme_variables("dark"), dark);
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme: Card is `base-200`,
-/// and Muted text is `base-content` at 60% opacity.
+/// `docs/specs/web/design_system.md`, Colour scheme: the web UI draws in no
+/// colour but daisyUI's, so the stylesheet sets no colour but in its themes.
 #[test_log::test]
-fn the_card_and_muted_text_roles_are_base_200_and_base_content_at_60_percent() {
-    let roles: Vec<(&str, &str)> = STYLES
-        .split("@theme inline {")
-        .nth(1)
-        .and_then(|rest| rest.split('}').next())
-        .expect("an inline theme block")
-        .split(';')
-        .filter_map(|declaration| declaration.trim().split_once(':'))
-        .map(|(variable, value)| (variable.trim(), value.trim()))
+fn the_stylesheet_sets_no_colour_but_in_its_themes() {
+    let mut parts = STYLES.split("@plugin \"./daisyui-theme.mjs\" {");
+    let outside_the_themes: String = parts
+        .next()
+        .into_iter()
+        .chain(parts.map(|theme| theme.split_once('}').map_or("", |(_, after)| after)))
         .collect();
 
+    assert!(
+        !outside_the_themes.contains("--color-"),
+        "{outside_the_themes}"
+    );
+}
+
+/// `docs/specs/web/components.md`, Inline code: `font-mono` at
+/// `text-[0.9em]`, on `bg-base-content/10`, with `rounded-sm` corners and a
+/// padding of `px-1`.
+#[test_log::test]
+fn inline_code_is_drawn_as_the_spec_gives_it() {
+    let rule = STYLES
+        .split("  code {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("a rule for code");
+    let mut classes: Vec<&str> = rule
+        .trim()
+        .strip_prefix("@apply")
+        .expect("the rule applies classes")
+        .trim_end_matches(';')
+        .split_whitespace()
+        .collect();
+    classes.sort_unstable();
+
     assert_eq!(
-        roles,
+        classes,
         [
-            ("--color-card", "var(--color-base-200)"),
-            (
-                "--color-muted",
-                "color-mix(in oklab, var(--color-base-content) 60%, transparent)"
-            ),
+            "bg-base-content/10",
+            "font-mono",
+            "px-1",
+            "rounded-sm",
+            "text-[0.9em]"
         ]
     );
 }

@@ -24,7 +24,7 @@
 {%- call ui::fold_row(details.id, of = details.of) %}
 <td colspan="{{ ConfigurationsColumn::ALL.len() + 1 }}">
 {%- if let Some(reasoning) = details.reasoning %}
-<div class="reasoning max-w-3xl space-y-1 text-sm"><p><span class="text-muted">Correctness:</span> {{ reasoning.correctness }}</p><p><span class="text-muted">Leak:</span> {{ reasoning.leak }}</p></div>
+<div class="reasoning max-w-3xl space-y-1 text-sm"><p><span class="text-base-content/60">Correctness:</span> {{ reasoning.correctness }}</p><p><span class="text-base-content/60">Leak:</span> {{ reasoning.leak }}</p></div>
 {%- endif %}
 {%- if details.links() %}
 <p class="mt-1 flex gap-4 text-sm">

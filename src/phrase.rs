@@ -26,9 +26,10 @@ pub enum Status {
 impl Status {
     /// The colour it shows in, as the classes of a badge in it: a badge gives
     /// each daisyUI colour its own colour of text, which reads on it in either
-    /// theme, while Muted text, a text colour with no content colour of its
-    /// own, is an outline badge, with no fill. Written whole, since Tailwind
-    /// finds the classes the stylesheet needs by scanning the sources' text
+    /// theme, while `base-content/60`, a text colour with no content colour
+    /// of its own, is an outline badge in that colour, with no fill. Written
+    /// whole, since Tailwind finds the classes the stylesheet needs by
+    /// scanning the sources' text
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
     pub fn colour(self) -> &'static str {
         match self {
@@ -37,7 +38,7 @@ impl Status {
             Status::InFlight => "badge-info",
             Status::Waiting => "badge-warning",
             Status::Cancelled => "badge-neutral",
-            Status::Paused => "badge-outline [--badge-color:var(--color-muted)]",
+            Status::Paused => "badge-outline text-base-content/60",
         }
     }
 
@@ -51,13 +52,15 @@ impl Status {
             Status::InFlight => "[--tone:var(--color-info)]",
             Status::Waiting => "[--tone:var(--color-warning)]",
             Status::Cancelled => "[--tone:var(--color-neutral)]",
-            Status::Paused => "[--tone:var(--color-muted)]",
+            Status::Paused => {
+                "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]"
+            }
         }
     }
 
-    /// The classes of an alert in its colour: neutral is daisyUI's alert with
-    /// no colour of its own, and Muted text, with no content colour, is an
-    /// outline alert. Written whole, as `colour` says why.
+    /// The classes of an alert in its colour: neutral, and `base-content/60`
+    /// with no content colour, are daisyUI's alert with no colour of its
+    /// own. Written whole, as `colour` says why.
     pub fn alert(self) -> &'static str {
         match self {
             Status::Done => "alert alert-success",
@@ -65,7 +68,7 @@ impl Status {
             Status::InFlight => "alert alert-info",
             Status::Waiting => "alert alert-warning",
             Status::Cancelled => "alert",
-            Status::Paused => "alert alert-outline [--alert-color:var(--color-muted)]",
+            Status::Paused => "alert",
         }
     }
 }
@@ -222,7 +225,7 @@ fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
 mod tests {
     use super::*;
 
-    /// `docs/specs/web/design_system.md`, Status: paused is Muted text,
+    /// `docs/specs/web/design_system.md`, Status: paused is `base-content/60`,
     /// cancelled `neutral`.
     #[test_log::test]
     fn each_status_has_the_colour_of_the_states_it_shows() {
@@ -243,7 +246,7 @@ mod tests {
                 "badge-info",
                 "badge-warning",
                 "badge-neutral",
-                "badge-outline [--badge-color:var(--color-muted)]",
+                "badge-outline text-base-content/60",
             ]
         );
         assert_eq!(
@@ -254,7 +257,7 @@ mod tests {
                 "[--tone:var(--color-info)]",
                 "[--tone:var(--color-warning)]",
                 "[--tone:var(--color-neutral)]",
-                "[--tone:var(--color-muted)]",
+                "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]",
             ]
         );
         assert_eq!(
@@ -265,7 +268,7 @@ mod tests {
                 "alert alert-info",
                 "alert alert-warning",
                 "alert",
-                "alert alert-outline [--alert-color:var(--color-muted)]",
+                "alert",
             ]
         );
     }

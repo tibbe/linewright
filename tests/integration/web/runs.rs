@@ -259,8 +259,11 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
         by_hand.into_iter().map(text).collect::<Vec<_>>(),
         ["by hand"]
     );
-    let badge = classes(&html, "#runs tbody .badge:not(.tone)");
-    assert!(badge[0].contains(&"badge-ghost"), "{badge:?}");
+    assert_eq!(
+        classes(&html, "#runs tbody .badge:not(.tone)"),
+        [["badge", "badge-sm"]],
+        "docs/specs/web/runs.md, Runs: a badge-sm with no colour or style class"
+    );
 }
 
 #[test_log::test(tokio::test)]

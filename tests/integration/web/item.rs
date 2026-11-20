@@ -37,7 +37,7 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
     let html = pages.page("/items/1").await;
 
     assert_eq!(select(&html, "#item dl.card").len(), 1, "{}", html.html());
-    assert_in_muted_text(&html, "#item dt");
+    assert_in_secondary_text(&html, "#item dt");
     assert_eq!(
         item_facts(&html),
         [
@@ -100,7 +100,7 @@ async fn the_item_pages_heading_is_its_number_and_title_linked_and_when_serve_la
     let as_of = select(&html, "#heading .line");
     assert_eq!(as_of.len(), 1, "{}", html.html());
     assert_eq!(text(as_of[0]), "as of 2026-10-01 12:00:00 UTC");
-    assert_in_muted_text(&html, "#heading .line");
+    assert_in_secondary_text(&html, "#heading .line");
     assert_eq!(
         select_in(as_of[0], "time")[0].attr("datetime"),
         Some("2026-10-01T12:00:00Z")

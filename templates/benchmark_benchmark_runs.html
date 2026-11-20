@@ -3,6 +3,7 @@
 {%- if benchmark_runs.is_empty() %}
 <p class="px-4 pb-4">No benchmark runs</p>
 {%- else %}
+<div class="overflow-x-auto">
 <table class="table">
 <thead><tr>{% for column in BenchmarkRunsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -30,6 +31,7 @@
 {%- endfor %}
 </tbody>
 </table>
+</div>
 {%- if let Some(pages) = benchmark_runs_nav %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}

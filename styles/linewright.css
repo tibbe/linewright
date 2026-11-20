@@ -90,17 +90,9 @@
   --noise: 0;
 }
 
-/* The Card colour as Tailwind's `bg-card`, and Muted text as `text-muted`
-   and `var(--color-muted)`
-   (https://tailwindcss.com/docs/colors#using-a-custom-color). */
-@theme inline {
-  --color-card: var(--color-base-200);
-  --color-muted: color-mix(in oklab, var(--color-base-content) 60%, transparent);
-}
-
 @layer base {
   code {
-    @apply rounded-sm bg-base-300 px-1 font-mono text-[0.9em];
+    @apply font-mono text-[0.9em] bg-base-content/10 rounded-sm px-1;
   }
 }
 
@@ -135,7 +127,7 @@
   }
 
   .benchmark-run-chart .point .dot {
-    @apply size-4 shrink-0 rounded-full border-2 border-card bg-info;
+    @apply size-4 shrink-0 rounded-full border-2 border-base-200 bg-info;
   }
 
   a.github > svg.icon {
@@ -240,7 +232,7 @@
   }
 
   .transcript .thinking .text {
-    @apply text-muted;
+    @apply text-base-content/60;
   }
 }
 
@@ -249,7 +241,7 @@
    (https://daisyui.com/docs/install/standalone/). */
 @layer utilities {
   .table-card .table-pin-rows thead tr {
-    @apply bg-card;
+    @apply bg-base-200;
   }
 
   form.capture:not(:has(option.new-benchmark:checked)) .new-benchmark-name {

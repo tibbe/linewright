@@ -441,7 +441,7 @@ impl Hold {
 }
 
 pub(super) struct HoldShown {
-    pub(super) alert: &'static str,
+    pub(super) status: Status,
     pub(super) phrase: Html,
     pub(super) href: String,
 }
@@ -499,7 +499,7 @@ impl Frame {
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {
-                alert: hold.status().alert(),
+                status: hold.status(),
                 phrase: html::phrase(&hold.phrase(), &names),
                 href: hold.href(),
             })

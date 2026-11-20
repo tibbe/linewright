@@ -540,20 +540,22 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
     })
 }
 
-/// Asserts that `selector` selects something in `html`, all of it in Muted
-/// text and in no translucent text colour: `docs/specs/web/design_system.md`,
-/// Colour scheme: secondary text is in Muted text, and the web UI draws in
-/// no colour but its own.
-fn assert_in_muted_text(html: &Html, selector: &str) {
+/// Asserts that `selector` selects something in `html`, all of it in
+/// secondary text and in no other translucent text colour:
+/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// `text-base-content/60`.
+fn assert_in_secondary_text(html: &Html, selector: &str) {
     let selected = select(html, selector);
     assert!(!selected.is_empty(), "{selector}");
     for element in selected {
         assert!(
-            has_classes(element, &["text-muted"])
-                && !element
+            has_classes(element, &["text-base-content/60"])
+                && element
                     .value()
                     .classes()
-                    .any(|class| class.starts_with("text-") && class.contains('/')),
+                    .filter(|class| class.starts_with("text-") && class.contains('/'))
+                    .count()
+                    == 1,
             "{}",
             element.html()
         );
@@ -987,14 +989,14 @@ fn no_link(text: &str) -> PageLink {
 }
 
 /// The pages under the table in `within` on `html`, if it has any. Each item
-/// is a small button in a daisyUI `join`, and which rows show is in Muted
+/// is a small button in a daisyUI `join`, and which rows show is in secondary
 /// text.
 #[track_caller]
 fn pages_nav(html: &Html, within: &str) -> Option<PagesNav> {
     let navs = select(html, &format!("{within} nav.pages"));
     assert!(navs.len() <= 1, "{}", html.html());
     let nav = *navs.first()?;
-    assert_in_muted_text(html, &format!("{within} nav.pages .pages-showing"));
+    assert_in_secondary_text(html, &format!("{within} nav.pages .pages-showing"));
     let showing = select_in(nav, ".pages-showing");
     let items = select_in(nav, ".join > *")
         .into_iter()

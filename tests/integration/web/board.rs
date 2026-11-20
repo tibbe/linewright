@@ -692,7 +692,7 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
 }
 
 /// `docs/specs/web/board.md`, Board: a lane is drawn as a card is, its head
-/// a bar in the Card colour, and its cards are cards in the Page colour.
+/// a bar in `bg-base-200`, and its cards are cards in `bg-base-100`.
 #[test_log::test(tokio::test)]
 async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -703,9 +703,9 @@ async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour(
     assert_eq!(lanes.len(), 4);
     for lane in lanes {
         assert!(has_classes(lane, &["rounded-box"]), "{}", lane.html());
-        assert_drawn_as_a_card(lane, "bg-card", "a lane");
+        assert_drawn_as_a_card(lane, "bg-base-200", "a lane");
         for head in select_in(lane, ".lane-head") {
-            assert!(has_classes(head, &["bg-card"]), "{}", head.html());
+            assert!(has_classes(head, &["bg-base-200"]), "{}", head.html());
             assert!(lacks_classes(head, &["border-t"]), "{}", head.html());
         }
     }
@@ -736,7 +736,7 @@ const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
 /// `docs/specs/board.md`, Lanes: a lane's head is its number and title, with
 /// its tickets closed of total and when it finished, and no status of its own
-/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in the Card colour.
+/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in `bg-base-200`.
 #[test_log::test(tokio::test)]
 async fn a_lane_head_shows_no_status_of_its_own() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -760,11 +760,12 @@ async fn a_lane_head_shows_no_status_of_its_own() {
 
 /// `docs/specs/board.md`, Cards, Card status, and
 /// `docs/specs/web/design_system.md`, Status: paused or queued shows as
-/// paused, which is Muted text.
-const PAUSED_OR_QUEUED: &str = "[--tone:var(--color-muted)]";
+/// paused, which is `base-content/60`.
+const PAUSED_OR_QUEUED: &str =
+    "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]";
 
 #[test_log::test(tokio::test)]
-async fn a_card_paused_for_the_usage_limit_shows_it_in_muted_text() {
+async fn a_card_paused_for_the_usage_limit_shows_it_in_secondary_text() {
     let claimed = assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]);
     let pages = Pages::of(View {
         memory: limited_until("2026-10-01T13:00:00Z"),
@@ -838,14 +839,14 @@ async fn a_held_card_says_what_ends_its_hold() {
 }
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
-/// Muted text.
+/// `text-base-content/60`.
 #[test_log::test(tokio::test)]
-async fn a_cards_line_under_its_title_is_in_muted_text() {
+async fn a_cards_line_under_its_title_is_in_secondary_text() {
     let pages = Pages::of(a_board()).await;
 
     let html = pages.page("/").await;
 
-    assert_in_muted_text(&html, "#board .card .line");
+    assert_in_secondary_text(&html, "#board .card .line");
 }
 
 #[test_log::test(tokio::test)]
@@ -1168,9 +1169,9 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
 
 /// `docs/specs/board.md`, Cards, What stops a pull request merging:
 /// a pull request whose update run waits for a free run says "queued", not
-/// "conflicts", in Muted text.
+/// "conflicts", in secondary text.
 #[test_log::test(tokio::test)]
-async fn a_pull_request_whose_run_is_queued_says_queued_in_muted_text() {
+async fn a_pull_request_whose_run_is_queued_says_queued_in_secondary_text() {
     let conflicting = Pull {
         mergeability: Mergeability::Conflicting,
         ..linewrights_pull(11, &[1], &[CheckState::Passed])
