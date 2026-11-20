@@ -399,7 +399,7 @@ fn working_html(n: usize, model: &Session) -> String {
                         .or(model.started_at)
                         .map(|from| Lasted::from(model.lasted_from(from))),
                 ),
-                None => ("working".to_string(), Some(model.turn_so_far()?.into())),
+                None => (WORKING.to_string(), Some(model.turn_so_far()?.into())),
             };
             let row = entry_row(&Row {
                 id: Some(&format!("s{n}-step")),
@@ -492,7 +492,7 @@ fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
 }
 
 /// An entry's line, and what it opens to, if anything
-/// (`docs/specs/web/runs.md`, Run).
+/// (`docs/specs/web/components.md`, Transcript).
 pub(super) struct Row<'a> {
     /// The start of the IDs of its line, `{id}-line`, of what holds it and
     /// what it opens to, `{id}-fold`, and of what it opens to,
@@ -534,8 +534,9 @@ pub(super) fn entry_row(row: &Row) -> String {
     )
 }
 
-/// A row's line: the summary of its fold, if it opens, in `base-300`
-/// on hover and on keyboard focus (`docs/specs/web/runs.md`, Run, Hover).
+/// A row's line: the summary of its fold, if it opens, in
+/// `bg-base-content/10` on hover and on keyboard focus
+/// (`docs/specs/web/components.md`, Transcript, Hover).
 /// The chevron of a fold points right while it is closed and down while it
 /// is open (`docs/specs/web/components.md`, Transcript, Lines).
 fn line_html(row: &Row) -> String {
@@ -553,11 +554,19 @@ fn line_html(row: &Row) -> String {
         .id
         .map_or(String::new(), |id| format!(r#" id="{id}-line""#));
     format!(
-        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron flex h-lh items-center justify-center self-start text-base-content/60" aria-hidden="true">{chevron}</span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
+        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-content/10 focus-visible:bg-base-content/10"{id}><span class="chevron flex h-lh items-center justify-center self-start text-base-content/60" aria-hidden="true">{chevron}</span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
         text = row.text,
         duration = duration_html(row.lasted),
     )
 }
+
+/// The class of a block an entry opens to
+/// (`docs/specs/web/components.md`, Transcript, What an entry opens to).
+const OPENS_TO: &str = "max-h-[30rem] overflow-auto rounded-box bg-base-200 px-3 py-2 whitespace-pre-wrap wrap-anywhere";
+
+/// The text of the working step while a turn goes on
+/// (`docs/specs/web/components.md`, Transcript, "working").
+const WORKING: &str = r#"<span class="text-base-content/60"><span class="loading loading-dots loading-xs mr-1 align-middle"></span>working</span>"#;
 
 /// The class of a duration at the right of its line.
 const DURATION: &str =
@@ -651,7 +660,7 @@ pub(super) fn output_html(output: &str) -> String {
         return String::new();
     }
     format!(
-        r#"<pre class="output my-1 max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre>"#,
+        r#"<pre class="output my-1 {OPENS_TO}">{}</pre>"#,
         html::escape(output.trim_end())
     )
 }
@@ -775,12 +784,12 @@ impl Drawn<'_> {
                 let fold = (!text.is_empty()).then(|| Fold {
                     open: self.verbose,
                     body: format!(
-                        r#"<div class="thinking my-1 whitespace-pre-wrap wrap-anywhere text-base-content/60">{}</div>"#,
+                        r#"<div class="thinking my-1 {OPENS_TO}">{}</div>"#,
                         html::escape(text)
                     ),
                 });
                 (
-                    "thought",
+                    "thought text-base-content/60",
                     row(cut_short(THOUGHT, thought.cut_short()), fold),
                 )
             }
@@ -811,7 +820,7 @@ impl Drawn<'_> {
         let fold = more.then(|| Fold {
             open: self.verbose,
             body: format!(
-                r#"<div class="prompt my-1 whitespace-pre-wrap wrap-anywhere">{}</div>"#,
+                r#"<div class="prompt my-1 {OPENS_TO}">{}</div>"#,
                 html::escape(text)
             ),
         });
@@ -883,7 +892,7 @@ impl Drawn<'_> {
             .filter_map(|i| self.entry_html(i))
             .collect();
         format!(
-            r#"<ol class="entries border-l-2 border-base-300" id="{}-entries">{entries}</ol>"#,
+            r#"<ol class="entries border-s-2 border-base-content/10" id="{}-entries">{entries}</ol>"#,
             self.entry_id(call)
         )
     }
@@ -895,7 +904,7 @@ impl Drawn<'_> {
             return String::new();
         }
         let entries = if n == 1 { "entry" } else { "entries" };
-        format!(r#" <span class="count badge badge-sm badge-ghost ml-2">{n} {entries}</span>"#)
+        format!(r#" <span class="count badge badge-sm ml-2">{n} {entries}</span>"#)
     }
 }
 
@@ -927,7 +936,7 @@ fn io_html(id: &str, call: &Call) -> String {
     for (label, text) in call.parts() {
         let _ = writeln!(
             io,
-            r#"<div>{label}: <pre class="mt-0.5 mb-1.5 max-h-[30rem] overflow-auto rounded-box bg-base-200 px-2.5 py-1.5 whitespace-pre-wrap wrap-anywhere">{}</pre></div>"#,
+            r#"<div>{label}: <pre class="mt-0.5 mb-1.5 {OPENS_TO}">{}</pre></div>"#,
             html::escape(text.trim_end())
         );
     }

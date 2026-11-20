@@ -228,10 +228,6 @@
   td:has(> .row-view) {
     @apply w-0;
   }
-
-  .transcript .thinking .text {
-    @apply text-base-content/60;
-  }
 }
 
 /* In the utilities layer, as daisyUI's `.input` that it hides and its

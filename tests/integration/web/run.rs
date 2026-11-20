@@ -311,7 +311,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/web/runs.md`, Run, Lines.
+/// `docs/specs/web/components.md`, Transcript, Lines.
 #[test_log::test(tokio::test)]
 async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_opens_fills() {
     let pages = implemented_as_recorded().await;
@@ -341,24 +341,26 @@ async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_
     }
 }
 
-/// `docs/specs/web/runs.md`, Run, Hover: an entry's line is in the Border
-/// colour on hover.
+/// `docs/specs/web/components.md`, Transcript: the run page draws each part
+/// of its transcript in the spec's classes, thinking in secondary text.
 #[test_log::test(tokio::test)]
-async fn every_entrys_line_is_in_the_border_colour_on_hover() {
+async fn the_run_pages_transcript_is_drawn_in_the_specs_classes() {
     let pages = implemented_as_recorded().await;
 
     let html = pages.page("/runs/1/implement-1?verbose=").await;
 
-    let lines = select(&html, "#transcript .entry .line");
-    assert_ne!(lines.len(), 0);
-    for line in lines {
-        let hovered: Vec<&str> = line
-            .value()
-            .classes()
-            .filter(|class| class.starts_with("hover:"))
-            .collect();
-        assert_eq!(hovered, ["hover:bg-base-300"], "{}", line.html());
+    for part in [
+        "#transcript .settings",
+        "#transcript .io pre",
+        "#transcript .prompt",
+        "#transcript .thinking",
+        "#transcript .entry ol.entries",
+        "#transcript .count",
+    ] {
+        assert_ne!(select(&html, part).len(), 0, "{part}");
     }
+    assert_transcript_drawn_as_the_spec_says(&html);
+    assert_in_secondary_text(&html, "#transcript .entry.thought");
 }
 
 /// `docs/specs/runs.md`, Out of scope: a link of its own to each
@@ -1460,7 +1462,7 @@ fn working_step(html: &Html) -> Option<String> {
 }
 
 /// `docs/specs/runs.md`, Run, A session's heading;
-/// `docs/specs/web/runs.md`, Run, Durations.
+/// `docs/specs/web/components.md`, Transcript, Durations.
 #[test_log::test(tokio::test)]
 async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_secondary_text() {
     let output = cloned_and_called() + &session_ended(at("2026-10-14T12:00:40Z")) + "\n";
@@ -1589,6 +1591,30 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
         .filter(|(target, _)| target == "#s1-heading" || target == "#s1-working")
         .collect();
     assert_eq!(ended_heading, [heading("50s")]);
+}
+
+/// `docs/specs/web/components.md`, Transcript: "working" is in secondary
+/// text, after a daisyUI `loading` in the `loading-dots` style,
+/// `loading-xs`.
+#[test_log::test(tokio::test)]
+async fn the_working_step_says_working_in_secondary_text_after_small_loading_dots() {
+    let pages = triaged(&cloned_and_called(), serde_json::Value::Null).await;
+    let _in_flight = lock_of(&pages.path("runs/items/1/triage-1.json"));
+
+    let html = pages.page("/runs/1/triage-1").await;
+
+    let said = select(&html, "#s1-working .line .text > *");
+    assert_eq!(said.len(), 1, "{}", html.html());
+    assert_eq!(text(said[0]), "working");
+    assert_in_secondary_text(&html, "#s1-working .line .text > *");
+    let first = said[0].children().find_map(ElementRef::wrap);
+    assert!(
+        first.is_some_and(|loading| {
+            has_classes(loading, &["loading", "loading-dots", "loading-xs"])
+        }),
+        "{}",
+        said[0].html()
+    );
 }
 
 /// `docs/specs/runs.md`, Run, Working.
