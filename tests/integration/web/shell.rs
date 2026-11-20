@@ -416,6 +416,45 @@ async fn every_stream_sends_the_shells_regions_first() {
     }
 }
 
+/// `docs/specs/design_system.md`, Making, What was made: the message a
+/// dialog's answer sends goes under the heading, into a slot that a page
+/// starts empty and that no stream sends, so it stays until the reader
+/// leaves.
+#[test_log::test(tokio::test)]
+async fn every_page_starts_an_empty_slot_for_what_was_made_under_its_heading_that_no_stream_sends()
+{
+    let pages = with_a_run().await;
+
+    for path in [
+        "/",
+        "/runs",
+        "/benchmarks/board",
+        "/items/1",
+        "/runs/1/triage-1",
+    ] {
+        let html = pages.page(path).await;
+        let mut events = stream(&pages, &format!("/events{path}")).await;
+        let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let made = select(&html, "#made");
+        assert_eq!(made.len(), 1, "{path}");
+        assert_eq!(made[0].inner_html(), "", "{path}");
+        assert!(has_classes(made[0], &["empty:hidden"]), "{path}");
+        let before = made[0]
+            .prev_siblings()
+            .find_map(ElementRef::wrap)
+            .and_then(|element| element.attr("id"));
+        assert_eq!(before, Some("heading"), "{path}");
+        for (id, region) in regions(&first) {
+            assert_ne!(id, "made", "{path}");
+            assert_eq!(select(&region, "#made").len(), 0, "{path} {id}");
+        }
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn an_items_heading_and_title_follow_a_change_of_its_title_through_its_stream() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
