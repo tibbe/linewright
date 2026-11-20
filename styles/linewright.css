@@ -125,7 +125,7 @@
   }
 
   .benchmark-run-chart .point {
-    @apply pointer-events-auto flex cursor-default items-center gap-1 rounded-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-info;
+    @apply pointer-events-auto flex cursor-default items-center gap-1 rounded-sm whitespace-nowrap focus-visible:outline-2 focus-visible:outline-base-content;
   }
 
   .benchmark-run-chart .named-left .point {

@@ -6,7 +6,7 @@
 {%- if !automations.unparsed.is_empty() %}
 <ul class="unparsed space-y-1">
 {%- for file in automations.unparsed %}
-<li class="text-error">{{ file|safe }}</li>
+<li class="{{ crate::phrase::Status::Failed.alert() }}">{% call ui::icon(crate::web::icons::status_icon(&crate::phrase::Status::Failed), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ file|safe }}</span></li>
 {%- endfor %}
 </ul>
 {%- endif %}
