@@ -3,7 +3,7 @@
 <div class="stats max-w-full {% call ui::card_look() %}{% endcall %}">
 {%- for fact in benchmark_run.facts %}
 <div class="stat">
-<div class="stat-title text-muted">{{ fact.label }}</div>
+<div class="stat-title text-base-content/60">{{ fact.label }}</div>
 <div class="stat-value text-lg font-semibold">{{ fact.value }}</div>
 </div>
 {%- endfor %}

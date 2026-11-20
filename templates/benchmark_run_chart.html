@@ -5,8 +5,8 @@
 {%- when Some(drawn) %}
 <svg class="size-full" viewBox="{{ drawn.view_box }}">
 <g class="text-base-300 stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.rules }}"/></g>
-<g class="text-muted stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.axes }}"/></g>
-<g class="text-muted fill-current text-xs" aria-hidden="true">
+<g class="text-base-content/60 stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.axes }}"/></g>
+<g class="text-base-content/60 fill-current text-xs" aria-hidden="true">
 {%- for tick in drawn.ticks %}
 <text x="{{ "{:.1}"|format(tick.x) }}" y="{{ "{:.1}"|format(tick.y) }}" text-anchor="{{ tick.anchor }}">{{ tick.label }}</text>
 {%- endfor %}
@@ -16,7 +16,7 @@
 {%- endfor %}
 </svg>
 {%- when None %}
-<p class="text-muted absolute inset-0 grid place-items-center">No results</p>
+<p class="text-base-content/60 absolute inset-0 grid place-items-center">No results</p>
 {%- endmatch %}
 </div>
 {%- endfor %}

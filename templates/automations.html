@@ -15,7 +15,7 @@
 {%- if automations.rows.is_empty() %}
 <p class="px-4 pb-4">No automations</p>
 {%- else %}
-<div class="scroll-box">
+<div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
 <thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>

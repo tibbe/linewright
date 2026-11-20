@@ -254,7 +254,7 @@ fn build_html(build: &BuildShown, names: &Names) -> Html {
         .as_ref()
         .map_or_else(String::new, |so_far| output_html(&so_far.output));
     html::built(format!(
-        r#"<div class="build font-mono text-sm" id="build-{}"><div class="text-muted">{heading}</div>{line}<div class="ml-6">{so_far}</div></div>"#,
+        r#"<div class="build font-mono text-sm" id="build-{}"><div class="text-base-content/60">{heading}</div>{line}<div class="ml-6">{so_far}</div></div>"#,
         build.build
     ))
 }

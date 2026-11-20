@@ -220,15 +220,15 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
 }
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
-/// Muted text.
+/// `text-base-content/60`.
 #[test_log::test(tokio::test)]
-async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_muted_text() {
+async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_secondary_text() {
     let pages = implemented_as_recorded().await;
 
     let html = pages.page("/runs/1/implement-1").await;
 
     for selector in ["#s1 .ran", "#s1 .layers", "#transcript time.duration"] {
-        assert_in_muted_text(&html, selector);
+        assert_in_secondary_text(&html, selector);
     }
 }
 
@@ -1462,7 +1462,7 @@ fn working_step(html: &Html) -> Option<String> {
 /// `docs/specs/runs.md`, Run, A session's heading;
 /// `docs/specs/web/runs.md`, Run, Durations.
 #[test_log::test(tokio::test)]
-async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_muted_text() {
+async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_secondary_text() {
     let output = cloned_and_called() + &session_ended(at("2026-10-14T12:00:40Z")) + "\n";
     let pages = triaged(
         &output,
@@ -1477,7 +1477,7 @@ async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_muted_t
         "session 1: started 2026-10-14 12:00:00 UTC | 40s"
     );
     assert_eq!(working_step(&html), None, "the run is not followed");
-    assert_in_muted_text(&html, "#s1-heading time.duration");
+    assert_in_secondary_text(&html, "#s1-heading time.duration");
 }
 
 /// `docs/specs/runs.md`, Run, A session's heading,

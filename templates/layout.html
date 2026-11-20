@@ -15,7 +15,7 @@
 <script src="{{ page.assets.sse }}"></script>
 <script src="{{ page.assets.script }}" defer></script>
 </head>
-<body class="bg-card text-base-content">
+<body class="bg-base-200 text-base-content">
 <div id="stream" hidden hx-sse:connect="{{ page.events }}" hx-swap="none"></div>
 <div class="drawer lg:drawer-open">
 <input id="navigation" type="checkbox" class="drawer-toggle">
@@ -25,12 +25,12 @@
 <label for="navigation" class="btn btn-ghost btn-square btn-sm drawer-button lg:hidden" aria-label="Open the navigation">
 {% call ui::icon(crate::web::icons::Icon::Bars3, crate::web::icons::IconSize::Inline) %}{% endcall %}
 </label>
-<p class="repo-name flex min-h-8 items-center text-xl font-light text-muted">{{ frame.repo }}</p>
+<p class="repo-name flex min-h-8 items-center text-xl font-light text-base-content/60">{{ frame.repo }}</p>
 </div>
 {% block holds -%}
 <div id="holds" class="flex shrink-0 flex-col gap-2 empty:hidden">
 {%- for hold in frame.holds %}
-<div class="{{ hold.alert }}" role="alert"><span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
+<div class="{{ hold.status.alert() }}" role="alert">{% call ui::icon(crate::web::icons::status_icon(hold.status), crate::web::icons::IconSize::Inline) %}{% endcall %}<span class="phrase">{{ hold.phrase|safe }}</span><a class="link" href="{{ hold.href }}">details</a></div>
 {%- endfor -%}
 </div>
 {%- endblock %}
@@ -51,7 +51,7 @@
 </div>
 <div class="drawer-side">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
-<nav class="flex min-h-full w-64 flex-col gap-2 bg-card px-2 pt-10 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
+<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 px-2 pt-10 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
 <a class="repo link link-hover mx-5 flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-4 rounded-full"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
 <ul class="menu w-full">
 {%- for area in crate::web::shell::Area::ALL %}

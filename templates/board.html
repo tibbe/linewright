@@ -13,7 +13,7 @@
 <div class="card-body gap-1">
 <h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ card.kind.svg() }}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}
-<p class="line text-muted">{% if let Some(status) = card.status %}{% call ui::icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ line|safe }}</p>
+<p class="line text-base-content/60">{% if let Some(status) = card.status %}{% call ui::icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ line|safe }}</p>
 {%- endif %}
 </div>
 </li>
@@ -54,7 +54,7 @@
 </div>
 {%- for lane in board.unfinished %}
 <section class="lane rounded-box {% call ui::card_surface() %}{% endcall %} mt-3 pb-(--lane-padding)" id="{{ lane.id }}">
-<h2 class="lane-head bg-card">{% call lane_head(lane) %}{% endcall %}</h2>
+<h2 class="lane-head bg-base-200">{% call lane_head(lane) %}{% endcall %}</h2>
 {%- call cells(lane) %}{% endcall %}
 </section>
 {%- endfor %}
@@ -63,7 +63,7 @@
 <summary class="cursor-pointer font-semibold">{{ board.finished_count() }}</summary>
 {%- for lane in board.finished %}
 <details class="lane rounded-box {% call ui::card_surface() %}{% endcall %} mt-2 pb-(--lane-padding)" id="{{ lane.id }}">
-<summary class="lane-head cursor-pointer bg-card">{% call lane_head(lane) %}{% endcall %}</summary>
+<summary class="lane-head cursor-pointer bg-base-200">{% call lane_head(lane) %}{% endcall %}</summary>
 {%- call cells(lane) %}{% endcall %}
 </details>
 {%- endfor %}

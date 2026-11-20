@@ -3,6 +3,7 @@
 {%- if tasks.is_empty() %}
 <p class="px-4 pb-4">No tasks</p>
 {%- else %}
+<div class="overflow-x-auto">
 <table class="table">
 <thead><tr><th class="w-0"></th>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -16,7 +17,7 @@
 {%- match task.criteria %}
 {%- when CriteriaShown::Read { first_line, text: _ } %}
 <span>{{ task.name }}</span>
-<div class="text-muted text-sm font-normal">{{ first_line }}</div>
+<div class="text-base-content/60 text-sm font-normal">{{ first_line }}</div>
 {%- when CriteriaShown::Unreadable(why) %}
 <span>{{ task.name }}</span>
 <div class="text-error text-sm font-normal">the criteria do not read: {{ why }}</div>
@@ -37,6 +38,7 @@
 {%- endfor %}
 </tbody>
 </table>
+</div>
 {%- if let Some(pages) = tasks_nav %}
 {%- call ui::pages(pages) %}{% endcall %}
 {%- endif %}

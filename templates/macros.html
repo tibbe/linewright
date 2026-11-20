@@ -1,7 +1,7 @@
 {#- A status as a daisyUI badge in its colour, holding its icon and its
     words, so that it is never told by colour alone. -#}
 {%- macro status(status, word) -%}
-<span class="tone badge badge-sm h-auto min-h-5 {{ status.colour() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
+<span class="tone badge badge-sm {{ status.colour() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
@@ -10,13 +10,13 @@
 <span class="status-text {{ status.accent() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
-{#- A page's facts (`docs/specs/web/design_system.md`, Facts), in a card, their labels in a column of their own in Muted text, and
+{#- A page's facts (`docs/specs/web/design_system.md`, Facts), in a card, their labels in a column of their own in secondary text, and
     each line of a value a block of its own. An item among them is shown as
     its card is, its card status's icon in place of its line. -#}
 {%- macro facts(facts) -%}
 <dl class="{% call card_look() %}{% endcall %} grid w-fit grid-cols-[max-content_1fr] gap-x-6 gap-y-2 p-4">
 {%- for fact in facts %}
-<dt class="text-muted">{{ fact.label }}</dt>
+<dt class="text-base-content/60">{{ fact.label }}</dt>
 <dd>
 {%- for line in fact.lines -%}
 <div>
@@ -93,7 +93,7 @@
     "…" are no links. -#}
 {%- macro pages(shown) -%}
 <nav class="pages flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-3" aria-label="{{ shown.label }}">
-<span class="pages-showing text-muted text-sm">{{ shown.showing }}</span>
+<span class="pages-showing text-base-content/60 text-sm">{{ shown.showing }}</span>
 <div class="join">
 {%- call page_end("Previous", shown.previous) %}{% endcall %}
 {%- for item in shown.items %}
@@ -212,7 +212,7 @@
     region, `disabled` and after `note` as the stream keeps them. -#}
 {%- macro new_submit(verb, region = "", disabled = false, note = "") -%}
 {%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>
-{%- if !note.is_empty() %}<span class="text-muted self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
+{%- if !note.is_empty() %}<span class="text-base-content/60 self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
 <button class="btn btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
 {%- if !region.is_empty() %}</div>{% endif %}
 {%- endmacro -%}
@@ -255,14 +255,14 @@
 {%- endmacro -%}
 
 {#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
-    the Card colour, or in `colour`. -#}
-{%- macro card_look(colour = "bg-card") -%}
+    `bg-base-200`, or in `colour`. -#}
+{%- macro card_look(colour = "bg-base-200") -%}
 card card-sm {% call card_surface(colour) %}{% endcall %}
 {%- endmacro -%}
 
 {#- The classes that colour a card and give it its shadow, for what is
     drawn as a card is without being one. -#}
-{%- macro card_surface(colour = "bg-card") -%}
+{%- macro card_surface(colour = "bg-base-200") -%}
 {{ colour }} shadow-xs
 {%- endmacro -%}
 
@@ -294,7 +294,7 @@ card card-sm {% call card_surface(colour) %}{% endcall %}
 <div id="runs" class="flex min-h-0 flex-1 flex-col">
 {%- match shown %}
 {%- when crate::web::runs_table::RunsShown::Table(table) %}
-<div class="scroll-box">
+<div class="scroll-box overflow-x-auto">
 <table class="table table-pin-rows">
 <thead><tr>{% for column in table.columns() %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
@@ -314,7 +314,7 @@ card card-sm {% call card_surface(colour) %}{% endcall %}
 {%- when crate::web::runs_table::RunsColumn::Stage -%}
 {%- if let Some(stage) = row.stage %}{{ stage }}{% endif -%}
 {%- when crate::web::runs_table::RunsColumn::Started -%}
-<span class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-ghost badge-sm">by hand</span>{% endif %}</span>
+<span class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-sm">by hand</span>{% endif %}</span>
 {%- when crate::web::runs_table::RunsColumn::Duration -%}
 {%- if let Some(duration) = row.duration %}<span class="whitespace-nowrap">{{ duration|safe }}</span>{% endif -%}
 {%- when crate::web::runs_table::RunsColumn::View -%}

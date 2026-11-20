@@ -453,7 +453,7 @@ fn maintenance(model: &Session) -> &Maintenance {
 /// (`docs/specs/runs.md`, Run, A session's settings).
 fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
     let said = format!(
-        r#"<span class="ran text-muted">{}</span>"#,
+        r#"<span class="ran text-base-content/60">{}</span>"#,
         html::escape(&runs::describe_ran(ran))
     );
     let fold = ran.map(|ran| {
@@ -478,7 +478,7 @@ fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
         Fold {
             open: verbose,
             body: format!(
-                r#"<div class="layers text-muted"><ul>{settings}</ul><ul class="font-mono">{briefs}</ul></div>"#
+                r#"<div class="layers text-base-content/60"><ul>{settings}</ul><ul class="font-mono">{briefs}</ul></div>"#
             ),
         }
     });
@@ -534,7 +534,7 @@ pub(super) fn entry_row(row: &Row) -> String {
     )
 }
 
-/// A row's line: the summary of its fold, if it opens, in the Border colour
+/// A row's line: the summary of its fold, if it opens, in `base-300`
 /// on hover and on keyboard focus (`docs/specs/web/runs.md`, Run, Hover).
 /// The chevron of a fold points right while it is closed and down while it
 /// is open (`docs/specs/web/components.md`, Transcript, Lines).
@@ -553,14 +553,15 @@ fn line_html(row: &Row) -> String {
         .id
         .map_or(String::new(), |id| format!(r#" id="{id}-line""#));
     format!(
-        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron flex h-lh items-center justify-center self-start text-muted" aria-hidden="true">{chevron}</span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
+        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron flex h-lh items-center justify-center self-start text-base-content/60" aria-hidden="true">{chevron}</span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
         text = row.text,
         duration = duration_html(row.lasted),
     )
 }
 
 /// The class of a duration at the right of its line.
-const DURATION: &str = "duration pl-4 text-right whitespace-nowrap text-muted font-normal";
+const DURATION: &str =
+    "duration pl-4 text-right whitespace-nowrap text-base-content/60 font-normal";
 
 /// How long an entry that runs ran, ticking while it runs, and nothing
 /// where that is not known (`docs/specs/runs.md`, Run,
@@ -774,7 +775,7 @@ impl Drawn<'_> {
                 let fold = (!text.is_empty()).then(|| Fold {
                     open: self.verbose,
                     body: format!(
-                        r#"<div class="thinking my-1 whitespace-pre-wrap wrap-anywhere text-muted">{}</div>"#,
+                        r#"<div class="thinking my-1 whitespace-pre-wrap wrap-anywhere text-base-content/60">{}</div>"#,
                         html::escape(text)
                     ),
                 });

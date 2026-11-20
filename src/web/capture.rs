@@ -86,7 +86,7 @@ impl Offer {
         } else {
             (
                 " disabled",
-                format!(r#"<span class="text-muted text-sm">{NOT_POLLED}</span>"#),
+                format!(r#"<span class="text-base-content/60 text-sm">{NOT_POLLED}</span>"#),
             )
         };
         html::built(format!(
