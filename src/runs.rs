@@ -216,7 +216,7 @@ pub enum Ending {
 
 /// Why a session ended unexpectedly, other than its agent giving up: one
 /// variant for each row of docs/specs/runs.md, Ending, "Unexpected ends", in
-/// its order.
+/// its order. `Display` gives the row's reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnexpectedEnd {
     /// It reached its timeout, `after`, which `setting` gives.
@@ -224,18 +224,33 @@ pub enum UnexpectedEnd {
         after: std::time::Duration,
         setting: TimeoutSetting,
     },
-    /// Its last result was still not accepted after `follow_ups`, the last
-    /// of which was `why`.
-    NotAccepted { why: String, follow_ups: u32 },
+    /// Its last result was still not accepted, `why` being what was last
+    /// sent back to it.
+    NotAccepted { why: String },
     /// It failed on its infrastructure, and again on the retry, with `error`.
     Infrastructure { error: String },
-    /// The harness ended it with the error `kind`, saying `result`.
-    HarnessError {
-        kind: String,
-        result: Option<String>,
-    },
-    /// The harness stopped without a result, `why`.
-    NoResult { why: String },
+    /// The harness ended it with the error `kind`.
+    HarnessError { kind: String },
+    /// The harness stopped without a result.
+    NoResult,
+}
+
+impl fmt::Display for UnexpectedEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnexpectedEnd::TimedOut { after, .. } => write!(
+                f,
+                "it timed out after {}",
+                Phrase::default().duration(after.as_secs(), None)
+            ),
+            UnexpectedEnd::NotAccepted { why } => write!(f, "its result was not accepted: {why}"),
+            UnexpectedEnd::Infrastructure { error } => {
+                write!(f, "it failed on its infrastructure: {error}")
+            }
+            UnexpectedEnd::HarnessError { kind } => write!(f, "the harness ended it with `{kind}`"),
+            UnexpectedEnd::NoResult => f.write_str("the harness stopped without a result"),
+        }
+    }
 }
 
 /// A session of a run: where its records are, and what Linewright kept of

@@ -3,7 +3,6 @@
 
 use super::{Asks, Designed, StatusTo};
 use crate::domain::{HandBackKind, Issue, Login, StatusLabel, label};
-use crate::harness;
 use crate::prompts::DesignOf;
 use crate::redaction::Redaction;
 use crate::runs::UnexpectedEnd;
@@ -187,8 +186,7 @@ impl FollowUps {
         }
         SendBack::Ends(Ended {
             end: UnexpectedEnd::NotAccepted {
-                why: followup.to_string(),
-                follow_ups: sent,
+                why: followup.trim_end().to_string(),
             },
             log_tail: LogTail::session(&tail(session_log)),
         })
@@ -437,24 +435,22 @@ pub fn unexpected(ended: Ended, note: &str) -> HandBack {
 /// Why a session ended unexpectedly, for `end`, as a hand-back says it. A
 /// timeout names the setting that would give the next session longer
 /// (docs/specs/runs.md, "Limits", Session timeout).
-pub fn ended_reason(end: &UnexpectedEnd) -> String {
-    match end {
-        UnexpectedEnd::TimedOut { setting, .. } => format!(
-            "The session ended unexpectedly: {}. The work may need cutting smaller, or \
-             {setting} may need to be longer.",
-            harness::TIMED_OUT,
-        ),
-        UnexpectedEnd::NotAccepted { why, follow_ups } => format!(
-            "The session's result still could not be used after {follow_ups} follow-up(s).\n\n{why}"
-        ),
-        UnexpectedEnd::Infrastructure { error } => {
-            format!("The run failed twice on its infrastructure: {error}")
-        }
-        UnexpectedEnd::HarnessError { kind, result } => format!(
-            "The session ended unexpectedly: {}",
-            harness::ended_with(kind, result.as_deref())
-        ),
-        UnexpectedEnd::NoResult { why } => format!("The session ended unexpectedly: {why}"),
+fn ended_reason(end: &UnexpectedEnd) -> String {
+    let ended = sentence(&format!("The session ended unexpectedly: {end}"));
+    if let UnexpectedEnd::TimedOut { setting, .. } = end {
+        format!("{ended} The work may need cutting smaller, or {setting} may need to be longer.")
+    } else {
+        ended
+    }
+}
+
+/// `text` ended with a full stop, unless it ends one already, or ends a
+/// block of code, which a full stop after it would keep open.
+fn sentence(text: &str) -> String {
+    if text.ends_with(['.', '!', '?']) || text.ends_with("```") {
+        text.to_string()
+    } else {
+        format!("{text}.")
     }
 }
 

@@ -30,7 +30,7 @@ fn linewright_assigned(world: &World, issue: Number) -> bool {
 }
 
 /// How a hand-back for a timed-out session begins.
-const TIMED_OUT_OPENING: &str = "The session ended unexpectedly: it timed out.";
+const TIMED_OUT_OPENING: &str = "The session ended unexpectedly: it timed out after ";
 
 #[test_log::test(tokio::test)]
 async fn a_triage_run_readying_an_issue_adds_its_label_after_the_comment_and_category_and_before_removing_needs_triage()

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::{Id, JoinError, JoinSet};
 use tracing::{error, info, warn};
@@ -23,7 +23,7 @@ use crate::harness::{Harness, UsageLimit};
 use crate::runs::{Ending, OutcomeName};
 use crate::session::Cancellation;
 use crate::task::{Task, TaskName};
-use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord};
+use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord, Unscored};
 use crate::trial::{self, Configuration, OnUsageLimit, Output, Under};
 
 /// How the benchmark runs stand, as `serve` shows them.
@@ -278,10 +278,7 @@ impl BenchmarkRunsRunner {
                 money: None,
                 time: std::time::Duration::ZERO,
             }),
-            (false, None, Step::Scorer(_)) => TrialChange::ScorerMakesNone {
-                why: "the scorer panicked".into(),
-                scorer_money: None,
-            },
+            (false, None, Step::Scorer(_)) => scorer_makes_none(anyhow!("the scorer panicked")),
         };
         self.record(trial, change).await;
     }
@@ -429,18 +426,22 @@ impl StepContext {
         let dir = self.output_dir(at);
         let task = match self.task(at).await {
             Ok(task) => task,
-            Err(e) => return scorer_makes_none(format!("the task cannot be scored: {e:#}")),
+            Err(e) => {
+                return scorer_makes_none(e.context("the task cannot be scored"));
+            }
         };
         let scoreable = match ScoreableTrial::open(&dir, &task).await {
             Ok(scoreable) => scoreable,
             Err(ScoreRefusal::Scored) => {
                 return match scorer::kept(&dir) {
                     Ok(Some(score)) => TrialChange::Scored(score),
-                    Ok(None) => scorer_makes_none("the output's score went missing".into()),
-                    Err(e) => scorer_makes_none(format!("{e:#}")),
+                    Ok(None) => scorer_makes_none(anyhow!("the output's score went missing")),
+                    Err(e) => scorer_makes_none(e),
                 };
             }
-            Err(e) => return scorer_makes_none(format!("the output cannot be scored: {e}")),
+            Err(e) => {
+                return scorer_makes_none(anyhow!("the output cannot be scored: {e}"));
+            }
         };
         let discarding = scoreable.clone();
         if let Err(e) =
@@ -450,7 +451,7 @@ impl StepContext {
         }
         let record = match ScorerRecord::make(&scoreable) {
             Ok(record) => record,
-            Err(e) => return scorer_makes_none(format!("{e:#}")),
+            Err(e) => return scorer_makes_none(e),
         };
         let spent = record.spent();
         match scorer::run(
@@ -468,7 +469,7 @@ impl StepContext {
                 match scorer::keep(&scoreable, score) {
                     Ok(()) => TrialChange::Scored(figures),
                     Err(e) => TrialChange::ScorerMakesNone {
-                        why: format!("keeping the score: {e:#}"),
+                        why: Unscored::Failed(e.context("keeping the score")).to_string(),
                         scorer_money: figures.scorer_money,
                     },
                 }
@@ -481,10 +482,11 @@ impl StepContext {
     }
 }
 
-/// A scorer that made no score for `why`, before its session opened.
-fn scorer_makes_none(why: String) -> TrialChange {
+/// A scorer that made no score for `error`, a cause outside the spec's
+/// table, with no cost of its own.
+fn scorer_makes_none(error: anyhow::Error) -> TrialChange {
     TrialChange::ScorerMakesNone {
-        why,
+        why: Unscored::Failed(error).to_string(),
         scorer_money: None,
     }
 }

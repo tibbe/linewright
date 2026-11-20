@@ -359,7 +359,7 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             }
             Err(Failure::Infrastructure { error: e, note }) => {
                 let ended = Ended::without_log(UnexpectedEnd::Infrastructure {
-                    error: format!("{e:#}"),
+                    error: shell.sessions.secrets.redaction().apply(&format!("{e:#}")),
                 });
                 break hand_back::unexpected(ended, &note);
             }

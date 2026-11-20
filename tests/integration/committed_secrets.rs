@@ -189,7 +189,7 @@ async fn an_implement_run_whose_commits_still_hold_a_secret_after_its_follow_ups
     let comment = last_comment(&issue);
     let commit = committed.lock().unwrap().clone();
     assert!(
-        comment.contains("still could not be used after 1 follow-up(s)")
+        comment.contains("its result was not accepted: ")
             && comment.contains(&sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")),
         "{comment}"
     );
@@ -236,7 +236,7 @@ async fn a_rework_whose_commits_hold_a_secret_pushes_nothing_to_its_pull_request
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, head);
     let comment = last_pull_comment(&world, pr).await;
     assert!(
-        comment.contains("still could not be used after 1 follow-up(s)")
+        comment.contains("its result was not accepted: ")
             && comment.contains(&sent_back_for_secret(&commit, "NPM_TOKEN", ".npmrc")),
         "{comment}"
     );

@@ -1568,7 +1568,7 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
         }),
         |signal| {
             scorer::discard(&record_dir);
-            complain("the scorer made no score: a signal ended the command");
+            complain("A signal ended the scorer.");
             signal.exit_status()
         },
     );
@@ -1581,7 +1581,10 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
     print_answer(
         scorer::keep(&scoreable, score)
             .map(|()| summary)
-            .map_err(|e| failed(&e)),
+            .map_err(|e| {
+                let unscored = scorer::Unscored::Failed(e.context("keeping the score"));
+                (FAILURE, unscored.to_string())
+            }),
     )
 }
 

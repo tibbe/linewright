@@ -1066,7 +1066,10 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
     world.poll().await;
 
     let comment = handed_back_comment(&world, ticket, pr).await;
-    assert!(comment.contains("it crashed"), "{comment}");
+    assert!(
+        comment.contains("the harness stopped without a result"),
+        "{comment}"
+    );
     world.factory.settle().await;
     assert_eq!(
         world.factory.cycle().await.unwrap(),
@@ -1129,8 +1132,8 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
         comment.starts_with(
-            "The session ended unexpectedly: it timed out. The work may need cutting smaller, \
-             or `session-timeout` in `[stage.implement]` may need to be longer."
+            "The session ended unexpectedly: it timed out after 1h 30m. The work may need cutting \
+             smaller, or `session-timeout` in `[stage.implement]` may need to be longer."
         ),
         "{comment}"
     );
@@ -1764,7 +1767,7 @@ async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_un
                     log_tail: String::new(),
                 })
             },
-            "it crashed",
+            "the harness stopped without a result",
         ),
         (|| Ok("Out of ideas.".into()), "Out of ideas."),
         (
@@ -1932,7 +1935,7 @@ async fn a_run_that_fails_on_its_infrastructure_is_retried_from_its_unfinished_c
     assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
-        comment.starts_with("The run failed twice on its infrastructure")
+        comment.starts_with("The session ended unexpectedly: it failed on its infrastructure: ")
             && comment.ends_with(&kept_on(&branch)),
         "{comment}"
     );
@@ -2000,11 +2003,11 @@ async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_unc
                     log_tail: String::new(),
                 })
             },
-            "The session ended unexpectedly: it crashed",
+            "The session ended unexpectedly: the harness stopped without a result.",
         ),
         (
             || Ok("Out of ideas.".into()),
-            "The session's result still could not be used",
+            "The session ended unexpectedly: its result was not accepted: ",
         ),
         (
             || {
@@ -2825,7 +2828,7 @@ async fn a_session_that_fails_on_its_infrastructure_is_retried_once_then_handed_
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     assert!(
-        last_comment(&issue).contains("The run failed twice on its infrastructure"),
+        last_comment(&issue).contains("it failed on its infrastructure: "),
         "{}",
         last_comment(&issue)
     );

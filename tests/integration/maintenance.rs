@@ -246,7 +246,7 @@ async fn a_maintenance_command_that_outlasts_its_sessions_timeout_is_the_session
     let comment = last_comment(&issue);
     assert!(
         comment.contains(
-            "The session ended unexpectedly: it timed out. The work may need cutting \
+            "The session ended unexpectedly: it timed out after 1s. The work may need cutting \
              smaller, or `session-timeout` may need to be longer."
         ),
         "{comment}"
@@ -432,7 +432,7 @@ async fn a_bash_that_does_not_start_hands_back_after_a_retry_without_a_tail() {
     let issue = world.issue(issue);
     let comment = last_comment(&issue);
     assert!(
-        comment.contains("The run failed twice on its infrastructure"),
+        comment.contains("it failed on its infrastructure: "),
         "{comment}"
     );
     assert!(comment.contains("/nowhere/bash"), "{comment}");

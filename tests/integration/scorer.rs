@@ -27,6 +27,7 @@ use linewright::task::Task;
 use linewright::trial::Under;
 use linewright::trial::scorer::{self, Score, ScorerRecord, Unscored};
 use linewright::work_settings::{Effort, Partial, StageKey, StageTable};
+use rstest::rstest;
 use serde_json::{Value, json};
 
 /// A scorer's result: the verdict `verdict`, and a leak found when `calls`
@@ -262,11 +263,54 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     let gave_up = gave_up.expect_err("a scorer that gives up makes no score");
     assert_eq!(
         gave_up.to_string(),
-        "the scorer gave up: The output is empty."
+        "The scorer gave up: The output is empty."
     );
     let unmatched = unmatched.expect_err("a result never accepted is no score");
-    assert!(unmatched.to_string().contains("/leak"), "{unmatched}");
+    let said = unmatched.to_string();
+    assert!(
+        said.starts_with(
+            "The scorer's session ended without a score: its result was not accepted: "
+        ) && said.contains("/leak"),
+        "{said}"
+    );
     assert_eq!(entries(&out), vec!["outcome", "task"]);
+}
+
+#[rstest]
+#[case::the_usage_limit(
+    Unscored::UsageLimit {
+        resets_at: "2026-11-20T18:00:00Z".parse().unwrap(),
+    },
+    "The scorer's session reached the usage limit, which resets at 2026-11-20 18:00:00 UTC."
+)]
+#[case::giving_up(
+    Unscored::GaveUp("The output is empty.".into()),
+    "The scorer gave up: The output is empty."
+)]
+#[case::its_session_ending_with_its_log(
+    Unscored::Ended(Ended {
+        end: UnexpectedEnd::NoResult,
+        log_tail: LogTail::session("Out of memory.\n"),
+    }),
+    "The scorer's session ended without a score: the harness stopped without a result\n\n\
+     Out of memory."
+)]
+#[case::its_session_ending_with_no_log(
+    Unscored::Ended(Ended {
+        end: UnexpectedEnd::TimedOut {
+            after: std::time::Duration::from_mins(30),
+            setting: linewright::work_settings::TimeoutSetting::Pipeline,
+        },
+        log_tail: None,
+    }),
+    "The scorer's session ended without a score: it timed out after 30m"
+)]
+#[case::a_cause_the_spec_leaves_out(
+    Unscored::Failed(anyhow::anyhow!("no such file").context("the task cannot be scored")),
+    "The scorer could not score: the task cannot be scored: no such file"
+)]
+fn a_scorer_that_makes_no_score_says_why(#[case] unscored: Unscored, #[case] why: &str) {
+    assert_eq!(unscored.to_string(), why);
 }
 
 #[test_log::test(tokio::test)]
@@ -293,15 +337,14 @@ async fn a_scorers_session_that_the_harness_ends_with_an_error_is_its_typed_end(
         (
             &UnexpectedEnd::HarnessError {
                 kind: "error_max_turns".into(),
-                result: Some("stuck".into()),
             },
             Some("Reading the diff.")
         )
     );
     assert_eq!(
         unscored.to_string(),
-        "the scorer's session ended without a score: The session ended unexpectedly: the \
-         session ended with `error_max_turns`: stuck\n\nReading the diff."
+        "The scorer's session ended without a score: the harness ended it with \
+         `error_max_turns`\n\nReading the diff."
     );
 }
 
@@ -365,6 +408,25 @@ async fn a_scorers_session_that_fails_on_its_infrastructure_is_retried_once() {
     assert!(scored.is_ok(), "{scored:?}");
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(scorer_records(&out).len(), 1);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_scorers_session_that_fails_on_its_infrastructure_again_on_the_retry_ends_without_a_score()
+ {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = triage_output(under.path(), "done").await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on_scorer(|_| Err(SessionError::Infrastructure("the harness lost it".into())));
+
+    let scored = scoring(&task, &out, under.path(), harness, |_| {}).await;
+
+    let unscored = scored.expect_err("a session that failed again on the retry makes no score");
+    assert_eq!(
+        unscored.to_string(),
+        "The scorer's session ended without a score: it failed on its infrastructure: the \
+         harness lost it"
+    );
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 /// What a scorer saw of the trial in its copy, from the paths its prompt
@@ -746,7 +808,7 @@ async fn lw_score_whose_scorer_gives_up_exits_1_saying_why_and_keeps_nothing() {
     assert_eq!(ran.code, Some(1), "{}", ran.stderr);
     assert!(
         ran.stderr
-            .contains("the scorer gave up: The output is empty."),
+            .contains("The scorer gave up: The output is empty."),
         "{}",
         ran.stderr
     );
@@ -792,10 +854,7 @@ async fn a_signal_ends_lw_score_at_once_saying_why_and_keeping_nothing_of_its_sc
         .unwrap();
     let stderr = std::fs::read_to_string(&stderr).unwrap();
     assert_eq!(status.code(), Some(128 + 15), "{status}: {stderr}");
-    assert!(
-        stderr.contains("the scorer made no score: a signal ended the command"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("A signal ended the scorer."), "{stderr}");
     assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 

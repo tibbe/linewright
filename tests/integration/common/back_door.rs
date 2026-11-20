@@ -160,8 +160,9 @@ pub const UNFINISHED_MESSAGE: &str = "Unfinished work, kept when its run stopped
      run folds it into its own commits.\n\nLinewright-Unfinished: true";
 
 /// How a hand-back starts when the session timed out.
-pub const TIMED_OUT: &str = "The session ended unexpectedly: it timed out. The work may need \
-                             cutting smaller, or `session-timeout` may need to be longer.";
+pub const TIMED_OUT: &str = "The session ended unexpectedly: it timed out after 30m. The work \
+                             may need cutting smaller, or `session-timeout` may need to be \
+                             longer.";
 
 /// How a hand-back says where the work so far is kept.
 pub fn kept_on(branch: &str) -> String {

@@ -132,7 +132,7 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
     assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
     assert!(
-        comment.contains("still could not be used after 1 follow-up(s)")
+        comment.contains("its result was not accepted: ")
             && comment.contains(&sent_back_for_secret(AT))
             && comment.contains(&format!(
                 "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection \
@@ -234,7 +234,7 @@ async fn a_fix_ci_run_whose_push_github_still_refuses_after_its_follow_ups_hands
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, before);
     let comment = last_pull_comment(&world, pr).await;
     assert!(
-        comment.contains("still could not be used after 1 follow-up(s)")
+        comment.contains("its result was not accepted: ")
             && comment.contains(&sent_back_for_secret(AT)),
         "{comment}"
     );
@@ -336,7 +336,7 @@ async fn a_result_sent_back_for_another_reason_first_has_no_follow_up_left_when_
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 2);
     let comment = last_comment(&world.issue(ticket)).to_string();
     assert!(
-        comment.contains("still could not be used after 1 follow-up(s)")
+        comment.contains("its result was not accepted: ")
             && comment.contains(&sent_back_for_secret(AT)),
         "{comment}"
     );

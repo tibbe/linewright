@@ -1935,7 +1935,11 @@ fn reassigning_linewright_to_a_pull_request_a_rework_handed_back_addresses_its_f
     let mut pr = ready(pull(20, 2));
     pr.comments = vec![
         comment("maintainer", 4, "Please rename `foo`."),
-        comment(LINEWRIGHT, 5, "The run failed twice on its infrastructure."),
+        comment(
+            LINEWRIGHT,
+            5,
+            "The session ended unexpectedly: the harness stopped without a result.",
+        ),
     ];
     let world = in_review(unassigned_at(pr, LINEWRIGHT, 5, Some(7)));
 
