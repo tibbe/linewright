@@ -2,23 +2,26 @@
 
 The web UI follows daisyUI, with two themes of its own.
 
+## Components
+
+- Each part of the web UI is the daisyUI component for it, where daisyUI has
+  one, and looks as daisyUI draws it. Where a part differs from its component,
+  the spec says how, in the classes of daisyUI and Tailwind.
+- A part that daisyUI has no component for is one of Linewright's own
+  [components](components.md). The spec defines each of them in the classes of
+  daisyUI and Tailwind too.
+
 ## Colour scheme
 
 - The light theme, or the dark theme for a reader who prefers dark. Each is
-  daisyUI's built-in theme of that name, with the values of the table at the
-  end of this section in place of its own. The web UI draws in no colour but
-  the roles below and the theme's fills, each fill with its content colour on
-  it. Shadows are daisyUI's.
-
-| Role       | daisyUI                       |
-| ---------- | ----------------------------- |
-| Page       | `base-100`                    |
-| Card       | `base-200`                    |
-| Border     | `base-300`                    |
-| Muted text | `base-content` at 60% opacity |
-| Text       | `base-content`                |
-
-- **Secondary text** is in Muted text.
+  daisyUI's built-in theme of that name, with the values of the table at the end
+  of this section in place of its own. The web UI draws in no colour but
+  `base-100`, `base-200`, `base-300`, `base-content` and the theme's fills,
+  each fill with its content colour on it. The exception is what daisyUI's
+  components draw on their own, such as the shade over the content behind an
+  open `drawer`. Shadows are daisyUI's.
+- **Text** is in `base-content`, and **secondary text** in
+  `text-base-content/60`.
 
 | Variable | Light | Dark |
 | --- | --- | --- |
@@ -59,14 +62,66 @@ The web UI follows daisyUI, with two themes of its own.
 | failed    | `error`    |
 | waiting   | `warning`  |
 | in flight | `info`     |
-| paused    | Muted text |
+| paused    | `base-content/60` |
 | cancelled | `neutral`  |
 
-- **A status's badge** is a small daisyUI `badge` in its colour.
+- **A status's badge** is a daisyUI `badge`, `badge-sm`, with the icon first.
+  A paused badge, whose colour is not a fill, is a `badge-outline` in
+  `base-content/60`.
+
+## Icons
+
+- **The icons** are [Heroicons](https://heroicons.com) 2, in its 20 solid
+  ("mini") style. The exceptions are the icons of an issue and of a pull
+  request, which are GitHub's own, from
+  [Octicons](https://primer.style/octicons). An icon is `size-5` before a
+  `card-title`, `size-[1em]` in a `badge`, as daisyUI's badge with an icon has
+  it, and `size-4` elsewhere. Where a daisyUI component draws an icon of its
+  own, such as the arrow of a `select`, it keeps it.
+- **Which icon.** Each part has the icon in the table below, and no other. A
+  card has the icon of the area of the thing it holds, such as Runs for a
+  run's heading or for a table of runs. The cards that the table names are the
+  exceptions.
+
+| Part                                       | Icon                        |
+| ------------------------------------------ | --------------------------- |
+| Board                                      | `view-columns`              |
+| Runs                                       | `command-line`              |
+| Automations                                | `bolt`                      |
+| Benchmarks                                 | `beaker`                    |
+| Server                                     | `server`                    |
+| The card "Configurations"                  | `adjustments-horizontal`    |
+| The card "Passes by task"                  | `table-cells`               |
+| The card "Pass rate vs"                    | `chart-bar`                 |
+| done                                       | `check-circle`              |
+| failed                                     | `x-circle`                  |
+| waiting                                    | `hand-raised`               |
+| in flight                                  | `arrow-path`                |
+| paused                                     | `pause-circle`              |
+| cancelled                                  | `no-symbol`                 |
+| "Add task"                                 | `plus`                      |
+| "Cancel" that cancels work                 | `stop-circle`               |
+| "Remove"                                   | `trash`                     |
+| "Create"                                   | `plus`                      |
+| "Run benchmark"                            | `play`                      |
+| "Add a configuration"                      | `plus`                      |
+| "Keep running"                             | `play`                      |
+| "Cancel" that closes a dialog              | `x-mark`                    |
+| The button that opens the navigation       | `bars-3`                    |
+| The button that expands the navigation     | `chevron-double-right`      |
+| The button that collapses the navigation   | `chevron-double-right`, mirrored |
+| A chevron that points right                | `chevron-right`             |
+| A chevron that points down                 | `chevron-down`              |
+| A filter that searches                     | `magnifying-glass`          |
+| A link to GitHub at the end of a name      | `arrow-top-right-on-square` |
+| A card that is an issue                    | Octicons' `issue-opened`     |
+| A card that is a pull request              | Octicons' `git-pull-request` |
+| "Lost `serve`"                             | `signal-slash`              |
+| "Jump to the latest entry"                 | `arrow-down`                |
 
 ## Cards
 
-- **A card** is a daisyUI `card` in the Card colour, with daisyUI's
+- **A card** is a daisyUI `card` in `bg-base-200`, with daisyUI's
   `shadow-xs` and no border.
 - **A card's title** is its `card-title`, with an icon before it that stands
   for what the card holds.
@@ -112,10 +167,7 @@ The web UI follows daisyUI, with two themes of its own.
 
 ## Layout
 
-- **The content** is a panel in the Page colour. From Tailwind's `lg` width,
-  it has `mt-2` above it and a Border along its top and its start. Its top
-  start corner has `rounded-ss-4xl`, in the shape that CSS's
-  `corner-start-start-shape: squircle` gives it.
+- **The content** is a [content panel](components.md#content-panel).
 - **Spacing.** The content has a padding of `p-4`, or `p-10` from
   Tailwind's `lg` width. The parts of a screen are `gap-6` apart, and the parts
   of a card `gap-4`.
@@ -127,14 +179,17 @@ The web UI follows daisyUI, with two themes of its own.
 - **The filters** are a row of small daisyUI `input`s and `select`s, each
   with its label inside it as daisyUI's `label`.
 - **A filter that searches** keeps the rows whose text holds what the reader
-  types. It is a search `input` with a magnifier icon at its start, and it
+  types. It is a search `input` with its icon at its start, and it
   takes the spare width of the row.
 
 ## Tables
 
 - **A table** is a daisyUI `table`. In a table whose first column names each
   row, a row's first cell is a `th`.
+- **Scrolling.** A table is in a wrapper with `overflow-x-auto`, as daisyUI's
+  table is. As the table scrolls sideways, the top of its card and its filters
+  stay in place.
 - **Its card** is a card ([Cards](#cards)), with the table's name as its
   title.
-- **Its pages** are a daisyUI `join` of small buttons, and which rows show is
-  in Muted text.
+- **Its pages** are a daisyUI `join` of small buttons, and which rows show is in
+  secondary text.

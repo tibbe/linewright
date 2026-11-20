@@ -143,8 +143,8 @@ column, what a person acts on, or since when it has sat. A card with nothing
 to add is the title alone.
 
 - **The title.** A card's title is on at most two lines.
-- **Pull requests.** A card that is a pull request carries a pull request
-  icon beside its number.
+- **Issue or pull request.** Beside its number, a card carries an icon that
+  says whether it is an issue or a pull request.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
 - **Card status.** A card whose line has a card status shows it. Card
