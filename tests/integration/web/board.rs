@@ -629,6 +629,23 @@ async fn the_board_folds_its_finished_lanes_under_one_closed_fold_after_the_rest
         .map(text)
         .collect();
     assert_eq!(summaries, ["2 finished lanes"]);
+    let collapses: Vec<Option<&str>> = select(&html, "#board details")
+        .into_iter()
+        .filter(|fold| has_classes(*fold, &["collapse", "collapse-arrow"]))
+        .filter(|fold| select_in(*fold, ":scope > summary.collapse-title").len() == 1)
+        .filter(|fold| select_in(*fold, ":scope > .collapse-content").len() == 1)
+        .map(|fold| fold.attr("id"))
+        .collect();
+    assert_eq!(
+        collapses,
+        [Some("finished"), Some("lane-5"), Some("lane-4")],
+        "each fold a daisyUI collapse, with collapse-arrow"
+    );
+    assert_eq!(
+        select(&html, "#board .divider + #finished").len(),
+        1,
+        "the finished lanes under a divider"
+    );
     let finished: Vec<&str> = select(&html, "#lane-5 > summary time")
         .into_iter()
         .filter_map(|time| time.attr("datetime"))
@@ -691,8 +708,33 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
     }
 }
 
-/// `docs/specs/web/board.md`, Board: a lane is drawn as a card is, its head
-/// a bar in `bg-base-200`, and its cards are cards in `bg-base-100`.
+/// `docs/specs/web/board.md`, Board: the column heads are a row in
+/// `bg-base-100`, `h-8` tall, each name in `font-semibold`.
+#[test_log::test(tokio::test)]
+async fn the_column_heads_are_a_row_in_the_page_colour_with_each_name_in_semibold() {
+    let pages = Pages::of(a_board()).await;
+
+    let html = pages.page("/").await;
+
+    let rows = select(&html, "#board .board > :first-child");
+    assert_eq!(rows.len(), 1, "{}", html.html());
+    assert!(
+        has_classes(rows[0], &["bg-base-100", "h-8"]),
+        "{}",
+        rows[0].html()
+    );
+    let names = select_in(rows[0], ".column");
+    assert_eq!(names.len(), 6);
+    for name in names {
+        assert!(has_classes(name, &["font-semibold"]), "{}", name.html());
+    }
+}
+
+/// `docs/specs/web/board.md`, Board: a lane is drawn as a card is, with
+/// `px-2` at its sides and `pb-2` at its foot, its columns and the cards in a
+/// column `gap-2` apart; its head is its top row in `bg-base-200`, at least
+/// `h-10` tall, with `pt-2` above its text in `font-semibold`, and no
+/// `card-title`; and its cards are cards in `bg-base-100`.
 #[test_log::test(tokio::test)]
 async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -702,11 +744,30 @@ async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour(
     let lanes = select(&html, "#board .lane");
     assert_eq!(lanes.len(), 4);
     for lane in lanes {
-        assert!(has_classes(lane, &["rounded-box"]), "{}", lane.html());
+        assert!(
+            has_classes(lane, &["rounded-box", "px-2", "pb-2"]),
+            "{}",
+            lane.html()
+        );
         assert_drawn_as_a_card(lane, "bg-base-200", "a lane");
-        for head in select_in(lane, ".lane-head") {
-            assert!(has_classes(head, &["bg-base-200"]), "{}", head.html());
-            assert!(lacks_classes(head, &["border-t"]), "{}", head.html());
+        let heads = select_in(lane, ":scope > .lane-head");
+        assert_eq!(heads.len(), 1, "{}", lane.html());
+        for head in heads {
+            assert!(
+                has_classes(head, &["bg-base-200", "min-h-10", "pt-2", "font-semibold"]),
+                "{}",
+                head.html()
+            );
+            assert!(
+                lacks_classes(head, &["border-t", "card-title"]),
+                "{}",
+                head.html()
+            );
+        }
+        for cell in select_in(lane, ".cell") {
+            let columns = cell.parent().and_then(ElementRef::wrap).unwrap();
+            assert!(has_classes(columns, &["gap-2"]), "{}", columns.html());
+            assert!(has_classes(cell, &["gap-2"]), "{}", cell.html());
         }
     }
     let cards = select(&html, "#board li");
@@ -872,7 +933,7 @@ async fn a_card_with_a_card_status_shows_it_and_a_card_in_done_is_faded() {
             let toned = has_classes(card, &["toned"]);
             let waiting = has_classes(card, &[WAITING_FOR_A_PERSON]);
             let icons_before_its_line = select_in(card, ".line > svg.icon:first-child").len();
-            let faded = has_classes(card, &["opacity-75"]);
+            let faded = has_classes(card, &["opacity-60"]);
             (title, toned, waiting, icons_before_its_line, faded)
         })
         .collect();
@@ -911,6 +972,7 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
         shown,
         [
             "div: Triage Needs a person Ready Working In review Done",
+            "div: ",
             "details: 1 finished lane #1: Do the thing — finished \
              2026-10-01 09:00:00 UTC #1: Do the thing closed as completed · 2026-10-01 09:00:00 UTC",
         ]
