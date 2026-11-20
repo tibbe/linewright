@@ -181,9 +181,9 @@ const EMPTY_BENCHMARK: &str = "triage-basics";
 
 /// Writes into the work directory `work_dir` the benchmarks the web UI shows: a
 /// benchmark of design tasks captured from #3's runs, which the seed records as
-/// ended, with a benchmark run on it that has ended, and an empty benchmark of
-/// triage. A work directory that holds the first of those runs already is left
-/// as it is.
+/// ended, with a benchmark run on it that has ended and one cancelled before
+/// any result, and an empty benchmark of triage. A work directory that holds
+/// the first of those runs already is left as it is.
 ///
 /// # Errors
 ///
@@ -224,7 +224,9 @@ pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
     }
     let empty: BenchmarkName = EMPTY_BENCHMARK.parse().map_err(anyhow::Error::msg)?;
     benchmarks.make(&empty, TaskStage::Triage).await?;
-    benchmark_run(&BenchmarkRuns::new(runs.database().clone()), &board).await
+    let benchmark_runs = BenchmarkRuns::new(runs.database().clone());
+    benchmark_run(&benchmark_runs, &board).await?;
+    cancelled_benchmark_run(&benchmark_runs, &board).await
 }
 
 /// How each trial of the seed's benchmark run ended, in start order: by
@@ -397,6 +399,43 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
         ),
         task_run,
     )
+}
+
+/// Launches on `board` a benchmark run under `as-is` alone, after the seed's
+/// other one, and cancels it before any of its trials starts, so that it has
+/// no results.
+async fn cancelled_benchmark_run(
+    benchmark_runs: &BenchmarkRuns,
+    board: &BenchmarkName,
+) -> Result<()> {
+    let launched_at: Timestamp = "2026-03-01T18:00:00Z".parse()?;
+    let launched = benchmark_runs
+        .launch(
+            board,
+            Vec::new(),
+            NonZeroU32::new(1).context("one repetition")?,
+            launched_at,
+        )
+        .await?;
+    let at = launched_at + chrono::TimeDelta::minutes(1);
+    benchmark_runs
+        .cancel(launched.id, at)
+        .await
+        .context("cancelling the seed's benchmark run")?;
+    let record = benchmark_runs
+        .show(launched.id)
+        .await?
+        .context("the seed's cancelled benchmark run is kept")?;
+    for key in record.trials.keys() {
+        let trial = TrialRef {
+            benchmark_run: launched.id,
+            key: *key,
+        };
+        benchmark_runs
+            .step(&trial, TrialChange::Cancelled, at)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Writes in `output` what the first trial of the seed's benchmark run left
