@@ -199,7 +199,7 @@
     `new_submit` with `region`, `disabled` and `note`. -#}
 {%- macro new_form(id, title, verb, refusal, region = "", disabled = false, note = "") -%}
 <fieldset class="fieldset">
-<legend id="{{ id }}-title" class="fieldset-legend text-base">{{ title }}</legend>
+<legend id="{{ id }}-title" class="fieldset-legend">{{ title }}</legend>
 {{- caller() }}
 </fieldset>
 {%- if let Some(refusal) = refusal %}
@@ -261,7 +261,7 @@
 {#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
     `bg-base-200`, or in `colour`. -#}
 {%- macro card_look(colour = "bg-base-200") -%}
-card card-sm {% call card_surface(colour) %}{% endcall %}
+card {% call card_surface(colour) %}{% endcall %}
 {%- endmacro -%}
 
 {#- The classes that colour a card and give it its shadow, for what is
