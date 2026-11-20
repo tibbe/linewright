@@ -24,9 +24,7 @@ impl TrialShown<'_> {
     /// `benchmark_run`.
     pub fn of(_benchmark_run: BenchmarkRunState, trial: &TrialState) -> TrialShown<'_> {
         match trial {
-            TrialState::Ended(TrialEnd::Cancelled | TrialEnd::Unscored(NoScore::Cancelled(_))) => {
-                TrialShown::Cancelled
-            }
+            TrialState::Ended(TrialEnd::Cancelled { .. }) => TrialShown::Cancelled,
             TrialState::Pending | TrialState::Ran { .. } => TrialShown::Waiting,
             TrialState::Ended(TrialEnd::Unscored(no_score)) => TrialShown::NoScore(no_score),
             TrialState::Ended(TrialEnd::Scored { score, .. }) => {
@@ -48,9 +46,7 @@ impl TrialShown<'_> {
     /// The name of its state.
     pub fn name(&self) -> String {
         match self {
-            TrialShown::Cancelled | TrialShown::NoScore(NoScore::Cancelled(_)) => {
-                "no score: cancelled".into()
-            }
+            TrialShown::Cancelled => "no score: cancelled".into(),
             TrialShown::Waiting => "waiting".into(),
             TrialShown::NoScore(NoScore::Outcome(_)) => {
                 "no score: its run is not done or handed back".into()
@@ -70,7 +66,7 @@ impl TrialShown<'_> {
     /// outcome does (`docs/specs/runs.md`, Ending).
     pub fn status(&self) -> Status {
         match self {
-            TrialShown::Cancelled | TrialShown::NoScore(NoScore::Cancelled(_)) => Status::Cancelled,
+            TrialShown::Cancelled => Status::Cancelled,
             TrialShown::Waiting => Status::Paused,
             TrialShown::NoScore(NoScore::Outcome(run)) => run.outcome.status(),
             TrialShown::NoScore(NoScore::Scorer { .. })
@@ -192,8 +188,10 @@ mod tests {
     #[test_log::test]
     fn a_trial_its_benchmark_runs_cancel_left_without_a_score_shows_cancelled() {
         let states = [
-            unscored(NoScore::Cancelled(ended("done"))),
-            TrialState::Ended(TrialEnd::Cancelled),
+            TrialState::Ended(TrialEnd::Cancelled {
+                run: Some(ended("done")),
+            }),
+            TrialState::Ended(TrialEnd::Cancelled { run: None }),
         ];
 
         let shown = states.map(|state| shown(&state).0);

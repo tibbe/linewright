@@ -630,7 +630,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
                 why: "it gave up".into(),
                 scorer_money: Usd::new(0.125),
             })),
-            TrialState::Ended(TrialEnd::Cancelled),
+            TrialState::Ended(TrialEnd::Cancelled { run: None }),
             TrialState::Scoring {
                 run: figures("done", Some(2.0), 40),
             },
