@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::buttons::{ScreenButton, Verb};
-use super::capture::Offer;
+use super::capture::{self, Offer};
 use super::html::{self, Html};
 use super::icons::{Icon, IconSize};
 use super::names::Names;
@@ -1222,9 +1222,6 @@ async fn run_thing(sources: &Sources, run: &RunId) -> Option<Thing> {
     }
 }
 
-/// The id of the capture's dialog.
-const CAPTURE: &str = "capture";
-
 /// The page at `place`, its stream at `events`, with "Add task" among the
 /// screen's buttons where it draws the capture's dialog
 /// (`docs/specs/runs.md`, Run, Capturing).
@@ -1237,7 +1234,7 @@ fn transcript_page_at(
     let buttons = captures
         .then(|| ScreenButton::Act {
             verb: Verb::AddTask,
-            dialog: CAPTURE.into(),
+            dialog: capture::DIALOG.into(),
         })
         .into_iter()
         .collect();
@@ -1382,9 +1379,7 @@ pub(super) async fn run_page(
         Some(found) => found,
         None => Thing::Found(Heading::named(id)),
     };
-    let capture = Offer::of(&sources, &run)
-        .await
-        .map(|offer| offer.html(CAPTURE));
+    let capture = Offer::of(&sources, &run).await.map(Offer::html);
     transcript_page(
         &sources,
         &run_path(&run),

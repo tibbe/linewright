@@ -56,10 +56,6 @@ impl std::str::FromStr for TaskName {
     }
 }
 
-/// The form of a name that [`check_name`] accepts, as the `pattern` of an
-/// HTML input, so that a web form refuses the names the server would.
-pub(crate) const NAME_PATTERN: &str = r"[a-z0-9][a-z0-9\-]*";
-
 /// Refuses `name` as `whose` name, such as "a task's", unless it is one or
 /// more lowercase letters, digits and hyphens, starting with a letter or a
 /// digit.
@@ -876,8 +872,6 @@ fn json(value: &impl Serialize) -> anyhow::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use boa_engine::{Context, Source};
-
     use super::*;
 
     #[test_log::test]
@@ -899,41 +893,6 @@ mod tests {
             "gädgets",
         ] {
             assert!(name.parse::<TaskName>().is_err(), "{name:?}");
-        }
-    }
-
-    #[test_log::test]
-    fn the_names_pattern_matches_the_names_accepted() {
-        let mut js = Context::default();
-        let browser_matches = |context: &mut Context, name: &str| {
-            let source = format!(
-                "new RegExp({pattern:?}, 'v').test({name:?})",
-                pattern = format!("^(?:{NAME_PATTERN})$"),
-            );
-            context
-                .eval(Source::from_bytes(&source))
-                .unwrap()
-                .as_boolean()
-                .unwrap()
-        };
-        for name in [
-            "gadgets",
-            "43-implement-2",
-            "7",
-            "gadgets-",
-            "",
-            "-",
-            "-gadgets",
-            "Gadgets",
-            "gadgets_1",
-            "gadgets 1",
-            "gädgets",
-        ] {
-            assert_eq!(
-                browser_matches(&mut js, name),
-                check_name(name, "a task's").is_ok(),
-                "{name:?}"
-            );
         }
     }
 

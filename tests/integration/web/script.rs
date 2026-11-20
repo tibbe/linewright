@@ -122,10 +122,10 @@ const morphed = (tagName, attributes, attrName, newValue) => {
     );
 }
 
-/// `docs/specs/design_system.md`, Confirming; `docs/specs/runs.md`, Run,
-/// Capturing: the capture says what came of it in its own dialog.
+/// `docs/specs/design_system.md`, Confirming and Making: a dialog that makes
+/// a thing closes once it is made, not as it is sent.
 #[test_log::test(tokio::test)]
-async fn going_ahead_closes_the_confirmation_but_not_a_dialog_that_answers_within_and_turning_it_down_is_left_to_the_browser()
+async fn going_ahead_closes_the_confirmation_but_not_a_making_dialog_and_turning_it_down_is_left_to_the_browser()
  {
     let script = served_script().await;
 
@@ -136,15 +136,13 @@ var submitted = [];
 document.addEventListener = (type, listener) => { if (type === "submit") submitted.push(listener); };
 "#;
     let submit = r##"
-const dialog = (holds = []) => ({
+const dialog = () => ({
   open: true,
   close() { this.open = false; },
-  querySelector: (selector) => (holds.includes(selector) ? {} : null),
 });
 const ahead = dialog();
 const down = dialog();
 const making = dialog();
-const capturing = dialog(["#capture-said"]);
 const form = (method, within, attributes, target = null) => ({
   method,
   closest: (selector) => (selector === "dialog" ? within : null),
@@ -156,16 +154,12 @@ for (const listener of submitted) {
   listener({ target: form("dialog", down, []) });
   listener({ target: form("get", null, []) });
   listener({ target: form("post", making, ["data-new"], "this") });
-  listener({ target: form("post", capturing, [], "#capture-said") });
 }
-`ahead: ${ahead.open}, down: ${down.open}, making: ${making.open}, capturing: ${capturing.open}`
+`ahead: ${ahead.open}, down: ${down.open}, making: ${making.open}`
 "##;
     let answer = evaluated(&[BROWSER, asked, &script, submit]);
 
-    assert_eq!(
-        answer,
-        "ahead: false, down: true, making: true, capturing: true"
-    );
+    assert_eq!(answer, "ahead: false, down: true, making: true");
 }
 
 /// Stand-ins for the page's `#tip` and its triggers, and for the events the
@@ -1103,11 +1097,13 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
 }
 
-/// `docs/specs/design_system.md`, Making: a "New" dialog closes once
-/// Linewright has made the thing, and opens again as it starts however it
-/// was closed.
+/// `docs/specs/design_system.md`, Making: a dialog that makes a thing closes
+/// once Linewright has made it, and opens again as it starts however it was
+/// closed, as the answer to the last thing made started it: Run's "Add task"
+/// offers the benchmark it made (`docs/specs/runs.md`, Run, Capturing).
 #[test_log::test(tokio::test)]
-async fn a_new_dialog_closes_once_made_and_opens_again_with_its_form_as_it_started() {
+async fn a_making_dialog_closes_once_made_and_opens_again_with_its_form_as_the_last_made_started_it()
+ {
     let page = r#"
 var dialog = Object.assign(element("DIALOG", {}), {
   open: true,
@@ -1132,7 +1128,9 @@ const shown = () => `${dialog.open ? "open" : "closed"}: ${making.innerHTML}`;
 const steps = [];
 making.innerHTML = "refused"; fire("submit", event(making));
 steps.push(shown());
-fire("made", event(making));
+open(); making.innerHTML = "typed"; dialog.close();
+steps.push(shown());
+open(); making.innerHTML = "as it starts after a thing made"; fire("made", event(making));
 steps.push(shown());
 open(); making.innerHTML = "typed"; dialog.close();
 steps.push(shown());
@@ -1148,8 +1146,9 @@ steps.join("\n")
         [
             "open: refused",
             "closed: as it starts",
-            "closed: as it starts",
-            "open: as it starts",
+            "closed: as it starts after a thing made",
+            "closed: as it starts after a thing made",
+            "open: as it starts after a thing made",
         ]
     );
 }

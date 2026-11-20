@@ -378,11 +378,6 @@ fn page_with_cookie<W: Routed>(
     }
 }
 
-/// The form of a name of a benchmark, a task or a configuration, as the
-/// `pattern` of the inputs that take one (`docs/specs/benchmarks.md`,
-/// Capturing).
-const NAME_PATTERN: &str = r"[a-z0-9][a-z0-9\-]*";
-
 /// A web UI's own page's request.
 const SAME_ORIGIN: (&str, &str) = ("sec-fetch-site", "same-origin");
 

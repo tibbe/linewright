@@ -174,7 +174,8 @@
 <button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ id }}">New</button>
 {%- endmacro -%}
 
-{#- A "New" dialog (`docs/specs/design_system.md`, Dialogs and Making;
+{#- A dialog in which the reader makes a thing, such as the one "New" opens
+    (`docs/specs/design_system.md`, Dialogs and Making;
     `docs/specs/web/design_system.md`, Navigation and Making): a daisyUI
     `modal` with no `modal-backdrop`, so that a click outside it leaves it
     open. It is drawn outside every region a stream sends, so that an update
@@ -192,7 +193,7 @@
 </dialog>
 {%- endmacro -%}
 
-{#- What the form of the "New" dialog `id` holds: the fieldset titled
+{#- What the form of the making dialog `id` holds: the fieldset titled
     `title`, whose fields, each under its `label`, its caller draws, then
     the refusal, if there is one, then "Cancel" and the button of the
     `crate::web::buttons::Verb` `verb` that makes the thing, drawn by
@@ -211,7 +212,7 @@
 </div>
 {%- endmacro -%}
 
-{#- The button of the verb `verb` that makes a "New" dialog's thing. Given `region`,
+{#- The button of the verb `verb` that makes a making dialog's thing. Given `region`,
     the id of a region of the page's stream inside the dialog, it is in that
     region, `disabled` as the stream keeps it. -#}
 {%- macro new_submit(verb, region = "", disabled = false) -%}

@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use super::buttons::ScreenButton;
 use super::html::{self, Html};
-use super::making::{Answer, Making, NOT_A_NAME, benchmark_not_made};
+use super::making::{Answer, MadeShown, Making, NOT_A_NAME, benchmark_not_made};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
@@ -427,6 +427,7 @@ pub(super) async fn make_benchmark(
                 blank: NewBenchmarkForm {
                     new_benchmark: Making::blank(),
                 },
+                shown: MadeShown::OnScreen,
             }
         }
         Err(e) => {

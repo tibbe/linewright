@@ -1,0 +1,4 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_dialog(DIALOG, form.path, form_class = "capture") %}
+{{ self.form() }}
+{%- endcall %}

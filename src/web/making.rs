@@ -1,12 +1,15 @@
-//! Making a thing in a "New" dialog (`docs/specs/design_system.md`, Dialogs
-//! and Making; `docs/specs/web/design_system.md`, Making), drawn by the
-//! `new_button` and `new_dialog` macros, its form answering into itself.
+//! Making a thing in a dialog, such as one that "New" opens
+//! (`docs/specs/design_system.md`, Dialogs and Making;
+//! `docs/specs/web/design_system.md`, Making), drawn by the `new_dialog` and
+//! `new_form` macros, its form answering into itself, and what was made said
+//! on a screen that does not show it.
 
 use askama::Template;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use super::capture::NotCaptured;
+use super::html::Html;
 use super::render;
 use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal, MakeError};
 use crate::repo_files::FileError;
@@ -39,32 +42,59 @@ impl<Fields> Making<Fields> {
     }
 }
 
-/// What a "New" form's POST answers, which htmx swaps into the form.
+/// What a making dialog's form's POST answers, which htmx swaps into the
+/// form.
 pub(super) enum Answer<Form: Template> {
     /// 200 with the form as it starts, and the `made` event, on which the
-    /// dialog closes.
-    Made { blank: Form },
+    /// dialog closes; with what was made, if `shown` says the screen does
+    /// not show it.
+    Made { blank: Form, shown: MadeShown },
     /// The form as sent, with its refusal.
     Refused { status: StatusCode, form: Form },
 }
 
-/// The event, sent in `HX-Trigger`, on which a "New" dialog closes.
+/// Whether the dialog's screen shows what it made
+/// (`docs/specs/design_system.md`, Making, What was made).
+pub(super) enum MadeShown {
+    /// The screen shows it, so says nothing of it.
+    OnScreen,
+    /// The screen does not show it, so says this of it under its heading,
+    /// until the reader leaves.
+    Elsewhere(Html),
+}
+
+/// The event, sent in `HX-Trigger`, on which a making dialog closes.
 const MADE: &str = "made";
 
 impl<Form: Template> IntoResponse for Answer<Form> {
     fn into_response(self) -> Response {
         match self {
-            Answer::Made { blank } => (
-                StatusCode::OK,
-                [("HX-Trigger", HeaderValue::from_static(MADE))],
-                axum::response::Html(render(&blank)),
-            )
-                .into_response(),
+            Answer::Made { blank, shown } => {
+                let mut answer = render(&blank);
+                if let MadeShown::Elsewhere(said) = shown {
+                    answer.push_str(&made_said(&said));
+                }
+                (
+                    StatusCode::OK,
+                    [("HX-Trigger", HeaderValue::from_static(MADE))],
+                    axum::response::Html(answer),
+                )
+                    .into_response()
+            }
             Answer::Refused { status, form } => {
                 (status, axum::response::Html(render(&form))).into_response()
             }
         }
     }
+}
+
+/// `said` of what was made, swapped out of band into the shell's `#made`,
+/// which no stream sends, as a daisyUI success alert
+/// (`docs/specs/web/design_system.md`, Making).
+fn made_said(said: &Html) -> String {
+    format!(
+        r#"<div id="made" hx-swap-oob="innerHTML"><div class="alert alert-success" role="status"><span>{said}</span></div></div>"#
+    )
 }
 
 /// The refusal of a name not in the form of a name
@@ -108,13 +138,19 @@ pub(super) fn capture_refused(not: &NotCaptured) -> String {
             ),
             CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
             CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
-            CaptureError::NoSuchRun(run) => format!("No such run {run}."),
+            CaptureError::NoSuchRun(run) => no_such_run(run),
             CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
             CaptureError::NotCapturable(_)
             | CaptureError::NoSuchBenchmark(_)
             | CaptureError::Failed(_) => why.clone(),
         },
     }
+}
+
+/// The refusal of a capture of run `run`, which does not exist
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
+pub(super) fn no_such_run(run: &impl std::fmt::Display) -> String {
+    format!("No such run {run}.")
 }
 
 /// The refusal of repetitions that are not a whole number, 1 or more.

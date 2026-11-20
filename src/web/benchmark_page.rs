@@ -21,7 +21,7 @@ use super::capture::{TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
-use super::making::{Answer, Making, capture_refused};
+use super::making::{Answer, MadeShown, Making};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, Fold, View};
@@ -830,7 +830,7 @@ struct AddForm {
 }
 
 /// Benchmark `name` with its tasks and benchmark runs, or else the status and
-/// why there is no benchmark for a "New" dialog to make a thing in.
+/// why there is no benchmark for a making dialog to make a thing in.
 pub(super) async fn benchmark_for_making(
     sources: &Sources,
     name: &str,
@@ -889,7 +889,7 @@ pub(super) async fn add_task(
     form.runs = runs_of(&sources, stage).await;
     let served = match polled(&sources) {
         Ok(served) => served,
-        Err(not) => return form.refused((not.status(), capture_refused(&not))),
+        Err(not) => return form.refused(not.refusal()),
     };
     let run: RunId = match sent.run.parse() {
         Ok(run) => run,
@@ -909,9 +909,12 @@ pub(super) async fn add_task(
                 fields: NewTaskFields::starting(&form.runs),
                 refusal: None,
             };
-            Answer::Made { blank: form }
+            Answer::Made {
+                blank: form,
+                shown: MadeShown::OnScreen,
+            }
         }
-        Err(not) => form.refused((not.status(), capture_refused(&not))),
+        Err(not) => form.refused(not.refusal()),
     }
 }
 
