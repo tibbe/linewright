@@ -89,9 +89,9 @@
   and cancelled. Each area says which status each of its states shows as.
 - **Shown.** A status shows as its icon and its colour, never by colour alone.
   Where a screen also names a status's state, a badge in the status's colour
-  holds the state's name in place of the icon. A status among a
-  screen's facts is the exception ([Facts](#facts)). For example, a running
-  benchmark run shows as "running" in the colour of in flight.
+  holds the icon and the state's name. A status among a screen's facts is the
+  exception ([Facts](#facts)). For example, a running benchmark run shows as
+  "running", with the icon of in flight, in its colour.
 
 ## Tables
 

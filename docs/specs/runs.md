@@ -479,7 +479,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 - **Verbose.** The verbose switch is set once for the screen, and opens
   everything, a session's settings too.
 - **Following.** A run in flight is followed. The screen stays at the bottom
-  until the reader scrolls up, and then offers to jump to the latest entry.
+  until the reader scrolls up, and then offers "Jump to the latest entry".
 - **Capturing.** A run that can be captured
   ([Capturing](benchmarks.md#capturing)) has "Add task" with the screen's
   buttons ([Shell](shell.md)). The capture asks for these, then "Add task", then

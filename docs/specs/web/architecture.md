@@ -12,6 +12,9 @@ Pages are askama templates, with htmx.
 
 - **Live updates.** A live update is a server-sent event carrying an HTML
   fragment, one event stream per page.
+- **The reader's choice of navigation.** The server reads the reader's
+  choice, the sidebar or the rail ([Shell on the web](shell.md)), from a
+  cookie. The server renders each page with that choice.
 
 ## Styling
 
