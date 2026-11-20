@@ -240,7 +240,7 @@ fn foot_button(html: &Html) -> (String, String) {
         button.html()
     );
     assert_eq!(button.attr("type"), Some("button"));
-    assert_eq!(button.attr("data-navigation-toggle"), Some("navigation"));
+    assert_eq!(button.attr("data-navigation-toggle"), Some("/navigation"));
     let tooltip = ElementRef::wrap(button.parent().unwrap()).unwrap();
     assert!(
         has_classes(tooltip, &["tooltip", "tooltip-right", "hidden", "lg:block"]),

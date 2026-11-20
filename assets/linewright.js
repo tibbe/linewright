@@ -657,10 +657,14 @@
   /**
    * Collapses the sidebar to the rail, or expands the rail to the sidebar,
    * on a click on the navigation's foot button, which then names what it does
-   * next, and remembers the choice for a year in the cookie its
-   * `data-navigation-toggle` names
-   * (docs/specs/web/shell.md, Expanding and collapsing, Remembered).
+   * next, and posts the choice to the URL its `data-navigation-toggle` holds,
+   * without waiting, for the server to remember it in a cookie for a year
+   * (docs/specs/web/shell.md, Expanding and collapsing, Remembered). A cookie
+   * written here would last only 7 days in Safari
+   * (https://webkit.org/tracking-prevention/). Each choice is posted once the
+   * one before it is answered, so the cookie set last is the last choice.
    */
+  let remembering = Promise.resolve();
   document.addEventListener("click", (event) => {
     const toggle = event.target?.closest?.("button[data-navigation-toggle]");
     if (!toggle) return;
@@ -671,8 +675,13 @@
     document.getElementById(toggle.getAttribute("aria-labelledby")).textContent = rail
       ? "Expand navigation"
       : "Collapse navigation";
-    const cookie = toggle.getAttribute("data-navigation-toggle");
-    document.cookie = `${cookie}=${rail ? "rail" : "sidebar"}; Path=/; Max-Age=31536000; SameSite=Lax`;
+    const url = toggle.getAttribute("data-navigation-toggle");
+    const navigation = rail ? "rail" : "sidebar";
+    remembering = remembering
+      .then(() =>
+        fetch(url, { method: "POST", body: new URLSearchParams({ navigation }), keepalive: true }),
+      )
+      .catch(() => {});
   });
 
   /**

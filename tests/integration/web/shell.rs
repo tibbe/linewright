@@ -570,3 +570,39 @@ async fn every_page_draws_the_navigation_the_readers_cookie_chose_and_otherwise_
         }
     }
 }
+
+/// `docs/specs/web/shell.md`, Remembered: the reader's choice, posted to
+/// `/navigation`, comes back as a first-party cookie for a year, which the
+/// script cannot read, and a page asked for with it is drawn with that
+/// choice. A choice that is neither is refused, with no cookie.
+#[test_log::test(tokio::test)]
+async fn the_server_remembers_the_readers_choice_of_navigation_for_a_year() {
+    let pages = with_a_run().await;
+
+    for (choice, shown) in [("rail", Some("rail")), ("sidebar", None)] {
+        let (status, headers, _) =
+            post_answer(&pages, "/navigation", &[], &[("navigation", choice)]).await;
+
+        assert_eq!(status, 204, "{choice}");
+        let cookies: Vec<_> = headers
+            .get_all("set-cookie")
+            .iter()
+            .map(|cookie| cookie.to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            cookies,
+            [format!(
+                "navigation={choice}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly"
+            )]
+        );
+        let cookie = cookies[0].split(';').next().unwrap();
+        let html = page_with_cookie(&pages, "/runs", cookie).await;
+        assert_eq!(navigation(&html).as_deref(), shown, "{choice}");
+    }
+
+    for fields in [&[("navigation", "drawer")][..], &[]] {
+        let (status, headers, _) = post_answer(&pages, "/navigation", &[], fields).await;
+        assert_eq!(status, 400, "{fields:?}");
+        assert!(headers.get("set-cookie").is_none(), "{fields:?}");
+    }
+}

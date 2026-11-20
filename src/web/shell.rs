@@ -7,9 +7,12 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use askama::Template;
+use axum::body::Bytes;
 use axum::extract::FromRequestParts;
-use axum::http::header;
 use axum::http::request::Parts;
+use axum::http::{StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 
 use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
@@ -93,9 +96,11 @@ impl Area {
 /// The navigation a page draws from Tailwind's `lg` width, as the reader
 /// last chose (`docs/specs/web/shell.md`, Remembered): the `navigation`
 /// cookie says `rail` for the rail, and anything else, or none, is the
-/// sidebar (`docs/specs/web/architecture.md`, The reader's choice of
+/// sidebar. The reader's choice is posted as the form value `sidebar` or
+/// `rail` (`docs/specs/web/architecture.md`, The reader's choice of
 /// navigation).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(super) enum Navigation {
     Sidebar,
     Rail,
@@ -103,7 +108,10 @@ pub(super) enum Navigation {
 
 impl Navigation {
     /// The name of the cookie that holds the choice.
-    pub(super) const COOKIE: &str = "navigation";
+    const COOKIE: &str = "navigation";
+
+    /// The path the reader's choice is posted to.
+    pub(super) const PATH: &str = "/navigation";
 
     /// The choice the `Cookie` headers `cookies` hold.
     fn of(cookies: impl IntoIterator<Item = impl AsRef<str>>) -> Navigation {
@@ -112,12 +120,34 @@ impl Navigation {
                 .as_ref()
                 .split(';')
                 .filter_map(|cookie| cookie.trim().split_once('='))
-                .any(|(name, value)| name == Navigation::COOKIE && value == "rail")
+                .any(|(name, value)| {
+                    name == Navigation::COOKIE && value == Navigation::Rail.value()
+                })
         });
         if rail {
             Navigation::Rail
         } else {
             Navigation::Sidebar
+        }
+    }
+
+    /// The `Set-Cookie` that remembers it for a year (`docs/specs/web/shell.md`,
+    /// Remembered). The server sets it, as Safari deletes a cookie written from
+    /// script after 7 days without the reader using the site
+    /// (<https://webkit.org/tracking-prevention/>), and only the server reads it.
+    fn set_cookie(self) -> String {
+        format!(
+            "{}={}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly",
+            Navigation::COOKIE,
+            self.value()
+        )
+    }
+
+    /// Its value in the cookie and in the form, as serde reads it.
+    fn value(self) -> &'static str {
+        match self {
+            Navigation::Sidebar => "sidebar",
+            Navigation::Rail => "rail",
         }
     }
 
@@ -150,6 +180,30 @@ impl<S: Sync> FromRequestParts<S> for Navigation {
                 .iter()
                 .map(|value| String::from_utf8_lossy(value.as_bytes())),
         )))
+    }
+}
+
+/// The form the navigation's foot button posts: the reader's choice.
+#[derive(Deserialize)]
+struct NavigationForm {
+    navigation: Navigation,
+}
+
+/// Remembers the reader's choice of navigation in its cookie
+/// (`docs/specs/web/shell.md`, Remembered), for a request from any page: a
+/// 204, or a 400 with no cookie for a form that does not read.
+pub(super) async fn remember_navigation(body: Bytes) -> Response {
+    match serde_urlencoded::from_bytes::<NavigationForm>(&body) {
+        Ok(form) => (
+            StatusCode::NO_CONTENT,
+            [(header::SET_COOKIE, form.navigation.set_cookie())],
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("the form does not read: {e}"),
+        )
+            .into_response(),
     }
 }
 
@@ -631,8 +685,8 @@ mod tests {
     use super::*;
     use crate::environment::shown::BuiltShown;
 
-    /// `docs/specs/web/shell.md`, Remembered: the cookie the page's script
-    /// writes, among the browser's others, chooses the rail; anything else is
+    /// `docs/specs/web/shell.md`, Remembered: the cookie the server
+    /// sets, among the browser's others, chooses the rail; anything else is
     /// the sidebar.
     #[test_log::test]
     fn the_navigation_cookie_saying_rail_chooses_the_rail_and_anything_else_the_sidebar() {

@@ -53,6 +53,22 @@ fn evaluated(sources: &[&str]) -> String {
         .to_std_string_escaped()
 }
 
+/// As [`evaluated`], with the jobs each of the rest queues, such as a
+/// promise's callbacks, run after it.
+fn settled(sources: &[&str]) -> String {
+    let mut context = Context::default();
+    let (last, rest) = sources.split_last().unwrap();
+    for source in rest {
+        context.eval(Source::from_bytes(source)).unwrap();
+        context.run_jobs().unwrap();
+    }
+    let answer = context.eval(Source::from_bytes(last)).unwrap();
+    answer
+        .to_string(&mut context)
+        .unwrap()
+        .to_std_string_escaped()
+}
+
 #[test_log::test(tokio::test)]
 async fn an_update_neither_opens_nor_closes_a_fold_a_fold_row_or_a_confirmation_and_morphs_every_other_attribute()
  {
@@ -1432,11 +1448,12 @@ steps.join("\n")
 }
 
 /// `docs/specs/web/shell.md`, Expanding and collapsing, Remembered: the foot
-/// button collapses the sidebar to the rail and expands it again, naming
-/// what it does next, and remembers the choice for a year.
+/// button collapses the sidebar to the rail and expands it again at once,
+/// naming what it does next, and posts each choice to the URL it holds for
+/// the server to remember, once the one before is answered, without
+/// writing a cookie itself.
 #[test_log::test(tokio::test)]
-async fn the_foot_button_collapses_and_expands_the_navigation_and_remembers_the_choice_for_a_year()
-{
+async fn the_foot_button_collapses_and_expands_the_navigation_and_posts_each_choice_in_turn() {
     let script = served_script().await;
 
     let asked = r#"
@@ -1444,6 +1461,16 @@ var clicks = [];
 document.addEventListener = (type, listener) => { if (type === "click") clicks.push(listener); };
 var cookies = [];
 Object.defineProperty(document, "cookie", { set(cookie) { cookies.push(cookie); } });
+var posts = [];
+var answers = [];
+function URLSearchParams(fields) { this.fields = fields; }
+URLSearchParams.prototype.toString = function () {
+  return Object.entries(this.fields).map(([name, value]) => `${name}=${value}`).join("&");
+};
+var fetch = (url, options) => {
+  posts.push(`${options.method} ${url} ${options.body}${options.keepalive ? " keepalive" : ""}`);
+  return new Promise((answer) => answers.push(answer));
+};
 var drawer = {
   attributes: {},
   getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; },
@@ -1455,25 +1482,31 @@ var button = {
   closest: (selector) =>
     selector === "button[data-navigation-toggle]" ? button : selector === ".drawer" ? drawer : null,
   getAttribute: (attribute) =>
-    ({ "data-navigation-toggle": "navigation", "aria-labelledby": "navigation-toggle-name" })[attribute] ?? null,
+    ({ "data-navigation-toggle": "/navigation", "aria-labelledby": "navigation-toggle-name" })[attribute] ?? null,
 };
 document.getElementById = (id) => (id === "navigation-toggle-name" ? name : null);
-"#;
-    let click = r#"
 var shown = [];
-for (let i = 0; i < 2; i++) {
+var click = () => {
   for (const listener of clicks) listener({ target: button });
-  shown.push(`${drawer.getAttribute("data-navigation")}: ${name.textContent}: ${cookies.at(-1)}`);
-}
-shown.join("\n")
+  shown.push(`${drawer.getAttribute("data-navigation")}: ${name.textContent}`);
+};
 "#;
-    let answers = evaluated(&[BROWSER, asked, &script, click]);
+    let steps = [
+        "click(); click();",
+        "shown.push(`posted: ${posts.join(\", \")}`); answers[0]({ status: 204 });",
+        "shown.push(`posted: ${posts.join(\", \")}`); answers[1]({ status: 204 });",
+    ];
+    let read = "shown.push(`cookies written: ${cookies.length}`); shown.join(\"\\n\")";
+    let seen = settled(&[BROWSER, asked, &script, steps[0], steps[1], steps[2], read]);
 
     assert_eq!(
-        answers.lines().collect::<Vec<_>>(),
+        seen.lines().collect::<Vec<_>>(),
         [
-            "rail: Expand navigation: navigation=rail; Path=/; Max-Age=31536000; SameSite=Lax",
-            "null: Collapse navigation: navigation=sidebar; Path=/; Max-Age=31536000; SameSite=Lax",
+            "rail: Expand navigation",
+            "null: Collapse navigation",
+            "posted: POST /navigation navigation=rail keepalive",
+            "posted: POST /navigation navigation=rail keepalive, POST /navigation navigation=sidebar keepalive",
+            "cookies written: 0",
         ]
     );
 }
