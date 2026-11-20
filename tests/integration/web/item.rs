@@ -499,7 +499,9 @@ fn a_lane() -> linewright::status::View {
 }
 
 /// `docs/specs/board.md`, Item: a tracking issue's State is
-/// "Tracking", with no status of its lane's own (Out of scope).
+/// "Tracking", with no status of its lane's own (Out of scope), and its
+/// heading is as its card, its lane head, is, with no icon (Heading, Its
+/// card).
 #[test_log::test(tokio::test)]
 async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     let pages = Pages::of(a_lane()).await;
@@ -509,6 +511,12 @@ async fn an_unfinished_tracking_issues_state_is_tracking_alone() {
     assert_eq!(fact(&item_facts(&html), "State"), "Tracking");
     let value = select(&html, "#item dd")[0];
     assert!(select_in(value, "svg").is_empty(), "{}", value.html());
+    let heading = select(&html, "#heading h1")[0];
+    assert!(
+        select_in(heading, "svg[role=img]").is_empty(),
+        "a tracking issue's heading is as its lane head: {}",
+        heading.html()
+    );
 }
 
 /// `docs/specs/board.md`, Item, Related items: a tracking
@@ -529,7 +537,11 @@ async fn a_tickets_tracking_issue_is_shown_as_its_lane_head_is() {
         .position(|(label, _)| label == "Tracking issue")
         .unwrap();
     let value = select(&html, "#item dd")[at];
-    assert!(select_in(value, "svg").is_empty(), "{}", value.html());
+    assert!(
+        select_in(value, "svg:not(a.github > svg)").is_empty(),
+        "{}",
+        value.html()
+    );
     let links: Vec<&str> = select_in(value, "a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
@@ -559,6 +571,60 @@ async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its
         fact(&facts, "Waiting for"),
         "#2: First try, its pull request, until it is merged or closed"
     );
+}
+
+/// The icon of an issue or a pull request, and what a screen reader reads of
+/// it.
+#[track_caller]
+fn kind(icon: ElementRef) -> (String, String) {
+    let attribute = |name| {
+        icon.attr(name)
+            .unwrap_or_else(|| panic!("no {name}: {}", icon.html()))
+            .to_string()
+    };
+    (attribute("data-icon"), attribute("aria-label"))
+}
+
+/// `docs/specs/board.md`, Cards, Issue or pull request, and Item, Heading
+/// and Related items: beside its number, an item carries the icon of an
+/// issue or of a pull request (`docs/specs/web/design_system.md`, Icons),
+/// which a screen reader reads.
+#[test_log::test(tokio::test)]
+async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_pull_request() {
+    let pull = Pull {
+        title: "First try".into(),
+        ..open_pull(2, LINEWRIGHT, &[1], &[LINEWRIGHT])
+    };
+    let pages = Pages::of(view(vec![ticket(1, "Do the thing")], vec![pull])).await;
+
+    let issue = ("issue-opened".to_string(), "issue".to_string());
+    let pull_request = ("git-pull-request".to_string(), "pull request".to_string());
+    for (path, related, own, its) in [
+        (
+            "/items/1",
+            "Pull requests",
+            issue.clone(),
+            pull_request.clone(),
+        ),
+        ("/items/2", "Closes", pull_request, issue),
+    ] {
+        let html = pages.page(path).await;
+        let heading: Vec<_> = select(&html, "#heading h1 > svg[role=img]")
+            .into_iter()
+            .map(kind)
+            .collect();
+        assert_eq!(heading, [own], "{path}");
+        let at = item_facts(&html)
+            .iter()
+            .position(|(label, _)| label == related)
+            .unwrap_or_else(|| panic!("{path}: {related}"));
+        let value = select(&html, "#item dd")[at];
+        let icons: Vec<_> = select_in(value, ".related-item > svg[role=img]")
+            .into_iter()
+            .map(kind)
+            .collect();
+        assert_eq!(icons, [its], "{path}: {}", value.html());
+    }
 }
 
 #[test_log::test(tokio::test)]

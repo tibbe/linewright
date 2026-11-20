@@ -452,7 +452,7 @@ impl BenchmarkRunView {
             state,
             cancel: (record.state == BenchmarkRunState::Open).then(|| Confirmation {
                 id: "cancel-benchmark-run".into(),
-                verb: Verb::Cancel,
+                verb: Verb::CancelWork,
                 question: format!(
                     "Cancel benchmark run {}? This stops its running trials and scorers.",
                     record.id
@@ -1005,7 +1005,7 @@ impl BenchmarkRunView {
             .iter()
             .filter(|_| cancels)
             .map(|cancel| ScreenButton::Act {
-                verb: Verb::Cancel,
+                verb: Verb::CancelWork,
                 dialog: cancel.id.clone(),
             })
             .collect();

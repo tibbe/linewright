@@ -1,7 +1,7 @@
 {%- import "macros.html" as ui -%}
 {#- A navigation link, its label under its icon in the rail. -#}
 {%- macro nav_link(area) -%}
-<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ area.href() }}">{% call ui::nav_icon(area) %}{% endcall %}<span>{{ area.name() }}</span></a></li>
+<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ area.href() }}">{% call ui::icon(area.icon(), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ area.name() }}</span></a></li>
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -23,7 +23,7 @@
 <div class="content flex min-h-0 flex-1 flex-col gap-6 bg-base-100 p-4 lg:mt-2 lg:rounded-ss-4xl lg:border-t lg:border-s border-base-300 lg:p-10 lg:[corner-start-start-shape:squircle]">
 <div class="flex shrink-0 items-center gap-2">
 <label for="navigation" class="btn btn-ghost btn-square btn-sm drawer-button lg:hidden" aria-label="Open the navigation">
-<svg class="size-5" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
+{% call ui::icon(crate::web::icons::Icon::Bars3, crate::web::icons::IconSize::Inline) %}{% endcall %}
 </label>
 <p class="repo-name flex min-h-8 items-center text-xl font-light text-muted">{{ frame.repo }}</p>
 </div>
@@ -34,7 +34,7 @@
 {%- endfor -%}
 </div>
 {%- endblock %}
-<p id="lost" class="alert alert-warning shrink-0" role="status" hidden>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</p>
+<p id="lost" class="alert alert-warning shrink-0" role="status" hidden>{% call ui::icon(crate::web::icons::Icon::SignalSlash, crate::web::icons::IconSize::Inline) %}{% endcall %}<span>Lost <code>serve</code> <time tabindex="0"></time>; reconnecting.</span></p>
 {%- if page.place.has_crumbs() %}
 <div class="flex min-h-8 shrink-0 flex-wrap items-center gap-2">
 {% include "shell_crumbs.html" %}

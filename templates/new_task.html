@@ -1,5 +1,5 @@
 {%- import "macros.html" as ui -%}
-{%- call ui::new_form("new-task", self.title(), "Add task", making.refusal, region = NEW_TASK_READY, disabled = self.ready().disabled, note = self.ready().note) %}
+{%- call ui::new_form("new-task", self.title(), crate::web::buttons::Verb::AddTask, making.refusal, region = NEW_TASK_READY, disabled = self.ready().disabled, note = self.ready().note) %}
 <label class="label" for="new-task-run">Run</label>
 {{ self.runs() }}
 <label class="label" for="new-task-name">Name</label>

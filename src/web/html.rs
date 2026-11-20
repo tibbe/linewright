@@ -1,5 +1,6 @@
 use std::fmt::{self, Write as _};
 
+use super::icons::{Icon, IconSize};
 use super::names::Names;
 use crate::domain::{Number, Timestamp};
 use crate::phrase::{Phrase, Segment};
@@ -118,8 +119,9 @@ fn page_link(number: Number, content: &Html) -> String {
 
 fn github(number: Number, repo: &str) -> String {
     format!(
-        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub"></a>"#,
+        r#"<a class="github" href="{href}" aria-label="{number} on GitHub" data-tip="{number} on GitHub">{icon}</a>"#,
         href = escape(&format!("https://github.com/{repo}/issues/{}", number.0)),
+        icon = Icon::ArrowTopRightOnSquare.svg(IconSize::Inline),
     )
 }
 

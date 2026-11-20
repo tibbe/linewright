@@ -12,6 +12,7 @@
 @source "../assets/linewright.js";
 @source not "./daisyui.mjs";
 @source not "./daisyui-theme.mjs";
+@source not "../src/web/icons";
 
 /* daisyUI's components without its themes, which the two blocks below give
    in full: each is daisyUI's built-in theme of that name, with which the
@@ -137,10 +138,8 @@
     @apply size-4 shrink-0 rounded-full border-2 border-card bg-info;
   }
 
-  a.github::after {
-    content: "\2197" / "";
-    margin-left: 0.15em;
-    font-size: 0.8em;
+  a.github > svg.icon {
+    @apply ms-[0.15em] inline-block align-[-0.125em];
   }
 
   .name-cut-1,
@@ -186,7 +185,7 @@
   }
 
   .name-cut-2 > svg {
-    @apply mt-[calc((1lh-1em)/2)] mr-[0.25em];
+    @apply mt-[calc((1lh-1rem)/2)] mr-[0.25em];
   }
 
   .board .lane-head {
@@ -197,7 +196,7 @@
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
 
-  .board .toned svg.icon {
+  .board .toned .line > svg.icon {
     @apply text-(--tone);
   }
 
@@ -205,15 +204,15 @@
     @apply text-(--tone);
   }
 
-  :is(.board .toned, .status-text) svg.icon {
+  :is(.board .toned .line, .status-text) > svg.icon {
     @apply mr-1 inline-block align-[-0.125em];
   }
 
-  .related-item svg {
+  .related-item > svg.icon {
     @apply mr-1 inline-block align-[-0.125em];
   }
 
-  .related-item svg.icon {
+  .related-item > svg.icon:not([role="img"]) {
     @apply text-(--tone);
   }
 
@@ -221,7 +220,7 @@
     @apply mr-4;
   }
 
-  /* The chevron of a line that opens, drawn in place of the browser's own
+  /* A line that opens draws its chevron in place of the browser's own
      marker (https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/summary#changing_the_summarys_icon). */
   summary.line {
     @apply cursor-pointer list-none;
@@ -231,13 +230,9 @@
     display: none;
   }
 
-  summary.line > .chevron::before {
-    @apply inline-block transition-transform;
-    content: "\203A" / "";
-  }
-
-  details[open] > summary.line > .chevron::before {
-    @apply rotate-90;
+  details:not([open]) > summary.line > .chevron > svg[data-icon="chevron-down"],
+  details[open] > summary.line > .chevron > svg[data-icon="chevron-right"] {
+    @apply hidden;
   }
 
   td:has(> .row-view) {

@@ -138,6 +138,177 @@ async fn every_cards_title_has_an_icon_before_it() {
     assert!(titles > 0, "the pages have cards with titles");
 }
 
+/// The name of `icon`'s icon (`docs/specs/web/design_system.md`, Icons).
+#[track_caller]
+fn icon_name(icon: ElementRef) -> String {
+    icon.attr("data-icon")
+        .unwrap_or_else(|| panic!("not an icon of the set: {}", icon.html()))
+        .to_string()
+}
+
+/// `docs/specs/web/design_system.md`, Icons: every icon is one of the set,
+/// `size-5` before a `card-title`, `size-[1em]` in a `badge` and `size-4`
+/// elsewhere. The chart is a plot, not an icon.
+#[test_log::test(tokio::test)]
+async fn every_icon_is_one_of_the_set_sized_by_where_it_sits() {
+    let pages = with_a_run().await;
+
+    let mut sizes = std::collections::BTreeSet::new();
+    for path in PATHS {
+        let html = pages.page(path).await;
+        for icon in select(&html, "svg:not(#chart svg)") {
+            icon_name(icon);
+            let parent = ElementRef::wrap(icon.parent().unwrap()).unwrap();
+            let before_a_title = has_classes(parent, &["card-title"])
+                && parent.children().find_map(ElementRef::wrap) == Some(icon);
+            let size = if before_a_title {
+                "size-5"
+            } else if has_classes(parent, &["badge"]) {
+                "size-[1em]"
+            } else {
+                "size-4"
+            };
+            let sized: Vec<&str> = icon
+                .value()
+                .classes()
+                .filter(|class| class.starts_with("size-"))
+                .collect();
+            assert_eq!(sized, [size], "{path}: {}", parent.html());
+            sizes.insert(size);
+        }
+    }
+    assert_eq!(
+        sizes.into_iter().collect::<Vec<_>>(),
+        ["size-4", "size-5", "size-[1em]"]
+    );
+}
+
+/// `docs/specs/web/design_system.md`, Cards and Icons: a card's title has
+/// the icon of the area of what the card holds, but the cards the table
+/// names.
+#[test_log::test(tokio::test)]
+async fn each_cards_title_has_the_icon_of_what_it_holds() {
+    let pages = with_a_run().await;
+
+    let mut titles = Vec::new();
+    for path in ["/items/1", "/runs/1/triage-1", "/benchmark-runs/1"] {
+        let html = pages.page(path).await;
+        for title in select(&html, ".card-title") {
+            let icon = select_in(title, ":scope > svg")[0];
+            titles.push((path, text(title), icon_name(icon)));
+        }
+    }
+
+    assert_eq!(
+        titles
+            .iter()
+            .map(|(path, title, icon)| (*path, title.clone(), icon.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("/items/1", "#1: Ship gh".to_string(), "view-columns"),
+            ("/items/1", "Runs".to_string(), "command-line"),
+            (
+                "/runs/1/triage-1",
+                "1/triage-1 (it started no session)".to_string(),
+                "command-line"
+            ),
+            ("/benchmark-runs/1", "Benchmark run 1".to_string(), "beaker"),
+            ("/benchmark-runs/1", "Pass rate vs".to_string(), "chart-bar"),
+            (
+                "/benchmark-runs/1",
+                "Configurations".to_string(),
+                "adjustments-horizontal"
+            ),
+            (
+                "/benchmark-runs/1",
+                "Passes by task".to_string(),
+                "table-cells"
+            ),
+        ]
+    );
+}
+
+/// `docs/specs/web/design_system.md`, Icons: each button the table names has
+/// its icon before its label. A "Cancel" that cancels work opens its
+/// confirmation, and one that closes a dialog closes it.
+#[test_log::test(tokio::test)]
+async fn each_button_has_its_icon_before_its_label() {
+    let pages = with_a_run().await;
+
+    let mut buttons = std::collections::BTreeSet::new();
+    for path in PATHS
+        .into_iter()
+        .chain(["/benchmark-runs/1/as-is/columns/1/run"])
+    {
+        let html = pages.page(path).await;
+        for button in select(&html, "button") {
+            let label = text(button);
+            let closes = button.attr("command") == Some("close")
+                || button
+                    .parent()
+                    .and_then(ElementRef::wrap)
+                    .is_some_and(|form| form.attr("method") == Some("dialog"));
+            let label = match label.as_str() {
+                "Cancel" if closes => "Cancel that closes a dialog".to_string(),
+                "Cancel" => "Cancel that cancels work".to_string(),
+                _ => label,
+            };
+            let icon = select_in(button, ":scope > svg:first-child")
+                .first()
+                .map(|icon| icon_name(*icon));
+            buttons.insert((label, icon));
+        }
+    }
+    let named = [
+        ("Add task", "plus"),
+        ("Cancel that cancels work", "stop-circle"),
+        ("Remove", "trash"),
+        ("Create", "plus"),
+        ("Run benchmark", "play"),
+        ("Add a configuration", "plus"),
+        ("Keep running", "play"),
+        ("Cancel that closes a dialog", "x-mark"),
+        ("Jump to the latest entry", "arrow-down"),
+    ];
+    for (label, icon) in named {
+        let shown: Vec<Option<&str>> = buttons
+            .iter()
+            .filter(|(shown, _)| shown == label)
+            .map(|(_, shown)| shown.as_deref())
+            .collect();
+        assert_eq!(shown, [Some(icon)], "{label}");
+    }
+}
+
+/// `docs/specs/web/design_system.md`, Icons: the button that opens the
+/// navigation, a link to GitHub at the end of a name and "Lost `serve`"
+/// each have their icon.
+#[test_log::test(tokio::test)]
+async fn the_shells_parts_have_their_icons() {
+    let pages = with_a_run().await;
+
+    let html = pages.page("/runs").await;
+
+    for (selector, icon) in [
+        ("label.drawer-button > svg", "bars-3"),
+        ("#runs a.github > svg", "arrow-top-right-on-square"),
+        ("#lost > svg:first-child", "signal-slash"),
+    ] {
+        let icons = select(&html, selector);
+        assert!(!icons.is_empty(), "{selector}");
+        for shown in icons {
+            assert_eq!(icon_name(shown), icon, "{selector}");
+        }
+    }
+    assert_eq!(
+        select(&html, ".drawer-side ul.menu a > svg")
+            .into_iter()
+            .map(icon_name)
+            .collect::<Vec<_>>(),
+        ["view-columns", "command-line", "bolt", "beaker", "server"]
+    );
+}
+
 /// `docs/specs/web/benchmarks.md`, Benchmark run: the chart is in a card
 /// whose title is "Pass rate vs" and the choice of axis, and it runs to the
 /// card's left, right and bottom edges. The choice is beside the title's

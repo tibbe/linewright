@@ -438,7 +438,7 @@ impl NewTaskRuns<'_> {
 /// cannot run yet.
 #[derive(Template)]
 #[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit("Add task", NEW_TASK_READY, disabled, note) %}{% endcall %}"#,
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit(crate::web::buttons::Verb::AddTask, NEW_TASK_READY, disabled, note) %}{% endcall %}"#,
     ext = "html"
 )]
 struct NewTaskReady {

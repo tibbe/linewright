@@ -4,6 +4,7 @@
 use crate::phrase::Status;
 
 use super::html::Html;
+use super::icons::ItemKind;
 
 /// A fact: its label, and its value a line at a time. `Words` is what its
 /// words are made of, `Html` as the page draws them.
@@ -21,13 +22,15 @@ pub(super) enum Piece<Words = Html> {
         words: Words,
     },
     /// An item as its card is (`docs/specs/board.md`, Item,
-    /// Related items): its card status's icon, if it has one, then its
-    /// heading, with the pull request icon where it is one.
+    /// Related items): its card status's icon, if it has one, then the
+    /// icon of an issue or a pull request, then its heading.
     Item {
         status: Option<Status>,
-        pull_request: bool,
+        kind: ItemKind,
         heading: Words,
     },
+    /// A tracking issue as its lane's head is.
+    LaneHead(Words),
     /// Markup of its own, such as a build of the environment's.
     Markup(Html),
 }
@@ -50,13 +53,14 @@ impl<Words> Fact<Words> {
                             },
                             Piece::Item {
                                 status,
-                                pull_request,
+                                kind,
                                 heading,
                             } => Piece::Item {
                                 status,
-                                pull_request,
+                                kind,
                                 heading: draw(heading),
                             },
+                            Piece::LaneHead(heading) => Piece::LaneHead(draw(heading)),
                             Piece::Markup(markup) => Piece::Markup(markup),
                         })
                         .collect()

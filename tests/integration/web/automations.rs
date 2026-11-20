@@ -150,7 +150,10 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
         .filter_map(|a| a.attr("href"))
         .collect();
     assert_eq!(links, ["/runs/weekly/1"]);
-    assert_eq!(select(&html, "#automations tbody svg.icon").len(), 1);
+    assert_eq!(
+        select(&html, &format!("#automations tbody {STATUS_ICON}")).len(),
+        1
+    );
     assert_no_status_by_colour_alone(&html);
     assert_eq!(events_path(&html), Some("/events/automations"));
 }

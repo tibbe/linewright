@@ -5,9 +5,9 @@
 <div class="flex min-w-0 flex-1 flex-col gap-1">
 <div class="flex flex-wrap items-center gap-3">
 {%- if page.place.has_crumbs() %}
-<h2 class="card-title">{% call ui::card_icon(page.place.icon()) %}{% endcall %}{{ heading.name|safe }}</h2>
+<h2 class="card-title">{% call ui::icon(page.place.icon().icon(), crate::web::icons::IconSize::CardTitle) %}{% endcall %}{{ heading.name|safe }}</h2>
 {%- else %}
-<h1 class="card-title">{% call ui::card_icon(page.place.icon()) %}{% endcall %}{{ heading.name|safe }}</h1>
+<h1 class="card-title">{% call ui::icon(page.place.icon().icon(), crate::web::icons::IconSize::CardTitle) %}{% endcall %}{{ heading.name|safe }}</h1>
 {%- endif %}
 {%- if let Some((status, word)) = heading.state %}
 {% call ui::status(status, word) %}{% endcall %}

@@ -176,16 +176,30 @@ fn board_shown(html: &Html) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The icon beside a card's number (`docs/specs/board.md`, Cards, Issue or
+/// pull request; `docs/specs/web/design_system.md`, Icons), and what a
+/// screen reader reads of it.
+#[derive(Debug, PartialEq, Eq)]
+enum Kind {
+    Issue,
+    PullRequest,
+}
+
 /// The board's cards, each as its column and what a reader reads of it,
-/// and whether it carries the pull request icon.
-fn cards_shown(html: &Html) -> Vec<(String, bool)> {
+/// and the icon beside its number.
+#[track_caller]
+fn cards_shown(html: &Html) -> Vec<(String, Kind)> {
     board_shown(html)
         .into_iter()
         .flat_map(|lane| lane.into_iter().skip(1))
         .zip(select(html, "#board .card").into_iter().map(|card| {
-            card.select(&Selector::parse("h3 svg.pull-request").unwrap())
-                .count()
-                == 1
+            let icons = select_in(card, "h3 > svg");
+            assert_eq!(icons.len(), 1, "{}", card.html());
+            match (icons[0].attr("data-icon"), icons[0].attr("aria-label")) {
+                (Some("issue-opened"), Some("issue")) => Kind::Issue,
+                (Some("git-pull-request"), Some("pull request")) => Kind::PullRequest,
+                _ => panic!("not an issue's or a pull request's icon: {}", card.html()),
+            }
         }))
         .collect()
 }
@@ -703,9 +717,9 @@ async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour(
     }
 }
 
-/// The icons `element` holds, as their markup.
+/// The statuses' icons `element` holds, as their markup.
 fn icons(element: ElementRef) -> Vec<String> {
-    select_in(element, "svg.icon")
+    select_in(element, STATUS_ICON)
         .into_iter()
         .map(|icon| icon.html())
         .collect()
@@ -1012,7 +1026,7 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
         shown,
         [(
             "Done: #5: Merged 5 | merged · 2026-10-01 10:00:00 UTC".to_string(),
-            true
+            Kind::PullRequest
         )]
     );
 }
@@ -1035,7 +1049,7 @@ async fn an_issue_whose_pull_request_merged_is_in_done_before_github_closes_it()
         shown,
         [(
             "Done: #1: Do the thing | closed in #11 · 2026-09-30 10:00:00 UTC".to_string(),
-            false
+            Kind::Issue
         )]
     );
 }
