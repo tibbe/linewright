@@ -549,8 +549,8 @@ pub(super) struct ServerFact {
 
 /// The server page's facts, in order.
 pub(super) fn server_facts(html: &Html) -> Vec<ServerFact> {
-    let labels = select(html, "#server dl > dt");
-    let values = select(html, "#server dl > dd");
+    let labels = select(html, "#server dl > div > dt");
+    let values = select(html, "#server dl > div > dd");
     assert_eq!(labels.len(), values.len(), "{}", html.html());
     labels
         .into_iter()

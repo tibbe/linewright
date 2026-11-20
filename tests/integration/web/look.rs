@@ -107,6 +107,57 @@ async fn every_card_is_in_base_200_with_a_light_shadow_and_no_border() {
     }
 }
 
+/// `docs/specs/web/components.md`, Facts: Item's and Server's facts are a
+/// card holding a `grid` of rows `gap-3` apart, in `text-sm`, each fact a
+/// row with its label at the start, in secondary text, and its value at the
+/// end (`docs/specs/web/board.md`, Item; `docs/specs/web/operation.md`).
+#[test_log::test(tokio::test)]
+async fn item_and_servers_facts_are_rows_each_its_label_at_the_start_and_its_value_at_the_end() {
+    let pages = with_a_run().await;
+
+    for (path, facts) in [("/items/1", "#item dl"), ("/server", "#server dl")] {
+        let html = pages.page(path).await;
+
+        let card = select(&html, facts);
+        assert_eq!(card.len(), 1, "{path}");
+        assert!(
+            has_classes(card[0], &["grid", "gap-3", "text-sm"]),
+            "{path}: {}",
+            card[0].html()
+        );
+        let rows: Vec<ElementRef> = card[0].children().filter_map(ElementRef::wrap).collect();
+        assert_ne!(rows.len(), 0, "{path}");
+        for row in rows {
+            assert!(
+                has_classes(row, &["flex", "justify-between"]),
+                "{path}: {}",
+                row.html()
+            );
+            let parts: Vec<&str> = row
+                .children()
+                .filter_map(ElementRef::wrap)
+                .map(|part| part.value().name())
+                .collect();
+            assert_eq!(parts, ["dt", "dd"], "{path}: {}", row.html());
+            let label = row.children().find_map(ElementRef::wrap).expect("a label");
+            assert!(
+                has_classes(label, &["shrink-0"]),
+                "{path}: {}",
+                label.html()
+            );
+        }
+        for value in select(&html, &format!("{facts} dd")) {
+            assert!(
+                has_classes(value, &["flex", "flex-col", "items-end"])
+                    && !has_classes(value, &["text-end"]),
+                "{path}: {}",
+                value.html()
+            );
+        }
+        assert_in_secondary_text(&html, &format!("{facts} dt"));
+    }
+}
+
 /// `docs/specs/web/design_system.md`, Cards: a card's title has an icon
 /// before it.
 #[test_log::test(tokio::test)]
