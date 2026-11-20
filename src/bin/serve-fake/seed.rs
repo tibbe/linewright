@@ -724,6 +724,27 @@ fn implementing() -> Vec<Step> {
         said("The heading is drawn by the run page. I'll add the duration at its right."),
         called("i2", "Read", &json!({"file_path": "src/run_page.rs"})),
         returned("i2", "fn heading(session: &Session) -> Markup { … }"),
+        called(
+            "i3",
+            "Agent",
+            &json!({
+                "description": "Find the heading's tests",
+                "prompt": "Find the tests of the run page's session heading.",
+            }),
+        ),
+        of_sub_agent(
+            "i3",
+            called(
+                "i3a",
+                "Grep",
+                &json!({"pattern": "heading", "path": "tests"}),
+            ),
+        ),
+        of_sub_agent(
+            "i3",
+            returned("i3a", "tests/run_page.rs: fn a_heading_shows_its_duration"),
+        ),
+        returned("i3", "The heading's tests are in tests/run_page.rs."),
     ];
     let testing = (1..=8).flat_map(|round| {
         let id = format!("test-{round}");
@@ -822,6 +843,12 @@ fn called(id: &str, tool: &str, input: &Value) -> Value {
         "type": "assistant",
         "message": {"content": [{"type": "tool_use", "id": id, "name": tool, "input": input}]},
     })
+}
+
+/// `event`, as the sub-agent that the call `call` started streams it.
+fn of_sub_agent(call: &str, mut event: Value) -> Value {
+    event["parent_tool_use_id"] = json!(call);
+    event
 }
 
 fn returned(id: &str, output: &str) -> Value {
