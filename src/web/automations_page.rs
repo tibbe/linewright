@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use super::html::{self, Html};
 use super::names::Names;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Area, Frame, Place, Read};
+use super::shell::{self, Area, Frame, Navigation, Place, Read};
 use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
 use crate::api::{Sources, Unexplained};
@@ -234,10 +234,11 @@ async fn shown(sources: &Sources, requested: Requested) -> (Frame, Option<Automa
 }
 
 /// The automations page, its stream's on the `requested` page.
-fn page(requested: Requested) -> Page {
+fn page(requested: Requested, navigation: Navigation) -> Page {
     Page::new(
         Place::Navigation(Area::Automations),
         path("/events/automations", requested),
+        navigation,
     )
     .filling_the_viewport()
 }
@@ -245,9 +246,10 @@ fn page(requested: Requested) -> Page {
 pub(super) async fn automations_page(
     State(sources): State<Sources>,
     Query(query): Query<AutomationsQuery>,
+    navigation: Navigation,
 ) -> Response {
     let requested = query.page;
-    let page = page(requested);
+    let page = page(requested, navigation);
     match shown(&sources, requested).await {
         (frame, Some(automations)) => AutomationsPage {
             page,
@@ -273,13 +275,14 @@ pub(super) async fn automations_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<AutomationsQuery>,
+    navigation: Navigation,
 ) -> Response {
     let requested = query.page;
     let regions = move || {
         let sources = sources.clone();
         async move {
             let (frame, automations) = shown(&sources, requested).await;
-            let mut regions = shell::regions(&frame, &page(requested));
+            let mut regions = shell::regions(&frame, &page(requested, navigation));
             if let Some(automations) = automations {
                 regions.push((
                     "automations",

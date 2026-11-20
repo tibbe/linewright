@@ -356,6 +356,28 @@ trait Routed {
     }
 }
 
+/// The page at `path` of `web` as a browser holding the cookies `cookie`
+/// asks for it, whatever its status.
+#[track_caller]
+fn page_with_cookie<W: Routed>(
+    web: &W,
+    path: &str,
+    cookie: &str,
+) -> impl Future<Output = Html> + use<W> {
+    let caller = std::panic::Location::caller();
+    let request = axum::http::Request::builder()
+        .uri(path)
+        .header("Host", "localhost")
+        .header("Cookie", cookie.as_bytes())
+        .body(Body::empty())
+        .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
+    let router = web.router().clone();
+    async move {
+        let Ok(response) = router.oneshot(request).await;
+        Html::parse_document(&status_and_body(response).await.1)
+    }
+}
+
 /// The form of a name of a benchmark, a task or a configuration, as the
 /// `pattern` of the inputs that take one (`docs/specs/benchmarks.md`,
 /// Capturing).

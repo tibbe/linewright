@@ -1,7 +1,12 @@
 {%- import "macros.html" as ui -%}
-{#- A navigation link, its label under its icon in the rail. -#}
+{#- The link to `area`'s screen, named in a tooltip on the rail. -#}
 {%- macro nav_link(area) -%}
-<li><a class="lg:max-2xl:flex lg:max-2xl:flex-col lg:max-2xl:items-center lg:max-2xl:gap-1 lg:max-2xl:px-0 lg:max-2xl:text-xs" href="{{ area.href() }}">{% call ui::icon(area.icon(), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ area.name() }}</span></a></li>
+<li class="lg:rail:tooltip lg:rail:tooltip-right">{% call rail_tip(area.name()) %}{% endcall %}<a href="{{ area.href() }}">{% call ui::icon(area.icon(), crate::web::icons::IconSize::Inline) %}{% endcall %}<span class="lg:rail:sr-only">{{ area.name() }}</span></a></li>
+{%- endmacro -%}
+{#- `name` in the tooltip of the element it is first in, which only the rail
+    shows. -#}
+{%- macro rail_tip(name) -%}
+<span class="tooltip-content hidden lg:rail:block" aria-hidden="true">{{ name }}</span>
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -17,7 +22,7 @@
 </head>
 <body class="bg-base-200 text-base-content">
 <div id="stream" hidden hx-sse:connect="{{ page.events }}" hx-swap="none"></div>
-<div class="drawer lg:drawer-open">
+<div class="drawer lg:drawer-open"{% if page.navigation.is_rail() %} data-navigation="rail"{% endif %}>
 <input id="navigation" type="checkbox" class="drawer-toggle">
 <div class="drawer-content isolate flex min-w-0 flex-col {% if page.fills_viewport %}h-dvh{% else %}min-h-dvh{% endif %}">
 <div class="content flex min-h-0 flex-1 flex-col gap-6 bg-base-100 p-4 lg:mt-2 lg:rounded-ss-4xl lg:border-t lg:border-s border-base-300 lg:p-10 lg:[corner-start-start-shape:squircle]">
@@ -49,15 +54,19 @@
 </main>
 </div>
 </div>
-<div class="drawer-side">
+<div class="drawer-side lg:rail:overflow-visible">
 <label for="navigation" class="drawer-overlay" aria-label="Close the navigation"></label>
-<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 px-2 pt-10 lg:max-2xl:w-20 lg:max-2xl:items-center lg:max-2xl:px-1" aria-label="Linewright">
-<a class="repo link link-hover mx-5 flex items-center gap-2 font-semibold lg:max-2xl:justify-center" href="https://github.com/{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-4 rounded-full"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:max-2xl:sr-only">{{ frame.repo }}</span></a>
+<nav class="flex min-h-full w-64 flex-col gap-2 bg-base-200 px-2 pt-10 lg:rail:w-14 lg:rail:px-0" aria-label="Linewright">
+<div class="lg:rail:tooltip lg:rail:tooltip-right">{% call rail_tip(frame.repo) %}{% endcall %}<a class="repo link link-hover mx-5 flex items-center gap-2 font-semibold" href="https://github.com/{{ frame.repo }}" aria-label="{{ frame.repo }}" data-tip="{{ frame.repo }}" data-tip-cut><div class="avatar"><div class="size-4 rounded-full"><img src="https://github.com/{{ frame.repo.owner() }}.png?size=64" width="32" height="32" alt=""></div></div><span class="lg:rail:hidden">{{ frame.repo }}</span></a></div>
 <ul class="menu w-full">
 {%- for area in crate::web::shell::Area::ALL %}
 {%- call nav_link(area) %}{% endcall %}
 {%- endfor %}
 </ul>
+<div class="tooltip tooltip-right mt-auto mb-4 ms-2 hidden self-start lg:block">
+<span id="navigation-toggle-name" class="tooltip-content">{{ page.navigation.toggle_name() }}</span>
+<button type="button" class="btn btn-ghost btn-circle" data-navigation-toggle="{{ crate::web::shell::Navigation::COOKIE }}" aria-labelledby="navigation-toggle-name">{% call ui::icon(crate::web::icons::Icon::ChevronDoubleRight, crate::web::icons::IconSize::Inline, "-scale-x-100 lg:rail:scale-x-100") %}{% endcall %}</button>
+</div>
 </nav>
 </div>
 </div>

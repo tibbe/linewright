@@ -25,7 +25,7 @@ use super::html::{self, Html};
 use super::icons::{Icon, IconSize};
 use super::names::Names;
 use super::runs_table::ItemCell;
-use super::shell::{self, Frame, Heading, Missing, Thing};
+use super::shell::{self, Frame, Heading, Missing, Navigation, Thing};
 use super::{
     ErrorPage, Page, Sent, nothing_there, render, run_path, samples, unanswered, with_query,
 };
@@ -1219,7 +1219,12 @@ const CAPTURE: &str = "capture";
 /// The page at `place`, its stream at `events`, with "Add task" among the
 /// screen's buttons where it draws the capture's dialog
 /// (`docs/specs/runs.md`, Run, Capturing).
-fn transcript_page_at(place: shell::Place, events: String, captures: bool) -> Page {
+fn transcript_page_at(
+    place: shell::Place,
+    events: String,
+    captures: bool,
+    navigation: Navigation,
+) -> Page {
     let buttons = captures
         .then(|| ScreenButton::Act {
             verb: Verb::AddTask,
@@ -1227,7 +1232,7 @@ fn transcript_page_at(place: shell::Place, events: String, captures: bool) -> Pa
         })
         .into_iter()
         .collect();
-    Page::new(place, events).buttons(buttons)
+    Page::new(place, events, navigation).buttons(buttons)
 }
 
 /// What `id` is of, as the Item column of a list of runs names it, its item
@@ -1297,6 +1302,7 @@ pub(super) async fn transcript_page(
     transcribed: Result<Transcribed, (StatusCode, String)>,
     verbose: bool,
     capture: Option<Html>,
+    navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(sources).await;
     let shown = match transcribed {
@@ -1304,7 +1310,7 @@ pub(super) async fn transcript_page(
             (Err(RunError::NoSuchRun(_)), Some(missing)) => {
                 let events = format!("/events{path}");
                 return nothing_there(
-                    |thing| Page::new(run_place(thing), events),
+                    |thing| Page::new(run_place(thing), events, navigation),
                     missing,
                     frame,
                     "transcript",
@@ -1319,7 +1325,7 @@ pub(super) async fn transcript_page(
             let captures = capture.is_some();
             let events = page_path(path, "/events", verbose, follow.as_ref(), captures);
             RunPage {
-                page: transcript_page_at(place, events, captures),
+                page: transcript_page_at(place, events, captures, navigation),
                 frame,
                 verbose,
                 switched: page_path(path, "", !verbose, None, false),
@@ -1331,7 +1337,7 @@ pub(super) async fn transcript_page(
         Err(e) => {
             let (status, error) = e.answer();
             let page = ErrorPage {
-                page: Page::new(place, format!("/events{path}")),
+                page: Page::new(place, format!("/events{path}"), navigation),
                 frame,
                 region: "transcript",
                 error,
@@ -1350,17 +1356,18 @@ pub(super) async fn run_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
+    navigation: Navigation,
 ) -> Response {
     let events = format!("/events/runs/{id}");
     let Ok(run) = id.parse::<RunId>() else {
         let frame = Frame::of(&sources).await;
-        let page = |thing| Page::new(run_place(thing), events);
+        let page = |thing| Page::new(run_place(thing), events, navigation);
         return nothing_there(page, Missing::Run(id), frame, "transcript");
     };
     let thing = match run_thing(&sources, &run).await {
         Some(Thing::Missing(missing)) => {
             let frame = Frame::of(&sources).await;
-            let page = |thing| Page::new(run_place(thing), events);
+            let page = |thing| Page::new(run_place(thing), events, navigation);
             return nothing_there(page, missing, frame, "transcript");
         }
         Some(found) => found,
@@ -1376,6 +1383,7 @@ pub(super) async fn run_page(
         Ok(Transcribed::run(&sources, &run)),
         query.verbose(),
         capture,
+        navigation,
     )
     .await
 }
@@ -1393,6 +1401,7 @@ pub(super) async fn run_events(
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
     headers: HeaderMap,
+    navigation: Navigation,
 ) -> Response {
     let run = id.parse::<RunId>().ok();
     let transcribed = run.as_ref().map(|run| Transcribed::run(&sources, run));
@@ -1411,7 +1420,12 @@ pub(super) async fn run_events(
                     Some(run) if found => run_thing(&sources, run).await?,
                     _ => Thing::Missing(Missing::Run(id)),
                 };
-                Some(transcript_page_at(run_place(thing), events, captures))
+                Some(transcript_page_at(
+                    run_place(thing),
+                    events,
+                    captures,
+                    navigation,
+                ))
             })
         })
     };

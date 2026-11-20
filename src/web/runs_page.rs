@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use super::names::Names;
 use super::pages::{PageHref, Requested};
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{self, Area, Frame, Place};
+use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, given, render, unanswered, with_filters};
 use crate::api::{self, Sources};
 use crate::config::{self, Since};
@@ -182,10 +182,11 @@ struct RunsPage {
 }
 
 /// The runs page, its stream's narrowed as `narrowing` says.
-fn page(narrowing: &Narrowing) -> Page {
+fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
     Page::new(
         Place::Navigation(Area::Runs),
         narrowing.path("/events/runs", narrowing.page),
+        navigation,
     )
     .filling_the_viewport()
 }
@@ -193,11 +194,12 @@ fn page(narrowing: &Narrowing) -> Page {
 pub(super) async fn runs_page(
     State(sources): State<Sources>,
     Query(query): Query<RunsQuery>,
+    navigation: Navigation,
 ) -> Response {
     let narrowing = Narrowing::of(&query);
     let (status, runs) = listed(&sources, &narrowing).await;
     let page = RunsPage {
-        page: page(&narrowing),
+        page: page(&narrowing, navigation),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         runs,
@@ -211,13 +213,15 @@ pub(super) async fn runs_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<RunsQuery>,
+    navigation: Navigation,
 ) -> Response {
     let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
         let sources = sources.clone();
         let narrowing = narrowing.clone();
         async move {
-            let mut regions = shell::regions(&Frame::of(&sources).await, &page(&narrowing));
+            let mut regions =
+                shell::regions(&Frame::of(&sources).await, &page(&narrowing, navigation));
             let (_, runs) = listed(&sources, &narrowing).await;
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions

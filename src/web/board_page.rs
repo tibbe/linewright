@@ -13,7 +13,7 @@ use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
 use super::icons::ItemKind;
 use super::names::Names;
-use super::shell::{self, Area, Frame, Place};
+use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, given, render, with_filters};
 use crate::api::{self, Sources};
 use crate::board::{Board, Card, Column, Lane};
@@ -190,10 +190,14 @@ struct PeopleRegion<'a> {
 
 /// The board's page, its stream's narrowed to `person`, if set, and its
 /// title counting `needing_a_person`.
-fn page(person: Option<&Login>, needing_a_person: usize) -> Page {
-    Page::new(Place::Navigation(Area::Board), events_path(person))
-        .needing_a_person(needing_a_person)
-        .filling_the_viewport()
+fn page(person: Option<&Login>, needing_a_person: usize, navigation: Navigation) -> Page {
+    Page::new(
+        Place::Navigation(Area::Board),
+        events_path(person),
+        navigation,
+    )
+    .needing_a_person(needing_a_person)
+    .filling_the_viewport()
 }
 
 /// The Person filter's options: each of `people`'s logins and whether it is
@@ -214,13 +218,14 @@ fn events_path(person: Option<&Login>) -> String {
 pub(super) async fn board_page(
     State(sources): State<Sources>,
     Query(filters): Query<FilterQuery>,
+    navigation: Navigation,
 ) -> Response {
     let repo = &sources.work_dir.repo;
     let person = filters.person();
     let shown = BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
     let person_options = person_options(&shown.people, person.as_ref());
     BoardPage {
-        page: page(person.as_ref(), shown.needing_a_person),
+        page: page(person.as_ref(), shown.needing_a_person, navigation),
         frame: Frame::of(&sources).await,
         board: shown.board,
         people: shown.people,
@@ -235,6 +240,7 @@ pub(super) async fn board_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Query(filters): Query<FilterQuery>,
+    navigation: Navigation,
 ) -> Response {
     let person = filters.person();
     let regions = move || {
@@ -245,8 +251,10 @@ pub(super) async fn board_events(
             let frame = Frame::of(&sources).await;
             let shown =
                 BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
-            let mut regions =
-                shell::regions(&frame, &page(person.as_ref(), shown.needing_a_person));
+            let mut regions = shell::regions(
+                &frame,
+                &page(person.as_ref(), shown.needing_a_person, navigation),
+            );
             regions.push((
                 "board",
                 render(&BoardRegion {

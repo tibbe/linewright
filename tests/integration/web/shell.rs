@@ -530,3 +530,43 @@ async fn a_missing_runs_stream_sends_no_heading_card() {
     assert!(heading.attr("hidden").is_some(), "{}", heading.html());
     assert_eq!(title(region_of(&first, "title")), "9/triage-1 · Linewright");
 }
+
+/// The navigation the drawer of `html` is drawn as: its `data-navigation`.
+#[track_caller]
+fn navigation(html: &Html) -> Option<String> {
+    let drawers = select(html, ".drawer");
+    assert_eq!(drawers.len(), 1, "{}", html.html());
+    drawers[0].attr("data-navigation").map(ToString::to_string)
+}
+
+/// `docs/specs/web/shell.md`, Remembered; `docs/specs/web/architecture.md`,
+/// The reader's choice of navigation: every page, "No such" too, is drawn
+/// with the rail for a reader whose cookie chose it, whatever their other
+/// cookies hold, and with the sidebar otherwise.
+#[test_log::test(tokio::test)]
+async fn every_page_draws_the_navigation_the_readers_cookie_chose_and_otherwise_the_sidebar() {
+    let pages = with_a_run().await;
+
+    for path in [
+        "/",
+        "/items/1",
+        "/runs",
+        "/runs/1/triage-1",
+        "/automations",
+        "/benchmarks",
+        "/benchmarks/board",
+        "/benchmark-runs/1",
+        "/benchmark-runs/1/as-is/columns/1/run",
+        "/server",
+        "/items/99",
+    ] {
+        for (cookie, shown) in [
+            ("", None),
+            ("navigation=rail", Some("rail")),
+            ("name=Zoë; navigation=rail", Some("rail")),
+        ] {
+            let html = page_with_cookie(&pages, path, cookie).await;
+            assert_eq!(navigation(&html).as_deref(), shown, "{path}: {cookie}");
+        }
+    }
+}

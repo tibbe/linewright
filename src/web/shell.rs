@@ -3,9 +3,13 @@
 //! and each screen's title (`docs/specs/design_system.md`, Titles and
 //! Headings).
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use askama::Template;
+use axum::extract::FromRequestParts;
+use axum::http::header;
+use axum::http::request::Parts;
 
 use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
@@ -83,6 +87,69 @@ impl Area {
             Area::Benchmarks => "/benchmarks",
             Area::Server => "/server",
         }
+    }
+}
+
+/// The navigation a page draws from Tailwind's `lg` width, as the reader
+/// last chose (`docs/specs/web/shell.md`, Remembered): the `navigation`
+/// cookie says `rail` for the rail, and anything else, or none, is the
+/// sidebar (`docs/specs/web/architecture.md`, The reader's choice of
+/// navigation).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Navigation {
+    Sidebar,
+    Rail,
+}
+
+impl Navigation {
+    /// The name of the cookie that holds the choice.
+    pub(super) const COOKIE: &str = "navigation";
+
+    /// The choice the `Cookie` headers `cookies` hold.
+    fn of(cookies: impl IntoIterator<Item = impl AsRef<str>>) -> Navigation {
+        let rail = cookies.into_iter().any(|header| {
+            header
+                .as_ref()
+                .split(';')
+                .filter_map(|cookie| cookie.trim().split_once('='))
+                .any(|(name, value)| name == Navigation::COOKIE && value == "rail")
+        });
+        if rail {
+            Navigation::Rail
+        } else {
+            Navigation::Sidebar
+        }
+    }
+
+    /// Whether it is the rail.
+    pub(super) fn is_rail(self) -> bool {
+        self == Navigation::Rail
+    }
+
+    /// The name of the button that switches to the other navigation
+    /// (`docs/specs/web/shell.md`, Expanding and collapsing).
+    pub(super) fn toggle_name(self) -> &'static str {
+        match self {
+            Navigation::Sidebar => "Collapse navigation",
+            Navigation::Rail => "Expand navigation",
+        }
+    }
+}
+
+impl<S: Sync> FromRequestParts<S> for Navigation {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _: &S,
+    ) -> impl Future<Output = Result<Navigation, Infallible>> {
+        std::future::ready(Ok(Navigation::of(
+            parts
+                .headers
+                .get_all(header::COOKIE)
+                .iter()
+                .map(|value| String::from_utf8_lossy(value.as_bytes())),
+        )))
     }
 }
 
@@ -563,6 +630,25 @@ pub(super) fn holds(frame: &Frame) -> (&'static str, String) {
 mod tests {
     use super::*;
     use crate::environment::shown::BuiltShown;
+
+    /// `docs/specs/web/shell.md`, Remembered: the cookie the page's script
+    /// writes, among the browser's others, chooses the rail; anything else is
+    /// the sidebar.
+    #[test_log::test]
+    fn the_navigation_cookie_saying_rail_chooses_the_rail_and_anything_else_the_sidebar() {
+        for (headers, chosen) in [
+            (vec![], Navigation::Sidebar),
+            (vec!["navigation=rail"], Navigation::Rail),
+            (vec!["theme=dark; navigation=rail"], Navigation::Rail),
+            (vec!["theme=dark", "navigation=rail"], Navigation::Rail),
+            (vec!["navigation=sidebar"], Navigation::Sidebar),
+            (vec!["navigation=wide"], Navigation::Sidebar),
+            (vec!["railnavigation=rail"], Navigation::Sidebar),
+            (vec!["navigation=railway"], Navigation::Sidebar),
+        ] {
+            assert_eq!(Navigation::of(&headers), chosen, "{headers:?}");
+        }
+    }
 
     /// A crumb linking to `href`.
     fn link<'a>(name: &'a str, href: &'a str) -> CrumbShown<'a> {

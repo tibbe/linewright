@@ -28,7 +28,7 @@ use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_page::{
     PageOf, RunQuery, ShellRegions, Transcribed, transcript_events, transcript_page,
 };
-use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing, Within};
+use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
 use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
@@ -995,7 +995,13 @@ impl BenchmarkRunView {
     /// (`docs/specs/benchmarks.md`, Benchmark run, Heading), where `cancels`,
     /// the page drawing the dialog "Cancel" opens; its stream's on the pages
     /// `paging` asks for.
-    fn page(&self, record: &BenchmarkRunRecord, cancels: bool, paging: Paging) -> Page {
+    fn page(
+        &self,
+        record: &BenchmarkRunRecord,
+        cancels: bool,
+        paging: Paging,
+        navigation: Navigation,
+    ) -> Page {
         let heading = Heading {
             state: Some((self.status, self.state)),
             ..Heading::named(benchmark_run_name(self.id))
@@ -1012,6 +1018,7 @@ impl BenchmarkRunView {
         Page::new(
             benchmark_crumbs(record).screen(BENCHMARK_RUN, Thing::Found(heading)),
             paging.href(&benchmark_run_path(self.id), cancels).stream,
+            navigation,
         )
         .buttons(buttons)
     }
@@ -1102,6 +1109,7 @@ pub(super) async fn benchmark_run_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
+    navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
     match record_of(&sources, &id).await {
@@ -1117,7 +1125,7 @@ pub(super) async fn benchmark_run_page(
                 cancels,
             );
             BenchmarkRunPage {
-                page: benchmark_run.page(&record, cancels, paging),
+                page: benchmark_run.page(&record, cancels, paging, navigation),
                 frame,
                 benchmark_run,
             }
@@ -1129,6 +1137,7 @@ pub(super) async fn benchmark_run_page(
                 Page::new(
                     Place::within(Area::Benchmarks).screen(BENCHMARK_RUN, thing),
                     events,
+                    navigation,
                 )
             };
             if let Unshown::NoSuch = unshown {
@@ -1154,6 +1163,7 @@ pub(super) async fn benchmark_run_events(
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
     Query(query): Query<StreamQuery>,
+    navigation: Navigation,
 ) -> Response {
     let cancels = query.cancels.is_some();
     let paging = query.paging;
@@ -1168,7 +1178,10 @@ pub(super) async fn benchmark_run_events(
             let shown = shown_of(&sources, &record);
             let benchmark_run =
                 BenchmarkRunView::of(&sources, &record, &shown, &outputs, paging, cancels);
-            let mut regions = shell::regions(&frame, &benchmark_run.page(&record, cancels, paging));
+            let mut regions = shell::regions(
+                &frame,
+                &benchmark_run.page(&record, cancels, paging, navigation),
+            );
             regions.extend(benchmark_run.regions());
             regions
         }
@@ -1390,8 +1403,12 @@ async fn trial_transcript(
 }
 
 /// The page of a trial's transcript whose benchmark run is missing, `thing`.
-fn missing_trial_page(thing: Thing, events: String) -> Page {
-    Page::new(Place::within(Area::Benchmarks).screen(TRIAL, thing), events)
+fn missing_trial_page(thing: Thing, events: String, navigation: Navigation) -> Page {
+    Page::new(
+        Place::within(Area::Benchmarks).screen(TRIAL, thing),
+        events,
+        navigation,
+    )
 }
 
 /// The page of a trial's run's or scorer's transcript, shown as the run
@@ -1401,6 +1418,7 @@ pub(super) async fn trial_page(
     Path(path): Path<TrialPath>,
     Query(query): Query<RunQuery>,
     uri: Uri,
+    navigation: Navigation,
 ) -> Response {
     let (place, transcribed) = match trial_transcript(&sources, &path).await {
         Ok(shown) => shown,
@@ -1408,7 +1426,7 @@ pub(super) async fn trial_page(
             let events = format!("/events{}", uri.path());
             let frame = Frame::of(&sources).await;
             return nothing_there(
-                |thing| missing_trial_page(thing, events),
+                |thing| missing_trial_page(thing, events, navigation),
                 missing,
                 frame,
                 "transcript",
@@ -1422,6 +1440,7 @@ pub(super) async fn trial_page(
         transcribed,
         query.verbose(),
         None,
+        navigation,
     )
     .await
 }
@@ -1435,6 +1454,7 @@ pub(super) async fn trial_events(
     Query(query): Query<RunQuery>,
     uri: Uri,
     headers: HeaderMap,
+    navigation: Navigation,
 ) -> Response {
     let events = uri.path().to_string();
     let (place, transcribed) = match trial_transcript(&sources, &path).await {
@@ -1445,7 +1465,7 @@ pub(super) async fn trial_events(
         }
     };
     let page: PageOf = Box::new(move || {
-        let page = Page::new(place.clone(), events.clone());
+        let page = Page::new(place.clone(), events.clone(), navigation);
         Box::pin(async move { Some(page) })
     });
     transcript_events(

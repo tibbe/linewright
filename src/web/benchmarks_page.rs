@@ -19,7 +19,7 @@ use super::buttons::ScreenButton;
 use super::html::{self, Html};
 use super::making::{Answer, Making, NOT_A_NAME, benchmark_not_made};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Area, Frame, Place};
+use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
 use super::write::Write;
 use super::{
@@ -310,10 +310,11 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
 
 /// The benchmarks page, its stream's narrowed as `narrowing` says, with
 /// "New" among the screen's buttons (`docs/specs/design_system.md`, Making).
-fn page(narrowing: &Narrowing) -> Page {
+fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
     Page::new(
         Place::Navigation(Area::Benchmarks),
         narrowing.path("/events/benchmarks", narrowing.page),
+        navigation,
     )
     .buttons(vec![ScreenButton::New {
         dialog: NEW_BENCHMARK,
@@ -326,11 +327,12 @@ const NEW_BENCHMARK: &str = "new-benchmark";
 pub(super) async fn benchmarks_page(
     State(sources): State<Sources>,
     Query(query): Query<BenchmarksQuery>,
+    navigation: Navigation,
 ) -> Response {
     let narrowing = Narrowing::of(&query);
     let (status, benchmarks) = listed(&sources, &narrowing).await;
     let page = BenchmarksPage {
-        page: page(&narrowing),
+        page: page(&narrowing, navigation),
         frame: Frame::of(&sources).await,
         filters: Filters::of(&narrowing.fields),
         benchmarks,
@@ -345,13 +347,15 @@ pub(super) async fn benchmarks_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<BenchmarksQuery>,
+    navigation: Navigation,
 ) -> Response {
     let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
         let sources = sources.clone();
         let narrowing = narrowing.clone();
         async move {
-            let mut regions = shell::regions(&Frame::of(&sources).await, &page(&narrowing));
+            let mut regions =
+                shell::regions(&Frame::of(&sources).await, &page(&narrowing, navigation));
             let (_, benchmarks) = listed(&sources, &narrowing).await;
             regions.push((
                 "benchmarks",

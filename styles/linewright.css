@@ -22,6 +22,12 @@
   themes: false;
 }
 
+/* `rail:` draws the navigation as the rail, where the layout's `.drawer` says
+   so in `data-navigation`, as Tailwind's own `dark:` variant is drawn from a
+   data attribute
+   (https://tailwindcss.com/docs/dark-mode#using-a-data-attribute). */
+@custom-variant rail (&:where([data-navigation=rail], [data-navigation=rail] *));
+
 @plugin "./daisyui-theme.mjs" {
   name: "light";
   default: true;

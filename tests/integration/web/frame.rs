@@ -91,7 +91,7 @@ async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show(
     ] {
         let (_, body) = pages.get(path).await;
         let html = Html::parse_document(&body);
-        let tips = select(&html, "[popover], .tooltip");
+        let tips = select(&html, "[popover], .tooltip[data-tip]");
         assert_eq!(tips.len(), 1, "{path}: {tips:?}");
         let tip = tips[0];
         assert_eq!(tip.attr("id"), Some("tip"), "{path}");
@@ -112,12 +112,12 @@ async fn every_page_has_one_tooltip_outside_every_region_for_its_script_to_show(
     }
 }
 
-/// `element`'s classes in the rail, without their `lg:max-2xl:` prefix.
+/// `element`'s classes in the rail, without their `lg:rail:` prefix.
 fn in_the_rail(element: ElementRef<'_>) -> Vec<&str> {
     element
         .value()
         .classes()
-        .filter_map(|class| class.strip_prefix("lg:max-2xl:"))
+        .filter_map(|class| class.strip_prefix("lg:rail:"))
         .collect()
 }
 
@@ -136,8 +136,34 @@ fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool
     })
 }
 
+/// The name `element` shows in a tooltip to its right on the rail alone
+/// (`docs/specs/web/shell.md`, The rail), which a screen reader skips for
+/// the name `element` gives itself.
+#[track_caller]
+fn rail_tip(element: ElementRef<'_>) -> String {
+    assert_eq!(
+        in_the_rail(element),
+        ["tooltip", "tooltip-right"],
+        "{}",
+        element.html()
+    );
+    let tips = select_in(element, ":scope > .tooltip-content");
+    assert_eq!(tips.len(), 1, "{}", element.html());
+    let tip = tips[0];
+    assert!(
+        has_classes(tip, &["hidden", "lg:rail:block"]),
+        "only the rail shows it: {}",
+        tip.html()
+    );
+    assert_eq!(tip.attr("aria-hidden"), Some("true"), "{}", tip.html());
+    text(tip)
+}
+
+/// `docs/specs/web/shell.md`, The sidebar, The rail: the repository is its
+/// owner's avatar beside its name, a tip while the name is cut; the rail
+/// shows the avatar alone, with the name in a tooltip to its right.
 #[test_log::test(tokio::test)]
-async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_as_a_tip_while_cut_and_hidden_text()
+async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_in_a_tooltip()
  {
     let pages = Pages::of(a_ticket()).await;
 
@@ -165,19 +191,93 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
     assert_eq!(names.len(), 1, "{}", repo.html());
     let name = names[0];
     assert_eq!(text(name), "owner/widgets");
-    assert!(
-        in_the_rail(name).contains(&"sr-only") && !has_classes(name, &["sr-only"]),
+    assert_eq!(
+        (in_the_rail(name), has_classes(name, &["hidden"])),
+        (vec!["hidden"], false),
         "only the rail hides the name: {}",
         name.html()
     );
+    assert_eq!(repo.attr("aria-label"), Some("owner/widgets"));
     assert_eq!(repo.attr("data-tip"), Some("owner/widgets"));
     assert_eq!(repo.attr("data-tip-cut"), Some(""));
-    assert_eq!(
-        select(&html, ".drawer-side [class*='tooltip']").len(),
-        0,
-        "the page's one tooltip is the repository's: {}",
-        repo.html()
+    let holder = ElementRef::wrap(repo.parent().unwrap()).unwrap();
+    assert_eq!(rail_tip(holder), "owner/widgets");
+}
+
+/// `docs/specs/web/shell.md`, The rail: `w-14`, each link its icon alone,
+/// its name in a daisyUI `tooltip` to its right, which the drawer lets out.
+#[test_log::test(tokio::test)]
+async fn in_the_rail_each_link_is_its_icon_with_its_name_in_a_tooltip_to_its_right() {
+    let pages = Pages::of(a_ticket()).await;
+
+    let html = pages.page("/runs").await;
+
+    let side = select(&html, ".drawer-side")[0];
+    assert_eq!(in_the_rail(side), ["overflow-visible"], "{}", side.html());
+    let nav = select_in(side, "nav")[0];
+    assert!(in_the_rail(nav).contains(&"w-14"), "{}", nav.html());
+    let items = select_in(nav, ".menu > li");
+    assert_eq!(items.len(), 5, "{}", nav.html());
+    for item in items {
+        let link = select_in(item, "a")[0];
+        let names = select_in(link, "span");
+        assert_eq!(names.len(), 1, "{}", link.html());
+        assert_eq!(in_the_rail(names[0]), ["sr-only"], "{}", link.html());
+        assert_eq!(rail_tip(item), text(link), "{}", item.html());
+    }
+}
+
+/// The foot button of `html`, from `lg` alone: its icon, mirrored on the
+/// sidebar alone, and the name in its `tooltip-right` that labels it.
+#[track_caller]
+fn foot_button(html: &Html) -> (String, String) {
+    let buttons = select(html, ".drawer-side nav button[data-navigation-toggle]");
+    assert_eq!(buttons.len(), 1, "{}", html.html());
+    let button = buttons[0];
+    assert!(
+        has_classes(button, &["btn", "btn-ghost", "btn-circle"]),
+        "{}",
+        button.html()
     );
+    assert_eq!(button.attr("type"), Some("button"));
+    assert_eq!(button.attr("data-navigation-toggle"), Some("navigation"));
+    let tooltip = ElementRef::wrap(button.parent().unwrap()).unwrap();
+    assert!(
+        has_classes(tooltip, &["tooltip", "tooltip-right", "hidden", "lg:block"]),
+        "only from `lg`: {}",
+        tooltip.html()
+    );
+    let name = select_in(tooltip, ".tooltip-content")[0];
+    assert_eq!(button.attr("aria-labelledby"), name.attr("id"));
+    let icon = select_in(button, "svg")[0];
+    assert_eq!(
+        (has_classes(icon, &["-scale-x-100"]), in_the_rail(icon)),
+        (true, vec!["scale-x-100"]),
+        "mirrored on the sidebar alone: {}",
+        icon.html()
+    );
+    (icon.attr("data-icon").unwrap().to_string(), text(name))
+}
+
+/// `docs/specs/web/shell.md`, Expanding and collapsing: the foot button is
+/// a `btn-ghost` `btn-circle`, from `lg` alone, named in a `tooltip-right`
+/// for what it does on the navigation the page is drawn with.
+#[test_log::test(tokio::test)]
+async fn the_foot_button_collapses_the_sidebar_and_expands_the_rail() {
+    let pages = Pages::of(a_ticket()).await;
+
+    for (cookie, name) in [
+        ("", "Collapse navigation"),
+        ("navigation=rail", "Expand navigation"),
+    ] {
+        let html = page_with_cookie(&pages, "/runs", cookie).await;
+
+        assert_eq!(
+            foot_button(&html),
+            ("chevron-double-right".to_string(), name.to_string()),
+            "{cookie}"
+        );
+    }
 }
 
 /// Asserts that the one notice in `html` is an alert of the classes
