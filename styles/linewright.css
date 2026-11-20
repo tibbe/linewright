@@ -180,10 +180,6 @@
     @apply mt-[calc((1lh-1rem)/2)] mr-[0.25em];
   }
 
-  .board .lane-head {
-    @apply sticky top-(--column-heads) z-10 min-h-(--lane-head) rounded-t-box px-(--lane-padding) pt-2 font-semibold;
-  }
-
   .board .card.toned {
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
