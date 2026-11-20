@@ -17,11 +17,11 @@ use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
 use super::buttons::Verb;
-use super::capture::{NOT_POLLED, TaskFields, capture_run, polled};
+use super::capture::{TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
-use super::making::{Answer, Making, task_not_made};
+use super::making::{Answer, Making, capture_refused};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, Fold, View};
@@ -463,8 +463,6 @@ pub(super) struct NewTaskForm {
     making: Making<NewTaskFields>,
     /// The runs of the benchmark's stage that can be captured, latest first.
     runs: Vec<RunChoice>,
-    /// Whether `serve` has polled, so that a capture can run.
-    polled: bool,
 }
 
 impl NewTaskForm {
@@ -478,7 +476,6 @@ impl NewTaskForm {
                 refusal: None,
             },
             runs,
-            polled: polled(sources),
         }
     }
 
@@ -495,7 +492,7 @@ impl NewTaskForm {
     }
 
     fn ready(&self) -> NewTaskReady {
-        NewTaskReady::of(&self.runs, self.polled)
+        NewTaskReady::of(&self.runs)
     }
 
     /// It refused for `why`, answered with `status`.
@@ -521,23 +518,20 @@ impl NewTaskRuns<'_> {
 }
 
 /// The region of the New task dialog that holds "Add task": disabled with
-/// no runs to capture or before `serve` has polled, after `note`, why it
-/// cannot run yet.
+/// no runs to capture.
 #[derive(Template)]
 #[template(
-    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit(crate::web::buttons::Verb::AddTask, NEW_TASK_READY, disabled, note) %}{% endcall %}"#,
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::new_submit(crate::web::buttons::Verb::AddTask, NEW_TASK_READY, disabled) %}{% endcall %}"#,
     ext = "html"
 )]
 struct NewTaskReady {
     disabled: bool,
-    note: &'static str,
 }
 
 impl NewTaskReady {
-    fn of(runs: &[RunChoice], polled: bool) -> NewTaskReady {
+    fn of(runs: &[RunChoice]) -> NewTaskReady {
         NewTaskReady {
-            disabled: runs.is_empty() || !polled,
-            note: if polled { "" } else { NOT_POLLED },
+            disabled: runs.is_empty(),
         }
     }
 }
@@ -811,7 +805,7 @@ pub(super) async fn benchmark_events(
                     chosen: None,
                 }),
             ));
-            let ready = NewTaskReady::of(&runs, polled(&sources));
+            let ready = NewTaskReady::of(&runs);
             regions.push((NEW_TASK_READY, render(&ready)));
             regions
         }
@@ -883,7 +877,6 @@ pub(super) async fn add_task(
             refusal: None,
         },
         runs: vec![],
-        polled: polled(&sources),
     };
     let sent = match WRITE.same_origin(&headers, &uri).and(sent) {
         Ok(sent) => sent,
@@ -894,12 +887,17 @@ pub(super) async fn add_task(
         Err(refused) => return form.refused(refused),
     };
     form.runs = runs_of(&sources, stage).await;
+    let served = match polled(&sources) {
+        Ok(served) => served,
+        Err(not) => return form.refused((not.status(), capture_refused(&not))),
+    };
     let run: RunId = match sent.run.parse() {
         Ok(run) => run,
         Err(why) => return form.refused((StatusCode::UNPROCESSABLE_ENTITY, why)),
     };
     match capture_run(
         &sources,
+        &served,
         &run,
         &BenchmarkChoice::Named(benchmark),
         &sent.task,
@@ -913,7 +911,7 @@ pub(super) async fn add_task(
             };
             Answer::Made { blank: form }
         }
-        Err(not) => form.refused((not.status(), task_not_made(&not))),
+        Err(not) => form.refused((not.status(), capture_refused(&not))),
     }
 }
 

@@ -180,8 +180,7 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: the run 1/implement-1's record lacks the properties, so it cannot be \
-         captured"
+        "Not captured: The record of run 1/implement-1 lacks properties."
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -272,10 +271,7 @@ async fn a_capture_with_blank_criteria_is_refused_and_writes_nothing() {
     let (status, answer) = submit(&pages, "gadgets", " \n\t\n").await;
 
     assert_eq!(status, 422);
-    assert_eq!(
-        said(&answer),
-        "Not captured: the criteria are required: what a good result is, not only white space"
-    );
+    assert_eq!(said(&answer), "Not captured: A task needs criteria.");
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -289,7 +285,7 @@ async fn a_taken_name_is_refused_and_says_so() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: a task is already named gadgets"
+        "Not captured: A task named gadgets already exists."
     );
 }
 
@@ -302,7 +298,8 @@ async fn a_name_that_is_not_a_tasks_is_refused_and_says_so() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: \"../Gadgets\" is not a task's name: it is lowercase letters, digits and hyphens, starting with a letter or a digit"
+        "Not captured: A name holds only lowercase letters, digits and hyphens, and starts with a \
+         letter or a digit."
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -339,48 +336,27 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
+/// `docs/specs/benchmarks.md`, Capturing, Before the first poll.
 #[test_log::test(tokio::test)]
-async fn before_the_first_poll_the_form_says_the_capture_cant_run_yet() {
+async fn before_the_first_poll_add_task_is_offered_and_the_capture_refused() {
     let pages = implemented(Recorded::Whole).await;
-    let view = pages.served.send_replace(None).unwrap().view();
+    pages.served.send_replace(None);
 
     let html = pages.page(RUN_PAGE).await;
+    let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", "").await;
+
     let form = capture_form(&html).unwrap();
-    assert_eq!(
-        text(select_in(form, "#capture-ready span")[0]),
-        "the capture can't run before Linewright's first poll"
-    );
     assert!(
         select_in(form, "button[type=submit]")[0]
             .attr("disabled")
-            .is_some()
+            .is_none()
     );
-    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
     assert_eq!(status, 503);
     assert_eq!(
         said(&answer),
-        "Not captured: the capture can't run before Linewright's first poll"
+        "Not captured: Linewright can't capture a run before its first poll."
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
-
-    let mut events = stream(&pages, events_path(&html).unwrap()).await;
-    events.recv().await.unwrap();
-    pages.publish(view);
-    let ready = loop {
-        let event = events.recv().await.unwrap();
-        if let Some((_, ready)) = regions(&event)
-            .into_iter()
-            .find(|(id, _)| id == "capture-ready")
-        {
-            break ready;
-        }
-    };
-    assert_eq!(select(&ready, "#capture-ready span").len(), 0);
-    assert!(
-        select(&ready, "button[type=submit]")[0]
-            .attr("disabled")
-            .is_none()
-    );
 }
 
 #[test_log::test(tokio::test)]
@@ -458,8 +434,7 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: the benchmark designs holds tasks of design, and the run 1/implement-1 is of \
-         implement"
+        "Not captured: Run 1/implement-1 is of implement, and designs holds tasks of design."
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -473,7 +448,71 @@ async fn a_new_benchmark_without_a_name_is_refused_and_writes_nothing() {
     assert_eq!(status, 422);
     assert_eq!(
         said(&answer),
-        "Not captured: the new benchmark needs a name"
+        "Not captured: The new benchmark needs a name."
     );
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_new_benchmark_whose_name_is_not_a_name_is_refused_and_writes_nothing() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::New("Fresh"), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: A name holds only lowercase letters, digits and hyphens, and starts with a \
+         letter or a digit."
+    );
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_new_benchmark_named_as_one_that_exists_is_refused_and_writes_nothing() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::New(DESIGNS), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: A benchmark named designs already exists."
+    );
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_that_recorded_no_input_is_refused_and_says_so() {
+    let pages = implemented(Recorded::Nothing).await;
+
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(
+        said(&answer),
+        "Not captured: Run 1/implement-1 recorded no input."
+    );
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_that_does_not_exist_is_refused_and_says_so() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = post(
+        &pages,
+        "/runs/1/implement-9",
+        &[SAME_ORIGIN],
+        &[
+            ("benchmark", IMPLEMENTS),
+            ("name", "gadgets"),
+            ("criteria", CRITERIA),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, 404);
+    assert_eq!(said(&answer), "Not captured: No such run 1/implement-9.");
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }

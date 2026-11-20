@@ -14,14 +14,13 @@ use tracing::{info, warn};
 
 use super::buttons::Verb;
 use super::html::{self, Html};
+use super::making::capture_refused;
 use super::write::{Refused, Write, alert};
 use super::{benchmarks, run_path};
-use crate::api::Sources;
+use crate::api::{Served, Sources};
 use crate::benchmarks::{BenchmarkName, Benchmarks};
 use crate::runs::RunId;
-use crate::task::{
-    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, TaskName, TaskStage,
-};
+use crate::task::{self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskName, TaskStage};
 
 /// The run page's offer to capture its run as a task.
 pub(super) struct Offer {
@@ -61,52 +60,19 @@ impl Offer {
     /// first of the run's stage or else a new one, its name filled in with
     /// the suggested one, then where it says what came of a capture. The
     /// page draws it outside every region a stream sends.
-    pub(super) fn html(&self, sources: &Sources, id: &str) -> Html {
+    pub(super) fn html(&self, id: &str) -> Html {
         let path = html::escape(&run_path(&self.run));
         let name = html::escape(TaskName::suggested(&self.run).as_str());
         let id = html::escape(id);
         html::built(format!(
-            r##"<dialog id="{id}" class="modal" aria-labelledby="{id}-title"><div class="modal-box"><form class="capture" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><fieldset class="fieldset gap-2"><legend id="{id}-title" class="fieldset-legend">Add task</legend><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea></fieldset><div class="modal-action items-center"><button class="btn btn-sm" type="button" command="close" commandfor="{id}">{cancel}</button>{ready}</div></form><div id="capture-said" class="mt-2" role="status"></div></div></dialog>"##,
+            r##"<dialog id="{id}" class="modal" aria-labelledby="{id}-title"><div class="modal-box"><form class="capture" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><fieldset class="fieldset gap-2"><legend id="{id}-title" class="fieldset-legend">Add task</legend><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea></fieldset><div class="modal-action items-center"><button class="btn btn-sm" type="button" command="close" commandfor="{id}">{cancel}</button><button class="btn btn-sm btn-primary" type="submit">{add_task}</button></div></form><div id="capture-said" class="mt-2" role="status"></div></div></dialog>"##,
             select = benchmark_select(&self.benchmarks, None, ""),
             pattern = html::escape(task::NAME_PATTERN),
-            ready = Offer::ready_html(sources),
             cancel = Verb::CloseDialog.labelled(),
-        ))
-    }
-
-    /// The region of an offer's form that changes with whether a capture
-    /// can run yet, by its id.
-    pub(super) fn region(sources: &Sources) -> (&'static str, String) {
-        (READY, Offer::ready_html(sources).to_string())
-    }
-
-    pub(super) fn ready_html(sources: &Sources) -> Html {
-        let (disabled, note) = if polled(sources) {
-            ("", String::new())
-        } else {
-            (
-                " disabled",
-                format!(r#"<span class="text-base-content/60 text-sm">{NOT_POLLED}</span>"#),
-            )
-        };
-        html::built(format!(
-            r#"<div id="{READY}" class="flex items-center gap-2"><button class="btn btn-sm btn-primary" type="submit"{disabled}>{add_task}</button>{note}</div>"#,
             add_task = Verb::AddTask.labelled(),
         ))
     }
 }
-
-const READY: &str = "capture-ready";
-
-const NEW_BENCHMARK_UNNAMED: &str = "the new benchmark needs a name";
-
-/// Whether `serve` has polled, so that a capture can run.
-pub(super) fn polled(sources: &Sources) -> bool {
-    sources.served.borrow().is_some()
-}
-
-/// Why a capture cannot run yet.
-pub(super) const NOT_POLLED: &str = "the capture can't run before Linewright's first poll";
 
 /// The names of the benchmarks of `stage`.
 async fn benchmarks_of(
@@ -186,13 +152,19 @@ pub(super) async fn capture(
         .parse()
         .map_err(|error: String| Write::Capture.refused(StatusCode::NOT_FOUND, &error))?;
     let form: CaptureForm = Write::Capture.read_form(&body)?;
+    let served = polled(&sources).map_err(NotCaptured::refused)?;
     let choice = match (form.benchmark.as_str(), form.new_benchmark.as_str()) {
-        ("", "") => Err(NEW_BENCHMARK_UNNAMED.to_string()),
-        ("", new) => new.parse().map(BenchmarkChoice::New),
-        (named, _) => named.parse().map(BenchmarkChoice::Named),
-    }
-    .map_err(|error| Write::Capture.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    let captured = capture_run(&sources, &run, &choice, &form.task)
+        ("", "") => return Err(NotCaptured::NewBenchmarkUnnamed.refused()),
+        ("", new) => new
+            .parse()
+            .map(BenchmarkChoice::New)
+            .map_err(|_| NotCaptured::NewBenchmarkMisnamed.refused())?,
+        (named, _) => named
+            .parse()
+            .map(BenchmarkChoice::Named)
+            .map_err(|error| Write::Capture.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?,
+    };
+    let captured = capture_run(&sources, &served, &run, &choice, &form.task)
         .await
         .map_err(NotCaptured::refused)?;
     let mut answer = captured.said(&run, &choice).0;
@@ -240,10 +212,15 @@ impl Captured {
 
 /// Why a capture did not happen.
 pub(super) enum NotCaptured {
-    /// The task's name is not in the form of a name, for the reason given.
-    Name(String),
+    /// The task's name is not in the form of a name.
+    Name,
     NoCriteria,
+    /// `serve` has not polled since it started.
     NotPolled,
+    /// A new benchmark was asked for with an empty name.
+    NewBenchmarkUnnamed,
+    /// A new benchmark's name is not in the form of a name.
+    NewBenchmarkMisnamed,
     /// The capture was refused or failed, for `why`, redacted.
     Capture {
         error: CaptureError,
@@ -255,42 +232,42 @@ impl NotCaptured {
     /// The status the capture that did not happen is answered with.
     pub(super) fn status(&self) -> StatusCode {
         match self {
-            NotCaptured::Name(_) | NotCaptured::NoCriteria => StatusCode::UNPROCESSABLE_ENTITY,
+            NotCaptured::Name
+            | NotCaptured::NoCriteria
+            | NotCaptured::NewBenchmarkUnnamed
+            | NotCaptured::NewBenchmarkMisnamed => StatusCode::UNPROCESSABLE_ENTITY,
             NotCaptured::NotPolled => StatusCode::SERVICE_UNAVAILABLE,
             NotCaptured::Capture { error, .. } => status_of(error),
         }
     }
 
-    /// Why, in the capture's own words.
-    pub(super) fn why(&self) -> &str {
-        match self {
-            NotCaptured::Name(why) | NotCaptured::Capture { why, .. } => why,
-            NotCaptured::NoCriteria => CRITERIA_REQUIRED,
-            NotCaptured::NotPolled => NOT_POLLED,
-        }
-    }
-
-    /// It in the capture's own words, in an alert.
+    /// Refused with the screen's wording of it, in an alert.
     fn refused(self) -> Refused {
-        Write::Capture.refused(self.status(), self.why())
+        Write::Capture.refused(self.status(), &capture_refused(&self))
     }
 }
 
+/// What `serve` serves once it has polled, so that a capture can run; or
+/// else why it cannot yet.
+pub(super) fn polled(sources: &Sources) -> Result<Served, NotCaptured> {
+    sources
+        .served
+        .borrow()
+        .clone()
+        .ok_or(NotCaptured::NotPolled)
+}
+
 /// Captures `run` as the task `task` names into the benchmark `choice`, with
-/// the store `serve` holds; or else says why it did not.
+/// the store `served` holds; or else says why it did not.
 pub(super) async fn capture_run(
     sources: &Sources,
+    served: &Served,
     run: &RunId,
     choice: &BenchmarkChoice,
     task: &TaskFields,
 ) -> Result<Captured, NotCaptured> {
-    let name: TaskName = task.name.parse().map_err(NotCaptured::Name)?;
+    let name: TaskName = task.name.parse().map_err(|_| NotCaptured::Name)?;
     let criteria = Criteria::parse(&task.criteria).ok_or(NotCaptured::NoCriteria)?;
-    let served = sources
-        .served
-        .borrow()
-        .clone()
-        .ok_or(NotCaptured::NotPolled)?;
     let benchmarks = benchmarks(sources);
     let captured = match task::capturable(&sources.runs, &benchmarks, run, &name, choice).await {
         Ok(capturable) => {

@@ -25,9 +25,7 @@ use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::run_page::{
-    PageOf, RunQuery, ShellRegions, Transcribed, transcript_events, transcript_page,
-};
+use super::run_page::{PageOf, RunQuery, Transcribed, transcript_events, transcript_page};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
 use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
@@ -1517,10 +1515,7 @@ pub(super) async fn trial_events(
         transcribed.as_ref(),
         &query,
         &headers,
-        ShellRegions {
-            page,
-            captures: false,
-        },
+        page,
     )
     .await
 }

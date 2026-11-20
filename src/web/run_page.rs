@@ -1384,7 +1384,7 @@ pub(super) async fn run_page(
     };
     let capture = Offer::of(&sources, &run)
         .await
-        .map(|offer| offer.html(&sources, CAPTURE));
+        .map(|offer| offer.html(CAPTURE));
     transcript_page(
         &sources,
         &run_path(&run),
@@ -1444,7 +1444,7 @@ pub(super) async fn run_events(
         transcribed.as_ref(),
         &query,
         &headers,
-        ShellRegions { page, captures },
+        page,
     )
     .await
 }
@@ -1454,24 +1454,17 @@ pub(super) async fn run_events(
 /// leaves the shell as the stream last sent it.
 pub(super) type PageOf = Box<dyn Fn() -> BoxFuture<'static, Option<Page>> + Send + Sync>;
 
-/// What a transcript's stream sends besides the transcript: the shell's
-/// regions of its page, and with `captures`, whether the page draws the
-/// capture's dialog, whether a capture can run yet.
-pub(super) struct ShellRegions {
-    pub(super) page: PageOf,
-    pub(super) captures: bool,
-}
-
-/// The regions of the page of the transcript `transcribed` names: those of
-/// `shell`, and while the run is in flight the transcript's lines after those the page showed,
-/// or after the `Last-Event-ID` a reconnecting reader gives.
+/// The regions of the page of the transcript `transcribed` names: the
+/// shell's of the page `page` makes, and while the run is in flight the
+/// transcript's lines after those the page showed, or after the
+/// `Last-Event-ID` a reconnecting reader gives.
 pub(super) async fn transcript_events(
     sources: Sources,
     stopping: CancellationToken,
     transcribed: Option<&Transcribed>,
     query: &RunQuery,
     headers: &HeaderMap,
-    shell: ShellRegions,
+    page: PageOf,
 ) -> Response {
     let resumed = headers
         .get(LAST_EVENT_ID)
@@ -1511,7 +1504,7 @@ pub(super) async fn transcript_events(
         sent: Sent::default(),
         samples: samples(),
         transcript,
-        shell,
+        page,
         sources,
         stopping,
     };
@@ -1527,7 +1520,7 @@ struct RunStream {
     samples: tokio::time::Interval,
     /// `None` once the run has ended, or with the page not following it.
     transcript: Option<FollowedRun>,
-    shell: ShellRegions,
+    page: PageOf,
     sources: Sources,
     stopping: CancellationToken,
 }
@@ -1561,13 +1554,10 @@ impl RunStream {
                 }
                 Wake::Sample => {
                     let frame = Frame::of(&self.sources).await;
-                    let mut regions = match (self.shell.page)().await {
+                    let regions = match (self.page)().await {
                         Some(page) => shell::regions(&frame, &page),
                         None => vec![shell::holds(&frame)],
                     };
-                    if self.shell.captures {
-                        regions.push(Offer::region(&self.sources));
-                    }
                     let changed = self.sent.changed(regions);
                     changed
                         .map(|message| Event::default().data(message))
