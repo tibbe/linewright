@@ -672,9 +672,12 @@ async fn with_ticket() -> World {
     world
 }
 
-/// Each icon beside the words it stands for.
+/// An icon of a status (`docs/specs/web/design_system.md`, Icons).
+const STATUS_ICON: &str = "svg:is([data-icon=check-circle], [data-icon=x-circle], [data-icon=hand-raised], [data-icon=arrow-path], [data-icon=pause-circle], [data-icon=no-symbol])";
+
+/// Each status's icon beside the words it stands for.
 fn assert_no_status_by_colour_alone(html: &Html) {
-    for icon in select(html, "svg.icon") {
+    for icon in select(html, STATUS_ICON) {
         let words = ElementRef::wrap(icon.parent().unwrap()).map(text);
         assert!(
             words.is_some_and(|words| !words.is_empty()),

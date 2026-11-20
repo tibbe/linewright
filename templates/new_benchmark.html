@@ -1,5 +1,5 @@
 {%- import "macros.html" as ui -%}
-{%- call ui::new_form("new-benchmark", "New benchmark", "Create", new_benchmark.refusal) %}
+{%- call ui::new_form("new-benchmark", "New benchmark", crate::web::buttons::Verb::Create, new_benchmark.refusal) %}
 <label class="label" for="new-benchmark-name">Name</label>
 <input id="new-benchmark-name" class="input w-full" name="name" value="{{ new_benchmark.fields.name }}" autocomplete="off">
 <label class="label" for="new-benchmark-stage">Stage</label>

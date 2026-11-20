@@ -212,6 +212,11 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     assert_eq!(settings_shown(&verbose), (line, layers, true));
     let chevron = select(&html, "#s1 .settings > details > summary > .chevron");
     assert_eq!(chevron.len(), 1);
+    let icons: Vec<Option<&str>> = select_in(chevron[0], "svg")
+        .into_iter()
+        .map(|icon| icon.attr("data-icon"))
+        .collect();
+    assert_eq!(icons, [Some("chevron-right"), Some("chevron-down")]);
 }
 
 /// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in

@@ -5,7 +5,7 @@
 <div role="tablist" class="tabs tabs-border">
 <input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Runs"{% if !self.opens_on_tasks() %} checked{% endif %}>
 <div role="tabpanel" class="tab-content pt-4">
-{%- call(part) ui::table_card("Runs", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
+{%- call(part) ui::table_card("Runs", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Runs), shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
 {{ new_benchmark_run_offer }}

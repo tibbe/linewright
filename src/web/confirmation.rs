@@ -34,11 +34,11 @@ pub(super) enum TurnDown {
 }
 
 impl TurnDown {
-    /// Its button's label.
-    pub(super) fn label(&self) -> &'static str {
+    /// Its button's verb.
+    pub(super) fn verb(&self) -> Verb {
         match self {
-            TurnDown::Cancel => "Cancel",
-            TurnDown::KeepRunning => "Keep running",
+            TurnDown::Cancel => Verb::CloseDialog,
+            TurnDown::KeepRunning => Verb::KeepRunning,
         }
     }
 }

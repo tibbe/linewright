@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tracing::{info, warn};
 
+use super::buttons::Verb;
 use super::html::{self, Html};
 use super::write::{Refused, Write, alert};
 use super::{benchmarks, run_path};
@@ -65,10 +66,11 @@ impl Offer {
         let name = html::escape(TaskName::suggested(&self.run).as_str());
         let id = html::escape(id);
         html::built(format!(
-            r##"<dialog id="{id}" class="modal" aria-labelledby="{id}-title"><div class="modal-box"><form class="capture" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><fieldset class="fieldset gap-2"><legend id="{id}-title" class="fieldset-legend text-base">Add task</legend><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea></fieldset><div class="modal-action items-center"><button class="btn btn-sm" type="button" command="close" commandfor="{id}">Cancel</button>{ready}</div></form><div id="capture-said" class="mt-2" role="status"></div></div></dialog>"##,
+            r##"<dialog id="{id}" class="modal" aria-labelledby="{id}-title"><div class="modal-box"><form class="capture" method="post" action="{path}" hx-post="{path}" hx-target="#capture-said" hx-swap="innerHTML"><fieldset class="fieldset gap-2"><legend id="{id}-title" class="fieldset-legend text-base">Add task</legend><label class="select select-sm w-full"><span class="label">benchmark</span>{select}</label><label class="new-benchmark-name input input-sm w-full"><span class="label">new benchmark</span><input name="new-benchmark" pattern="{pattern}" autocomplete="off" placeholder="its name"></label><label class="input input-sm w-full"><span class="label">name</span><input name="name" value="{name}" required pattern="{pattern}" autocomplete="off"></label><textarea class="textarea textarea-sm w-full" name="criteria" rows="4" required placeholder="criteria: what a good result is" aria-label="criteria"></textarea></fieldset><div class="modal-action items-center"><button class="btn btn-sm" type="button" command="close" commandfor="{id}">{cancel}</button>{ready}</div></form><div id="capture-said" class="mt-2" role="status"></div></div></dialog>"##,
             select = benchmark_select(&self.benchmarks, None, ""),
             pattern = html::escape(task::NAME_PATTERN),
             ready = Offer::ready_html(sources),
+            cancel = Verb::CloseDialog.labelled(),
         ))
     }
 
@@ -88,7 +90,8 @@ impl Offer {
             )
         };
         html::built(format!(
-            r#"<div id="{READY}" class="flex items-center gap-2"><button class="btn btn-sm btn-primary" type="submit"{disabled}>Add task</button>{note}</div>"#
+            r#"<div id="{READY}" class="flex items-center gap-2"><button class="btn btn-sm btn-primary" type="submit"{disabled}>{add_task}</button>{note}</div>"#,
+            add_task = Verb::AddTask.labelled(),
         ))
     }
 }

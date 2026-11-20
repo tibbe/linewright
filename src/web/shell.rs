@@ -9,7 +9,7 @@ use askama::Template;
 
 use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
-use super::icons::CardIcon;
+use super::icons::{CardIcon, Icon};
 use super::names::Names;
 use super::{Page, render, run_path};
 use crate::api::{self, Sources};
@@ -59,6 +59,18 @@ impl Area {
             Area::Automations => "All automations",
             Area::Benchmarks => "All benchmarks",
             Area::Server => "Status",
+        }
+    }
+
+    /// Its icon, in the navigation and before the title of a card of what
+    /// it holds (`docs/specs/web/design_system.md`, Icons).
+    pub(super) fn icon(self) -> Icon {
+        match self {
+            Area::Board => Icon::ViewColumns,
+            Area::Runs => Icon::CommandLine,
+            Area::Automations => Icon::Bolt,
+            Area::Benchmarks => Icon::Beaker,
+            Area::Server => Icon::Server,
         }
     }
 

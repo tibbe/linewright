@@ -870,7 +870,23 @@ async fn a_tasks_row_opens_to_its_criteria_by_a_chevron_in_its_leading_cell() {
         buttons[0].attr("aria-label"),
         Some("Show the criteria of columns")
     );
-    assert_eq!(select_in(buttons[0], "svg.chevron").len(), 1);
+    let chevrons: Vec<_> = select_in(buttons[0], "svg")
+        .into_iter()
+        .map(|chevron| (chevron.attr("data-icon"), chevron.attr("class")))
+        .collect();
+    assert_eq!(
+        chevrons,
+        [
+            (
+                Some("chevron-right"),
+                Some("icon size-4 shrink-0 group-aria-expanded:hidden")
+            ),
+            (
+                Some("chevron-down"),
+                Some("icon size-4 shrink-0 hidden group-aria-expanded:block")
+            ),
+        ]
+    );
     assert_eq!(select(&html, "#tasks th button").len(), 0);
     let unread = select(&html, "#task-aisles > :first-child")[0];
     assert_eq!(unread.value().name(), "td");

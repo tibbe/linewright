@@ -20,5 +20,5 @@
 {{ self.file(path, text) }}
 {%- endfor %}
 </div>
-<div><button class="remove-configuration btn btn-sm btn-ghost" type="button">Remove</button></div>
+<div><button class="remove-configuration btn btn-sm btn-ghost" type="button">{{ crate::web::buttons::Verb::Remove.labelled() }}</button></div>
 </fieldset>

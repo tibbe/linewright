@@ -22,6 +22,7 @@ use tracing::error;
 use super::buttons::{ScreenButton, Verb};
 use super::capture::Offer;
 use super::html::{self, Html};
+use super::icons::{Icon, IconSize};
 use super::names::Names;
 use super::runs_table::ItemCell;
 use super::shell::{self, Frame, Heading, Missing, Thing};
@@ -535,13 +536,24 @@ pub(super) fn entry_row(row: &Row) -> String {
 
 /// A row's line: the summary of its fold, if it opens, in the Border colour
 /// on hover and on keyboard focus (`docs/specs/web/runs.md`, Run, Hover).
+/// The chevron of a fold points right while it is closed and down while it
+/// is open (`docs/specs/web/components.md`, Transcript, Lines).
 fn line_html(row: &Row) -> String {
-    let tag = if row.fold.is_some() { "summary" } else { "div" };
+    let (tag, chevron) = if row.fold.is_some() {
+        (
+            "summary",
+            Icon::ChevronRight
+                .svg(IconSize::Inline)
+                .then(&Icon::ChevronDown.svg(IconSize::Inline)),
+        )
+    } else {
+        ("div", Html::default())
+    };
     let id = row
         .id
         .map_or(String::new(), |id| format!(r#" id="{id}-line""#));
     format!(
-        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron text-center text-muted" aria-hidden="true"></span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
+        r#"<{tag} class="line grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-baseline rounded-sm hover:bg-base-300 focus-visible:bg-base-300"{id}><span class="chevron flex h-lh items-center justify-center self-start text-muted" aria-hidden="true">{chevron}</span><span class="text whitespace-pre-wrap wrap-anywhere">{text}</span>{duration}</{tag}>"#,
         text = row.text,
         duration = duration_html(row.lasted),
     )

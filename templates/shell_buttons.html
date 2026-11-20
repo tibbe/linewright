@@ -5,7 +5,7 @@
 {%- when crate::web::buttons::ScreenButton::New { dialog } %}
 <button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ dialog }}">New</button>
 {%- when crate::web::buttons::ScreenButton::Act { verb, dialog } %}
-<button class="btn btn-sm" type="button" command="show-modal" commandfor="{{ dialog }}">{% call ui::verb_icon(verb) %}{% endcall %}{{ verb.label() }}</button>
+<button class="btn btn-sm" type="button" command="show-modal" commandfor="{{ dialog }}">{{ verb.labelled() }}</button>
 {%- endmatch %}
 {%- endfor %}
 </div>

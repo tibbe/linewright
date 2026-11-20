@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use super::cards::{self, card_line, lane_head};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
+use super::icons::ItemKind;
 use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
@@ -41,15 +42,16 @@ impl ItemShown {
 }
 
 /// #N's name in its heading: its number and title as on its card, with the
-/// pull request icon where its card has it (`docs/specs/board.md`, Item,
-/// Heading).
+/// icon of an issue or a pull request beside it, but for a tracking issue,
+/// whose card is its lane head (`docs/specs/board.md`, Item, Heading and Its
+/// card; Cards, Issue or pull request).
 #[derive(Template)]
 #[template(
-    source = r#"{%- import "macros.html" as ui -%}{% if pull_request %}{% call ui::pull_request_icon() %}{% endcall %}{% endif %}{{ titled|safe }}"#,
+    source = r#"{% if let Some(kind) = kind %}{{ kind.svg() }}{% endif %}{{ titled|safe }}"#,
     ext = "html"
 )]
 struct ItemName {
-    pull_request: bool,
+    kind: Option<ItemKind>,
     titled: Html,
 }
 
@@ -58,7 +60,8 @@ fn heading(facts: &ItemFacts, repo: &str) -> Heading {
     Heading {
         title: format!("{} {}", facts.number, facts.title),
         name: html::rendered(&ItemName {
-            pull_request: facts.pull_request,
+            kind: (!matches!(facts.state, StateFact::Tracking { .. }))
+                .then(|| ItemKind::of(facts.pull_request)),
             titled: html::titled(facts.number, &facts.title, repo),
         }),
         state: None,
@@ -174,17 +177,13 @@ fn related(item: &Related, repo: &str) -> Piece {
             status,
         } => Piece::Item {
             status: status.map(cards::status),
-            pull_request: *pull_request,
+            kind: ItemKind::of(*pull_request),
             heading: match title {
                 Some(title) => html::titled(*number, title, repo),
                 None => html::item(*number, repo),
             },
         },
-        Related::LaneHead(lane) => Piece::Item {
-            status: None,
-            pull_request: false,
-            heading: lane_head(lane, repo),
-        },
+        Related::LaneHead(lane) => Piece::LaneHead(lane_head(lane, repo)),
     }
 }
 

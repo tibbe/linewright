@@ -1,13 +1,13 @@
 {#- A status as a daisyUI badge in its colour, holding its icon and its
     words, so that it is never told by colour alone. -#}
 {%- macro status(status, word) -%}
-<span class="tone badge badge-sm h-auto min-h-5 {{ status.colour() }}">{% call icon(status) %}{% endcall %}<span>{{ word }}</span></span>
+<span class="tone badge badge-sm h-auto min-h-5 {{ status.colour() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
     the status's icon and its words in its colour, with nothing behind them. -#}
 {%- macro status_text(status, words) -%}
-<span class="status-text {{ status.accent() }}">{% call icon(status) %}{% endcall %}<span>{{ words|safe }}</span></span>
+<span class="status-text {{ status.accent() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
 {#- A page's facts (`docs/specs/web/design_system.md`, Facts), in a card, their labels in a column of their own in Muted text, and
@@ -26,8 +26,10 @@
 {{ text|safe }}
 {%- when crate::web::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
-{%- when crate::web::facts::Piece::Item { status, pull_request, heading } -%}
-<span class="related-item{% if let Some(status) = status %} {{ status.accent() }}{% endif %}">{% if let Some(status) = status %}{% call icon(status) %}{% endcall %}{% endif %}{% if pull_request %}{% call pull_request_icon() %}{% endcall %}{% endif %}{{ heading|safe }}</span>
+{%- when crate::web::facts::Piece::Item { status, kind, heading } -%}
+<span class="related-item{% if let Some(status) = status %} {{ status.accent() }}{% endif %}">{% if let Some(status) = status %}{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ kind.svg() }}{{ heading|safe }}</span>
+{%- when crate::web::facts::Piece::LaneHead(heading) -%}
+<span class="related-item">{{ heading|safe }}</span>
 {%- when crate::web::facts::Piece::Markup(markup) -%}
 {{ markup|safe }}
 {%- endmatch -%}
@@ -64,7 +66,7 @@
 {%- if shows_name || buttons %}
 <div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4">
 {%- if shows_name %}
-<h2 class="card-title">{% call card_icon(icon) %}{% endcall %}{{ name }}</h2>
+<h2 class="card-title">{% call icon(icon.icon(), crate::web::icons::IconSize::CardTitle) %}{% endcall %}{{ name }}</h2>
 {%- endif %}
 {%- if buttons %}
 <div class="ml-auto flex flex-wrap items-center gap-2">
@@ -125,11 +127,11 @@
 {%- endmacro -%}
 
 {#- A filter that searches (`docs/specs/web/design_system.md`, Filters): a
-    search `input` with a magnifier at its start, named `label` for screen
+    search `input` with its icon at its start, named `label` for screen
     readers and taking the spare width of its row, `value` empty while it is
     unset. -#}
 {%- macro filter_search(label, name, value) -%}
-<label class="input input-sm grow"><svg class="size-[1em] shrink-0 opacity-60" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.75"/><path d="M10.5 10.5l3.25 3.25"/></svg><input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
+<label class="input input-sm grow">{% call icon(crate::web::icons::Icon::MagnifyingGlass, crate::web::icons::IconSize::Inline, "opacity-60") %}{% endcall %}<input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
 {%- endmacro -%}
 
 {#- A filter chosen from `options`, each its value and whether it is
@@ -153,10 +155,10 @@
 <div class="modal-box">
 <p id="{{ confirmation.id }}_question">{{ confirmation.question }}</p>
 <div class="modal-action">
-<form method="dialog"><button class="btn btn-sm" autofocus>{{ confirmation.turn_down.label() }}</button></form>
+<form method="dialog"><button class="btn btn-sm" autofocus>{{ confirmation.turn_down.verb().labelled() }}</button></form>
 <form method="post" action="{{ confirmation.action }}" hx-post="{{ confirmation.action }}" hx-target="#{{ confirmation.said }}" hx-swap="innerHTML">
 {%- for (name, value) in confirmation.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor -%}
-<button class="btn btn-sm btn-error" type="submit">{{ confirmation.verb.label() }}</button></form>
+<button class="btn btn-sm btn-error" type="submit">{{ confirmation.verb.labelled() }}</button></form>
 </div>
 </div>
 </dialog>
@@ -188,10 +190,10 @@
 
 {#- What the form of the "New" dialog `id` holds: the fieldset titled
     `title`, whose fields, each under its `label`, its caller draws, then
-    the refusal, if there is one, then "Cancel" and the button `button`
-    that makes the thing, drawn by `new_submit` with `region`, `disabled`
-    and `note`. -#}
-{%- macro new_form(id, title, button, refusal, region = "", disabled = false, note = "") -%}
+    the refusal, if there is one, then "Cancel" and the button of the
+    `crate::web::buttons::Verb` `verb` that makes the thing, drawn by
+    `new_submit` with `region`, `disabled` and `note`. -#}
+{%- macro new_form(id, title, verb, refusal, region = "", disabled = false, note = "") -%}
 <fieldset class="fieldset">
 <legend id="{{ id }}-title" class="fieldset-legend text-base">{{ title }}</legend>
 {{- caller() }}
@@ -200,18 +202,18 @@
 <div class="alert alert-error mt-2" role="alert"><span>{{ refusal }}</span></div>
 {%- endif %}
 <div class="modal-action">
-<button class="btn" type="button" command="close" commandfor="{{ id }}">Cancel</button>
-{% call new_submit(button, region, disabled, note) %}{% endcall %}
+<button class="btn" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
+{% call new_submit(verb, region, disabled, note) %}{% endcall %}
 </div>
 {%- endmacro -%}
 
-{#- The button `button` that makes a "New" dialog's thing. Given `region`,
+{#- The button of the verb `verb` that makes a "New" dialog's thing. Given `region`,
     the id of a region of the page's stream inside the dialog, it is in that
     region, `disabled` and after `note` as the stream keeps them. -#}
-{%- macro new_submit(button, region = "", disabled = false, note = "") -%}
+{%- macro new_submit(verb, region = "", disabled = false, note = "") -%}
 {%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>
 {%- if !note.is_empty() %}<span class="text-muted self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
-<button class="btn btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ button }}</button>
+<button class="btn btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
 {%- if !region.is_empty() %}</div>{% endif %}
 {%- endmacro -%}
 
@@ -234,7 +236,7 @@
 <td class="fold-cell w-0 pr-0">
 {%- match fold -%}
 {%- when crate::web::table::Fold::Opens(opens) -%}
-<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}"><svg class="chevron size-[1em] shrink-0 transition-transform group-aria-expanded:rotate-90" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}">{% call icon(crate::web::icons::Icon::ChevronRight, crate::web::icons::IconSize::Inline, "group-aria-expanded:hidden") %}{% endcall %}{% call icon(crate::web::icons::Icon::ChevronDown, crate::web::icons::IconSize::Inline, "hidden group-aria-expanded:block") %}{% endcall %}</button>
 {%- when crate::web::table::Fold::Nothing -%}
 {%- endmatch -%}
 </td>
@@ -249,7 +251,7 @@
     its verb's label after its icon, opening the dialog `dialog` with no
     request. -#}
 {%- macro row_button(verb, dialog) -%}
-<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}">{% call verb_icon(verb) %}{% endcall %}{{ verb.label() }}</button>
+<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}">{{ verb.labelled() }}</button>
 {%- endmacro -%}
 
 {#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
@@ -264,88 +266,10 @@ card card-sm {% call card_surface(colour) %}{% endcall %}
 {{ colour }} shadow-xs
 {%- endmacro -%}
 
-{%- macro icon(status) -%}
-<svg class="icon size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-{%- match status -%}
-{%- when crate::phrase::Status::Done -%}
-<circle cx="8" cy="8" r="6.75"/><path d="M5 8.25l2 2 4-4.25"/>
-{%- when crate::phrase::Status::Failed -%}
-<circle cx="8" cy="8" r="6.75"/><path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5"/>
-{%- when crate::phrase::Status::InFlight -%}
-<circle cx="8" cy="8" r="6.75"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/>
-{%- when crate::phrase::Status::Waiting -%}
-<circle cx="8" cy="8" r="6.75" stroke-dasharray="2.5 2"/>
-{%- when crate::phrase::Status::Cancelled -%}
-<circle cx="8" cy="8" r="6.75"/><path d="M3.25 12.75l9.5-9.5"/>
-{%- when crate::phrase::Status::Paused -%}
-<circle cx="8" cy="8" r="6.75"/><path d="M6.5 5.5v5M9.5 5.5v5"/>
-{%- endmatch -%}
-</svg>
-{%- endmacro -%}
-
-{#- The icon of a button's verb (`docs/specs/web/design_system.md`,
-    Buttons), drawn as the statuses' icons are, before its label. -#}
-{%- macro verb_icon(verb) -%}
-<svg class="size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-{%- match verb -%}
-{%- when crate::web::buttons::Verb::Cancel -%}
-<circle cx="8" cy="8" r="6.75"/><rect x="5.75" y="5.75" width="4.5" height="4.5" rx="0.5"/>
-{%- when crate::web::buttons::Verb::AddTask -%}
-<path d="M8 3v10M3 8h10"/>
-{%- when crate::web::buttons::Verb::Remove -%}
-<path d="M2.75 4.25h10.5M6.25 4.25v-1.5h3.5v1.5M4 4.25l.75 9h6.5l.75-9M6.75 7v3.75M9.25 7v3.75"/>
-{%- endmatch -%}
-</svg>
-{%- endmacro -%}
-
-{#- The icon of a card that is a pull request, drawn as the statuses' icons
-    are, and named for screen readers, which read it before the number. -#}
-{%- macro pull_request_icon() -%}
-<svg class="pull-request size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" role="img" aria-label="pull request" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-<circle cx="4" cy="3.5" r="1.75"/><circle cx="4" cy="12.5" r="1.75"/><circle cx="12" cy="12.5" r="1.75"/><path d="M4 5.25v5.5M12 10.75V6.5a2 2 0 0 0-2-2H7.5M9 3l-1.5 1.5L9 6"/>
-</svg>
-{%- endmacro -%}
-
-{#- A navigation link's icon, drawn as the statuses' icons are. It is hidden
-    from screen readers, so that the link's text is its label. -#}
-{%- macro nav_icon(area) -%}
-<svg class="size-4 shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-{%- call area_paths(area) %}{% endcall -%}
-</svg>
-{%- endmacro -%}
-
-{#- The icon before a card's title (`docs/specs/web/design_system.md`,
-    Cards), drawn as the statuses' icons are, and hidden from screen
-    readers, so that the title's text is its name. -#}
-{%- macro card_icon(icon) -%}
-<svg class="size-[1em] shrink-0" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-{%- match icon -%}
-{%- when crate::web::icons::CardIcon::Area(area) -%}
-{% call area_paths(area) %}{% endcall %}
-{%- when crate::web::icons::CardIcon::Configurations -%}
-<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/><circle cx="5.5" cy="4" r="1.5" fill="currentColor"/><circle cx="10.5" cy="8" r="1.5" fill="currentColor"/><circle cx="7" cy="12" r="1.5" fill="currentColor"/>
-{%- when crate::web::icons::CardIcon::Grid -%}
-<rect x="1.75" y="1.75" width="12.5" height="12.5" rx="1.5"/><path d="M1.75 6h12.5M1.75 10h12.5M6 1.75v12.5M10 1.75v12.5"/>
-{%- when crate::web::icons::CardIcon::Chart -%}
-<path d="M2 2v12h12"/><path d="M4.5 10.5l3-3.5 2.5 2 4-5"/>
-{%- endmatch -%}
-</svg>
-{%- endmacro -%}
-
-{#- The strokes of an area's icon. -#}
-{%- macro area_paths(area) -%}
-{%- match area -%}
-{%- when crate::web::shell::Area::Board -%}
-<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M6 2.75v10.5M10 2.75v10.5"/>
-{%- when crate::web::shell::Area::Runs -%}
-<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5"/><path d="M4.75 6l2 2-2 2M8.75 10h2.5"/>
-{%- when crate::web::shell::Area::Automations -%}
-<path d="M9.25 1.75L3.75 9h4.25l-1.25 5.25L12.25 7H8z"/>
-{%- when crate::web::shell::Area::Benchmarks -%}
-<path d="M3 4.75h10M3 8h10M3 11.25h10"/><path d="M1.75 4.75h.01M1.75 8h.01M1.75 11.25h.01"/>
-{%- when crate::web::shell::Area::Server -%}
-<rect x="2" y="2.25" width="12" height="4.75" rx="1"/><rect x="2" y="9" width="12" height="4.75" rx="1"/><path d="M4.75 4.625h.01M4.75 11.375h.01"/>
-{%- endmatch -%}
+{#- `icon` in `size`, a `crate::web::icons::IconSize`, with the classes
+    `class` too. -#}
+{%- macro icon(icon, size, class = "") -%}
+{{ icon.svg_classed(size, class) }}
 {%- endmacro -%}
 
 {#- What a run is of, as the Item column of a list of runs names it

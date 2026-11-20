@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
+use super::icons::ItemKind;
 use super::names::Names;
 use super::shell::{self, Area, Frame, Place};
 use super::{Page, events, given, render, with_filters};
@@ -88,8 +89,7 @@ struct CellShown {
 /// A card (`docs/specs/board.md`, Cards).
 struct CardShown {
     heading: Html,
-    /// Whether it carries the pull request icon.
-    pull_request: bool,
+    kind: ItemKind,
     /// The status its card status shows as, if it has one.
     status: Option<Status>,
     line: Option<Html>,
@@ -155,7 +155,7 @@ impl CardShown {
     fn of(card: &Card, column: Column, names: &Names) -> CardShown {
         CardShown {
             heading: html::titled(card.number, &card.title, names.repo()),
-            pull_request: card.pull_request,
+            kind: ItemKind::of(card.pull_request),
             status: card.status().map(cards::status),
             line: card_line(card).map(|line| line.html(names)),
             quiet: column == Column::Done,
