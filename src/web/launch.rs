@@ -16,8 +16,8 @@ use super::benchmark_page::benchmark_for_making;
 use super::benchmark_runs;
 use super::html::{self, Html};
 use super::making::{
-    Answer, Making, REPETITIONS, configuration_misnamed, configuration_unnamed,
-    configuration_unusable, launch_refused,
+    Answer, Making, NOT_A_NAME, REPETITIONS, configuration_unnamed, configuration_unusable,
+    launch_refused,
 };
 use super::write::Write;
 use crate::api::Sources;
@@ -195,8 +195,7 @@ impl LaunchFields {
             if typed.is_empty() {
                 return Err(configuration_unnamed(added));
             }
-            let name: ConfigurationName =
-                typed.parse().map_err(|_| configuration_misnamed(typed))?;
+            let name: ConfigurationName = typed.parse().map_err(|_| NOT_A_NAME.to_string())?;
             let configuration = Configuration::parse(fields.files(starting))
                 .map_err(|errors| configuration_unusable(&name, &errors))?;
             configurations.push((name, configuration));

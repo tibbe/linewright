@@ -1750,7 +1750,7 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
                 session_timeout: "soon".into(),
                 ..named("short")
             }],
-            "The configuration short cannot be used: config.toml: ",
+            "The configuration short has an error in config.toml: ",
         ),
         (
             &[
@@ -1765,7 +1765,7 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
                 )],
                 ..named("short")
             }],
-            "The configuration short cannot be used: briefs/prompts/implement.md: ",
+            "The configuration short has an error in briefs/prompts/implement.md: ",
         ),
         (
             &[("c1.name", "as-is")],
@@ -1780,8 +1780,8 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
         (
             &[("c1.name", "Short")],
             vec![named("Short")],
-            "\"Short\" cannot name a configuration. A name holds only lowercase letters, digits \
-             and hyphens, and starts with a letter or a digit.",
+            "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a \
+             digit.",
         ),
         (
             &[("c1.name", "short"), ("c2.name", " ")],
@@ -1822,10 +1822,38 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
             configurations: vec![named("short")],
             repetitions: "0".into(),
             count: "2 configurations × 2 tasks × 1 repetition: 4 trials".into(),
-            refusal: Some("The repetitions are a whole number, 1 or more.".into()),
+            refusal: Some("Repetitions are a whole number, 1 or more.".into()),
         }
     );
     assert!(!pages.path("benchmark-runs/1").exists());
+}
+
+/// `docs/specs/benchmarks.md`, New benchmark run, Refusals: a configuration
+/// with errors in several files is refused for its first, by path.
+#[test_log::test(tokio::test)]
+async fn a_configuration_with_errors_in_several_files_is_refused_for_its_first() {
+    let pages = with_benchmarks().await;
+
+    let (status, answer) = post(
+        &pages,
+        "/benchmarks/board/launch",
+        &[SAME_ORIGIN],
+        &[
+            ("repetitions", "1"),
+            ("c1.name", "short"),
+            ("c1.session-timeout", "soon"),
+            ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, 422);
+    let refusal = launch_form(&answer).refusal.unwrap();
+    assert_eq!(
+        refusal,
+        "The configuration short has an error in briefs/prompts/implement.md: it has unknown \
+         placeholders: `{{nothing}}`"
+    );
 }
 
 /// `docs/specs/design_system.md`, Making, A refusal: the fields keep every
@@ -1877,8 +1905,8 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
             repetitions: "3".into(),
             count: "3 configurations × 2 tasks × 3 repetitions: 18 trials".into(),
             refusal: Some(
-                "\"Careful\" cannot name a configuration. A name holds only lowercase letters, \
-                 digits and hyphens, and starts with a letter or a digit."
+                "A name holds only lowercase letters, digits and hyphens, and starts with a letter \
+                 or a digit."
                     .into()
             ),
         }
