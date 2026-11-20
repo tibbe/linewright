@@ -378,8 +378,9 @@ pub enum TrialChange {
         why: String,
         scorer_money: Option<Usd>,
     },
-    /// Not ended, its benchmark run is cancelled.
-    Cancelled,
+    /// Not ended, its benchmark run is cancelled, with the figures of the
+    /// run the cancel stopped, if it stopped one.
+    Cancelled { stopped: Option<TrialFigures> },
 }
 
 /// The benchmark runs of a work directory, kept in its database and under
@@ -707,7 +708,7 @@ impl BenchmarkRuns {
                     &mut tx,
                     benchmark_run,
                     &key,
-                    &state.changed(TrialChange::Cancelled)?,
+                    &state.changed(TrialChange::Cancelled { stopped: None })?,
                 )
                 .await?;
             }
@@ -850,12 +851,16 @@ impl TrialState {
                     scorer_money,
                 }))
             }
-            (TrialState::Pending | TrialState::Running, TrialChange::Cancelled) => {
+            (TrialState::Pending, TrialChange::Cancelled { stopped: None }) => {
                 TrialState::Ended(TrialEnd::Cancelled { run: None })
             }
-            (TrialState::Ran { run } | TrialState::Scoring { run }, TrialChange::Cancelled) => {
-                TrialState::Ended(TrialEnd::Cancelled { run: Some(run) })
+            (TrialState::Running, TrialChange::Cancelled { stopped }) => {
+                TrialState::Ended(TrialEnd::Cancelled { run: stopped })
             }
+            (
+                TrialState::Ran { run } | TrialState::Scoring { run },
+                TrialChange::Cancelled { stopped: None },
+            ) => TrialState::Ended(TrialEnd::Cancelled { run: Some(run) }),
             (state, change) => anyhow::bail!(
                 "a trial {} cannot change by {change:?}",
                 Columns::of(&state).state
@@ -1503,7 +1508,7 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn a_cancelled_trial_keeps_the_run_it_had_and_has_none_before_its_run_ended() {
+    async fn a_cancelled_trial_keeps_the_run_it_had_or_the_cancel_stopped() {
         let work_dir = tempfile::tempdir().unwrap();
         let (benchmark_runs, id) = launched(work_dir.path()).await;
 
@@ -1513,14 +1518,19 @@ mod tests {
             vec![
                 TrialChange::RunStarts,
                 TrialChange::RunEnds(figures(Ending::Done)),
-                TrialChange::Cancelled,
+                TrialChange::Cancelled { stopped: None },
             ],
         )
         .await;
         steps(
             &benchmark_runs,
             trial(id, 1),
-            vec![TrialChange::RunStarts, TrialChange::Cancelled],
+            vec![
+                TrialChange::RunStarts,
+                TrialChange::Cancelled {
+                    stopped: Some(figures(Ending::Cancelled)),
+                },
+            ],
         )
         .await;
 
@@ -1532,7 +1542,9 @@ mod tests {
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled { run: None })
+            TrialState::Ended(TrialEnd::Cancelled {
+                run: Some(figures(Ending::Cancelled)),
+            })
         );
     }
 
