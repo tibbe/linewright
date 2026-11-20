@@ -13,7 +13,8 @@
  * reader opens elsewhere, fills in a capture's name for the
  * run chosen and keeps that run chosen through updates, adds and removes
  * New benchmark run's configurations, opens the boxes of the files of the brief
- * they give and counts their trials, and shows the page's tooltip.
+ * they give and counts their trials, collapses and expands the navigation,
+ * and shows the page's tooltip.
  */
 (() => {
   "use strict";
@@ -651,6 +652,27 @@
 
   document.addEventListener("change", (event) => {
     if (event.target?.classList?.contains("brief-file")) openFile(event.target);
+  });
+
+  /**
+   * Collapses the sidebar to the rail, or expands the rail to the sidebar,
+   * on a click on the navigation's foot button, which then names what it does
+   * next, and remembers the choice for a year in the cookie its
+   * `data-navigation-toggle` names
+   * (docs/specs/web/shell.md, Expanding and collapsing, Remembered).
+   */
+  document.addEventListener("click", (event) => {
+    const toggle = event.target?.closest?.("button[data-navigation-toggle]");
+    if (!toggle) return;
+    const drawer = toggle.closest(".drawer");
+    const rail = drawer.getAttribute("data-navigation") !== "rail";
+    if (rail) drawer.setAttribute("data-navigation", "rail");
+    else drawer.removeAttribute("data-navigation");
+    document.getElementById(toggle.getAttribute("aria-labelledby")).textContent = rail
+      ? "Expand navigation"
+      : "Collapse navigation";
+    const cookie = toggle.getAttribute("data-navigation-toggle");
+    document.cookie = `${cookie}=${rail ? "rail" : "sidebar"}; Path=/; Max-Age=31536000; SameSite=Lax`;
   });
 
   /**

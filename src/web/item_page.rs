@@ -14,7 +14,7 @@ use super::html::{self, Html};
 use super::icons::ItemKind;
 use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
-use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
+use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::{ErrorPage, Page, events, nothing_there, render};
 use crate::api::{self, Sources, Unexplained};
 use crate::board;
@@ -265,10 +265,11 @@ struct ItemRegion<'a> {
 }
 
 /// Item `number`'s page, with `thing` its heading or that it is missing.
-fn page(number: Number, thing: Thing) -> Page {
+fn page(number: Number, thing: Thing, navigation: Navigation) -> Page {
     Page::new(
         Place::Alone(Area::Board, thing),
         format!("/events/items/{}", number.0),
+        navigation,
     )
     .filling_the_viewport()
 }
@@ -276,20 +277,25 @@ fn page(number: Number, thing: Thing) -> Page {
 pub(super) async fn item_page(
     State(sources): State<Sources>,
     Path(number): Path<Number>,
+    navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
     match api::item_facts(&sources, number).await {
         Ok((facts, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
-                page: page(number, Thing::Found(heading(&facts, names.repo()))),
+                page: page(
+                    number,
+                    Thing::Found(heading(&facts, names.repo())),
+                    navigation,
+                ),
                 item: ItemShown::of(&facts, &names),
                 runs: item_runs(&sources, number, &names).await,
                 frame,
             }
             .into_response()
         }
-        Err(e) => error_page(number, frame, &e),
+        Err(e) => error_page(number, frame, &e, navigation),
     }
 }
 
@@ -299,17 +305,21 @@ fn names<'a>(sources: &'a Sources, snapshot: Option<&'a Snapshot>) -> Names<'a> 
     Names::of(&sources.work_dir.repo, snapshot)
 }
 
-fn error_page(number: Number, frame: Frame, e: &Unexplained) -> Response {
+fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigation) -> Response {
     if let Unexplained::NoSuchItem(missing) = e {
         return nothing_there(
-            |thing| page(number, thing),
+            |thing| page(number, thing, navigation),
             Missing::Item(*missing),
             frame,
             "item",
         );
     }
     let page = ErrorPage {
-        page: page(number, Thing::Found(Heading::named(number.to_string()))),
+        page: page(
+            number,
+            Thing::Found(Heading::named(number.to_string())),
+            navigation,
+        ),
         frame,
         region: "item",
         error: e.to_string(),
@@ -325,6 +335,7 @@ pub(super) async fn item_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
     Path(number): Path<Number>,
+    navigation: Navigation,
 ) -> Response {
     let regions = move || {
         let sources = sources.clone();
@@ -349,7 +360,11 @@ pub(super) async fn item_events(
                     in_view.now,
                 );
                 let item = ItemShown::of(&facts, &names);
-                let page = page(number, Thing::Found(heading(&facts, names.repo())));
+                let page = page(
+                    number,
+                    Thing::Found(heading(&facts, names.repo())),
+                    navigation,
+                );
                 regions.extend(shell::regions(&frame, &page));
                 regions.push(("item", render(&ItemRegion { item: &item })));
             } else {

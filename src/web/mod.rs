@@ -27,7 +27,7 @@ mod table;
 mod write;
 
 use buttons::ScreenButton;
-use shell::{Frame, Missing, Place, Thing};
+use shell::{Frame, Missing, Navigation, Place, Thing};
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -285,6 +285,8 @@ struct Page {
     /// Whether the page is as tall as the viewport, its `main` a flex column
     /// whose `.scroll-box` scrolls rather than the page.
     fills_viewport: bool,
+    /// The navigation it draws from Tailwind's `lg` width.
+    navigation: Navigation,
     assets: PageAssets,
 }
 
@@ -297,7 +299,7 @@ struct PageAssets {
 }
 
 impl Page {
-    fn new(place: Place, events: String) -> Page {
+    fn new(place: Place, events: String, navigation: Navigation) -> Page {
         let path = |name| HASHED.names[name].as_str();
         Page {
             place,
@@ -305,6 +307,7 @@ impl Page {
             needing_a_person: None,
             events,
             fills_viewport: false,
+            navigation,
             assets: PageAssets {
                 css: path("linewright.css"),
                 script: path("linewright.js"),

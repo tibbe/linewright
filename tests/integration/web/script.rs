@@ -1122,7 +1122,7 @@ function row(id, under) {
   const tr = Object.assign(element("TR", under ? { id, "data-fold-of": under } : { id }), { id, hidden: !!under });
   const button = element("BUTTON", { "aria-expanded": "false", "aria-controls": `${id}-rows` });
   button.closest = (selector) =>
-    selector === "tr[id]" ? tr : selector.startsWith("button") ? button : null;
+    selector === "tr[id]" ? tr : selector.startsWith("button[aria-expanded]") ? button : null;
   tr.chevron = element("svg", {});
   tr.chevron.closest = button.closest;
   tr.querySelector = (selector) => (selector.includes("button") ? button : null);
@@ -1427,6 +1427,53 @@ steps.join("\n")
             "prompts/fix-ci.md c1.briefs/prompts/fix-ci.md: mine (started fix-ci as opened) | \
              prompts/design.md c1.briefs/prompts/design.md: design as opened (started design as opened)",
             "prompts/fix-ci.md c1.briefs/prompts/fix-ci.md: mine (started fix-ci as opened)",
+        ]
+    );
+}
+
+/// `docs/specs/web/shell.md`, Expanding and collapsing, Remembered: the foot
+/// button collapses the sidebar to the rail and expands it again, naming
+/// what it does next, and remembers the choice for a year.
+#[test_log::test(tokio::test)]
+async fn the_foot_button_collapses_and_expands_the_navigation_and_remembers_the_choice_for_a_year()
+{
+    let script = served_script().await;
+
+    let asked = r#"
+var clicks = [];
+document.addEventListener = (type, listener) => { if (type === "click") clicks.push(listener); };
+var cookies = [];
+Object.defineProperty(document, "cookie", { set(cookie) { cookies.push(cookie); } });
+var drawer = {
+  attributes: {},
+  getAttribute(name) { return name in this.attributes ? this.attributes[name] : null; },
+  setAttribute(name, value) { this.attributes[name] = value; },
+  removeAttribute(name) { delete this.attributes[name]; },
+};
+var name = { textContent: "Collapse navigation" };
+var button = {
+  closest: (selector) =>
+    selector === "button[data-navigation-toggle]" ? button : selector === ".drawer" ? drawer : null,
+  getAttribute: (attribute) =>
+    ({ "data-navigation-toggle": "navigation", "aria-labelledby": "navigation-toggle-name" })[attribute] ?? null,
+};
+document.getElementById = (id) => (id === "navigation-toggle-name" ? name : null);
+"#;
+    let click = r#"
+var shown = [];
+for (let i = 0; i < 2; i++) {
+  for (const listener of clicks) listener({ target: button });
+  shown.push(`${drawer.getAttribute("data-navigation")}: ${name.textContent}: ${cookies.at(-1)}`);
+}
+shown.join("\n")
+"#;
+    let answers = evaluated(&[BROWSER, asked, &script, click]);
+
+    assert_eq!(
+        answers.lines().collect::<Vec<_>>(),
+        [
+            "rail: Expand navigation: navigation=rail; Path=/; Max-Age=31536000; SameSite=Lax",
+            "null: Collapse navigation: navigation=sidebar; Path=/; Max-Age=31536000; SameSite=Lax",
         ]
     );
 }

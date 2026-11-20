@@ -23,7 +23,7 @@ use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
 use super::making::{Answer, Making, task_not_made};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Area, Frame, Heading, Missing, Place, Thing};
+use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, Fold, View};
 use super::write::{Refused, Write, alert};
 use super::{
@@ -554,7 +554,7 @@ async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunChoice> {
 /// The page of `benchmark`: its heading, its name with its stage under it
 /// (`docs/specs/benchmarks.md`, Benchmark, Heading), its stream's on the
 /// pages `paging` asks for.
-fn page(benchmark: &Benchmark, paging: Paging) -> Page {
+fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     let heading = Heading {
         line: Some(html::escape(&benchmark.stage.to_string())),
         ..Heading::named(benchmark.name.as_str())
@@ -562,6 +562,7 @@ fn page(benchmark: &Benchmark, paging: Paging) -> Page {
     Page::new(
         Place::Alone(Area::Benchmarks, Thing::Found(heading)),
         paging.href(&benchmark.name).stream,
+        navigation,
     )
 }
 
@@ -569,6 +570,7 @@ pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
     Path(name): Path<String>,
     Query(paging): Query<Paging>,
+    navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
     match shown(&sources, &name, paging).await {
@@ -585,7 +587,7 @@ pub(super) async fn benchmark_page(
             let new_benchmark_run =
                 NewBenchmarkRunForm::blank(&sources, &benchmark.name, task_count);
             BenchmarkPage {
-                page: page(&benchmark, paging),
+                page: page(&benchmark, paging, navigation),
                 frame,
                 new_benchmark_run_offer: html::rendered(&NewBenchmarkRunRegion {
                     tasks: task_count,
@@ -607,7 +609,7 @@ pub(super) async fn benchmark_page(
             let events = paging.path(&format!("/events/benchmarks/{name}"));
             match unshown {
                 Unshown::NoSuch => nothing_there(
-                    |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events),
+                    |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events, navigation),
                     Missing::Benchmark(name),
                     frame,
                     "tasks",
@@ -619,6 +621,7 @@ pub(super) async fn benchmark_page(
                         page: Page::new(
                             Place::Alone(Area::Benchmarks, Thing::Found(Heading::named(name))),
                             events,
+                            navigation,
                         ),
                         frame,
                         region: "tasks",
@@ -639,6 +642,7 @@ pub(super) async fn benchmark_events(
     Extension(stopping): Extension<CancellationToken>,
     Path(name): Path<String>,
     Query(paging): Query<Paging>,
+    navigation: Navigation,
 ) -> Response {
     let regions = move || {
         let sources = sources.clone();
@@ -656,7 +660,7 @@ pub(super) async fn benchmark_events(
             else {
                 return vec![shell::holds(&frame)];
             };
-            let mut regions = shell::regions(&frame, &page(&benchmark, paging));
+            let mut regions = shell::regions(&frame, &page(&benchmark, paging, navigation));
             regions.push((
                 "benchmark-runs",
                 render(&BenchmarkRunsRegion {
