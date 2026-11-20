@@ -1406,10 +1406,7 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
     assert_eq!(other_stage, 422);
     assert_eq!(
         new_task_form(&other_stage_form).1,
-        Some(
-            "the benchmark board holds tasks of implement, and the run 1/design-1 is of design"
-                .into()
-        )
+        Some("Run 1/design-1 is of design, and board holds tasks of implement.".into())
     );
     assert_eq!(cross_site, 403);
     assert_eq!(
@@ -1419,6 +1416,103 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
             ("name", "gadgets".into()),
             ("criteria", "Ships gh.\n".into())
         ]
+    );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// Adds a task capturing run `run` as `gadgets` with `criteria` to the
+/// benchmark `board`: the status and the form it answers with.
+#[track_caller]
+fn add(pages: &Pages, run: &str, criteria: &str) -> impl Future<Output = (u16, Html)> + use<> {
+    let posted = post_answer(
+        pages,
+        "/benchmarks/board",
+        &[SAME_ORIGIN],
+        &[("run", run), ("name", "gadgets"), ("criteria", criteria)],
+    );
+    async move {
+        let (status, _, form) = posted.await;
+        (status, form)
+    }
+}
+
+/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen.
+#[test_log::test(tokio::test)]
+async fn a_task_of_a_run_that_recorded_no_input_is_refused_saying_so() {
+    let pages = with_runs().await;
+
+    let (status, form) = add(&pages, "1/implement-1", "Ships gh.\n").await;
+
+    assert_eq!(
+        (status, new_task_form(&form).1),
+        (422, Some("Run 1/implement-1 recorded no input.".into()))
+    );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen.
+#[test_log::test(tokio::test)]
+async fn a_task_of_a_run_whose_record_lacks_a_part_is_refused_naming_it() {
+    let pages = with_runs().await;
+    let head = committed(&pages).await;
+    record_run(&pages, "implement", 3, "2026-10-13T11:10:00Z", None).await;
+    pages
+        .input(
+            "1/implement-3",
+            &json!({
+                "api_version": linewright::store::API_VERSION,
+                "start": "2026-10-13T11:10:00Z",
+                "items": [{"number": 1, "resources": {"issues/1": {"number": 1, "title": "Ship gh"}}}],
+                "heads": {"main": head},
+            }),
+        )
+        .await;
+
+    let (status, form) = add(&pages, "1/implement-3", "Ships gh.\n").await;
+
+    assert_eq!(
+        (status, new_task_form(&form).1),
+        (
+            422,
+            Some("The record of run 1/implement-3 lacks properties.".into())
+        )
+    );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen.
+#[test_log::test(tokio::test)]
+async fn a_task_of_a_run_that_does_not_exist_is_refused_saying_so() {
+    let pages = with_runs().await;
+
+    let (status, form) = add(&pages, "1/implement-9", "Ships gh.\n").await;
+
+    assert_eq!(
+        (status, new_task_form(&form).1),
+        (404, Some("No such run 1/implement-9.".into()))
+    );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, Capturing, Before the first poll and Refusals
+/// on a screen.
+#[test_log::test(tokio::test)]
+async fn before_the_first_poll_add_task_is_offered_and_a_task_refused() {
+    let pages = with_runs().await;
+    pages.served.send_replace(None);
+
+    let html = pages.page("/benchmarks/board").await;
+    let (status, form) = add(&pages, "1/implement-2", "").await;
+
+    let add = select(&html, "dialog#new-task button[type=submit]");
+    assert!(add[0].attr("disabled").is_none(), "{}", add[0].html());
+    assert_eq!(select(&html, "#new-task-ready span").len(), 0);
+    assert_eq!(
+        (status, new_task_form(&form).1),
+        (
+            503,
+            Some("Linewright can't capture a run before its first poll.".into())
+        )
     );
     assert_eq!(tasks(&pages), ["columns", "lanes"]);
 }

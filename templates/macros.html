@@ -196,8 +196,8 @@
     `title`, whose fields, each under its `label`, its caller draws, then
     the refusal, if there is one, then "Cancel" and the button of the
     `crate::web::buttons::Verb` `verb` that makes the thing, drawn by
-    `new_submit` with `region`, `disabled` and `note`. -#}
-{%- macro new_form(id, title, verb, refusal, region = "", disabled = false, note = "") -%}
+    `new_submit` with `region` and `disabled`. -#}
+{%- macro new_form(id, title, verb, refusal, region = "", disabled = false) -%}
 <fieldset class="fieldset">
 <legend id="{{ id }}-title" class="fieldset-legend">{{ title }}</legend>
 {{- caller() }}
@@ -207,16 +207,15 @@
 {%- endif %}
 <div class="modal-action">
 <button class="btn btn-sm" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
-{% call new_submit(verb, region, disabled, note) %}{% endcall %}
+{% call new_submit(verb, region, disabled) %}{% endcall %}
 </div>
 {%- endmacro -%}
 
 {#- The button of the verb `verb` that makes a "New" dialog's thing. Given `region`,
     the id of a region of the page's stream inside the dialog, it is in that
-    region, `disabled` and after `note` as the stream keeps them. -#}
-{%- macro new_submit(verb, region = "", disabled = false, note = "") -%}
-{%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>
-{%- if !note.is_empty() %}<span class="text-base-content/60 self-center text-sm">{{ note }}</span>{% endif %}{% endif -%}
+    region, `disabled` as the stream keeps it. -#}
+{%- macro new_submit(verb, region = "", disabled = false) -%}
+{%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>{% endif -%}
 <button class="btn btn-sm btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
 {%- if !region.is_empty() %}</div>{% endif %}
 {%- endmacro -%}

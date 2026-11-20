@@ -10,7 +10,7 @@ use super::capture::NotCaptured;
 use super::render;
 use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal, MakeError};
 use crate::repo_files::FileError;
-use crate::task::{CaptureError, TaskName};
+use crate::task::CaptureError;
 
 /// A dialog's form as drawn: the fields as the reader left them, and why
 /// Linewright refused, if it did.
@@ -86,26 +86,35 @@ fn benchmark_taken(name: &BenchmarkName) -> String {
     format!("A benchmark named {name} already exists.")
 }
 
-/// The refusal of a task that was not made (`docs/specs/benchmarks.md`, New
-/// task, Refusals), or why making it was refused otherwise or failed.
-pub(super) fn task_not_made(not: &NotCaptured) -> String {
+/// What a screen says of a capture that did not happen
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
+/// `docs/specs/runs.md`, Run, A new benchmark's refusals). A refusal the
+/// spec gives no message keeps the capture's own wording.
+pub(super) fn capture_refused(not: &NotCaptured) -> String {
     match not {
-        NotCaptured::Name(_) => NOT_A_NAME.into(),
-        NotCaptured::NoCriteria => CRITERIA_NEEDED.into(),
-        NotCaptured::Capture {
-            error: CaptureError::Taken(name),
-            ..
-        } => task_taken(name),
-        NotCaptured::NotPolled | NotCaptured::Capture { .. } => not.why().into(),
+        NotCaptured::Name | NotCaptured::NewBenchmarkMisnamed => NOT_A_NAME.into(),
+        NotCaptured::NoCriteria => "A task needs criteria.".into(),
+        NotCaptured::NotPolled => "Linewright can't capture a run before its first poll.".into(),
+        NotCaptured::NewBenchmarkUnnamed => "The new benchmark needs a name.".into(),
+        NotCaptured::Capture { error, why } => match error {
+            CaptureError::Taken(name) => format!("A task named {name} already exists."),
+            CaptureError::OtherStage {
+                run,
+                stage,
+                benchmark,
+            } => format!(
+                "Run {run} is of {stage}, and {} holds tasks of {}.",
+                benchmark.name, benchmark.stage
+            ),
+            CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
+            CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
+            CaptureError::NoSuchRun(run) => format!("No such run {run}."),
+            CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
+            CaptureError::NotCapturable(_)
+            | CaptureError::NoSuchBenchmark(_)
+            | CaptureError::Failed(_) => why.clone(),
+        },
     }
-}
-
-/// The refusal of a task without criteria.
-const CRITERIA_NEEDED: &str = "A task needs criteria.";
-
-/// The refusal of a task named as one that exists.
-fn task_taken(name: &TaskName) -> String {
-    format!("A task named {name} already exists.")
 }
 
 /// The refusal of repetitions that are not a whole number, 1 or more.
