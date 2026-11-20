@@ -219,6 +219,13 @@ pub enum NextTurn {
     Resume { session: String, prompt: String },
 }
 
+/// How a session the harness ended with the error `kind`, saying `result`,
+/// ended, as its error says.
+pub fn ended_with(kind: &str, result: Option<&str>) -> String {
+    let said = result.map(|r| format!(": {r}")).unwrap_or_default();
+    format!("the session ended with `{kind}`{said}")
+}
+
 /// What a session that ran past its deadline did, as its error says.
 pub const TIMED_OUT: &str = "it timed out";
 
@@ -238,8 +245,18 @@ pub enum SessionError {
     /// Ran past its deadline.
     #[error("{TIMED_OUT}")]
     TimedOut { log_tail: String },
-    #[error("{reason}")]
-    Failed { reason: String, log_tail: String },
+    /// The harness ended it with the error `kind`, its result event's
+    /// `subtype`, saying `result`.
+    #[error("{}", ended_with(kind, result.as_deref()))]
+    Errored {
+        kind: String,
+        result: Option<String>,
+        log_tail: String,
+    },
+    /// The harness exited, or could not be waited for, without a result, as
+    /// `why` says.
+    #[error("{why}")]
+    NoResult { why: String, log_tail: String },
 }
 
 impl SessionError {
@@ -252,8 +269,17 @@ impl SessionError {
             SessionError::TimedOut { log_tail } => SessionError::TimedOut {
                 log_tail: redaction.apply(&log_tail),
             },
-            SessionError::Failed { reason, log_tail } => SessionError::Failed {
-                reason: redaction.apply(&reason),
+            SessionError::Errored {
+                kind,
+                result,
+                log_tail,
+            } => SessionError::Errored {
+                kind: redaction.apply(&kind),
+                result: result.map(|result| redaction.apply(&result)),
+                log_tail: redaction.apply(&log_tail),
+            },
+            SessionError::NoResult { why, log_tail } => SessionError::NoResult {
+                why: redaction.apply(&why),
                 log_tail: redaction.apply(&log_tail),
             },
             error @ SessionError::UsageLimit { .. } => error,

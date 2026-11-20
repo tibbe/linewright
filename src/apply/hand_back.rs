@@ -6,9 +6,10 @@ use crate::domain::{HandBackKind, Issue, Login, StatusLabel, label};
 use crate::harness;
 use crate::prompts::DesignOf;
 use crate::redaction::Redaction;
+use crate::runs::UnexpectedEnd;
 use crate::secrets::Held;
+use crate::session::Ended;
 use crate::store::FoundSecrets;
-use crate::work_settings::TimeoutSetting;
 
 /// How many of a log's last lines a hand-back gives.
 const TAIL_LINES: usize = 40;
@@ -159,8 +160,8 @@ fn with_log(hand_back: &HandBack) -> String {
 pub enum SendBack {
     /// Sent back with a follow-up.
     Retry,
-    /// Past `result-retries`: handed back.
-    HandBack(HandBack),
+    /// Past `result-retries`: the session ended, its result not accepted.
+    Ends(Ended),
 }
 
 /// The follow-ups a session's result was sent back with, counted against
@@ -171,7 +172,7 @@ pub struct FollowUps(u32);
 
 impl FollowUps {
     /// Sends the result back to its session with `followup`, counting the
-    /// follow-up, until they reach `result_retries`; then hands it back
+    /// follow-up, until they reach `result_retries`; then ends the session
     /// with the end of `session_log`, the session's last message.
     pub fn send_back(
         &mut self,
@@ -184,11 +185,11 @@ impl FollowUps {
             *self = FollowUps(sent + 1);
             return SendBack::Retry;
         }
-        SendBack::HandBack(HandBack {
-            kind: HandBackKind::Stall,
-            reason: format!(
-                "The session's result still could not be used after {sent} follow-up(s).\n\n{followup}"
-            ),
+        SendBack::Ends(Ended {
+            end: UnexpectedEnd::NotAccepted {
+                why: followup.to_string(),
+                follow_ups: sent,
+            },
             log_tail: LogTail::session(&tail(session_log)),
         })
     }
@@ -422,28 +423,38 @@ pub fn nothing_to_build(author: &Login, linewright: &Login, reason: &str) -> Not
     })
 }
 
-/// The hand-back of a session that timed out, which `timeout_setting`
-/// limits, with `log_tail` as its log (docs/specs/runs.md, "Limits",
-/// Session timeout).
-pub fn timed_out(timeout_setting: &TimeoutSetting, log_tail: Option<LogTail>) -> HandBack {
+/// The hand-back of a session that `ended` unexpectedly, its reason then
+/// `note`, with the end of its log (docs/specs/runs.md, Ending, "Unexpected
+/// ends").
+pub fn unexpected(ended: Ended, note: &str) -> HandBack {
     HandBack {
         kind: HandBackKind::Stall,
-        reason: format!(
-            "The session ended unexpectedly: {}. The work may need cutting smaller, or \
-             {timeout_setting} may need to be longer.",
-            harness::TIMED_OUT,
-        ),
-        log_tail,
+        reason: format!("{}{note}", ended_reason(&ended.end)),
+        log_tail: ended.log_tail,
     }
 }
 
-/// The hand-back of a session that ended unexpectedly for `reason`, with
-/// the end of `session_log`.
-pub fn session_failed(reason: &str, session_log: &str) -> HandBack {
-    HandBack {
-        kind: HandBackKind::Stall,
-        reason: format!("The session ended unexpectedly: {reason}"),
-        log_tail: LogTail::session(session_log),
+/// Why a session ended unexpectedly, for `end`, as a hand-back says it. A
+/// timeout names the setting that would give the next session longer
+/// (docs/specs/runs.md, "Limits", Session timeout).
+pub fn ended_reason(end: &UnexpectedEnd) -> String {
+    match end {
+        UnexpectedEnd::TimedOut { setting, .. } => format!(
+            "The session ended unexpectedly: {}. The work may need cutting smaller, or \
+             {setting} may need to be longer.",
+            harness::TIMED_OUT,
+        ),
+        UnexpectedEnd::NotAccepted { why, follow_ups } => format!(
+            "The session's result still could not be used after {follow_ups} follow-up(s).\n\n{why}"
+        ),
+        UnexpectedEnd::Infrastructure { error } => {
+            format!("The run failed twice on its infrastructure: {error}")
+        }
+        UnexpectedEnd::HarnessError { kind, result } => format!(
+            "The session ended unexpectedly: {}",
+            harness::ended_with(kind, result.as_deref())
+        ),
+        UnexpectedEnd::NoResult { why } => format!("The session ended unexpectedly: {why}"),
     }
 }
 
@@ -452,16 +463,6 @@ pub fn session_failed(reason: &str, session_log: &str) -> HandBack {
 /// "Retries").
 pub fn retries_infrastructure_failure(retries: u32) -> bool {
     retries < 1
-}
-
-/// The hand-back of a run whose retry failed on its infrastructure too, with
-/// `error`, then `note`.
-pub fn failed_twice(error: &anyhow::Error, note: &str) -> HandBack {
-    HandBack {
-        kind: HandBackKind::Stall,
-        reason: format!("The run failed twice on its infrastructure: {error:#}{note}"),
-        log_tail: None,
-    }
 }
 
 /// The hand-back of a run whose recording of its result failed with

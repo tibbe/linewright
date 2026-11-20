@@ -16,10 +16,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use common::*;
+use linewright::apply::hand_back::LogTail;
 use linewright::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright::factory::FactoryConfig;
 use linewright::harness::SessionError;
 use linewright::reconcile::WorkKind;
+use linewright::runs::UnexpectedEnd;
+use linewright::session::Ended;
 use linewright::task::Task;
 use linewright::trial::Under;
 use linewright::trial::scorer::{self, Score, ScorerRecord, Unscored};
@@ -264,6 +267,42 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     let unmatched = unmatched.expect_err("a result never accepted is no score");
     assert!(unmatched.to_string().contains("/leak"), "{unmatched}");
     assert_eq!(entries(&out), vec!["outcome", "task"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_scorers_session_that_the_harness_ends_with_an_error_is_its_typed_end() {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = triage_output(under.path(), "done").await;
+    let harness = Arc::new(ScriptedHarness::default());
+    harness.on_scorer(|_| {
+        Err(SessionError::Errored {
+            kind: "error_max_turns".into(),
+            result: Some("stuck".into()),
+            log_tail: "Reading the diff.".into(),
+        })
+    });
+
+    let scored = scoring(&task, &out, under.path(), harness, |_| {}).await;
+
+    let unscored = scored.expect_err("a session the harness ended makes no score");
+    let Unscored::Ended(Ended { end, log_tail }) = &unscored else {
+        panic!("expected an unexpected end, got {unscored:?}");
+    };
+    assert_eq!(
+        (end, log_tail.as_ref().map(LogTail::text)),
+        (
+            &UnexpectedEnd::HarnessError {
+                kind: "error_max_turns".into(),
+                result: Some("stuck".into()),
+            },
+            Some("Reading the diff.")
+        )
+    );
+    assert_eq!(
+        unscored.to_string(),
+        "the scorer's session ended without a score: The session ended unexpectedly: the \
+         session ended with `error_max_turns`: stuck\n\nReading the diff."
+    );
 }
 
 #[test_log::test(tokio::test)]

@@ -4,7 +4,9 @@ use linewright::apply::{Asks, Designed, StatusTo};
 use linewright::domain::{HandBackKind, Issue, Login, Number, Parent, StatusLabel};
 use linewright::prompts::DesignOf;
 use linewright::reconcile::WorkKind;
+use linewright::runs::UnexpectedEnd;
 use linewright::secrets::Held;
+use linewright::session::Ended;
 use linewright::store::{FoundSecret, FoundSecrets};
 use linewright::work_settings::{StageKey, TimeoutSetting};
 use rstest::rstest;
@@ -180,12 +182,12 @@ fn numbered_lines(to: u32) -> String {
 }
 
 #[rstest]
-#[case::the_first_of_one_is_sent_back(0, 1, SendBack::Retry)]
-#[case::the_second_of_two_is_sent_back(1, 2, SendBack::Retry)]
+#[case::the_first_of_one_is_sent_back(0, 1, None)]
+#[case::the_second_of_two_is_sent_back(1, 2, None)]
 #[case::past_the_retries_it_is_handed_back(
     1,
     1,
-    SendBack::HandBack(hand_back_of(
+    Some(hand_back_of(
         HandBackKind::Stall,
         "The session's result still could not be used after 1 follow-up(s).\n\nAnswer with JSON.",
         Some(log(Logged::Session, "I think it's a bug.")),
@@ -194,7 +196,7 @@ fn numbered_lines(to: u32) -> String {
 #[case::with_no_retries_it_is_handed_back_at_once(
     0,
     0,
-    SendBack::HandBack(hand_back_of(
+    Some(hand_back_of(
         HandBackKind::Stall,
         "The session's result still could not be used after 0 follow-up(s).\n\nAnswer with JSON.",
         Some(log(Logged::Session, "I think it's a bug.")),
@@ -203,7 +205,7 @@ fn numbered_lines(to: u32) -> String {
 fn a_result_sent_back(
     #[case] sent_before: u32,
     #[case] result_retries: u32,
-    #[case] expected: SendBack,
+    #[case] expected: Option<HandBack>,
 ) {
     let mut follow_ups = FollowUps::default();
     for _ in 0..sent_before {
@@ -212,7 +214,11 @@ fn a_result_sent_back(
 
     let sent = follow_ups.send_back(result_retries, "Answer with JSON.", "I think it's a bug.\n");
 
-    assert_eq!(sent, expected);
+    let handed_back = match sent {
+        SendBack::Retry => None,
+        SendBack::Ends(ended) => Some(unexpected(ended, "")),
+    };
+    assert_eq!(handed_back, expected);
 }
 
 /// What `tail` shows: what it is the end of, and its text.
@@ -231,13 +237,12 @@ fn a_result_handed_back_gives_the_end_of_the_sessions_message(
     #[case] message: &str,
     #[case] expected: Option<(Logged, &str)>,
 ) {
-    let SendBack::HandBack(handed) =
-        FollowUps::default().send_back(0, "Answer with JSON.", message)
+    let SendBack::Ends(ended) = FollowUps::default().send_back(0, "Answer with JSON.", message)
     else {
         panic!("the result is not handed back");
     };
 
-    assert_eq!(shown(handed.log_tail.as_ref()), expected);
+    assert_eq!(shown(ended.log_tail.as_ref()), expected);
 }
 
 #[rstest]
@@ -577,7 +582,12 @@ fn a_timed_out_session_stalls(
     #[case] log_tail: Option<LogTail>,
     #[case] expected: HandBack,
 ) {
-    assert_eq!(timed_out(&setting, log_tail), expected);
+    let end = UnexpectedEnd::TimedOut {
+        after: std::time::Duration::from_mins(30),
+        setting,
+    };
+
+    assert_eq!(unexpected(Ended { end, log_tail }, ""), expected);
 }
 
 #[rstest]
@@ -598,7 +608,14 @@ fn a_timed_out_session_stalls(
     )
 )]
 fn a_session_that_ended_unexpectedly_stalls(#[case] session_log: &str, #[case] expected: HandBack) {
-    assert_eq!(session_failed("it crashed", session_log), expected);
+    let ended = Ended {
+        end: UnexpectedEnd::NoResult {
+            why: "it crashed".into(),
+        },
+        log_tail: LogTail::session(session_log),
+    };
+
+    assert_eq!(unexpected(ended, ""), expected);
 }
 
 #[rstest]
@@ -613,9 +630,15 @@ fn a_session_that_ended_unexpectedly_stalls(#[case] session_log: &str, #[case] e
 )]
 fn a_run_that_failed_twice_on_its_infrastructure_stalls(#[case] note: &str, #[case] reason: &str) {
     let error = anyhow::anyhow!("connection reset").context("cloning");
+    let ended = Ended {
+        end: UnexpectedEnd::Infrastructure {
+            error: format!("{error:#}"),
+        },
+        log_tail: None,
+    };
 
     assert_eq!(
-        failed_twice(&error, note),
+        unexpected(ended, note),
         hand_back_of(HandBackKind::Stall, reason, None)
     );
 }
@@ -664,7 +687,7 @@ fn an_infrastructure_failure_is_retried(#[case] retries: u32, #[case] retried: b
 fn sent_back(follow_ups: &mut FollowUps) -> bool {
     match follow_ups.send_back(1, "Answer with JSON.", "Done.") {
         SendBack::Retry => true,
-        SendBack::HandBack(_) => false,
+        SendBack::Ends(_) => false,
     }
 }
 

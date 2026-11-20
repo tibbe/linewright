@@ -219,8 +219,8 @@ impl ScriptedHarness {
         )
         .unwrap();
         let script = self.scripts.lock().unwrap().get(&key).cloned();
-        let script = script.ok_or_else(|| SessionError::Failed {
-            reason: format!("no script for {key:?}"),
+        let script = script.ok_or_else(|| SessionError::NoResult {
+            why: format!("no script for {key:?}"),
             log_tail: String::new(),
         })?;
         let call = Call {
@@ -325,10 +325,10 @@ pub fn refused_for_the_usage_limit(call: &Call) -> Result<String, SessionError> 
     refused_until(usage_limit_resets_at(), call)
 }
 
-/// A session that ended unexpectedly, for `reason`.
-pub fn failed_session(reason: &str) -> Result<String, SessionError> {
-    Err(SessionError::Failed {
-        reason: reason.into(),
+/// A session that stopped without a result, as `why` says.
+pub fn failed_session(why: &str) -> Result<String, SessionError> {
+    Err(SessionError::NoResult {
+        why: why.into(),
         log_tail: String::new(),
     })
 }

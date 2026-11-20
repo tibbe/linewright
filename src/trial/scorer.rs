@@ -30,8 +30,8 @@ use crate::runs::{
     State,
 };
 use crate::session::{
-    self, Beside, Cancellation, Failure, RecordsSessions, SessionCtx, Sessions, converse, infra,
-    lock_set_whole, open_session, parse_retry,
+    self, Beside, Cancellation, Ended, Failure, RecordsSessions, SessionCtx, Sessions, converse,
+    infra, lock_set_whole, open_session, parse_retry,
 };
 use crate::task::Task;
 use crate::work_settings::{RunKind, SessionSettings};
@@ -524,12 +524,8 @@ impl Score {
 #[derive(Debug)]
 pub enum Unscored {
     GaveUp(String),
-    /// Its session ended, failing or timing out or with no result accepted,
-    /// for `reason`, with the end of the log that shows it, if any.
-    Ended {
-        reason: String,
-        log_tail: Option<String>,
-    },
+    /// Its session ended unexpectedly.
+    Ended(Ended),
     UsageLimit {
         resets_at: Timestamp,
     },
@@ -540,10 +536,14 @@ impl fmt::Display for Unscored {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Unscored::GaveUp(reason) => write!(f, "the scorer gave up: {reason}"),
-            Unscored::Ended { reason, log_tail } => {
-                write!(f, "the scorer's session ended without a score: {reason}")?;
+            Unscored::Ended(Ended { end, log_tail }) => {
+                write!(
+                    f,
+                    "the scorer's session ended without a score: {}",
+                    hand_back::ended_reason(end)
+                )?;
                 match log_tail {
-                    Some(tail) => write!(f, "\n\n{tail}"),
+                    Some(tail) => write!(f, "\n\n{}", tail.text()),
                     None => Ok(()),
                 }
             }
@@ -561,10 +561,8 @@ impl std::error::Error for Unscored {}
 impl From<Failure> for Unscored {
     fn from(failure: Failure) -> Unscored {
         match failure {
-            Failure::HandBack(hand_back) => Unscored::Ended {
-                reason: hand_back.reason,
-                log_tail: hand_back.log_tail.map(|tail| tail.text().to_string()),
-            },
+            Failure::HandBack(hand_back) => Unscored::Failed(anyhow!(hand_back.reason)),
+            Failure::Ended { ended, .. } => Unscored::Ended(ended),
             Failure::UsageLimit(limit) => Unscored::UsageLimit {
                 resets_at: limit.resets_at,
             },
@@ -609,7 +607,7 @@ pub async fn run(
         Unscored::Failed(error) => {
             Unscored::Failed(anyhow!(redaction.apply(&format!("{error:#}"))))
         }
-        unscored @ (Unscored::GaveUp(_) | Unscored::Ended { .. } | Unscored::UsageLimit { .. }) => {
+        unscored @ (Unscored::GaveUp(_) | Unscored::Ended(_) | Unscored::UsageLimit { .. }) => {
             unscored
         }
     })?;

@@ -212,8 +212,8 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
 async fn a_session_that_fails_fails_the_run() {
     let mut world = with_automation("weekly", WEEKLY).await;
     world.harness.on_automation(|_| {
-        Err(SessionError::Failed {
-            reason: "it crashed".into(),
+        Err(SessionError::NoResult {
+            why: "it crashed".into(),
             log_tail: String::new(),
         })
     });
