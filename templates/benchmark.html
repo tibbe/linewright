@@ -3,8 +3,11 @@
 {%- block main -%}
 <div id="benchmark-said" class="max-w-xl empty:hidden" role="status"></div>
 <div role="tablist" class="tabs tabs-border">
-<input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Runs"{% if !self.opens_on_tasks() %} checked{% endif %}>
-<div role="tabpanel" class="tab-content pt-4">
+{%- for link in tab_links %}
+<a role="tab" class="tab{% if self.opens(link.tab.clone()) %} tab-active{% endif %}" id="{{ link.tab.link_id() }}" href="{{ link.href }}" aria-selected="{{ self.opens(link.tab.clone()) }}" aria-controls="{{ link.tab.panel() }}">{{ link.tab.label() }}</a>
+{%- endfor %}
+</div>
+<div role="tabpanel" id="{{ BenchmarkTab::Runs.panel() }}" aria-labelledby="{{ BenchmarkTab::Runs.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Runs) %} hidden{% endif %}>
 {%- call(part) ui::table_card("Runs", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Runs), shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
@@ -15,8 +18,7 @@
 {%- endmatch %}
 {%- endcall %}
 </div>
-<input type="radio" name="benchmark-tab" role="tab" class="tab" aria-label="Tasks"{% if self.opens_on_tasks() %} checked{% endif %}>
-<div role="tabpanel" class="tab-content pt-4">
+<div role="tabpanel" id="{{ BenchmarkTab::Tasks.panel() }}" aria-labelledby="{{ BenchmarkTab::Tasks.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Tasks) %} hidden{% endif %}>
 {%- call(part) ui::table_card("Tasks", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
@@ -26,7 +28,6 @@
 {%- when crate::web::table::Part::Filters %}
 {%- endmatch %}
 {%- endcall %}
-</div>
 </div>
 {%- call ui::new_dialog("new-task", path) %}
 {{ new_task }}

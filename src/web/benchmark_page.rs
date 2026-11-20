@@ -1,8 +1,8 @@
 //! The benchmark page (`docs/specs/benchmarks.md`, Benchmark and New task):
 //! benchmark NAME's heading, then its benchmark runs and its tasks, each in a
-//! tab of its own, the New task dialog that captures a run of the benchmark's
-//! stage into it, and the New benchmark run dialog that launches a benchmark
-//! run on it.
+//! tab of its own at its own address, the New task dialog that captures a run
+//! of the benchmark's stage into it, and the New benchmark run dialog that
+//! launches a benchmark run on it.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -27,8 +27,8 @@ use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing
 use super::table::{Align, Column, Fold, View};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmarks, events, nothing_there, render,
-    run_path, with_filters,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, benchmarks, events,
+    no_such_page, nothing_there, render, run_path, with_filters,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -250,6 +250,77 @@ struct Shown {
     benchmark_runs_nav: Option<PagesShown>,
 }
 
+/// A tab of the benchmark page (`docs/specs/benchmarks.md`, Benchmark, Tabs),
+/// at its own address (`docs/specs/web/design_system.md`, A tab).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BenchmarkTab {
+    /// The benchmark runs.
+    Runs,
+    Tasks,
+}
+
+impl BenchmarkTab {
+    const ALL: [BenchmarkTab; 2] = [BenchmarkTab::Runs, BenchmarkTab::Tasks];
+
+    /// The tab the page opens on: `asked`, the tab its address names, or
+    /// without one, Runs, or Tasks while the benchmark has no benchmark runs
+    /// (`docs/specs/benchmarks.md`, Benchmark, Tabs).
+    fn opened(asked: Option<BenchmarkTab>, has_benchmark_runs: bool) -> BenchmarkTab {
+        asked.unwrap_or(if has_benchmark_runs {
+            BenchmarkTab::Runs
+        } else {
+            BenchmarkTab::Tasks
+        })
+    }
+
+    /// Its segment of its address, after the page's.
+    pub(super) fn segment(self) -> &'static str {
+        match self {
+            BenchmarkTab::Runs => "runs",
+            BenchmarkTab::Tasks => "tasks",
+        }
+    }
+
+    /// The id of its panel.
+    fn panel(self) -> &'static str {
+        match self {
+            BenchmarkTab::Runs => "runs-panel",
+            BenchmarkTab::Tasks => "tasks-panel",
+        }
+    }
+
+    /// The id of its link.
+    fn link_id(self) -> String {
+        format!("{}-tab", self.panel())
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            BenchmarkTab::Runs => "Runs",
+            BenchmarkTab::Tasks => "Tasks",
+        }
+    }
+}
+
+impl std::str::FromStr for BenchmarkTab {
+    type Err = ();
+
+    /// The tab whose segment is `segment`.
+    fn from_str(segment: &str) -> Result<BenchmarkTab, ()> {
+        BenchmarkTab::ALL
+            .into_iter()
+            .find(|tab| tab.segment() == segment)
+            .ok_or(())
+    }
+}
+
+/// A tab's link, which opens its panel.
+struct TabLink {
+    tab: BenchmarkTab,
+    /// Its address, with the page's pages.
+    href: String,
+}
+
 /// The page of each of the page's tables that its address asks for.
 #[derive(Clone, Copy, Deserialize)]
 pub(super) struct Paging {
@@ -271,9 +342,23 @@ impl Paging {
         )
     }
 
-    /// Where a link to these pages of benchmark `name` leads.
-    fn href(self, name: &BenchmarkName) -> PageHref {
-        PageHref::at(self.path(&benchmark_path(name)))
+    /// Where a link to these pages of benchmark `name`, on its tab `tab`,
+    /// leads. The stream is the same on every tab.
+    fn href(self, name: &BenchmarkName, tab: BenchmarkTab) -> PageHref {
+        PageHref {
+            page: self.tab_path(name, tab),
+            stream: self.stream(name),
+        }
+    }
+
+    /// The address of tab `tab` of benchmark `name` on these pages.
+    fn tab_path(self, name: &BenchmarkName, tab: BenchmarkTab) -> String {
+        self.path(&benchmark_tab_path(name, tab))
+    }
+
+    /// The page's stream on these pages of benchmark `name`.
+    fn stream(self, name: &BenchmarkName) -> String {
+        self.path(&format!("/events{}", benchmark_path(name)))
     }
 }
 
@@ -290,6 +375,9 @@ struct BenchmarkPage {
     page: Page,
     frame: Frame,
     path: String,
+    /// The tab that shows.
+    tab: BenchmarkTab,
+    tab_links: Vec<TabLink>,
     tasks: Vec<TaskRow>,
     tasks_nav: Option<PagesShown>,
     benchmark_runs: Vec<BenchmarkRunRow>,
@@ -308,10 +396,9 @@ struct BenchmarkPage {
 }
 
 impl BenchmarkPage {
-    /// Whether the page opens on the tab of its tasks, as it does while the
-    /// benchmark has no benchmark runs.
-    fn opens_on_tasks(&self) -> bool {
-        self.benchmark_runs.is_empty()
+    /// Whether tab `tab` is open, its panel shown.
+    fn opens(&self, tab: BenchmarkTab) -> bool {
+        self.tab == tab
     }
 
     fn launch_path(&self) -> String {
@@ -493,7 +580,7 @@ async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, U
                         tasks: page,
                         ..paging
                     }
-                    .href(&benchmark.name)
+                    .href(&benchmark.name, BenchmarkTab::Tasks)
                 }),
                 benchmark_runs: benchmark_runs_page
                     .shows(benchmark_runs)
@@ -505,7 +592,7 @@ async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, U
                         benchmark_runs: page,
                         ..paging
                     }
-                    .href(&benchmark.name)
+                    .href(&benchmark.name, BenchmarkTab::Runs)
                 }),
                 benchmark,
             })
@@ -561,7 +648,7 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     };
     Page::new(
         Place::Alone(Area::Benchmarks, Thing::Found(heading)),
-        paging.href(&benchmark.name).stream,
+        paging.stream(&benchmark.name),
         navigation,
     )
 }
@@ -570,6 +657,32 @@ pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
     Path(name): Path<String>,
     Query(paging): Query<Paging>,
+    navigation: Navigation,
+) -> Response {
+    benchmark_page_on(sources, name, None, paging, navigation).await
+}
+
+/// The benchmark page at tab `tab`'s address, or else no page.
+pub(super) async fn benchmark_tab_page(
+    State(sources): State<Sources>,
+    Path((name, tab)): Path<(String, String)>,
+    Query(paging): Query<Paging>,
+    navigation: Navigation,
+) -> Response {
+    let Ok(tab) = tab.parse() else {
+        return no_such_page().await;
+    };
+    benchmark_page_on(sources, name, Some(tab), paging, navigation).await
+}
+
+/// The benchmark page of benchmark `name` on tab `tab`, or without one, on the
+/// tab it opens on: its benchmark runs, or its tasks while it has no benchmark
+/// runs.
+async fn benchmark_page_on(
+    sources: Sources,
+    name: String,
+    tab: Option<BenchmarkTab>,
+    paging: Paging,
     navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
@@ -583,6 +696,14 @@ pub(super) async fn benchmark_page(
             benchmark_runs_nav,
         }) => {
             let path = benchmark_path(&benchmark.name);
+            let tab = BenchmarkTab::opened(tab, !benchmark_runs.is_empty());
+            let tab_links = BenchmarkTab::ALL
+                .into_iter()
+                .map(|link| TabLink {
+                    tab: link,
+                    href: paging.tab_path(&benchmark.name, link),
+                })
+                .collect();
             let new_task = NewTaskForm::blank(&sources, &benchmark.name, benchmark.stage).await;
             let new_benchmark_run =
                 NewBenchmarkRunForm::blank(&sources, &benchmark.name, task_count);
@@ -598,6 +719,8 @@ pub(super) async fn benchmark_page(
                 brief_texts: html::rendered(&BriefTexts::of(&sources)),
                 new_task: html::rendered(&new_task),
                 path,
+                tab,
+                tab_links,
                 tasks,
                 tasks_nav,
                 benchmark_runs,
@@ -832,5 +955,57 @@ pub(super) async fn remove_task(
             warn!(benchmark = %benchmark, task = %task, error = why, "removing a task failed");
             Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &why))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_log::test]
+    fn the_page_opens_on_the_tab_asked_for_or_else_on_runs_or_on_tasks_while_there_are_no_benchmark_runs()
+     {
+        let opened: Vec<BenchmarkTab> = [
+            (None, true),
+            (None, false),
+            (Some(BenchmarkTab::Tasks), true),
+            (Some(BenchmarkTab::Runs), false),
+        ]
+        .into_iter()
+        .map(|(asked, has_benchmark_runs)| BenchmarkTab::opened(asked, has_benchmark_runs))
+        .collect();
+
+        assert_eq!(
+            opened,
+            [
+                BenchmarkTab::Runs,
+                BenchmarkTab::Tasks,
+                BenchmarkTab::Tasks,
+                BenchmarkTab::Runs
+            ]
+        );
+    }
+
+    #[test_log::test]
+    fn a_tab_is_named_in_its_address_by_its_segment_alone() {
+        let parsed: Vec<Result<BenchmarkTab, ()>> = ["runs", "tasks", "Tasks", "nope", ""]
+            .into_iter()
+            .map(str::parse)
+            .collect();
+
+        assert_eq!(
+            parsed,
+            [
+                Ok(BenchmarkTab::Runs),
+                Ok(BenchmarkTab::Tasks),
+                Err(()),
+                Err(()),
+                Err(())
+            ]
+        );
+        assert_eq!(
+            benchmark_tab_path(&"board".parse().unwrap(), BenchmarkTab::Tasks),
+            "/benchmarks/board/tasks"
+        );
     }
 }

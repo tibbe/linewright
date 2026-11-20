@@ -523,17 +523,17 @@ async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_
             items: vec![
                 page_link(
                     "Previous",
-                    "/benchmarks/board?runs-page=2",
+                    "/benchmarks/board/tasks?runs-page=2",
                     "/events/benchmarks/board?runs-page=2"
                 ),
                 page_link(
                     "1",
-                    "/benchmarks/board?runs-page=2",
+                    "/benchmarks/board/tasks?runs-page=2",
                     "/events/benchmarks/board?runs-page=2"
                 ),
                 page_link(
                     "2*",
-                    "/benchmarks/board?runs-page=2&tasks-page=2",
+                    "/benchmarks/board/tasks?runs-page=2&tasks-page=2",
                     "/events/benchmarks/board?runs-page=2&tasks-page=2"
                 ),
                 no_link("Next"),
@@ -549,7 +549,7 @@ async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_
         pages_nav(&html, "#benchmark-runs").unwrap().items[0],
         page_link(
             "Previous",
-            "/benchmarks/board?tasks-page=2",
+            "/benchmarks/board/runs?tasks-page=2",
             "/events/benchmarks/board?tasks-page=2"
         )
     );
@@ -575,26 +575,44 @@ async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_
     );
 }
 
-/// The tabs of the Benchmark page `html`, in order: each one's label, whether
-/// it is checked, and the ids of the regions its panel holds.
+/// A tab of the Benchmark page: its label, its href, whether it is open, and
+/// the ids of the regions its panel holds.
+type Tab = (String, String, bool, Vec<String>);
+
+/// The tabs of the Benchmark page `html`, in order. Each is a link with
+/// `role="tab"` in a daisyUI `tabs tabs-border`, the open one `tab-active`
+/// and `aria-selected`, and controls its panel, which shows only while it is
+/// open.
 #[track_caller]
-fn tabs(html: &Html) -> Vec<(String, bool, Vec<String>)> {
+fn tabs(html: &Html) -> Vec<Tab> {
     let lists = select(html, "main [role=tablist]");
     assert_eq!(lists.len(), 1, "{}", html.html());
     assert!(has_classes(lists[0], &["tabs", "tabs-border"]));
-    select_in(lists[0], ":scope > input.tab")
+    select_in(lists[0], ":scope > a[role=tab]")
         .into_iter()
         .map(|tab| {
-            assert_eq!(tab.attr("type"), Some("radio"));
-            let panel = tab
-                .next_siblings()
-                .find_map(ElementRef::wrap)
-                .expect("the tab's panel");
-            assert!(has_classes(panel, &["tab-content"]), "{}", panel.html());
+            assert!(has_classes(tab, &["tab"]), "{}", tab.html());
+            let open = has_classes(tab, &["tab-active"]);
+            assert_eq!(
+                tab.attr("aria-selected"),
+                Some(if open { "true" } else { "false" }),
+                "{}",
+                tab.html()
+            );
+            let controls = tab.attr("aria-controls").expect("the tab's panel");
+            let panels = select(html, &format!("main [role=tabpanel]#{controls}"));
+            assert_eq!(panels.len(), 1, "{}", html.html());
+            assert_eq!(
+                panels[0].attr("hidden").is_none(),
+                open,
+                "{}",
+                panels[0].html()
+            );
             (
-                tab.attr("aria-label").unwrap_or_default().to_string(),
-                tab.attr("checked").is_some(),
-                select_in(panel, "[id]:is(#benchmark-runs, #tasks)")
+                text(tab),
+                tab.attr("href").unwrap_or_default().to_string(),
+                open,
+                select_in(panels[0], "[id]:is(#benchmark-runs, #tasks)")
                     .into_iter()
                     .filter_map(|region| region.attr("id").map(str::to_string))
                     .collect(),
@@ -603,8 +621,19 @@ fn tabs(html: &Html) -> Vec<(String, bool, Vec<String>)> {
         .collect()
 }
 
+/// Of the tabs of the Benchmark page `html`, each one's label and whether it
+/// is open.
+#[track_caller]
+fn open_tabs(html: &Html) -> Vec<(String, bool)> {
+    tabs(html)
+        .into_iter()
+        .map(|(label, _, open, _)| (label, open))
+        .collect()
+}
+
 /// `docs/specs/benchmarks.md`, Benchmark, Heading and Tabs;
-/// `docs/specs/web/benchmarks.md`, Benchmark.
+/// `docs/specs/web/benchmarks.md`, Benchmark; `docs/specs/web/design_system.md`,
+/// A tab.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_while_it_has_no_benchmark_runs()
  {
@@ -619,13 +648,19 @@ async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_whi
         [
             (
                 "Runs".to_string(),
+                "/benchmarks/board/runs".to_string(),
                 false,
                 vec!["benchmark-runs".to_string()]
             ),
-            ("Tasks".to_string(), true, vec!["tasks".to_string()]),
+            (
+                "Tasks".to_string(),
+                "/benchmarks/board/tasks".to_string(),
+                true,
+                vec!["tasks".to_string()]
+            ),
         ]
     );
-    assert_eq!(select(&html, "#benchmark-runs [role=tablist], #tasks [role=tablist], #benchmark-runs input.tab, #tasks input.tab").len(), 0);
+    assert_eq!(select(&html, "#benchmark-runs [role=tablist], #tasks [role=tablist], #benchmark-runs [role=tab], #tasks [role=tab]").len(), 0);
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Tabs.
@@ -636,13 +671,120 @@ async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
 
     let html = pages.page("/benchmarks/board").await;
 
-    let opened: Vec<(String, bool)> = tabs(&html)
+    assert_eq!(
+        open_tabs(&html),
+        [("Runs".to_string(), true), ("Tasks".to_string(), false)]
+    );
+}
+
+/// `docs/specs/design_system.md`, Tabs, Links; `docs/specs/web/design_system.md`,
+/// A tab: each tab is at its own address, whatever the page opens on without
+/// one.
+#[test_log::test(tokio::test)]
+async fn each_tab_of_the_benchmark_page_opens_at_its_own_address() {
+    let launched_on = with_benchmarks().await;
+    launched(&launched_on, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    let empty = Pages::of(view(vec![], vec![])).await;
+    keep_benchmark(&empty.path(""), "fresh", "implement").await;
+
+    for (web, path, open) in [
+        (&launched_on, "/benchmarks/board/tasks", [false, true]),
+        (&launched_on, "/benchmarks/board/runs", [true, false]),
+        (&empty, "/benchmarks/fresh/runs", [true, false]),
+        (&empty, "/benchmarks/fresh/tasks", [false, true]),
+    ] {
+        let html = web.page(path).await;
+
+        assert_eq!(
+            open_tabs(&html),
+            [
+                ("Runs".to_string(), open[0]),
+                ("Tasks".to_string(), open[1])
+            ],
+            "{path}"
+        );
+    }
+}
+
+/// `docs/specs/web/design_system.md`, A tab: a segment that names no tab is
+/// an unknown page.
+#[test_log::test(tokio::test)]
+async fn a_benchmark_tab_that_does_not_exist_is_no_page() {
+    let pages = with_benchmarks().await;
+
+    for path in [
+        "/benchmarks/board/nope",
+        "/benchmarks/board/Tasks",
+        "/benchmarks/board/launch",
+        "/benchmarks/board/remove-task",
+        "/benchmarks/nothing/nope",
+    ] {
+        let (status, body) = pages.get(path).await;
+
+        assert_eq!((status, body.as_str()), (404, "no such page"), "{path}");
+    }
+    let (status, body) = pages.get("/benchmarks/nothing/tasks").await;
+    assert_eq!(status, 404);
+    let html = Html::parse_document(&body);
+    assert_eq!(
+        text(select(&html, "main #tasks")[0]),
+        "No such benchmark nothing"
+    );
+}
+
+/// `docs/specs/design_system.md`, Tabs, Links: a tab's link carries the
+/// page's pages, and its tables' page links go to their own tab's address.
+#[test_log::test(tokio::test)]
+async fn the_benchmark_pages_tab_links_carry_its_pages_and_open_on_the_page_asked_for() {
+    let pages = with_benchmarks().await;
+    for n in 1..=26 {
+        keep_task(
+            &pages.path(""),
+            "board",
+            &format!("task-{n:02}"),
+            "1/implement-1",
+            "Does it.\n",
+        )
+        .await;
+    }
+    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+
+    let html = pages.page("/benchmarks/board/tasks?tasks-page=2").await;
+
+    let hrefs: Vec<(String, String, bool)> = tabs(&html)
         .into_iter()
-        .map(|(label, checked, _)| (label, checked))
+        .map(|(label, href, open, _)| (label, href, open))
         .collect();
     assert_eq!(
-        opened,
-        [("Runs".to_string(), true), ("Tasks".to_string(), false)]
+        hrefs,
+        [
+            (
+                "Runs".to_string(),
+                "/benchmarks/board/runs?tasks-page=2".to_string(),
+                false
+            ),
+            (
+                "Tasks".to_string(),
+                "/benchmarks/board/tasks?tasks-page=2".to_string(),
+                true
+            ),
+        ]
+    );
+    assert_eq!(
+        pages_nav(&html, "#tasks").unwrap().showing,
+        "Showing 26–28 of 28 tasks"
+    );
+    assert_eq!(
+        pages_nav(&html, "#tasks").unwrap().items[0],
+        page_link(
+            "Previous",
+            "/benchmarks/board/tasks",
+            "/events/benchmarks/board"
+        )
+    );
+    assert_eq!(
+        events_path(&html),
+        Some("/events/benchmarks/board?tasks-page=2")
     );
 }
 
