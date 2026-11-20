@@ -165,6 +165,7 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(run_page::run_page).post(capture::capture),
         )
         .route("/events/runs/{*id}", get(run_page::run_events))
+        .route(Navigation::PATH, post(shell::remember_navigation))
         .route("/assets/{name}", get(asset))
         .layer(middleware::from_fn(confined))
         .fallback(|| async { (StatusCode::NOT_FOUND, "no such page") })
