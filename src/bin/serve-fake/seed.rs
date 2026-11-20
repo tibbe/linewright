@@ -17,7 +17,7 @@ use linewright::input::{self, Wanted};
 use linewright::results::Verdict;
 use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
-use linewright::task::{self, BenchmarkChoice, Criteria, TaskStage};
+use linewright::task::{self, BenchmarkChoice, Criteria, TaskName, TaskStage};
 use linewright::trial::Configuration;
 use serde_json::{Value, json};
 
@@ -399,10 +399,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
         .next()
         .context("the benchmark run has trials")?;
     let task = &record.tasks[first.task];
-    let task_run = BOARD_TASKS
-        .iter()
-        .find(|seeded| seeded.name == task.as_str())
-        .context("the trial's task is the seed's")?;
+    let task_run = seed_task(task)?;
     trial_output(
         &benchmark_runs.output_dir(
             launched.id,
@@ -414,10 +411,12 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
     )
 }
 
-/// Launches on `board` a benchmark run under `as-is` alone, after the seed's
-/// other one, and cancels it once its first trial's run has ended, before its
-/// scorer starts, so that it has no score: that trial ends cancelled with its
-/// run, and the other is left as it was, not started.
+/// Launches on `board` a benchmark run under `as-is` alone, twice, after the
+/// seed's other one, and cancels it as its first repetition's trials are in
+/// flight: the run of the first has ended and its scorer has not started, so
+/// that trial ends cancelled with its run; the cancel stops the run of the
+/// second, which keeps what it cost until then; and the second repetition's
+/// trials have not started.
 async fn cancelled_benchmark_run(
     benchmark_runs: &BenchmarkRuns,
     board: &BenchmarkName,
@@ -427,7 +426,7 @@ async fn cancelled_benchmark_run(
         .launch(
             board,
             Vec::new(),
-            NonZeroU32::new(1).context("one repetition")?,
+            NonZeroU32::new(2).context("two repetitions")?,
             launched_at,
         )
         .await?;
@@ -436,20 +435,22 @@ async fn cancelled_benchmark_run(
         .show(launched.id)
         .await?
         .context("the seed's cancelled benchmark run is kept")?;
-    let first = TrialRef {
-        benchmark_run: launched.id,
-        key: *record
-            .trials
-            .keys()
-            .next()
-            .context("the benchmark run has trials")?,
+    let mut keys = record.trials.keys();
+    let mut next = || {
+        anyhow::Ok(TrialRef {
+            benchmark_run: launched.id,
+            key: *keys.next().context("the benchmark run has two trials")?,
+        })
     };
-    benchmark_runs
-        .step(&first, TrialChange::RunStarts, at)
-        .await?;
+    let (ran, stopped) = (next()?, next()?);
+    for trial in [&ran, &stopped] {
+        benchmark_runs
+            .step(trial, TrialChange::RunStarts, at)
+            .await?;
+    }
     benchmark_runs
         .step(
-            &first,
+            &ran,
             TrialChange::RunEnds(TrialFigures {
                 outcome: OutcomeName::Ended(Ending::Done),
                 money: Some(usd(0.31)?),
@@ -463,9 +464,45 @@ async fn cancelled_benchmark_run(
         .await
         .context("cancelling the seed's benchmark run")?;
     benchmark_runs
-        .step(&first, TrialChange::Cancelled { stopped: None }, at)
+        .step(&ran, TrialChange::Cancelled { stopped: None }, at)
         .await?;
-    Ok(())
+    benchmark_runs
+        .step(
+            &stopped,
+            TrialChange::Cancelled {
+                stopped: Some(TrialFigures {
+                    outcome: OutcomeName::Ended(STOPPED),
+                    money: Some(usd(0.12)?),
+                    time: Duration::from_secs(41),
+                }),
+            },
+            at,
+        )
+        .await?;
+    let task = &record.tasks[stopped.key.task];
+    run_output(
+        &benchmark_runs.output_dir(
+            launched.id,
+            &record.configurations[stopped.key.configuration],
+            task,
+            stopped.key.repetition,
+        ),
+        seed_task(task)?,
+        STOPPED,
+        "The board's columns are half named when the run stops.",
+    )
+}
+
+/// How the run of the trial of the seed's cancelled benchmark run that the
+/// cancel stopped ended.
+const STOPPED: Ending = Ending::Cancelled;
+
+/// The seed's task `task`.
+fn seed_task(task: &TaskName) -> Result<&'static SeedTask> {
+    BOARD_TASKS
+        .iter()
+        .find(|seeded| seeded.name == task.as_str())
+        .context("the trial's task is the seed's")
 }
 
 /// Writes in `output` what the first trial of the seed's benchmark run left
@@ -473,18 +510,12 @@ async fn cancelled_benchmark_run(
 /// ran, its run's record and session, its score and its scorer's
 /// session.
 fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
-    let run = run_of(task)?;
-    let session = format!("sessions/issue-{}/20260301T160005Z-design", TASKS_ISSUE.0);
-    let mut session_entry = json!({"dir": session});
-    extend(&mut session_entry, &ran())?;
-    let record = json!({
-        "item": TASKS_ISSUE.0,
-        "stage": "design",
-        "n": task.n,
-        "started_at": "2026-03-01T16:00:05Z",
-        "end": {"at": "2026-03-01T16:09:40Z", "ending": "done"},
-        "sessions": [session_entry],
-    });
+    run_output(
+        output,
+        task,
+        Ending::Done,
+        "The board's columns now carry their names.",
+    )?;
     let score = score(
         Verdict::Pass,
         "The board names its columns as the criteria ask, and the tests pass.",
@@ -494,33 +525,7 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
             "calls": [],
         }),
     )?;
-    let transcript = |at: &str, text: &str| -> String {
-        let started = json!({
-            "type": "system", "subtype": "init", "model": "claude-opus-5-5", "timestamp": at,
-        });
-        let said = json!({
-            "type": "assistant", "timestamp": at,
-            "message": {"content": [{"type": "text", "text": text}]},
-        });
-        format!("{started}\n{said}\n")
-    };
     let files = [
-        (linewright::trial::TASK.to_string(), format!("{run}\n")),
-        (
-            format!("runs/items/{}/design-{}.json", TASKS_ISSUE.0, task.n),
-            record.to_string(),
-        ),
-        (
-            format!("{session}/output.jsonl"),
-            transcript(
-                "2026-03-01T16:00:05Z",
-                "The board's columns now carry their names.",
-            ),
-        ),
-        (
-            format!("{session}/brief.md"),
-            "# Your task\n\nDesign the ticket below.\n".to_string(),
-        ),
         (
             linewright::trial::scorer::SCORE.to_string(),
             score.to_string(),
@@ -537,6 +542,57 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
             "# Your task\n\nScore the trial.\n".to_string(),
         ),
     ];
+    write_files(output, files)
+}
+
+/// Writes in `output` what a trial of a seed's benchmark run left there as it
+/// ran `task` until its run ended as `ending`, its agent last saying `said`:
+/// the task it ran, and its run's record and session.
+fn run_output(output: &Path, task: &SeedTask, ending: Ending, said: &str) -> Result<()> {
+    let run = run_of(task)?;
+    let session = format!("sessions/issue-{}/20260301T160005Z-design", TASKS_ISSUE.0);
+    let mut session_entry = json!({"dir": session});
+    extend(&mut session_entry, &ran())?;
+    let record = json!({
+        "item": TASKS_ISSUE.0,
+        "stage": "design",
+        "n": task.n,
+        "started_at": "2026-03-01T16:00:05Z",
+        "end": {"at": "2026-03-01T16:09:40Z", "ending": ending},
+        "sessions": [session_entry],
+    });
+    let files = [
+        (linewright::trial::TASK.to_string(), format!("{run}\n")),
+        (
+            format!("runs/items/{}/design-{}.json", TASKS_ISSUE.0, task.n),
+            record.to_string(),
+        ),
+        (
+            format!("{session}/output.jsonl"),
+            transcript("2026-03-01T16:00:05Z", said),
+        ),
+        (
+            format!("{session}/brief.md"),
+            "# Your task\n\nDesign the ticket below.\n".to_string(),
+        ),
+    ];
+    write_files(output, files)
+}
+
+/// A session's transcript in which the agent, started at `at`, says `text`.
+fn transcript(at: &str, text: &str) -> String {
+    let started = json!({
+        "type": "system", "subtype": "init", "model": "claude-opus-5-5", "timestamp": at,
+    });
+    let said = json!({
+        "type": "assistant", "timestamp": at,
+        "message": {"content": [{"type": "text", "text": text}]},
+    });
+    format!("{started}\n{said}\n")
+}
+
+/// Writes each file of `files`, a path under `output` and its text.
+fn write_files(output: &Path, files: impl IntoIterator<Item = (String, String)>) -> Result<()> {
     for (path, text) in files {
         let path = output.join(path);
         std::fs::create_dir_all(path.parent().context("a file has a directory")?)?;
