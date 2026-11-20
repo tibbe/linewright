@@ -182,7 +182,7 @@ const EMPTY_BENCHMARK: &str = "triage-basics";
 /// Writes into the work directory `work_dir` the benchmarks the web UI shows: a
 /// benchmark of design tasks captured from #3's runs, which the seed records as
 /// ended, with a benchmark run on it that has ended and one cancelled before
-/// any result, and an empty benchmark of triage. A work directory that holds
+/// any score, and an empty benchmark of triage. A work directory that holds
 /// the first of those runs already is left as it is.
 ///
 /// # Errors
@@ -243,7 +243,7 @@ const TRIALS: [SeedTrial; 8] = [
         ending: Ending::Done,
         money: 0.21,
         seconds: 61,
-        verdict: Verdict::Fail,
+        verdict: Verdict::Pass,
         leak: true,
     },
     SeedTrial::Unscored {
@@ -308,7 +308,8 @@ enum SeedTrial {
 /// `as-is` and `terse`, which sets a low effort, twice, and ends each of its
 /// trials as [`TRIALS`] says, twenty minutes after its launch: with passes,
 /// failures, a leak and trials without a score. The first trial's
-/// output holds what its run and its scorer left, as [`trial_output`] says.
+/// output holds what its run and its scorer left, as [`trial_output`] says,
+/// and the output of a trial with a leak its score, as [`leak_output`] says.
 async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
@@ -329,7 +330,6 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
         .await?
         .context("the seed's benchmark run is kept")?;
     let at = launched_at + chrono::TimeDelta::minutes(20);
-    let usd = |money: f64| Usd::new(money).context("a cost is a number of dollars");
     for (key, seeded) in record.trials.keys().zip(&TRIALS) {
         let trial = TrialRef {
             benchmark_run: launched.id,
@@ -365,13 +365,26 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
             .await?;
         let scored = match *seeded {
             SeedTrial::Unscored { .. } => continue,
-            SeedTrial::Scored { verdict, leak, .. } => TrialChange::Scored(ScoreFigures {
-                correctness: verdict,
-                leak,
-                scorer_money: Some(usd(0.03)?),
-            }),
+            SeedTrial::Scored { verdict, leak, .. } => {
+                if leak {
+                    leak_output(
+                        &benchmark_runs.output_dir(
+                            launched.id,
+                            &record.configurations[key.configuration],
+                            &record.tasks[key.task],
+                            key.repetition,
+                        ),
+                        verdict,
+                    )?;
+                }
+                TrialChange::Scored(ScoreFigures {
+                    correctness: verdict,
+                    leak,
+                    scorer_money: Some(usd(0.03)?),
+                })
+            }
             SeedTrial::ScorerMadeNone { .. } => TrialChange::ScorerMakesNone {
-                why: "The scorer's session ended without a score: it timed out after 30m".into(),
+                why: "The scorer gave up: the criteria name no column to check".into(),
                 scorer_money: Some(usd(0.02)?),
             },
         };
@@ -402,8 +415,9 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
 }
 
 /// Launches on `board` a benchmark run under `as-is` alone, after the seed's
-/// other one, and cancels it before any of its trials starts, so that it has
-/// no results.
+/// other one, and cancels it once its first trial's run has ended, before its
+/// scorer starts, so that it has no score: that trial ends cancelled with its
+/// run, and the other is left as it was, not started.
 async fn cancelled_benchmark_run(
     benchmark_runs: &BenchmarkRuns,
     board: &BenchmarkName,
@@ -418,23 +432,39 @@ async fn cancelled_benchmark_run(
         )
         .await?;
     let at = launched_at + chrono::TimeDelta::minutes(1);
-    benchmark_runs
-        .cancel(launched.id, at)
-        .await
-        .context("cancelling the seed's benchmark run")?;
     let record = benchmark_runs
         .show(launched.id)
         .await?
         .context("the seed's cancelled benchmark run is kept")?;
-    for key in record.trials.keys() {
-        let trial = TrialRef {
-            benchmark_run: launched.id,
-            key: *key,
-        };
-        benchmark_runs
-            .step(&trial, TrialChange::Cancelled, at)
-            .await?;
-    }
+    let first = TrialRef {
+        benchmark_run: launched.id,
+        key: *record
+            .trials
+            .keys()
+            .next()
+            .context("the benchmark run has trials")?,
+    };
+    benchmark_runs
+        .step(&first, TrialChange::RunStarts, at)
+        .await?;
+    benchmark_runs
+        .step(
+            &first,
+            TrialChange::RunEnds(TrialFigures {
+                outcome: OutcomeName::Ended(Ending::Done),
+                money: Some(usd(0.31)?),
+                time: Duration::from_secs(52),
+            }),
+            at,
+        )
+        .await?;
+    benchmark_runs
+        .cancel(launched.id, at)
+        .await
+        .context("cancelling the seed's benchmark run")?;
+    benchmark_runs
+        .step(&first, TrialChange::Cancelled, at)
+        .await?;
     Ok(())
 }
 
@@ -445,14 +475,8 @@ async fn cancelled_benchmark_run(
 fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
     let run = run_of(task)?;
     let session = format!("sessions/issue-{}/20260301T160005Z-design", TASKS_ISSUE.0);
-    let scorer = "scorer/20260301T161000Z-scorer";
-    let ran = json!({
-        "model": null,
-        "effort": null,
-        "layers": {"settings": {"model": "harness"}, "prompts": {}},
-    });
     let mut session_entry = json!({"dir": session});
-    extend(&mut session_entry, &ran)?;
+    extend(&mut session_entry, &ran())?;
     let record = json!({
         "item": TASKS_ISSUE.0,
         "stage": "design",
@@ -461,21 +485,15 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
         "end": {"at": "2026-03-01T16:09:40Z", "ending": "done"},
         "sessions": [session_entry],
     });
-    let mut scorer_session = json!({"record": scorer, "cost": {}});
-    extend(&mut scorer_session, &ran)?;
-    let score = json!({
-        "correctness": {
-            "reasoning": "The board names its columns as the criteria ask, and the tests pass.",
-            "verdict": "pass",
-        },
-        "leak": {
+    let score = score(
+        Verdict::Pass,
+        "The board names its columns as the criteria ask, and the tests pass.",
+        &json!({
             "reasoning": "No call read the task's pull request or its branch.",
             "found": false,
             "calls": [],
-        },
-        "session": scorer_session,
-        "linewright": env!("CARGO_PKG_VERSION"),
-    });
+        }),
+    )?;
     let transcript = |at: &str, text: &str| -> String {
         let started = json!({
             "type": "system", "subtype": "init", "model": "claude-opus-5-5", "timestamp": at,
@@ -508,14 +526,14 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
             score.to_string(),
         ),
         (
-            format!("{scorer}/output.jsonl"),
+            format!("{SCORER}/output.jsonl"),
             transcript(
                 "2026-03-01T16:10:00Z",
                 "The trial passes, and it read nothing it should not.",
             ),
         ),
         (
-            format!("{scorer}/brief.md"),
+            format!("{SCORER}/brief.md"),
             "# Your task\n\nScore the trial.\n".to_string(),
         ),
     ];
@@ -525,6 +543,57 @@ fn trial_output(output: &Path, task: &SeedTask) -> Result<()> {
         std::fs::write(path, text)?;
     }
     Ok(())
+}
+
+/// Writes in `output` the score of a trial of the seed's benchmark run whose
+/// correctness is `verdict`, with a leak that two tool calls show.
+fn leak_output(output: &Path, verdict: Verdict) -> Result<()> {
+    let score = score(
+        verdict,
+        "The board names its columns, and its test reads them back.",
+        &json!({
+            "reasoning": "The session read the pull request that closed the task's issue.",
+            "found": true,
+            "calls": ["gh pr view 4 --comments", "git log origin/3-name-the-columns"],
+        }),
+    )?;
+    std::fs::create_dir_all(output)?;
+    std::fs::write(
+        output.join(linewright::trial::scorer::SCORE),
+        score.to_string(),
+    )?;
+    Ok(())
+}
+
+/// The record of the scorer's session of a trial of the seed's benchmark run,
+/// under its output.
+const SCORER: &str = "scorer/20260301T161000Z-scorer";
+
+/// What a session of the seed's benchmark run ran with: the harness's model.
+fn ran() -> Value {
+    json!({
+        "model": null,
+        "effort": null,
+        "layers": {"settings": {"model": "harness"}, "prompts": {}},
+    })
+}
+
+/// A score as a trial's output keeps it, of correctness `verdict` for
+/// `reasoning`, and of the leak `leak`, scored in [`SCORER`]'s session.
+fn score(verdict: Verdict, reasoning: &str, leak: &Value) -> Result<Value> {
+    let mut session = json!({"record": SCORER, "cost": {}});
+    extend(&mut session, &ran())?;
+    Ok(json!({
+        "correctness": {"reasoning": reasoning, "verdict": verdict},
+        "leak": leak,
+        "session": session,
+        "linewright": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+/// `money` dollars.
+fn usd(money: f64) -> Result<Usd> {
+    Usd::new(money).context("a cost is a number of dollars")
 }
 
 /// Adds the fields of the JSON object `more` to the JSON object `object`.

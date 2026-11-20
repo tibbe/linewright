@@ -266,7 +266,7 @@ async fn serve_fake_and_the_browser_clock_it_names_tell_the_time_from_the_seeds_
 }
 
 #[test_log::test(tokio::test)]
-async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score_and_one_with_no_results()
+async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score_and_a_cancelled_one_with_no_score()
  {
     let served = Served::start().await;
 
@@ -277,7 +277,8 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
         "8 of 8",
         "1 leak",
         "No score. The run's outcome: failed",
-        "No score. the scorer's session ended without a score",
+        "No score. The scorer gave up",
+        "gh pr view 4 --comments",
     ] {
         assert!(shown.contains(said), "{said:?} is not in {shown}");
     }
@@ -302,6 +303,14 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
         "{}",
         cancelled.html()
     );
+    let trials: Vec<String> = cancelled
+        .select(
+            &Selector::parse("#configurations tr[id*=_trial-]:not([id$=_details]) > th + td")
+                .unwrap(),
+        )
+        .map(|cell| cell.text().collect::<String>().trim().to_string())
+        .collect();
+    assert_eq!(trials, ["cancelled", "cancelled"]);
 
     served.stop().await;
 }
