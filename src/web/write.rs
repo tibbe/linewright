@@ -105,7 +105,7 @@ impl IntoResponse for Refused {
 /// `said`, in an alert of `kind`.
 pub(super) fn alert(kind: &str, said: &str) -> axum::response::Html<String> {
     axum::response::Html(format!(
-        r#"<p class="alert alert-soft {kind}"><span>{said}</span></p>"#
+        r#"<p class="alert {kind}"><span>{said}</span></p>"#
     ))
 }
 
