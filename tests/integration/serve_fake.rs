@@ -266,7 +266,8 @@ async fn serve_fake_and_the_browser_clock_it_names_tell_the_time_from_the_seeds_
 }
 
 #[test_log::test(tokio::test)]
-async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score() {
+async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a_score_and_one_with_no_results()
+ {
     let served = Served::start().await;
 
     let page = served.page("/benchmark-runs/1").await;
@@ -294,6 +295,13 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
             "{transcript}: {read}"
         );
     }
+    let cancelled = served.page("/benchmark-runs/2").await;
+    assert!(
+        attributes(&cancelled, "#chart button.point", "id").is_empty()
+            && text(&cancelled).contains("No results"),
+        "{}",
+        cancelled.html()
+    );
 
     served.stop().await;
 }
