@@ -862,11 +862,7 @@ fn trial_rows(
         state,
         TrialState::Scoring { .. }
             | TrialState::Ended(
-                TrialEnd::Scored { .. }
-                    | TrialEnd::Unscored {
-                        why: NoScore::Scorer { .. },
-                        ..
-                    }
+                TrialEnd::Scored { .. } | TrialEnd::Unscored(NoScore::Scorer { .. })
             )
     );
     let details = TrialDetails {
@@ -934,18 +930,18 @@ fn trial_shown(state: &TrialState) -> TrialShown<'_> {
                 Some(run),
             )
         }
-        TrialState::Ended(TrialEnd::Unscored { run, why }) => {
-            let (status, why) = match why {
-                NoScore::Outcome => (
+        TrialState::Ended(TrialEnd::Unscored(no_score)) => {
+            let (status, why) = match no_score {
+                NoScore::Outcome(run) => (
                     run.outcome.status(),
                     "its run is not done or handed back".to_string(),
                 ),
-                NoScore::Scorer { reason, .. } => {
-                    (Status::Failed, format!("the scorer made none: {reason}"))
+                NoScore::Scorer { why, .. } => {
+                    (Status::Failed, format!("the scorer made none: {why}"))
                 }
-                NoScore::Cancelled => (Status::Cancelled, "cancelled".into()),
+                NoScore::Cancelled(_) => (Status::Cancelled, "cancelled".into()),
             };
-            (status, format!("no score: {why}"), Some(run))
+            (status, format!("no score: {why}"), Some(no_score.run()))
         }
         TrialState::Ended(TrialEnd::Cancelled) => {
             (Status::Cancelled, "no score: cancelled".into(), None)
@@ -1560,12 +1556,8 @@ mod tests {
         })
     }
 
-    #[track_caller]
-    fn unscored(outcome: &str, why: NoScore) -> TrialState {
-        TrialState::Ended(TrialEnd::Unscored {
-            run: ended(outcome),
-            why,
-        })
+    fn unscored(no_score: NoScore) -> TrialState {
+        TrialState::Ended(TrialEnd::Unscored(no_score))
     }
 
     /// `docs/specs/benchmarks.md`, Benchmark run, A trial's status, and the
@@ -1580,13 +1572,11 @@ mod tests {
             scored(Verdict::Pass, false),
             scored(Verdict::Pass, true),
             scored(Verdict::Fail, false),
-            unscored(
-                "done",
-                NoScore::Scorer {
-                    reason: "it gave up".into(),
-                    scorer_money: None,
-                },
-            ),
+            unscored(NoScore::Scorer {
+                run: ended("done"),
+                why: "it gave up".into(),
+                scorer_money: None,
+            }),
         ];
 
         let shown: Vec<(Status, String)> = states
@@ -1628,7 +1618,7 @@ mod tests {
         ];
 
         let shown: Vec<Status> = outcomes
-            .map(|outcome| unscored(outcome, NoScore::Outcome))
+            .map(|outcome| unscored(NoScore::Outcome(ended(outcome))))
             .iter()
             .map(|state| trial_shown(state).status)
             .collect();
@@ -1650,7 +1640,7 @@ mod tests {
     #[test_log::test]
     fn a_trial_its_benchmark_runs_cancel_left_without_a_score_shows_cancelled() {
         let states = [
-            unscored("done", NoScore::Cancelled),
+            unscored(NoScore::Cancelled(ended("done"))),
             TrialState::Ended(TrialEnd::Cancelled),
         ];
 

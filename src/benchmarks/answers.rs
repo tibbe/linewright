@@ -203,18 +203,17 @@ impl From<&TrialState> for TrialAnswer {
                 leak: score.leak,
                 scorer_cost: score.scorer_money,
             },
-            TrialState::Ended(TrialEnd::Unscored { run, why }) => TrialAnswer::Unscored {
-                run: Some(run.into()),
-                why: match why {
-                    NoScore::Outcome => WhyUnscored::Outcome,
+            TrialState::Ended(TrialEnd::Unscored(no_score)) => TrialAnswer::Unscored {
+                run: Some(no_score.run().into()),
+                why: match no_score {
+                    NoScore::Outcome(_) => WhyUnscored::Outcome,
                     NoScore::Scorer {
-                        reason,
-                        scorer_money,
+                        why, scorer_money, ..
                     } => WhyUnscored::Scorer {
-                        reason: reason.clone(),
+                        reason: why.clone(),
                         scorer_cost: *scorer_money,
                     },
-                    NoScore::Cancelled => WhyUnscored::Cancelled,
+                    NoScore::Cancelled(_) => WhyUnscored::Cancelled,
                 },
             },
             TrialState::Ended(TrialEnd::Cancelled) => TrialAnswer::Unscored {
@@ -502,10 +501,11 @@ mod tests {
             ),
             (
                 key(0, 1),
-                TrialState::Ended(TrialEnd::Unscored {
-                    run: trial(Ending::Failed, None, 30),
-                    why: NoScore::Outcome,
-                }),
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(trial(
+                    Ending::Failed,
+                    None,
+                    30,
+                )))),
             ),
             (
                 key(1, 0),
@@ -520,13 +520,11 @@ mod tests {
             ),
             (
                 key(1, 1),
-                TrialState::Ended(TrialEnd::Unscored {
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
                     run: trial(Ending::Done, Some(0.2), 20),
-                    why: NoScore::Scorer {
-                        reason: "it gave up".into(),
-                        scorer_money: Usd::new(0.01),
-                    },
-                }),
+                    why: "it gave up".into(),
+                    scorer_money: Usd::new(0.01),
+                })),
             ),
             (key(2, 0), TrialState::Ended(TrialEnd::Cancelled)),
             (key(2, 1), TrialState::Running),

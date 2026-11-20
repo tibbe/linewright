@@ -259,13 +259,12 @@ fn an_open_benchmark_run_whose_trials_have_all_ended_is_ended() {
                 ((1, 0, 0), scored()),
                 (
                     (1, 1, 0),
-                    TrialState::Ended(TrialEnd::Unscored {
-                        run: TrialFigures {
+                    TrialState::Ended(TrialEnd::Unscored(
+                        linewright::benchmarks::NoScore::Outcome(TrialFigures {
                             outcome: OutcomeName::Ended(Ending::Failed),
                             ..done()
-                        },
-                        why: linewright::benchmarks::NoScore::Outcome,
-                    }),
+                        }),
+                    )),
                 ),
             ],
         ),
