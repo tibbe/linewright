@@ -172,6 +172,44 @@ pub enum TrialState {
     Ended(TrialEnd),
 }
 
+impl TrialState {
+    /// The figures of its run, once its run has ended.
+    pub fn run(&self) -> Option<&TrialFigures> {
+        match self {
+            TrialState::Pending | TrialState::Running | TrialState::Ended(TrialEnd::Cancelled) => {
+                None
+            }
+            TrialState::Ran { run }
+            | TrialState::Scoring { run }
+            | TrialState::Ended(TrialEnd::Scored { run, .. }) => Some(run),
+            TrialState::Ended(TrialEnd::Unscored(no_score)) => Some(no_score.run()),
+        }
+    }
+
+    /// Its score, if its scorer made one.
+    pub fn score(&self) -> Option<&ScoreFigures> {
+        match self {
+            TrialState::Ended(TrialEnd::Scored { score, .. }) => Some(score),
+            TrialState::Pending
+            | TrialState::Running
+            | TrialState::Ran { .. }
+            | TrialState::Scoring { .. }
+            | TrialState::Ended(TrialEnd::Unscored(_) | TrialEnd::Cancelled) => None,
+        }
+    }
+
+    /// Whether its scorer has started, and was not stopped by a cancel.
+    pub fn scorer_began(&self) -> bool {
+        matches!(
+            self,
+            TrialState::Scoring { .. }
+                | TrialState::Ended(
+                    TrialEnd::Scored { .. } | TrialEnd::Unscored(NoScore::Scorer { .. })
+                )
+        )
+    }
+}
+
 /// How a trial ended.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TrialEnd {
@@ -1285,6 +1323,43 @@ mod tests {
             money: Usd::new(0.25),
             time: Duration::from_millis(12_500),
         }
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: the
+    /// scorer's, once it has started.
+    #[test_log::test]
+    fn a_trials_scorer_has_begun_once_it_is_scoring_unless_a_cancel_stopped_it() {
+        let states = [
+            TrialState::Ran {
+                run: figures(Ending::Done),
+            },
+            TrialState::Scoring {
+                run: figures(Ending::Done),
+            },
+            TrialState::Ended(TrialEnd::Scored {
+                run: figures(Ending::Done),
+                score: ScoreFigures {
+                    correctness: Verdict::Pass,
+                    leak: false,
+                    scorer_money: None,
+                },
+            }),
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
+                run: figures(Ending::Done),
+                why: "it gave up".into(),
+                scorer_money: None,
+            })),
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(figures(
+                Ending::Failed,
+            )))),
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Cancelled(figures(
+                Ending::Done,
+            )))),
+        ];
+
+        let began = states.map(|state| state.scorer_began());
+
+        assert_eq!(began, [false, true, true, true, false, false]);
     }
 
     /// Records `changes` of `trial` in turn.
