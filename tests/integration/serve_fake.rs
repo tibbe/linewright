@@ -310,7 +310,20 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
         )
         .map(|cell| cell.text().collect::<String>().trim().to_string())
         .collect();
-    assert_eq!(trials, ["cancelled", "cancelled"]);
+    assert_eq!(trials, ["cancelled", "cancelled", "cancelled", "cancelled"]);
+    let facts = text(&cancelled);
+    assert!(
+        facts.contains("2 of 4") && facts.contains("$0.43"),
+        "the run the cancel stopped has ended and counts in the cost: {facts}"
+    );
+    let stopped: Vec<String> = attributes(&cancelled, "#configurations tr[id$=_details] a", "href");
+    assert_eq!(stopped.len(), 1, "{stopped:?}");
+    let read = text(&served.page(&stopped[0]).await);
+    assert!(
+        read.contains("The board's columns are half named when the run stops."),
+        "{}: {read}",
+        stopped[0]
+    );
 
     served.stop().await;
 }
