@@ -565,15 +565,22 @@ fn points(html: &Html, axis: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// Where the point `id` is drawn in its chart's SVG: the `x` and the `y`
-/// of the `foreignObject` that holds it.
+/// Where the point `id` is drawn in its chart's SVG: the `x` and the `y`, in
+/// percent of the plot, of the SVG that holds it.
 #[track_caller]
 fn drawn_at(html: &Html, id: &str) -> (f64, f64) {
-    let drawn = select(html, "#chart foreignObject")
+    let drawn = select(html, "#chart svg svg")
         .into_iter()
         .find(|drawn| !select_in(*drawn, &format!("#{id}")).is_empty())
         .unwrap_or_else(|| panic!("no point {id}: {}", html.html()));
-    let at = |attribute| drawn.attr(attribute).unwrap().parse::<f64>().unwrap();
+    let at = |attribute| {
+        drawn
+            .attr(attribute)
+            .and_then(|at| at.strip_suffix('%'))
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+    };
     (at("x"), at("y"))
 }
 
@@ -661,6 +668,71 @@ async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the
     );
 }
 
+/// `docs/specs/web/components.md`, Chart: the plot is as wide as its card in
+/// the proportions 480:260, its axes are in `base-content/60` and its grid
+/// lines in `base-content/10`, its ticks in `text-xs` and secondary text, and
+/// a point is a `size-4` dot in `bg-primary` with a `border-2` in `base-200`,
+/// its name beside it in `text-xs`.
+#[test_log::test(tokio::test)]
+async fn the_chart_is_drawn_in_the_specs_classes() {
+    let pages = with_benchmark_run().await;
+
+    let html = pages.page("/benchmark-runs/1").await;
+
+    for axis in ["cost", "time"] {
+        let plot = select(&html, &format!("#chart [data-axis={axis}]"))[0];
+        assert!(
+            has_classes(plot, &["w-full", "aspect-[480/260]"]),
+            "{}",
+            plot.html()
+        );
+        let lines = |class: &str| select_in(plot, &format!("svg g.{class} line"));
+        assert_eq!(lines("chart-axes").len(), 2, "{}", plot.html());
+        assert_eq!(lines("chart-grid").len(), 2, "{}", plot.html());
+        assert!(
+            select_in(plot, "svg[viewBox]").is_empty(),
+            "nothing scales its text and lines away from their classes: {}",
+            plot.html()
+        );
+        let axes = select_in(plot, "g.chart-axes")[0];
+        assert!(
+            has_classes(axes, &["text-base-content/60", "stroke-current"]),
+            "{}",
+            axes.html()
+        );
+        let grid = select_in(plot, "g.chart-grid")[0];
+        assert!(
+            has_classes(grid, &["text-base-content/10", "stroke-current"]),
+            "{}",
+            grid.html()
+        );
+        let ticks = select_in(plot, "g.chart-ticks")[0];
+        assert!(
+            has_classes(ticks, &["text-xs", "text-base-content/60"]),
+            "{}",
+            ticks.html()
+        );
+        for point in select_in(plot, "button.point") {
+            let dot = select_in(point, ".dot")[0];
+            assert!(
+                has_classes(
+                    dot,
+                    &[
+                        "size-4",
+                        "rounded-full",
+                        "bg-primary",
+                        "border-2",
+                        "border-base-200"
+                    ]
+                ),
+                "{}",
+                dot.html()
+            );
+            assert!(has_classes(point, &["text-xs"]), "{}", point.html());
+        }
+    }
+}
+
 /// `docs/specs/benchmarks.md`, Benchmark run, A point.
 #[test_log::test(tokio::test)]
 async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
@@ -672,11 +744,13 @@ async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
     for axis in ["cost", "time"] {
         let plot = select(&html, &format!("#chart [data-axis={axis}]"))[0];
         assert_eq!(text(plot), "No results");
+        let said = select_in(plot, "p")[0];
         assert!(
-            select_in(plot, "svg text, button").is_empty(),
+            has_classes(said, &["text-base-content/60", "place-items-center"]),
             "{}",
-            plot.html()
+            said.html()
         );
+        assert!(select_in(plot, "svg, button").is_empty(), "{}", plot.html());
     }
 }
 

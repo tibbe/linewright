@@ -1,18 +1,26 @@
 <div id="chart">
 {%- for plot in benchmark_run.chart %}
-<div class="plot relative aspect-[480/260] w-full" data-axis="{{ plot.axis.name() }}">
+<div class="plot relative aspect-[480/260] w-full pt-4 pr-6 pb-8 pl-12" data-axis="{{ plot.axis.name() }}">
 {%- match plot.drawn %}
 {%- when Some(drawn) %}
-<svg class="size-full" viewBox="{{ drawn.view_box }}">
-<g class="text-base-300 stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.rules }}"/></g>
-<g class="text-base-content/60 stroke-current" fill="none" aria-hidden="true"><path d="{{ drawn.axes }}"/></g>
-<g class="text-base-content/60 fill-current text-xs" aria-hidden="true">
-{%- for tick in drawn.ticks %}
-<text x="{{ "{:.1}"|format(tick.x) }}" y="{{ "{:.1}"|format(tick.y) }}" text-anchor="{{ tick.anchor }}">{{ tick.label }}</text>
+<svg class="block size-full overflow-visible">
+<g class="chart-grid text-base-content/10 stroke-current" shape-rendering="crispEdges" aria-hidden="true">
+{%- for line in drawn.rules %}
+<line x1="{{ "{:.2}%"|format(line.x1) }}" y1="{{ "{:.2}%"|format(line.y1) }}" x2="{{ "{:.2}%"|format(line.x2) }}" y2="{{ "{:.2}%"|format(line.y2) }}"/>
+{%- endfor %}
+</g>
+<g class="chart-axes text-base-content/60 stroke-current" stroke-linecap="square" shape-rendering="crispEdges" aria-hidden="true">
+{%- for line in drawn.axes %}
+<line x1="{{ "{:.2}%"|format(line.x1) }}" y1="{{ "{:.2}%"|format(line.y1) }}" x2="{{ "{:.2}%"|format(line.x2) }}" y2="{{ "{:.2}%"|format(line.y2) }}"/>
+{%- endfor %}
+</g>
+<g class="chart-ticks text-base-content/60 fill-current text-xs" aria-hidden="true">
+{%- for tick in drawn.rate_ticks.iter().chain(drawn.mean_ticks.iter()) %}
+<text x="{{ "{:.2}%"|format(tick.x) }}" y="{{ "{:.2}%"|format(tick.y) }}" dx="{{ tick.dx }}" dy="{{ tick.dy }}" text-anchor="{{ tick.anchor }}">{{ tick.label }}</text>
 {%- endfor %}
 </g>
 {%- for point in drawn.points %}
-<foreignObject class="overflow-visible" x="{{ "{:.1}"|format(point.x) }}" y="{{ "{:.1}"|format(point.y) }}" width="{{ POINT_WIDTH }}" height="{{ POINT_HEIGHT }}"><div class="point-box{% if point.named_left %} named-left{% endif %}"><button type="button" id="{{ point.id }}" class="point" data-tip="{{ point.tip }}"><span class="dot" aria-hidden="true"></span><span class="name">{{ point.name }}</span></button></div></foreignObject>
+<svg class="overflow-visible" x="{{ "{:.2}%"|format(point.x) }}" y="{{ "{:.2}%"|format(point.y) }}" width="1" height="1"><foreignObject class="overflow-visible" x="{{ point.dx }}" y="{{ point.dy }}" width="{{ POINT_WIDTH }}" height="{{ POINT_HEIGHT }}"><div class="point-box{% if point.named_left %} named-left{% endif %}"><button type="button" id="{{ point.id }}" class="point text-xs" data-tip="{{ point.tip }}"><span class="dot size-4 shrink-0 rounded-full border-2 border-base-200 bg-primary" aria-hidden="true"></span><span class="name">{{ point.name }}</span></button></div></foreignObject></svg>
 {%- endfor %}
 </svg>
 {%- when None %}

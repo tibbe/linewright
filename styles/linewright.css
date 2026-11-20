@@ -117,7 +117,7 @@
   }
 
   .benchmark-run-chart .point-box {
-    @apply pointer-events-none flex h-full items-center text-xs;
+    @apply pointer-events-none flex h-full items-center;
   }
 
   .benchmark-run-chart .point-box.named-left {
@@ -130,10 +130,6 @@
 
   .benchmark-run-chart .named-left .point {
     @apply flex-row-reverse;
-  }
-
-  .benchmark-run-chart .point .dot {
-    @apply size-4 shrink-0 rounded-full border-2 border-base-200 bg-info;
   }
 
   a.github > svg.icon {
