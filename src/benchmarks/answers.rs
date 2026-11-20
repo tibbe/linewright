@@ -213,11 +213,10 @@ impl From<&TrialState> for TrialAnswer {
                         reason: why.clone(),
                         scorer_cost: *scorer_money,
                     },
-                    NoScore::Cancelled(_) => WhyUnscored::Cancelled,
                 },
             },
-            TrialState::Ended(TrialEnd::Cancelled) => TrialAnswer::Unscored {
-                run: None,
+            TrialState::Ended(TrialEnd::Cancelled { run }) => TrialAnswer::Unscored {
+                run: run.as_ref().map(Into::into),
                 why: WhyUnscored::Cancelled,
             },
         }
@@ -526,7 +525,10 @@ mod tests {
                     scorer_money: Usd::new(0.01),
                 })),
             ),
-            (key(2, 0), TrialState::Ended(TrialEnd::Cancelled)),
+            (
+                key(2, 0),
+                TrialState::Ended(TrialEnd::Cancelled { run: None }),
+            ),
             (key(2, 1), TrialState::Running),
         ]);
         let record = BenchmarkRunRecord {

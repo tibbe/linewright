@@ -112,8 +112,12 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
             continue;
         };
         match state {
-            TrialState::Pending | TrialState::Running | TrialState::Ended(TrialEnd::Cancelled) => {}
-            TrialState::Ran { run } | TrialState::Scoring { run } => {
+            TrialState::Pending
+            | TrialState::Running
+            | TrialState::Ended(TrialEnd::Cancelled { run: None }) => {}
+            TrialState::Ran { run }
+            | TrialState::Scoring { run }
+            | TrialState::Ended(TrialEnd::Cancelled { run: Some(run) }) => {
                 tally.trial(run);
             }
             TrialState::Ended(TrialEnd::Scored { run, score }) => {
@@ -540,7 +544,10 @@ mod tests {
                     key(1, 1, 1),
                     scored(trial(Some(4.0), 40), Verdict::Pass, false, None),
                 ),
-                (key(1, 2, 0), TrialState::Ended(TrialEnd::Cancelled)),
+                (
+                    key(1, 2, 0),
+                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                ),
             ],
         );
 
@@ -584,16 +591,52 @@ mod tests {
                 ),
                 (
                     key(3, 0, 0),
-                    unscored(NoScore::Cancelled(trial(Some(0.1), 10))),
+                    TrialState::Ended(TrialEnd::Cancelled {
+                        run: Some(trial(Some(0.1), 10)),
+                    }),
                 ),
-                (key(4, 0, 0), TrialState::Ended(TrialEnd::Cancelled)),
+                (
+                    key(4, 0, 0),
+                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                ),
             ],
         );
 
         let as_is = &results(&record).configurations[0];
 
-        assert_eq!(as_is.figures.unscored, 3);
-        assert_eq!(as_is.tasks[0].figures.unscored, 3);
+        assert_eq!(as_is.figures.unscored, 2);
+        assert_eq!(as_is.tasks[0].figures.unscored, 2);
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a
+    /// cancelled trial has no reason, but its run's cost and time count.
+    #[test_log::test]
+    fn a_cancelled_trial_is_not_unscored_and_the_run_it_had_counts() {
+        let record = benchmark_run(
+            &["columns"],
+            &[],
+            2,
+            vec![
+                (
+                    key(1, 0, 0),
+                    TrialState::Ended(TrialEnd::Cancelled {
+                        run: Some(trial(Some(0.5), 30)),
+                    }),
+                ),
+                (
+                    key(2, 0, 0),
+                    TrialState::Ended(TrialEnd::Cancelled { run: None }),
+                ),
+            ],
+        );
+
+        let results = results(&record);
+
+        let as_is = &results.configurations[0];
+        assert_eq!(as_is.figures.unscored, 0);
+        approx(Some(as_is.figures.cost.total), 0.5);
+        approx(Some(as_is.figures.time.total), 30.0);
+        approx(Some(results.cost.total), 0.5);
     }
 
     #[test_log::test]

@@ -449,7 +449,7 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
     );
     assert_eq!(
         record.trials[&key(0, 0)],
-        TrialState::Ended(TrialEnd::Cancelled)
+        TrialState::Ended(TrialEnd::Cancelled { run: None })
     );
     assert_eq!(record.trials[&key(1, 0)], TrialState::Pending);
 }
