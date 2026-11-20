@@ -1012,6 +1012,21 @@ pub enum Unended {
 }
 
 impl OutcomeName {
+    /// Its words (`docs/specs/runs.md`, Ending, the Outcome column).
+    pub(crate) fn word(self) -> &'static str {
+        match self {
+            OutcomeName::Ended(ending) => match ending {
+                Ending::Done => "done",
+                Ending::HandedBack => "handed back",
+                Ending::Cancelled => "cancelled",
+                Ending::UsageLimit => "ended for the usage limit",
+                Ending::Failed => "failed",
+            },
+            OutcomeName::Unended(Unended::InFlight) => "in flight",
+            OutcomeName::Unended(Unended::Interrupted) => "interrupted",
+        }
+    }
+
     /// The status it shows as (`docs/specs/runs.md`, Ending).
     pub(crate) fn status(self) -> Status {
         match self {
@@ -1252,17 +1267,7 @@ pub(crate) fn earlier_runs(left_out: usize) -> String {
 
 impl Outcome {
     pub(crate) fn word(self) -> &'static str {
-        match self {
-            Outcome::Ended { ending, .. } => match ending {
-                Ending::Done => "done",
-                Ending::HandedBack => "handed back",
-                Ending::Cancelled => "cancelled",
-                Ending::UsageLimit => "ended for the usage limit",
-                Ending::Failed => "failed",
-            },
-            Outcome::InFlight { .. } => "in flight",
-            Outcome::Interrupted => "interrupted",
-        }
+        self.name().word()
     }
 
     /// Whether the run failed at its work, as opposed to being stopped.

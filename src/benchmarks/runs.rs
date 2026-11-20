@@ -273,6 +273,17 @@ impl NoScore {
             NoScore::Outcome(run) | NoScore::Scorer { run, .. } => run,
         }
     }
+
+    /// The reason the trial shows (`docs/specs/benchmarks.md`, Benchmark run,
+    /// A trial's reason).
+    pub fn reason(&self) -> String {
+        match self {
+            NoScore::Outcome(run) => {
+                format!("No score. The run's outcome: {}", run.outcome.word())
+            }
+            NoScore::Scorer { why, .. } => format!("No score. {why}"),
+        }
+    }
 }
 
 /// A benchmark run, as it was launched and as far as it has gone.

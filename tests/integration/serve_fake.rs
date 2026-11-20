@@ -276,8 +276,8 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
     for said in [
         "8 of 8",
         "1 leak",
-        "no score: its run is not done or handed back",
-        "no score: the scorer made none",
+        "No score. The run's outcome: failed",
+        "No score. the scorer's session ended without a score",
     ] {
         assert!(shown.contains(said), "{said:?} is not in {shown}");
     }
