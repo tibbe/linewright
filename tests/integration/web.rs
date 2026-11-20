@@ -584,6 +584,94 @@ fn assert_in_secondary_text(html: &Html, selector: &str) {
     }
 }
 
+/// The classes of `element` that start with any of `prefixes`, sorted.
+fn classes_starting_with<'a>(element: ElementRef<'a>, prefixes: &[&str]) -> Vec<&'a str> {
+    let mut classes: Vec<&str> = element
+        .value()
+        .classes()
+        .filter(|class| prefixes.iter().any(|prefix| class.starts_with(prefix)))
+        .collect();
+    classes.sort_unstable();
+    classes
+}
+
+/// Asserts that every part of the transcript on `html` that it shows is
+/// drawn in the classes of `docs/specs/web/components.md`, Transcript: a
+/// session's heading, its settings, its entries and their lines, what an
+/// entry opens to, a sub-agent's work and its count, and thinking.
+#[track_caller]
+fn assert_transcript_drawn_as_the_spec_says(html: &Html) {
+    let headings = select(html, "#transcript .session > h2");
+    assert_ne!(headings.len(), 0, "{}", html.html());
+    for heading in headings {
+        assert!(
+            has_classes(
+                heading,
+                &["font-semibold", "mt-4", "in-[.session:first-child]:mt-0"]
+            ),
+            "{}",
+            heading.html()
+        );
+    }
+    for settings in select(html, "#transcript .session > .settings") {
+        assert!(has_classes(settings, &["text-sm"]), "{}", settings.html());
+    }
+    for entries in select(html, "#transcript .session > ol.entries") {
+        assert!(
+            has_classes(entries, &["font-mono", "text-sm"]),
+            "{}",
+            entries.html()
+        );
+    }
+    for line in select(html, "#transcript .line") {
+        assert_eq!(
+            classes_starting_with(line, &["hover:", "focus-visible:"]),
+            [
+                "focus-visible:bg-base-content/10",
+                "hover:bg-base-content/10"
+            ],
+            "{}",
+            line.html()
+        );
+    }
+    for block in select(
+        html,
+        "#transcript pre, #transcript .prompt, #transcript .thinking",
+    ) {
+        assert!(
+            has_classes(
+                block,
+                &[
+                    "bg-base-200",
+                    "rounded-box",
+                    "px-3",
+                    "py-2",
+                    "max-h-[30rem]",
+                    "overflow-auto",
+                    "whitespace-pre-wrap",
+                ]
+            ),
+            "{}",
+            block.html()
+        );
+    }
+    for work in select(html, "#transcript .entry ol.entries") {
+        assert!(
+            has_classes(work, &["border-s-2", "border-base-content/10"]),
+            "{}",
+            work.html()
+        );
+    }
+    for count in select(html, "#transcript .count") {
+        assert_eq!(
+            classes_starting_with(count, &["badge"]),
+            ["badge", "badge-sm"],
+            "{}",
+            count.html()
+        );
+    }
+}
+
 /// Classes that would grow cut text in place on hover or on focus, moving
 /// what is around it.
 fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {

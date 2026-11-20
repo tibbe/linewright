@@ -1277,6 +1277,23 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     );
 }
 
+/// `docs/specs/web/benchmarks.md`, Benchmark run: a trial's transcripts are
+/// each a transcript (`docs/specs/web/components.md`, Transcript).
+#[test_log::test(tokio::test)]
+async fn a_trials_transcripts_are_drawn_as_the_run_pages_is() {
+    let pages = with_benchmark_run().await;
+
+    for path in [
+        "/benchmark-runs/1/as-is/columns/1/run?verbose=",
+        "/benchmark-runs/1/as-is/columns/1/scorer?verbose=",
+    ] {
+        let html = pages.page(path).await;
+
+        assert_ne!(select(&html, "#transcript .line").len(), 0, "{path}");
+        assert_transcript_drawn_as_the_spec_says(&html);
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn a_trial_with_no_output_or_scorer_answers_404() {
     let pages = with_benchmark_run().await;
