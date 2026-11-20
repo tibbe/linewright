@@ -103,6 +103,18 @@ async fn every_card_is_in_base_200_with_a_light_shadow_and_no_border() {
         }
         for card in select(&html, ".card") {
             assert_drawn_as_a_card(card, "bg-base-200", path);
+            let sizes: Vec<&str> = card
+                .value()
+                .classes()
+                .filter(|class| {
+                    ["card-xs", "card-sm", "card-md", "card-lg", "card-xl"].contains(class)
+                })
+                .collect();
+            assert!(
+                sizes.is_empty(),
+                "{path}: as daisyUI draws it: {}",
+                card.html()
+            );
         }
     }
 }
@@ -610,6 +622,31 @@ async fn every_button_is_small_and_new_is_primary() {
                     button.html()
                 );
             }
+        }
+    }
+}
+
+/// `docs/specs/web/benchmarks.md`, Benchmark run: each fact is a `stat`, its
+/// label the `stat-title` and its value the `stat-value`, as daisyUI draws
+/// them.
+#[test_log::test(tokio::test)]
+async fn benchmark_runs_facts_are_stats_as_daisyui_draws_them() {
+    let pages = with_a_run().await;
+
+    let html = pages.page("/benchmark-runs/1").await;
+
+    let stats = select(&html, "#benchmark-run .stat");
+    assert!(!stats.is_empty(), "{}", html.html());
+    for stat in stats {
+        for part in ["stat-title", "stat-value"] {
+            let parts = select_in(stat, &format!(".{part}"));
+            assert_eq!(parts.len(), 1, "{part}: {}", stat.html());
+            assert_eq!(
+                parts[0].value().classes().collect::<Vec<_>>(),
+                [part],
+                "{}",
+                stat.html()
+            );
         }
     }
 }
