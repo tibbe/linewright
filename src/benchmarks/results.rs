@@ -128,10 +128,10 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
                     }
                 }
             }
-            TrialState::Ended(TrialEnd::Unscored { run, why }) => {
-                tally.trial(run);
+            TrialState::Ended(TrialEnd::Unscored(no_score)) => {
+                tally.trial(no_score.run());
                 tally.unscored += 1;
-                if let NoScore::Scorer { scorer_money, .. } = why {
+                if let NoScore::Scorer { scorer_money, .. } = no_score {
                     scorers.add(scorer_money.map(f64::from));
                 }
             }
@@ -375,8 +375,8 @@ mod tests {
         }
     }
 
-    fn unscored(run: TrialFigures, why: NoScore) -> TrialState {
-        TrialState::Ended(TrialEnd::Unscored { run, why })
+    fn unscored(no_score: NoScore) -> TrialState {
+        TrialState::Ended(TrialEnd::Unscored(no_score))
     }
 
     #[track_caller]
@@ -450,7 +450,7 @@ mod tests {
                 ),
                 (
                     key(2, 1, 0),
-                    unscored(trial(Some(2.0), 200), NoScore::Outcome),
+                    unscored(NoScore::Outcome(trial(Some(2.0), 200))),
                 ),
             ],
         );
@@ -489,7 +489,7 @@ mod tests {
             1,
             vec![
                 (key(1, 0, 0), TrialState::Running),
-                (key(1, 0, 1), unscored(trial(None, 10), NoScore::Outcome)),
+                (key(1, 0, 1), unscored(NoScore::Outcome(trial(None, 10)))),
             ],
         );
 
@@ -572,21 +572,19 @@ mod tests {
             vec![
                 (
                     key(1, 0, 0),
-                    unscored(trial(Some(0.1), 10), NoScore::Outcome),
+                    unscored(NoScore::Outcome(trial(Some(0.1), 10))),
                 ),
                 (
                     key(2, 0, 0),
-                    unscored(
-                        trial(Some(0.1), 10),
-                        NoScore::Scorer {
-                            reason: "it gave up".into(),
-                            scorer_money: None,
-                        },
-                    ),
+                    unscored(NoScore::Scorer {
+                        run: trial(Some(0.1), 10),
+                        why: "it gave up".into(),
+                        scorer_money: None,
+                    }),
                 ),
                 (
                     key(3, 0, 0),
-                    unscored(trial(Some(0.1), 10), NoScore::Cancelled),
+                    unscored(NoScore::Cancelled(trial(Some(0.1), 10))),
                 ),
                 (key(4, 0, 0), TrialState::Ended(TrialEnd::Cancelled)),
             ],
@@ -615,13 +613,11 @@ mod tests {
                 ),
                 (
                     key(2, 0, 0),
-                    unscored(
-                        trial(Some(1.0), 10),
-                        NoScore::Scorer {
-                            reason: "it gave up".into(),
-                            scorer_money: Usd::new(0.02),
-                        },
-                    ),
+                    unscored(NoScore::Scorer {
+                        run: trial(Some(1.0), 10),
+                        why: "it gave up".into(),
+                        scorer_money: Usd::new(0.02),
+                    }),
                 ),
                 (
                     key(2, 0, 1),

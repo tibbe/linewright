@@ -180,7 +180,7 @@ pub enum TrialEnd {
         score: ScoreFigures,
     },
     /// Its run ended, and has no score.
-    Unscored { run: TrialFigures, why: NoScore },
+    Unscored(NoScore),
     /// Its benchmark run was cancelled before its run ended.
     Cancelled,
 }
@@ -214,19 +214,29 @@ pub struct ScoreFigures {
     pub scorer_money: Option<Usd>,
 }
 
-/// Why a trial that ended has no score.
+/// Why a trial that ended has no score, with the figures of its run.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NoScore {
     /// Its run is not done or handed back.
-    Outcome,
+    Outcome(TrialFigures),
     /// Its scorer made no score.
     Scorer {
-        reason: String,
+        run: TrialFigures,
+        why: String,
         /// `None` when the scorer's session has no cost.
         scorer_money: Option<Usd>,
     },
     /// Its benchmark run was cancelled before its scorer made a score.
-    Cancelled,
+    Cancelled(TrialFigures),
+}
+
+impl NoScore {
+    /// The figures of its run.
+    pub fn run(&self) -> &TrialFigures {
+        match self {
+            NoScore::Outcome(run) | NoScore::Scorer { run, .. } | NoScore::Cancelled(run) => run,
+        }
+    }
 }
 
 /// A benchmark run, as it was launched and as far as it has gone.
@@ -318,7 +328,7 @@ pub enum TrialChange {
     Scored(ScoreFigures),
     /// Scoring, its scorer makes none.
     ScorerMakesNone {
-        reason: String,
+        why: String,
         scorer_money: Option<Usd>,
     },
     /// Not ended, its benchmark run is cancelled.
@@ -780,36 +790,24 @@ impl TrialState {
                 TrialState::Ran { run }
             }
             (TrialState::Running, TrialChange::RunEnds(run)) => {
-                TrialState::Ended(TrialEnd::Unscored {
-                    run,
-                    why: NoScore::Outcome,
-                })
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(run)))
             }
             (TrialState::Ran { run }, TrialChange::ScorerStarts) => TrialState::Scoring { run },
             (TrialState::Scoring { run }, TrialChange::Scored(score)) => {
                 TrialState::Ended(TrialEnd::Scored { run, score })
             }
-            (
-                TrialState::Scoring { run },
-                TrialChange::ScorerMakesNone {
-                    reason,
+            (TrialState::Scoring { run }, TrialChange::ScorerMakesNone { why, scorer_money }) => {
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
+                    run,
+                    why,
                     scorer_money,
-                },
-            ) => TrialState::Ended(TrialEnd::Unscored {
-                run,
-                why: NoScore::Scorer {
-                    reason,
-                    scorer_money,
-                },
-            }),
+                }))
+            }
             (TrialState::Pending | TrialState::Running, TrialChange::Cancelled) => {
                 TrialState::Ended(TrialEnd::Cancelled)
             }
             (TrialState::Ran { run } | TrialState::Scoring { run }, TrialChange::Cancelled) => {
-                TrialState::Ended(TrialEnd::Unscored {
-                    run,
-                    why: NoScore::Cancelled,
-                })
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Cancelled(run)))
             }
             (state, change) => anyhow::bail!(
                 "a trial {} cannot change by {change:?}",
@@ -1125,18 +1123,18 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
         }
         "unscored" => match (unscored.as_deref(), reason, trial) {
             (Some("cancelled"), None, None) => TrialState::Ended(TrialEnd::Cancelled),
-            (Some(why), reason, Some(trial)) => TrialState::Ended(TrialEnd::Unscored {
-                run: trial,
-                why: match (why, reason) {
-                    ("outcome", None) => NoScore::Outcome,
+            (Some(cause), reason, Some(run)) => {
+                TrialState::Ended(TrialEnd::Unscored(match (cause, reason) {
+                    ("outcome", None) => NoScore::Outcome(run),
                     ("scorer", Some(reason)) => NoScore::Scorer {
-                        reason,
+                        run,
+                        why: reason,
                         scorer_money,
                     },
-                    ("cancelled", None) => NoScore::Cancelled,
-                    _ => anyhow::bail!("{why:?} is not why a trial has no score"),
-                },
-            }),
+                    ("cancelled", None) => NoScore::Cancelled(run),
+                    _ => anyhow::bail!("{cause:?} is not why a trial has no score"),
+                }))
+            }
             (why, ..) => anyhow::bail!("{why:?} is not why a trial has no score"),
         },
         other => anyhow::bail!("{other:?} is not a trial's state"),
@@ -1175,20 +1173,19 @@ impl Columns {
                 columns.scorer_money = score.scorer_money.map(f64::from);
                 ("scored", Some(run))
             }
-            TrialState::Ended(TrialEnd::Unscored { run, why }) => {
-                columns.unscored = Some(match why {
-                    NoScore::Outcome => "outcome",
+            TrialState::Ended(TrialEnd::Unscored(no_score)) => {
+                columns.unscored = Some(match no_score {
+                    NoScore::Outcome(_) => "outcome",
                     NoScore::Scorer {
-                        reason,
-                        scorer_money,
+                        why, scorer_money, ..
                     } => {
-                        columns.reason = Some(reason.clone());
+                        columns.reason = Some(why.clone());
                         columns.scorer_money = scorer_money.map(f64::from);
                         "scorer"
                     }
-                    NoScore::Cancelled => "cancelled",
+                    NoScore::Cancelled(_) => "cancelled",
                 });
-                ("unscored", Some(run))
+                ("unscored", Some(no_score.run()))
             }
             TrialState::Ended(TrialEnd::Cancelled) => {
                 columns.unscored = Some("cancelled");
@@ -1353,7 +1350,7 @@ mod tests {
                 TrialChange::RunEnds(figures(Ending::Done)),
                 TrialChange::ScorerStarts,
                 TrialChange::ScorerMakesNone {
-                    reason: "it gave up".into(),
+                    why: "it gave up".into(),
                     scorer_money: Usd::new(0.5),
                 },
             ],
@@ -1391,13 +1388,11 @@ mod tests {
             state_of(&benchmark_runs, trial(id, 1)).await,
             (
                 BenchmarkRunState::Ended { at: Some(later()) },
-                TrialState::Ended(TrialEnd::Unscored {
+                TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
                     run: figures(Ending::Done),
-                    why: NoScore::Scorer {
-                        reason: "it gave up".into(),
-                        scorer_money: Usd::new(0.5),
-                    },
-                })
+                    why: "it gave up".into(),
+                    scorer_money: Usd::new(0.5),
+                }))
             )
         );
     }
@@ -1419,10 +1414,9 @@ mod tests {
 
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 0)).await.1,
-            TrialState::Ended(TrialEnd::Unscored {
-                run: figures(Ending::Failed),
-                why: NoScore::Outcome,
-            })
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(figures(
+                Ending::Failed
+            ))))
         );
     }
 
@@ -1450,10 +1444,9 @@ mod tests {
 
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 0)).await.1,
-            TrialState::Ended(TrialEnd::Unscored {
-                run: figures(Ending::Done),
-                why: NoScore::Cancelled,
-            })
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Cancelled(figures(
+                Ending::Done
+            ))))
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
@@ -1545,10 +1538,9 @@ mod tests {
         );
         assert_eq!(
             state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Unscored {
-                run: figures(Ending::Done),
-                why: NoScore::Cancelled
-            })
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Cancelled(figures(
+                Ending::Done
+            ))))
         );
     }
 

@@ -371,7 +371,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
                 scorer_money: Some(usd(0.03)?),
             }),
             SeedTrial::ScorerMadeNone { .. } => TrialChange::ScorerMakesNone {
-                reason: "the scorer's session ended without a score: it timed out".into(),
+                why: "the scorer's session ended without a score: it timed out".into(),
                 scorer_money: Some(usd(0.02)?),
             },
         };

@@ -620,17 +620,16 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
                     scorer_money: None,
                 },
             }),
-            TrialState::Ended(TrialEnd::Unscored {
-                run: figures("failed", Some(0.5), 10),
-                why: NoScore::Outcome,
-            }),
-            TrialState::Ended(TrialEnd::Unscored {
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(figures(
+                "failed",
+                Some(0.5),
+                10,
+            )))),
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
                 run: figures("done", Some(0.75), 20),
-                why: NoScore::Scorer {
-                    reason: "it gave up".into(),
-                    scorer_money: Usd::new(0.125),
-                },
-            }),
+                why: "it gave up".into(),
+                scorer_money: Usd::new(0.125),
+            })),
             TrialState::Ended(TrialEnd::Cancelled),
             TrialState::Scoring {
                 run: figures("done", Some(2.0), 40),

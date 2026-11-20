@@ -279,7 +279,7 @@ impl BenchmarkRunsRunner {
                 time: std::time::Duration::ZERO,
             }),
             (false, None, Step::Scorer(_)) => TrialChange::ScorerMakesNone {
-                reason: "the scorer panicked".into(),
+                why: "the scorer panicked".into(),
                 scorer_money: None,
             },
         };
@@ -468,23 +468,23 @@ impl StepContext {
                 match scorer::keep(&scoreable, score) {
                     Ok(()) => TrialChange::Scored(figures),
                     Err(e) => TrialChange::ScorerMakesNone {
-                        reason: format!("keeping the score: {e:#}"),
+                        why: format!("keeping the score: {e:#}"),
                         scorer_money: figures.scorer_money,
                     },
                 }
             }
             Err(unscored) => TrialChange::ScorerMakesNone {
-                reason: unscored.to_string(),
+                why: unscored.to_string(),
                 scorer_money: spent.money(),
             },
         }
     }
 }
 
-/// A scorer that made no score for `reason`, before its session opened.
-fn scorer_makes_none(reason: String) -> TrialChange {
+/// A scorer that made no score for `why`, before its session opened.
+fn scorer_makes_none(why: String) -> TrialChange {
     TrialChange::ScorerMakesNone {
-        reason,
+        why,
         scorer_money: None,
     }
 }
