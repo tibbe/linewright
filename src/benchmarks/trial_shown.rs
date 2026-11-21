@@ -89,9 +89,9 @@ impl TrialShown<'_> {
             TrialShown::Cancelled => Status::Cancelled,
             TrialShown::Waiting => Status::Paused,
             TrialShown::NoScore(NoScore::Outcome(run)) => run.outcome.status(),
-            TrialShown::NoScore(NoScore::Scorer { .. }) | TrialShown::Fail | TrialShown::Leak => {
-                Status::Failed
-            }
+            TrialShown::NoScore(NoScore::BuildFailed { .. } | NoScore::Scorer { .. })
+            | TrialShown::Fail
+            | TrialShown::Leak => Status::Failed,
             TrialShown::Pass => Status::Done,
             TrialShown::Scoring | TrialShown::Running => Status::InFlight,
         }
@@ -154,6 +154,13 @@ mod tests {
                 "a restart interrupted its run or its scorer, which has not started again",
                 BenchmarkRunState::Open,
                 TrialState::Ran { run: ended("done") },
+            ),
+            (
+                "its build failed",
+                BenchmarkRunState::Open,
+                unscored(NoScore::BuildFailed {
+                    time: Duration::from_secs(5),
+                }),
             ),
             (
                 "its run ended, but not done or handed back",
@@ -221,6 +228,7 @@ mod tests {
                     "a restart interrupted its run or its scorer, which has not started again",
                     ("waiting", Status::Paused)
                 ),
+                ("its build failed", ("no score", Status::Failed)),
                 (
                     "its run ended, but not done or handed back",
                     ("no score", Status::Failed)
@@ -307,6 +315,9 @@ mod tests {
     #[test_log::test]
     fn a_trial_without_a_score_gives_the_spec_s_reason() {
         let reasons = [
+            NoScore::BuildFailed {
+                time: Duration::from_secs(5),
+            },
             NoScore::Outcome(ended("failed")),
             NoScore::Outcome(ended("usage-limit")),
             NoScore::Scorer {
@@ -320,6 +331,7 @@ mod tests {
         assert_eq!(
             reasons,
             [
+                "No score. The build of its environment failed.",
                 "No score. The run's outcome: failed",
                 "No score. The run's outcome: ended for the usage limit",
                 "No score. The scorer gave up: the task has no criteria",

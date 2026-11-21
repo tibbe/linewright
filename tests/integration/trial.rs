@@ -90,7 +90,7 @@ async fn task_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
 /// A trial's output, and how its run ended or why it did not run.
 pub(crate) struct RanTrial {
     pub(crate) out: PathBuf,
-    ended: anyhow::Result<Ending>,
+    ended: Result<Ending, trial::Unrun>,
 }
 
 /// Runs the task in `dir` with the sessions `harness` scripts and the
@@ -410,7 +410,11 @@ async fn a_trial_whose_build_fails_keeps_the_builds_output_and_time_and_its_own_
     })
     .await;
 
-    assert!(ran_trial.ended.is_err(), "{:?}", ran_trial.ended);
+    assert!(
+        matches!(ran_trial.ended, Err(trial::Unrun::BuildFailed(_))),
+        "{:?}",
+        ran_trial.ended
+    );
     assert_eq!(ran_trial.read("build.log"), "the build broke\n");
     assert_seconds(&ran_trial.read("build-seconds"));
     assert_eq!(cost_without_time(&ran_trial), json!({}));

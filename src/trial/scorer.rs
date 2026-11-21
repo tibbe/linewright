@@ -669,7 +669,7 @@ async fn scorer_in(
                     "the build of the scorer's environment"
                 );
             }
-            return Err(Unscored::Failed(e));
+            return Err(Unscored::Failed(e.into()));
         }
     };
     if let Some(branch) = &scoreable.pushed {

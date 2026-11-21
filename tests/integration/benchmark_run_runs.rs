@@ -21,13 +21,14 @@ use linewright::benchmarks::{
 use linewright::clock::Clock as _;
 use linewright::cost::Usd;
 use linewright::ending::Ends;
-use linewright::factory::{Factory, ServeEnd};
+use linewright::factory::{Factory, FactoryConfig, ServeEnd};
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, OutcomeName, RepoWorkDir};
 use linewright::store::local::LocalStore;
 use linewright::task::{self, BenchmarkChoice, Criteria, TaskName};
 use linewright::trial::{self, Configuration};
 use linewright::webhook::Pending;
+use linewright::work_settings::{Setup, SetupCommand};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -154,11 +155,24 @@ fn restarted(
     clock: Arc<FakeClock>,
     repo: &Path,
 ) -> impl Future<Output = Factory> + use<> {
+    restarted_with(store, harness, clock, repo, |_| {})
+}
+
+/// [`restarted`], its config changed by `adjust`.
+#[track_caller]
+fn restarted_with<F: FnOnce(&mut FactoryConfig) + 'static>(
+    store: Arc<LocalStore>,
+    harness: Arc<ScriptedHarness>,
+    clock: Arc<FakeClock>,
+    repo: &Path,
+    adjust: F,
+) -> impl Future<Output = Factory> + use<F> {
     let caller = Location::caller();
     let config = config(repo);
     async move {
         let mut config = config.await;
         config.max_trials = 1;
+        adjust(&mut config);
         Factory::start(store, harness, clock, config)
             .await
             .unwrap_or_else(|e| panic!("starting the factory again at {caller}: {e:#}"))
@@ -252,6 +266,79 @@ async fn a_trial_whose_scorer_makes_no_score_keeps_why_as_lw_score_says_it() {
         })
         .collect();
     assert_eq!(whys, vec!["The scorer gave up: The output is empty."; 2]);
+}
+
+/// The factory of `world`, its work directory `repo`, started again with
+/// `command` as its setup command, which builds the trials' environment.
+#[track_caller]
+fn with_setup(world: World, repo: &Path, command: &str) -> impl Future<Output = Factory> + use<> {
+    let command = command.to_string();
+    drop(world.factory);
+    restarted_with(
+        world.store,
+        world.harness,
+        world.clock,
+        repo,
+        move |config| {
+            config.work.pipeline_flags_and_env.setup.command =
+                Some(Setup::Command(SetupCommand::new(command).unwrap()));
+        },
+    )
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score: its
+/// build failed, which is kept as its reason and not as a run that failed.
+#[test_log::test(tokio::test)]
+async fn a_trial_whose_build_fails_ends_with_no_score_for_its_build() {
+    let (world, work_dir) = with_benchmark(1).await;
+    let repo = work_dir.path().join(REPO);
+    let factory = with_setup(world, &repo, "echo building; exit 3").await;
+    let (benchmark_runs, id) = launch(&repo, vec![], 1).await;
+
+    let serving = serve(factory);
+    let record = rests(&benchmark_runs, id, |record| {
+        matches!(record.state, BenchmarkRunState::Ended { at: Some(_) })
+    })
+    .await;
+    serving.stop().await;
+
+    assert!(
+        record.trials.values().all(|trial| matches!(
+            trial,
+            TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed { .. }))
+        )),
+        "{:#?}",
+        record.trials
+    );
+}
+
+/// A trial whose environment cannot be had, its build never run, is a run
+/// that failed, as any other failure to run.
+#[test_log::test(tokio::test)]
+async fn a_trial_whose_environment_cannot_be_had_ends_as_a_run_that_failed() {
+    let (world, work_dir) = with_benchmark(1).await;
+    let repo = work_dir.path().join(REPO);
+    let factory = with_setup(world, &repo, "echo building").await;
+    std::fs::create_dir_all(repo.join("trials")).unwrap();
+    std::fs::write(repo.join("trials/environments"), "not a directory").unwrap();
+    let (benchmark_runs, id) = launch(&repo, vec![], 1).await;
+
+    let serving = serve(factory);
+    let record = rests(&benchmark_runs, id, |record| {
+        matches!(record.state, BenchmarkRunState::Ended { at: Some(_) })
+    })
+    .await;
+    serving.stop().await;
+
+    assert!(
+        record.trials.values().all(|trial| matches!(
+            trial,
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(run)))
+                if run.outcome == OutcomeName::Ended(Ending::Failed)
+        )),
+        "{:#?}",
+        record.trials
+    );
 }
 
 /// Holds the first triage session open until the gate releases it, then

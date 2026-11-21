@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow};
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::UnboundedSender;
@@ -175,6 +175,19 @@ pub fn kept_spent(dir: &Path) -> Option<Spent> {
             None
         }
     }
+}
+
+/// Why [`run()`] gives no ending, or [`Setting::prepare`] no setting.
+#[derive(Debug, thiserror::Error)]
+pub enum Unrun {
+    /// The build of its environment failed (`docs/specs/benchmarks.md`,
+    /// Benchmark runs, A trial without a score).
+    #[error(transparent)]
+    BuildFailed(#[from] trials::BuildFailed),
+    /// Anything else, such as an environment that cannot be had, or an ending
+    /// that could not be written.
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
 }
 
 /// Why a directory cannot take a trial's output.
@@ -419,11 +432,12 @@ fn write_whole_new(path: &Path, partial: &Path, text: impl AsRef<[u8]>) -> std::
 ///
 /// # Errors
 ///
-/// When the output cannot be written, the task's model of GitHub cannot be
-/// seeded, a file on the task's default branch would hold the run, the
-/// environment cannot be had or its build fails, the gate of the sessions'
-/// `gh` cannot be started, or the run cannot be begun: then the run does not
-/// run. Once the run ended, only when its ending cannot be written.
+/// [`Unrun::BuildFailed`] when the build of the environment fails, and
+/// [`Unrun::Failed`] when the output cannot be written, the task's model of
+/// GitHub cannot be seeded, a file on the task's default branch would hold the
+/// run, the environment cannot be had, the gate of the sessions' `gh` cannot be
+/// started, or the run cannot be begun: then the run does not run. Once the
+/// run ended, only when its ending cannot be written.
 pub async fn run(
     task: &Task,
     out: &Output,
@@ -431,7 +445,7 @@ pub async fn run(
     config: FactoryConfig,
     configuration: Option<&Configuration>,
     under: &Under,
-) -> Result<Ending> {
+) -> Result<Ending, Unrun> {
     let ran = run_unfinished(task, out, harness, config, configuration, under).await;
     out.finished();
     ran
@@ -445,7 +459,7 @@ async fn run_unfinished(
     config: FactoryConfig,
     configuration: Option<&Configuration>,
     under: &Under,
-) -> Result<Ending> {
+) -> Result<Ending, Unrun> {
     out.write(VERSION, &format!("{COMMAND} {VERSION_AND_COMMIT}\n"))?;
     out.write(TASK, &format!("{}\n", task.run()))?;
     if let Some(configuration) = configuration {
@@ -516,7 +530,7 @@ async fn run_in(
     configuration: Option<&Configuration>,
     under: &Under,
     own: OwnDir<'_>,
-) -> Result<Ending> {
+) -> Result<Ending, Unrun> {
     let kind = task.stage().kind();
     let setting = Setting::prepare(
         task,
@@ -634,9 +648,10 @@ impl Setting {
     ///
     /// # Errors
     ///
-    /// When the model of GitHub cannot be seeded, a file on the task's
-    /// default branch would hold `kind`, the environment cannot be had or
-    /// its build fails, `build_log` fails, or the gate cannot be started.
+    /// [`Unrun::BuildFailed`] when the environment's build fails, and
+    /// [`Unrun::Failed`] when the model of GitHub cannot be seeded, a file on
+    /// the task's default branch would hold `kind`, the environment cannot be
+    /// had, `build_log` fails, or the gate cannot be started.
     pub async fn prepare(
         task: &Task,
         kind: &RunKind<'_>,
@@ -645,7 +660,7 @@ impl Setting {
         root: &Path,
         repository: &Path,
         build_log: impl Fn(&BuildLog) -> Result<()>,
-    ) -> Result<Setting> {
+    ) -> Result<Setting, Unrun> {
         let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(task.start()));
         let seeded = LocalStore::from_task(root, repository, task, clock.clone())
             .await
@@ -664,11 +679,12 @@ impl Setting {
                 RunKind::Scorer => ("scored", "the scorer"),
                 RunKind::Stage(_) | RunKind::Automation(_) => ("run", "the run"),
             };
-            bail!(
+            return Err(anyhow!(
                 "the task cannot be {refused}: {} on its default branch would hold {held}: {}",
                 file.path,
                 file.error
-            );
+            )
+            .into());
         }
         let head = task
             .heads()
@@ -709,7 +725,7 @@ impl Setting {
                 }
                 return Err(failed.into());
             }
-            Err(e @ trials::Unprepared::Unavailable(_)) => return Err(e.into()),
+            Err(e @ trials::Unprepared::Unavailable(_)) => return Err(Unrun::Failed(e.into())),
         };
         let gate = Gate::start(&properties.settings.repo, Upstream::GitHub)
             .context("starting the gate of the sessions' gh")?;

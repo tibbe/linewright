@@ -181,7 +181,7 @@ impl TrialState {
             TrialState::Ran { run }
             | TrialState::Scoring { run }
             | TrialState::Ended(TrialEnd::Scored { run, .. }) => Some(run),
-            TrialState::Ended(TrialEnd::Unscored(no_score)) => Some(no_score.run()),
+            TrialState::Ended(TrialEnd::Unscored(no_score)) => no_score.run(),
         }
     }
 
@@ -216,7 +216,7 @@ pub enum TrialEnd {
         run: TrialFigures,
         score: ScoreFigures,
     },
-    /// Its run ended, and has no score for a reason.
+    /// It has no score for a reason.
     Unscored(NoScore),
     /// Its benchmark run's cancel ended it.
     Cancelled(Cancelled),
@@ -284,9 +284,13 @@ pub struct ScoreFigures {
     pub scorer_money: Option<Usd>,
 }
 
-/// Why a trial that ended has no score, with the figures of its run.
+/// Why a trial that ended has no score (`docs/specs/benchmarks.md`, Benchmark
+/// runs, A trial without a score), with the figures it has.
 #[derive(Clone, Debug, PartialEq)]
 pub enum NoScore {
+    /// The build of its environment failed, so it has no run, and no cost:
+    /// the time it took until then.
+    BuildFailed { time: Duration },
     /// Its run is not done or handed back.
     Outcome(TrialFigures),
     /// Its scorer made no score.
@@ -299,10 +303,11 @@ pub enum NoScore {
 }
 
 impl NoScore {
-    /// The figures of its run.
-    pub fn run(&self) -> &TrialFigures {
+    /// The figures of its run, if it began.
+    pub fn run(&self) -> Option<&TrialFigures> {
         match self {
-            NoScore::Outcome(run) | NoScore::Scorer { run, .. } => run,
+            NoScore::BuildFailed { .. } => None,
+            NoScore::Outcome(run) | NoScore::Scorer { run, .. } => Some(run),
         }
     }
 
@@ -310,6 +315,7 @@ impl NoScore {
     /// A trial's reason).
     pub fn reason(&self) -> String {
         match self {
+            NoScore::BuildFailed { .. } => "No score. The build of its environment failed.".into(),
             NoScore::Outcome(run) => {
                 format!("No score. The run's outcome: {}", run.outcome.word())
             }
@@ -398,6 +404,9 @@ pub enum CancelRefusal {
 pub enum TrialChange {
     /// Pending, its run starts.
     RunStarts,
+    /// Running, the build of its environment fails: ended without a score,
+    /// with the time it took.
+    BuildFails { time: Duration },
     /// Running, its run ends: ran when its run can be scored, and else
     /// ended without a score.
     RunEnds(TrialFigures),
@@ -414,6 +423,30 @@ pub enum TrialChange {
     /// the figures of the run the cancel stopped: without them, its run
     /// stopped with no money and no time.
     Cancelled { stopped: Option<TrialFigures> },
+    /// Running, its benchmark run is cancelled and the build of its
+    /// environment failed, so its run never started.
+    CancelledBeforeRun,
+}
+
+impl TrialChange {
+    /// What a step that ended once its benchmark run was cancelled records,
+    /// given the change it made, if any: cancelled, with the run the cancel
+    /// stopped when it has one.
+    pub fn on_cancel(change: Option<TrialChange>) -> TrialChange {
+        match change {
+            Some(TrialChange::RunEnds(run)) => TrialChange::Cancelled { stopped: Some(run) },
+            Some(TrialChange::BuildFails { .. }) => TrialChange::CancelledBeforeRun,
+            Some(
+                TrialChange::RunStarts
+                | TrialChange::ScorerStarts
+                | TrialChange::Scored(_)
+                | TrialChange::ScorerMakesNone { .. }
+                | TrialChange::Cancelled { .. }
+                | TrialChange::CancelledBeforeRun,
+            )
+            | None => TrialChange::Cancelled { stopped: None },
+        }
+    }
 }
 
 /// The benchmark runs of a work directory, kept in its database and under
@@ -893,6 +926,9 @@ impl TrialState {
             (TrialState::Running, TrialChange::RunEnds(run)) => {
                 TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(run)))
             }
+            (TrialState::Running, TrialChange::BuildFails { time }) => {
+                TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed { time }))
+            }
             (TrialState::Ran { run }, TrialChange::ScorerStarts) => TrialState::Scoring { run },
             (TrialState::Scoring { run }, TrialChange::Scored(score)) => {
                 TrialState::Ended(TrialEnd::Scored { run, score })
@@ -904,7 +940,8 @@ impl TrialState {
                     scorer_money,
                 }))
             }
-            (TrialState::Pending, TrialChange::Cancelled { stopped: None }) => {
+            (TrialState::Pending, TrialChange::Cancelled { stopped: None })
+            | (TrialState::Running, TrialChange::CancelledBeforeRun) => {
                 TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
             }
             (TrialState::Running, TrialChange::Cancelled { stopped }) => {
@@ -1242,6 +1279,13 @@ fn decode(row: &SqliteRow) -> Result<(TrialKey, TrialState)> {
             (Some("cancelled"), None, run) => TrialState::Ended(TrialEnd::Cancelled(
                 run.map_or(Cancelled::BeforeRun, Cancelled::of_run),
             )),
+            (Some("build"), None, None) => {
+                TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed {
+                    time: Duration::try_from_secs_f64(
+                        seconds.context("a trial whose build failed has no time")?,
+                    )?,
+                }))
+            }
             (Some(cause), reason, Some(run)) => {
                 TrialState::Ended(TrialEnd::Unscored(match (cause, reason) {
                     ("outcome", None) => NoScore::Outcome(run),
@@ -1293,6 +1337,10 @@ impl Columns {
             }
             TrialState::Ended(TrialEnd::Unscored(no_score)) => {
                 columns.unscored = Some(match no_score {
+                    NoScore::BuildFailed { time } => {
+                        columns.seconds = Some(time.as_secs_f64());
+                        "build"
+                    }
                     NoScore::Outcome(_) => "outcome",
                     NoScore::Scorer {
                         why, scorer_money, ..
@@ -1302,7 +1350,7 @@ impl Columns {
                         "scorer"
                     }
                 });
-                ("unscored", Some(no_score.run()))
+                ("unscored", no_score.run())
             }
             TrialState::Ended(TrialEnd::Cancelled(cancelled)) => {
                 columns.unscored = Some("cancelled");
@@ -1612,6 +1660,64 @@ mod tests {
             TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(figures(
                 Ending::Cancelled
             ))))
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score:
+    /// its build failed, kept with its time, read the same after a restart.
+    #[test_log::test(tokio::test)]
+    async fn a_trial_whose_build_fails_ends_without_a_score_kept_across_a_restart() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (benchmark_runs, id) = launched(work_dir.path()).await;
+        let time = Duration::from_millis(12_500);
+
+        steps(
+            &benchmark_runs,
+            trial(id, 0),
+            vec![TrialChange::RunStarts, TrialChange::BuildFails { time }],
+        )
+        .await;
+        drop(benchmark_runs);
+        let restarted = BenchmarkRuns::new(Database::open(work_dir.path()).await.unwrap());
+
+        assert_eq!(
+            state_of(&restarted, trial(id, 0)).await.1,
+            TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed { time }))
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a
+    /// trial with no score and no reason at the cancel is cancelled, also when
+    /// its build fails after it, and keeps the run the cancel stopped, if any.
+    #[test_log::test(tokio::test)]
+    async fn a_step_that_ends_once_its_benchmark_run_is_cancelled_ends_its_trial_cancelled() {
+        let work_dir = tempfile::tempdir().unwrap();
+        let (benchmark_runs, id) = launched(work_dir.path()).await;
+        let build_fails = TrialChange::BuildFails {
+            time: Duration::from_secs(5),
+        };
+        let run_ends = TrialChange::RunEnds(figures(Ending::Cancelled));
+
+        for (task, change) in [(0, build_fails), (1, run_ends)] {
+            steps(
+                &benchmark_runs,
+                trial(id, task),
+                vec![TrialChange::RunStarts, TrialChange::on_cancel(Some(change))],
+            )
+            .await;
+        }
+
+        assert_eq!(
+            [
+                state_of(&benchmark_runs, trial(id, 0)).await.1,
+                state_of(&benchmark_runs, trial(id, 1)).await.1,
+            ],
+            [
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
+                TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(figures(
+                    Ending::Cancelled
+                )))),
+            ]
         );
     }
 
