@@ -299,6 +299,17 @@ pub struct UnparsedAutomation {
     pub reason: String,
 }
 
+impl UnparsedAutomation {
+    /// The file's name in the automations' directory: its path within it,
+    /// which is its file name unless it is in a directory of its own.
+    pub fn name(&self) -> &str {
+        self.path
+            .strip_prefix(crate::automation::DIR)
+            .and_then(|path| path.strip_prefix('/'))
+            .unwrap_or(&self.path)
+    }
+}
+
 /// A drain under way, as shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DrainShown {
@@ -696,7 +707,9 @@ pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
 
 /// What is wrong with an automation file that does not parse.
 pub(crate) fn does_not_parse(file: &UnparsedAutomation) -> Phrase {
-    format!("{}: does not parse: {}", file.path, file.reason).into()
+    Phrase::default()
+        .code(file.name())
+        .text(format!(" does not parse: {}", file.reason))
 }
 
 /// When an automation runs next, from where its schedule stands.
