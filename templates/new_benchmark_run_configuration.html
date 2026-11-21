@@ -1,15 +1,20 @@
-<fieldset class="configuration fieldset rounded-box border border-base-300 p-3" data-n="{{ n }}">
-<div class="grid grid-cols-1 gap-x-3 sm:grid-cols-4">
-<div class="flex flex-col"><label class="label" for="{{ self.id("name") }}">Name</label>
-<input id="{{ self.id("name") }}" class="input input-sm w-full" name="c{{ n }}.name" value="{{ fields.name }}" autocomplete="off"></div>
-<div class="flex flex-col"><label class="label" for="{{ self.id("model") }}">model</label>
-<input id="{{ self.id("model") }}" class="input input-sm w-full" name="c{{ n }}.model" value="{{ fields.model }}" placeholder="as it is" autocomplete="off"></div>
-<div class="flex flex-col"><label class="label" for="{{ self.id("effort") }}">effort</label>
-<select id="{{ self.id("effort") }}" class="select select-sm w-full" name="c{{ n }}.effort"><option value="">as it is</option>
+{%- import "macros.html" as ui -%}
+<fieldset class="configuration fieldset rounded-box border border-base-300 p-3" data-n="{{ self.number() }}">
+<div class="grid grid-cols-1 items-start gap-x-3 sm:grid-cols-4">
+{%- call(attributes) ui::field(self.id("name"), "Name", self.shown(ConfigurationField::Name), crate::web::making::Control::Input) %}
+<input id="{{ self.id("name") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.name" value="{{ fields.name }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field(self.id("model"), "model", self.shown(ConfigurationField::Model), crate::web::making::Control::Input) %}
+<input id="{{ self.id("model") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.model" value="{{ fields.model }}" placeholder="as it is" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field(self.id("effort"), "effort", self.shown(ConfigurationField::Effort), crate::web::making::Control::Select) %}
+<select id="{{ self.id("effort") }}" class="select select-sm validator w-full" name="c{{ self.number() }}.effort"{{ attributes }}><option value="">as it is</option>
 {%- for effort in efforts %}<option value="{{ effort }}"{% if *effort == fields.effort %} selected{% endif %}>{{ effort }}</option>{% endfor -%}
-</select></div>
-<div class="flex flex-col"><label class="label" for="{{ self.id("session-timeout") }}">session-timeout</label>
-<input id="{{ self.id("session-timeout") }}" class="input input-sm w-full" name="c{{ n }}.session-timeout" value="{{ fields.session_timeout }}" placeholder="as it is" autocomplete="off"></div>
+</select>
+{%- endcall %}
+{%- call(attributes) ui::field(self.id("session-timeout"), "session-timeout", self.shown(ConfigurationField::SessionTimeout), crate::web::making::Control::Input) %}
+<input id="{{ self.id("session-timeout") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.session-timeout" value="{{ fields.session_timeout }}" placeholder="as it is" autocomplete="off"{{ attributes }}>
+{%- endcall %}
 </div>
 <label class="label" for="{{ self.id("file") }}">Files of the brief</label>
 <select id="{{ self.id("file") }}" class="brief-file select select-sm w-full"><option value="">–</option>

@@ -36,6 +36,7 @@ pub(super) enum Refusal<F: Field> {
 }
 
 /// One or more fields refused, at most one reason for each.
+#[derive(Debug, PartialEq)]
 pub(super) struct FieldRefusals<F: Field>(BTreeMap<F, String>);
 
 impl<F: Field> FieldRefusals<F> {
@@ -51,7 +52,6 @@ impl<F: Field> FieldRefusals<F> {
     }
 
     /// The fields `refused`, the first reason for each, or `None` for none.
-    #[expect(dead_code, reason = "no dialog refuses a list of fields yet")]
     pub(super) fn collect(
         refused: impl IntoIterator<Item = (F, String)>,
     ) -> Option<FieldRefusals<F>> {
@@ -105,8 +105,8 @@ impl<F: Form> Making<F> {
             Some(Refusal::Whole(_)) | None => None,
         };
         FieldShown {
-            required: field.required(),
             reason,
+            ..FieldShown::unrefused(field)
         }
     }
 
@@ -130,6 +130,14 @@ pub(super) struct FieldShown {
 }
 
 impl FieldShown {
+    /// How a form shows `field` while Linewright has not refused it.
+    pub(super) fn unrefused(field: &impl Field) -> FieldShown {
+        FieldShown {
+            required: field.required(),
+            reason: None,
+        }
+    }
+
     pub(super) fn required(&self) -> bool {
         self.required
     }
@@ -174,6 +182,7 @@ impl FieldShown {
 pub(super) enum Control {
     Input,
     Select,
+    Textarea,
 }
 
 /// What a making dialog's form's POST answers, which htmx swaps into the

@@ -1,7 +1,9 @@
+{%- import "macros.html" as ui -%}
 <div class="brief-file-box flex flex-col">
-<label class="label" for="new-benchmark-run-c{{ n }}-briefs/{{ path }}">{{ path }}</label>
-<textarea id="new-benchmark-run-c{{ n }}-briefs/{{ path }}" class="textarea textarea-sm w-full font-mono" name="c{{ n }}.briefs/{{ path }}" rows="12">
+{%- call(attributes) ui::field(self.id(), path, shown, crate::web::making::Control::Textarea) %}
+<textarea id="{{ self.id() }}" class="textarea textarea-sm validator w-full font-mono" name="c{{ n }}.briefs/{{ path }}" rows="12"{{ attributes }}>
 {{ text }}</textarea>
+{%- endcall %}
 {%- if let Some(started) = started %}
 <input type="hidden" name="c{{ n }}.started/{{ path }}" value="{{ started }}">
 {%- endif %}

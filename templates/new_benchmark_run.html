@@ -3,12 +3,13 @@
 <p class="label">Configurations</p>
 <div class="configurations flex flex-col gap-3">
 <fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-base-content/60 text-sm">It holds nothing: the stage as it is.</p></fieldset>
-{%- for (i, configuration) in making.fields.configurations.iter().enumerate() %}
-{{ self.configuration(i + 1, configuration) }}
+{%- for configuration in making.fields.configurations %}
+{{ self.configuration(configuration) }}
 {%- endfor %}
 </div>
 <div><button class="add-configuration btn btn-sm" type="button">{{ crate::web::buttons::Verb::AddConfiguration.labelled() }}</button></div>
-<label class="label" for="new-benchmark-run-repetitions">Repetitions</label>
-<input id="new-benchmark-run-repetitions" class="input w-24" type="number" name="repetitions" value="{{ making.fields.repetitions }}" autocomplete="off">
+{%- call(attributes) ui::field("new-benchmark-run-repetitions", "Repetitions", making.field(&LaunchField::Repetitions), crate::web::making::Control::Input) %}
+<input id="new-benchmark-run-repetitions" class="input validator w-24" type="text" inputmode="numeric" name="repetitions" value="{{ making.fields.repetitions }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
 <p class="trial-count mt-2" aria-live="polite">{{ self.count() }}</p>
 {%- endcall %}
