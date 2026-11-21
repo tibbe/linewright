@@ -1,13 +1,13 @@
 {#- A status as a daisyUI badge in its colour, holding its icon and its
     words, so that it is never told by colour alone. -#}
 {%- macro status(status, word) -%}
-<span class="tone badge badge-sm {{ status.colour() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
+<span class="tone badge badge-sm {{ status.badge() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
 {#- A status among a page's facts (`docs/specs/design_system.md`, Status):
     a badge in its colour holding only its icon, then its words. -#}
 {%- macro status_text(status, words) -%}
-<span class="status-text"><span class="badge badge-sm {{ status.colour() }}">{{ crate::web::icons::named_status_icon(status) }}</span><span>{{ words|safe }}</span></span>
+<span class="status-text"><span class="badge badge-sm {{ status.badge() }}">{{ crate::web::icons::named_status_icon(status) }}</span><span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
 {#- A page's facts (`docs/specs/web/components.md`, Facts), in a card, each a
