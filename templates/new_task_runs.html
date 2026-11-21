@@ -1,4 +1,4 @@
-<select id="new-task-run" class="select w-full" name="run" data-region{% if runs.is_empty() %} disabled{% endif %}>
+<select id="{{ NEW_TASK_RUN }}" class="select validator w-full" name="run" data-region{% if runs.is_empty() %} disabled{% endif %}{{ attributes }}>
 {%- for run in runs %}
 <option value="{{ run.id }}" data-name="{{ run.name }}"{% if self.chosen(run.id) %} selected{% endif %}>{{ run.id }}</option>
 {%- else %}

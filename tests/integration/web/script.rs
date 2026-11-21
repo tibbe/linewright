@@ -1392,6 +1392,38 @@ steps.join("\n")
     assert_eq!(names, ["1-implement-1", "mine", "1-implement-2"]);
 }
 
+/// `docs/specs/runs.md`, Run, Capturing: "Benchmark name" is enabled while
+/// "New benchmark" is chosen alone, so that while it is hidden the browser
+/// neither checks nor sends it; another dialog's choice leaves it be.
+#[test_log::test(tokio::test)]
+async fn choosing_new_benchmark_enables_the_benchmark_name_and_choosing_another_disables_it() {
+    let page = r#"
+var capture = Object.assign(element("FORM", { "data-new": "" }), {
+  hasAttribute(name) { return name in this.attributes; },
+});
+var benchmark = Object.assign(element("SELECT", {}), { name: "benchmark", form: capture, value: "implements" });
+var named = Object.assign(element("INPUT", {}), { name: "new-benchmark", form: capture, disabled: true });
+capture.elements = [benchmark, named];
+var elsewhere = element("FORM", {});
+var other = Object.assign(element("SELECT", {}), { name: "stage", form: elsewhere, value: "" });
+elsewhere.elements = [other, Object.assign(element("INPUT", {}), { name: "new-benchmark", form: elsewhere })];
+function choose(select, value) { select.value = value; fire("change", event(select)); return named.disabled; }
+"#;
+    let asked = r#"
+const steps = [];
+steps.push(choose(benchmark, ""));
+steps.push(choose(benchmark, "implements"));
+steps.push(choose(benchmark, ""));
+steps.push(choose(other, "design"));
+steps.push(String(elsewhere.elements[1].disabled));
+steps.join("\n")
+"#;
+
+    let disabled = with_filters(page, asked).await;
+
+    assert_eq!(disabled, ["false", "true", "false", "false", "undefined"]);
+}
+
 /// `docs/specs/benchmarks.md`, Benchmark: Adding a task.
 #[test_log::test(tokio::test)]
 async fn the_run_chosen_to_capture_stays_chosen_when_an_update_brings_new_runs() {

@@ -1,16 +1,20 @@
 {%- import "macros.html" as ui -%}
 {%- call ui::new_form(DIALOG, "Add task to a benchmark", crate::web::buttons::Verb::AddTask, making.whole()) %}
-<label class="label" for="capture-benchmark">Benchmark</label>
-<select id="capture-benchmark" class="select w-full" name="benchmark">
+{%- call(attributes) ui::field("capture-benchmark", "Benchmark", making.field(&CaptureField::Benchmark), crate::web::making::Control::SelectWithBlank) %}
+<select id="capture-benchmark" class="select validator w-full" name="benchmark"{{ attributes }}>
 {%- for benchmark in benchmarks %}
 <option value="{{ benchmark }}"{% if benchmark.as_str() == making.fields.benchmark %} selected{% endif %}>{{ benchmark }}</option>
 {%- endfor %}
-<option class="new-benchmark" value=""{% if making.fields.benchmark.is_empty() %} selected{% endif %}>New benchmark</option>
+<option class="new-benchmark" value=""{% if self.new_benchmark_chosen() %} selected{% endif %}>New benchmark</option>
 </select>
-<label class="label new-benchmark-name" for="capture-new-benchmark">Benchmark name</label>
-<input id="capture-new-benchmark" class="input w-full new-benchmark-name" name="new-benchmark" value="{{ making.fields.new_benchmark }}" autocomplete="off">
-<label class="label" for="capture-name">Name</label>
-<input id="capture-name" class="input w-full" name="name" value="{{ making.fields.task.name }}" autocomplete="off">
-<label class="label" for="capture-criteria">Criteria</label>
-<textarea id="capture-criteria" class="textarea w-full" name="criteria" rows="6">{{ making.fields.task.criteria }}</textarea>
+{%- endcall %}
+{%- call(attributes) ui::field("capture-new-benchmark", "Benchmark name", making.field(&CaptureField::NewBenchmark), crate::web::making::Control::Input, class = "new-benchmark-name") %}
+<input id="capture-new-benchmark" class="input validator w-full" name="new-benchmark" value="{{ making.fields.new_benchmark }}" autocomplete="off"{% if !self.new_benchmark_chosen() %} disabled{% endif %}{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field("capture-name", "Name", making.field(&CaptureField::Task(TaskField::Name)), crate::web::making::Control::Input) %}
+<input id="capture-name" class="input validator w-full" name="name" value="{{ making.fields.task.name }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field("capture-criteria", "Criteria", making.field(&CaptureField::Task(TaskField::Criteria)), crate::web::making::Control::Textarea) %}
+<textarea id="capture-criteria" class="textarea validator w-full" name="criteria" rows="6"{{ attributes }}>{{ making.fields.task.criteria }}</textarea>
+{%- endcall %}
 {%- endcall %}

@@ -62,6 +62,24 @@ impl<F: Field> FieldRefusals<F> {
         (!refusals.is_empty()).then_some(FieldRefusals(refusals))
     }
 
+    /// These, each of `field` as a field of a dialog that draws it.
+    pub(super) fn into_fields<G: Field + From<F>>(self) -> FieldRefusals<G> {
+        FieldRefusals(
+            self.0
+                .into_iter()
+                .map(|(field, reason)| (G::from(field), reason))
+                .collect(),
+        )
+    }
+
+    /// These, and each of `more` whose field is not refused yet.
+    pub(super) fn with(mut self, more: FieldRefusals<F>) -> FieldRefusals<F> {
+        for (field, reason) in more.0 {
+            self.0.entry(field).or_insert(reason);
+        }
+        self
+    }
+
     /// Why `field` is refused, if it is.
     fn reason(&self, field: &F) -> Option<&str> {
         self.0.get(field).map(String::as_str)
@@ -160,7 +178,7 @@ impl FieldShown {
     /// Linewright refuses it, `aria-invalid`, described by its hint.
     pub(super) fn attributes(&self, id: &str, kind: Control) -> Html {
         let mut attributes = String::new();
-        if self.required {
+        if self.required && kind != Control::SelectWithBlank {
             attributes.push_str(" required");
             if kind == Control::Input {
                 attributes.push_str(r#" pattern=".*\S.*""#);
@@ -182,7 +200,25 @@ impl FieldShown {
 pub(super) enum Control {
     Input,
     Select,
+    /// A select one of whose choices has an empty value. The browser's
+    /// `required` takes that choice for no choice where it comes first, as
+    /// the select's placeholder label option
+    /// (<https://html.spec.whatwg.org/multipage/form-elements.html#placeholder-label-option>),
+    /// so Linewright alone checks it.
+    SelectWithBlank,
     Textarea,
+}
+
+/// What `a` and `b` checked, or else the refusals of both.
+pub(super) fn both<A, B, F: Field>(
+    a: Result<A, FieldRefusals<F>>,
+    b: Result<B, FieldRefusals<F>>,
+) -> Result<(A, B), FieldRefusals<F>> {
+    match (a, b) {
+        (Ok(a), Ok(b)) => Ok((a, b)),
+        (Err(refused), Ok(_)) | (Ok(_), Err(refused)) => Err(refused),
+        (Err(a), Err(b)) => Err(a.with(b)),
+    }
 }
 
 /// What a making dialog's form's POST answers, which htmx swaps into the
@@ -248,6 +284,16 @@ pub(super) const REQUIRED: &str = "Required.";
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
 pub(super) const NOT_A_NAME: &str =
     "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a digit.";
+
+/// The name `sent`, or else its refusal: [`REQUIRED`] while it is empty or
+/// holds only white space, and otherwise [`NOT_A_NAME`] while it is not in
+/// the form of a name.
+pub(super) fn parse_name<N: std::str::FromStr>(sent: &str) -> Result<N, &'static str> {
+    if sent.trim().is_empty() {
+        return Err(REQUIRED);
+    }
+    sent.parse().map_err(|_| NOT_A_NAME)
+}
 
 /// The refusal of a benchmark named as one that exists
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).

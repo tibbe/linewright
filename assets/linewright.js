@@ -15,7 +15,8 @@
  * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
  * reader opens elsewhere, opens a tab in place at its address, fills in a
  * capture's name for the
- * run chosen and keeps that run chosen through updates, adds and removes
+ * run chosen and keeps that run chosen through updates, enables a capture's
+ * new benchmark's name while it is chosen, adds and removes
  * New benchmark run's configurations, opens the boxes of the files of the brief
  * they give and counts their trials, collapses and expands the navigation,
  * and shows the page's tooltip.
@@ -595,6 +596,19 @@
     if (!chosen) return;
     chosenRun = chosen.value;
     suggestName(select, false);
+  });
+
+  /**
+   * Enables Add task's "Benchmark name" while "New benchmark" is chosen
+   * alone (docs/specs/runs.md, Run, Capturing), as the page drew it: while
+   * it is hidden, the browser neither checks nor sends it.
+   */
+  document.addEventListener("change", (event) => {
+    const select = event.target;
+    if (select?.tagName !== "SELECT" || select.name !== "benchmark") return;
+    if (!select.form || !isNewForm(select.form)) return;
+    const named = Array.from(select.form.elements).find((field) => field.name === "new-benchmark");
+    if (named) named.disabled = select.value !== "";
   });
 
   /**
