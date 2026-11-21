@@ -87,11 +87,10 @@
 
 - **Statuses.** A status is one of done, failed, waiting, in flight, paused
   and cancelled. Each area says which status each of its states shows as.
-- **Shown.** A status shows as its icon and its colour, never by colour alone.
+- **Shown.** A status shows as its icon and its colour.
   Where a screen also names a status's state, a badge in the status's colour
-  holds the icon and the state's name. A status among a screen's facts is the
-  exception ([Facts](#facts)). For example, a running benchmark run shows as
-  "running", with the icon of in flight, in its colour.
+  holds the icon and the state's name. For example, a running benchmark run
+  shows as "running", with the icon of in flight, in its colour.
 - **A badge's words.** The state's name in a badge gives no reason or
   detail: "no score", not why there is none.
 
@@ -144,9 +143,7 @@
 
 ## Facts
 
-- A label is words alone, with no icon or colour. A status among a screen's
-  facts is in the value: its icon and its state's name in its colour, with
-  nothing behind them.
+- A label is words alone, with no icon or colour.
 
 ## Dialogs
 
