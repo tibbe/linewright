@@ -313,6 +313,9 @@ The scorer is an agent in a session of its own.
   | its session ends for the usage limit ([Usage limit](runs.md#usage-limit)) | "The scorer's session reached the usage limit, which resets at TIME." |
   | it gives up | "The scorer gave up: REASON", where REASON is the reason the scorer gives |
   | its session ends without a result that Linewright accepts | "The scorer's session ended without a score: REASON", where REASON is the reason for the end ([Ending](runs.md#ending)), then the tail of its log |
+  | Linewright cannot build its environment | "The scorer's environment could not be built.", then the tail of the build's log |
+  | Linewright cannot keep the scorer's score | "The score could not be kept: ERROR", where ERROR is what the file system gives |
+  | it stops for any other reason, but for a cancel or a restart | "The scorer stopped unexpectedly." |
 - **The exit status of the command.** The command succeeds when the scorer
   made a score, whatever the score.
 
@@ -539,7 +542,7 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Launched    | when the benchmark run was launched                                                        | always                         |
   | Ended       | when it ended or was cancelled                                                          | once it has ended or cancelled |
   | Duration    | the time from its launch to its end or its cancelling; while it runs or waits, the time up to now         | always                         |
-  | Trials     | how many of its trials have ended, of all its trials. A trial has ended once its run has ended, whether or not its scorer has. | always |
+  | Trials     | how many of its trials have ended, of all its trials. A trial has ended once its run has ended or its build has failed, whether or not its scorer has. | always |
   | Cost        | the sum of the cost of the tokens of all its trials and of its scorers ([Cost](runs.md#cost)). After the sum, how many of its trials that have ended have no cost, if any. | always |
   | Scorers      | the cost of the tokens of its scorers ([Results](#results)) | always |
   | Waiting for | what it waits for, such as "the usage limit, until 14:30"                               | while it waits                 |

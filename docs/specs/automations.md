@@ -110,8 +110,11 @@ The session ends with a result that matches
 
 ### Automations
 
-- **Layout.** Each
-  automation file that does not parse, then a row per automation.
+- **Layout.** Each automation file that does not parse, then a row per
+  automation.
+- **A file that does not parse** shows as failed
+  ([Status](design_system.md#status)), and reads "`FILE` does not parse:
+  ERROR", where FILE is its name and ERROR is what the parser gives.
 
 | Column     | Holds                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------ |

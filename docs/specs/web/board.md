@@ -13,10 +13,10 @@
   with `pt-2` above its text. Its text is in `font-semibold`, on one line, cut
   to fit. It is not a `card-title`, so it has no
   icon before its text.
-- **A card** is a daisyUI `card` drawn as a card is
-  ([Cards](design_system.md#cards)), but in `bg-base-100`. A card that
-  shows a card status has an edge `3px` wide at its start in its colour, and
-  its icon before its line. A card in Done is at `opacity-60`.
+- **A card** is a daisyUI `card`, `card-sm`, drawn as a card is
+  ([Cards](design_system.md#cards)), but in `bg-base-100`. A card that shows a
+  card status has an edge `3px` wide at its start in its colour, and its icon,
+  in `base-content`, before its line. A card in Done is at `opacity-60`.
 - **On a lane or a card.** A lane or a card holds no daisyUI component that
   draws in `base-100`, `base-200` or `base-300`, such as a button, an input
   or an alert.
