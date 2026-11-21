@@ -186,24 +186,12 @@
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
 
-  .board .toned .line > svg.icon {
-    @apply text-(--tone);
-  }
-
-  .status-text {
-    @apply text-(--tone);
-  }
-
-  :is(.board .toned .line, .status-text) > svg.icon {
+  :is(.board .toned .line, .related-item) > svg.icon {
     @apply mr-1 inline-block align-[-0.125em];
   }
 
-  .related-item > svg.icon {
-    @apply mr-1 inline-block align-[-0.125em];
-  }
-
-  .related-item > svg.icon:not([role="img"]) {
-    @apply text-(--tone);
+  .status-text > .badge {
+    @apply mr-1 align-[-0.125em];
   }
 
   .related-item:not(:last-child) {

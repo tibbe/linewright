@@ -734,7 +734,7 @@ async fn the_column_heads_are_a_row_in_the_page_colour_with_each_name_in_semibol
 /// `px-2` at its sides and `pb-2` at its foot, its columns and the cards in a
 /// column `gap-2` apart; its head is its top row in `bg-base-200`, at least
 /// `h-10` tall, with `pt-2` above its text in `font-semibold`, and no
-/// `card-title`; and its cards are cards in `bg-base-100`.
+/// `card-title`; and its cards are `card-sm` cards in `bg-base-100`.
 #[test_log::test(tokio::test)]
 async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -773,7 +773,7 @@ async fn each_lane_is_drawn_as_a_card_and_its_cards_as_cards_in_the_page_colour(
     let cards = select(&html, "#board li");
     assert_eq!(cards.len(), 4);
     for card in cards {
-        assert!(has_classes(card, &["card"]), "{}", card.html());
+        assert!(has_classes(card, &["card", "card-sm"]), "{}", card.html());
         assert_drawn_as_a_card(card, "bg-base-100", "a board card");
     }
 }

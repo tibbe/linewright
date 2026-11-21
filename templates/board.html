@@ -9,7 +9,7 @@
 {%- for cell in lane.cells %}
 <ul class="cell flex flex-col gap-2" aria-label="{{ cell.column }}">
 {%- for card in cell.cards %}
-<li class="{% call ui::card_look("bg-base-100") %}{% endcall %}{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-60{% endif %}">
+<li class="{% call ui::card_look("bg-base-100") %}{% endcall %} card-sm{% call toned(card.status) %}{% endcall %}{% if card.quiet %} opacity-60{% endif %}">
 <div class="card-body gap-1">
 <h3 class="name-cut-2 text-sm font-semibold" data-tip-cut>{{ card.kind.svg() }}{{ card.heading|safe }}</h3>
 {%- if let Some(line) = card.line %}

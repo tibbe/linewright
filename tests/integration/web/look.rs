@@ -627,8 +627,8 @@ async fn every_button_is_small_and_new_is_primary() {
 }
 
 /// `docs/specs/web/benchmarks.md`, Benchmark run: each fact is a `stat`, its
-/// label the `stat-title` and its value the `stat-value`, as daisyUI draws
-/// them.
+/// label the `stat-title`, as daisyUI draws it, and its value the
+/// `stat-value`, in `text-xl` and `font-semibold`.
 #[test_log::test(tokio::test)]
 async fn benchmark_runs_facts_are_stats_as_daisyui_draws_them() {
     let pages = with_a_run().await;
@@ -638,12 +638,15 @@ async fn benchmark_runs_facts_are_stats_as_daisyui_draws_them() {
     let stats = select(&html, "#benchmark-run .stat");
     assert!(!stats.is_empty(), "{}", html.html());
     for stat in stats {
-        for part in ["stat-title", "stat-value"] {
+        for (part, classes) in [
+            ("stat-title", &["stat-title"][..]),
+            ("stat-value", &["font-semibold", "stat-value", "text-xl"]),
+        ] {
             let parts = select_in(stat, &format!(".{part}"));
             assert_eq!(parts.len(), 1, "{part}: {}", stat.html());
             assert_eq!(
                 parts[0].value().classes().collect::<Vec<_>>(),
-                [part],
+                classes,
                 "{}",
                 stat.html()
             );
