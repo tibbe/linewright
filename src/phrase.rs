@@ -31,7 +31,7 @@ impl Status {
     /// whole, since Tailwind finds the classes the stylesheet needs by
     /// scanning the sources' text
     /// (<https://tailwindcss.com/docs/detecting-classes-in-source-files>).
-    pub fn colour(self) -> &'static str {
+    pub fn badge(self) -> &'static str {
         match self {
             Status::Done => "badge-success",
             Status::Failed => "badge-error",
@@ -44,7 +44,7 @@ impl Status {
 
     /// The class that sets `--tone` to its colour, which the
     /// stylesheet's rules for a toned element read. Written whole, as
-    /// `colour` says why.
+    /// `badge` says why.
     pub fn accent(self) -> &'static str {
         match self {
             Status::Done => "[--tone:var(--color-success)]",
@@ -60,7 +60,7 @@ impl Status {
 
     /// The classes of an alert in its colour: neutral, and `base-content/60`
     /// with no content colour, are daisyUI's alert with no colour of its
-    /// own. Written whole, as `colour` says why.
+    /// own. Written whole, as `badge` says why.
     pub fn alert(self) -> &'static str {
         match self {
             Status::Done => "alert alert-success",
@@ -239,7 +239,7 @@ mod tests {
         ];
 
         assert_eq!(
-            statuses.map(Status::colour),
+            statuses.map(Status::badge),
             [
                 "badge-success",
                 "badge-error",
