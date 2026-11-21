@@ -15,10 +15,14 @@ use tracing::{info, warn};
 use super::benchmark_page::benchmark_for_making;
 use super::benchmark_runs;
 use super::html::{self, Html};
-use super::making::{Answer, Field, Form, MadeShown, Making, NOT_A_NAME, Refusal};
+use super::making::{
+    Answer, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, NOT_A_NAME, REQUIRED,
+    Refusal,
+};
 use super::write::Write;
 use crate::api::Sources;
 use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal};
+use crate::config;
 use crate::repo_files::FileError;
 use crate::trial::Configuration;
 use crate::work_settings::Effort;
@@ -68,6 +72,8 @@ fn efforts() -> [&'static str; 5] {
 /// A configuration but `as-is` as the dialog sends it and shows it.
 #[derive(Default)]
 pub(super) struct ConfigurationFields {
+    /// Its number in its fields' names, `cN.KEY`.
+    n: u32,
     name: String,
     model: String,
     effort: String,
@@ -138,8 +144,7 @@ impl Form for LaunchFields {
 }
 
 /// A field of the New benchmark run dialog.
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum LaunchField {
     Repetitions,
     /// The field `field` of the configuration numbered `n` in its fields'
@@ -151,8 +156,7 @@ pub(super) enum LaunchField {
 }
 
 /// A field of a configuration but `as-is`.
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ConfigurationField {
     Name,
     Model,
@@ -165,19 +169,20 @@ pub(super) enum ConfigurationField {
 impl Field for LaunchField {
     fn required(&self) -> bool {
         match self {
-            LaunchField::Repetitions
-            | LaunchField::Configuration {
-                field: ConfigurationField::Name,
-                ..
-            } => true,
-            LaunchField::Configuration {
-                field:
-                    ConfigurationField::Model
-                    | ConfigurationField::Effort
-                    | ConfigurationField::SessionTimeout
-                    | ConfigurationField::Brief(_),
-                ..
-            } => false,
+            LaunchField::Repetitions => true,
+            LaunchField::Configuration { field, .. } => field.required(),
+        }
+    }
+}
+
+impl Field for ConfigurationField {
+    fn required(&self) -> bool {
+        match self {
+            ConfigurationField::Name => true,
+            ConfigurationField::Model
+            | ConfigurationField::Effort
+            | ConfigurationField::SessionTimeout
+            | ConfigurationField::Brief(_) => false,
         }
     }
 }
@@ -199,7 +204,13 @@ impl LaunchFields {
                 unread.get_or_insert_with(|| format!("The form has no field \"{field}\"."));
                 continue;
             };
-            let configuration = configurations.entry(number).or_default();
+            let configuration =
+                configurations
+                    .entry(number)
+                    .or_insert_with(|| ConfigurationFields {
+                        n: number,
+                        ..ConfigurationFields::default()
+                    });
             match key {
                 ConfigurationKey::Name => configuration.name = value,
                 ConfigurationKey::Model => configuration.model = value,
@@ -230,33 +241,155 @@ impl LaunchFields {
         (fields, unread)
     }
 
-    /// Each configuration but `as-is`, its files of the brief given over
-    /// `starting`, or else the refusal of the first that cannot be used.
-    fn configurations(
+    /// The repetitions and each configuration but `as-is`, by its name, its
+    /// files of the brief given over `starting`, or else every refusal of
+    /// the fields (`docs/specs/benchmarks.md`, New benchmark run, Refusals).
+    fn check(
         &self,
         starting: &BTreeMap<String, String>,
-    ) -> Result<Vec<(ConfigurationName, Configuration)>, String> {
-        let mut configurations = Vec::with_capacity(self.configurations.len());
-        for (added, fields) in self.configurations.iter().enumerate() {
-            let typed = fields.name.trim();
-            if typed.is_empty() {
-                return Err(configuration_unnamed(added));
-            }
-            let name: ConfigurationName = typed.parse().map_err(|_| NOT_A_NAME.to_string())?;
-            let configuration = Configuration::parse(fields.files(starting))
-                .map_err(|errors| configuration_unusable(&name, &errors))?;
-            configurations.push((name, configuration));
+    ) -> Result<Launch, FieldRefusals<LaunchField>> {
+        let mut refused = vec![];
+        let names: Vec<Option<ConfigurationName>> = self
+            .configurations
+            .iter()
+            .map(|fields| {
+                let typed = fields.name.trim();
+                let reason = if typed.is_empty() {
+                    REQUIRED
+                } else {
+                    match typed.parse() {
+                        Ok(name) => return Some(name),
+                        Err(_) => NOT_A_NAME,
+                    }
+                };
+                refused.push((fields.field(ConfigurationField::Name), reason.to_string()));
+                None
+            })
+            .collect();
+        let mut counts = BTreeMap::from([(ConfigurationName::as_is(), 1_usize)]);
+        for name in names.iter().flatten() {
+            *counts.entry(name.clone()).or_default() += 1;
         }
-        Ok(configurations)
+        let mut configurations = Vec::with_capacity(self.configurations.len());
+        for (fields, name) in self.configurations.iter().zip(names) {
+            if let Some(name) = &name
+                && counts[name] > 1
+            {
+                refused.push((fields.field(ConfigurationField::Name), another_named(name)));
+            }
+            match fields.checked(starting) {
+                Ok(configuration) => configurations.extend(name.map(|name| (name, configuration))),
+                Err(errors) => refused.extend(errors),
+            }
+        }
+        let refusals = FieldRefusals::collect(refused);
+        match (self.repetitions(), refusals) {
+            (Some(repetitions), None) => Ok((repetitions, configurations)),
+            (Some(_), Some(refusals)) => Err(refusals),
+            (None, refusals) => {
+                let reason = if self.repetitions.trim().is_empty() {
+                    REQUIRED
+                } else {
+                    REPETITIONS
+                };
+                Err(match refusals {
+                    Some(refusals) => refusals.and(LaunchField::Repetitions, reason),
+                    None => FieldRefusals::of(LaunchField::Repetitions, reason),
+                })
+            }
+        }
     }
 
     /// The repetitions typed, while they are a whole number, 1 or more.
     fn repetitions(&self) -> Option<NonZeroU32> {
-        self.repetitions.trim().parse().ok()
+        let typed = self.repetitions.trim();
+        if !typed.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        typed.parse().ok()
     }
 }
 
+/// What a launch that passes the form's checks launches: its repetitions, and
+/// each configuration but `as-is`, by its name.
+type Launch = (NonZeroU32, Vec<(ConfigurationName, Configuration)>);
+
 impl ConfigurationFields {
+    /// Its field `field`.
+    fn field(&self, field: ConfigurationField) -> LaunchField {
+        LaunchField::Configuration { n: self.n, field }
+    }
+
+    /// Its settings, each with its key and its field.
+    fn settings(&self) -> [(ConfigurationField, &'static str, &str); 3] {
+        [
+            (ConfigurationField::Model, "model", &self.model),
+            (ConfigurationField::Effort, "effort", &self.effort),
+            (
+                ConfigurationField::SessionTimeout,
+                "session-timeout",
+                &self.session_timeout,
+            ),
+        ]
+    }
+
+    /// Its configuration, its files of the brief given over `starting`, or
+    /// else the refusal of each of its settings and files with an error,
+    /// under its field: a setting checked on its own as a `config.toml` of
+    /// that one key, and a file of the brief under its box, by its path as
+    /// the box's label shows it. An error of its settings together, which
+    /// none has on its own, goes under the first it sets.
+    fn checked(
+        &self,
+        starting: &BTreeMap<String, String>,
+    ) -> Result<Configuration, Vec<(LaunchField, String)>> {
+        let mut refused: Vec<(LaunchField, String)> = self
+            .settings()
+            .into_iter()
+            .filter_map(|(field, key, value)| {
+                let value = value.trim();
+                if value.is_empty() {
+                    return None;
+                }
+                let table =
+                    toml::Table::from_iter([(key.to_string(), toml::Value::String(value.into()))]);
+                let text = toml::to_string(&table).expect("a table of strings serializes");
+                let error = config::configuration_settings(&text).err()?;
+                Some((
+                    self.field(field),
+                    format!("{SETTINGS} has an error: {error:#}"),
+                ))
+            })
+            .collect();
+        let errors = match Configuration::parse(self.files(starting)) {
+            Ok(configuration) if refused.is_empty() => return Ok(configuration),
+            Ok(_) => vec![],
+            Err(errors) => errors,
+        };
+        let settings_refused = !refused.is_empty();
+        for FileError { path, error } in errors {
+            match path.strip_prefix(BRIEFS) {
+                Some(under) => refused.push((
+                    self.field(ConfigurationField::Brief(under.to_string())),
+                    format!("{under} has an error: {error}"),
+                )),
+                None if settings_refused => {}
+                None => {
+                    let first_set = self
+                        .settings()
+                        .into_iter()
+                        .find(|(_, _, value)| !value.trim().is_empty())
+                        .map_or(ConfigurationField::Name, |(field, _, _)| field);
+                    refused.push((
+                        self.field(first_set),
+                        format!("{path} has an error: {error}"),
+                    ));
+                }
+            }
+        }
+        Err(refused)
+    }
+
     /// The configuration's files, by their paths under CONFIG, as
     /// [`Configuration::parse`] takes them: its settings, if it sets any,
     /// and each file of the brief whose text is not the one it started with
@@ -264,11 +397,7 @@ impl ConfigurationFields {
     fn files(&self, starting: &BTreeMap<String, String>) -> BTreeMap<String, Vec<u8>> {
         let mut files = BTreeMap::new();
         let mut settings = toml::Table::new();
-        for (key, value) in [
-            ("model", &self.model),
-            ("effort", &self.effort),
-            ("session-timeout", &self.session_timeout),
-        ] {
+        for (_, key, value) in self.settings() {
             let value = value.trim();
             if !value.is_empty() {
                 settings.insert(key.into(), toml::Value::String(value.into()));
@@ -276,12 +405,12 @@ impl ConfigurationFields {
         }
         if !settings.is_empty() {
             let text = toml::to_string(&settings).expect("a table of strings serializes");
-            files.insert("config.toml".to_string(), text.into_bytes());
+            files.insert(SETTINGS.to_string(), text.into_bytes());
         }
         for (path, text) in &self.briefs {
             let started = self.started.get(path).or_else(|| starting.get(path));
             if started != Some(text) {
-                files.insert(format!("briefs/{path}"), text.clone().into_bytes());
+                files.insert(format!("{BRIEFS}{path}"), text.clone().into_bytes());
             }
         }
         files
@@ -328,21 +457,24 @@ impl NewBenchmarkRunForm {
         )
     }
 
-    /// The configuration `fields`, numbered `n` for its fields' names.
-    fn configuration(&self, n: usize, fields: &ConfigurationFields) -> Html {
-        self.configuration_box(n.to_string(), fields)
+    /// The configuration `fields`.
+    fn configuration(&self, fields: &ConfigurationFields) -> Html {
+        self.configuration_box(Some(fields.n), fields)
     }
 
     /// What "Add a configuration" adds, its number `__N__` for the script
     /// to fill in.
     pub(super) fn added(&self) -> Html {
-        self.configuration_box(UNNUMBERED.into(), &ConfigurationFields::default())
+        self.configuration_box(None, &ConfigurationFields::default())
     }
 
-    fn configuration_box(&self, n: String, fields: &ConfigurationFields) -> Html {
+    /// The box of the configuration `fields` numbered `n`, or else
+    /// unnumbered.
+    fn configuration_box(&self, n: Option<u32>, fields: &ConfigurationFields) -> Html {
         html::rendered(&ConfigurationBox {
             n,
             fields,
+            making: &self.making,
             paths: &self.paths,
             efforts: efforts(),
         })
@@ -357,12 +489,16 @@ impl NewBenchmarkRunForm {
             path: UNCHOSEN,
             text: "",
             started: Some(""),
+            shown: FieldShown::unrefused(&ConfigurationField::Brief(UNCHOSEN.into())),
         })
     }
 
-    /// It refused for `why`, answered with `status`.
-    fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewBenchmarkRunForm> {
-        self.making.refusal = Some(Refusal::Whole(why));
+    /// It refused for `refusal`, answered with `status`.
+    fn refused(
+        mut self,
+        (status, refusal): (StatusCode, Refusal<LaunchField>),
+    ) -> Answer<NewBenchmarkRunForm> {
+        self.making.refusal = Some(refusal);
         Answer::Refused { status, form: self }
     }
 }
@@ -371,26 +507,42 @@ impl NewBenchmarkRunForm {
 #[derive(Template)]
 #[template(path = "new_benchmark_run_configuration.html")]
 struct ConfigurationBox<'a> {
-    /// Its number in its fields' names.
-    n: String,
+    /// Its number in its fields' names, or none while the script has yet to
+    /// number it.
+    n: Option<u32>,
     fields: &'a ConfigurationFields,
+    making: &'a Making<LaunchFields>,
     paths: &'a [String],
     efforts: [&'static str; 5],
 }
 
 impl ConfigurationBox<'_> {
+    /// Its number as its fields' names give it.
+    fn number(&self) -> String {
+        self.n.map_or(UNNUMBERED.into(), |n| n.to_string())
+    }
+
     /// The id of its field `key`.
     fn id(&self, key: &str) -> String {
-        format!("new-benchmark-run-c{}-{key}", self.n)
+        format!("new-benchmark-run-c{}-{key}", self.number())
+    }
+
+    /// How it shows its field `field`.
+    fn shown(&self, field: ConfigurationField) -> FieldShown {
+        match self.n {
+            Some(n) => self.making.field(&LaunchField::Configuration { n, field }),
+            None => FieldShown::unrefused(&field),
+        }
     }
 
     /// The box of its file of the brief at `path`, holding `text`.
     fn file(&self, path: &str, text: &str) -> Html {
         html::rendered(&BriefFileBox {
-            n: &self.n,
+            n: &self.number(),
             path,
             text,
             started: self.fields.started.get(path).map(String::as_str),
+            shown: self.shown(ConfigurationField::Brief(path.into())),
         })
     }
 }
@@ -412,6 +564,14 @@ struct BriefFileBox<'a> {
     text: &'a str,
     /// The text it started with in the dialog, if the dialog sent it.
     started: Option<&'a str>,
+    shown: FieldShown,
+}
+
+impl BriefFileBox<'_> {
+    /// The id of its box.
+    fn id(&self) -> String {
+        format!("new-benchmark-run-c{}-briefs/{}", self.n, self.path)
+    }
 }
 
 /// The texts of the files of the brief, by path, as a run of the stage uses
@@ -463,22 +623,21 @@ pub(super) async fn launch(
         form.tasks = shown.tasks.len();
     }
     if let Err(refused) = WRITE.same_origin(&headers, &uri).and(sent) {
-        return form.refused(refused.into_parts());
+        let (status, why) = refused.into_parts();
+        return form.refused((status, Refusal::Whole(why)));
     }
     if let Some(why) = unread {
-        return form.refused((StatusCode::BAD_REQUEST, why));
+        return form.refused((StatusCode::BAD_REQUEST, Refusal::Whole(why)));
     }
     let benchmark = match found {
         Ok(shown) => shown.benchmark.name,
-        Err(refused) => return form.refused(refused),
+        Err((status, why)) => return form.refused((status, Refusal::Whole(why))),
     };
-    let unprocessable = |why: String| (StatusCode::UNPROCESSABLE_ENTITY, why);
-    let Some(repetitions) = form.making.fields.repetitions() else {
-        return form.refused(unprocessable(REPETITIONS.into()));
-    };
-    let configurations = match form.making.fields.configurations(&starting) {
-        Ok(configurations) => configurations,
-        Err(why) => return form.refused(unprocessable(why)),
+    let (repetitions, configurations) = match form.making.fields.check(&starting) {
+        Ok(launch) => launch,
+        Err(refusals) => {
+            return form.refused((StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals)));
+        }
     };
     match benchmark_runs(&sources)
         .launch(&benchmark, configurations, repetitions, sources.clock.now())
@@ -497,7 +656,8 @@ pub(super) async fn launch(
             if let LaunchRefusal::Failed(e) = &refusal {
                 warn!(benchmark = %benchmark, error = format!("{e:#}"), "launching a benchmark run failed");
             }
-            form.refused(launch_refused(&refusal))
+            let refused = launch_refused(&form.making.fields, &refusal);
+            form.refused(refused)
         }
     }
 }
@@ -505,53 +665,333 @@ pub(super) async fn launch(
 /// The refusal of repetitions that are not a whole number, 1 or more.
 const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 
-/// The refusal of a configuration with no name, the configuration `added`
-/// after `as-is`, counting from 0. It is named by its place in the New
-/// benchmark run dialog, where `as-is` is 1st.
-fn configuration_unnamed(added: usize) -> String {
-    const AFTER_AS_IS: usize = 2;
-    format!(
-        "The {} configuration needs a name.",
-        ordinal(added + AFTER_AS_IS)
-    )
+/// The refusal of the name `name` that another configuration has.
+fn another_named(name: &ConfigurationName) -> String {
+    format!("Another configuration is named {name}.")
 }
 
-/// `n` as an ordinal, such as "2nd" or "11th".
-fn ordinal(n: usize) -> String {
-    let suffix = match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
-}
+/// The path under a configuration of its settings.
+const SETTINGS: &str = "config.toml";
 
-/// The refusal of configuration `name`, whose files have `errors`, for the
-/// first of them.
-fn configuration_unusable(name: &ConfigurationName, errors: &[FileError]) -> String {
-    match errors.first() {
-        Some(FileError { path, error }) => {
-            format!("The configuration {name} has an error in {path}: {error}")
-        }
-        None => format!("The configuration {name} has an error."),
-    }
-}
+/// The directory under a configuration of its files of the brief.
+const BRIEFS: &str = "briefs/";
 
-/// The status and the refusal of a benchmark run that was not launched, or
-/// why launching it failed.
-fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
+/// The status and the refusal of a benchmark run on `fields` that was not
+/// launched, or why launching it failed: two configurations of one name
+/// under each configuration of that name, and the rest of no field.
+fn launch_refused(
+    fields: &LaunchFields,
+    refusal: &LaunchRefusal,
+) -> (StatusCode, Refusal<LaunchField>) {
+    let whole = |status, why: String| (status, Refusal::Whole(why));
     match refusal {
-        LaunchRefusal::NoSuchBenchmark(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
-        LaunchRefusal::NoTasks(name) => (
+        LaunchRefusal::NoSuchBenchmark(_) => whole(StatusCode::NOT_FOUND, refusal.to_string()),
+        LaunchRefusal::NoTasks(name) => whole(
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("The benchmark {name} has no tasks."),
         ),
-        LaunchRefusal::DuplicateConfiguration(name) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Two configurations are named {name}."),
-        ),
-        LaunchRefusal::Failed(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+        LaunchRefusal::DuplicateConfiguration(name) => {
+            let why = another_named(name);
+            let named = fields
+                .configurations
+                .iter()
+                .filter(|configuration| configuration.name.trim() == name.as_str())
+                .map(|configuration| (configuration.field(ConfigurationField::Name), why.clone()));
+            match FieldRefusals::collect(named) {
+                Some(refusals) => (StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals)),
+                None => whole(StatusCode::UNPROCESSABLE_ENTITY, why),
+            }
+        }
+        LaunchRefusal::Failed(e) => whole(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fields of a launch sent as `sent`, by the names the dialog gives
+    /// them.
+    #[track_caller]
+    fn sent(sent: &[(&str, &str)]) -> LaunchFields {
+        let (fields, unread) = LaunchFields::read(
+            sent.iter()
+                .map(|(field, value)| (field.to_string(), value.to_string()))
+                .collect(),
+        );
+        assert_eq!(unread, None);
+        fields
+    }
+
+    /// The field `field` of the configuration numbered `n`.
+    fn configuration_field(n: u32, field: ConfigurationField) -> LaunchField {
+        LaunchField::Configuration { n, field }
+    }
+
+    /// The refusals of the launch sent as `fields`, over no starting texts.
+    #[track_caller]
+    fn refused(fields: &[(&str, &str)]) -> FieldRefusals<LaunchField> {
+        match sent(fields).check(&BTreeMap::new()) {
+            Ok(_) => panic!("{fields:?} is not refused"),
+            Err(refusals) => refusals,
+        }
+    }
+
+    const NAME_FORM: &str = "A name holds only lowercase letters, digits and hyphens, and \
+                              starts with a letter or a digit.";
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
+    /// `docs/specs/design_system.md`, Making, Required.
+    #[test_log::test]
+    fn repetitions_that_are_empty_are_required_and_any_other_but_a_whole_number_1_or_more_refused()
+    {
+        for (typed, reason) in [
+            ("", "Required."),
+            ("  ", "Required."),
+            ("0", "Repetitions are a whole number, 1 or more."),
+            ("1.5", "Repetitions are a whole number, 1 or more."),
+            ("-2", "Repetitions are a whole number, 1 or more."),
+            ("+3", "Repetitions are a whole number, 1 or more."),
+            ("many", "Repetitions are a whole number, 1 or more."),
+        ] {
+            assert_eq!(
+                refused(&[("repetitions", typed)]),
+                FieldRefusals::of(LaunchField::Repetitions, reason),
+                "{typed:?}"
+            );
+        }
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
+    /// `docs/specs/design_system.md`, Making, Required.
+    #[test_log::test]
+    fn a_name_that_is_empty_is_required_and_one_out_of_form_refused() {
+        for (typed, reason) in [
+            ("", "Required."),
+            (" \t", "Required."),
+            ("Short", NAME_FORM),
+            ("short one", NAME_FORM),
+        ] {
+            assert_eq!(
+                refused(&[("repetitions", "1"), ("c3.name", typed)]),
+                FieldRefusals::of(configuration_field(3, ConfigurationField::Name), reason),
+                "{typed:?}"
+            );
+        }
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: a name that
+    /// another configuration has, `as-is` among them, under each such name.
+    #[test_log::test]
+    fn a_name_another_configuration_has_is_refused_under_each_configuration_of_that_name() {
+        assert_eq!(
+            refused(&[
+                ("repetitions", "1"),
+                ("c1.name", "short"),
+                ("c2.name", "long"),
+                ("c4.name", " short "),
+                ("c5.name", "as-is"),
+            ]),
+            FieldRefusals::of(
+                configuration_field(1, ConfigurationField::Name),
+                "Another configuration is named short."
+            )
+            .and(
+                configuration_field(4, ConfigurationField::Name),
+                "Another configuration is named short."
+            )
+            .and(
+                configuration_field(5, ConfigurationField::Name),
+                "Another configuration is named as-is."
+            )
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: each setting
+    /// is checked on its own, its error under it.
+    #[test_log::test]
+    fn a_setting_with_an_error_is_refused_under_it_as_config_toml() {
+        let refusals = refused(&[
+            ("repetitions", "1"),
+            ("c1.name", "short"),
+            ("c1.model", "haiku"),
+            ("c1.effort", "lots"),
+            ("c1.session-timeout", "soon"),
+        ]);
+
+        assert_eq!(
+            refusals,
+            FieldRefusals::of(
+                configuration_field(1, ConfigurationField::Effort),
+                "config.toml has an error: the setting `effort` is \"lots\": it is `low`, \
+                 `medium`, `high`, `xhigh` or `max`"
+            )
+            .and(
+                configuration_field(1, ConfigurationField::SessionTimeout),
+                "config.toml has an error: the setting `session-timeout` is \"soon\": expected \
+                 number at 0"
+            )
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: a file of
+    /// the brief with an error, named by its path under `briefs/`, as its
+    /// box's label shows it.
+    #[test_log::test]
+    fn a_file_of_the_brief_with_an_error_is_refused_under_its_box() {
+        assert_eq!(
+            refused(&[
+                ("repetitions", "1"),
+                ("c2.name", "short"),
+                ("c2.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
+            ]),
+            FieldRefusals::of(
+                configuration_field(2, ConfigurationField::Brief("prompts/implement.md".into())),
+                "prompts/implement.md has an error: it has unknown placeholders: `{{nothing}}`"
+            )
+        );
+    }
+
+    /// `docs/specs/design_system.md`, Making, A refusal: each field refused
+    /// shows its reason, all at once.
+    #[test_log::test]
+    fn every_refusal_of_the_form_comes_at_once() {
+        let another_twin = "Another configuration is named twin.";
+        assert_eq!(
+            refused(&[
+                ("repetitions", "0"),
+                ("c1.name", ""),
+                ("c2.name", "Short"),
+                ("c3.name", "twin"),
+                ("c3.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
+                ("c6.name", "twin"),
+                ("c6.effort", "lots"),
+            ]),
+            FieldRefusals::of(
+                LaunchField::Repetitions,
+                "Repetitions are a whole number, 1 or more."
+            )
+            .and(
+                configuration_field(1, ConfigurationField::Name),
+                "Required."
+            )
+            .and(configuration_field(2, ConfigurationField::Name), NAME_FORM)
+            .and(
+                configuration_field(3, ConfigurationField::Name),
+                another_twin
+            )
+            .and(
+                configuration_field(3, ConfigurationField::Brief("prompts/implement.md".into())),
+                "prompts/implement.md has an error: it has unknown placeholders: `{{nothing}}`"
+            )
+            .and(
+                configuration_field(6, ConfigurationField::Name),
+                another_twin
+            )
+            .and(
+                configuration_field(6, ConfigurationField::Effort),
+                "config.toml has an error: the setting `effort` is \"lots\": it is `low`, \
+                 `medium`, `high`, `xhigh` or `max`"
+            )
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: the
+    /// domain's refusal of two configurations of one name goes under each
+    /// configuration of that name, and a benchmark with no tasks above the
+    /// buttons.
+    #[test_log::test]
+    fn the_domains_refusals_go_under_each_configuration_named_or_above_the_buttons() {
+        let fields = sent(&[
+            ("repetitions", "1"),
+            ("c1.name", "short"),
+            ("c2.name", "long"),
+            ("c3.name", " short"),
+        ]);
+
+        let (status, refusal) = launch_refused(
+            &fields,
+            &LaunchRefusal::DuplicateConfiguration("short".parse().unwrap()),
+        );
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        let Refusal::Fields(refusals) = refusal else {
+            panic!("refused as a whole");
+        };
+        assert_eq!(
+            refusals,
+            FieldRefusals::of(
+                configuration_field(1, ConfigurationField::Name),
+                "Another configuration is named short."
+            )
+            .and(
+                configuration_field(3, ConfigurationField::Name),
+                "Another configuration is named short."
+            )
+        );
+
+        let (no_tasks_status, no_tasks) =
+            launch_refused(&fields, &LaunchRefusal::NoTasks("board".parse().unwrap()));
+        assert_eq!(no_tasks_status, StatusCode::UNPROCESSABLE_ENTITY);
+        let Refusal::Whole(why) = no_tasks else {
+            panic!("refused under a field");
+        };
+        assert_eq!(why, "The benchmark board has no tasks.");
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run: a launch that passes
+    /// gives its repetitions and each configuration, by its name, with the
+    /// files it gives: its settings, and each file of the brief whose text
+    /// is not the one it started with.
+    #[test_log::test]
+    fn a_launch_that_passes_gives_its_repetitions_and_configurations() {
+        let starting = BTreeMap::from([("prompts/fix-ci.md".to_string(), "Fix CI.\n".to_string())]);
+
+        let (repetitions, configurations) = sent(&[
+            ("repetitions", " 3 "),
+            ("c1.name", " short "),
+            ("c1.session-timeout", "30m"),
+            ("c1.briefs/prompts/fix-ci.md", "Fix CI.\n"),
+            ("c2.name", "careful"),
+            ("c2.effort", "max"),
+        ])
+        .check(&starting)
+        .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+
+        assert_eq!(repetitions.get(), 3);
+        let kept: Vec<(String, Vec<(String, String)>)> = configurations
+            .iter()
+            .map(|(name, configuration)| {
+                let dir = tempfile::tempdir().unwrap();
+                configuration.keep(dir.path()).unwrap();
+                let mut files: Vec<(String, String)> = std::fs::read_dir(dir.path())
+                    .unwrap()
+                    .map(|entry| {
+                        let path = entry.unwrap().path();
+                        (
+                            path.file_name().unwrap().to_string_lossy().into_owned(),
+                            std::fs::read_to_string(&path).unwrap(),
+                        )
+                    })
+                    .collect();
+                files.sort();
+                (name.to_string(), files)
+            })
+            .collect();
+        assert_eq!(
+            kept,
+            [
+                (
+                    "short".to_string(),
+                    vec![(
+                        "config.toml".to_string(),
+                        "session-timeout = \"30m\"\n".to_string()
+                    )]
+                ),
+                (
+                    "careful".to_string(),
+                    vec![("config.toml".to_string(), "effort = \"max\"\n".to_string())]
+                ),
+            ]
+        );
     }
 }

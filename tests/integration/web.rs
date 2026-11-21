@@ -926,7 +926,10 @@ struct MakingShown<'a> {
 /// is the one `alert` before the buttons.
 #[track_caller]
 fn making_shown(form: &Html) -> MakingShown<'_> {
-    let controls = select(form, "input[name], select[name], textarea[name]");
+    let controls = select(
+        form,
+        "input[name]:not([type=hidden]), select[name], textarea[name]",
+    );
     let mut refused = vec![];
     for control in &controls {
         let name = control.attr("name").unwrap();

@@ -1634,6 +1634,21 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
             refusal: None,
         }
     );
+    let fragment = Html::parse_fragment(&form.inner_html());
+    assert_eq!(
+        making_shown(&fragment),
+        MakingShown {
+            values: vec![("repetitions", "1".into())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+    let repetitions = select(&fragment, "input[name=repetitions]")[0];
+    assert_eq!(repetitions.attr("type"), Some("text"));
+    assert_eq!(repetitions.attr("inputmode"), Some("numeric"));
+    assert_eq!(repetitions.attr("required"), Some(""));
+    assert_eq!(repetitions.attr("pattern"), Some(r".*\S.*"));
+    assert_eq!(select(&fragment, ".optional").len(), 0);
     let buttons = select_in(form, ".modal-action button");
     assert_eq!(buttons[0].attr("command"), Some("close"));
     assert_eq!(buttons[0].attr("commandfor"), Some("new-benchmark-run"));
@@ -1654,7 +1669,55 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
             "Files of the brief"
         ]
     );
-    for label in select(&added, "label") {
+    assert_eq!(
+        making_shown(&added),
+        MakingShown {
+            values: vec![
+                ("c__N__.name", String::new()),
+                ("c__N__.model", String::new()),
+                ("c__N__.effort", String::new()),
+                ("c__N__.session-timeout", String::new()),
+            ],
+            refused: vec![],
+            whole: None,
+        }
+    );
+    let hints: Vec<String> = select(&added, ".validator-hint")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(hints, ["Required.", "", "", ""]);
+    let optional: Vec<String> = select(&added, ".optional").into_iter().map(text).collect();
+    assert_eq!(optional, ["Optional", "Optional", "Optional"]);
+    let name = select(&added, "input[name='c__N__.name']")[0];
+    assert_eq!(name.attr("required"), Some(""));
+    assert_eq!(name.attr("pattern"), Some(r".*\S.*"));
+    assert_eq!(
+        select(&added, "[name]:not([name='c__N__.name'])[required]").len(),
+        0
+    );
+    let file_template = select(&html, "template#brief-file-template");
+    let added_file = Html::parse_fragment(&file_template[0].inner_html());
+    assert_eq!(
+        making_shown(&added_file),
+        MakingShown {
+            values: vec![("c__N__.briefs/__PATH__", String::new())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+    let area = select(&added_file, "textarea")[0];
+    assert_eq!(area.attr("required"), None);
+    assert_eq!(
+        select(&added_file, ".validator-hint")[0].attr("id"),
+        Some("new-benchmark-run-c__N__-briefs/__PATH__-hint")
+    );
+    let file_optional: Vec<String> = select(&added_file, ".optional")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(file_optional, ["Optional"]);
+    for label in select(&added, "label[for]") {
         let field = label.attr("for").unwrap();
         assert_eq!(
             select(&added, &format!("[id='{field}']")).len(),
@@ -1746,6 +1809,12 @@ async fn a_launch_on_a_benchmark_with_no_tasks_is_refused() {
             refusal: Some("The benchmark triage-basics has no tasks.".into()),
         }
     );
+    let shown = making_shown(&answer);
+    assert_eq!(shown.refused, []);
+    assert_eq!(
+        shown.whole.as_deref(),
+        Some("The benchmark triage-basics has no tasks.")
+    );
     assert_eq!(
         text(select(&answer, "legend")[0]),
         "New benchmark run on triage-basics"
@@ -1764,30 +1833,45 @@ fn named(name: &str) -> ConfigurationShown {
     }
 }
 
-/// The configurations a launch sends, those its refused form shows, and the
-/// start of its refusal.
+/// The fields a launch sends besides its repetitions, the configurations its
+/// refused form shows, and each field refused with the reason under it.
 type Refusal = (
     &'static [(&'static str, &'static str)],
     Vec<ConfigurationShown>,
-    &'static str,
+    Vec<(&'static str, &'static str)>,
 );
 
+const NOT_A_NAME: &str = "A name holds only lowercase letters, digits and hyphens, and starts \
+                          with a letter or a digit.";
+
 /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
-/// `docs/specs/design_system.md`, Making, A refusal.
+/// `docs/specs/design_system.md`, Making, Required and A refusal;
+/// `docs/specs/web/design_system.md`, Making: each refusal of a field is
+/// under it: of the repetitions, a configuration's name, a setting and a
+/// file of the brief.
 #[test_log::test(tokio::test)]
-async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refused() {
+async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_field() {
     let pages = with_benchmarks().await;
-    let refusals: [Refusal; 6] = [
+    let refusals: [Refusal; 5] = [
         (
-            &[("c1.name", "short"), ("c1.session-timeout", "soon")],
+            &[
+                ("repetitions", "1"),
+                ("c1.name", "short"),
+                ("c1.session-timeout", "soon"),
+            ],
             vec![ConfigurationShown {
                 session_timeout: "soon".into(),
                 ..named("short")
             }],
-            "The configuration short has an error in config.toml: ",
+            vec![(
+                "c1.session-timeout",
+                "config.toml has an error: the setting `session-timeout` is \"soon\": expected \
+                 number at 0",
+            )],
         ),
         (
             &[
+                ("repetitions", "1"),
                 ("c1.name", "short"),
                 ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
             ],
@@ -1799,95 +1883,55 @@ async fn a_refused_launch_answers_the_form_as_sent_naming_the_configuration_refu
                 )],
                 ..named("short")
             }],
-            "The configuration short has an error in briefs/prompts/implement.md: ",
+            vec![(
+                "c1.briefs/prompts/implement.md",
+                "prompts/implement.md has an error: it has unknown placeholders: `{{nothing}}`",
+            )],
         ),
         (
-            &[("c1.name", "as-is")],
-            vec![named("as-is")],
-            "Two configurations are named as-is.",
-        ),
-        (
-            &[("c1.name", "short"), ("c2.name", "short")],
+            &[
+                ("repetitions", "1"),
+                ("c1.name", "short"),
+                ("c3.name", "short"),
+            ],
             vec![named("short"), named("short")],
-            "Two configurations are named short.",
+            vec![
+                ("c1.name", "Another configuration is named short."),
+                ("c3.name", "Another configuration is named short."),
+            ],
         ),
         (
-            &[("c1.name", "Short")],
-            vec![named("Short")],
-            "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a \
-             digit.",
-        ),
-        (
-            &[("c1.name", "short"), ("c2.name", " ")],
+            &[("repetitions", "1"), ("c1.name", "short"), ("c2.name", " ")],
             vec![named("short"), named(" ")],
-            "The 3rd configuration needs a name.",
+            vec![("c2.name", "Required.")],
+        ),
+        (
+            &[("repetitions", " ")],
+            vec![],
+            vec![("repetitions", "Required.")],
         ),
     ];
 
-    for (fields, configurations, refused) in refusals {
-        let mut sent = vec![("repetitions", "1")];
-        sent.extend_from_slice(fields);
+    for (sent, configurations, refused) in refusals {
         let (status, headers, answer) =
-            post_answer(&pages, "/benchmarks/board/launch", &[SAME_ORIGIN], &sent).await;
-        assert_eq!(status, 422, "{fields:?}");
+            post_answer(&pages, "/benchmarks/board/launch", &[SAME_ORIGIN], sent).await;
+        assert_eq!(status, 422, "{sent:?}");
         assert!(headers.get("hx-trigger").is_none());
-        let shown = launch_form(&answer);
-        assert!(
-            shown
-                .refusal
-                .as_deref()
-                .unwrap_or_default()
-                .starts_with(refused),
-            "{shown:?}"
+        let shown = making_shown(&answer);
+        let reasons: Vec<(&str, &str)> = shown
+            .refused
+            .iter()
+            .map(|(field, reason)| (*field, reason.as_str()))
+            .collect();
+        assert_eq!(reasons, refused, "{sent:?}");
+        assert_eq!(shown.whole, None, "{sent:?}");
+        assert_eq!(
+            launch_form(&answer).configurations,
+            configurations,
+            "{sent:?}"
         );
-        assert_eq!(shown.configurations, configurations, "{fields:?}");
     }
-    let (no_repetitions, answer) = post(
-        &pages,
-        "/benchmarks/board/launch",
-        &[SAME_ORIGIN],
-        &[("repetitions", "0"), ("c1.name", "short")],
-    )
-    .await;
-    assert_eq!(no_repetitions, 422);
-    assert_eq!(
-        launch_form(&answer),
-        LaunchShown {
-            configurations: vec![named("short")],
-            repetitions: "0".into(),
-            count: "2 configurations × 2 tasks × 1 repetition: 4 trials".into(),
-            refusal: Some("Repetitions are a whole number, 1 or more.".into()),
-        }
-    );
     assert!(!pages.path("benchmark-runs/1").exists());
-}
-
-/// `docs/specs/benchmarks.md`, New benchmark run, Refusals: a configuration
-/// with errors in several files is refused for its first, by path.
-#[test_log::test(tokio::test)]
-async fn a_configuration_with_errors_in_several_files_is_refused_for_its_first() {
-    let pages = with_benchmarks().await;
-
-    let (status, answer) = post(
-        &pages,
-        "/benchmarks/board/launch",
-        &[SAME_ORIGIN],
-        &[
-            ("repetitions", "1"),
-            ("c1.name", "short"),
-            ("c1.session-timeout", "soon"),
-            ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
-        ],
-    )
-    .await;
-
-    assert_eq!(status, 422);
-    let refusal = launch_form(&answer).refusal.unwrap();
-    assert_eq!(
-        refusal,
-        "The configuration short has an error in briefs/prompts/implement.md: it has unknown \
-         placeholders: `{{nothing}}`"
-    );
 }
 
 /// `docs/specs/design_system.md`, Making, A refusal: the fields keep every
@@ -1938,12 +1982,12 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
             ],
             repetitions: "3".into(),
             count: "3 configurations × 2 tasks × 3 repetitions: 18 trials".into(),
-            refusal: Some(
-                "A name holds only lowercase letters, digits and hyphens, and starts with a letter \
-                 or a digit."
-                    .into()
-            ),
+            refusal: None,
         }
+    );
+    assert_eq!(
+        making_shown(&answer).refused,
+        [("c4.name", NOT_A_NAME.to_string())]
     );
     assert_eq!(
         select(&answer, "fieldset.configuration")[0]
