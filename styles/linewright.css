@@ -186,12 +186,12 @@
     @apply inset-shadow-[3px_0_0_var(--tone)];
   }
 
-  :is(.board .toned .line, .related-item) > svg.icon {
+  :is(.board .toned .line, .related-item, .status-text) > svg.icon {
     @apply mr-1 inline-block align-[-0.125em];
   }
 
-  .status-text > .badge {
-    @apply mr-1 align-[-0.125em];
+  .status-text > .status {
+    @apply mr-1;
   }
 
   .related-item:not(:last-child) {

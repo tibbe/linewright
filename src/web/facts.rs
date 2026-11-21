@@ -16,7 +16,7 @@ pub(super) struct Fact<Words = Html> {
 /// A piece of a fact's line.
 pub(super) enum Piece<Words = Html> {
     Text(Words),
-    /// A status: its icon and words in its colour, nothing behind them.
+    /// A status: a dot in its colour, then its icon and words.
     Status {
         status: Status,
         words: Words,

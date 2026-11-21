@@ -349,8 +349,17 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     assert_in_secondary_text(&server, "#server dt");
     let usage_limit = select(&server, "#server dd")[2];
     assert_eq!(
-        select_in(usage_limit, ".status-text > .badge-sm > svg.icon").len(),
+        select_in(usage_limit, ".status-text > .status[aria-hidden=true]").len(),
         1,
+        "{}",
+        usage_limit.html()
+    );
+    assert_eq!(
+        select_in(usage_limit, ".status-text > svg.icon")
+            .into_iter()
+            .map(|icon| icon.attr("aria-label"))
+            .collect::<Vec<_>>(),
+        [Some("paused")],
         "{}",
         usage_limit.html()
     );
@@ -555,16 +564,14 @@ pub(super) fn server_facts(html: &Html) -> Vec<ServerFact> {
         .map(|(label, value)| ServerFact {
             label: text(label),
             value: text(value),
-            tone: select_in(value, ".status-text > .badge")
+            tone: select_in(value, ".status-text > .status")
                 .first()
-                .and_then(|badge| {
-                    badge
-                        .value()
+                .and_then(|dot| {
+                    dot.value()
                         .classes()
                         .find_map(|class| match class {
-                            "text-base-content/60" => Some("base-content/60"),
-                            "badge-outline" | "badge-sm" => None,
-                            _ => class.strip_prefix("badge-"),
+                            "bg-base-content/60" => Some("base-content/60"),
+                            _ => class.strip_prefix("status-"),
                         })
                         .map(str::to_string)
                 }),

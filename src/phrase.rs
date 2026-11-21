@@ -42,6 +42,21 @@ impl Status {
         }
     }
 
+    /// The classes of a daisyUI `status` dot in its colour, for a status
+    /// among facts (`docs/specs/web/components.md`, Facts): a dot is a fill
+    /// with nothing on it, so `base-content/60` is its background. Written
+    /// whole, as `badge` says why.
+    pub fn dot(self) -> &'static str {
+        match self {
+            Status::Done => "status status-success",
+            Status::Failed => "status status-error",
+            Status::InFlight => "status status-info",
+            Status::Waiting => "status status-warning",
+            Status::Cancelled => "status status-neutral",
+            Status::Paused => "status bg-base-content/60",
+        }
+    }
+
     /// The class that sets `--tone` to its colour, which the
     /// stylesheet's rules for a toned element read. Written whole, as
     /// `badge` says why.
@@ -247,6 +262,17 @@ mod tests {
                 "badge-warning",
                 "badge-neutral",
                 "badge-outline text-base-content/60",
+            ]
+        );
+        assert_eq!(
+            statuses.map(Status::dot),
+            [
+                "status status-success",
+                "status status-error",
+                "status status-info",
+                "status status-warning",
+                "status status-neutral",
+                "status bg-base-content/60",
             ]
         );
         assert_eq!(

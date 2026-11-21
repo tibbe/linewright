@@ -782,21 +782,12 @@ async fn with_ticket() -> World {
 /// An icon of a status (`docs/specs/web/design_system.md`, Icons).
 const STATUS_ICON: &str = "svg:is([data-icon=check-circle], [data-icon=x-circle], [data-icon=hand-raised], [data-icon=arrow-path], [data-icon=pause-circle], [data-icon=no-symbol])";
 
-/// Each status's icon beside the words it stands for: in its parent, or,
-/// for a status among facts, its badge's parent.
+/// Each status's icon beside the words it stands for, in its parent.
 fn assert_no_status_by_colour_alone(html: &Html) {
     for icon in select(html, STATUS_ICON) {
         let parent = ElementRef::wrap(icon.parent().unwrap()).unwrap();
-        let beside = if parent.value().classes().any(|class| class == "badge-sm")
-            && text(parent).is_empty()
-        {
-            ElementRef::wrap(parent.parent().unwrap())
-        } else {
-            Some(parent)
-        };
-        let words = beside.map(text);
         assert!(
-            words.is_some_and(|words| !words.is_empty()),
+            !text(parent).is_empty(),
             "an icon without words: {}",
             icon.html()
         );
@@ -804,8 +795,7 @@ fn assert_no_status_by_colour_alone(html: &Html) {
 }
 
 /// `docs/specs/design_system.md`, Status, A badge's words: a badge within
-/// `within`, such as a status among a screen's facts, holds no reason or
-/// detail, here no words at all.
+/// `within` holds no reason or detail, here no words at all.
 #[track_caller]
 fn assert_badges_hold_no_words(html: &Html, within: &str) {
     for badge in select(html, &format!("{within} .badge")) {
