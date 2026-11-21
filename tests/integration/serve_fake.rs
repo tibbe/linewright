@@ -278,6 +278,7 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
         "1 leak",
         "No score. The run's outcome: failed",
         "No score. The scorer gave up",
+        "No score. The build of its environment failed.",
         "gh pr view 4 --comments",
     ] {
         assert!(shown.contains(said), "{said:?} is not in {shown}");

@@ -185,6 +185,16 @@ impl TrialState {
         }
     }
 
+    /// Its time, once it has one: its run's, or the time to a build that
+    /// failed.
+    pub fn time(&self) -> Option<Duration> {
+        if let TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed { time })) = self {
+            Some(*time)
+        } else {
+            self.run().map(|run| run.time)
+        }
+    }
+
     /// Its score, if its scorer made one.
     pub fn score(&self) -> Option<&ScoreFigures> {
         match self {
@@ -195,6 +205,18 @@ impl TrialState {
             | TrialState::Scoring { .. }
             | TrialState::Ended(TrialEnd::Unscored(_) | TrialEnd::Cancelled(_)) => None,
         }
+    }
+
+    /// Whether it ended without its run ever starting, though its output
+    /// may have begun: its build failed, or the cancel came first.
+    pub fn run_never_started(&self) -> bool {
+        matches!(
+            self,
+            TrialState::Ended(
+                TrialEnd::Unscored(NoScore::BuildFailed { .. })
+                    | TrialEnd::Cancelled(Cancelled::BeforeRun)
+            )
+        )
     }
 
     /// Whether its scorer has started, and was not stopped by a cancel.

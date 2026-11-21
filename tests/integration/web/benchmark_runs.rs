@@ -1123,6 +1123,40 @@ async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_
     );
 }
 
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's status and A trial's
+/// reason: a trial whose build failed has no score, its time and no cost, and
+/// opens to its reason alone, as its run never started (A trial's
+/// transcripts), though its output began.
+#[test_log::test(tokio::test)]
+async fn a_trial_whose_build_failed_shows_no_score_and_opens_to_its_reason() {
+    let pages = with_benchmark_run().await;
+    trial(
+        &pages.path(""),
+        1,
+        (2, 1, 1),
+        "state = 'unscored', seconds = 12, unscored = 'build'",
+    )
+    .await;
+    pages.write(&[("benchmark-runs/1/short/lanes/2/task", "2/implement-1\n")]);
+
+    let html = pages.page("/benchmark-runs/1").await;
+
+    let (_, opens, cells) = &fold_rows(&html, Some("configuration-short_task-lanes"))[1];
+    assert!(opens);
+    assert_eq!(cells, &["Trial 2", "no score", "–", "", "12s", "", "", ""]);
+    let details = select(&html, "#configuration-short_task-lanes_trial-2_details")[0];
+    assert_eq!(
+        texts_in(details, ".reason"),
+        ["No score. The build of its environment failed."]
+    );
+    assert_eq!(texts_in(details, ".score"), [] as [String; 0]);
+    assert_eq!(
+        texts_in(details, "h3"),
+        [] as [String; 0],
+        "its run never started, though its output began"
+    );
+}
+
 /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: once the
 /// benchmark run is cancelled, a trial whose run the cancel is still stopping
 /// shows "cancelled".
