@@ -53,7 +53,17 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
     );
     let decision = select(&html, "#item dd")[0];
     assert_eq!(
-        select_in(decision, ".status-text > .badge-sm > svg.icon")
+        select_in(
+            decision,
+            ".status-text > .status.status-warning[aria-hidden=true]:first-child + svg.icon + span:last-child"
+        )
+        .len(),
+        1,
+        "{}",
+        decision.html()
+    );
+    assert_eq!(
+        select_in(decision, ".status-text > .status + svg.icon")
             .into_iter()
             .map(|icon| icon.attr("aria-label"))
             .collect::<Vec<_>>(),

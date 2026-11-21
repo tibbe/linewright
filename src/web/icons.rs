@@ -187,7 +187,7 @@ pub(super) fn status_icon(status: &Status) -> Icon {
 }
 
 /// The icon of a status, named by the status (`docs/specs/design_system.md`,
-/// Status), for a badge that holds it alone.
+/// Status), drawn inline.
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
@@ -201,7 +201,7 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
         Status::Paused => "paused",
         Status::Cancelled => "cancelled",
     };
-    status_icon(status).named(IconSize::Badge, name)
+    status_icon(status).named(IconSize::Inline, name)
 }
 
 /// The icon before a card's title, which stands for what the card holds
