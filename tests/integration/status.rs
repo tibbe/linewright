@@ -16,7 +16,8 @@ use linewright::runs::{Ending, Recorded, Started, StartedBy, State};
 use std::num::NonZeroU64;
 
 use linewright::status::{
-    FailedPolls, Poll, Polling, Serving, Status, StatusSources, View, render, status,
+    FailedPolls, Poll, Polling, Serving, Status, StatusSources, TrialsInFlight, View, render,
+    status,
 };
 use linewright::webhook::Received;
 
@@ -97,6 +98,7 @@ fn text_of(
         view,
         recorded,
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at(now),
     });
@@ -146,6 +148,78 @@ fn before_the_first_poll_there_is_no_last_poll_and_the_next_is_due_now() {
             "runs in flight: 0 of 4",
         ]
     );
+}
+
+fn with_trials(trials: TrialsInFlight) -> Status {
+    status(StatusSources {
+        serving: &serving(),
+        webhooks: Some(Received::default()),
+        polling: None,
+        view: Some(&view(vec![])),
+        recorded: &[],
+        environment: None,
+        trials,
+        drain_deadline: None,
+        now: at("2026-10-01T12:00:30Z"),
+    })
+}
+
+/// `docs/specs/operation.md`, `lw status`.
+#[test_log::test]
+fn the_trials_and_scorers_of_benchmark_runs_in_flight_follow_the_runs_in_flight_while_there_are_any()
+ {
+    let answer = with_trials(TrialsInFlight {
+        in_flight: 2,
+        max_trials: 3,
+    });
+
+    assert_eq!(
+        render(&answer, false).lines().collect::<Vec<_>>()[3..],
+        [
+            "runs in flight: 0 of 4",
+            "trials and scorers of benchmark runs in flight: 2 of 3",
+            "last webhook delivery accepted: none yet",
+            "webhook deliveries refused: 0",
+        ]
+    );
+}
+
+#[test_log::test]
+fn with_no_trials_or_scorers_in_flight_nothing_is_said_of_them() {
+    let answer = with_trials(TrialsInFlight {
+        in_flight: 0,
+        max_trials: 3,
+    });
+
+    assert_eq!(answer.linewright.trials_in_flight, None);
+    assert!(
+        !render(&answer, false).contains("trials and scorers"),
+        "{answer:?}"
+    );
+}
+
+#[test_log::test]
+fn the_trials_in_flight_are_in_the_json_and_a_client_reads_an_answer_without_them() {
+    let answer = with_trials(TrialsInFlight {
+        in_flight: 2,
+        max_trials: 3,
+    });
+    let mut json = serde_json::to_value(&answer).unwrap();
+
+    assert_eq!(
+        json["linewright"]["trials_in_flight"],
+        serde_json::json!({"in_flight": 2, "max_trials": 3})
+    );
+    assert_eq!(
+        serde_json::from_value::<Status>(json.clone()).unwrap(),
+        answer
+    );
+    json["linewright"]
+        .as_object_mut()
+        .unwrap()
+        .remove("trials_in_flight");
+    let read: Status = serde_json::from_value(json).unwrap();
+    assert_eq!(read.linewright.trials_in_flight, None);
 }
 
 #[test_log::test]
@@ -257,6 +331,7 @@ fn the_files_of_the_repositorys_linewright_cannot_use_are_in_the_json_and_a_clie
         view: Some(&with_unusable_files()),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:00:30Z"),
     });
@@ -302,6 +377,7 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
         view: Some(&draining),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now,
     }))
@@ -313,6 +389,7 @@ fn a_drain_under_way_is_in_the_json_and_is_null_without_one() {
         view: Some(&view(vec![])),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now,
     }))
@@ -341,6 +418,7 @@ fn a_drain_with_a_deadline_shows_it_in_text_and_json() {
         view: Some(&draining),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: deadline,
         now,
     });
@@ -387,6 +465,7 @@ fn a_usage_limit_whose_reset_has_passed_is_not_shown() {
         view: Some(&view),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:00:30Z"),
     });
@@ -883,6 +962,7 @@ fn on_a_terminal_the_text_is_coloured_and_otherwise_not() {
         view: Some(&view),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:10:00Z"),
     });
@@ -921,6 +1001,7 @@ fn the_answer_reads_back_from_its_json_as_it_was() {
             "2026-09-28T06:00:00Z",
         )],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:10:00Z"),
     });
@@ -956,6 +1037,10 @@ fn the_json_names_each_fact() {
         view: Some(&view),
         recorded: &recorded,
         environment: None,
+        trials: TrialsInFlight {
+            in_flight: 1,
+            max_trials: 3,
+        },
         drain_deadline: None,
         now: at("2026-10-01T12:10:00Z"),
     });
@@ -976,6 +1061,7 @@ fn the_json_names_each_fact() {
                 "environment": null,
                 "runs_in_flight": 2,
                 "max_runs": 4,
+                "trials_in_flight": {"in_flight": 1, "max_trials": 3},
                 "webhooks": null,
             },
             "runs": [
@@ -1030,6 +1116,7 @@ fn the_json_says_when_a_webhook_delivery_was_last_refused_and_reads_without_it()
         view: None,
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:10:00Z"),
     });
@@ -1065,6 +1152,7 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
         view: Some(&view),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:10:00Z"),
     });
@@ -1153,6 +1241,7 @@ fn managed_numbers(view: &View) -> Vec<Number> {
         view: Some(view),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:00:30Z"),
     })
@@ -1256,6 +1345,7 @@ fn polls_failed_since_the_last_that_succeeded_show_after_the_next_poll() {
         view: Some(&view(vec![])),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:01:30Z"),
     });
@@ -1286,6 +1376,7 @@ fn polls_failed_before_the_first_that_succeeded_show_with_the_next_poll() {
         view: None,
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T11:00:05Z"),
     });
@@ -1311,6 +1402,7 @@ fn polls_failed_are_in_the_json_and_a_client_reads_an_answer_without_them() {
         view: Some(&view(vec![])),
         recorded: &[],
         environment: None,
+        trials: TrialsInFlight::default(),
         drain_deadline: None,
         now: at("2026-10-01T12:01:30Z"),
     });
@@ -1379,6 +1471,7 @@ fn with_a_setup_command_the_environment_shows_after_the_drain_in_text_and_json()
             view: Some(&draining),
             recorded: &[],
             environment,
+            trials: TrialsInFlight::default(),
             drain_deadline: None,
             now,
         })

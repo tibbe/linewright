@@ -123,6 +123,44 @@ async fn the_api_answers_under_api_and_nothing_else() {
     assert_eq!(status, 200, "{body}");
 }
 
+/// `docs/specs/operation.md`, `lw status`: the status answer holds the trials
+/// and scorers of benchmark runs in flight as `serve` last published them.
+#[test_log::test(tokio::test)]
+async fn the_status_answer_holds_the_trials_and_scorers_serve_has_in_flight() {
+    let (_dir, work_dir) = work_dir_keeping(&[], &[]).await;
+    let (publish, links) = api::Publish::new();
+    publish
+        .benchmark_runs
+        .shown(linewright::benchmark_runs::runner::BenchmarkRunsShown {
+            in_flight: 2,
+            max_trials: 3,
+            ..Default::default()
+        });
+    let sources = Sources {
+        benchmark_runs: links.benchmark_runs,
+        ..sources(work_dir).await
+    };
+    let router = api::router(sources, CancellationToken::new());
+
+    let (status, body) = status_and_body(
+        routed(
+            &router,
+            hyper::Method::GET,
+            Some("localhost"),
+            "/api/status",
+        )
+        .await,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        answer["linewright"]["trials_in_flight"],
+        serde_json::json!({"in_flight": 2, "max_trials": 3})
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn a_request_whose_host_is_not_local_is_refused() {
     let routed = Routed::over(&[]).await;

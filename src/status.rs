@@ -140,8 +140,19 @@ pub struct Linewright {
     pub environment: Option<EnvironmentShown>,
     pub runs_in_flight: usize,
     pub max_runs: usize,
+    /// Set only while any are in flight. An answer without it reads as
+    /// `None`.
+    #[serde(default)]
+    pub trials_in_flight: Option<TrialsInFlight>,
     /// Set only with webhooks on.
     pub webhooks: Option<Received>,
+}
+
+/// The trials and scorers of benchmark runs in flight, out of `max-trials`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrialsInFlight {
+    pub in_flight: usize,
+    pub max_trials: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,6 +320,7 @@ pub struct StatusSources<'a> {
     pub recorded: &'a [Recorded],
     /// `None` without a setup command.
     pub environment: Option<EnvironmentShown>,
+    pub trials: TrialsInFlight,
     /// The deadline of the drain under way, if any.
     pub drain_deadline: Option<Timestamp>,
     pub now: Timestamp,
@@ -322,6 +334,7 @@ pub fn status(sources: StatusSources<'_>) -> Status {
         view,
         recorded,
         environment,
+        trials,
         drain_deadline,
         now,
     } = sources;
@@ -353,6 +366,7 @@ pub fn status(sources: StatusSources<'_>) -> Status {
         environment,
         runs_in_flight: view.map_or(0, View::runs_in_flight),
         max_runs: serving.max_runs,
+        trials_in_flight: (trials.in_flight > 0).then_some(trials),
         webhooks,
     };
     let Some(view) = view else {
@@ -527,6 +541,9 @@ pub(crate) enum LinewrightFact<'a> {
         runs: usize,
         max_runs: usize,
     },
+    /// The trials and scorers of benchmark runs in flight, while there are
+    /// any.
+    TrialsInFlight(TrialsInFlight),
     /// The last delivery accepted and the deliveries refused.
     Webhooks(Received),
 }
@@ -554,6 +571,7 @@ impl Linewright {
                 runs: self.runs_in_flight,
                 max_runs: self.max_runs,
             }),
+            self.trials_in_flight.map(LinewrightFact::TrialsInFlight),
             self.webhooks.map(LinewrightFact::Webhooks),
         ])
         .flatten()
@@ -583,6 +601,15 @@ pub(crate) fn linewright_facts(linewright: &Linewright) -> Vec<Fact> {
             LinewrightFact::Environment(environment) => shown::facts(environment),
             LinewrightFact::RunsInFlight { runs, max_runs } => vec![Fact::Plain(
                 format!("runs in flight: {runs} of {max_runs}").into(),
+            )],
+            LinewrightFact::TrialsInFlight(TrialsInFlight {
+                in_flight,
+                max_trials,
+            }) => vec![Fact::Plain(
+                format!(
+                    "trials and scorers of benchmark runs in flight: {in_flight} of {max_trials}"
+                )
+                .into(),
             )],
             LinewrightFact::Webhooks(received) => vec![
                 Fact::Plain(match received.last_accepted {

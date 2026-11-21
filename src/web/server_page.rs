@@ -17,10 +17,9 @@ use super::run_page::{Row, command_row, command_text, entry_row, output_html, st
 use super::shell::{self, Area, Frame, Hold, Navigation, Place, Read};
 use super::{Page, events, render};
 use crate::api::Sources;
-use crate::benchmark_runs::runner::BenchmarkRunsShown;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown, EnvironmentState};
 use crate::phrase::{Phrase, Status};
-use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown};
+use crate::status::{self, FailedPolls, Linewright, LinewrightFact, PollsShown, TrialsInFlight};
 
 #[derive(Template, WebTemplate)]
 #[template(path = "server.html")]
@@ -39,14 +38,8 @@ struct ServerRegion<'a> {
 /// The facts about Linewright itself as the page words them, each on a
 /// line, past times standing alone, as the page's script shows them
 /// relative. A hold's or a problem's value shows in its status.
-/// The environment's fact ends with `builds`, each a line. The trials and
-/// scorers of benchmark runs `trials` has in flight follow the runs in flight
-/// while there are any.
-fn facts(
-    linewright: &Linewright,
-    trials: &BenchmarkRunsShown,
-    mut builds: Vec<Html>,
-) -> Vec<Fact<Phrase>> {
+/// The environment's fact ends with `builds`, each a line.
+fn facts(linewright: &Linewright, mut builds: Vec<Html>) -> Vec<Fact<Phrase>> {
     let fact = |label, value| Fact {
         label,
         lines: vec![vec![Piece::Text(value)]],
@@ -92,24 +85,17 @@ fn facts(
             LinewrightFact::Environment(environment) => {
                 vec![self::environment(environment, std::mem::take(&mut builds))]
             }
-            LinewrightFact::RunsInFlight { runs, max_runs } => {
-                let trials = (trials.in_flight > 0).then(|| {
-                    fact(
-                        "Trials and scorers of benchmark runs in flight",
-                        format!("{} of {}", trials.in_flight, trials.max_trials).into(),
-                    )
-                });
-                [
-                    Some(fact(
-                        "Runs in flight",
-                        format!("{runs} of {max_runs}").into(),
-                    )),
-                    trials,
-                ]
-                .into_iter()
-                .flatten()
-                .collect()
-            }
+            LinewrightFact::RunsInFlight { runs, max_runs } => vec![fact(
+                "Runs in flight",
+                format!("{runs} of {max_runs}").into(),
+            )],
+            LinewrightFact::TrialsInFlight(TrialsInFlight {
+                in_flight,
+                max_trials,
+            }) => vec![fact(
+                "Trials and scorers of benchmark runs in flight",
+                format!("{in_flight} of {max_trials}").into(),
+            )],
             LinewrightFact::Webhooks(received) => vec![
                 fact(
                     "Last webhook delivery accepted",
@@ -222,7 +208,7 @@ async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
         .iter()
         .map(|build| build_html(build, &names))
         .collect();
-    let facts = facts(&read.linewright, &sources.benchmark_runs.shown(), builds)
+    let facts = facts(&read.linewright, builds)
         .into_iter()
         .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
         .collect();
@@ -314,11 +300,8 @@ mod tests {
     /// Each fact as label, value as the commands print its times, and the
     /// status it shows in, for a fact of one line that is all text or one
     /// status.
-    fn worded(
-        linewright: &Linewright,
-        trials: &BenchmarkRunsShown,
-    ) -> Vec<(&'static str, String, Option<Status>)> {
-        facts(linewright, trials, vec![])
+    fn worded(linewright: &Linewright) -> Vec<(&'static str, String, Option<Status>)> {
+        facts(linewright, vec![])
             .into_iter()
             .map(|fact| {
                 let (value, status) = match &fact.lines[..] {
@@ -345,6 +328,7 @@ mod tests {
             environment: None,
             runs_in_flight: 1,
             max_runs: 4,
+            trials_in_flight: None,
             webhooks: None,
         }
     }
@@ -353,7 +337,7 @@ mod tests {
     #[test_log::test]
     fn before_the_first_poll_ends_the_facts_always_shown_say_the_next_is_due() {
         assert_eq!(
-            worded(&serving(), &BenchmarkRunsShown::default()),
+            worded(&serving()),
             [
                 ("Started", "2026-10-01 12:00:00 UTC".into(), None),
                 ("Polls", "none yet, next due now".into(), None),
@@ -389,17 +373,15 @@ mod tests {
                 refused: 2,
                 last_refused: Some(at("2026-10-01T12:20:00Z")),
             }),
+            trials_in_flight: Some(TrialsInFlight {
+                in_flight: 2,
+                max_trials: 3,
+            }),
             ..serving()
         };
 
-        let trials = BenchmarkRunsShown {
-            in_flight: 2,
-            max_trials: 3,
-            ..BenchmarkRunsShown::default()
-        };
-
         assert_eq!(
-            worded(&linewright, &trials),
+            worded(&linewright),
             [
                 ("Started", "2026-10-01 12:00:00 UTC".into(), None),
                 (
@@ -556,7 +538,7 @@ mod tests {
         };
 
         assert_eq!(
-            worded(&linewright, &BenchmarkRunsShown::default())[2],
+            worded(&linewright)[2],
             (
                 "Failed polls",
                 "1, 2026-10-01 12:31:00 UTC: taking a snapshot: bad credentials".into(),
