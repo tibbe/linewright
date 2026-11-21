@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use super::benchmark_page::BenchmarkTab;
 use super::html::{self, Html};
-use super::making::{Answer, MadeShown, Making, capture_refused, no_such_run};
+use super::making::{self, Answer, Field, Form, MadeShown, Making, NOT_A_NAME, benchmark_taken};
 use super::write::Write;
 use super::{benchmark_tab_path, benchmarks, run_path};
 use crate::api::{Served, Sources};
@@ -121,8 +121,33 @@ pub(super) struct CaptureFields {
     task: TaskFields,
 }
 
+impl Form for CaptureFields {
+    type Field = CaptureField;
+}
+
+/// A field of the capture's dialog.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum CaptureField {
+    /// The benchmark chosen.
+    Benchmark,
+    /// The new benchmark's name.
+    NewBenchmark,
+    Task(TaskField),
+}
+
+impl Field for CaptureField {
+    fn required(&self) -> bool {
+        match self {
+            CaptureField::Benchmark | CaptureField::NewBenchmark => true,
+            CaptureField::Task(field) => field.required(),
+        }
+    }
+}
+
 /// What the capture's dialog's form holds: its fields, each under its label,
-/// then the refusal, if there is one, then "Cancel" and "Add task".
+/// then the reason of a refusal of no field, if there is one, then "Cancel"
+/// and "Add task".
 #[derive(Template)]
 #[template(path = "capture_form.html")]
 pub(super) struct CaptureForm {
@@ -140,20 +165,17 @@ impl CaptureForm {
     fn blank(run: &RunId, benchmarks: Vec<BenchmarkName>) -> CaptureForm {
         CaptureForm {
             path: run_path(run),
-            making: Making {
-                fields: CaptureFields {
-                    benchmark: benchmarks
-                        .first()
-                        .map(ToString::to_string)
-                        .unwrap_or_default(),
-                    new_benchmark: String::new(),
-                    task: TaskFields {
-                        name: TaskName::suggested(run).to_string(),
-                        criteria: String::new(),
-                    },
+            making: Making::of(CaptureFields {
+                benchmark: benchmarks
+                    .first()
+                    .map(ToString::to_string)
+                    .unwrap_or_default(),
+                new_benchmark: String::new(),
+                task: TaskFields {
+                    name: TaskName::suggested(run).to_string(),
+                    criteria: String::new(),
                 },
-                refusal: None,
-            },
+            }),
             benchmarks,
         }
     }
@@ -164,7 +186,7 @@ impl CaptureForm {
         sent: CaptureFields,
         (status, why): (StatusCode, String),
     ) -> Answer<CaptureForm> {
-        self.making = Making::refused(sent, why);
+        self.making = Making::refused(sent, making::Refusal::Whole(why));
         Answer::Refused { status, form: self }
     }
 }
@@ -176,6 +198,22 @@ pub(super) struct TaskFields {
     pub(super) name: String,
     #[serde(default)]
     pub(super) criteria: String,
+}
+
+/// A field of a capture's task, which New task and Add task both draw.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum TaskField {
+    Name,
+    Criteria,
+}
+
+impl Field for TaskField {
+    fn required(&self) -> bool {
+        match self {
+            TaskField::Name | TaskField::Criteria => true,
+        }
+    }
 }
 
 /// Captures run `id` as the task the form in `body` names, with the store
@@ -317,6 +355,43 @@ impl NotCaptured {
             NotCaptured::Capture { error, .. } => status_of(error),
         }
     }
+}
+
+/// What a screen says of a capture that did not happen
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
+/// `docs/specs/runs.md`, Run, A new benchmark's refusals). A refusal the
+/// spec gives no message keeps the capture's own wording.
+fn capture_refused(not: &NotCaptured) -> String {
+    match not {
+        NotCaptured::Name | NotCaptured::NewBenchmarkMisnamed => NOT_A_NAME.into(),
+        NotCaptured::NoCriteria => "A task needs criteria.".into(),
+        NotCaptured::NotPolled => "Linewright can't capture a run before its first poll.".into(),
+        NotCaptured::NewBenchmarkUnnamed => "The new benchmark needs a name.".into(),
+        NotCaptured::Capture { error, why } => match error {
+            CaptureError::Taken(name) => format!("A task named {name} already exists."),
+            CaptureError::OtherStage {
+                run,
+                stage,
+                benchmark,
+            } => format!(
+                "Run {run} is of {stage}, and {} holds tasks of {}.",
+                benchmark.name, benchmark.stage
+            ),
+            CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
+            CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
+            CaptureError::NoSuchRun(run) => no_such_run(run),
+            CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
+            CaptureError::NotCapturable(_)
+            | CaptureError::NoSuchBenchmark(_)
+            | CaptureError::Failed(_) => why.clone(),
+        },
+    }
+}
+
+/// The refusal of a capture of run `run`, which does not exist
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
+fn no_such_run(run: &impl std::fmt::Display) -> String {
+    format!("No such run {run}.")
 }
 
 /// What `serve` serves once it has polled, so that a capture can run; or

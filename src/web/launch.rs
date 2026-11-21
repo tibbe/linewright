@@ -15,13 +15,11 @@ use tracing::{info, warn};
 use super::benchmark_page::benchmark_for_making;
 use super::benchmark_runs;
 use super::html::{self, Html};
-use super::making::{
-    Answer, MadeShown, Making, NOT_A_NAME, REPETITIONS, configuration_unnamed,
-    configuration_unusable, launch_refused,
-};
+use super::making::{Answer, Field, Form, MadeShown, Making, NOT_A_NAME, Refusal};
 use super::write::Write;
 use crate::api::Sources;
 use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal};
+use crate::repo_files::FileError;
 use crate::trial::Configuration;
 use crate::work_settings::Effort;
 
@@ -131,6 +129,55 @@ impl Default for LaunchFields {
         LaunchFields {
             repetitions: "1".into(),
             configurations: vec![],
+        }
+    }
+}
+
+impl Form for LaunchFields {
+    type Field = LaunchField;
+}
+
+/// A field of the New benchmark run dialog.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum LaunchField {
+    Repetitions,
+    /// The field `field` of the configuration numbered `n` in its fields'
+    /// names, `cN.KEY`.
+    Configuration {
+        n: u32,
+        field: ConfigurationField,
+    },
+}
+
+/// A field of a configuration but `as-is`.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ConfigurationField {
+    Name,
+    Model,
+    Effort,
+    SessionTimeout,
+    /// The box of the file of the brief at this path under `briefs/`.
+    Brief(String),
+}
+
+impl Field for LaunchField {
+    fn required(&self) -> bool {
+        match self {
+            LaunchField::Repetitions
+            | LaunchField::Configuration {
+                field: ConfigurationField::Name,
+                ..
+            } => true,
+            LaunchField::Configuration {
+                field:
+                    ConfigurationField::Model
+                    | ConfigurationField::Effort
+                    | ConfigurationField::SessionTimeout
+                    | ConfigurationField::Brief(_),
+                ..
+            } => false,
         }
     }
 }
@@ -315,7 +362,7 @@ impl NewBenchmarkRunForm {
 
     /// It refused for `why`, answered with `status`.
     fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewBenchmarkRunForm> {
-        self.making.refusal = Some(why);
+        self.making.refusal = Some(Refusal::Whole(why));
         Answer::Refused { status, form: self }
     }
 }
@@ -408,10 +455,7 @@ pub(super) async fn launch(
     let mut form = NewBenchmarkRunForm {
         benchmark: benchmark_named,
         tasks: 0,
-        making: Making {
-            fields,
-            refusal: None,
-        },
+        making: Making::of(fields),
         paths: starting.keys().cloned().collect(),
     };
     let found = benchmark_for_making(&sources, &form.benchmark).await;
@@ -455,5 +499,59 @@ pub(super) async fn launch(
             }
             form.refused(launch_refused(&refusal))
         }
+    }
+}
+
+/// The refusal of repetitions that are not a whole number, 1 or more.
+const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
+
+/// The refusal of a configuration with no name, the configuration `added`
+/// after `as-is`, counting from 0. It is named by its place in the New
+/// benchmark run dialog, where `as-is` is 1st.
+fn configuration_unnamed(added: usize) -> String {
+    const AFTER_AS_IS: usize = 2;
+    format!(
+        "The {} configuration needs a name.",
+        ordinal(added + AFTER_AS_IS)
+    )
+}
+
+/// `n` as an ordinal, such as "2nd" or "11th".
+fn ordinal(n: usize) -> String {
+    let suffix = match (n % 10, n % 100) {
+        (_, 11..=13) => "th",
+        (1, _) => "st",
+        (2, _) => "nd",
+        (3, _) => "rd",
+        _ => "th",
+    };
+    format!("{n}{suffix}")
+}
+
+/// The refusal of configuration `name`, whose files have `errors`, for the
+/// first of them.
+fn configuration_unusable(name: &ConfigurationName, errors: &[FileError]) -> String {
+    match errors.first() {
+        Some(FileError { path, error }) => {
+            format!("The configuration {name} has an error in {path}: {error}")
+        }
+        None => format!("The configuration {name} has an error."),
+    }
+}
+
+/// The status and the refusal of a benchmark run that was not launched, or
+/// why launching it failed.
+fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
+    match refusal {
+        LaunchRefusal::NoSuchBenchmark(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
+        LaunchRefusal::NoTasks(name) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("The benchmark {name} has no tasks."),
+        ),
+        LaunchRefusal::DuplicateConfiguration(name) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Two configurations are named {name}."),
+        ),
+        LaunchRefusal::Failed(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
     }
 }

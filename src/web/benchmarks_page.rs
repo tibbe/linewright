@@ -17,7 +17,7 @@ use tracing::{info, warn};
 
 use super::buttons::ScreenButton;
 use super::html::{self, Html};
-use super::making::{Answer, MadeShown, Making, NOT_A_NAME, benchmark_not_made};
+use super::making::{Answer, Field, Form, MadeShown, Making, NOT_A_NAME, Refusal, benchmark_taken};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
@@ -230,6 +230,26 @@ impl NewBenchmarkFields {
     const STARTING_STAGE: TaskStage = TaskStage::ALL[0];
 }
 
+impl Form for NewBenchmarkFields {
+    type Field = NewBenchmarkField;
+}
+
+/// A field of the New benchmark dialog.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum NewBenchmarkField {
+    Name,
+    Stage,
+}
+
+impl Field for NewBenchmarkField {
+    fn required(&self) -> bool {
+        match self {
+            NewBenchmarkField::Name | NewBenchmarkField::Stage => true,
+        }
+    }
+}
+
 impl Default for NewBenchmarkFields {
     fn default() -> NewBenchmarkFields {
         NewBenchmarkFields {
@@ -403,7 +423,7 @@ pub(super) async fn make_benchmark(
     let refuse = |status, why| Answer::Refused {
         status,
         form: NewBenchmarkForm {
-            new_benchmark: Making::refused(fields, why),
+            new_benchmark: Making::refused(fields, Refusal::Whole(why)),
         },
     };
     let form = match WRITE.same_origin(&headers, &uri).and(sent) {
@@ -440,6 +460,14 @@ pub(super) async fn make_benchmark(
             };
             refuse(status, benchmark_not_made(&e))
         }
+    }
+}
+
+/// The refusal of a benchmark that was not made, or why making it failed.
+fn benchmark_not_made(error: &MakeError) -> String {
+    match error {
+        MakeError::Taken(name) => benchmark_taken(name),
+        MakeError::Failed(e) => format!("{e:#}"),
     }
 }
 
