@@ -2,9 +2,11 @@
 //! the trials that have ended, worked out on each read.
 
 use std::num::NonZeroUsize;
+use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::cost::Usd;
 use crate::results::Verdict;
 use crate::task::TaskName;
 
@@ -138,12 +140,20 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
                     }
                 }
             }
-            TrialState::Ended(TrialEnd::Unscored(no_score)) => {
-                tally.trial(no_score.run());
+            TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed { time })) => {
+                tally.ended(None, *time);
                 tally.unscored += 1;
-                if let NoScore::Scorer { scorer_money, .. } = no_score {
-                    scorers.add(scorer_money.map(f64::from));
-                }
+            }
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(run))) => {
+                tally.trial(run);
+                tally.unscored += 1;
+            }
+            TrialState::Ended(TrialEnd::Unscored(NoScore::Scorer {
+                run, scorer_money, ..
+            })) => {
+                tally.trial(run);
+                tally.unscored += 1;
+                scorers.add(scorer_money.map(f64::from));
             }
         }
     }
@@ -215,11 +225,16 @@ struct Tally {
 }
 
 impl Tally {
-    /// Counts a trial that ended, with its cost and its time.
+    /// Counts a trial that ended with its run's figures.
     fn trial(&mut self, trial: &TrialFigures) {
+        self.ended(trial.money, trial.time);
+    }
+
+    /// Counts a trial that ended, with its cost, if it has one, and its time.
+    fn ended(&mut self, money: Option<Usd>, time: Duration) {
         self.ended += 1;
-        self.cost.add(trial.money.map(f64::from));
-        self.time.add(Some(trial.time.as_secs_f64()));
+        self.cost.add(money.map(f64::from));
+        self.time.add(Some(time.as_secs_f64()));
     }
 
     /// The tally of the trials of both.
@@ -623,6 +638,45 @@ mod tests {
 
         assert_eq!(as_is.figures.unscored, 2);
         assert_eq!(as_is.tasks[0].figures.unscored, 2);
+    }
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score: a
+    /// trial whose build failed has no run, so it has its time and no cost.
+    #[test_log::test]
+    fn a_trial_whose_build_failed_is_unscored_with_its_time_and_no_cost() {
+        let record = benchmark_run(
+            &["columns"],
+            &[],
+            2,
+            vec![
+                (
+                    key(1, 0, 0),
+                    unscored(NoScore::BuildFailed {
+                        time: Duration::from_secs(5),
+                    }),
+                ),
+                (
+                    key(2, 0, 0),
+                    scored(trial(Some(1.0), 15), Verdict::Pass, false, None),
+                ),
+            ],
+        );
+
+        let results = results(&record);
+
+        assert_eq!((results.trials_ended, results.all), (2, 2));
+        assert_eq!(results.cost.none, 1);
+        let as_is = &results.configurations[0];
+        assert_eq!(as_is.figures.unscored, 1);
+        approx(Some(as_is.figures.cost.total), 1.0);
+        assert_eq!(as_is.figures.cost.none, 1);
+        approx(Some(as_is.figures.time.total), 20.0);
+        assert_eq!(as_is.figures.time.none, 0);
+        assert_eq!(
+            as_is.pass_rate,
+            Some(1.0),
+            "a trial whose build failed is not among those passing or failing"
+        );
     }
 
     /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a

@@ -24,7 +24,7 @@ use crate::runs::{Ending, OutcomeName};
 use crate::session::Cancellation;
 use crate::task::{Task, TaskName};
 use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord, Unscored};
-use crate::trial::{self, Configuration, OnUsageLimit, Output, Under};
+use crate::trial::{self, Configuration, OnUsageLimit, Output, Spent, Under, Unrun};
 
 /// How the benchmark runs stand, as `serve` shows them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -271,10 +271,7 @@ impl BenchmarkRunsRunner {
                 }
             };
         let change = match (cancelled, change, step) {
-            (true, Some(TrialChange::RunEnds(run)), _) => {
-                TrialChange::Cancelled { stopped: Some(run) }
-            }
-            (true, _, _) => TrialChange::Cancelled { stopped: None },
+            (true, change, _) => TrialChange::on_cancel(change),
             (false, Some(change), _) => change,
             (false, None, Step::Trial(_)) => TrialChange::RunEnds(TrialFigures {
                 outcome: OutcomeName::Ended(Ending::Failed),
@@ -372,8 +369,9 @@ impl StepContext {
     }
 
     /// Runs `at`'s task under its configuration into a new output, one a
-    /// stop left in its place removed first, and gives how it ended: a run
-    /// that did not run or end failed.
+    /// stop left in its place removed first, and gives how it ended: a trial
+    /// whose build failed has no score, and a run that did not run or end
+    /// otherwise failed.
     async fn trial(&self, at: &StepAt, under: &Under) -> TrialChange {
         let started = Instant::now();
         let dir = self.output_dir(at);
@@ -384,20 +382,27 @@ impl StepContext {
                 out.finished();
                 (ended, out.spent())
             }
-            Err(e) => (Err(e.into()), None),
+            Err(e) => (Err(Unrun::Failed(e.into())), None),
         };
-        let outcome = outcome.unwrap_or_else(|e| {
-            error!(error = format!("{e:#}"), dir = %dir.display(), "a trial of a benchmark run failed");
-            Ending::Failed
-        });
-        TrialChange::RunEnds(TrialFigures {
-            outcome: OutcomeName::Ended(outcome),
-            money: spent.and_then(|spent| spent.money),
-            time: spent.map_or_else(|| started.elapsed(), |spent| spent.time),
-        })
+        match &outcome {
+            Ok(_) => {}
+            Err(Unrun::BuildFailed(e)) => {
+                warn!(error = %e, dir = %dir.display(), "the build of a trial's environment failed");
+            }
+            Err(Unrun::Failed(e)) => {
+                error!(error = format!("{e:#}"), dir = %dir.display(), "a trial of a benchmark run failed");
+            }
+        }
+        ran(
+            &outcome,
+            spent.unwrap_or(Spent {
+                time: started.elapsed(),
+                money: None,
+            }),
+        )
     }
 
-    async fn trial_into(&self, at: &StepAt, out: &Output, under: &Under) -> Result<Ending> {
+    async fn trial_into(&self, at: &StepAt, out: &Output, under: &Under) -> Result<Ending, Unrun> {
         let task = self.task(at).await?;
         let configuration = if at.configuration == ConfigurationName::as_is() {
             None
@@ -494,6 +499,22 @@ fn scorer_makes_none(error: anyhow::Error) -> TrialChange {
     }
 }
 
+/// The change of a trial whose run ended as `ended`, the trial having spent
+/// `spent`: a build that failed leaves it without a score, with its time, and
+/// a run that did not run or end failed.
+fn ran(ended: &Result<Ending, Unrun>, spent: Spent) -> TrialChange {
+    let outcome = match ended {
+        Ok(ending) => *ending,
+        Err(Unrun::BuildFailed(_)) => return TrialChange::BuildFails { time: spent.time },
+        Err(Unrun::Failed(_)) => Ending::Failed,
+    };
+    TrialChange::RunEnds(TrialFigures {
+        outcome: OutcomeName::Ended(outcome),
+        money: spent.money,
+        time: spent.time,
+    })
+}
+
 /// Removes the output in `dir` that a stop left, if any, off the runtime's
 /// threads.
 async fn remove_left_behind(dir: PathBuf) {
@@ -509,5 +530,62 @@ fn remove_dir(dir: &Path) {
             warn!(dir = %dir.display(), error = %e, "removing the output a stop left failed");
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::cost::Usd;
+    use crate::environment::trials::BuildFailed;
+
+    const SPENT: Spent = Spent {
+        time: Duration::from_secs(9),
+        money: None,
+    };
+
+    /// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score:
+    /// its build failed, with its time; anything else that kept its run from
+    /// running or ending is a run that failed.
+    #[test_log::test]
+    fn a_failed_build_leaves_a_trial_without_a_score_and_any_other_failure_a_run_that_failed() {
+        let build_failed = Err(Unrun::BuildFailed(BuildFailed {
+            why: "the setup command exited with status 3".into(),
+            output: None,
+        }));
+        let failed = Err(Unrun::Failed(anyhow!("the environment cannot be had")));
+
+        assert_eq!(
+            [ran(&build_failed, SPENT), ran(&failed, SPENT)],
+            [
+                TrialChange::BuildFails {
+                    time: Duration::from_secs(9)
+                },
+                TrialChange::RunEnds(TrialFigures {
+                    outcome: OutcomeName::Ended(Ending::Failed),
+                    money: None,
+                    time: Duration::from_secs(9),
+                }),
+            ]
+        );
+    }
+
+    #[test_log::test]
+    fn a_run_that_ended_keeps_its_ending_and_what_it_spent() {
+        let spent = Spent {
+            money: Usd::new(0.5),
+            ..SPENT
+        };
+
+        assert_eq!(
+            ran(&Ok(Ending::HandedBack), spent),
+            TrialChange::RunEnds(TrialFigures {
+                outcome: OutcomeName::Ended(Ending::HandedBack),
+                money: Usd::new(0.5),
+                time: Duration::from_secs(9),
+            })
+        );
     }
 }

@@ -1483,7 +1483,7 @@ async fn trial(
             match ran {
                 Ok(_) => SUCCESS,
                 Err(e) => {
-                    log.fail(&e);
+                    log.fail(&e.into());
                     FAILURE
                 }
             }

@@ -51,6 +51,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(TASKS_IN_ORDER),
     Migration::Sql(benchmark_names::TABLES),
     Migration::WorkDir(benchmark_names::move_files),
+    Migration::Sql(TRIALS_BUILD_FAILED),
 ];
 
 /// The table of the release that made each schema version.
@@ -234,6 +235,46 @@ const TASKS_IN_ORDER: &str = "CREATE TABLE cases_in_order (
     INSERT INTO cases_in_order (name, suite, run, seq) SELECT name, suite, run, rowid FROM cases;
     DROP TABLE cases;
     ALTER TABLE cases_in_order RENAME TO cases;";
+
+/// A trial with no score as the build of its environment failed: `unscored =
+/// 'build'`, with its time and no outcome or money. `trials` is
+/// made again, as its CHECK constraints hold the values that change.
+/// <https://www.sqlite.org/lang_altertable.html#otheralter>
+const TRIALS_BUILD_FAILED: &str = "CREATE TABLE trials_build_failed (
+        benchmark_run INTEGER NOT NULL REFERENCES benchmark_runs (id),
+        repetition INTEGER NOT NULL CHECK (repetition > 0),
+        task_seq INTEGER NOT NULL,
+        configuration_seq INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN
+            ('pending', 'running', 'ran', 'scoring', 'scored', 'unscored')),
+        outcome TEXT CHECK (outcome IN ('done', 'handed-back', 'cancelled', 'usage-limit',
+            'failed', 'in-flight', 'interrupted')),
+        money REAL CHECK (money >= 0),
+        seconds REAL CHECK (seconds >= 0),
+        correctness TEXT CHECK (correctness IN ('pass', 'fail')),
+        leak INTEGER CHECK (leak IN (0, 1)),
+        scorer_money REAL CHECK (scorer_money >= 0),
+        unscored TEXT CHECK (unscored IN ('build', 'outcome', 'scorer', 'cancelled')),
+        reason TEXT,
+        PRIMARY KEY (benchmark_run, repetition, task_seq, configuration_seq),
+        FOREIGN KEY (benchmark_run, task_seq) REFERENCES benchmark_run_tasks (benchmark_run, seq),
+        FOREIGN KEY (benchmark_run, configuration_seq)
+            REFERENCES benchmark_run_configurations (benchmark_run, seq),
+        CHECK (unscored IS 'build' OR (outcome IS NULL) = (seconds IS NULL)),
+        CHECK (unscored IS NOT 'build' OR outcome IS NULL AND seconds IS NOT NULL),
+        CHECK (money IS NULL OR outcome IS NOT NULL),
+        CHECK (state NOT IN ('pending', 'running') OR outcome IS NULL),
+        CHECK (state NOT IN ('ran', 'scoring', 'scored') OR outcome IS NOT NULL),
+        CHECK ((correctness IS NOT NULL) = (state = 'scored')),
+        CHECK ((leak IS NOT NULL) = (state = 'scored')),
+        CHECK (scorer_money IS NULL OR state = 'scored' OR unscored IS 'scorer'),
+        CHECK ((unscored IS NOT NULL) = (state = 'unscored')),
+        CHECK (unscored IS NOT 'outcome' AND unscored IS NOT 'scorer' OR outcome IS NOT NULL),
+        CHECK ((reason IS NOT NULL) = (unscored IS 'scorer'))
+    ) STRICT;
+    INSERT INTO trials_build_failed SELECT * FROM trials;
+    DROP TABLE trials;
+    ALTER TABLE trials_build_failed RENAME TO trials;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

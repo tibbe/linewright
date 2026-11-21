@@ -151,7 +151,8 @@ pub enum TrialAnswer {
         scorer_cost: Option<Usd>,
     },
     Unscored {
-        /// `None` when it was cancelled before its run ended.
+        /// `None` when its build failed, or it was cancelled before its run
+        /// ended.
         #[serde(flatten)]
         run: Option<TrialFiguresAnswer>,
         #[serde(flatten)]
@@ -163,6 +164,10 @@ pub enum TrialAnswer {
 #[derive(Serialize)]
 #[serde(tag = "unscored", rename_all = "lowercase")]
 pub enum WhyUnscored {
+    /// The build of its environment failed: it has no run, only its time.
+    Build {
+        seconds: f64,
+    },
     Outcome,
     Scorer {
         reason: String,
@@ -204,8 +209,11 @@ impl From<&TrialState> for TrialAnswer {
                 scorer_cost: score.scorer_money,
             },
             TrialState::Ended(TrialEnd::Unscored(no_score)) => TrialAnswer::Unscored {
-                run: Some(no_score.run().into()),
+                run: no_score.run().map(Into::into),
                 why: match no_score {
+                    NoScore::BuildFailed { time } => WhyUnscored::Build {
+                        seconds: time.as_secs_f64(),
+                    },
                     NoScore::Outcome(_) => WhyUnscored::Outcome,
                     NoScore::Scorer {
                         why, scorer_money, ..
@@ -343,6 +351,13 @@ fn describe_trial(state: &TrialAnswer) -> String {
         }
         TrialAnswer::Unscored { run, why } => {
             let (why, scorer_cost) = match why {
+                WhyUnscored::Build { seconds } => (
+                    format!(
+                        "the build of its environment failed, took {}",
+                        duration(*seconds)
+                    ),
+                    None,
+                ),
                 WhyUnscored::Outcome => ("its run is not done or handed back".into(), None),
                 WhyUnscored::Scorer {
                     reason,
@@ -639,6 +654,24 @@ mod tests {
              trial as-is/rows/1: no score: cancelled\n\
              trial short/rows/1: no score: cancelled, run cancelled, cost $0.04, took 15s\n\
              trial short/rows/2: running\n"
+        );
+    }
+
+    #[test_log::test]
+    fn a_trial_whose_build_failed_prints_why_and_its_time_with_no_run() {
+        let state = TrialState::Ended(TrialEnd::Unscored(NoScore::BuildFailed {
+            time: Duration::from_secs(9),
+        }));
+
+        let answer = TrialAnswer::from(&state);
+
+        assert_eq!(
+            describe_trial(&answer),
+            "no score: the build of its environment failed, took 9s"
+        );
+        assert_eq!(
+            serde_json::to_value(&answer).unwrap(),
+            serde_json::json!({"state": "unscored", "unscored": "build", "seconds": 9.0})
         );
     }
 
