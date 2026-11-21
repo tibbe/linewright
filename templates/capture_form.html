@@ -1,5 +1,5 @@
 {%- import "macros.html" as ui -%}
-{%- call ui::new_form(DIALOG, "Add task to a benchmark", crate::web::buttons::Verb::AddTask, making.refusal) %}
+{%- call ui::new_form(DIALOG, "Add task to a benchmark", crate::web::buttons::Verb::AddTask, making.whole()) %}
 <label class="label" for="capture-benchmark">Benchmark</label>
 <select id="capture-benchmark" class="select w-full" name="benchmark">
 {%- for benchmark in benchmarks %}

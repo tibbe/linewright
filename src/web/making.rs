@@ -4,40 +4,102 @@
 //! `new_form` macros, its form answering into itself, and what was made said
 //! on a screen that does not show it.
 
+use std::collections::BTreeMap;
+
 use askama::Template;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use super::capture::NotCaptured;
 use super::html::Html;
 use super::render;
-use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal, MakeError};
-use crate::repo_files::FileError;
-use crate::task::CaptureError;
+use crate::benchmarks::BenchmarkName;
 
-/// A dialog's form as drawn: the fields as the reader left them, and why
-/// Linewright refused, if it did.
-pub(super) struct Making<Fields> {
-    pub(super) fields: Fields,
-    pub(super) refusal: Option<String>,
+/// A dialog's fields as the reader left them, with the fields it draws.
+pub(super) trait Form: Default {
+    type Field: Field;
 }
 
-impl<Fields: Default> Making<Fields> {
-    /// The form as it starts.
-    pub(super) fn blank() -> Making<Fields> {
-        Making {
-            fields: Fields::default(),
-            refusal: None,
+/// A field a dialog draws.
+pub(super) trait Field: Ord + Clone {
+    /// Whether Linewright cannot make the thing without it
+    /// (`docs/specs/design_system.md`, Making, Required).
+    #[expect(dead_code, reason = "every dialog refuses as a whole")]
+    fn required(&self) -> bool;
+}
+
+/// Why Linewright refused a dialog's form: of its fields `F`, or of none.
+pub(super) enum Refusal<F: Field> {
+    /// Of one or more fields, each with its reason under it.
+    #[expect(dead_code, reason = "every dialog refuses as a whole")]
+    Fields(FieldRefusals<F>),
+    /// Of no field, with its reason above the buttons.
+    Whole(String),
+}
+
+/// One or more fields refused, at most one reason for each.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+pub(super) struct FieldRefusals<F: Field>(BTreeMap<F, String>);
+
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+impl<F: Field> FieldRefusals<F> {
+    /// `field` refused for `reason`.
+    pub(super) fn of(field: F, reason: impl Into<String>) -> FieldRefusals<F> {
+        FieldRefusals(BTreeMap::from([(field, reason.into())]))
+    }
+
+    /// These, and `field` refused for `reason` unless it already is.
+    pub(super) fn and(mut self, field: F, reason: impl Into<String>) -> FieldRefusals<F> {
+        self.0.entry(field).or_insert_with(|| reason.into());
+        self
+    }
+
+    /// The fields `refused`, the first reason for each, or `None` for none.
+    pub(super) fn collect(
+        refused: impl IntoIterator<Item = (F, String)>,
+    ) -> Option<FieldRefusals<F>> {
+        let mut refusals = BTreeMap::new();
+        for (field, reason) in refused {
+            refusals.entry(field).or_insert(reason);
         }
+        (!refusals.is_empty()).then_some(FieldRefusals(refusals))
     }
 }
 
-impl<Fields> Making<Fields> {
+/// A dialog's form as drawn: the fields as the reader left them, and why
+/// Linewright refused, if it did.
+pub(super) struct Making<F: Form> {
+    pub(super) fields: F,
+    pub(super) refusal: Option<Refusal<F::Field>>,
+}
+
+impl<F: Form> Making<F> {
+    /// The form as it starts.
+    pub(super) fn blank() -> Making<F> {
+        Making::of(F::default())
+    }
+
+    /// The form holding `fields`, unrefused.
+    pub(super) fn of(fields: F) -> Making<F> {
+        Making {
+            fields,
+            refusal: None,
+        }
+    }
+
     /// The form as the reader sent it, refused for `refusal`.
-    pub(super) fn refused(fields: Fields, refusal: String) -> Making<Fields> {
+    pub(super) fn refused(fields: F, refusal: Refusal<F::Field>) -> Making<F> {
         Making {
             fields,
             refusal: Some(refusal),
+        }
+    }
+
+    /// The reason of a refusal of no field, which the form shows above its
+    /// buttons.
+    pub(super) fn whole(&self) -> Option<&str> {
+        match &self.refusal {
+            Some(Refusal::Whole(reason)) => Some(reason),
+            Some(Refusal::Fields(_)) | None => None,
         }
     }
 }
@@ -97,112 +159,18 @@ fn made_said(said: &Html) -> String {
     )
 }
 
+/// The refusal of a required field that is empty or holds only white space
+/// (`docs/specs/design_system.md`, Making, Required).
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+pub(super) const REQUIRED: &str = "Required.";
+
 /// The refusal of a name not in the form of a name
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
 pub(super) const NOT_A_NAME: &str =
     "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a digit.";
 
-/// The refusal of a benchmark that was not made, or why making it failed.
-pub(super) fn benchmark_not_made(error: &MakeError) -> String {
-    match error {
-        MakeError::Taken(name) => benchmark_taken(name),
-        MakeError::Failed(e) => format!("{e:#}"),
-    }
-}
-
 /// The refusal of a benchmark named as one that exists
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
-fn benchmark_taken(name: &BenchmarkName) -> String {
+pub(super) fn benchmark_taken(name: &BenchmarkName) -> String {
     format!("A benchmark named {name} already exists.")
-}
-
-/// What a screen says of a capture that did not happen
-/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
-/// `docs/specs/runs.md`, Run, A new benchmark's refusals). A refusal the
-/// spec gives no message keeps the capture's own wording.
-pub(super) fn capture_refused(not: &NotCaptured) -> String {
-    match not {
-        NotCaptured::Name | NotCaptured::NewBenchmarkMisnamed => NOT_A_NAME.into(),
-        NotCaptured::NoCriteria => "A task needs criteria.".into(),
-        NotCaptured::NotPolled => "Linewright can't capture a run before its first poll.".into(),
-        NotCaptured::NewBenchmarkUnnamed => "The new benchmark needs a name.".into(),
-        NotCaptured::Capture { error, why } => match error {
-            CaptureError::Taken(name) => format!("A task named {name} already exists."),
-            CaptureError::OtherStage {
-                run,
-                stage,
-                benchmark,
-            } => format!(
-                "Run {run} is of {stage}, and {} holds tasks of {}.",
-                benchmark.name, benchmark.stage
-            ),
-            CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
-            CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
-            CaptureError::NoSuchRun(run) => no_such_run(run),
-            CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
-            CaptureError::NotCapturable(_)
-            | CaptureError::NoSuchBenchmark(_)
-            | CaptureError::Failed(_) => why.clone(),
-        },
-    }
-}
-
-/// The refusal of a capture of run `run`, which does not exist
-/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
-pub(super) fn no_such_run(run: &impl std::fmt::Display) -> String {
-    format!("No such run {run}.")
-}
-
-/// The refusal of repetitions that are not a whole number, 1 or more.
-pub(super) const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
-
-/// The refusal of a configuration with no name, the configuration `added`
-/// after `as-is`, counting from 0. It is named by its place in the New
-/// benchmark run dialog, where `as-is` is 1st.
-pub(super) fn configuration_unnamed(added: usize) -> String {
-    const AFTER_AS_IS: usize = 2;
-    format!(
-        "The {} configuration needs a name.",
-        ordinal(added + AFTER_AS_IS)
-    )
-}
-
-/// `n` as an ordinal, such as "2nd" or "11th".
-fn ordinal(n: usize) -> String {
-    let suffix = match (n % 10, n % 100) {
-        (_, 11..=13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
-}
-
-/// The refusal of configuration `name`, whose files have `errors`, for the
-/// first of them.
-pub(super) fn configuration_unusable(name: &ConfigurationName, errors: &[FileError]) -> String {
-    match errors.first() {
-        Some(FileError { path, error }) => {
-            format!("The configuration {name} has an error in {path}: {error}")
-        }
-        None => format!("The configuration {name} has an error."),
-    }
-}
-
-/// The status and the refusal of a benchmark run that was not launched, or
-/// why launching it failed.
-pub(super) fn launch_refused(refusal: &LaunchRefusal) -> (StatusCode, String) {
-    match refusal {
-        LaunchRefusal::NoSuchBenchmark(_) => (StatusCode::NOT_FOUND, refusal.to_string()),
-        LaunchRefusal::NoTasks(name) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("The benchmark {name} has no tasks."),
-        ),
-        LaunchRefusal::DuplicateConfiguration(name) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Two configurations are named {name}."),
-        ),
-        LaunchRefusal::Failed(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
-    }
 }

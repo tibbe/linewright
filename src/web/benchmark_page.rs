@@ -17,11 +17,11 @@ use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
 use super::buttons::Verb;
-use super::capture::{TaskFields, capture_run, polled};
+use super::capture::{TaskField, TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
-use super::making::{Answer, MadeShown, Making};
+use super::making::{self, Answer, Field, Form, MadeShown, Making};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, Fold, View};
@@ -437,6 +437,28 @@ pub(super) struct NewTaskFields {
     criteria: String,
 }
 
+impl Form for NewTaskFields {
+    type Field = NewTaskField;
+}
+
+/// A field of the New task dialog.
+#[expect(dead_code, reason = "every dialog refuses as a whole")]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum NewTaskField {
+    /// The run captured.
+    Run,
+    Task(TaskField),
+}
+
+impl Field for NewTaskField {
+    fn required(&self) -> bool {
+        match self {
+            NewTaskField::Run => true,
+            NewTaskField::Task(field) => field.required(),
+        }
+    }
+}
+
 impl NewTaskFields {
     /// The fields as they start: the latest run of `runs`, and the name
     /// suggested for it.
@@ -471,10 +493,7 @@ impl NewTaskForm {
         let runs = runs_of(sources, stage).await;
         NewTaskForm {
             benchmark: benchmark.to_string(),
-            making: Making {
-                fields: NewTaskFields::starting(&runs),
-                refusal: None,
-            },
+            making: Making::of(NewTaskFields::starting(&runs)),
             runs,
         }
     }
@@ -497,7 +516,7 @@ impl NewTaskForm {
 
     /// It refused for `why`, answered with `status`.
     fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewTaskForm> {
-        self.making.refusal = Some(why);
+        self.making.refusal = Some(making::Refusal::Whole(why));
         Answer::Refused { status, form: self }
     }
 }
@@ -872,10 +891,7 @@ pub(super) async fn add_task(
         .unwrap_or_default();
     let mut form = NewTaskForm {
         benchmark: name,
-        making: Making {
-            fields,
-            refusal: None,
-        },
+        making: Making::of(fields),
         runs: vec![],
     };
     let sent = match WRITE.same_origin(&headers, &uri).and(sent) {
@@ -905,10 +921,7 @@ pub(super) async fn add_task(
     .await
     {
         Ok(_) => {
-            form.making = Making {
-                fields: NewTaskFields::starting(&form.runs),
-                refusal: None,
-            };
+            form.making = Making::of(NewTaskFields::starting(&form.runs));
             Answer::Made {
                 blank: form,
                 shown: MadeShown::OnScreen,

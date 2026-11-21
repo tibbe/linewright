@@ -195,16 +195,16 @@
 
 {#- What the form of the making dialog `id` holds: the fieldset titled
     `title`, whose fields, each under its `label`, its caller draws, then
-    the refusal, if there is one, then "Cancel" and the button of the
-    `crate::web::buttons::Verb` `verb` that makes the thing, drawn by
-    `new_submit` with `region` and `disabled`. -#}
-{%- macro new_form(id, title, verb, refusal, region = "", disabled = false) -%}
+    `whole`, the reason of a refusal of no field, if there is one, then
+    "Cancel" and the button of the `crate::web::buttons::Verb` `verb` that
+    makes the thing, drawn by `new_submit` with `region` and `disabled`. -#}
+{%- macro new_form(id, title, verb, whole, region = "", disabled = false) -%}
 <fieldset class="fieldset">
 <legend id="{{ id }}-title" class="fieldset-legend">{{ title }}</legend>
 {{- caller() }}
 </fieldset>
-{%- if let Some(refusal) = refusal %}
-<div class="alert alert-error mt-2" role="alert"><span>{{ refusal }}</span></div>
+{%- if let Some(whole) = whole %}
+<div class="alert alert-error mt-2" role="alert"><span>{{ whole }}</span></div>
 {%- endif %}
 <div class="modal-action">
 <button class="btn btn-sm" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
