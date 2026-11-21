@@ -178,8 +178,14 @@
 - **What was made.** When a screen does not show what its dialog made, it
   shows a message under its heading. The message says what was made and links
   to it. It stays until the reader leaves the screen.
-- **A refusal.** When Linewright refuses, the dialog stays open and shows the
-  reason above its buttons. The fields keep what the reader typed or chose.
+- **Required.** A field is required when Linewright cannot make the thing
+  without it. Every other field is optional. An optional field shows "Optional"
+  under it. A required field that is empty, or holds only white space, gets the
+  message "Required."
+- **A refusal.** When Linewright refuses, the dialog stays open. Each field that
+  Linewright refuses shows the reason under it. A refusal that is not of one
+  field shows its reason above the buttons. The fields keep what the reader
+  typed or chose.
 
 ## Layout
 
