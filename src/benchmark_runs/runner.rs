@@ -278,7 +278,9 @@ impl BenchmarkRunsRunner {
                 money: None,
                 time: std::time::Duration::ZERO,
             }),
-            (false, None, Step::Scorer(_)) => scorer_makes_none(anyhow!("the scorer panicked")),
+            (false, None, Step::Scorer(_)) => {
+                scorer_makes_none(Unscored::Unexpected(anyhow!("the scorer panicked")))
+            }
         };
         self.record(trial, change).await;
     }
@@ -435,7 +437,9 @@ impl StepContext {
         let task = match self.task(at).await {
             Ok(task) => task,
             Err(e) => {
-                return scorer_makes_none(e.context("the task cannot be scored"));
+                return scorer_makes_none(Unscored::Unexpected(
+                    e.context("the task cannot be scored"),
+                ));
             }
         };
         let scoreable = match ScoreableTrial::open(&dir, &task).await {
@@ -443,12 +447,16 @@ impl StepContext {
             Err(ScoreRefusal::Scored) => {
                 return match scorer::kept(&dir) {
                     Ok(Some(score)) => TrialChange::Scored(score),
-                    Ok(None) => scorer_makes_none(anyhow!("the output's score went missing")),
-                    Err(e) => scorer_makes_none(e),
+                    Ok(None) => scorer_makes_none(Unscored::Unexpected(anyhow!(
+                        "the output's score went missing"
+                    ))),
+                    Err(e) => scorer_makes_none(Unscored::Unexpected(e)),
                 };
             }
             Err(e) => {
-                return scorer_makes_none(anyhow!("the output cannot be scored: {e}"));
+                return scorer_makes_none(Unscored::Unexpected(anyhow!(
+                    "the output cannot be scored: {e}"
+                )));
             }
         };
         let discarding = scoreable.clone();
@@ -459,7 +467,7 @@ impl StepContext {
         }
         let record = match ScorerRecord::make(&scoreable) {
             Ok(record) => record,
-            Err(e) => return scorer_makes_none(e),
+            Err(e) => return scorer_makes_none(Unscored::Unexpected(e)),
         };
         let spent = record.spent();
         match scorer::run(
@@ -476,25 +484,24 @@ impl StepContext {
                 let figures: ScoreFigures = score.figures();
                 match scorer::keep(&scoreable, score) {
                     Ok(()) => TrialChange::Scored(figures),
-                    Err(e) => TrialChange::ScorerMakesNone {
-                        why: Unscored::Failed(e.context("keeping the score")).to_string(),
+                    Err(unscored) => TrialChange::ScorerMakesNone {
+                        why: unscored.told(),
                         scorer_money: figures.scorer_money,
                     },
                 }
             }
             Err(unscored) => TrialChange::ScorerMakesNone {
-                why: unscored.to_string(),
+                why: unscored.told(),
                 scorer_money: spent.money(),
             },
         }
     }
 }
 
-/// A scorer that made no score for `error`, a cause outside the spec's
-/// table, with no cost of its own.
-fn scorer_makes_none(error: anyhow::Error) -> TrialChange {
+/// A scorer that made no score for `unscored`, with no cost of its own.
+fn scorer_makes_none(unscored: Unscored) -> TrialChange {
     TrialChange::ScorerMakesNone {
-        why: Unscored::Failed(error).to_string(),
+        why: unscored.told(),
         scorer_money: None,
     }
 }

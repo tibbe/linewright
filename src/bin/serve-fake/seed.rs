@@ -7,6 +7,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
     BenchmarkName, BenchmarkRuns, Benchmarks, ScoreFigures, TrialChange, TrialFigures, TrialRef,
 };
@@ -19,6 +20,7 @@ use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
 use linewright::task::{self, BenchmarkChoice, Criteria, TaskName, TaskStage};
 use linewright::trial::Configuration;
+use linewright::trial::scorer::Unscored;
 use serde_json::{Value, json};
 
 use crate::scenario::{Scenario, Step};
@@ -268,13 +270,12 @@ const TRIALS: [SeedTrial; 8] = [
     SeedTrial::ScorerMadeNone {
         money: 0.24,
         seconds: 70,
+        why: ScorerWhy::GaveUp,
     },
-    SeedTrial::Scored {
-        ending: Ending::Done,
+    SeedTrial::ScorerMadeNone {
         money: 0.47,
         seconds: 102,
-        verdict: Verdict::Pass,
-        leak: false,
+        why: ScorerWhy::BuildFailed,
     },
     SeedTrial::BuildFailed { seconds: 9 },
 ];
@@ -295,9 +296,40 @@ enum SeedTrial {
         seconds: u64,
     },
     /// Its run done, and its scorer made no score.
-    ScorerMadeNone { money: f64, seconds: u64 },
+    ScorerMadeNone {
+        money: f64,
+        seconds: u64,
+        why: ScorerWhy,
+    },
     /// The build of its environment failed, its output begun.
     BuildFailed { seconds: u64 },
+}
+
+/// Why a seeded scorer made no score.
+#[derive(Clone, Copy)]
+enum ScorerWhy {
+    /// It gave up.
+    GaveUp,
+    /// The build of its environment failed, with a log.
+    BuildFailed,
+}
+
+impl ScorerWhy {
+    /// Why, as the trial keeps it.
+    fn why(self) -> String {
+        match self {
+            ScorerWhy::GaveUp => {
+                Unscored::GaveUp("the criteria name no column to check".into()).to_string()
+            }
+            ScorerWhy::BuildFailed => Unscored::BuildFailed {
+                log_tail: LogTail::maintenance(
+                    "$ npm ci\nnpm ERR! code ENOTFOUND\nnpm ERR! network request to \
+                     https://registry.npmjs.org/tailwindcss failed\n",
+                ),
+            }
+            .to_string(),
+        }
+    }
 }
 
 /// Launches on `board` a benchmark run the day before the clock starts, under
@@ -353,7 +385,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
                 money,
                 seconds,
             } => (ending, money, seconds),
-            SeedTrial::ScorerMadeNone { money, seconds } => (Ending::Done, money, seconds),
+            SeedTrial::ScorerMadeNone { money, seconds, .. } => (Ending::Done, money, seconds),
             SeedTrial::BuildFailed { seconds } => {
                 write_files(
                     &output,
@@ -392,8 +424,8 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
                     scorer_money: Some(usd(0.03)?),
                 })
             }
-            SeedTrial::ScorerMadeNone { .. } => TrialChange::ScorerMakesNone {
-                why: "The scorer gave up: the criteria name no column to check".into(),
+            SeedTrial::ScorerMadeNone { why, .. } => TrialChange::ScorerMakesNone {
+                why: why.why(),
                 scorer_money: Some(usd(0.02)?),
             },
         };

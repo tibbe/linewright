@@ -26,7 +26,7 @@ use linewright::session::Ended;
 use linewright::task::Task;
 use linewright::trial::Under;
 use linewright::trial::scorer::{self, Score, ScorerRecord, Unscored};
-use linewright::work_settings::{Effort, Partial, StageKey, StageTable};
+use linewright::work_settings::{Effort, Partial, Setup, SetupCommand, StageKey, StageTable};
 use rstest::rstest;
 use serde_json::{Value, json};
 
@@ -305,12 +305,66 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     }),
     "The scorer's session ended without a score: it timed out after 30m"
 )]
-#[case::a_cause_the_spec_leaves_out(
-    Unscored::Failed(anyhow::anyhow!("no such file").context("the task cannot be scored")),
-    "The scorer could not score: the task cannot be scored: no such file"
+#[case::its_build_failing_with_its_log(
+    Unscored::BuildFailed {
+        log_tail: LogTail::maintenance("npm ci\nnpm ERR! no package.json\n"),
+    },
+    "The scorer's environment could not be built.\n\nnpm ci\nnpm ERR! no package.json"
+)]
+#[case::its_build_failing_with_no_log(
+    Unscored::BuildFailed { log_tail: None },
+    "The scorer's environment could not be built."
+)]
+#[case::its_score_not_kept(
+    Unscored::NotKept(std::io::Error::from(std::io::ErrorKind::StorageFull)),
+    "The score could not be kept: no storage space"
+)]
+#[case::any_other_cause(
+    Unscored::Unexpected(anyhow::anyhow!("no such file").context("the task cannot be scored")),
+    "The scorer stopped unexpectedly."
 )]
 fn a_scorer_that_makes_no_score_says_why(#[case] unscored: Unscored, #[case] why: &str) {
     assert_eq!(unscored.to_string(), why);
+}
+
+#[test_log::test]
+fn the_cause_of_a_scorer_that_stopped_unexpectedly_is_logged_and_not_told() {
+    let (log, _guard) = Log::capture();
+
+    let told = Unscored::Unexpected(anyhow::anyhow!("no such file")).told();
+
+    assert_eq!(told, "The scorer stopped unexpectedly.");
+    let errors = log.lines("ERROR");
+    assert!(
+        errors.len() == 1 && errors[0].contains("no such file"),
+        "{errors:?}"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_scorer_whose_environment_cannot_be_built_says_so_with_the_builds_log() {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = triage_output(under.path(), "done").await;
+    let harness = Arc::new(ScriptedHarness::default());
+
+    let scored = scoring(&task, &out, under.path(), harness.clone(), |config| {
+        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+            SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
+        ));
+    })
+    .await;
+
+    let unscored = scored.expect_err("a scorer with no environment makes no score");
+    assert!(
+        matches!(unscored, Unscored::BuildFailed { .. }),
+        "{unscored:?}"
+    );
+    assert_eq!(
+        unscored.to_string(),
+        "The scorer's environment could not be built.\n\nthe build broke"
+    );
+    assert_eq!(harness.scorer_prompts().len(), 0);
+    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -376,11 +430,8 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
 
     let refused = kept.expect_err("a score is never kept over another");
     assert!(
-        matches!(
-            refused.downcast_ref::<scorer::ScoreRefusal>(),
-            Some(scorer::ScoreRefusal::Scored)
-        ),
-        "{refused:#}"
+        matches!(&refused, Unscored::NotKept(e) if e.kind() == std::io::ErrorKind::AlreadyExists),
+        "{refused:?}"
     );
     assert_eq!(
         std::fs::read_to_string(out.join("score.json")).unwrap(),

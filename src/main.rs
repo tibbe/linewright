@@ -1555,7 +1555,7 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
         Box::pin(async {
             let (harness, factory_config) = on_task(config, token, &task, winding_up)
                 .await
-                .map_err(scorer::Unscored::Failed)?;
+                .map_err(scorer::Unscored::Unexpected)?;
             scorer::run(
                 &task,
                 &scoreable,
@@ -1574,17 +1574,14 @@ async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp,
     );
     let score = match scoring.await {
         Ok(Ok(score)) => score,
-        Ok(Err(unscored)) => return print_answer(Err((FAILURE, unscored.to_string()))),
+        Ok(Err(unscored)) => return print_answer(Err((FAILURE, unscored.told()))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let summary = score.summary();
     print_answer(
         scorer::keep(&scoreable, score)
             .map(|()| summary)
-            .map_err(|e| {
-                let unscored = scorer::Unscored::Failed(e.context("keeping the score"));
-                (FAILURE, unscored.to_string())
-            }),
+            .map_err(|unscored| (FAILURE, unscored.told())),
     )
 }
 
