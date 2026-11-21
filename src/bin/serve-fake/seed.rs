@@ -46,6 +46,10 @@ const SETTINGS: &str = "[setup]\ncommand = \"echo ready\"\n";
 /// after.
 const WEEKLY: &str = "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook around.\n";
 
+/// An automation file that does not parse: its schedule is not a cron
+/// expression.
+const NIGHTLY: &str = "---\non:\n  schedule: \"every night\"\n---\nTidy up.\n";
+
 /// When the clock starts, so that the pages show the same times on every
 /// run.
 pub fn started_at() -> Timestamp {
@@ -78,6 +82,7 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
                 ("README.md", "# Widgets\n"),
                 (".linewright/config.toml", SETTINGS),
                 (".linewright/automations/weekly.md", WEEKLY),
+                (".linewright/automations/nightly.md", NIGHTLY),
                 (
                     ".linewright/briefs/plugin/skills/triage/SKILL.md",
                     "# Triage\n\nTriage the widgets' issues.\n",
