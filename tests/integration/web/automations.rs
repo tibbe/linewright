@@ -124,9 +124,7 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
 
     assert_eq!(
         unparsed_shown(&html),
-        [format!(
-            ".linewright/automations/broken.md: does not parse: {BROKEN}"
-        )]
+        [format!("`broken.md` does not parse: {BROKEN}")]
     );
     assert_eq!(
         rows_shown(&html),
@@ -209,7 +207,7 @@ async fn an_automation_file_that_does_not_parse_is_a_hold_on_every_page_linking_
         assert_eq!(
             holds(&pages.page(path).await),
             [(
-                format!(".linewright/automations/broken.md: does not parse: {BROKEN}"),
+                format!("`broken.md` does not parse: {BROKEN}"),
                 "/automations".to_string()
             )],
             "{path}"
@@ -424,5 +422,34 @@ async fn an_unparsed_automation_file_is_an_error_alert_with_faileds_icon_first()
         Some("x-circle"),
         "{}",
         file.html()
+    );
+}
+
+/// `docs/specs/automations.md`, Automations: a file that does not parse is
+/// named by its name in the automations' directory, which tells a file in a
+/// directory of its own from one directly in it.
+#[test_log::test(tokio::test)]
+async fn a_file_in_a_directory_of_the_automations_is_named_with_its_directory() {
+    let pages = Pages::of(View {
+        automations: AutomationFiles {
+            parsed: vec![],
+            unparsed: vec![Unparsed {
+                path: ".linewright/automations/team/weekly.md".into(),
+                reason: "an automation is a `.md` file directly in `.linewright/automations/`"
+                    .into(),
+            }],
+        },
+        ..view(vec![], vec![])
+    })
+    .await;
+
+    let html = pages.page("/automations").await;
+
+    assert_eq!(
+        unparsed_shown(&html),
+        [
+            "`team/weekly.md` does not parse: an automation is a `.md` file directly in \
+          `.linewright/automations/`"
+        ]
     );
 }

@@ -941,7 +941,7 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
             "automation hourly next run: 2026-10-01 13:00:00 UTC",
             "automation weekly last run: none yet",
             "automation weekly next run: 2026-10-05 06:00:00 UTC",
-            ".linewright/automations/broken.md: does not parse: no front matter",
+            "`broken.md` does not parse: no front matter",
         ]
     );
 }
