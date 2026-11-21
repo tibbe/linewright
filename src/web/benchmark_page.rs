@@ -17,11 +17,14 @@ use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
 use super::buttons::Verb;
-use super::capture::{TaskField, TaskFields, capture_run, polled};
+use super::capture::{CapturingField, NotPolled, Task, TaskField, TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm};
-use super::making::{self, Answer, Field, Form, MadeShown, Making};
+use super::making::{
+    self, Answer, Control, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, REQUIRED,
+    both,
+};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::table::{Align, Column, Fold, View};
@@ -442,7 +445,6 @@ impl Form for NewTaskFields {
 }
 
 /// A field of the New task dialog.
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NewTaskField {
     /// The run captured.
@@ -456,6 +458,19 @@ impl Field for NewTaskField {
             NewTaskField::Run => true,
             NewTaskField::Task(field) => field.required(),
         }
+    }
+}
+
+impl From<TaskField> for NewTaskField {
+    fn from(field: TaskField) -> NewTaskField {
+        NewTaskField::Task(field)
+    }
+}
+
+/// New task captures into its own benchmark, which no field chooses.
+impl CapturingField for NewTaskField {
+    fn naming(_: &BenchmarkChoice) -> Option<NewTaskField> {
+        None
     }
 }
 
@@ -502,11 +517,13 @@ impl NewTaskForm {
         format!("New task in {}", self.benchmark)
     }
 
-    /// The choice of a run, the region of the page's stream that keeps it.
-    fn runs(&self) -> Html {
+    /// The choice of a run, the region of the page's stream that keeps it,
+    /// with the `attributes` of its field.
+    fn runs(&self, attributes: &Html) -> Html {
         html::rendered(&NewTaskRuns {
             runs: &self.runs,
             chosen: self.making.fields.run.as_ref(),
+            attributes,
         })
     }
 
@@ -514,21 +531,35 @@ impl NewTaskForm {
         NewTaskReady::of(&self.runs)
     }
 
-    /// It refused for `why`, answered with `status`.
-    fn refused(mut self, (status, why): (StatusCode, String)) -> Answer<NewTaskForm> {
-        self.making.refusal = Some(making::Refusal::Whole(why));
+    /// It refused for `refusal`, answered with `status`.
+    fn refused(
+        mut self,
+        (status, refusal): (StatusCode, making::Refusal<NewTaskField>),
+    ) -> Answer<NewTaskForm> {
+        self.making.refusal = Some(refusal);
         Answer::Refused { status, form: self }
+    }
+
+    /// It refused for `why`, of no field, answered with `status`.
+    fn refused_whole(self, (status, why): (StatusCode, String)) -> Answer<NewTaskForm> {
+        self.refused((status, making::Refusal::Whole(why)))
     }
 }
 
 /// The New task dialog's choice of a run, `chosen` chosen, or else the
-/// first; or "No runs".
+/// first; or "No runs". Its field's `attributes` are drawn by the `field`
+/// macro.
 #[derive(Template)]
 #[template(path = "new_task_runs.html")]
 struct NewTaskRuns<'a> {
     runs: &'a [RunChoice],
     chosen: Option<&'a RunId>,
+    attributes: &'a Html,
 }
+
+/// The id of the New task dialog's choice of a run, which is the region of
+/// the page's stream that keeps it.
+const NEW_TASK_RUN: &str = "new-task-run";
 
 impl NewTaskRuns<'_> {
     fn chosen(&self, id: &RunId) -> bool {
@@ -817,11 +848,14 @@ pub(super) async fn benchmark_events(
             ));
             regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
             let runs = runs_of(&sources, benchmark.stage).await;
+            let unrefused =
+                FieldShown::unrefused(&NewTaskField::Run).attributes(NEW_TASK_RUN, Control::Select);
             regions.push((
-                "new-task-run",
+                NEW_TASK_RUN,
                 render(&NewTaskRuns {
                     runs: &runs,
                     chosen: None,
+                    attributes: &unrefused,
                 }),
             ));
             let ready = NewTaskReady::of(&runs);
@@ -846,6 +880,24 @@ struct AddForm {
     run: String,
     #[serde(flatten)]
     task: TaskFields,
+}
+
+impl AddForm {
+    /// The run it sends and the task, or else the refusal of each field
+    /// that does not hold one (`docs/specs/benchmarks.md`, New task;
+    /// `docs/specs/design_system.md`, Making, Required); or else, of a run
+    /// that does not read, its refusal above the buttons, as a run's.
+    fn checked(&self) -> Result<(RunId, Task), making::Refusal<NewTaskField>> {
+        let run = if self.run.trim().is_empty() {
+            Err(FieldRefusals::of(NewTaskField::Run, REQUIRED))
+        } else {
+            Ok(self.run.as_str())
+        };
+        let (run, task) = both(run, self.task.checked().map_err(FieldRefusals::into_fields))
+            .map_err(making::Refusal::Fields)?;
+        let run = run.parse().map_err(making::Refusal::Whole)?;
+        Ok((run, task))
+    }
 }
 
 /// Benchmark `name` with its tasks and benchmark runs, or else the status and
@@ -896,30 +948,23 @@ pub(super) async fn add_task(
     };
     let sent = match WRITE.same_origin(&headers, &uri).and(sent) {
         Ok(sent) => sent,
-        Err(refused) => return form.refused(refused.into_parts()),
+        Err(refused) => return form.refused_whole(refused.into_parts()),
     };
     let (benchmark, stage) = match benchmark_for_making(&sources, &form.benchmark).await {
         Ok(shown) => (shown.benchmark.name, shown.benchmark.stage),
-        Err(refused) => return form.refused(refused),
+        Err(refused) => return form.refused_whole(refused),
     };
     form.runs = runs_of(&sources, stage).await;
+    let (run, task) = match sent.checked() {
+        Ok(checked) => checked,
+        Err(refusal) => return form.refused((StatusCode::UNPROCESSABLE_ENTITY, refusal)),
+    };
     let served = match polled(&sources) {
         Ok(served) => served,
-        Err(not) => return form.refused(not.refusal()),
+        Err(NotPolled) => return form.refused(NotPolled::refusal()),
     };
-    let run: RunId = match sent.run.parse() {
-        Ok(run) => run,
-        Err(why) => return form.refused((StatusCode::UNPROCESSABLE_ENTITY, why)),
-    };
-    match capture_run(
-        &sources,
-        &served,
-        &run,
-        &BenchmarkChoice::Named(benchmark),
-        &sent.task,
-    )
-    .await
-    {
+    let choice = BenchmarkChoice::Named(benchmark);
+    match capture_run(&sources, &served, &run, &choice, task).await {
         Ok(_) => {
             form.making = Making::of(NewTaskFields::starting(&form.runs));
             Answer::Made {
@@ -927,7 +972,7 @@ pub(super) async fn add_task(
                 shown: MadeShown::OnScreen,
             }
         }
-        Err(not) => form.refused(not.refusal()),
+        Err(not) => form.refused(not.refusal(&choice)),
     }
 }
 

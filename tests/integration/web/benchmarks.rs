@@ -406,8 +406,6 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
 /// under it, and one of no field above the buttons.
 #[test_log::test(tokio::test)]
 async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_place() {
-    const NOT_A_NAME: &str = "A name holds only lowercase letters, digits and hyphens, and \
-                              starts with a letter or a digit.";
     const NOT_A_STAGE: &str =
         "\"rework\" is not a stage of a benchmark: one of triage, design, implement";
     let pages = with_benchmarks().await;
@@ -1208,15 +1206,8 @@ type FormShown<'a> = (Vec<(&'a str, String)>, Option<String>);
 /// a select's its chosen option's, and the refusal above its buttons, if any.
 #[track_caller]
 fn new_task_form(form: &Html) -> FormShown<'_> {
-    let refusals = select(form, ".alert");
-    assert!(refusals.len() <= 1, "{}", form.html());
-    let mut fields = field_values(select(form, "input[name], select[name]"));
-    fields.extend(
-        select(form, "textarea[name]")
-            .into_iter()
-            .map(|area| (area.attr("name").unwrap(), area.text().collect())),
-    );
-    (fields, refusals.first().map(|refusal| text(*refusal)))
+    let shown = making_shown(form);
+    (shown.values, shown.whole)
 }
 
 /// `docs/specs/benchmarks.md`, New task; `docs/specs/design_system.md`,
@@ -1261,8 +1252,9 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
         .map(|option| (option.attr("value"), option.attr("data-name")))
         .collect();
     assert_eq!(runs, [(Some("1/implement-2"), Some("1-implement-2"))]);
+    let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
-        new_task_form(&Html::parse_fragment(&form.inner_html())),
+        new_task_form(&fragment),
         (
             vec![
                 ("run", String::new()),
@@ -1272,6 +1264,20 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
             None
         )
     );
+    let required: Vec<(&str, Option<&str>)> = select(&fragment, "[name][required]")
+        .into_iter()
+        .map(|field| (field.attr("name").unwrap(), field.attr("pattern")))
+        .collect();
+    assert_eq!(
+        required,
+        [("run", None), ("name", Some(r".*\S.*")), ("criteria", None)]
+    );
+    let hints: Vec<String> = select(&fragment, ".validator-hint")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(hints, ["Required."; 3]);
+    assert_eq!(select(&fragment, ".optional").len(), 0);
     let actions = select_in(form, ".modal-action button");
     let action_labels: Vec<String> = actions.iter().map(|button| text(*button)).collect();
     assert_eq!(action_labels, ["Cancel", "Add task"]);
@@ -1320,101 +1326,114 @@ async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_
     assert_eq!(names, ["columns", "lanes", "gadgets"]);
 }
 
-/// `docs/specs/benchmarks.md`, New task, Refusals;
-/// `docs/specs/design_system.md`, Making, A refusal.
-#[test_log::test(tokio::test)]
-async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
-    let pages = with_runs().await;
-    let sent = |name: &'static str, criteria: &'static str| {
-        [
-            ("run", "1/implement-2"),
-            ("name", name),
-            ("criteria", criteria),
-        ]
-    };
-    let as_sent = |name: &str, criteria: &str| {
-        vec![
-            ("run", "1/implement-2".to_string()),
-            ("name", name.to_string()),
-            ("criteria", criteria.to_string()),
-        ]
-    };
+/// A New task sent, and how it is refused.
+struct Case {
+    run: &'static str,
+    name: &'static str,
+    criteria: &'static str,
+    status: u16,
+    /// Each field refused, by name, with the reason under it.
+    refused: Vec<(&'static str, &'static str)>,
+    /// The reason above the buttons, if any.
+    whole: Option<&'static str>,
+}
 
-    let mut answers = vec![];
-    for fields in [
-        sent("columns", "Ships gh.\n"),
-        sent("Gadgets 2", "Ships gh.\n"),
-        sent("gadgets", "  \n"),
-    ] {
-        answers.push(post_answer(&pages, "/benchmarks/board", &[SAME_ORIGIN], &fields).await);
+/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
+/// `docs/specs/design_system.md`, Making, Required and A refusal: each
+/// refusal of a field is under it, every empty required field at once, and a
+/// refusal of the run above the buttons.
+#[test_log::test(tokio::test)]
+async fn a_refused_task_answers_the_form_as_sent_with_each_reason_in_its_place() {
+    let pages = with_runs().await;
+    let sent = |run, name, criteria| Case {
+        run,
+        name,
+        criteria,
+        status: 422,
+        refused: vec![],
+        whole: None,
+    };
+    let cases = [
+        Case {
+            refused: vec![("name", "A task named columns already exists.")],
+            ..sent("1/implement-2", "columns", "Ships gh.\n")
+        },
+        Case {
+            refused: vec![("name", NOT_A_NAME)],
+            ..sent("1/implement-2", "Gadgets 2", "Ships gh.\n")
+        },
+        Case {
+            refused: vec![("criteria", "Required.")],
+            ..sent("1/implement-2", "gadgets", "  \n")
+        },
+        Case {
+            refused: vec![
+                ("run", "Required."),
+                ("name", "Required."),
+                ("criteria", "Required."),
+            ],
+            ..sent("", " ", "")
+        },
+        Case {
+            whole: Some("Run 1/design-1 is of design, and board holds tasks of implement."),
+            ..sent("1/design-1", "gadgets", "Ships gh.\n")
+        },
+        Case {
+            status: 404,
+            whole: Some("No such run 1/implement-9."),
+            ..sent("1/implement-9", "gadgets", "Ships gh.\n")
+        },
+    ];
+
+    for case in cases {
+        let Case {
+            run,
+            name,
+            criteria,
+            ..
+        } = case;
+        let (status, headers, form) = post_answer(
+            &pages,
+            "/benchmarks/board",
+            &[SAME_ORIGIN],
+            &[("run", run), ("name", name), ("criteria", criteria)],
+        )
+        .await;
+
+        assert_eq!(status, case.status, "{run:?} {name:?} {criteria:?}");
+        assert!(headers.get("hx-trigger").is_none());
+        assert_eq!(
+            placed(&form),
+            (
+                case.refused
+                    .iter()
+                    .map(|(field, reason)| (*field, (*reason).to_string()))
+                    .collect::<Vec<_>>(),
+                case.whole.map(str::to_string)
+            ),
+            "{run:?} {name:?} {criteria:?}"
+        );
+        let values = new_task_form(&form).0;
+        assert_eq!(
+            values[1..],
+            [
+                ("name", name.to_string()),
+                ("criteria", criteria.to_string())
+            ],
+            "{run:?}"
+        );
     }
-    let (other_stage, _, other_stage_form) = post_answer(
+    let (cross_site, _, cross_site_form) = post_answer(
         &pages,
         "/benchmarks/board",
-        &[SAME_ORIGIN],
+        &[CROSS_SITE],
         &[
-            ("run", "1/design-1"),
+            ("run", "1/implement-2"),
             ("name", "gadgets"),
             ("criteria", "Ships gh.\n"),
         ],
     )
     .await;
-    let (cross_site, _, cross_site_form) = post_answer(
-        &pages,
-        "/benchmarks/board",
-        &[CROSS_SITE],
-        &sent("gadgets", "Ships gh.\n"),
-    )
-    .await;
-
-    let refused: Vec<(u16, bool, FormShown)> = answers
-        .iter()
-        .map(|(status, headers, form)| {
-            (
-                *status,
-                headers.get("hx-trigger").is_some(),
-                new_task_form(form),
-            )
-        })
-        .collect();
-    assert_eq!(
-        refused,
-        [
-            (
-                422,
-                false,
-                (
-                    as_sent("columns", "Ships gh.\n"),
-                    Some("A task named columns already exists.".into())
-                )
-            ),
-            (
-                422,
-                false,
-                (
-                    as_sent("Gadgets 2", "Ships gh.\n"),
-                    Some(
-                        "A name holds only lowercase letters, digits and hyphens, and starts \
-                         with a letter or a digit."
-                            .into()
-                    )
-                )
-            ),
-            (
-                422,
-                false,
-                (
-                    as_sent("gadgets", "  \n"),
-                    Some("A task needs criteria.".into())
-                )
-            ),
-        ]
-    );
-    assert_eq!(other_stage, 422);
-    assert_eq!(
-        new_task_form(&other_stage_form).1,
-        Some("Run 1/design-1 is of design, and board holds tasks of implement.".into())
-    );
     assert_eq!(cross_site, 403);
     assert_eq!(
         new_task_form(&cross_site_form).0,
@@ -1424,6 +1443,73 @@ async fn a_refused_task_answers_the_form_as_sent_with_the_reason() {
             ("criteria", "Ships gh.\n".into())
         ]
     );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, Capturing: a run that is not a triage, design
+/// or implement run is refused above the buttons.
+#[test_log::test(tokio::test)]
+async fn a_task_of_a_run_that_cannot_be_captured_is_refused_above_the_buttons() {
+    let pages = with_runs().await;
+    record_run(&pages, "rework", 1, "2026-10-13T11:20:00Z", None).await;
+
+    let (status, form) = add(&pages, "1/rework-1", "Ships gh.\n").await;
+
+    assert_eq!(status, 422);
+    let (refused, whole) = placed(&form);
+    assert_eq!(refused, []);
+    assert!(whole.is_some_and(|whole| whole.contains("1/rework-1")));
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, New task: a benchmark that no longer exists
+/// is refused above the buttons, New task having no field that chose it.
+#[test_log::test(tokio::test)]
+async fn a_task_in_a_benchmark_that_no_longer_exists_is_refused_above_the_buttons() {
+    let pages = with_runs().await;
+
+    let (status, _, form) = post_answer(
+        &pages,
+        "/benchmarks/gone",
+        &[SAME_ORIGIN],
+        &[
+            ("run", "1/implement-2"),
+            ("name", "gadgets"),
+            ("criteria", "Ships gh.\n"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, 404);
+    assert_eq!(
+        placed(&form),
+        (vec![], Some("there is no benchmark gone".into()))
+    );
+    assert_eq!(tasks(&pages), ["columns", "lanes"]);
+}
+
+/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen: a capture
+/// that fails says why above the buttons.
+#[test_log::test(tokio::test)]
+async fn a_failed_task_says_why_above_the_buttons() {
+    let pages = with_runs().await;
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    record_run(
+        &pages,
+        "implement",
+        3,
+        "2026-10-13T11:10:00Z",
+        Some(missing),
+    )
+    .await;
+
+    let (status, form) = add(&pages, "1/implement-3", "Ships gh.\n").await;
+
+    assert_eq!(status, 500);
+    let (refused, whole) = placed(&form);
+    assert_eq!(refused, []);
+    let whole = whole.unwrap();
+    assert!(whole.contains(missing), "{whole}");
     assert_eq!(tasks(&pages), ["columns", "lanes"]);
 }
 
@@ -1509,7 +1595,7 @@ async fn before_the_first_poll_add_task_is_offered_and_a_task_refused() {
     pages.served.send_replace(None);
 
     let html = pages.page("/benchmarks/board").await;
-    let (status, form) = add(&pages, "1/implement-2", "").await;
+    let (status, form) = add(&pages, "1/implement-2", "Ships gh.\n").await;
 
     let add = select(&html, "dialog#new-task button[type=submit]");
     assert!(add[0].attr("disabled").is_none(), "{}", add[0].html());

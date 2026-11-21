@@ -222,9 +222,9 @@
     taking no room while it is hidden, and "Optional" under an optional field.
     `shown`, a `crate::web::making::FieldShown`, says what the hint holds, and
     `data-unrefused-hint` what it holds again once the reader edits a refused
-    field. -#}
-{%- macro field(id, label, shown, control) -%}
-<div class="field grid gap-1.5">
+    field. `class` gives the wrapper more classes. -#}
+{%- macro field(id, label, shown, control, class = "") -%}
+<div class="field grid gap-1.5{% if !class.is_empty() %} {{ class }}{% endif %}">
 <label class="label" for="{{ id }}">{{ label }}</label>
 {{- caller(shown.attributes(id, *control)) }}
 <p id="{{ id }}-hint" class="validator-hint hidden" data-unrefused-hint="{{ shown.unrefused_hint() }}">{{ shown.hint() }}</p>

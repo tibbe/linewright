@@ -129,6 +129,16 @@ fn shown<'a>(
     )
 }
 
+/// [`placed`] for a refusal of field `name` alone, for `reason`.
+fn under<'a>(name: &'a str, reason: &str) -> (Vec<(&'a str, String)>, Option<String>) {
+    (vec![(name, reason.to_string())], None)
+}
+
+/// [`placed`] for a refusal of no field, for `reason`.
+fn above_buttons<'a>(reason: &str) -> (Vec<(&'a str, String)>, Option<String>) {
+    (vec![], Some(reason.to_string()))
+}
+
 /// `docs/specs/runs.md`, Run, Capturing; `docs/specs/design_system.md`,
 /// Making, The dialog.
 #[test_log::test(tokio::test)]
@@ -162,10 +172,30 @@ async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under
             "{field}"
         );
     }
+    let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
-        form_shown(&Html::parse_fragment(&form.inner_html())),
+        form_shown(&fragment),
         shown(IMPLEMENTS, "", "1-implement-1", "", None)
     );
+    assert_eq!(placed(&fragment), (vec![], None));
+    let required: Vec<(&str, Option<&str>)> = select(&fragment, "[name][required]")
+        .into_iter()
+        .map(|field| (field.attr("name").unwrap(), field.attr("pattern")))
+        .collect();
+    assert_eq!(
+        required,
+        [
+            ("new-benchmark", Some(r".*\S.*")),
+            ("name", Some(r".*\S.*")),
+            ("criteria", None),
+        ]
+    );
+    let hints: Vec<String> = select(&fragment, ".validator-hint")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(hints, ["Required."; 4]);
+    assert_eq!(select(&fragment, ".optional").len(), 0);
     let actions: Vec<String> = select_in(form, ".modal-action button")
         .into_iter()
         .map(text)
@@ -174,23 +204,34 @@ async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under
 }
 
 /// `docs/specs/runs.md`, Run, Capturing: "Benchmark name" shows while "New
-/// benchmark" is chosen, its label with it, as the stylesheet hides each
-/// `.new-benchmark-name` of a capture's form without it.
+/// benchmark" is chosen, as the stylesheet hides the `.new-benchmark-name`
+/// of a capture's form without it, its label, hint and all; and it is
+/// disabled while hidden, so that the browser neither checks nor sends it.
 #[test_log::test(tokio::test)]
-async fn the_benchmark_name_and_its_label_are_hidden_but_with_new_benchmark_chosen() {
+async fn the_benchmark_name_is_hidden_and_disabled_but_with_new_benchmark_chosen() {
     let pages = implemented(Recorded::Whole).await;
 
     let html = pages.page(RUN_PAGE).await;
+    let (_, refused) = submit_into(&pages, Chosen::New("Fresh"), "gadgets", CRITERIA).await;
 
     let form = capture_form(&html).unwrap();
-    let hidden: Vec<&str> = select_in(form, ".new-benchmark-name")
+    let hidden = select_in(form, ".new-benchmark-name");
+    assert_eq!(hidden.len(), 1, "{}", form.html());
+    let held: Vec<&str> = select_in(hidden[0], "label, [name], .validator-hint")
         .into_iter()
         .map(|element| element.value().name())
         .collect();
-    assert_eq!(hidden, ["label", "input"]);
+    assert_eq!(held, ["label", "input", "p"]);
     let new_benchmark = select_in(form, "select[name=benchmark] option.new-benchmark");
     assert_eq!(new_benchmark.len(), 1);
     assert_eq!(new_benchmark[0].attr("value"), Some(""));
+    let disabled = |holder: ElementRef<'_>| {
+        select_in(holder, "input[name=new-benchmark]")[0]
+            .attr("disabled")
+            .is_some()
+    };
+    assert!(disabled(form));
+    assert!(!disabled(refused.root_element()), "{}", refused.html());
 }
 
 #[test_log::test(tokio::test)]
@@ -254,8 +295,8 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
     assert!(capture_form(&html).is_none());
     assert_eq!(status, 422);
     assert_eq!(
-        said(&answer),
-        "The record of run 1/implement-1 lacks properties."
+        placed(&answer),
+        above_buttons("The record of run 1/implement-1 lacks properties.")
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -387,38 +428,60 @@ async fn a_capture_closes_the_dialog_and_says_under_the_heading_what_it_made_lin
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_with_blank_criteria_is_refused_and_writes_nothing() {
+async fn a_capture_with_blank_criteria_is_refused_under_them_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "gadgets", " \n\t\n").await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "A task needs criteria.");
+    assert_eq!(placed(&answer), under("criteria", "Required."));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_taken_name_is_refused_and_says_so() {
+async fn a_taken_name_is_refused_under_the_name() {
     let pages = implemented(Recorded::Whole).await;
     submit(&pages, "gadgets", CRITERIA).await;
 
     let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "A task named gadgets already exists.");
+    assert_eq!(
+        placed(&answer),
+        under("name", "A task named gadgets already exists.")
+    );
 }
 
 #[test_log::test(tokio::test)]
-async fn a_name_that_is_not_a_tasks_is_refused_and_says_so() {
+async fn a_name_that_is_not_a_tasks_is_refused_under_the_name() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit(&pages, "../Gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
+    assert_eq!(placed(&answer), under("name", NOT_A_NAME));
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+/// `docs/specs/design_system.md`, Making, Required: every empty required
+/// field is refused at once, each under it.
+#[test_log::test(tokio::test)]
+async fn empty_fields_are_each_refused_as_required_at_once() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit_into(&pages, Chosen::New(" "), "\t", "").await;
+
+    assert_eq!(status, 422);
     assert_eq!(
-        said(&answer),
-        "A name holds only lowercase letters, digits and hyphens, and starts with a \
-         letter or a digit."
+        placed(&answer),
+        (
+            vec![
+                ("new-benchmark", "Required.".to_string()),
+                ("name", "Required.".to_string()),
+                ("criteria", "Required.".to_string()),
+            ],
+            None
+        )
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -432,8 +495,10 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
     let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert_eq!(status, 500);
-    let said = said(&answer);
-    assert!(said.contains(missing), "{said}");
+    let (refused, whole) = placed(&answer);
+    assert_eq!(refused, []);
+    let whole = whole.unwrap();
+    assert!(whole.contains(missing), "{whole}");
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -471,7 +536,7 @@ async fn before_the_first_poll_add_task_is_offered_and_the_capture_refused() {
     pages.served.send_replace(None);
 
     let html = pages.page(RUN_PAGE).await;
-    let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", "").await;
+    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     let form = capture_form(&html).unwrap();
     assert!(
@@ -481,8 +546,8 @@ async fn before_the_first_poll_add_task_is_offered_and_the_capture_refused() {
     );
     assert_eq!(status, 503);
     assert_eq!(
-        said(&answer),
-        "Linewright can't capture a run before its first poll."
+        placed(&answer),
+        above_buttons("Linewright can't capture a run before its first poll.")
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
@@ -543,17 +608,17 @@ async fn a_capture_into_a_new_benchmark_makes_it_says_so_and_offers_it_next_time
 }
 
 /// `docs/specs/design_system.md`, Making, A refusal: the dialog stays open,
-/// the reason above its buttons, and the fields keep what was typed and
-/// chosen.
+/// the reason of a refusal of no field above its buttons, and the fields
+/// keep what was typed and chosen.
 #[test_log::test(tokio::test)]
 async fn a_refused_capture_answers_the_form_as_sent_with_the_reason_and_leaves_the_dialog_open() {
-    let pages = implemented(Recorded::Whole).await;
+    let pages = implemented(Recorded::Nothing).await;
 
     let (status, headers, form) = post_answer(
         &pages,
         RUN_PAGE,
         &[SAME_ORIGIN],
-        &fields(Chosen::New("Fresh"), "gadgets", "Ships.\n"),
+        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", "Ships.\n"),
     )
     .await;
 
@@ -572,14 +637,11 @@ async fn a_refused_capture_answers_the_form_as_sent_with_the_reason_and_leaves_t
     assert_eq!(
         form_shown(&form),
         shown(
+            IMPLEMENTS,
             "",
-            "Fresh",
             "gadgets",
             "Ships.\n",
-            Some(
-                "A name holds only lowercase letters, digits and hyphens, and starts with a \
-                 letter or a digit."
-            )
+            Some("Run 1/implement-1 recorded no input.")
         )
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
@@ -594,46 +656,45 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
 
     assert_eq!(status, 422);
     assert_eq!(
-        said(&answer),
-        "Run 1/implement-1 is of implement, and designs holds tasks of design."
+        placed(&answer),
+        above_buttons("Run 1/implement-1 is of implement, and designs holds tasks of design.")
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_without_a_name_is_refused_and_writes_nothing() {
+async fn a_new_benchmark_without_a_name_is_refused_under_it_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "The new benchmark needs a name.");
+    assert_eq!(placed(&answer), under("new-benchmark", "Required."));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_whose_name_is_not_a_name_is_refused_and_writes_nothing() {
+async fn a_new_benchmark_whose_name_is_not_a_name_is_refused_under_it_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit_into(&pages, Chosen::New("Fresh"), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(
-        said(&answer),
-        "A name holds only lowercase letters, digits and hyphens, and starts with a \
-         letter or a digit."
-    );
+    assert_eq!(placed(&answer), under("new-benchmark", NOT_A_NAME));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_named_as_one_that_exists_is_refused_and_writes_nothing() {
+async fn a_new_benchmark_named_as_one_that_exists_is_refused_under_its_name_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) = submit_into(&pages, Chosen::New(DESIGNS), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "A benchmark named designs already exists.");
+    assert_eq!(
+        placed(&answer),
+        under("new-benchmark", "A benchmark named designs already exists.")
+    );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -644,7 +705,10 @@ async fn a_run_that_recorded_no_input_is_refused_and_says_so() {
     let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(said(&answer), "Run 1/implement-1 recorded no input.");
+    assert_eq!(
+        placed(&answer),
+        above_buttons("Run 1/implement-1 recorded no input.")
+    );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -665,6 +729,80 @@ async fn a_run_that_does_not_exist_is_refused_and_says_so() {
     .await;
 
     assert_eq!(status, 404);
-    assert_eq!(said(&answer), "No such run 1/implement-9.");
+    assert_eq!(placed(&answer), above_buttons("No such run 1/implement-9."));
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+/// `docs/specs/runs.md`, Run, Capturing: with no benchmark offered, "New
+/// benchmark" is chosen and its name enabled; and Benchmark has no
+/// `required`, which the browser would take its empty choice to fail.
+#[test_log::test(tokio::test)]
+async fn with_no_benchmark_offered_new_benchmark_is_chosen_and_its_name_enabled() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (_, answer) = post(
+        &pages,
+        "/runs/1/rework-1",
+        &[SAME_ORIGIN],
+        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", CRITERIA),
+    )
+    .await;
+
+    let benchmark = select(&answer, "select[name=benchmark]")[0];
+    assert_eq!(benchmark.attr("required"), None);
+    let chosen: Vec<String> = select_in(benchmark, "option[selected]")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(chosen, ["New benchmark"]);
+    let name = select(&answer, "input[name=new-benchmark]")[0];
+    assert_eq!(name.attr("disabled"), None, "{}", answer.html());
+}
+
+/// `docs/specs/benchmarks.md`, Capturing: a run that is not a triage, design
+/// or implement run is refused above the buttons.
+#[test_log::test(tokio::test)]
+async fn a_run_that_cannot_be_captured_is_refused_above_the_buttons() {
+    let pages = implemented(Recorded::Whole).await;
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "rework",
+            "n": 1,
+            "started_at": "2026-10-13T10:20:00Z",
+            "end": {"at": "2026-10-13T10:23:00Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
+
+    let (status, answer) = post(
+        &pages,
+        "/runs/1/rework-1",
+        &[SAME_ORIGIN],
+        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", CRITERIA),
+    )
+    .await;
+
+    assert_eq!(status, 422);
+    let (refused, whole) = placed(&answer);
+    assert_eq!(refused, []);
+    assert!(whole.is_some_and(|whole| whole.contains("1/rework-1")));
+    assert_eq!(tasks(&pages), Vec::<String>::new());
+}
+
+/// `docs/specs/runs.md`, Run, Capturing: a benchmark chosen that no longer
+/// exists is refused under "Benchmark".
+#[test_log::test(tokio::test)]
+async fn a_benchmark_that_no_longer_exists_is_refused_under_benchmark() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) =
+        submit_into(&pages, Chosen::Benchmark("gone"), "gadgets", CRITERIA).await;
+
+    assert_eq!(status, 422);
+    assert_eq!(
+        placed(&answer),
+        under("benchmark", "there is no benchmark gone")
+    );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }

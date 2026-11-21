@@ -18,8 +18,7 @@ use tracing::{info, warn};
 use super::buttons::ScreenButton;
 use super::html::{self, Html};
 use super::making::{
-    Answer, Field, FieldRefusals, Form, MadeShown, Making, NOT_A_NAME, REQUIRED, Refusal,
-    benchmark_taken,
+    self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal, benchmark_taken,
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
@@ -405,13 +404,7 @@ impl MakeForm {
     /// not hold one (`docs/specs/benchmarks.md`, New benchmark, Refusals;
     /// `docs/specs/design_system.md`, Making, Required).
     fn checked(&self) -> Result<(BenchmarkName, TaskStage), FieldRefusals<NewBenchmarkField>> {
-        let name = if self.name.trim().is_empty() {
-            Err(REQUIRED.to_string())
-        } else {
-            self.name
-                .parse::<BenchmarkName>()
-                .map_err(|_| NOT_A_NAME.to_string())
-        };
+        let name = making::parse_name::<BenchmarkName>(&self.name);
         let stage = self.stage.parse::<TaskStage>();
         match (name, stage) {
             (Ok(name), Ok(stage)) => Ok((name, stage)),

@@ -889,7 +889,7 @@ fn filters(html: &Html) -> Vec<(&str, String)> {
 }
 
 /// The names and values of `fields`, a select's the value of its chosen
-/// option.
+/// option and a textarea's its text.
 #[track_caller]
 fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
     fields
@@ -900,6 +900,7 @@ fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
                     .into_iter()
                     .filter_map(|option| option.attr("value"))
                     .collect(),
+                "textarea" => field.text().collect(),
                 _ => field.attr("value").unwrap_or_default().to_string(),
             };
             (field.attr("name").expect("a field's name"), value)
@@ -982,6 +983,20 @@ fn making_shown(form: &Html) -> MakingShown<'_> {
         whole: alerts.first().map(|alert| text(*alert)),
     }
 }
+
+/// The fields of `form`, a making dialog's, that Linewright refused, by
+/// name, each with the reason under it, and the reason above its buttons, if
+/// any.
+#[track_caller]
+fn placed(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
+    let shown = making_shown(form);
+    (shown.refused, shown.whole)
+}
+
+/// The refusal of a name not in the form of a name
+/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
+const NOT_A_NAME: &str = "A name holds only lowercase letters, digits and hyphens, and starts \
+                          with a letter or a digit.";
 
 /// A table card (`docs/specs/design_system.md`, Tables) as a reader reads
 /// it: the name at the left of its top, if it shows one, the labels of the
