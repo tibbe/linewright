@@ -907,6 +907,79 @@ fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
         .collect()
 }
 
+/// A making dialog's form (`docs/specs/design_system.md`, Making;
+/// `docs/specs/web/design_system.md`, Making) as a reader meets it.
+#[derive(Debug, PartialEq, Eq)]
+struct MakingShown<'a> {
+    /// The name and value of each field, as [`field_values`] gives them.
+    values: Vec<(&'a str, String)>,
+    /// The name of each field Linewright refused, with the reason under it.
+    refused: Vec<(&'a str, String)>,
+    /// The reason of a refusal of no field, above the buttons.
+    whole: Option<String>,
+}
+
+/// What `form`, a making dialog's, shows. Each field is a `validator` in a
+/// wrapper of its own with its `validator-hint`, a refused one marked
+/// `aria-invalid` and described by its hint, and another's hint saying what
+/// it says again once the reader edits a refused one; a refusal of no field
+/// is the one `alert` before the buttons.
+#[track_caller]
+fn making_shown(form: &Html) -> MakingShown<'_> {
+    let controls = select(form, "input[name], select[name], textarea[name]");
+    let mut refused = vec![];
+    for control in &controls {
+        let name = control.attr("name").unwrap();
+        assert!(has_classes(*control, &["validator"]), "{}", control.html());
+        let wrapper = ElementRef::wrap(control.parent().unwrap()).unwrap();
+        assert_eq!(
+            select_in(wrapper, ".validator").len(),
+            1,
+            "{}",
+            wrapper.html()
+        );
+        let hints = select_in(wrapper, ".validator-hint");
+        assert_eq!(hints.len(), 1, "{}", wrapper.html());
+        let hint = hints[0];
+        assert!(
+            hint.prev_siblings().any(|sibling| sibling == **control),
+            "the hint follows its field: {}",
+            wrapper.html()
+        );
+        match control.attr("aria-invalid") {
+            Some("true") => {
+                assert_eq!(control.attr("aria-describedby"), hint.attr("id"));
+                refused.push((name, text(hint)));
+            }
+            None => {
+                assert_eq!(control.attr("aria-describedby"), None);
+                assert_eq!(
+                    Some(text(hint).as_str()),
+                    hint.attr("data-unrefused-hint"),
+                    "{}",
+                    wrapper.html()
+                );
+            }
+            Some(other) => panic!("aria-invalid={other:?} on {name}"),
+        }
+    }
+    let alerts = select(form, ".alert");
+    assert!(alerts.len() <= 1, "{}", form.html());
+    let buttons = select(form, ".modal-action");
+    if let (Some(alert), Some(buttons)) = (alerts.first(), buttons.first()) {
+        assert!(
+            alert.next_siblings().any(|sibling| sibling == **buttons),
+            "the refusal of no field is above the buttons: {}",
+            form.html()
+        );
+    }
+    MakingShown {
+        values: field_values(controls),
+        refused,
+        whole: alerts.first().map(|alert| text(*alert)),
+    }
+}
+
 /// A table card (`docs/specs/design_system.md`, Tables) as a reader reads
 /// it: the name at the left of its top, if it shows one, the labels of the
 /// buttons at the right of its top, and the names of the filters in the row
