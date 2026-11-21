@@ -17,7 +17,10 @@ use tracing::{info, warn};
 
 use super::buttons::ScreenButton;
 use super::html::{self, Html};
-use super::making::{Answer, Field, Form, MadeShown, Making, NOT_A_NAME, Refusal, benchmark_taken};
+use super::making::{
+    Answer, Field, FieldRefusals, Form, MadeShown, Making, NOT_A_NAME, REQUIRED, Refusal,
+    benchmark_taken,
+};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
@@ -235,7 +238,6 @@ impl Form for NewBenchmarkFields {
 }
 
 /// A field of the New benchmark dialog.
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum NewBenchmarkField {
     Name,
@@ -398,6 +400,29 @@ struct MakeForm {
     stage: String,
 }
 
+impl MakeForm {
+    /// The name and stage it sends, or the refusal of each field that does
+    /// not hold one (`docs/specs/benchmarks.md`, New benchmark, Refusals;
+    /// `docs/specs/design_system.md`, Making, Required).
+    fn checked(&self) -> Result<(BenchmarkName, TaskStage), FieldRefusals<NewBenchmarkField>> {
+        let name = if self.name.trim().is_empty() {
+            Err(REQUIRED.to_string())
+        } else {
+            self.name
+                .parse::<BenchmarkName>()
+                .map_err(|_| NOT_A_NAME.to_string())
+        };
+        let stage = self.stage.parse::<TaskStage>();
+        match (name, stage) {
+            (Ok(name), Ok(stage)) => Ok((name, stage)),
+            (Err(name), Ok(_)) => Err(FieldRefusals::of(NewBenchmarkField::Name, name)),
+            (Ok(_), Err(stage)) => Err(FieldRefusals::of(NewBenchmarkField::Stage, stage)),
+            (Err(name), Err(stage)) => Err(FieldRefusals::of(NewBenchmarkField::Name, name)
+                .and(NewBenchmarkField::Stage, stage)),
+        }
+    }
+}
+
 /// Makes the benchmark the form in `body` names, and answers with the dialog's
 /// form: as it starts once made, or as sent with why it was refused.
 /// Refused, writing nothing, unless the browser shows the request came from
@@ -420,25 +445,24 @@ pub(super) async fn make_benchmark(
         },
         Err(_) => NewBenchmarkFields::default(),
     };
-    let refuse = |status, why| Answer::Refused {
+    let refuse = |status, refusal| Answer::Refused {
         status,
         form: NewBenchmarkForm {
-            new_benchmark: Making::refused(fields, Refusal::Whole(why)),
+            new_benchmark: Making::refused(fields, refusal),
         },
     };
     let form = match WRITE.same_origin(&headers, &uri).and(sent) {
         Ok(form) => form,
         Err(refused) => {
             let (status, why) = refused.into_parts();
-            return refuse(status, why);
+            return refuse(status, Refusal::Whole(why));
         }
     };
-    let Ok(name) = form.name.parse::<BenchmarkName>() else {
-        return refuse(StatusCode::UNPROCESSABLE_ENTITY, NOT_A_NAME.into());
-    };
-    let stage = match form.stage.parse::<TaskStage>() {
-        Ok(stage) => stage,
-        Err(why) => return refuse(StatusCode::UNPROCESSABLE_ENTITY, why),
+    let (name, stage) = match form.checked() {
+        Ok(checked) => checked,
+        Err(refusals) => {
+            return refuse(StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals));
+        }
     };
     match benchmarks(&sources).make(&name, stage).await {
         Ok(benchmark) => {
@@ -451,23 +475,24 @@ pub(super) async fn make_benchmark(
             }
         }
         Err(e) => {
-            let status = match &e {
-                MakeError::Taken(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            let (status, refusal) = match &e {
+                MakeError::Taken(taken) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Refusal::Fields(FieldRefusals::of(
+                        NewBenchmarkField::Name,
+                        benchmark_taken(taken),
+                    )),
+                ),
                 MakeError::Failed(e) => {
                     warn!(benchmark = %name, error = format!("{e:#}"), "making a benchmark failed");
-                    StatusCode::INTERNAL_SERVER_ERROR
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Refusal::Whole(format!("{e:#}")),
+                    )
                 }
             };
-            refuse(status, benchmark_not_made(&e))
+            refuse(status, refusal)
         }
-    }
-}
-
-/// The refusal of a benchmark that was not made, or why making it failed.
-fn benchmark_not_made(error: &MakeError) -> String {
-    match error {
-        MakeError::Taken(name) => benchmark_taken(name),
-        MakeError::Failed(e) => format!("{e:#}"),
     }
 }
 

@@ -7,7 +7,9 @@
  * closed it through updates, closes a confirmation as it goes ahead and a
  * dialog that makes a thing once it is made, starts such a dialog's form
  * afresh as it closes, as the answer to the last thing made started it, but
- * for the regions of the stream it holds,
+ * for the regions of the stream it holds, says "Required." of such a dialog's
+ * field the browser finds empty and drops Linewright's refusal of one the
+ * reader edits,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen and a table's page links
  * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
@@ -243,6 +245,66 @@
     if (!launch) return;
     openedTexts.set(launch, briefTexts());
     countTrials(launch);
+  });
+
+  /**
+   * The hint of `field`, if it is a making dialog's field
+   * (docs/specs/web/design_system.md, Making), drawn by the `field` macro:
+   * its `validator-hint`, whose `data-unrefused-hint` is what it says while
+   * Linewright has not refused the field.
+   */
+  function hintOf(field) {
+    if (!field?.closest?.("form[data-new]")) return null;
+    return document.getElementById(`${field.id}-hint`);
+  }
+
+  /**
+   * Gives a making dialog's field that the browser finds empty or of white
+   * space alone the message "Required.", as its hint says
+   * (docs/specs/design_system.md, Making, Required). `invalid` does not
+   * bubble:
+   * https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#statically-validate-the-constraints
+   */
+  document.addEventListener(
+    "invalid",
+    (event) => {
+      const field = event.target;
+      const hint = hintOf(field);
+      if (hint && (field.validity.valueMissing || field.validity.patternMismatch)) {
+        field.setCustomValidity(hint.getAttribute("data-unrefused-hint"));
+      }
+    },
+    true,
+  );
+
+  /**
+   * Lets the browser check a making dialog's fields afresh as the reader
+   * sends its form, whatever set their values since. A submit button's click
+   * comes before the browser checks the form, on Enter too:
+   * https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission
+   */
+  document.addEventListener("click", (event) => {
+    const form = event.target?.closest?.("form[data-new]");
+    if (!form || !event.target.closest("[type=submit]")) return;
+    for (const field of form.elements) {
+      if (hintOf(field)) field.setCustomValidity("");
+    }
+  });
+
+  /**
+   * Drops Linewright's refusal of a making dialog's field once the reader
+   * edits it (docs/specs/design_system.md, Making, A refusal), its hint
+   * saying again what it says of a field not refused.
+   */
+  document.addEventListener("input", (event) => {
+    const field = event.target;
+    const hint = hintOf(field);
+    if (!hint) return;
+    field.setCustomValidity("");
+    if (field.getAttribute("aria-invalid") !== "true") return;
+    field.removeAttribute("aria-invalid");
+    field.removeAttribute("aria-describedby");
+    hint.textContent = hint.getAttribute("data-unrefused-hint");
   });
 
   /** A fold row's button. */

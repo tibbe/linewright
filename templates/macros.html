@@ -195,7 +195,7 @@
 {%- endmacro -%}
 
 {#- What the form of the making dialog `id` holds: the fieldset titled
-    `title`, whose fields, each under its `label`, its caller draws, then
+    `title`, whose fields, each drawn by `field`, its caller draws, then
     `whole`, the reason of a refusal of no field, if there is one, then
     "Cancel" and the button of the `crate::web::buttons::Verb` `verb` that
     makes the thing, drawn by `new_submit` with `region` and `disabled`. -#}
@@ -210,6 +210,27 @@
 <div class="modal-action">
 <button class="btn btn-sm" type="button" command="close" commandfor="{{ id }}">{{ crate::web::buttons::Verb::CloseDialog.labelled() }}</button>
 {% call new_submit(verb, region, disabled) %}{% endcall %}
+</div>
+{%- endmacro -%}
+
+{#- A making dialog's field (`docs/specs/design_system.md`, Making, Required
+    and A refusal; `docs/specs/web/design_system.md`, Making), in a wrapper of
+    its own so that daisyUI's `.validator ~ .validator-hint` reaches its hint
+    alone (https://daisyui.com/components/validator/): its `label`, then the control of the `crate::web::making::Control`
+    `control` with the id `id`, which its caller draws with the class
+    `validator` and the attributes it is given, then its `validator-hint`,
+    taking no room while it is hidden, and "Optional" under an optional field.
+    `shown`, a `crate::web::making::FieldShown`, says what the hint holds, and
+    `data-unrefused-hint` what it holds again once the reader edits a refused
+    field. -#}
+{%- macro field(id, label, shown, control) -%}
+<div class="field grid gap-1.5">
+<label class="label" for="{{ id }}">{{ label }}</label>
+{{- caller(shown.attributes(id, *control)) }}
+<p id="{{ id }}-hint" class="validator-hint hidden" data-unrefused-hint="{{ shown.unrefused_hint() }}">{{ shown.hint() }}</p>
+{%- if !shown.required() %}
+<span class="label optional">Optional</span>
+{%- endif %}
 </div>
 {%- endmacro -%}
 

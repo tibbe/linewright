@@ -1153,6 +1153,81 @@ steps.join("\n")
     );
 }
 
+/// `docs/specs/design_system.md`, Making, Required and A refusal: the
+/// browser's message for a making dialog's field it finds empty or of white
+/// space alone is "Required.", as the field's hint says, until the reader
+/// edits it or sends the form again; and editing a field Linewright refused
+/// drops the refusal, its hint saying again what it said before: "Required."
+/// for a required field, and nothing for an optional one.
+#[test_log::test(tokio::test)]
+async fn a_making_dialogs_field_reads_required_when_the_browser_finds_it_empty_and_drops_a_refusal_once_edited()
+ {
+    let page = r#"
+var making = element("FORM", { "data-new": "" });
+making.elements = [];
+var hints = {};
+function control(id, attributes, hint, unrefused, form) {
+  const control = Object.assign(element("INPUT", attributes), {
+    id,
+    message: "",
+    validity: {},
+    setCustomValidity(message) { this.message = message; },
+    removeAttribute(name) { delete this.attributes[name]; },
+    closest: (selector) => (selector === "form[data-new]" ? form : null),
+  });
+  hints[`${id}-hint`] = Object.assign(
+    element("P", { id: `${id}-hint`, "data-unrefused-hint": unrefused }),
+    { textContent: hint },
+  );
+  if (form) form.elements.push(control);
+  return control;
+}
+const refused = (id) => ({ "aria-invalid": "true", "aria-describedby": `${id}-hint` });
+var name = control("name", refused("name"), "A benchmark named board already exists.", "Required.", making);
+var model = control("model", refused("model"), "config.toml has an error: no model", "", making);
+var stage = control("stage", {}, "Required.", "Required.", making);
+var filter = control("filter", {}, "", "", null);
+var create = Object.assign(element("BUTTON", { type: "submit" }), {
+  closest: (selector) => (selector === "form[data-new]" ? making : selector === "[type=submit]" ? create : null),
+});
+const byId = document.getElementById;
+document.getElementById = (id) => hints[id] || byId(id);
+const shown = (field) =>
+  `${field.id} ${JSON.stringify(field.attributes)} "${hints[`${field.id}-hint`].textContent}" "${field.message}"`;
+const refuse = (field, validity) => { field.validity = validity; fire("invalid", event(field)); };
+"#;
+    let asked = r#"
+const steps = [];
+refuse(stage, { valueMissing: true }); steps.push(shown(stage));
+fire("input", event(stage)); steps.push(shown(stage));
+refuse(stage, { patternMismatch: true }); steps.push(shown(stage));
+stage.validity = {}; fire("click", event(create)); steps.push(shown(stage));
+refuse(stage, { typeMismatch: true }); steps.push(shown(stage));
+refuse(name, { valueMissing: true }); steps.push(shown(name));
+fire("input", event(name)); steps.push(shown(name));
+fire("input", event(model)); steps.push(shown(model));
+refuse(filter, { valueMissing: true }); steps.push(shown(filter));
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            r#"stage {} "Required." "Required.""#,
+            r#"stage {} "Required." """#,
+            r#"stage {} "Required." "Required.""#,
+            r#"stage {} "Required." """#,
+            r#"stage {} "Required." """#,
+            r#"name {"aria-invalid":"true","aria-describedby":"name-hint"} "A benchmark named board already exists." "Required.""#,
+            r#"name {} "Required." """#,
+            r#"model {} "" """#,
+            r#"filter {} "" """#,
+        ]
+    );
+}
+
 /// `docs/specs/benchmarks.md`, New task: a "New" dialog starts afresh
 /// with the regions of the page's stream it holds as the stream last sent
 /// them, New task's run chosen as it starts and its name suggested for it.

@@ -5,12 +5,13 @@
 //! on a screen that does not show it.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use askama::Template;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use super::html::Html;
+use super::html::{self, Html};
 use super::render;
 use crate::benchmarks::BenchmarkName;
 
@@ -23,24 +24,20 @@ pub(super) trait Form: Default {
 pub(super) trait Field: Ord + Clone {
     /// Whether Linewright cannot make the thing without it
     /// (`docs/specs/design_system.md`, Making, Required).
-    #[expect(dead_code, reason = "every dialog refuses as a whole")]
     fn required(&self) -> bool;
 }
 
 /// Why Linewright refused a dialog's form: of its fields `F`, or of none.
 pub(super) enum Refusal<F: Field> {
     /// Of one or more fields, each with its reason under it.
-    #[expect(dead_code, reason = "every dialog refuses as a whole")]
     Fields(FieldRefusals<F>),
     /// Of no field, with its reason above the buttons.
     Whole(String),
 }
 
 /// One or more fields refused, at most one reason for each.
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
 pub(super) struct FieldRefusals<F: Field>(BTreeMap<F, String>);
 
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
 impl<F: Field> FieldRefusals<F> {
     /// `field` refused for `reason`.
     pub(super) fn of(field: F, reason: impl Into<String>) -> FieldRefusals<F> {
@@ -54,6 +51,7 @@ impl<F: Field> FieldRefusals<F> {
     }
 
     /// The fields `refused`, the first reason for each, or `None` for none.
+    #[expect(dead_code, reason = "no dialog refuses a list of fields yet")]
     pub(super) fn collect(
         refused: impl IntoIterator<Item = (F, String)>,
     ) -> Option<FieldRefusals<F>> {
@@ -62,6 +60,11 @@ impl<F: Field> FieldRefusals<F> {
             refusals.entry(field).or_insert(reason);
         }
         (!refusals.is_empty()).then_some(FieldRefusals(refusals))
+    }
+
+    /// Why `field` is refused, if it is.
+    fn reason(&self, field: &F) -> Option<&str> {
+        self.0.get(field).map(String::as_str)
     }
 }
 
@@ -94,6 +97,19 @@ impl<F: Form> Making<F> {
         }
     }
 
+    /// How the form shows `field`: whether it is required, and why
+    /// Linewright refused it, if it did.
+    pub(super) fn field(&self, field: &F::Field) -> FieldShown {
+        let reason = match &self.refusal {
+            Some(Refusal::Fields(refusals)) => refusals.reason(field).map(str::to_string),
+            Some(Refusal::Whole(_)) | None => None,
+        };
+        FieldShown {
+            required: field.required(),
+            reason,
+        }
+    }
+
     /// The reason of a refusal of no field, which the form shows above its
     /// buttons.
     pub(super) fn whole(&self) -> Option<&str> {
@@ -102,6 +118,62 @@ impl<F: Form> Making<F> {
             Some(Refusal::Fields(_)) | None => None,
         }
     }
+}
+
+/// A field as its dialog's form draws it with the `field` macro
+/// (`docs/specs/design_system.md`, Making, Required and A refusal;
+/// `docs/specs/web/design_system.md`, Making).
+pub(super) struct FieldShown {
+    required: bool,
+    /// Why Linewright refused it, if it did.
+    reason: Option<String>,
+}
+
+impl FieldShown {
+    pub(super) fn required(&self) -> bool {
+        self.required
+    }
+
+    /// What its hint says while Linewright has not refused it: "Required."
+    /// for a required field, and nothing for an optional one.
+    pub(super) fn unrefused_hint(&self) -> &'static str {
+        if self.required { REQUIRED } else { "" }
+    }
+
+    /// What its hint says: why Linewright refused it, or else
+    /// [`FieldShown::unrefused_hint`].
+    pub(super) fn hint(&self) -> &str {
+        self.reason.as_deref().unwrap_or(self.unrefused_hint())
+    }
+
+    /// The attributes of its control `kind` whose id is `id`, but for its
+    /// class `validator`: the browser's checks of a required field, which
+    /// every value but one empty or of white space alone passes, and while
+    /// Linewright refuses it, `aria-invalid`, described by its hint.
+    pub(super) fn attributes(&self, id: &str, kind: Control) -> Html {
+        let mut attributes = String::new();
+        if self.required {
+            attributes.push_str(" required");
+            if kind == Control::Input {
+                attributes.push_str(r#" pattern=".*\S.*""#);
+            }
+        }
+        if self.reason.is_some() {
+            let _ = write!(
+                attributes,
+                r#" aria-invalid="true" aria-describedby="{}-hint""#,
+                html::escape(id)
+            );
+        }
+        html::built(attributes)
+    }
+}
+
+/// The kind of a field's control.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Control {
+    Input,
+    Select,
 }
 
 /// What a making dialog's form's POST answers, which htmx swaps into the
@@ -161,7 +233,6 @@ fn made_said(said: &Html) -> String {
 
 /// The refusal of a required field that is empty or holds only white space
 /// (`docs/specs/design_system.md`, Making, Required).
-#[expect(dead_code, reason = "every dialog refuses as a whole")]
 pub(super) const REQUIRED: &str = "Required.";
 
 /// The refusal of a name not in the form of a name

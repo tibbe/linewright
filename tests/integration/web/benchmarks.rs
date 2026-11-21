@@ -269,19 +269,6 @@ async fn a_stage_to_filter_on_that_is_not_a_benchmarks_says_so_in_place_of_the_b
     );
 }
 
-/// The New benchmark dialog's form as a reader meets it: the value of each
-/// field, a select's its chosen option's, and the refusal above its buttons, if
-/// any.
-#[track_caller]
-fn new_benchmark_form(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
-    let refusals = select(form, ".alert");
-    assert!(refusals.len() <= 1, "{}", form.html());
-    (
-        field_values(select(form, "input[name], select[name]")),
-        refusals.first().map(|refusal| text(*refusal)),
-    )
-}
-
 /// `docs/specs/benchmarks.md`, New benchmark; `docs/specs/design_system.md`,
 /// Dialogs and Making; `docs/specs/web/design_system.md`, Navigation and
 /// Making.
@@ -336,13 +323,27 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
         .filter_map(|option| option.attr("value"))
         .collect();
     assert_eq!(stages, ["triage", "design", "implement"]);
+    let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
-        new_benchmark_form(&Html::parse_fragment(&form.inner_html())),
-        (
-            vec![("name", String::new()), ("stage", "triage".into())],
-            None
-        )
+        making_shown(&fragment),
+        MakingShown {
+            values: vec![("name", String::new()), ("stage", "triage".into())],
+            refused: vec![],
+            whole: None,
+        }
     );
+    let name = select(&fragment, "input[name=name]")[0];
+    assert_eq!(name.attr("required"), Some(""));
+    assert_eq!(name.attr("pattern"), Some(r".*\S.*"));
+    let stage = select(&fragment, "select[name=stage]")[0];
+    assert_eq!(stage.attr("required"), Some(""));
+    assert_eq!(stage.attr("pattern"), None);
+    let hints: Vec<String> = select(&fragment, ".validator-hint")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(hints, ["Required.", "Required."]);
+    assert_eq!(select(&fragment, ".optional").len(), 0);
     let buttons = select_in(form, ".modal-action button");
     assert_eq!(
         buttons
@@ -376,11 +377,12 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
     assert_eq!(status, 200, "{}", answer.html());
     assert_eq!(headers.get("hx-trigger").unwrap(), "made");
     assert_eq!(
-        new_benchmark_form(&answer),
-        (
-            vec![("name", String::new()), ("stage", "triage".into())],
-            None
-        )
+        making_shown(&answer),
+        MakingShown {
+            values: vec![("name", String::new()), ("stage", "triage".into())],
+            refused: vec![],
+            whole: None,
+        }
     );
     assert_eq!(text(select(&answer, "legend")[0]), "New benchmark");
     let benchmarks = loop {
@@ -399,32 +401,66 @@ async fn making_a_benchmark_answers_the_form_as_it_starts_closing_the_dialog_and
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark, Refusals;
-/// `docs/specs/design_system.md`, Making, A refusal.
+/// `docs/specs/design_system.md`, Making, Required and A refusal;
+/// `docs/specs/web/design_system.md`, Making: each refusal of a field is
+/// under it, and one of no field above the buttons.
 #[test_log::test(tokio::test)]
-async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
+async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_place() {
+    const NOT_A_NAME: &str = "A name holds only lowercase letters, digits and hyphens, and \
+                              starts with a letter or a digit.";
+    const NOT_A_STAGE: &str =
+        "\"rework\" is not a stage of a benchmark: one of triage, design, implement";
     let pages = with_benchmarks().await;
+    let cases = [
+        ("", "design", "design", vec![("name", "Required.")]),
+        (" \t ", "design", "design", vec![("name", "Required.")]),
+        (
+            "Board 2",
+            "implement",
+            "implement",
+            vec![("name", NOT_A_NAME)],
+        ),
+        (
+            "board",
+            "design",
+            "design",
+            vec![("name", "A benchmark named board already exists.")],
+        ),
+        ("fresh", "rework", "triage", vec![("stage", NOT_A_STAGE)]),
+        (
+            "",
+            "rework",
+            "triage",
+            vec![("name", "Required."), ("stage", NOT_A_STAGE)],
+        ),
+    ];
 
-    let (taken, taken_headers, taken_form) = post_answer(
-        &pages,
-        "/benchmarks",
-        &[SAME_ORIGIN],
-        &[("name", "board"), ("stage", "design")],
-    )
-    .await;
-    let (malformed, _, malformed_form) = post_answer(
-        &pages,
-        "/benchmarks",
-        &[SAME_ORIGIN],
-        &[("name", "Board 2"), ("stage", "implement")],
-    )
-    .await;
-    let (no_stage, _, no_stage_form) = post_answer(
-        &pages,
-        "/benchmarks",
-        &[SAME_ORIGIN],
-        &[("name", "fresh"), ("stage", "rework")],
-    )
-    .await;
+    for (name, stage, kept, refused) in cases {
+        let (status, headers, form) = post_answer(
+            &pages,
+            "/benchmarks",
+            &[SAME_ORIGIN],
+            &[("name", name), ("stage", stage)],
+        )
+        .await;
+
+        assert_eq!(status, 422, "{name:?} {stage:?}");
+        assert!(headers.get("hx-trigger").is_none());
+        let shown = making_shown(&form);
+        assert_eq!(
+            shown.refused,
+            refused
+                .iter()
+                .map(|(field, reason)| (*field, (*reason).to_string()))
+                .collect::<Vec<_>>(),
+            "{name:?} {stage:?}"
+        );
+        assert_eq!(shown.whole, None, "{name:?} {stage:?}");
+        assert_eq!(
+            shown.values,
+            [("name", name.to_string()), ("stage", kept.to_string())]
+        );
+    }
     let (cross_site, _, cross_site_form) = post_answer(
         &pages,
         "/benchmarks",
@@ -432,43 +468,14 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_the_reason() {
         &[("name", "fresh"), ("stage", "design")],
     )
     .await;
-
-    assert_eq!(taken, 422);
-    assert!(taken_headers.get("hx-trigger").is_none());
-    assert_eq!(
-        new_benchmark_form(&taken_form),
-        (
-            vec![("name", "board".into()), ("stage", "design".into())],
-            Some("A benchmark named board already exists.".into())
-        )
-    );
-    assert_eq!(malformed, 422);
-    assert_eq!(
-        new_benchmark_form(&malformed_form),
-        (
-            vec![("name", "Board 2".into()), ("stage", "implement".into())],
-            Some(
-                "A name holds only lowercase letters, digits and hyphens, and starts with a \
-                 letter or a digit."
-                    .into()
-            )
-        )
-    );
-    assert_eq!(no_stage, 422);
-    assert_eq!(
-        new_benchmark_form(&no_stage_form),
-        (
-            vec![("name", "fresh".into()), ("stage", "triage".into())],
-            Some(
-                "\"rework\" is not a stage of a benchmark: one of triage, design, implement".into()
-            )
-        )
-    );
     assert_eq!(cross_site, 403);
+    let shown = making_shown(&cross_site_form);
     assert_eq!(
-        new_benchmark_form(&cross_site_form).0,
+        shown.values,
         [("name", "fresh".into()), ("stage", "design".into())]
     );
+    assert_eq!(shown.refused, []);
+    assert!(shown.whole.is_some(), "{}", cross_site_form.html());
     let html = pages.page("/benchmarks").await;
     assert_eq!(
         rows(&html, "#benchmarks"),
