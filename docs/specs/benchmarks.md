@@ -107,13 +107,13 @@ task of it, whatever its outcome.
 - **Before the first poll.** In the UI, Linewright refuses a capture until its
   first poll since `serve` started.
 - **Refusals on a screen.** [New task](#new-task) and [Run](runs.md#run) give
-  these messages for a capture's refusals. A name that is empty gets the message
-  for no name where there is one, and not the message for a name out of form.
+  these messages for a capture's refusals, other than for a required field that
+  is empty ([Making](design_system.md#making)). The refusals of a run, and of a
+  capture before Linewright's first poll, show their reason above the buttons.
 
   | Refusal                                              | Message                                                       |
   | ---------------------------------------------------- | ------------------------------------------------------------- |
   | a name that a task has                               | "A task named NAME already exists."                           |
-  | no criteria                                          | "A task needs criteria."                                      |
   | a name that is not in the form of a name             | as on [New benchmark](#new-benchmark)                         |
   | a run of a stage other than the benchmark's          | "Run ID is of STAGE, and BENCHMARK holds tasks of STAGE."     |
   | a run that recorded no input                         | "Run ID recorded no input."                                   |
@@ -510,19 +510,17 @@ benchmark run that does not exist is as an item or run that does not exist.
   When the maintainer chooses one, a box for its text opens. Its text starts as
   the text that a run of the stage uses when the dialog opens. A file whose text
   the maintainer does not change is not part of the configuration.
-- **Refusals.** A refusal names a configuration by its name. While the
-  configuration has no name, the refusal names it by its place in the dialog,
-  where `as-is` is the 1st. A name that is empty gets the message for no name.
-  The messages are:
+- **Refusals.** The messages are as below, other than for a required field that
+  is empty ([Making](design_system.md#making)). A benchmark with no tasks shows
+  its reason above the buttons.
 
-  | Refusal                                                        | Message                                                    |
-  | -------------------------------------------------------------- | ---------------------------------------------------------- |
-  | a benchmark with no tasks                                      | "The benchmark NAME has no tasks."                         |
-  | a configuration with no name                                   | "The 3rd configuration needs a name.", with its place      |
-  | a name that is not in the form of a name                       | as on [New benchmark](#new-benchmark)                      |
-  | two configurations with the same name                          | "Two configurations are named NAME."                       |
-  | a configuration with an error ([Configurations](#configurations)) | "The configuration NAME has an error in FILE: ERROR"    |
-  | repetitions that are not a whole number, 1 or more              | "Repetitions are a whole number, 1 or more."               |
+  | Refusal                                                  | Message                                      |
+  | -------------------------------------------------------- | -------------------------------------------- |
+  | a benchmark with no tasks                                | "The benchmark NAME has no tasks."           |
+  | a name that is not in the form of a name                 | as on [New benchmark](#new-benchmark)        |
+  | a name that another configuration has                    | "Another configuration is named NAME."       |
+  | a file with an error ([Configurations](#configurations)) | "FILE has an error: ERROR"                   |
+  | repetitions that are not a whole number, 1 or more       | "Repetitions are a whole number, 1 or more." |
 
 ### Benchmark run
 

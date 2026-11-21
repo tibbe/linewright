@@ -503,8 +503,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   | Criteria       | the criteria                                                                                            |
 
   - **A new benchmark's refusals.** Linewright refuses a new benchmark as on
-    [New benchmark](benchmarks.md#new-benchmark). The message for a new
-    benchmark with an empty name is "The new benchmark needs a name."
+    [New benchmark](benchmarks.md#new-benchmark).
   - **What was made.** The message is "Captured run ID as the task NAME in the
     benchmark BENCHMARK." For a new benchmark, the message is "Captured run ID
     as the task NAME in the new benchmark BENCHMARK." BENCHMARK links to the

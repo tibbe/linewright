@@ -164,8 +164,12 @@ The web UI follows daisyUI, with two themes of its own.
   dialog's title as its `fieldset-legend`. Each field is an `input`, a `select`
   or a `textarea` under its `label`, and the buttons are in the `modal-action`.
 - **"New"**, and the button that makes the thing, are each a `btn-primary`.
-- **The reason for a refusal** is a daisyUI `alert` in the `alert-error`
-  style.
+- **A field** is a daisyUI `validator`, with the browser's checks of its value,
+  such as `required` or a `pattern`. "Optional" is a `label` under the field.
+- **A field's refusal** is its `validator-hint`, and Linewright marks a field
+  that it refuses `aria-invalid`.
+- **A refusal that is not of one field** is a daisyUI `alert` in the
+  `alert-error` style.
 - **What was made**, on a screen that does not show it, is a daisyUI `alert` in
   the `alert-success` style.
 
