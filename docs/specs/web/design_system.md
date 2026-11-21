@@ -16,8 +16,8 @@ The web UI follows daisyUI, with two themes of its own.
 - The light theme, or the dark theme for a reader who prefers dark. Each is
   daisyUI's built-in theme of that name, with the values of the table at the end
   of this section in place of its own. The web UI draws in no colour but
-  `base-100`, `base-200`, `base-300`, `base-content` and the theme's fills,
-  each fill with its content colour on it. The exception is what daisyUI's
+  `base-100`, `base-200`, `base-300`, `base-content` and the theme's fills, each
+  fill with its content colour on what it holds. The exception is what daisyUI's
   components draw on their own, such as the shade over the content behind an
   open `drawer`. Shadows are daisyUI's.
 - **Text** is in `base-content`, and **secondary text** in

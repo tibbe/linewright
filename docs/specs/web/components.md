@@ -17,6 +17,8 @@ component for ([Components](design_system.md#components)).
   `grid` of rows `gap-3` apart, in `text-sm`.
 - **A fact** is a row: its label at the start and its value at the end
   (`flex justify-between`).
+- **A status among facts** is a daisyUI `status` dot in its colour, then its
+  icon and the value's words. A paused dot is in `bg-base-content/60`.
 
 ## Transcript
 
