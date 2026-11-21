@@ -349,16 +349,12 @@ async fn a_usage_limit_in_force_is_a_hold_on_every_page_linking_to_the_server_pa
     assert_in_secondary_text(&server, "#server dt");
     let usage_limit = select(&server, "#server dd")[2];
     assert_eq!(
-        select_in(usage_limit, ".status-text svg.icon").len(),
+        select_in(usage_limit, ".status-text > .badge-sm > svg.icon").len(),
         1,
         "{}",
         usage_limit.html()
     );
-    assert!(
-        select(&server, "#server dl.card .badge").is_empty(),
-        "{}",
-        server.html()
-    );
+    assert_badges_hold_no_words(&server, "#server dl.card");
     assert_no_status_by_colour_alone(&server);
 }
 
@@ -559,20 +555,19 @@ pub(super) fn server_facts(html: &Html) -> Vec<ServerFact> {
         .map(|(label, value)| ServerFact {
             label: text(label),
             value: text(value),
-            tone: select_in(value, ".status-text").first().and_then(|status| {
-                status
-                    .value()
-                    .classes()
-                    .find_map(|class| match class {
-                        "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]" => {
-                            Some("base-content/60")
-                        }
-                        _ => class
-                            .strip_prefix("[--tone:var(--color-")
-                            .and_then(|colour| colour.strip_suffix(")]")),
-                    })
-                    .map(str::to_string)
-            }),
+            tone: select_in(value, ".status-text > .badge")
+                .first()
+                .and_then(|badge| {
+                    badge
+                        .value()
+                        .classes()
+                        .find_map(|class| match class {
+                            "text-base-content/60" => Some("base-content/60"),
+                            "badge-outline" | "badge-sm" => None,
+                            _ => class.strip_prefix("badge-"),
+                        })
+                        .map(str::to_string)
+                }),
         })
         .collect()
 }

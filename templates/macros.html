@@ -4,10 +4,10 @@
 <span class="tone badge badge-sm {{ status.colour() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
-{#- A status among a page's facts (`docs/specs/design_system.md`, Facts):
-    the status's icon and its words in its colour, with nothing behind them. -#}
+{#- A status among a page's facts (`docs/specs/design_system.md`, Status):
+    a badge in its colour holding only its icon, then its words. -#}
 {%- macro status_text(status, words) -%}
-<span class="status-text {{ status.accent() }}">{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ words|safe }}</span></span>
+<span class="status-text"><span class="badge badge-sm {{ status.colour() }}">{{ crate::web::icons::named_status_icon(status) }}</span><span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
 {#- A page's facts (`docs/specs/web/components.md`, Facts), in a card, each a
@@ -30,7 +30,7 @@
 {%- when crate::web::facts::Piece::Status { status, words } -%}
 {% call status_text(status, words) %}{% endcall %}
 {%- when crate::web::facts::Piece::Item { status, kind, heading } -%}
-<span class="related-item{% if let Some(status) = status %} {{ status.accent() }}{% endif %}">{% if let Some(status) = status %}{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ kind.svg() }}{{ heading|safe }}</span>
+<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::web::icons::status_icon(status), crate::web::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ kind.svg() }}{{ heading|safe }}</span>
 {%- when crate::web::facts::Piece::LaneHead(heading) -%}
 <span class="related-item">{{ heading|safe }}</span>
 {%- when crate::web::facts::Piece::Markup(markup) -%}

@@ -53,18 +53,17 @@ async fn the_item_pages_facts_are_a_card_of_labels_in_the_specs_order_with_the_s
     );
     let decision = select(&html, "#item dd")[0];
     assert_eq!(
-        select_in(decision, ".status-text svg.icon").len(),
-        1,
+        select_in(decision, ".status-text > .badge-sm > svg.icon")
+            .into_iter()
+            .map(|icon| icon.attr("aria-label"))
+            .collect::<Vec<_>>(),
+        [Some("waiting")],
         "{}",
         decision.html()
     );
     let waits = select(&html, "#item dd")[1];
     assert!(select_in(waits, "svg").is_empty(), "{}", waits.html());
-    assert!(
-        select(&html, "#item dl .badge").is_empty(),
-        "{}",
-        html.html()
-    );
+    assert_badges_hold_no_words(&html, "#item dl");
     assert_no_status_by_colour_alone(&html);
 }
 
@@ -121,11 +120,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
         "Left alone · labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
          `ready-for-human`"
     );
-    assert!(
-        select(&html, "#item dl .badge").is_empty(),
-        "{}",
-        html.html()
-    );
+    assert_badges_hold_no_words(&html, "#item dl");
 }
 
 /// `docs/specs/design_system.md`, Screen states, Nothing there.
