@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
 use super::{
-    COMMITS, OUTCOME, OwnDir, Setting, TASK, Under, WRITES, in_own_dir, write_build,
+    COMMITS, OUTCOME, OwnDir, Setting, TASK, Under, Unrun, WRITES, in_own_dir, write_build,
     write_whole_new,
 };
-use crate::apply::hand_back;
+use crate::apply::hand_back::{self, LogTail};
 use crate::benchmarks::ScoreFigures;
 use crate::briefs::Briefs;
 use crate::clock::{Clock, SystemClock};
@@ -522,8 +522,8 @@ impl Score {
 
 /// Why a scorer made no score: one variant for each row of
 /// `docs/specs/benchmarks.md`, Scoring, "A scorer that makes no score", but
-/// the signal, which ends the command before it has one, and `Failed` for
-/// the causes the table leaves out. `Display` gives the row's words.
+/// the signal, which ends the command before it has one. `Display` gives the
+/// row's words.
 #[derive(Debug)]
 pub enum Unscored {
     UsageLimit {
@@ -532,7 +532,34 @@ pub enum Unscored {
     GaveUp(String),
     /// Its session ended unexpectedly.
     Ended(Ended),
-    Failed(anyhow::Error),
+    /// The build of its environment failed: the tail of the build's log, if
+    /// its setup command ran.
+    BuildFailed {
+        log_tail: Option<LogTail>,
+    },
+    /// Its score could not be written: what the file system gave.
+    NotKept(std::io::Error),
+    /// Any other cause, but a cancel or a restart. Shown without its cause,
+    /// which [`Unscored::told`] logs.
+    Unexpected(anyhow::Error),
+    /// Its session was cancelled, by a cancel or a restart, whose trial
+    /// never shows why its scorer made no score. Worded as `Unexpected`,
+    /// and not logged.
+    Cancelled,
+}
+
+impl Unscored {
+    /// The words to report, the cause of an [`Unscored::Unexpected`]
+    /// logged first.
+    pub fn told(self) -> String {
+        if let Unscored::Unexpected(cause) = &self {
+            error!(
+                error = format!("{cause:#}"),
+                "the scorer stopped unexpectedly"
+            );
+        }
+        self.to_string()
+    }
 }
 
 impl fmt::Display for Unscored {
@@ -550,7 +577,17 @@ impl fmt::Display for Unscored {
                     None => Ok(()),
                 }
             }
-            Unscored::Failed(error) => write!(f, "The scorer could not score: {error:#}"),
+            Unscored::BuildFailed { log_tail } => {
+                write!(f, "The scorer's environment could not be built.")?;
+                match log_tail {
+                    Some(tail) => write!(f, "\n\n{}", tail.text()),
+                    None => Ok(()),
+                }
+            }
+            Unscored::NotKept(error) => write!(f, "The score could not be kept: {error}"),
+            Unscored::Unexpected(_) | Unscored::Cancelled => {
+                write!(f, "The scorer stopped unexpectedly.")
+            }
         }
     }
 }
@@ -560,15 +597,15 @@ impl std::error::Error for Unscored {}
 impl From<Failure> for Unscored {
     fn from(failure: Failure) -> Unscored {
         match failure {
-            Failure::HandBack(hand_back) => Unscored::Failed(anyhow!(hand_back.reason)),
+            Failure::HandBack(hand_back) => Unscored::Unexpected(anyhow!(hand_back.reason)),
             Failure::Ended { ended, .. } => Unscored::Ended(ended),
             Failure::UsageLimit(limit) => Unscored::UsageLimit {
                 resets_at: limit.resets_at,
             },
             Failure::Infrastructure { error, .. } | Failure::Apply { error, .. } => {
-                Unscored::Failed(error)
+                Unscored::Unexpected(error)
             }
-            Failure::Cancelled => Unscored::Failed(anyhow!("the scorer's session was cancelled")),
+            Failure::Cancelled => Unscored::Cancelled,
         }
     }
 }
@@ -600,20 +637,23 @@ pub async fn run(
         scorer_in(task, scoreable, &record, harness, &config, under, own).await
     })
     .await
-    .map_err(Unscored::Failed)
+    .map_err(Unscored::Unexpected)
     .flatten()
     .map_err(|unscored| match unscored {
-        Unscored::Failed(error) => {
-            Unscored::Failed(anyhow!(redaction.apply(&format!("{error:#}"))))
+        Unscored::Unexpected(error) => {
+            Unscored::Unexpected(anyhow!(redaction.apply(&format!("{error:#}"))))
         }
-        unscored @ (Unscored::GaveUp(_) | Unscored::Ended(_) | Unscored::UsageLimit { .. }) => {
-            unscored
-        }
+        unscored @ (Unscored::GaveUp(_)
+        | Unscored::Ended(_)
+        | Unscored::UsageLimit { .. }
+        | Unscored::BuildFailed { .. }
+        | Unscored::NotKept(_)
+        | Unscored::Cancelled) => unscored,
     })?;
     let (correctness, leak) = scored;
     let session = lock_set_whole(&record.session)
         .take()
-        .ok_or_else(|| Unscored::Failed(anyhow!("the scorer's session is not recorded")))?;
+        .ok_or_else(|| Unscored::Unexpected(anyhow!("the scorer's session is not recorded")))?;
     Ok(Score {
         correctness,
         leak,
@@ -658,24 +698,35 @@ async fn scorer_in(
             if let Some(build) = built {
                 write_build(record.dir(), &build)
                     .context("writing the build's output")
-                    .map_err(Unscored::Failed)?;
+                    .map_err(Unscored::Unexpected)?;
             }
             setting
         }
-        (Err(e), built) => {
+        (Err(Unrun::BuildFailed(failed)), _) => {
+            warn!(
+                why = failed.why,
+                "the build of the scorer's environment failed"
+            );
+            return Err(Unscored::BuildFailed {
+                log_tail: failed
+                    .output
+                    .and_then(|build| LogTail::maintenance(&build.output)),
+            });
+        }
+        (Err(Unrun::Failed(e)), built) => {
             if let Some(build) = built {
                 error!(
                     output = build.output,
                     "the build of the scorer's environment"
                 );
             }
-            return Err(Unscored::Failed(e.into()));
+            return Err(Unscored::Unexpected(e));
         }
     };
     if let Some(branch) = &scoreable.pushed {
         fetch_pushed(&repository, &scoreable.dir.join(COMMITS), branch)
             .await
-            .map_err(Unscored::Failed)?;
+            .map_err(Unscored::Unexpected)?;
     }
     let sessions = setting.sessions(
         task,
@@ -715,7 +766,7 @@ async fn scorer_in(
                     error,
                     "the scorer's session failed on its infrastructure; retrying once"
                 );
-                record.restart().map_err(Unscored::Failed)?;
+                record.restart().map_err(Unscored::Unexpected)?;
             }
             Err(Failure::Infrastructure { error, .. }) => {
                 let error = config.secrets.redaction().apply(&format!("{error:#}"));
@@ -818,17 +869,20 @@ async fn fetch_pushed(repository: &Path, commits: &Path, branch: &str) -> Result
 ///
 /// # Errors
 ///
-/// When the score cannot be written, or the output came to hold one
-/// since it was opened, as [`ScoreRefusal::Scored`]: nothing of `score`
-/// is kept then.
-pub fn keep(scoreable: &ScoreableTrial, mut score: Score) -> Result<()> {
-    let mut text = serde_json::to_string_pretty(&score)?;
+/// As [`Unscored::NotKept`] when the score cannot be written, or the
+/// output came to hold one since it was opened: nothing of `score` is
+/// kept then.
+pub fn keep(scoreable: &ScoreableTrial, mut score: Score) -> Result<(), Unscored> {
+    let mut text = serde_json::to_string_pretty(&score)
+        .context("serializing the score")
+        .map_err(Unscored::Unexpected)?;
     text.push('\n');
     let own = score
         .session
         .record
         .file_name()
-        .context("the scorer's record has a name")?
+        .context("the scorer's record has a name")
+        .map_err(Unscored::Unexpected)?
         .to_string_lossy()
         .into_owned();
     let path = scoreable.dir.join(SCORE);
@@ -837,7 +891,6 @@ pub fn keep(scoreable: &ScoreableTrial, mut score: Score) -> Result<()> {
             score.record.kept = true;
             Ok(())
         }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(ScoreRefusal::Scored.into()),
-        Err(e) => Err(anyhow::Error::from(e).context(format!("writing {}", path.display()))),
+        Err(e) => Err(Unscored::NotKept(e)),
     }
 }
