@@ -908,7 +908,7 @@ fn trial_rows(
         id: format!("{id}_details"),
         of: id.clone(),
         said,
-        run_href: began.then(|| at.path(Of::Run)),
+        run_href: (began && !state.run_never_started()).then(|| at.path(Of::Run)),
         scorer_href: (began && scorer_began).then(|| at.path(Of::Scorer)),
     };
     let opens = !details.is_empty();
@@ -932,7 +932,9 @@ fn trial_rows(
             run.and_then(|run| run.money)
                 .map_or_else(absent, |money| dollars(money.into())),
             String::new(),
-            run.map_or_else(absent, |run| duration(run.time.as_secs_f64())),
+            state
+                .time()
+                .map_or_else(absent, |time| duration(time.as_secs_f64())),
             String::new(),
             String::new(),
             String::new(),

@@ -276,13 +276,7 @@ const TRIALS: [SeedTrial; 8] = [
         verdict: Verdict::Pass,
         leak: false,
     },
-    SeedTrial::Scored {
-        ending: Ending::Done,
-        money: 0.2,
-        seconds: 55,
-        verdict: Verdict::Pass,
-        leak: false,
-    },
+    SeedTrial::BuildFailed { seconds: 9 },
 ];
 
 /// How a trial of the seed's benchmark run ended.
@@ -302,6 +296,8 @@ enum SeedTrial {
     },
     /// Its run done, and its scorer made no score.
     ScorerMadeNone { money: f64, seconds: u64 },
+    /// The build of its environment failed, its output begun.
+    BuildFailed { seconds: u64 },
 }
 
 /// Launches on `board` a benchmark run the day before the clock starts, under
@@ -309,7 +305,8 @@ enum SeedTrial {
 /// trials as [`TRIALS`] says, twenty minutes after its launch: with passes,
 /// failures, a leak and trials without a score. The first trial's
 /// output holds what its run and its scorer left, as [`trial_output`] says,
-/// and the output of a trial with a leak its score, as [`leak_output`] says.
+/// the output of a trial with a leak its score, as [`leak_output`] says, and
+/// that of a trial whose build failed the task it began on.
 async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
@@ -335,6 +332,15 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
             benchmark_run: launched.id,
             key: *key,
         };
+        let output = benchmark_runs.output_dir(
+            launched.id,
+            &record.configurations[key.configuration],
+            &record.tasks[key.task],
+            key.repetition,
+        );
+        benchmark_runs
+            .step(&trial, TrialChange::RunStarts, at)
+            .await?;
         let (ending, money, seconds) = match *seeded {
             SeedTrial::Scored {
                 ending,
@@ -348,10 +354,21 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
                 seconds,
             } => (ending, money, seconds),
             SeedTrial::ScorerMadeNone { money, seconds } => (Ending::Done, money, seconds),
+            SeedTrial::BuildFailed { seconds } => {
+                write_files(
+                    &output,
+                    [(
+                        linewright::trial::TASK.to_string(),
+                        format!("{}\n", run_of(seed_task(&record.tasks[key.task])?)?),
+                    )],
+                )?;
+                let time = Duration::from_secs(seconds);
+                benchmark_runs
+                    .step(&trial, TrialChange::BuildFails { time }, at)
+                    .await?;
+                continue;
+            }
         };
-        benchmark_runs
-            .step(&trial, TrialChange::RunStarts, at)
-            .await?;
         benchmark_runs
             .step(
                 &trial,
@@ -364,18 +381,10 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
             )
             .await?;
         let scored = match *seeded {
-            SeedTrial::Unscored { .. } => continue,
+            SeedTrial::Unscored { .. } | SeedTrial::BuildFailed { .. } => continue,
             SeedTrial::Scored { verdict, leak, .. } => {
                 if leak {
-                    leak_output(
-                        &benchmark_runs.output_dir(
-                            launched.id,
-                            &record.configurations[key.configuration],
-                            &record.tasks[key.task],
-                            key.repetition,
-                        ),
-                        verdict,
-                    )?;
+                    leak_output(&output, verdict)?;
                 }
                 TrialChange::Scored(ScoreFigures {
                     correctness: verdict,
