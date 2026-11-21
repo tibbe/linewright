@@ -38,7 +38,7 @@ use crate::listening::Listening;
 use crate::logs::{self, FollowQuery, Following, LogsError, NoSuchRun, Which};
 use crate::redaction::Redaction;
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
-use crate::status::{self, Polling, Serving, Status, StatusSources, View};
+use crate::status::{self, Polling, Serving, Status, StatusSources, TrialsInFlight, View};
 use crate::store::Store;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::web;
@@ -327,6 +327,15 @@ impl BenchmarkRunsLink {
         self.shown.borrow().clone()
     }
 
+    /// The trials and scorers in flight, as `serve` last published.
+    pub fn trials_in_flight(&self) -> TrialsInFlight {
+        let shown = self.shown.borrow();
+        TrialsInFlight {
+            in_flight: shown.in_flight,
+            max_trials: shown.max_trials,
+        }
+    }
+
     /// Tells `serve` that a benchmark run changed, such as one launched or
     /// cancelled, so that it acts on it before its next poll.
     pub fn changed(&self) {
@@ -549,6 +558,7 @@ pub(crate) fn status_of(
         view,
         recorded,
         environment,
+        trials: sources.benchmark_runs.trials_in_flight(),
         drain_deadline: sources.ends.deadline(),
         now: sources.clock.now(),
     })

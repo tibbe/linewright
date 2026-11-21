@@ -787,6 +787,7 @@ mod tests {
             environment: Some(environment),
             runs_in_flight: 0,
             max_runs: 4,
+            trials_in_flight: None,
             webhooks: None,
         };
         match &Hold::of(&linewright, None)[..] {
