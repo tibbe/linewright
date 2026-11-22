@@ -179,8 +179,8 @@ async fn an_automations_run_by_hand_is_marked_as_one_and_a_scheduled_one_is_not(
     assert_eq!(
         started,
         [
-            ("hourly/1".to_string(), Some(StartedBy::Schedule)),
-            ("hourly/2".to_string(), Some(StartedBy::Hand)),
+            ("hourly.md/1".to_string(), Some(StartedBy::Schedule)),
+            ("hourly.md/2".to_string(), Some(StartedBy::Hand)),
         ]
     );
 }
@@ -296,7 +296,7 @@ fn work(item: u64, stage: WorkKind, n: u32, start: &str) -> Recorded {
 
 fn weekly(n: u32, start: &str) -> Recorded {
     let of = RunOf::Automation {
-        automation: "weekly".parse().unwrap(),
+        automation: "weekly.md".parse().unwrap(),
     };
     ended(of, n, Some(StartedBy::Schedule), start)
 }
@@ -327,7 +327,7 @@ fn every_run_is_listed_newest_first() {
             "1/rework-1",
             "2/triage-1",
             "1/implement-1",
-            "weekly/1",
+            "weekly.md/1",
             "1/triage-1"
         ]
     );
@@ -703,7 +703,7 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
 
 fn weekly_by_hand(n: u32, start: &str, ending: Ending) -> Recorded {
     let of = RunOf::Automation {
-        automation: "weekly".parse().unwrap(),
+        automation: "weekly.md".parse().unwrap(),
     };
     let mut run = ended(of, n, Some(StartedBy::Hand), start);
     run.state = State::Ended {
@@ -724,8 +724,8 @@ fn an_automations_run_says_whether_it_was_by_hand_and_how_it_ended() {
 
     assert_eq!(
         runs::render(&listing, false),
-        "weekly/2: failed — automation weekly by hand, started 2026-10-14 10:00:00 UTC, ran 1m\n\
-         weekly/1: done — automation weekly, started 2026-10-14 09:00:00 UTC, ran 1m\n"
+        "weekly.md/2: failed — automation weekly.md by hand, started 2026-10-14 10:00:00 UTC, ran 1m\n\
+         weekly.md/1: done — automation weekly.md, started 2026-10-14 09:00:00 UTC, ran 1m\n"
     );
 }
 
@@ -746,16 +746,16 @@ fn the_whole_list_as_json_says_how_each_automations_run_started_and_leaves_the_s
         json!({
             "runs": [
                 {
-                    "id": "weekly/2",
-                    "automation": "weekly",
+                    "id": "weekly.md/2",
+                    "automation": "weekly.md",
                     "started_by": "hand",
                     "started_at": "2026-10-14T10:00:00Z",
                     "duration_seconds": 60,
                     "outcome": "done",
                 },
                 {
-                    "id": "weekly/1",
-                    "automation": "weekly",
+                    "id": "weekly.md/1",
+                    "automation": "weekly.md",
                     "started_by": "schedule",
                     "started_at": "2026-10-14T09:00:00Z",
                     "duration_seconds": 60,

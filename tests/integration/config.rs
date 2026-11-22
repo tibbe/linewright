@@ -673,7 +673,7 @@ fn a_stages_session_env_adds_its_values_to_the_whole_pipelines_for_that_stage_on
 fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
     let config = resolve(&["--model", "sonnet", "--effort", "low"], &[], None).unwrap();
     let automation = automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\nmodel: opus\neffort: xhigh\n---\nLook around.\n",
     )
     .unwrap();
@@ -761,7 +761,7 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
 fn an_automations_session_timeout_comes_from_the_repository_before_the_operators_session_timeout() {
     let config = resolve(&["--session-timeout", "10m"], &[], None).unwrap();
     let automation = automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\nsession-timeout: 5m\n---\nLook around.\n",
     )
     .unwrap();
@@ -1816,7 +1816,7 @@ fn maintenance_in_a_stages_table_or_front_matter_is_an_error_naming_it_the_whole
     let front_matter = format!(
         "{:#}",
         automation::parse(
-            &"weekly".parse().unwrap(),
+            &"weekly.md".parse().unwrap(),
             "---\non:\n  schedule: \"0 9 * * 1\"\nmaintenance: make lint\n---\nLook around.\n",
         )
         .unwrap_err()
@@ -1972,7 +1972,7 @@ fn setup_in_a_stages_table_or_front_matter_is_an_error_naming_it_the_whole_pipel
     let front_matter = format!(
         "{:#}",
         automation::parse(
-            &"weekly".parse().unwrap(),
+            &"weekly.md".parse().unwrap(),
             "---\non:\n  schedule: \"0 9 * * 1\"\nsetup:\n  command: make\n---\nLook around.\n",
         )
         .unwrap_err()
@@ -2030,7 +2030,7 @@ fn an_unknown_key_in_a_stages_table_is_refused_with_the_keys_it_holds() {
 fn an_automations_front_matter_holds_no_maintenance_so_it_runs_the_whole_pipelines() {
     let config = resolve(&["--maintenance", "make deps"], &[], None).unwrap();
     let automation = automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook around.\n",
     )
     .unwrap();

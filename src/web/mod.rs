@@ -55,7 +55,6 @@ use crate::api::{Sources, Unanswered};
 use crate::benchmarks::{BenchmarkId, BenchmarkRunId, BenchmarkRuns, Benchmarks};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
-use crate::runs::RunId;
 
 /// Where the web UI is served and the names it answers besides the local
 /// ones and IP addresses (`docs/specs/operation.md`, Serving the UI).
@@ -404,10 +403,31 @@ fn samples() -> tokio::time::Interval {
     samples
 }
 
-/// The path of run `id`'s page.
-fn run_path(id: &RunId) -> String {
-    format!("/runs/{id}")
+/// The path of run `id`'s page, each character of `id` that a path
+/// segment cannot hold as it is percent-encoded, so that the router's
+/// `{*id}` decodes it back to `id`.
+fn run_path(id: impl std::fmt::Display) -> String {
+    format!(
+        "/runs/{}",
+        percent_encoding::utf8_percent_encode(&id.to_string(), NOT_IN_A_PATH)
+    )
 }
+
+/// What a path segment cannot hold as it is, and `%`, which starts an
+/// encoded one. <https://url.spec.whatwg.org/#path-percent-encode-set>
+const NOT_IN_A_PATH: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 /// The benchmarks of `serve`'s work directory.
 fn benchmarks(sources: &Sources) -> Benchmarks {

@@ -635,7 +635,7 @@ impl World {
         self.poll().await;
         self.clock.advance(TimeDelta::minutes(5));
         self.factory
-            .run_automation(&"hourly".parse().unwrap())
+            .run_automation(&"hourly.md".parse().unwrap())
             .await
             .unwrap();
     }

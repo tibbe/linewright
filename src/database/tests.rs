@@ -311,7 +311,7 @@ async fn a_new_database_keeps_none_of_the_records_linewright_0_22_0_kept_in_file
             LastScheduledRuns::load(&db)
                 .await
                 .unwrap()
-                .get(&"hourly".parse().unwrap()),
+                .get(&"hourly.md".parse().unwrap()),
             served.named(&db).await.unwrap().map(|built| built.id),
             crate::runs::Runs::new(db.clone())
                 .read()
@@ -1141,4 +1141,45 @@ async fn moves_left_part_way_are_not_carried_on_once_the_database_gives_others()
         "{e:#}"
     );
     assert!(work_dir.path().join("benchmark-runs/1/1/1/1/task").exists());
+}
+
+/// The schema before an automation was named by its path.
+static BEFORE_AUTOMATION_PATHS: &[Migration] = MIGRATIONS.split_at(16).0;
+
+#[test_log::test(tokio::test)]
+async fn a_database_from_before_automations_were_named_by_their_paths_opens_with_each_named_by_its_file()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_AUTOMATION_PATHS, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO automation_schedules (name, last_scheduled_run)
+             VALUES ('weekly', '2026-11-16T06:00:00Z');
+         INSERT INTO runs (kind, automation, n, started_by, started_at)
+             VALUES ('automation', 'weekly', 3, 'hand', '2026-11-16T09:00:00Z');
+         INSERT INTO runs (kind, item, stage, n, started_at)
+             VALUES ('item', 7, 'triage', 1, '2026-11-16T10:00:00Z')",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let last = LastScheduledRuns::load(&db).await.unwrap();
+    assert_eq!(
+        last.get(&"weekly.md".parse().unwrap()),
+        Some(parse_time("2026-11-16T06:00:00Z").unwrap())
+    );
+    let mut ids: Vec<String> = crate::runs::Runs::new(db)
+        .read()
+        .await
+        .unwrap()
+        .iter()
+        .map(|run| run.id.to_string())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["7/triage-1", "weekly.md/3"]);
 }

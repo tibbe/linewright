@@ -10,7 +10,7 @@ async fn with_automations(files: &[(&str, &str)]) -> World {
     let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
     let files: Vec<(String, &str)> = files
         .iter()
-        .map(|(name, text)| (format!(".linewright/automations/{name}.md"), *text))
+        .map(|(name, text)| (format!(".linewright/automations/{name}"), *text))
         .collect();
     let files: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), *t)).collect();
     world
@@ -61,7 +61,7 @@ fn record_weekly(
 ) -> impl Future<Output = ()> + use<> {
     let ended = at(started) + chrono::TimeDelta::minutes(1);
     let record = json!({
-        "automation": "weekly",
+        "automation": "weekly.md",
         "n": n,
         "started_by": "hand",
         "started_at": started,
@@ -111,14 +111,23 @@ fn holds(html: &Html) -> Vec<(String, String)> {
 #[test_log::test(tokio::test)]
 async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_name() {
     let pages = Pages::of(View {
-        last_scheduled_runs: ["hourly", "weekly"]
+        last_scheduled_runs: ["hourly.md", "team/weekly.md"]
             .map(|name| (name.parse().unwrap(), at("2026-10-01T12:00:00Z")))
             .into_iter()
             .collect::<LastScheduledRuns>(),
-        ..with(&[("weekly", WEEKLY), ("hourly", HOURLY)], true)
+        ..with(&[("team/weekly.md", WEEKLY), ("hourly.md", HOURLY)], true)
     })
     .await;
-    record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("done")).await;
+    pages
+        .record(&json!({
+            "automation": "team/weekly.md",
+            "n": 1,
+            "started_by": "hand",
+            "started_at": "2026-10-01T11:00:00Z",
+            "end": {"at": "2026-10-01T11:01:00Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
 
     let html = pages.page("/automations").await;
 
@@ -130,15 +139,15 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
         rows_shown(&html),
         [
             [
-                "hourly",
+                "hourly.md",
                 "At minute 0 past every hour.",
                 "none yet, first seen 2026-10-01 12:00:00 UTC",
                 "2026-10-01 13:00:00 UTC"
             ],
             [
-                "weekly",
+                "team/weekly.md",
                 "At 06:00, on Monday.",
-                "weekly/1 by hand, started 2026-10-01 11:00:00 UTC — done",
+                "team/weekly.md/1 by hand, started 2026-10-01 11:00:00 UTC — done",
                 "2026-10-05 06:00:00 UTC"
             ],
         ]
@@ -147,7 +156,13 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
-    assert_eq!(links, ["/runs/weekly/1"]);
+    assert_eq!(links, ["/runs/team/weekly.md/1"]);
+    let run = pages.page("/runs/team/weekly.md/1").await;
+    assert!(
+        text(select(&run, "h1")[0]).contains("team/weekly.md/1"),
+        "{}",
+        run.html()
+    );
     assert_eq!(
         select(&html, &format!("#automations tbody {STATUS_ICON}")).len(),
         1
@@ -161,7 +176,7 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
 #[test_log::test(tokio::test)]
 async fn the_automations_table_is_in_a_card_showing_no_name_under_the_unparsed_files_its_rows_named_by_their_headers()
  {
-    let pages = Pages::of(with(&[("weekly", WEEKLY), ("hourly", HOURLY)], true)).await;
+    let pages = Pages::of(with(&[("weekly.md", WEEKLY), ("hourly.md", HOURLY)], true)).await;
 
     let html = pages.page("/automations").await;
 
@@ -179,14 +194,14 @@ async fn the_automations_table_is_in_a_card_showing_no_name_under_the_unparsed_f
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(names, ["hourly", "weekly"]);
+    assert_eq!(names, ["hourly.md", "weekly.md"]);
     let row = ["start"; 4];
     assert_eq!(alignments(&html, "#automations"), [row, row, row]);
 }
 
 #[test_log::test(tokio::test)]
 async fn the_automations_table_pins_its_heads_in_a_box_scrolling_both_ways() {
-    let pages = Pages::of(with(&[("weekly", WEEKLY)], true)).await;
+    let pages = Pages::of(with(&[("weekly.md", WEEKLY)], true)).await;
 
     let html = pages.page("/automations").await;
 
@@ -218,23 +233,23 @@ async fn an_automation_file_that_does_not_parse_is_a_hold_on_every_page_linking_
 #[test_log::test(tokio::test)]
 async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_a_newer_one_starts()
 {
-    let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
+    let pages = Pages::of(with(&[("weekly.md", WEEKLY)], false)).await;
     record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("failed")).await;
 
     let held = [(
-        "automation weekly: last run weekly/1 failed".to_string(),
-        "/runs/weekly/1".to_string(),
+        "automation weekly.md: last run weekly.md/1 failed".to_string(),
+        "/runs/weekly.md/1".to_string(),
     )];
     for path in ["/", "/runs", "/automations"] {
         assert_eq!(holds(&pages.page(path).await), held, "{path}");
     }
 
     record_weekly(&pages, 2, "2026-10-01T11:30:00Z", None).await;
-    let in_flight = lock_of(&pages.path("runs/automations/weekly/2.json"));
+    let in_flight = lock_of(&pages.path("runs/automations/weekly.md/2.json"));
     let running = pages.page("/automations").await;
     assert_eq!(
         rows_shown(&running)[0][2],
-        "weekly/2 by hand, started 2026-10-01 11:30:00 UTC — in flight"
+        "weekly.md/2 by hand, started 2026-10-01 11:30:00 UTC — in flight"
     );
     assert_eq!(holds(&running), Vec::<(String, String)>::new());
 
@@ -243,14 +258,14 @@ async fn an_automation_whose_last_run_failed_is_a_hold_linking_to_the_run_until_
     let done = pages.page("/automations").await;
     assert_eq!(
         rows_shown(&done)[0][2],
-        "weekly/2 by hand, started 2026-10-01 11:30:00 UTC — done"
+        "weekly.md/2 by hand, started 2026-10-01 11:30:00 UTC — done"
     );
     assert_eq!(holds(&done), Vec::<(String, String)>::new());
 }
 
 #[test_log::test(tokio::test)]
 async fn a_run_handed_back_is_a_failed_last_run() {
-    let pages = Pages::of(with(&[("weekly", WEEKLY)], false)).await;
+    let pages = Pages::of(with(&[("weekly.md", WEEKLY)], false)).await;
     record_weekly(&pages, 1, "2026-10-01T11:00:00Z", Some("handed-back")).await;
 
     let held = holds(&pages.page("/automations").await);
@@ -258,8 +273,8 @@ async fn a_run_handed_back_is_a_failed_last_run() {
     assert_eq!(
         held,
         [(
-            "automation weekly: last run weekly/1 handed back".to_string(),
-            "/runs/weekly/1".to_string()
+            "automation weekly.md: last run weekly.md/1 handed back".to_string(),
+            "/runs/weekly.md/1".to_string()
         )]
     );
 }
@@ -302,7 +317,7 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
 
 #[test_log::test(tokio::test)]
 async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_what_changed() {
-    let web = Web::start(with_automations(&[("weekly", WEEKLY)]).await).await;
+    let web = Web::start(with_automations(&[("weekly.md", WEEKLY)]).await).await;
     let mut events = stream(&web, "/events/automations").await;
 
     let first = tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -325,7 +340,7 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
     web.harness.on_automation(|_| Ok(nothing_needs_doing()));
     web.factory_beside()
         .await
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
 
@@ -355,10 +370,14 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
     };
     assert_eq!(
         [name, schedule, next_run],
-        ["weekly", "At 06:00, on Monday.", "2026-10-05 06:00:00 UTC"]
+        [
+            "weekly.md",
+            "At 06:00, on Monday.",
+            "2026-10-05 06:00:00 UTC"
+        ]
     );
     assert!(
-        last_run.starts_with("weekly/1 by hand, started ") && last_run.ends_with(" UTC — done"),
+        last_run.starts_with("weekly.md/1 by hand, started ") && last_run.ends_with(" UTC — done"),
         "{last_run}"
     );
     web.stop().await;
@@ -367,7 +386,7 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
 /// `docs/specs/design_system.md`, Tables, Pages.
 #[test_log::test(tokio::test)]
 async fn the_automations_page_shows_its_automations_25_at_a_time() {
-    let names: Vec<String> = (1..=27).map(|n| format!("weekly-{n:02}")).collect();
+    let names: Vec<String> = (1..=27).map(|n| format!("weekly-{n:02}.md")).collect();
     let parsed: Vec<(&str, &str)> = names.iter().map(|name| (name.as_str(), WEEKLY)).collect();
     let pages = Pages::of(with(&parsed, false)).await;
 
@@ -381,7 +400,7 @@ async fn the_automations_page_shows_its_automations_25_at_a_time() {
             .collect()
     };
     assert_eq!(shown(&first), names[..25]);
-    assert_eq!(shown(&second), ["weekly-26", "weekly-27"]);
+    assert_eq!(shown(&second), ["weekly-26.md", "weekly-27.md"]);
     assert_eq!(
         pages_nav(&second, "#automations"),
         Some(PagesNav {
@@ -403,7 +422,7 @@ async fn the_automations_page_shows_its_automations_25_at_a_time() {
 /// in `alert-error` with `failed`'s icon first, not text coloured `error`.
 #[test_log::test(tokio::test)]
 async fn an_unparsed_automation_file_is_an_error_alert_with_faileds_icon_first() {
-    let pages = Pages::of(with(&[("weekly", WEEKLY)], true)).await;
+    let pages = Pages::of(with(&[("weekly.md", WEEKLY)], true)).await;
 
     let html = pages.page("/automations").await;
 
@@ -452,4 +471,43 @@ async fn a_file_in_a_directory_of_the_automations_is_named_with_its_directory() 
           `.linewright/automations/`"
         ]
     );
+}
+
+/// `docs/specs/automations.md`, The automation file: an automation is named
+/// by its path, so `a%2Fb.md` and `a/b.md` are two automations, and the link
+/// to each one's run opens that run.
+#[test_log::test(tokio::test)]
+async fn the_link_to_a_run_opens_that_automations_run_whatever_its_names_characters() {
+    let names = ["a%2Fb.md", "a/b.md", "100% #1?.md"];
+    let parsed: Vec<(&str, &str)> = names.iter().map(|name| (*name, WEEKLY)).collect();
+    let pages = Pages::of(with(&parsed, false)).await;
+    for (n, name) in (1..).zip(names) {
+        pages
+            .record(&json!({
+                "automation": name,
+                "n": n,
+                "started_by": "hand",
+                "started_at": "2026-10-01T11:00:00Z",
+                "end": {"at": "2026-10-01T11:01:00Z", "ending": "done"},
+                "sessions": [],
+            }))
+            .await;
+    }
+
+    let html = pages.page("/automations").await;
+
+    let links: Vec<String> = select(&html, "#automations tbody a")
+        .into_iter()
+        .filter_map(|a| a.attr("href"))
+        .map(String::from)
+        .collect();
+    let mut opened = vec![];
+    for link in &links {
+        opened.push(text(select(&pages.page(link).await, "h1")[0]));
+    }
+    let in_rows = ["100% #1?.md/3", "a%2Fb.md/1", "a/b.md/2"];
+    assert_eq!(opened.len(), in_rows.len(), "{links:?}");
+    for (heading, id) in opened.iter().zip(in_rows) {
+        assert!(heading.contains(id), "{heading} for {id}, of {links:?}");
+    }
 }

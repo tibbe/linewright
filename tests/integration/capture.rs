@@ -399,7 +399,7 @@ async fn an_automations_run_is_refused() {
     let mut world = World::new().await;
     world.hourly_by_schedule_then_by_hand().await;
 
-    let refused = capture(&world, "hourly/1", "hourly", "Gadgets.\n").await;
+    let refused = capture(&world, "hourly.md/1", "hourly", "Gadgets.\n").await;
 
     assert!(
         matches!(refused, Err(CaptureError::NotCapturable(_))),
@@ -407,7 +407,7 @@ async fn an_automations_run_is_refused() {
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "the run hourly/1 is an automation's run: only a triage, design or implement run can \
+        "the run hourly.md/1 is an automation's run: only a triage, design or implement run can \
          be captured"
     );
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
@@ -945,10 +945,10 @@ async fn lw_capture_of_an_automations_run_exits_1_saying_why() {
     let (mut world, work_dir) = world_in_work_dir().await;
     world.hourly_by_schedule_then_by_hand().await;
 
-    let output = lw_capture(work_dir.path(), "hourly/1", "hourly", "Gadgets.\n").await;
+    let output = lw_capture(work_dir.path(), "hourly.md/1", "hourly", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert!(output.stderr.contains("hourly/1"), "{}", output.stderr);
+    assert!(output.stderr.contains("hourly.md/1"), "{}", output.stderr);
 }
 
 #[test_log::test(tokio::test)]

@@ -419,7 +419,7 @@ pub fn subject_name(subject: Subject) -> String {
 pub fn purpose_name(purpose: &Purpose) -> String {
     match purpose {
         Purpose::Work { subject, .. } => subject_name(*subject),
-        Purpose::Automation(name) => format!("automation-{name}"),
+        Purpose::Automation(name) => format!("automation-{}", name.file_name()),
         Purpose::Scorer => "scorer".into(),
     }
 }

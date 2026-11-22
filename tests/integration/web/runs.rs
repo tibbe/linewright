@@ -214,7 +214,7 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
         (2, "hand", "2026-10-01T13:05:00Z", "2026-10-01T13:05:40Z"),
     ] {
         let record = json!({
-            "automation": "hourly",
+            "automation": "hourly.md",
             "n": n,
             "started_by": by,
             "started_at": started,
@@ -231,8 +231,8 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
         [
             [
                 "done",
-                "hourly/2",
-                "automation hourly",
+                "hourly.md/2",
+                "automation hourly.md",
                 "",
                 "2026-10-01 13:05:00 UTC by hand",
                 "40s",
@@ -240,8 +240,8 @@ async fn the_runs_page_shows_an_automations_run_linking_to_the_automations_and_m
             ],
             [
                 "done",
-                "hourly/1",
-                "automation hourly",
+                "hourly.md/1",
+                "automation hourly.md",
                 "",
                 "2026-10-01 13:00:00 UTC",
                 "1m",

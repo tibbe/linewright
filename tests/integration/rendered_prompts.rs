@@ -229,7 +229,7 @@ fn update_is_filled_as_before() {
 fn automation_is_filled_as_before() {
     let name = repo_name();
     let automation = linewright::automation::parse(
-        &"weekly-bugs".parse().unwrap(),
+        &"weekly-bugs.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\nmax-issues: 2\n---\nLook at the bugs fixed in the past week.\n",
     )
     .unwrap();
@@ -248,7 +248,7 @@ fn automation_is_filled_as_before() {
 fn an_automation_a_workflow_run_started_is_given_the_attempt() {
     let name = repo_name();
     let automation = linewright::automation::parse(
-        &"main-ci".parse().unwrap(),
+        &"main-ci.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nFile an issue to fix what failed.\n",
     )
     .unwrap();

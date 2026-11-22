@@ -320,7 +320,7 @@ fn an_implement_run_opens_a_pull_request_closing_its_ticket(
 fn weekly(max_issues: Option<u32>) -> Automation {
     let max = max_issues.map_or(String::new(), |n| format!("max-issues: {n}\n"));
     automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         &format!("---\non:\n  schedule: \"0 9 * * 1\"\n{max}---\nLook.\n"),
     )
     .unwrap()
@@ -394,7 +394,7 @@ fn an_automation_files_its_issues_saying_which_automation_filed_them(
         automation_issues(&weekly(None), &result, required),
         vec![new_issue(
             "Stale docs",
-            "Stale docs is broken.\n\nFiled by the automation `weekly`.",
+            "Stale docs is broken.\n\nFiled by the automation `weekly.md`.",
             labels
         )]
     );

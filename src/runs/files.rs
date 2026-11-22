@@ -183,7 +183,7 @@ impl RunFiles {
             RunOf::Automation { automation } => self
                 .runs_dir()
                 .join(AUTOMATIONS)
-                .join(automation.to_string()),
+                .join(automation.file_name()),
         }
     }
 

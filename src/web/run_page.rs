@@ -1364,7 +1364,7 @@ pub(super) async fn run_page(
     Query(query): Query<RunQuery>,
     navigation: Navigation,
 ) -> Response {
-    let events = format!("/events/runs/{id}");
+    let events = format!("/events{}", super::run_path(&id));
     let Ok(run) = id.parse::<RunId>() else {
         let frame = Frame::of(&sources).await;
         let page = |thing| Page::new(run_place(thing), events, navigation);
@@ -1418,7 +1418,7 @@ pub(super) async fn run_events(
         let sources = sources.clone();
         Box::new(move || {
             let (sources, run, id) = (sources.clone(), run.clone(), id.clone());
-            let events = format!("/events/runs/{id}");
+            let events = format!("/events{}", super::run_path(&id));
             Box::pin(async move {
                 let thing = match &run {
                     Some(run) if found => run_thing(&sources, run).await?,
