@@ -75,6 +75,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(benchmark_ids::TABLES),
     Migration::Moves(benchmark_ids::MOVES),
     Migration::Sql(AUTOMATION_PATHS),
+    Migration::Sql(WORKFLOW_RUN_TRIGGERS),
 ];
 
 /// The table of the release that made each schema version.
@@ -303,6 +304,62 @@ const TRIALS_BUILD_FAILED: &str = "CREATE TABLE trials_build_failed (
 /// path under `.linewright/automations/`: that name with `.md`.
 const AUTOMATION_PATHS: &str = "UPDATE automation_schedules SET name = name || '.md';
     UPDATE runs SET automation = automation || '.md' WHERE kind = 'automation';";
+
+/// The completed attempts of workflow runs Linewright read, each
+/// automation's workflow-run filters and when it first saw them, and the
+/// attempt that started each automation's run it started. `runs` is made
+/// again, as its CHECK constraints hold the values that change.
+/// <https://www.sqlite.org/lang_altertable.html#otheralter>
+const WORKFLOW_RUN_TRIGGERS: &str = "CREATE TABLE workflow_attempts (
+        run INTEGER NOT NULL CHECK (run > 0),
+        attempt INTEGER NOT NULL CHECK (attempt > 0),
+        workflow TEXT NOT NULL,
+        run_created_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        conclusion TEXT NOT NULL,
+        branch TEXT,
+        commit_sha TEXT NOT NULL,
+        link TEXT NOT NULL,
+        PRIMARY KEY (run, attempt)
+    ) STRICT;
+    CREATE TABLE automation_workflow_triggers (
+        name TEXT PRIMARY KEY,
+        filters TEXT NOT NULL,
+        since TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE runs_triggered (
+        id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('item', 'automation')),
+        item INTEGER,
+        stage TEXT,
+        automation TEXT,
+        n INTEGER NOT NULL CHECK (n > 0),
+        started_by TEXT CHECK (started_by IN ('schedule', 'hand', 'workflow-run')),
+        workflow_run INTEGER CHECK (workflow_run > 0),
+        run_attempt INTEGER CHECK (run_attempt > 0),
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        ending TEXT CHECK (ending IN ('done', 'handed-back', 'cancelled', 'usage-limit', 'failed')),
+        answered_until TEXT,
+        CHECK (
+            (kind = 'item' AND item IS NOT NULL AND stage IS NOT NULL
+                AND automation IS NULL AND started_by IS NULL)
+            OR (kind = 'automation' AND automation IS NOT NULL AND started_by IS NOT NULL
+                AND item IS NULL AND stage IS NULL)
+        ),
+        CHECK ((started_by IS 'workflow-run') = (workflow_run IS NOT NULL)),
+        CHECK ((started_by IS 'workflow-run') = (run_attempt IS NOT NULL)),
+        CHECK ((ended_at IS NULL) = (ending IS NULL))
+    ) STRICT;
+    INSERT INTO runs_triggered
+        (id, kind, item, stage, automation, n, started_by, started_at, ended_at, ending,
+            answered_until)
+        SELECT id, kind, item, stage, automation, n, started_by, started_at, ended_at, ending,
+            answered_until FROM runs;
+    DROP TABLE runs;
+    ALTER TABLE runs_triggered RENAME TO runs;
+    CREATE UNIQUE INDEX runs_of_items ON runs (item, stage, n) WHERE kind = 'item';
+    CREATE UNIQUE INDEX runs_of_automations ON runs (automation, n) WHERE kind = 'automation';";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

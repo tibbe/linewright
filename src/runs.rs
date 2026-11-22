@@ -27,6 +27,7 @@ use crate::records;
 use crate::session::{self, RecordsSessions};
 use crate::status::Paint;
 use crate::work_settings::{Effort, SessionSettings, Setting, TimeoutSetting};
+use crate::workflow_run::{AttemptId, TriggeredRun};
 use files::{End, Record, RecordedSession, RunFiles};
 use rows::{Change, RunRow};
 
@@ -54,13 +55,15 @@ impl RunOf {
     }
 }
 
-/// How an automation's run started: on its schedule or by hand. Not part of
-/// which run it is, so kept off [`RunOf`] and [`RunId`].
+/// How an automation's run started: on its schedule, by hand, or by the
+/// attempt of a workflow run. Not part of which run it is, so kept off
+/// [`RunOf`] and [`RunId`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartedBy {
     Schedule,
     Hand,
+    WorkflowRun(AttemptId),
 }
 
 /// What a run about to begin is of, and for an automation's run how it
@@ -890,6 +893,17 @@ pub enum State {
     Interrupted,
 }
 
+impl State {
+    /// Whether the run ended with an outcome that does not show as
+    /// cancelled (`docs/specs/runs.md`, Ending).
+    pub fn ended_not_cancelled(self) -> bool {
+        match self {
+            State::Ended { ending, .. } => OutcomeName::Ended(ending).status() != Status::Cancelled,
+            State::InFlight | State::Interrupted => false,
+        }
+    }
+}
+
 impl Recorded {
     pub fn new(
         started: Started,
@@ -1103,7 +1117,7 @@ pub fn of_item(recorded: &[Recorded], number: Number) -> Vec<Recorded> {
         .collect()
 }
 
-/// An automation's last run: its newest, by its schedule or by hand, and how
+/// An automation's last run: its newest, by its trigger or by hand, and how
 /// it started.
 pub fn last_of_automation<'a>(
     recorded: &'a [Recorded],
@@ -1116,6 +1130,23 @@ pub fn last_of_automation<'a>(
             _ => None,
         })
         .min_by(|(a, _), (b, _)| newest_first(a, b))
+}
+
+/// The runs of automations that attempts of workflow runs started.
+pub fn triggered_runs(recorded: &[Recorded]) -> Vec<TriggeredRun> {
+    recorded
+        .iter()
+        .filter_map(|run| match (&run.id.of, run.started_by) {
+            (RunOf::Automation { automation }, Some(StartedBy::WorkflowRun(attempt))) => {
+                Some(TriggeredRun {
+                    automation: automation.clone(),
+                    attempt,
+                    state: run.state,
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Asking for an item's runs when it has none is an error, however the rest
@@ -1527,6 +1558,53 @@ mod tests {
             "end": {"at": "2026-10-14T06:05:00Z", "ending": "done"},
             "sessions": [],
         })
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_runs_attempts_started_read_back_with_their_attempts_and_others_are_not_triggered()
+    {
+        let work_dir = tempfile::tempdir().unwrap();
+        let runs = runs_in(work_dir.path()).await;
+        let attempt = crate::workflow_run::AttemptId {
+            run: crate::workflow_run::WorkflowRunId(18_000_000_001),
+            attempt: std::num::NonZeroU32::new(2).unwrap(),
+        };
+        let fix_ci = |started_by| Begin::Automation {
+            automation: "fix-ci.md".parse().unwrap(),
+            started_by,
+        };
+
+        begun(
+            &runs,
+            vec![
+                fix_ci(StartedBy::Hand),
+                fix_ci(StartedBy::WorkflowRun(attempt)),
+                fix_ci(StartedBy::Schedule),
+            ],
+        )
+        .await;
+
+        let recorded = runs.read().await.unwrap();
+        assert_eq!(
+            triggered_runs(&recorded),
+            [TriggeredRun {
+                automation: "fix-ci.md".parse().unwrap(),
+                attempt,
+                state: State::Ended {
+                    at: at("2026-10-15T09:01:00Z"),
+                    ending: Ending::Done,
+                },
+            }]
+        );
+        let by: Vec<Option<StartedBy>> = recorded.iter().map(|run| run.started().by()).collect();
+        assert_eq!(
+            by,
+            [
+                Some(StartedBy::Hand),
+                Some(StartedBy::WorkflowRun(attempt)),
+                Some(StartedBy::Schedule)
+            ]
+        );
     }
 
     #[test_log::test(tokio::test)]

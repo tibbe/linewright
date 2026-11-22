@@ -47,6 +47,7 @@ use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::webhook::{self, Pending};
 use crate::winding_up::WindingUp;
 use crate::work_settings::{Environments, RunKind, WorkSettings};
+use crate::workflow_run::{self, Attempts, CompletedAttempt, TriggersSeen};
 
 #[derive(Clone, Debug)]
 pub struct FactoryConfig {
@@ -177,6 +178,9 @@ pub struct Factory {
     ends: Ends,
     winding_up: WindingUp,
     last_scheduled_runs: LastScheduledRuns,
+    triggers_seen: TriggersSeen,
+    /// The completed attempts of workflow runs read and kept.
+    attempts: Attempts,
     automation_files: AutomationFiles,
     memory: Memory,
     pull_records_file: PullRecordsFile,
@@ -275,6 +279,8 @@ impl Factory {
         let last_scheduled_runs = LastScheduledRuns::load(&config.database)
             .await
             .context("reading the automations' last scheduled runs")?;
+        let triggers_seen = TriggersSeen::load(&config.database).await?;
+        let attempts = Attempts::load(&config.database).await?;
         let (report_refusal, refusals) = tokio::sync::mpsc::unbounded_channel();
         let benchmark_runs = BenchmarkRunsRunner::new(
             BenchmarkRuns::new(config.database.clone()),
@@ -365,6 +371,8 @@ impl Factory {
             ends: config.ends,
             winding_up: config.winding_up,
             last_scheduled_runs,
+            triggers_seen,
+            attempts,
             automation_files: AutomationFiles::default(),
             pull_records_file,
             environment,
@@ -433,6 +441,9 @@ impl Factory {
             repo,
         };
         let defined = self.automations().await;
+        let pruning = defined.is_some() && self.automation_files.unparsed.is_empty();
+        let defined = defined.unwrap_or_default();
+        self.read_attempts(&defined, pruning, now).await;
         Ok(self.reconcile(kept, defined, now).await)
     }
 
@@ -458,17 +469,30 @@ impl Factory {
             return self.cycle().await;
         };
         self.reap_before_reading().await;
+        let now = self.shell.sessions.clock.now();
+        let subjects: Vec<webhook::Subject> = subjects.into_iter().map(Into::into).collect();
+        let defined: Vec<Automation> = if subjects.contains(&webhook::Subject::WorkflowRuns) {
+            self.automation_files
+                .parsed
+                .iter()
+                .filter(|automation| automation.on_workflow_runs())
+                .cloned()
+                .collect()
+        } else {
+            vec![]
+        };
+        let workflow_runs = !defined.is_empty();
+        self.read_attempts(&defined, false, now).await;
         let shell = &self.shell;
-        let now = shell.sessions.clock.now();
         let windows = shell.policy.windows(now);
         let snapshot = Arc::make_mut(&mut kept.snapshot);
         let mut read = read_all(snapshot, shell, self.written.clone(), windows).await?;
         let named: BTreeSet<Item> = subjects
-            .into_iter()
-            .flat_map(|subject| subject.into().items(snapshot))
+            .iter()
+            .flat_map(|subject| subject.items(snapshot))
             .filter(|item| !read.contains(item))
             .collect();
-        if read.is_empty() && named.is_empty() && !always {
+        if read.is_empty() && named.is_empty() && !always && !workflow_runs {
             return Ok(vec![]);
         }
         read.extend(read_all(snapshot, shell, named, windows).await?);
@@ -491,7 +515,62 @@ impl Factory {
         kept.repo = self.read_repo_files().await?;
         self.poll_environment(&kept.repo).await;
         self.written.clear();
-        Ok(self.reconcile(kept, vec![], now).await)
+        Ok(self.reconcile(kept, defined, now).await)
+    }
+
+    /// When an automation of `defined` is on `workflow_run`, reads the
+    /// completed attempts of the workflow runs created within `ci-timeout`
+    /// of `now`, keeps those read within it, and with `pruning`, which only
+    /// automation files that were all listed and parsed allow, drops those
+    /// kept that no automation awaits any more and that are past it
+    /// (`docs/specs/automations.md`, Workflow runs). A failure is logged,
+    /// and the next poll reads again.
+    async fn read_attempts(&mut self, defined: &[Automation], pruning: bool, now: Timestamp) {
+        if !defined.iter().any(Automation::on_workflow_runs) {
+            return;
+        }
+        if let Err(e) = self.try_read_attempts(defined, pruning, now).await {
+            error!(
+                error = format!("{e:#}"),
+                "reading the workflow runs failed; the next poll reads them again"
+            );
+        }
+    }
+
+    async fn try_read_attempts(
+        &mut self,
+        defined: &[Automation],
+        pruning: bool,
+        now: Timestamp,
+    ) -> Result<()> {
+        let ci_timeout = self.shell.policy.ci_timeout;
+        let read = self
+            .shell
+            .sessions
+            .store
+            .completed_attempts(now - ci_timeout, &self.attempts.known())
+            .await
+            .context("reading the workflow runs' completed attempts")?;
+        let within: Vec<CompletedAttempt> = read
+            .into_iter()
+            .filter(|attempt| workflow_run::within_limit(attempt, now, ci_timeout))
+            .collect();
+        self.attempts.add(&self.database, within).await?;
+        if pruning {
+            let recorded = self
+                .recorded_runs
+                .read()
+                .await
+                .context("reading the runs, to keep the attempts awaited")?;
+            let runs = runs::triggered_runs(&recorded);
+            let awaited = workflow_run::awaited(defined, &self.triggers_seen, &runs, now);
+            self.attempts
+                .prune(&self.database, |attempt| {
+                    workflow_run::within_limit(attempt, now, ci_timeout) || awaited(attempt)
+                })
+                .await?;
+        }
+        Ok(())
     }
 
     /// A refresh never races a poll: one still running when the poll falls
@@ -744,10 +823,14 @@ impl Factory {
         self.note_drain();
         self.memory.awaits_environment = !self.environment.ready();
         let live = self.live_runs();
+        let (defined, triggered) = self.with_triggered_runs(defined).await;
         let automations = Automations {
             defined,
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             in_flight: self.automations_in_flight(),
+            seen: self.triggers_seen.clone(),
+            attempts: self.attempts.all(),
+            triggered,
         };
         self.take_shown_comments(snapshot, now);
         self.memory.retain_open(snapshot);
@@ -787,6 +870,30 @@ impl Factory {
             next += 1;
         }
         actions
+    }
+
+    /// `defined`, with the runs that attempts of workflow runs started when
+    /// an automation of it is on `workflow_run`. Those automations are left
+    /// out when the runs cannot be read, as which attempts have run them
+    /// is not known then.
+    async fn with_triggered_runs(
+        &self,
+        mut defined: Vec<Automation>,
+    ) -> (Vec<Automation>, Vec<workflow_run::TriggeredRun>) {
+        if !defined.iter().any(Automation::on_workflow_runs) {
+            return (defined, vec![]);
+        }
+        match self.recorded_runs.read().await {
+            Ok(recorded) => (defined, runs::triggered_runs(&recorded)),
+            Err(e) => {
+                error!(
+                    error = format!("{e:#}"),
+                    "reading the runs failed; the automations on workflow runs wait"
+                );
+                defined.retain(|automation| !automation.on_workflow_runs());
+                (defined, vec![])
+            }
+        }
     }
 
     /// The `setup` table as `repo` gives it.
@@ -887,6 +994,7 @@ impl Factory {
             shell,
             &repo,
             &automation,
+            None,
             begin_automation(
                 &self.recorded_runs,
                 name,
@@ -909,16 +1017,15 @@ impl Factory {
         .with_context(|| format!("the run of the automation `{name}` failed"))
     }
 
-    async fn automations(&mut self) -> Vec<Automation> {
+    /// The automations defined, `None` when they cannot be listed.
+    async fn automations(&mut self) -> Option<Vec<Automation>> {
         let branch = &self.shell.settings.default_branch;
-        self.automation_files =
-            match automation::read(self.shell.sessions.store.as_ref(), branch).await {
-                Ok(files) => files,
-                Err(e) => {
-                    error!(error = format!("{e:#}"), "listing the automations failed");
-                    AutomationFiles::default()
-                }
-            };
+        let read = automation::read(self.shell.sessions.store.as_ref(), branch).await;
+        let listed = read.is_ok();
+        self.automation_files = read.unwrap_or_else(|e| {
+            error!(error = format!("{e:#}"), "listing the automations failed");
+            AutomationFiles::default()
+        });
         for file in &self.automation_files.unparsed {
             warn!(
                 path = file.path,
@@ -926,7 +1033,7 @@ impl Factory {
                 "skipping an automation file"
             );
         }
-        self.automation_files.parsed.clone()
+        listed.then(|| self.automation_files.parsed.clone())
     }
 
     pub fn is_idle(&self) -> bool {
@@ -1246,14 +1353,21 @@ impl Factory {
                 self.last_scheduled_runs = last_scheduled_runs.clone();
                 last_scheduled_runs.save(&self.database).await?;
             }
-            Action::RunAutomation {
-                automation,
-                start: AutomationStart::Schedule,
-            } => {
+            Action::RecordTriggersSeen(seen) => {
+                self.triggers_seen = seen.clone();
+                seen.save(&self.database).await?;
+            }
+            Action::RunAutomation { automation, start } => {
+                let (started_by, trigger) = match start {
+                    AutomationStart::Schedule => (StartedBy::Schedule, None),
+                    AutomationStart::WorkflowRun(attempt) => {
+                        (StartedBy::WorkflowRun(attempt.id), Some(attempt.clone()))
+                    }
+                };
                 let running = begin_automation(
                     &self.recorded_runs,
                     &automation.name,
-                    StartedBy::Schedule,
+                    started_by,
                     self.shell.sessions.clock.now(),
                 )
                 .await?;
@@ -1264,7 +1378,15 @@ impl Factory {
                 let handle = self.runs.spawn({
                     let (automation, cancel) = (automation.clone(), cancel.clone());
                     async move {
-                        let _ = run_and_log(&shell, &repo, &automation, running, cancel).await;
+                        let _ = run_and_log(
+                            &shell,
+                            &repo,
+                            &automation,
+                            trigger.as_ref(),
+                            running,
+                            cancel,
+                        )
+                        .await;
                     }
                 });
                 self.live.insert(
@@ -1310,6 +1432,7 @@ async fn run_and_log(
     shell: &Shell,
     repo: &RepoLayer,
     automation: &Automation,
+    trigger: Option<&CompletedAttempt>,
     running: runs::Running,
     cancel: Cancellation,
 ) -> Result<()> {
@@ -1322,7 +1445,7 @@ async fn run_and_log(
         cancel,
         run: running,
     };
-    match run::automation(shell, automation, None, ctx).await {
+    match run::automation(shell, automation, trigger, ctx).await {
         Ok(AutomationEnd::Finished(result)) => {
             info!(automation = %name, summary = result.summary, "automation run finished");
             Ok(())

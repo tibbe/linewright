@@ -32,6 +32,13 @@ pub struct Automation {
     pub instructions: String,
 }
 
+impl Automation {
+    /// Whether attempts of workflow runs start its runs.
+    pub fn on_workflow_runs(&self) -> bool {
+        matches!(self.trigger, Trigger::WorkflowRun(_))
+    }
+}
+
 /// What starts an automation's runs: its `on`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trigger {

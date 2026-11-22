@@ -22,6 +22,7 @@ use crate::repo_files::{FileError, Unusable};
 use crate::runs::Ending;
 use crate::spec_glob::SpecGlob;
 use crate::work_settings::RunKind;
+use crate::workflow_run::{self, CompletedAttempt, TriggeredRun, TriggersSeen};
 use crate::working_pull::{self, Row as WorkingRow};
 
 #[derive(Clone, Debug)]
@@ -386,6 +387,12 @@ pub struct Automations {
     pub defined: Vec<Automation>,
     pub last_scheduled_runs: LastScheduledRuns,
     pub in_flight: Vec<AutomationName>,
+    /// The automations' workflow-run filters as Linewright last saw them.
+    pub seen: TriggersSeen,
+    /// The completed attempts of workflow runs Linewright keeps.
+    pub attempts: Vec<CompletedAttempt>,
+    /// The runs of automations that attempts started.
+    pub triggered: Vec<TriggeredRun>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -465,6 +472,7 @@ pub enum Action {
         branch: TicketBranchName,
     },
     RecordLastScheduledRuns(LastScheduledRuns),
+    RecordTriggersSeen(TriggersSeen),
     RunAutomation {
         automation: Box<Automation>,
         start: AutomationStart,
@@ -476,6 +484,8 @@ pub enum Action {
 pub enum AutomationStart {
     /// Its schedule ticked.
     Schedule,
+    /// An attempt of a workflow run that matches its trigger completed.
+    WorkflowRun(CompletedAttempt),
 }
 
 impl Action {
@@ -511,6 +521,7 @@ impl Action {
             Action::DeleteBranch { branch } => vec![Item::Issue(branch.issue())],
             Action::Cancel { .. }
             | Action::RecordLastScheduledRuns(_)
+            | Action::RecordTriggersSeen(_)
             | Action::RunAutomation { .. } => vec![],
         }
     }
@@ -870,10 +881,56 @@ pub fn decisions(
     }
 
     let (mut decisions, room) = plan.into_decisions(room);
+    let scheduled = schedule(automations, now, room, &in_force);
+    let room = room.saturating_sub(
+        scheduled
+            .iter()
+            .filter(|action| matches!(action, Action::RunAutomation { .. }))
+            .count(),
+    );
+    decisions.actions.extend(scheduled);
     decisions
         .actions
-        .extend(schedule(automations, now, room, &in_force));
+        .extend(trigger(automations, now, room, &in_force));
     decisions
+}
+
+/// The runs that the attempts of workflow runs start, at most `room`,
+/// followed by the record of the triggers seen if it changed. An
+/// automation with a run in flight, or that a hold in `in_force` holds,
+/// keeps its attempts pending.
+fn trigger(
+    automations: &Automations,
+    now: Timestamp,
+    room: usize,
+    in_force: &InForce,
+) -> Vec<Action> {
+    let triggered = workflow_run::trigger(
+        &automations.defined,
+        &automations.seen,
+        &automations.attempts,
+        &automations.triggered,
+        |automation| {
+            automations.in_flight.contains(&automation.name)
+                || !in_force
+                    .holding(&RunKind::Automation(automation))
+                    .is_empty()
+        },
+        room,
+        now,
+    );
+    let mut actions: Vec<Action> = triggered
+        .runs
+        .into_iter()
+        .map(|(automation, attempt)| Action::RunAutomation {
+            automation: Box::new(automation),
+            start: AutomationStart::WorkflowRun(attempt),
+        })
+        .collect();
+    if triggered.seen != automations.seen {
+        actions.push(Action::RecordTriggersSeen(triggered.seen));
+    }
+    actions
 }
 
 /// Works pull request `number` by `holding`, the row that holds for it, and
@@ -911,13 +968,18 @@ fn work_pull(number: Number, holding: Option<PullRow>, work: Option<PullWork>, p
 /// The rest of a plan made before a drain began, as the drain has it: with
 /// no claim, no clear of a stall that follows one, and no run, and the
 /// automations' last scheduled runs as
-/// `recorded` holds them for the runs it holds back, so that they run after
-/// the restart.
+/// `recorded` holds them for the scheduled runs it holds back, so that they
+/// run after the restart. An attempt whose run it holds back stays pending
+/// with no record changed.
 pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Vec<Action> {
     let held_back: Vec<AutomationName> = rest
         .iter()
         .filter_map(|action| {
-            if let Action::RunAutomation { automation, .. } = action {
+            if let Action::RunAutomation {
+                automation,
+                start: AutomationStart::Schedule,
+            } = action
+            {
                 Some(automation.name.clone())
             } else {
                 None
@@ -960,7 +1022,8 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             | Action::CommentRequirements { .. }
             | Action::CloseTracking { .. }
             | Action::DiscardCut(_)
-            | Action::DeleteBranch { .. } => Some(action),
+            | Action::DeleteBranch { .. }
+            | Action::RecordTriggersSeen(_) => Some(action),
         })
         .collect()
 }

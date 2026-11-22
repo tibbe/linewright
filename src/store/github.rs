@@ -1902,7 +1902,7 @@ impl RunsListed {
 
 /// `time` rounded down to the hour, which a bound on the runs listed is,
 /// so that the polls of the hour list them at the same URL.
-fn hour_of(time: Timestamp) -> Timestamp {
+pub(super) fn hour_of(time: Timestamp) -> Timestamp {
     use chrono::{DurationRound as _, TimeDelta};
     time.duration_trunc(TimeDelta::hours(1))
         .expect("an hour divides a time")

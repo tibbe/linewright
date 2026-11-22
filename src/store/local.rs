@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 
+use super::github::hour_of;
 use super::{
     AnyItem, AttachError, Blob, Categories, IssueRead, NewIssue, NewPull, PeoplesPullRead,
     Property, PushError, PushMode, RecordedItem, RecordedProperties, Resource, Store, holds,
@@ -2583,7 +2584,7 @@ impl Store for LocalStore {
             .state()
             .attempts
             .values()
-            .filter(|attempt| attempt.run_created_at >= created_since)
+            .filter(|attempt| attempt.run_created_at >= hour_of(created_since))
             .filter(|attempt| !known.contains(&attempt.id))
             .cloned()
             .collect())

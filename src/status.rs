@@ -53,6 +53,7 @@ impl View {
             defined: self.automations.parsed.clone(),
             last_scheduled_runs: self.last_scheduled_runs.clone(),
             in_flight: self.automations_in_flight().collect(),
+            ..Automations::default()
         };
         decisions(
             &self.snapshot,
@@ -292,7 +293,7 @@ pub enum Schedule {
     Ended,
 }
 
-/// An automation's last run: its newest, by its schedule or by hand.
+/// An automation's last run: its newest, by its trigger or by hand.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastRun {
     #[serde(rename = "last_run")]

@@ -47,6 +47,7 @@ use crate::spec_glob::SpecGlob;
 use crate::store::{AnyItem, AttachError, FoundSecrets, PushError, PushMode, RepoSettings, Store};
 use crate::tracking::FiledTicket;
 use crate::work_settings::{Environments, RunKind, SessionSettings, WorkSettings};
+use crate::workflow_run::CompletedAttempt;
 use crate::working_pull::feedback;
 
 pub(crate) struct Shell {
@@ -1616,7 +1617,7 @@ pub(crate) enum AutomationEnd {
 pub(crate) async fn automation(
     shell: &Shell,
     automation: &Automation,
-    trigger: Option<&WorkflowRunAttempt<'_>>,
+    trigger: Option<&CompletedAttempt>,
     ctx: Ctx,
 ) -> Result<AutomationEnd> {
     let session = async {
@@ -1627,7 +1628,7 @@ pub(crate) async fn automation(
                 &ctx.with.briefs.templates,
                 &shell.repo(),
                 automation,
-                trigger.copied(),
+                trigger.map(WorkflowRunAttempt::from),
                 attachments,
             )
         });

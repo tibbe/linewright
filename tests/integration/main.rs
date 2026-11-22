@@ -9,6 +9,7 @@ mod attachments;
 mod automation_file;
 mod automation_run;
 mod automation_schedule;
+mod automation_workflow_run;
 mod benchmark_run_plan;
 mod benchmark_run_runs;
 mod benchmark_runs;

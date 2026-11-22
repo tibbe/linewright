@@ -9,6 +9,12 @@ use linewright::prompts::{self, Readers};
 use linewright::reconcile::*;
 use linewright::repo_files::{FileError, Unusable};
 use linewright::runs::Ending;
+use linewright::workflow_run::{
+    AttemptConclusion, AttemptId, CompletedAttempt, Conclusion, Filters, Seen, TriggersSeen,
+    WorkflowRunId,
+};
+
+use crate::workflow_run::set;
 
 fn t(minute: i64) -> Timestamp {
     DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
@@ -3284,6 +3290,7 @@ fn automations(defined: &[&str], last: &[(&str, i64)], in_flight: &[&str]) -> Au
         defined: defined.iter().map(|name| hourly(name)).collect(),
         last_scheduled_runs: last_scheduled_runs(last),
         in_flight: in_flight.iter().map(|name| name.parse().unwrap()).collect(),
+        ..Automations::default()
     }
 }
 
@@ -3341,10 +3348,23 @@ fn an_automation_not_on_a_schedule_is_left_alone_and_loses_its_last_scheduled_ru
         "---\non:\n  workflow_run:\n    conclusions: [failure]\n---\nFix it.\n",
     )
     .unwrap();
+    let seen = [(
+        on_workflow_runs.name.clone(),
+        Seen {
+            filters: Filters {
+                conclusions: Some(set([Conclusion::Failure])),
+                ..Filters::default()
+            },
+            since: t(10),
+        },
+    )]
+    .into_iter()
+    .collect();
     let world = Automations {
         defined: vec![on_workflow_runs, hourly("hourly.md")],
         last_scheduled_runs: last_scheduled_runs(&[("fix-ci.md", 10), ("hourly.md", 30)]),
-        in_flight: vec![],
+        seen,
+        ..Automations::default()
     };
 
     assert_eq!(
@@ -3441,6 +3461,124 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
                 ("c.md", 30)
             ])),
         ]
+    );
+}
+
+/// The automation `name`, run when CI fails.
+#[track_caller]
+fn on_failures(name: &str) -> Automation {
+    linewright::automation::parse(
+        &name.parse().unwrap(),
+        "---\non:\n  workflow_run:\n    conclusions: [failure]\n---\nFix it.\n",
+    )
+    .unwrap()
+}
+
+/// A failed attempt of the workflow run `run`, completed at `minute`.
+fn failed_attempt(run: u64, minute: i64) -> CompletedAttempt {
+    CompletedAttempt {
+        id: AttemptId {
+            run: WorkflowRunId(run),
+            attempt: std::num::NonZeroU32::MIN,
+        },
+        workflow: "CI".into(),
+        run_created_at: t(minute - 20),
+        completed_at: t(minute),
+        conclusion: AttemptConclusion::Known(Conclusion::Failure),
+        branch: Some("main".into()),
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+        link: format!("https://github.com/owner/repo/actions/runs/{run}/attempts/1"),
+    }
+}
+
+/// The automations of `names`, run when CI fails, each seen since its
+/// minute.
+#[track_caller]
+fn seen_on_failures(names: &[(&str, i64)]) -> TriggersSeen {
+    names
+        .iter()
+        .map(|&(name, minute)| {
+            (
+                name.parse().unwrap(),
+                Seen {
+                    filters: Filters {
+                        conclusions: Some(set([Conclusion::Failure])),
+                        ..Filters::default()
+                    },
+                    since: t(minute),
+                },
+            )
+        })
+        .collect()
+}
+
+#[test_log::test]
+fn triggered_runs_get_the_room_the_scheduled_runs_leave_and_record_the_triggers_seen() {
+    let tickets = snapshot_of([1, 2].map(|n| claimed(ticket(n))).to_vec());
+    let busy = [1, 2].map(|n| live(n, WorkKind::Implement));
+    let world = Automations {
+        defined: vec![
+            hourly("hourly.md"),
+            on_failures("a.md"),
+            on_failures("b.md"),
+            on_failures("new.md"),
+        ],
+        last_scheduled_runs: last_scheduled_runs(&[("hourly.md", 30)]),
+        seen: seen_on_failures(&[("a.md", 0), ("b.md", 0)]),
+        attempts: vec![failed_attempt(1, 40), failed_attempt(2, 30)],
+        ..Automations::default()
+    };
+    let seen_now = seen_on_failures(&[("a.md", 0), ("b.md", 0), ("new.md", 70)]);
+
+    assert_eq!(
+        reconcile(
+            &tickets,
+            &busy,
+            &Memory::default(),
+            &world,
+            t(70),
+            &policy(),
+            &[]
+        ),
+        vec![
+            scheduled_run("hourly.md"),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 70)])),
+            Action::RunAutomation {
+                automation: Box::new(on_failures("a.md")),
+                start: AutomationStart::WorkflowRun(failed_attempt(2, 30)),
+            },
+            Action::RecordTriggersSeen(seen_now),
+        ]
+    );
+}
+
+#[test_log::test]
+fn an_automation_on_workflow_runs_with_a_run_in_flight_waits_for_it() {
+    let world = Automations {
+        defined: vec![on_failures("a.md")],
+        in_flight: vec!["a.md".parse().unwrap()],
+        seen: seen_on_failures(&[("a.md", 0)]),
+        attempts: vec![failed_attempt(1, 40)],
+        ..Automations::default()
+    };
+
+    assert_eq!(scheduled(&world, 70), vec![]);
+}
+
+#[test_log::test]
+fn a_drain_begun_part_way_through_a_plan_holds_back_triggered_runs_and_keeps_the_triggers_seen() {
+    let seen = seen_on_failures(&[("a.md", 0)]);
+    let rest = vec![
+        Action::RunAutomation {
+            automation: Box::new(on_failures("a.md")),
+            start: AutomationStart::WorkflowRun(failed_attempt(1, 40)),
+        },
+        Action::RecordTriggersSeen(seen.clone()),
+    ];
+
+    assert_eq!(
+        held_back_by_drain(rest, &LastScheduledRuns::default()),
+        vec![Action::RecordTriggersSeen(seen)]
     );
 }
 
@@ -4919,7 +5057,7 @@ fn a_config_of_the_repositorys_that_cannot_be_used_holds_every_run_and_leaves_au
             .unwrap(),
         ],
         last_scheduled_runs,
-        in_flight: vec![],
+        ..Automations::default()
     };
     let broken = Unusable {
         file: FileError {
