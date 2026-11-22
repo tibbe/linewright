@@ -6,7 +6,7 @@ use super::shell::with_a_run;
 use super::*;
 
 /// A page of each kind of screen in `with_a_run`.
-const PATHS: [&str; 9] = [
+const PATHS: [&str; 10] = [
     "/",
     "/items/1",
     "/runs",
@@ -14,6 +14,7 @@ const PATHS: [&str; 9] = [
     "/automations",
     "/benchmarks",
     "/benchmarks/1",
+    "/tasks/1",
     "/benchmark-runs/1",
     "/server",
 ];
@@ -83,6 +84,7 @@ async fn every_card_is_in_base_200_with_a_light_shadow_and_no_border() {
         ("/runs", vec![".table-card"]),
         ("/items/1", vec!["#heading", "#item dl", ".table-card"]),
         ("/server", vec!["#server dl"]),
+        ("/tasks/1", vec!["#heading", "#task .stats", "#criteria"]),
         (
             "/benchmark-runs/1",
             vec![
@@ -623,30 +625,36 @@ async fn every_button_is_small_and_new_is_primary() {
     }
 }
 
-/// `docs/specs/web/benchmarks.md`, Benchmark run: each fact is a `stat`, its
-/// label the `stat-title`, as daisyUI draws it, and its value the
-/// `stat-value`, in `text-xl` and `font-semibold`.
+/// `docs/specs/web/benchmarks.md`, Benchmark run, and Task, whose facts are
+/// as on Benchmark run: each fact is a `stat`, its label the `stat-title`, as
+/// daisyUI draws it, and its value the `stat-value`, in `text-xl` and
+/// `font-semibold`.
 #[test_log::test(tokio::test)]
-async fn benchmark_runs_facts_are_stats_as_daisyui_draws_them() {
+async fn benchmark_runs_and_tasks_facts_are_stats_as_daisyui_draws_them() {
     let pages = with_a_run().await;
 
-    let html = pages.page("/benchmark-runs/1").await;
+    for (path, facts) in [
+        ("/benchmark-runs/1", "#benchmark-run"),
+        ("/tasks/1", "#task"),
+    ] {
+        let html = pages.page(path).await;
 
-    let stats = select(&html, "#benchmark-run .stat");
-    assert!(!stats.is_empty(), "{}", html.html());
-    for stat in stats {
-        for (part, classes) in [
-            ("stat-title", &["stat-title"][..]),
-            ("stat-value", &["font-semibold", "stat-value", "text-xl"]),
-        ] {
-            let parts = select_in(stat, &format!(".{part}"));
-            assert_eq!(parts.len(), 1, "{part}: {}", stat.html());
-            assert_eq!(
-                parts[0].value().classes().collect::<Vec<_>>(),
-                classes,
-                "{}",
-                stat.html()
-            );
+        let stats = select(&html, &format!("{facts} .stat"));
+        assert!(!stats.is_empty(), "{}", html.html());
+        for stat in stats {
+            for (part, classes) in [
+                ("stat-title", &["stat-title"][..]),
+                ("stat-value", &["font-semibold", "stat-value", "text-xl"]),
+            ] {
+                let parts = select_in(stat, &format!(".{part}"));
+                assert_eq!(parts.len(), 1, "{part}: {}", stat.html());
+                assert_eq!(
+                    parts[0].value().classes().collect::<Vec<_>>(),
+                    classes,
+                    "{}",
+                    stat.html()
+                );
+            }
         }
     }
 }

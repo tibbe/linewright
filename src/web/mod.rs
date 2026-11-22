@@ -25,6 +25,7 @@ mod server_page;
 mod shell;
 mod stats;
 mod table;
+mod task_page;
 mod write;
 
 use benchmark_page::BenchmarkTab;
@@ -53,7 +54,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{Sources, Unanswered};
-use crate::benchmarks::{BenchmarkId, BenchmarkRunId, BenchmarkRuns, Benchmarks};
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, BenchmarkRuns, Benchmarks, TaskId};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 
@@ -146,6 +147,8 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             "/events/benchmarks/{id}",
             get(benchmark_page::benchmark_events),
         )
+        .route("/tasks/{id}", get(task_page::task_page))
+        .route("/events/tasks/{id}", get(task_page::task_events))
         .route(
             "/benchmark-runs/{id}",
             get(benchmark_run_page::benchmark_run_page),
@@ -296,6 +299,10 @@ struct Page {
     fills_viewport: bool,
     /// The navigation it draws from Tailwind's `lg` width.
     navigation: Navigation,
+    /// What the screen says under its heading of what was made or removed
+    /// (`docs/specs/design_system.md`, Making, What was made, and Confirming,
+    /// What was removed), as it opens.
+    said: Option<html::Html>,
     assets: PageAssets,
 }
 
@@ -317,12 +324,21 @@ impl Page {
             events,
             fills_viewport: false,
             navigation,
+            said: None,
             assets: PageAssets {
                 css: path("linewright.css"),
                 script: path("linewright.js"),
                 htmx: path("htmx.min.js"),
                 sse: path("hx-sse.js"),
             },
+        }
+    }
+
+    /// The page saying `said` under its heading, as a success alert.
+    fn saying(self, said: &html::Html) -> Page {
+        Page {
+            said: Some(making::success(said)),
+            ..self
         }
     }
 
@@ -445,6 +461,11 @@ fn benchmark_run_path(id: BenchmarkRunId) -> String {
     format!("/benchmark-runs/{id}")
 }
 
+/// The path of task `id`'s page.
+fn task_path(id: TaskId) -> String {
+    format!("/tasks/{id}")
+}
+
 /// The path of benchmark `id`'s page.
 fn benchmark_path(id: BenchmarkId) -> String {
     format!("/benchmarks/{id}")
@@ -454,6 +475,31 @@ fn benchmark_path(id: BenchmarkId) -> String {
 /// (`docs/specs/web/design_system.md`, A tab).
 fn benchmark_tab_path(id: BenchmarkId, tab: BenchmarkTab) -> String {
     format!("{}/{}", benchmark_path(id), tab.segment())
+}
+
+/// The `Cookie` headers of a request's `headers`.
+fn cookie_headers(headers: &axum::http::HeaderMap) -> impl Iterator<Item = String> + '_ {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
+}
+
+/// The value of each cookie named `name` that the `Cookie` headers `cookies`
+/// hold, in order. <https://www.rfc-editor.org/rfc/rfc6265#section-5.4>
+fn cookie_values(cookies: impl IntoIterator<Item = impl AsRef<str>>, name: &str) -> Vec<String> {
+    cookies
+        .into_iter()
+        .flat_map(|header| {
+            header
+                .as_ref()
+                .split(';')
+                .filter_map(|cookie| cookie.trim().split_once('='))
+                .filter(|(named, _)| *named == name)
+                .map(|(_, value)| value.to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The answer to a path that is no page's.

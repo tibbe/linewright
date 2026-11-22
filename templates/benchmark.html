@@ -1,7 +1,6 @@
 {%- extends "layout.html" -%}
 {%- import "macros.html" as ui -%}
 {%- block main -%}
-<div id="benchmark-said" class="max-w-xl empty:hidden" role="status"></div>
 <div role="tablist" class="tabs tabs-border">
 {%- for link in tab_links %}
 <a role="tab" class="tab{% if self.opens(link.tab.clone()) %} tab-active{% endif %}" id="{{ link.tab.link_id() }}" href="{{ link.href }}" aria-selected="{{ self.opens(link.tab.clone()) }}" aria-controls="{{ link.tab.panel() }}">{{ link.tab.label() }}</a>

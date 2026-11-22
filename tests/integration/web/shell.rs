@@ -9,7 +9,7 @@ use linewright::domain::Issue;
 use serde_json::json;
 
 /// Each crumb's name, and where it links, if it does.
-fn crumbs(html: &Html) -> Vec<(String, Option<String>)> {
+pub(super) fn crumbs(html: &Html) -> Vec<(String, Option<String>)> {
     select(html, r#"nav[aria-label="Breadcrumb"] li"#)
         .into_iter()
         .map(|crumb| {
@@ -160,6 +160,12 @@ async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading()
             "Benchmark run 1 · Linewright",
         ),
         (
+            "/tasks/1",
+            vec![benchmarks(), board(), here("Task")],
+            "Task",
+            "columns · Linewright",
+        ),
+        (
             "/benchmark-runs/1/1/1/1/run",
             vec![benchmarks(), board(), benchmark_run(), here("Trial")],
             "Trial",
@@ -231,6 +237,7 @@ async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one
         ("/benchmarks", None),
         ("/server", None),
         ("/benchmarks/1", Some(card("board", &[], Some("implement")))),
+        ("/tasks/1", Some(card("columns", &[], Some("implement")))),
         (
             "/benchmark-runs/1",
             Some(card("Benchmark run 1", &["waiting"], None)),
@@ -393,6 +400,7 @@ async fn every_stream_sends_the_shells_regions_first() {
         "/events/automations",
         "/events/benchmarks",
         "/events/benchmarks/1",
+        "/events/tasks/1",
         "/events/benchmark-runs/1",
         "/events/items/1",
         "/events/runs/1/triage-1",
@@ -426,6 +434,7 @@ async fn every_page_starts_an_empty_slot_for_what_was_made_under_its_heading_tha
         "/",
         "/runs",
         "/benchmarks/1",
+        "/tasks/1",
         "/items/1",
         "/runs/1/triage-1",
     ] {
@@ -591,6 +600,7 @@ async fn every_page_draws_the_navigation_the_readers_cookie_chose_and_otherwise_
         "/automations",
         "/benchmarks",
         "/benchmarks/1",
+        "/tasks/1",
         "/benchmark-runs/1",
         "/benchmark-runs/1/1/1/1/run",
         "/server",

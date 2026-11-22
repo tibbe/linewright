@@ -336,15 +336,7 @@ fn benchmark_run_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
 /// Benchmark run), each its `stat-title` and its `stat-value`.
 #[track_caller]
 fn benchmark_run_facts(html: &Html) -> Vec<(String, String)> {
-    select(html, "#benchmark-run .stats > .stat")
-        .into_iter()
-        .map(|stat| {
-            (
-                text(select_in(stat, ".stat-title")[0]),
-                text(select_in(stat, ".stat-value")[0]),
-            )
-        })
-        .collect()
+    stats(html, "#benchmark-run")
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark run, Heading, State and Facts.

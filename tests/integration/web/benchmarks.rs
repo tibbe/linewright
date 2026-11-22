@@ -513,12 +513,11 @@ async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_
 
     let html = pages.page("/benchmarks/1?runs-page=2&tasks-page=2").await;
 
-    let tasks: Vec<String> = select(&html, "#tasks tbody tr:not([data-fold-of]) > th > span")
+    let tasks: Vec<String> = select(&html, "#tasks tbody tr > th > span")
         .into_iter()
         .map(text)
         .collect();
     assert_eq!(tasks, ["task-24", "task-25", "task-26"]);
-    assert_eq!(select(&html, "#tasks tbody tr[data-fold-of]").len(), 3);
     assert_eq!(
         pages_nav(&html, "#tasks"),
         Some(PagesNav {
@@ -628,7 +627,7 @@ fn tabs(html: &Html) -> Vec<Tab> {
 /// Of the tabs of the Benchmark page `html`, each one's label and whether it
 /// is open.
 #[track_caller]
-fn open_tabs(html: &Html) -> Vec<(String, bool)> {
+pub(super) fn open_tabs(html: &Html) -> Vec<(String, bool)> {
     tabs(html)
         .into_iter()
         .map(|(label, _, open, _)| (label, open))
@@ -786,34 +785,6 @@ async fn the_benchmark_pages_tab_links_carry_its_pages_and_open_on_the_page_aske
 }
 
 #[test_log::test(tokio::test)]
-async fn a_task_named_as_another_tasks_question_has_a_confirmation_of_its_own() {
-    let pages = with_benchmarks().await;
-    keep_task(
-        &pages.path(""),
-        "board",
-        "lanes-question",
-        "1/implement-1",
-        "Asks.\n",
-    )
-    .await;
-
-    let html = pages.page("/benchmarks/1").await;
-
-    let questions: Vec<String> = confirmations(&html)
-        .into_iter()
-        .map(|confirmation| confirmation.question)
-        .collect();
-    assert_eq!(
-        questions,
-        [
-            "Remove the task columns and its directory?",
-            "Remove the task lanes and its directory?",
-            "Remove the task lanes-question and its directory?",
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let pages = with_benchmarks().await;
     let writes: [(&str, &[(&str, &str)]); 3] = [
@@ -913,149 +884,55 @@ async fn the_benchmark_page_shows_each_task_in_capture_order_with_the_first_line
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["", "Task", "Captured from", ""]);
-    let tasks = select(&html, "#tasks tbody tr:not([data-fold-of])");
-    let shown: Vec<(String, String, String)> = tasks
-        .iter()
-        .map(|row| {
-            let header = select_in(*row, ":scope > th")[0];
-            let cells = select_in(*row, ":scope > td");
-            let remove = select_in(cells[2], "button[command=show-modal]")[0];
-            assert!(
-                has_classes(remove, &["btn", "btn-ghost", "btn-xs"]),
-                "{}",
-                remove.html()
-            );
-            assert_eq!(select_in(remove, "svg[aria-hidden=true]").len(), 1);
-            (text(header), text(cells[1]), text(remove))
-        })
-        .collect();
+    assert_eq!(heads, ["Task", "Captured from", ""]);
     assert_eq!(
-        shown,
+        rows(&html, "#tasks"),
         [
-            (
-                "columns Names the columns.".to_string(),
-                "1/implement-1".to_string(),
-                "Remove".to_string()
-            ),
-            (
-                "lanes Stacks them.".into(),
-                "1/implement-2".into(),
-                "Remove".into()
-            ),
-            (
-                "aisles Walks the aisles.".into(),
-                "1/implement-1".into(),
-                "Remove".into()
-            ),
+            ["columns Names the columns.", "1/implement-1", "View"],
+            ["lanes Stacks them.", "1/implement-2", "View"],
+            ["aisles Walks the aisles.", "1/implement-1", "View"],
         ]
     );
     assert_eq!(
-        hrefs(select(&html, "#tasks tbody td a")),
+        hrefs(select(&html, "#tasks tbody td:nth-child(2) a")),
         [
             "/runs/1/implement-1",
             "/runs/1/implement-2",
             "/runs/1/implement-1"
         ]
     );
-    let criteria = select(&html, "#tasks tbody tr[data-fold-of]");
-    assert_eq!(criteria.len(), 3);
-    assert_eq!(
-        select_in(criteria[0], "pre")[0].text().collect::<String>(),
-        "Names the columns.\nAnd orders them.\n"
-    );
-    assert_eq!(select_in(criteria[0], "td")[0].attr("colspan"), Some("4"));
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark, Tasks: a task's row opens to the
-/// whole of its criteria, as a fold row whose ids are keyed by names;
-/// `docs/specs/design_system.md`, Tables, Opening in place.
+/// `docs/specs/benchmarks.md`, Benchmark, Tasks, and Task: a task's row opens
+/// Task by "View" at its end, and opens nothing in place;
+/// `docs/specs/design_system.md`, Tables, A row's screen.
 #[test_log::test(tokio::test)]
-async fn a_tasks_row_opens_to_its_criteria_by_a_chevron_in_its_leading_cell() {
+async fn a_tasks_row_opens_its_task_by_view_and_nothing_in_place() {
     let pages = with_benchmarks().await;
-    keep_task_row(&pages.path(""), "board", "aisles", "1/implement-1").await;
 
     let html = pages.page("/benchmarks/1").await;
 
-    let rows: Vec<(Option<&str>, Option<&str>, bool)> = select(&html, "#tasks tbody tr")
+    let views: Vec<(Option<&str>, Option<&str>)> = select(&html, "#tasks tbody td a.row-view")
         .into_iter()
-        .map(|row| {
-            (
-                row.attr("id"),
-                row.attr("data-fold-of"),
-                row.attr("hidden").is_some(),
-            )
+        .map(|view| {
+            assert!(
+                has_classes(view, &["btn", "btn-ghost", "btn-xs"]),
+                "{}",
+                view.html()
+            );
+            (view.attr("href"), view.attr("aria-label"))
         })
         .collect();
     assert_eq!(
-        rows,
+        views,
         [
-            (Some("task-1"), None, false),
-            (Some("task-1_criteria"), Some("task-1"), true),
-            (Some("task-2"), None, false),
-            (Some("task-2_criteria"), Some("task-2"), true),
-            (Some("task-3"), None, false),
+            (Some("/tasks/1"), Some("View task columns")),
+            (Some("/tasks/2"), Some("View task lanes")),
         ]
     );
-    let buttons = select(&html, "#task-1 > td:first-child > button");
-    assert_eq!(buttons.len(), 1, "{}", html.html());
-    assert_eq!(buttons[0].attr("type"), Some("button"));
-    assert_eq!(buttons[0].attr("aria-expanded"), Some("false"));
-    assert_eq!(buttons[0].attr("aria-controls"), Some("task-1_criteria"));
-    assert_eq!(
-        buttons[0].attr("aria-label"),
-        Some("Show the criteria of columns")
-    );
-    let chevrons: Vec<_> = select_in(buttons[0], "svg")
-        .into_iter()
-        .map(|chevron| (chevron.attr("data-icon"), chevron.attr("class")))
-        .collect();
-    assert_eq!(
-        chevrons,
-        [
-            (
-                Some("chevron-right"),
-                Some("icon size-4 shrink-0 group-aria-expanded:hidden")
-            ),
-            (
-                Some("chevron-down"),
-                Some("icon size-4 shrink-0 hidden group-aria-expanded:block")
-            ),
-        ]
-    );
-    assert_eq!(select(&html, "#tasks th button").len(), 0);
-    let unread = select(&html, "#task-3 > :first-child")[0];
-    assert_eq!(unread.value().name(), "td");
-    assert_eq!(unread.children().count(), 0, "{}", unread.html());
-    assert_eq!(
-        text(select(&html, "#task-3 > th")[0])
-            .split_whitespace()
-            .next(),
-        Some("aisles")
-    );
-    assert_eq!(select(&html, "#tasks details").len(), 0);
-}
-
-/// `docs/specs/benchmarks.md`, Benchmark, Tasks, and Remove task;
-/// `docs/specs/design_system.md`, Confirming.
-#[test_log::test(tokio::test)]
-async fn each_task_is_removed_after_a_confirmation_naming_it() {
-    let pages = with_benchmarks().await;
-
-    let html = pages.page("/benchmarks/1").await;
-
-    let removal = |task: &str, id: &str| Confirmation {
-        asking: "Remove".into(),
-        question: format!("Remove the task {task} and its directory?"),
-        turn_down: "Cancel".into(),
-        action: "/benchmarks/1/remove-task".into(),
-        fields: vec![("task".into(), id.into())],
-    };
-    assert_eq!(
-        confirmations(&html),
-        [removal("columns", "1"), removal("lanes", "2")]
-    );
-    assert!(select(&html, "[hx-confirm]").is_empty(), "{}", html.html());
+    assert_eq!(select(&html, "#tasks tbody tr").len(), 2);
+    assert_eq!(select(&html, "#tasks button").len(), 0, "{}", html.html());
+    assert_eq!(confirmations(&html), []);
 }
 
 /// `docs/specs/design_system.md`, Screen states, Empty;
@@ -1077,29 +954,6 @@ async fn a_benchmark_with_no_tasks_benchmark_runs_or_runs_of_its_stage_says_so()
     let add = select(&html, "dialog#new-task button[type=submit]");
     assert_eq!(text(add[0]), "Add task");
     assert!(add[0].attr("disabled").is_some(), "{}", add[0].html());
-}
-
-#[test_log::test(tokio::test)]
-async fn removing_a_task_removes_it_from_the_page_and_from_the_tasks() {
-    let pages = with_benchmarks().await;
-
-    let (status, answer) = post(
-        &pages,
-        "/benchmarks/1/remove-task",
-        &[SAME_ORIGIN],
-        &[("task", "1")],
-    )
-    .await;
-
-    assert_eq!(status, 200, "{}", said(&answer));
-    assert_eq!(said(&answer), "Removed the task columns");
-    assert_eq!(tasks(&pages), ["2"]);
-    let html = pages.page("/benchmarks/1").await;
-    let names: Vec<String> = select(&html, "#tasks tbody th > span:first-child")
-        .into_iter()
-        .map(text)
-        .collect();
-    assert_eq!(names, ["lanes"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -1748,27 +1602,24 @@ async fn a_task_whose_criteria_do_not_read_says_so_in_secondary_text_after_faile
 }
 
 /// `docs/specs/web/design_system.md`, Making: the reason for a refusal is a
-/// daisyUI `alert` in the `alert-error` style, and what was done one in
-/// `alert-success`, each as daisyUI draws it.
+/// daisyUI `alert` in the `alert-error` style, as daisyUI draws it.
 #[test_log::test(tokio::test)]
-async fn a_writes_answer_is_an_alert_in_its_style_as_daisyui_draws_it() {
+async fn a_refused_writes_answer_is_an_error_alert_as_daisyui_draws_it() {
     let pages = with_benchmarks().await;
 
-    for (benchmark, style) in [("2", "alert-error"), ("1", "alert-success")] {
-        let (_, answer) = post(
-            &pages,
-            &format!("/benchmarks/{benchmark}/remove-task"),
-            &[SAME_ORIGIN],
-            &[("task", "1")],
-        )
-        .await;
+    let (_, answer) = post(
+        &pages,
+        "/benchmarks/2/remove-task",
+        &[SAME_ORIGIN],
+        &[("task", "1")],
+    )
+    .await;
 
-        let alerts = select(&answer, ".alert");
-        assert_eq!(alerts.len(), 1, "{}", answer.html());
-        let mut classes: Vec<&str> = alerts[0].value().classes().collect();
-        classes.sort_unstable();
-        assert_eq!(classes, ["alert", style], "{benchmark}");
-    }
+    let alerts = select(&answer, ".alert");
+    assert_eq!(alerts.len(), 1, "{}", answer.html());
+    let mut classes: Vec<&str> = alerts[0].value().classes().collect();
+    classes.sort_unstable();
+    assert_eq!(classes, ["alert", "alert-error"]);
 }
 
 /// `docs/specs/benchmarks.md`, Names and IDs: a name is any text, which every
@@ -1798,6 +1649,7 @@ async fn a_name_holding_markup_shows_as_text_on_every_screen_and_names_no_id() {
         ("/benchmarks", &[BENCHMARK][..]),
         ("/benchmarks/1/tasks", &[BENCHMARK, TASK][..]),
         ("/benchmarks/1/runs", &[BENCHMARK][..]),
+        ("/tasks/1", &[BENCHMARK, TASK][..]),
         ("/benchmark-runs/1", &[BENCHMARK, TASK, CONFIGURATION][..]),
         ("/benchmark-runs/1/1/1/1/run", &[BENCHMARK, TASK][..]),
         ("/runs/1/implement-2", &[BENCHMARK][..]),

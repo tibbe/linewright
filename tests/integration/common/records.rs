@@ -461,6 +461,43 @@ pub fn keep_task(
     }
 }
 
+/// Writes into the directory of the task `id` of `work_dir` what a capture of
+/// the run `run`, started at `start`, leaves of its facts: its `task.json`,
+/// and its `items.json` holding the run's item with its issue `issue`, as
+/// GitHub gave it.
+#[track_caller]
+pub fn keep_task_facts(
+    work_dir: &Path,
+    id: i64,
+    run: &str,
+    start: &str,
+    issue: &serde_json::Value,
+) {
+    let caller = Location::caller();
+    let parsed: linewright::runs::RunId = run
+        .parse()
+        .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
+    let linewright::runs::RunOf::Work { item, stage } = parsed.of else {
+        panic!("only an item's run is captured, at {caller}");
+    };
+    let dir = work_dir.join("tasks").join(id.to_string());
+    let task = serde_json::json!({
+        "stage": stage.name(),
+        "item": item.0,
+        "start": start,
+        "run": run,
+        "api_version": linewright::store::API_VERSION,
+    });
+    let items = serde_json::json!([{
+        "number": item.0,
+        "resources": {format!("issues/{}", item.0): issue},
+    }]);
+    for (file, json) in [("task.json", task), ("items.json", items)] {
+        std::fs::write(dir.join(file), json.to_string())
+            .unwrap_or_else(|e| panic!("writing the task's {file} at {caller}: {e}"));
+    }
+}
+
 /// Sets when the benchmark run `id` of `work_dir` was launched, through the
 /// back door, so that what shows it is known.
 #[track_caller]

@@ -906,7 +906,7 @@ async fn a_work_directory_from_before_ids_opens_with_each_benchmark_task_copy_an
             .removed_task("4".parse().unwrap())
             .await
             .unwrap()
-            .map(|name| name.to_string()),
+            .map(|removed| removed.name.to_string()),
         Some("gone".into())
     );
 }

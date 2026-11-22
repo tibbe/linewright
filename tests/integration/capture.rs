@@ -363,7 +363,7 @@ async fn a_task_reads_with_its_benchmark_and_what_its_directory_gives_and_once_r
             .removed_task(kept.id)
             .await
             .unwrap()
-            .map(|name| name.to_string()),
+            .map(|removed| removed.name.to_string()),
         Some("gadgets".into())
     );
 }

@@ -1,0 +1,7 @@
+{%- import "macros.html" as ui -%}
+<section id="task" class="flex flex-col gap-2">
+{%- call ui::stats(task.facts()) %}{% endcall %}
+{%- if let ItemAndStart::Unreadable(why) = task.item_and_start %}
+{%- call ui::unreadable(format!("Item and Started do not read: {why}"), "text-sm") %}{% endcall %}
+{%- endif %}
+</section>
