@@ -191,8 +191,8 @@ async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under
     assert_eq!(
         required,
         [
-            ("new-benchmark", Some(r".*\S.*")),
-            ("name", Some(r".*\S.*")),
+            ("new-benchmark", Some(r"[\s\S]*\S[\s\S]*")),
+            ("name", Some(r"[\s\S]*\S[\s\S]*")),
             ("criteria", None),
         ]
     );
@@ -218,7 +218,7 @@ async fn the_benchmark_name_is_hidden_and_disabled_but_with_new_benchmark_chosen
     let pages = implemented(Recorded::Whole).await;
 
     let html = pages.page(RUN_PAGE).await;
-    let (_, refused) = submit_into(&pages, Chosen::New("Fresh\nones"), "gadgets", CRITERIA).await;
+    let (_, refused) = submit_into(&pages, Chosen::New("\u{200b}"), "gadgets", CRITERIA).await;
 
     let form = capture_form(&html).unwrap();
     let hidden = select_in(form, ".new-benchmark-name");
@@ -455,14 +455,33 @@ async fn a_taken_name_is_refused_under_the_name() {
     );
 }
 
+/// `docs/specs/benchmarks.md`, Names and IDs, Cleaning a name.
 #[test_log::test(tokio::test)]
-async fn a_name_of_two_lines_is_refused_under_the_name() {
+async fn a_name_is_kept_clean() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit(&pages, "Gadgets\nand more", CRITERIA).await;
+    let (status, answer) = submit(&pages, " Gadgets\nand  more\u{200b} ", CRITERIA).await;
+
+    assert_eq!(status, 200, "{}", answer.html());
+    let said: Vec<String> = select(&answer, "#made .alert-success")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(
+        said,
+        ["Captured run 1/implement-1 as the task Gadgets and more in the benchmark implements."]
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Names and IDs, No name.
+#[test_log::test(tokio::test)]
+async fn a_name_that_is_no_name_once_clean_is_required_under_the_name() {
+    let pages = implemented(Recorded::Whole).await;
+
+    let (status, answer) = submit(&pages, "\u{200b}", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("name", ONE_LINE));
+    assert_eq!(placed(&answer), under("name", "Required."));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -674,14 +693,15 @@ async fn a_new_benchmark_without_a_name_is_refused_under_it_and_writes_nothing()
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_whose_name_is_of_two_lines_is_refused_under_it_and_writes_nothing() {
+async fn a_new_benchmark_whose_name_is_no_name_once_clean_is_required_under_it_and_writes_nothing()
+{
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) =
-        submit_into(&pages, Chosen::New("Fresh\nones"), "gadgets", CRITERIA).await;
+        submit_into(&pages, Chosen::New("\u{200b}\u{ad}"), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("new-benchmark", ONE_LINE));
+    assert_eq!(placed(&answer), under("new-benchmark", "Required."));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 

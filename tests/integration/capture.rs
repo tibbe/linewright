@@ -951,16 +951,22 @@ fn lw_capture<'a>(
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_refuses_a_blank_name() {
+async fn lw_capture_refuses_no_name() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let output = lw_capture(work_dir.path(), "7/implement-1", " \t ", "Gadgets.\n").await;
+    let output = lw_capture(
+        work_dir.path(),
+        "7/implement-1",
+        " \t\u{200b} ",
+        "Gadgets.\n",
+    )
+    .await;
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(
         output
             .stderr
-            .contains("it holds only white space, which is no name"),
+            .contains("it holds nothing once it is clean, which is no name"),
         "{}",
         output.stderr
     );

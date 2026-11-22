@@ -335,7 +335,7 @@ async fn new_opens_the_new_benchmark_dialog_outside_the_benchmarks_with_name_and
     );
     let name = select(&fragment, "input[name=name]")[0];
     assert_eq!(name.attr("required"), Some(""));
-    assert_eq!(name.attr("pattern"), Some(r".*\S.*"));
+    assert_eq!(name.attr("pattern"), Some(r"[\s\S]*\S[\s\S]*"));
     let stage = select(&fragment, "select[name=stage]")[0];
     assert_eq!(stage.attr("required"), Some(""));
     assert_eq!(stage.attr("pattern"), None);
@@ -414,10 +414,10 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_pl
         ("", "design", "design", vec![("name", "Required.")]),
         (" \t ", "design", "design", vec![("name", "Required.")]),
         (
-            "Board\n2",
+            "\u{200b}",
             "implement",
             "implement",
-            vec![("name", ONE_LINE)],
+            vec![("name", "Required.")],
         ),
         (
             "board",
@@ -1114,7 +1114,11 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
         .collect();
     assert_eq!(
         required,
-        [("run", None), ("name", Some(r".*\S.*")), ("criteria", None)]
+        [
+            ("run", None),
+            ("name", Some(r"[\s\S]*\S[\s\S]*")),
+            ("criteria", None)
+        ]
     );
     let hints: Vec<String> = select(&fragment, ".validator-hint")
         .into_iter()
@@ -1203,8 +1207,8 @@ async fn a_refused_task_answers_the_form_as_sent_with_each_reason_in_its_place()
             ..sent("1/implement-2", "columns", "Ships gh.\n")
         },
         Case {
-            refused: vec![("name", ONE_LINE)],
-            ..sent("1/implement-2", "Gadgets\n2", "Ships gh.\n")
+            refused: vec![("name", "Required.")],
+            ..sent("1/implement-2", "\u{200b}", "Ships gh.\n")
         },
         Case {
             refused: vec![("criteria", "Required.")],
@@ -1879,9 +1883,9 @@ async fn a_refused_benchmark_name_keeps_what_the_reader_typed_with_its_reason() 
         ),
         (
             "/benchmarks/1/edit",
-            "Board\n2",
+            "\u{200b}",
             422,
-            vec![("name", ONE_LINE)],
+            vec![("name", "Required.")],
             None,
         ),
         (

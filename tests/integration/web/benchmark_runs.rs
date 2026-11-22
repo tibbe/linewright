@@ -1641,7 +1641,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
     assert_eq!(repetitions.attr("type"), Some("text"));
     assert_eq!(repetitions.attr("inputmode"), Some("numeric"));
     assert_eq!(repetitions.attr("required"), Some(""));
-    assert_eq!(repetitions.attr("pattern"), Some(r".*\S.*"));
+    assert_eq!(repetitions.attr("pattern"), Some(r"[\s\S]*\S[\s\S]*"));
     assert_eq!(select(&fragment, ".optional").len(), 0);
     let buttons = select_in(form, ".modal-action button");
     assert_eq!(buttons[0].attr("command"), Some("close"));
@@ -1685,7 +1685,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
     assert_eq!(optional, ["Optional", "Optional", "Optional"]);
     let name = select(&added, "input[name='c__N__.name']")[0];
     assert_eq!(name.attr("required"), Some(""));
-    assert_eq!(name.attr("pattern"), Some(r".*\S.*"));
+    assert_eq!(name.attr("pattern"), Some(r"[\s\S]*\S[\s\S]*"));
     assert_eq!(
         select(&added, "[name]:not([name='c__N__.name'])[required]").len(),
         0

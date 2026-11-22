@@ -91,6 +91,8 @@ humantime = "2"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 icu_collator = "2.3"
+icu_normalizer = "2.3"
+icu_properties = "2.3"
 jsonschema = { version = "0.61.0", default-features = false }
 percent-encoding = "2.3"
 rayon = "1"
@@ -122,6 +124,7 @@ libtest-mimic = "0.8"
 # Cargo has no test-only binaries:
 # https://github.com/rust-lang/cargo/issues/4356
 linewright = { path = ".", features = ["bench", "fake-claude"] }
+proptest = "1"
 rstest = { version = "0.28", default-features = false }
 scraper = "0.29"
 test-log = { version = "0.2.21", default-features = false, features = ["trace"] }

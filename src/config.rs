@@ -171,7 +171,7 @@ pub enum Command {
         /// The ID of the benchmark the task goes into: one of the run's stage.
         #[arg(long)]
         benchmark: BenchmarkId,
-        /// The task's name: one line of any text, refused when blank.
+        /// The task's name, kept clean, and refused when it is no name.
         #[arg(long)]
         name: Name,
         /// What a good result is, as `criteria.md` in the task: refused
@@ -253,7 +253,7 @@ pub enum BenchmarkRunCommand {
     RenameConfiguration {
         id: BenchmarkRunId,
         configuration: ConfigurationId,
-        /// One line of any text, refused when blank.
+        /// Kept clean, and refused when it is no name.
         name: Name,
         /// Print the answer as JSON.
         #[arg(long)]
@@ -295,7 +295,7 @@ pub enum BenchmarkCommand {
     /// Make the benchmark NAME, of the stage STAGE: triage, design or
     /// implement, and write its ID.
     Add {
-        /// One line of any text, refused when blank.
+        /// Kept clean, and refused when it is no name.
         name: Name,
         stage: TaskStage,
         /// Print the answer as JSON.
@@ -305,7 +305,7 @@ pub enum BenchmarkCommand {
     /// Change the name of the benchmark whose ID is BENCHMARK to NAME.
     Rename {
         benchmark: BenchmarkId,
-        /// One line of any text, refused when blank.
+        /// Kept clean, and refused when it is no name.
         name: Name,
         /// Print the answer as JSON.
         #[arg(long)]
@@ -317,7 +317,7 @@ pub enum BenchmarkCommand {
     EditTask {
         benchmark: BenchmarkId,
         task: TaskId,
-        /// The task's new name: one line of any text, refused when blank.
+        /// The task's new name, kept clean, and refused when it is no name.
         #[arg(long, group = "change")]
         name: Option<Name>,
         /// The file that holds the task's new criteria.

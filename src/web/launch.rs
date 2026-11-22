@@ -941,11 +941,11 @@ mod tests {
     /// `docs/specs/benchmarks.md`, Names and IDs, A name;
     /// `docs/specs/design_system.md`, Making, Required.
     #[test_log::test]
-    fn a_name_that_is_blank_is_required_and_one_of_two_lines_refused() {
+    fn a_name_that_is_no_name_once_clean_is_required() {
         for (typed, reason) in [
             ("", "Required."),
             (" \t", "Required."),
-            ("two\nlines", "A name is one line."),
+            ("\u{200b}", "Required."),
         ] {
             assert_eq!(
                 refused(&[("repetitions", "1"), ("c3.name", typed)]),
@@ -955,8 +955,7 @@ mod tests {
         }
     }
 
-    /// `docs/specs/benchmarks.md`, Names and IDs, A name: one line of any
-    /// text.
+    /// `docs/specs/benchmarks.md`, Names and IDs, A name.
     #[test_log::test]
     fn a_configuration_is_named_in_plain_words() {
         let launch = sent(&[
@@ -1058,7 +1057,7 @@ mod tests {
             refused(&[
                 ("repetitions", "0"),
                 ("c1.name", ""),
-                ("c2.name", "two\nlines"),
+                ("c2.name", "\u{200b}"),
                 ("c3.name", "twin"),
                 ("c3.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
                 ("c6.name", "twin"),
@@ -1074,7 +1073,7 @@ mod tests {
             )
             .and(
                 configuration_field(2, ConfigurationField::Name),
-                "A name is one line."
+                "Required."
             )
             .and(
                 configuration_field(3, ConfigurationField::Name),
