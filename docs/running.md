@@ -27,7 +27,7 @@ lw --repo owner/name serve
 `.linewright/automations/` that are due. One `serve` runs per repository on a
 host. `lw drain` stops it once the runs in flight have finished. `lw once` runs
 one poll cycle and the runs it starts, and `lw automation run NAME` runs the
-automation in `.linewright/automations/NAME.md` once, now.
+automation in `.linewright/automations/NAME` once, now.
 
 ## Settings
 

@@ -26,9 +26,9 @@ test. The pipeline then works those issues like any other.
 
 ## The automation file
 
-An automation is a Markdown file in `.linewright/automations/` on the default
-branch: its name is the file's name, its YAML front matter says when it runs,
-and its body is the agent's instructions.
+An automation is a Markdown file anywhere under `.linewright/automations/` on
+the default branch: its name is its path there, such as `team/weekly.md`, its
+YAML front matter says when it runs, and its body is the agent's instructions.
 
 ```markdown
 ---
