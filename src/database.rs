@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat};
+use futures_util::future::BoxFuture;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Connection as _, SqlitePool};
 
@@ -16,6 +17,7 @@ use crate::domain::Timestamp;
 
 mod benchmark_ids;
 mod benchmark_names;
+mod clean_names;
 mod moves;
 
 /// The database's file, in the work directory.
@@ -52,6 +54,9 @@ pub(crate) enum Migration {
         table: &'static str,
         dir: &'static str,
     },
+    /// A change of the rows, run on the schema as the change has made it so
+    /// far.
+    Rows(fn(&mut sqlx::SqliteConnection) -> BoxFuture<'_, anyhow::Result<()>>),
 }
 
 /// Every change of the schema, in order: the schema's version is how many of
@@ -76,6 +81,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Moves(benchmark_ids::MOVES),
     Migration::Sql(AUTOMATION_PATHS),
     Migration::Sql(WORKFLOW_RUN_TRIGGERS),
+    clean_names::CLEAN_NAMES,
 ];
 
 /// The table of the release that made each schema version.
@@ -653,6 +659,7 @@ async fn migrate_on(
                     .with_context(changing)?;
                 }
             }
+            Migration::Rows(change) => change(&mut tx).await.with_context(changing)?,
         }
     }
     foreign_keys_met(&mut tx).await?;
