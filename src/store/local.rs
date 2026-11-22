@@ -26,6 +26,7 @@ use crate::domain::{
 };
 use crate::git::{self, Merged};
 use crate::task::{IssueState, Task, TaskItem, TaskItemKind, TaskPull, TaskPullState};
+use crate::workflow_run::{AttemptId, CompletedAttempt};
 
 mod history;
 
@@ -90,6 +91,8 @@ struct State {
     after_comment: Option<Box<dyn FnOnce() + Send>>,
     after_labeling: Option<AfterLabeling>,
     pause: Option<Pause>,
+    /// Each completed attempt of a workflow run, by its id.
+    attempts: BTreeMap<AttemptId, CompletedAttempt>,
 }
 
 /// A write of Linewright's that [`LocalStore::pause_after`] can pause a
@@ -395,6 +398,7 @@ impl LocalStore {
                 after_comment: None,
                 after_labeling: None,
                 pause: None,
+                attempts: BTreeMap::new(),
             }),
         })
     }
@@ -1042,6 +1046,12 @@ impl LocalStore {
     /// Fails each read of items as GitHub's REST API gives them.
     pub fn fail_recording(&self, reason: &str) {
         self.state().unrecordable = Some(reason.into());
+    }
+
+    /// Keeps `attempt` as a completed attempt of a workflow run of the
+    /// repository.
+    pub fn complete_attempt(&self, attempt: CompletedAttempt) {
+        self.state().attempts.insert(attempt.id, attempt);
     }
 
     pub fn restore_reads(&self) {
@@ -2563,6 +2573,22 @@ impl Store for LocalStore {
             .collect())
     }
 
+    async fn completed_attempts(
+        &self,
+        created_since: Timestamp,
+        known: &BTreeSet<AttemptId>,
+    ) -> Result<Vec<CompletedAttempt>> {
+        self.readable()?;
+        Ok(self
+            .state()
+            .attempts
+            .values()
+            .filter(|attempt| attempt.run_created_at >= created_since)
+            .filter(|attempt| !known.contains(&attempt.id))
+            .cloned()
+            .collect())
+    }
+
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {
         let object = format!("{branch}:{path}");
         let repository = self.repository();
@@ -3034,5 +3060,73 @@ impl Store for LocalStore {
             .iter()
             .map(|&number| state.recorded_item(number))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::SystemClock;
+    use crate::store::attempts_read::{self as read, LINEWRIGHT, REGISTER};
+
+    /// A local store of `repo` holding `attempts`, with the directory it
+    /// keeps it in.
+    #[track_caller]
+    fn holding(
+        repo: &str,
+        attempts: Vec<CompletedAttempt>,
+    ) -> impl Future<Output = (LocalStore, tempfile::TempDir)> {
+        let caller = std::panic::Location::caller();
+        let repo: Repo = repo.parse().unwrap();
+        async move {
+            let root = tempfile::tempdir().unwrap();
+            let store = LocalStore::create(
+                root.path(),
+                Seed {
+                    repo,
+                    default_branch: "main".into(),
+                    linewright: Login::new("linewright"),
+                    issue_types: None,
+                    linear_history: false,
+                    requires_up_to_date: false,
+                    allowed_merge_methods: MergeMethods::all(),
+                },
+                Arc::new(SystemClock),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("creating the local store at {caller}: {e:#}"));
+            for attempt in attempts {
+                store.complete_attempt(attempt);
+            }
+            (store, root)
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn every_attempt_of_a_run_re_run_twice_is_read() {
+        let (store, _root) = holding(LINEWRIGHT, read::re_run_twice()).await;
+
+        read::every_attempt_of_a_run_re_run_twice_is_read(&store).await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_forks_run_on_a_branch_named_main_reads_with_no_branch() {
+        let (store, _root) = holding(REGISTER, vec![read::fork_run_on_main()]).await;
+
+        read::the_attempt_is_read(&store, read::fork_run_on_main()).await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_conclusion_outside_the_nine_reads_as_other() {
+        let (store, _root) = holding(REGISTER, vec![read::concluded_outside_the_nine()]).await;
+
+        read::the_attempt_is_read(&store, read::concluded_outside_the_nine()).await;
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_poll_with_nothing_new_reads_the_same() {
+        let (store, _root) = holding(LINEWRIGHT, read::re_run_twice()).await;
+
+        read::a_poll_with_nothing_new_reads_the_same(&store).await;
     }
 }

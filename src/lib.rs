@@ -75,4 +75,5 @@ pub mod web;
 pub mod webhook;
 pub mod winding_up;
 pub mod work_settings;
+pub mod workflow_run;
 pub mod working_pull;

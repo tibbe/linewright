@@ -11,13 +11,14 @@ use tokio::sync::Mutex;
 use super::{ATTACHMENTS, WRITES, attachment_link};
 use crate::domain::{
     CheckFailure, IssueCloseReason, Login, MergeMethod, MergedPull, Number, Pull, Scope, Snapshot,
-    TicketBranchName, Windows, label,
+    TicketBranchName, Timestamp, Windows, label,
 };
 use crate::git::CommitId;
 use crate::store::{
     AnyItem, AttachError, Blob, Identity, IssueRead, NewIssue, NewPull, PeoplesPullRead, PushError,
     PushMode, RecordedItem, RecordedProperties, RepoSettings, Store,
 };
+use crate::workflow_run::{AttemptId, CompletedAttempt};
 
 /// A [`Store`] that keeps each write made through it as plain files under
 /// its output, in the order of the calls, and answers every read from the
@@ -283,6 +284,14 @@ impl Store for Journal {
 
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>> {
         self.inner.check_failures(pr, checks).await
+    }
+
+    async fn completed_attempts(
+        &self,
+        created_since: Timestamp,
+        known: &BTreeSet<AttemptId>,
+    ) -> Result<Vec<CompletedAttempt>> {
+        self.inner.completed_attempts(created_since, known).await
     }
 
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {

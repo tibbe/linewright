@@ -29,6 +29,7 @@ use crate::domain::{
     closed_within, label,
 };
 use crate::git;
+use crate::workflow_run::{AttemptConclusion, AttemptId, CompletedAttempt, WorkflowRunId};
 
 const API: &str = "https://api.github.com";
 
@@ -58,6 +59,7 @@ pub struct GitHub {
     openings: Arc<std::sync::Mutex<BTreeMap<Number, Opening>>>,
     sending: Arc<Sending>,
     pushes_kept: Arc<PushesKept>,
+    runs_listed: Arc<RunsListed>,
 }
 
 /// The most requests in flight at once. GitHub takes at most 100 and asks
@@ -682,6 +684,7 @@ impl GitHub {
             openings: Arc::default(),
             sending: Arc::default(),
             pushes_kept: Arc::default(),
+            runs_listed: Arc::default(),
         };
         github.viewer = github
             .rest(Method::GET, "/user", None)
@@ -711,62 +714,94 @@ impl GitHub {
         format!("/repos/{}/{}{rest}", self.owner, self.name)
     }
 
+    /// A request to `path`, under the API unless it is a full URL, sending
+    /// `body`, if any.
+    fn request(&self, method: Method, path: &str, body: Option<&Value>) -> reqwest::RequestBuilder {
+        let url = if path.starts_with("http") {
+            path.to_string()
+        } else {
+            format!("{}{path}", self.api)
+        };
+        let request = self
+            .http
+            .request(method, &url)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION);
+        match body {
+            Some(body) => request.json(body),
+            None => request,
+        }
+    }
+
     async fn send(
         &self,
         method: Method,
         path: &str,
         body: Option<Value>,
     ) -> Result<reqwest::Response> {
-        let url = if path.starts_with("http") {
-            path.to_string()
-        } else {
-            format!("{}{path}", self.api)
-        };
-        let mut request = self
-            .http
-            .request(method.clone(), &url)
-            .bearer_auth(&self.token)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", API_VERSION);
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-        request
+        self.request(method.clone(), path, body.as_ref())
             .send()
             .await
             .with_context(|| format!("{method} {path}"))
     }
 
-    /// The answer to the request, with each rate limit waited out.
-    async fn answer(&self, method: &Method, path: &str, body: Option<&Value>) -> Result<Answer> {
-        let request = format!("{method} {path}");
-        waiting_out_rate_limits(&request, &self.sending, || async {
-            Answer::read(self.send(method.clone(), path, body.cloned()).await?).await
+    /// The answer to `request`, which `build` builds, with each rate limit
+    /// waited out.
+    async fn answer_to(
+        &self,
+        request: &str,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<Answer> {
+        waiting_out_rate_limits(request, &self.sending, || async {
+            let response = build().send().await.with_context(|| request.to_string())?;
+            Answer::read(response).await
         })
         .await
     }
 
-    /// The answer to a request that makes nothing, made again once when a
-    /// retry could end it differently ([`retried_once`]): when GitHub gives
-    /// none or a server error, which fails it.
+    /// The answer to the request, with each rate limit waited out.
+    async fn answer(&self, method: &Method, path: &str, body: Option<&Value>) -> Result<Answer> {
+        self.answer_to(&format!("{method} {path}"), || {
+            self.request(method.clone(), path, body)
+        })
+        .await
+    }
+
+    /// The answer to `request`, which `build` builds and which makes
+    /// nothing, made again once when a retry could end it differently
+    /// ([`retried_once`]): when GitHub gives none or a server error, which
+    /// fails it.
+    async fn answer_retried_to(
+        &self,
+        request: &str,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<Answer> {
+        retried_once(
+            request,
+            || async {
+                let answer = self.answer_to(request, &build).await?;
+                if answer.status.is_server_error() {
+                    return Err(answer.refusal(request.to_string()).into());
+                }
+                Ok(answer)
+            },
+            finds_nothing,
+        )
+        .await
+    }
+
+    /// The answer to a request that makes nothing, as
+    /// [`GitHub::answer_retried_to`] gives it.
     async fn answer_retried(
         &self,
         method: Method,
         path: &str,
         body: Option<Value>,
     ) -> Result<Answer> {
-        let request = format!("{method} {path}");
-        retried_once(
-            &request,
-            || async {
-                let answer = self.answer(&method, path, body.as_ref()).await?;
-                if answer.status.is_server_error() {
-                    return Err(answer.refusal(request.clone()).into());
-                }
-                Ok(answer)
-            },
-            finds_nothing,
-        )
+        self.answer_retried_to(&format!("{method} {path}"), || {
+            self.request(method.clone(), path, body.as_ref())
+        })
         .await
     }
 
@@ -1690,6 +1725,92 @@ impl GitHub {
         Ok(node.node_id)
     }
 
+    /// The page of runs listed at `url`, read again only when it changed:
+    /// GitHub answers 304 to the `ETag` of the page kept for `url`
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate>).
+    async fn runs_page(&self, url: &str) -> Result<RunsPage> {
+        let kept = self.runs_listed.kept(url);
+        let request = format!("GET {url}");
+        let answer = self
+            .answer_retried_to(&request, || {
+                let sent = self.request(Method::GET, url, None);
+                match kept.as_ref().and_then(|kept| kept.etag.as_deref()) {
+                    Some(etag) => sent.header("If-None-Match", etag),
+                    None => sent,
+                }
+            })
+            .await?;
+        let page = match (answer.status, kept) {
+            (StatusCode::NOT_MODIFIED, Some(kept)) => kept,
+            (status, _) if status.is_success() => RunsPage {
+                etag: header(&answer.headers, "etag"),
+                next: header(&answer.headers, "link").and_then(|link| next_link(&link)),
+                body: answer.body,
+            },
+            _ => return Err(answer.refusal(request).into()),
+        };
+        self.runs_listed.keep(url, page.clone());
+        Ok(page)
+    }
+
+    /// Every run GitHub lists as created within `window`, with the URL of
+    /// each page read. A range GitHub counts more than [`RUNS_LISTED_AT_MOST`]
+    /// runs in is read in halves.
+    async fn runs_created(
+        &self,
+        window: Created,
+    ) -> Result<(Vec<RestWorkflowRun>, BTreeSet<String>)> {
+        let now = chrono::Utc::now();
+        let mut ranges = vec![window];
+        let mut runs = vec![];
+        let mut read = BTreeSet::new();
+        while let Some(range) = ranges.pop() {
+            let query: String = form_urlencoded::Serializer::new(String::new())
+                .append_pair("created", &range.query())
+                .append_pair("per_page", &RUNS_PER_PAGE.to_string())
+                .finish();
+            let mut url = Some(self.repo_path(&format!("/actions/runs?{query}")));
+            let mut first = true;
+            while let Some(at) = url {
+                let page = self.runs_page(&at).await?;
+                let listed: RunsListing = serde_json::from_str(&page.body)
+                    .with_context(|| format!("decoding GET {at}"))?;
+                read.insert(at);
+                if first && listed.total_count > RUNS_LISTED_AT_MOST {
+                    if let Some((earlier, later)) = range.halves(now) {
+                        ranges.extend([earlier, later]);
+                        break;
+                    }
+                    tracing::warn!(
+                        created = range.query(),
+                        runs = listed.total_count,
+                        "GitHub lists only {RUNS_LISTED_AT_MOST} of the runs created in a second"
+                    );
+                }
+                first = false;
+                runs.extend(listed.workflow_runs);
+                url = page.next;
+            }
+        }
+        Ok((runs, read))
+    }
+
+    /// Attempt `id` of `run`, if it has completed: `None` too when GitHub no
+    /// longer has it, as after the run is deleted.
+    async fn earlier_attempt(
+        &self,
+        run: &RestWorkflowRun,
+        id: AttemptId,
+    ) -> Result<Option<CompletedAttempt>> {
+        let path = format!("actions/runs/{}/attempts/{}", id.run, id.attempt);
+        let Some(attempt) = self.found(&path).await? else {
+            return Ok(None);
+        };
+        let attempt: RestWorkflowRun = serde_json::from_value(attempt)
+            .with_context(|| format!("decoding GET {}", self.repo_path(&format!("/{path}"))))?;
+        Ok(attempt.completed(run))
+    }
+
     async fn failed_step_output(&self, job: u64) -> Option<String> {
         let response = self
             .send(
@@ -1738,6 +1859,221 @@ impl BranchRules {
                 .any(|p| p["require_code_owner_review"] == json!(true)),
         }
     }
+}
+
+/// The most runs GitHub lists for one filter
+/// (<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository>).
+const RUNS_LISTED_AT_MOST: u64 = 1000;
+
+/// How many runs a page of a listing of them holds, the most GitHub gives.
+const RUNS_PER_PAGE: u64 = 100;
+
+/// A page of runs as GitHub listed it at a URL, with its `ETag`, if GitHub
+/// gave one, and the URL of the next page.
+#[derive(Clone)]
+struct RunsPage {
+    etag: Option<String>,
+    body: String,
+    next: Option<String>,
+}
+
+/// The page of runs last listed at each URL a poll read.
+#[derive(Default)]
+struct RunsListed(std::sync::Mutex<BTreeMap<String, RunsPage>>);
+
+impl RunsListed {
+    fn listed(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, RunsPage>> {
+        self.0.lock().expect("the runs listed are readable")
+    }
+
+    fn kept(&self, url: &str) -> Option<RunsPage> {
+        self.listed().get(url).cloned()
+    }
+
+    fn keep(&self, url: &str, page: RunsPage) {
+        self.listed().insert(url.to_string(), page);
+    }
+
+    /// Forgets every page but those listed at `urls`.
+    fn keep_only(&self, urls: &BTreeSet<String>) {
+        self.listed().retain(|url, _| urls.contains(url));
+    }
+}
+
+/// `time` rounded down to the hour, which a bound on the runs listed is,
+/// so that the polls of the hour list them at the same URL.
+fn hour_of(time: Timestamp) -> Timestamp {
+    use chrono::{DurationRound as _, TimeDelta};
+    time.duration_trunc(TimeDelta::hours(1))
+        .expect("an hour divides a time")
+}
+
+/// A range of the times GitHub created runs at, as its `created` filter
+/// takes it
+/// (<https://docs.github.com/en/search-github/getting-started-with-searching-on-github/understanding-the-search-syntax#query-for-dates>).
+#[derive(Clone, Copy, Debug)]
+struct Created {
+    /// The first time in it, a whole second.
+    from: Timestamp,
+    /// The last time in it, inclusive and a whole second; none for every
+    /// time from `from` on.
+    to: Option<Timestamp>,
+}
+
+impl Created {
+    fn query(self) -> String {
+        match self.to {
+            None => format!(">={}", query_time(self.from)),
+            Some(to) => format!("{}..{}", query_time(self.from), query_time(to)),
+        }
+    }
+
+    /// The range split in two at a time after `from`, taking `now` as the
+    /// end of a range with none: at the hour of its middle when that is
+    /// after `from`, and else at its middle. None for a range of one second.
+    fn halves(self, now: Timestamp) -> Option<(Created, Created)> {
+        use chrono::DurationRound as _;
+        let second = chrono::TimeDelta::seconds(1);
+        let end = self.to.unwrap_or(now);
+        if end - self.from < second {
+            return None;
+        }
+        let middle = (self.from + (end - self.from) / 2)
+            .duration_trunc(second)
+            .ok()?;
+        let middle = Some(hour_of(middle))
+            .filter(|hour| *hour > self.from)
+            .unwrap_or(middle)
+            .max(self.from + second);
+        Some((
+            Created {
+                from: self.from,
+                to: Some(middle - second),
+            },
+            Created {
+                from: middle,
+                to: self.to,
+            },
+        ))
+    }
+}
+
+/// <https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository>
+#[derive(Deserialize)]
+struct RunsListing {
+    total_count: u64,
+    workflow_runs: Vec<RestWorkflowRun>,
+}
+
+/// A run at its latest attempt, or one of its attempts
+/// (<https://docs.github.com/en/rest/actions/workflow-runs#get-a-workflow-run-attempt>).
+#[derive(Deserialize)]
+struct RestWorkflowRun {
+    id: WorkflowRunId,
+    name: Option<String>,
+    run_attempt: std::num::NonZeroU32,
+    status: Option<RunStatus>,
+    conclusion: Option<AttemptConclusion>,
+    /// When GitHub created the run, for the run; when it created the
+    /// attempt, for an attempt.
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    head_branch: Option<String>,
+    head_sha: String,
+    /// The repository the run is of.
+    repository: RestRepository,
+    /// The repository of the commit it ran on: another for a fork's.
+    head_repository: Option<RestRepository>,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum RunStatus {
+    Completed,
+    #[serde(other)]
+    NotCompleted,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct RestRepository {
+    full_name: String,
+}
+
+impl RestWorkflowRun {
+    fn id(&self) -> AttemptId {
+        AttemptId {
+            run: self.id,
+            attempt: self.run_attempt,
+        }
+    }
+
+    /// The ids of the attempts before this one, leaving out those `known`.
+    fn earlier(&self, known: &BTreeSet<AttemptId>) -> Vec<AttemptId> {
+        (1..self.run_attempt.get())
+            .filter_map(std::num::NonZeroU32::new)
+            .map(|attempt| AttemptId {
+                run: self.id,
+                attempt,
+            })
+            .filter(|id| !known.contains(id))
+            .collect()
+    }
+
+    /// This attempt of `run`, as listed, if it has completed.
+    fn completed(&self, run: &RestWorkflowRun) -> Option<CompletedAttempt> {
+        if self.status != Some(RunStatus::Completed) {
+            return None;
+        }
+        let id = self.id();
+        let ours = self.head_repository.as_ref() == Some(&self.repository);
+        Some(CompletedAttempt {
+            id,
+            workflow: run.name.clone().unwrap_or_default(),
+            run_created_at: run.created_at,
+            completed_at: self.updated_at,
+            conclusion: self.conclusion.clone()?,
+            branch: self.head_branch.clone().filter(|_| ours),
+            commit: self.head_sha.clone(),
+            link: format!(
+                "https://github.com/{}/actions/runs/{}/attempts/{}",
+                self.repository.full_name, id.run, id.attempt
+            ),
+        })
+    }
+}
+
+/// The latest attempt of each of `runs`, which may list a run twice as a
+/// new run shifts the pages read.
+fn latest_attempts(runs: Vec<RestWorkflowRun>) -> Vec<RestWorkflowRun> {
+    let mut latest: BTreeMap<WorkflowRunId, RestWorkflowRun> = BTreeMap::new();
+    for run in runs {
+        if latest
+            .get(&run.id)
+            .is_none_or(|kept| kept.run_attempt < run.run_attempt)
+        {
+            latest.insert(run.id, run);
+        }
+    }
+    latest.into_values().collect()
+}
+
+/// The value of the header `name`, if it is text.
+fn header(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    Some(headers.get(name)?.to_str().ok()?.to_string())
+}
+
+/// The URL of the next page a `Link` header gives
+/// (<https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api#using-link-headers>).
+fn next_link(link: &str) -> Option<String> {
+    link.split(',').find_map(|part| {
+        let (url, rel) = part.split_once(';')?;
+        (rel.trim() == "rel=\"next\"").then(|| {
+            url.trim()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
+                .to_string()
+        })
+    })
 }
 
 #[derive(Deserialize)]
@@ -4247,6 +4583,28 @@ impl Store for GitHub {
             failures.push(failure);
         }
         Ok(failures)
+    }
+
+    async fn completed_attempts(
+        &self,
+        created_since: Timestamp,
+        known: &BTreeSet<AttemptId>,
+    ) -> Result<Vec<CompletedAttempt>> {
+        let window = Created {
+            from: hour_of(created_since),
+            to: None,
+        };
+        let (runs, read) = self.runs_created(window).await?;
+        self.runs_listed.keep_only(&read);
+        let runs = latest_attempts(runs);
+        let earlier = try_join_all(runs.iter().flat_map(|run| {
+            run.earlier(known)
+                .into_iter()
+                .map(move |id| self.earlier_attempt(run, id))
+        }))
+        .await?;
+        let latest = runs.iter().filter_map(|run| run.completed(run));
+        Ok(earlier.into_iter().flatten().chain(latest).collect())
     }
 
     async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>> {
@@ -7314,6 +7672,7 @@ mod tests {
             openings: Arc::default(),
             sending: Arc::default(),
             pushes_kept: Arc::default(),
+            runs_listed: Arc::default(),
         }
     }
 
@@ -7490,6 +7849,315 @@ mod tests {
             "{sent_at:?}"
         );
     }
+    /// [`Store::completed_attempts`] against a fake GitHub serving recorded
+    /// workflow runs, as [`attempts_read`] checks it on each store.
+    mod workflow_runs {
+        use sha2::{Digest, Sha256};
+
+        use super::*;
+        use crate::store::attempts_read::{self as read, LINEWRIGHT, REGISTER};
+
+        /// What a fake GitHub holds of a repository's workflow runs.
+        #[derive(Clone, Default)]
+        struct Actions {
+            /// Each run as GitHub gives it at its latest attempt, newest
+            /// first once served.
+            runs: Vec<Value>,
+            /// Each earlier attempt as GitHub gives it, by its run and number.
+            attempts: BTreeMap<(u64, u64), Value>,
+        }
+
+        /// The most runs GitHub lists for one filter
+        /// (<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository>).
+        const LISTED_AT_MOST: usize = 1000;
+
+        #[track_caller]
+        fn recorded(json: &str) -> Value {
+            serde_json::from_str(json).unwrap()
+        }
+
+        /// tibbe/linewright's run 40834616225 at its third attempt, with its
+        /// first two.
+        fn re_run_twice() -> Actions {
+            Actions {
+                runs: vec![recorded(include_str!(
+                    "fixtures/workflow-run-re-run-twice.json"
+                ))],
+                attempts: BTreeMap::from([
+                    (
+                        (40_834_616_225, 1),
+                        recorded(include_str!(
+                            "fixtures/workflow-run-re-run-twice-attempt-1.json"
+                        )),
+                    ),
+                    (
+                        (40_834_616_225, 2),
+                        recorded(include_str!(
+                            "fixtures/workflow-run-re-run-twice-attempt-2.json"
+                        )),
+                    ),
+                ]),
+            }
+        }
+
+        fn fork_run_on_main() -> Value {
+            recorded(include_str!("fixtures/workflow-run-fork-main.json"))
+        }
+
+        impl Actions {
+            /// GitHub's answer to a listing of the runs with `query`: those
+            /// created within its `created` range, in the order of `runs`,
+            /// paged by its
+            /// `per_page` and `page`, of at most [`LISTED_AT_MOST`], with the
+            /// link to the next page, if any, under `base`.
+            fn listing(&self, base: &str, path: &str, query: &str) -> (Value, Option<String>) {
+                let params: BTreeMap<String, String> = form_urlencoded::parse(query.as_bytes())
+                    .into_owned()
+                    .collect();
+                let range = &params["created"];
+                let (from, to) = match range.strip_prefix(">=") {
+                    Some(from) => (from, None),
+                    None => {
+                        let (from, to) = range.split_once("..").unwrap();
+                        (from, Some(to))
+                    }
+                };
+                let time = |time: &str| time.parse::<Timestamp>().unwrap();
+                let matching: Vec<&Value> = self
+                    .runs
+                    .iter()
+                    .filter(|run| {
+                        let created = time(run["created_at"].as_str().unwrap());
+                        created >= time(from) && to.is_none_or(|to| created <= time(to))
+                    })
+                    .collect();
+                let per_page: usize = params.get("per_page").map_or(30, |n| n.parse().unwrap());
+                let page: usize = params.get("page").map_or(1, |n| n.parse().unwrap());
+                let listed = matching.len().min(LISTED_AT_MOST);
+                let start = ((page - 1) * per_page).min(listed);
+                let end = (page * per_page).min(listed);
+                let body = json!({
+                    "total_count": matching.len(),
+                    "workflow_runs": matching[start..end],
+                });
+                let next = (end < listed).then(|| {
+                    let mut params = params.clone();
+                    params.insert("page".into(), (page + 1).to_string());
+                    let next: String = form_urlencoded::Serializer::new(String::new())
+                        .extend_pairs(&params)
+                        .finish();
+                    format!("{base}{path}?{next}")
+                });
+                (body, next)
+            }
+        }
+
+        /// Each request a fake GitHub answered: its path and query, and the
+        /// status it answered with.
+        type Answered = Arc<std::sync::Mutex<Vec<(String, u16)>>>;
+
+        /// A GitHub store on `repo`, served by a fake GitHub holding
+        /// `actions`, which gives each listing an `ETag` and answers a request
+        /// sending it in `If-None-Match` with 304, as GitHub does
+        /// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate>);
+        /// with what it answered.
+        #[track_caller]
+        fn serving_actions(
+            repo: &str,
+            actions: Actions,
+        ) -> impl Future<Output = (GitHub, Answered)> {
+            let caller = std::panic::Location::caller();
+            let repo = repo.to_string();
+            async move {
+                use axum::http::{HeaderMap, StatusCode as Status, Uri};
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .unwrap_or_else(|e| panic!("serving GitHub's Actions at {caller}: {e}"));
+                let base = format!("http://{}", listener.local_addr().unwrap());
+                let answered = Answered::default();
+                let runs = format!("/repos/{repo}/actions/runs");
+                let mut actions = actions;
+                actions
+                    .runs
+                    .sort_by_key(|run| std::cmp::Reverse(run["created_at"].to_string()));
+                let actions = Arc::new(actions);
+                let app = axum::Router::new().fallback({
+                    let (base, answered) = (base.clone(), answered.clone());
+                    move |uri: Uri, headers: HeaderMap| {
+                        let (base, answered, runs) = (base.clone(), answered.clone(), runs.clone());
+                        let actions = actions.clone();
+                        async move {
+                            let path = uri.path();
+                            let query = uri.query().unwrap_or_default();
+                            let (status, link, body) = if path == runs {
+                                let (body, next) = actions.listing(&base, path, query);
+                                let body = body.to_string();
+                                let etag = format!("W/\"{}\"", hex::encode(Sha256::digest(&body)));
+                                if headers
+                                    .get("If-None-Match")
+                                    .is_some_and(|sent| sent == &*etag)
+                                {
+                                    (Status::NOT_MODIFIED, None, (etag, String::new()))
+                                } else {
+                                    let link = next.map(|next| format!("<{next}>; rel=\"next\""));
+                                    (Status::OK, link, (etag, body))
+                                }
+                            } else {
+                                let attempt = path
+                                    .strip_prefix(&format!("{runs}/"))
+                                    .and_then(|rest| rest.split_once("/attempts/"))
+                                    .and_then(|(run, n)| {
+                                        actions.attempts.get(&(run.parse().ok()?, n.parse().ok()?))
+                                    });
+                                match attempt {
+                                    Some(attempt) => {
+                                        (Status::OK, None, (String::new(), attempt.to_string()))
+                                    }
+                                    None => (Status::NOT_FOUND, None, (String::new(), "{}".into())),
+                                }
+                            };
+                            answered
+                                .lock()
+                                .unwrap()
+                                .push((uri.to_string(), status.as_u16()));
+                            let (etag, body) = body;
+                            let mut answer = axum::http::Response::builder().status(status);
+                            if !etag.is_empty() {
+                                answer = answer.header("ETag", etag);
+                            }
+                            if let Some(link) = link {
+                                answer = answer.header("Link", link);
+                            }
+                            answer.body(axum::body::Body::from(body)).unwrap()
+                        }
+                    }
+                });
+                tokio::spawn(async move { axum::serve(listener, app).await });
+                let (owner, name) = repo.split_once('/').unwrap();
+                let github = GitHub {
+                    api: base,
+                    owner: owner.into(),
+                    name: name.into(),
+                    ..github("token")
+                };
+                (github, answered)
+            }
+        }
+
+        /// The requests answered for the path `path`, with their statuses.
+        fn asked(answered: &Answered, path: &str) -> Vec<(String, u16)> {
+            answered
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(uri, _)| uri.split('?').next() == Some(path))
+                .cloned()
+                .collect()
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn every_attempt_of_a_run_re_run_twice_is_read_fetching_each_earlier_one_once() {
+            let (github, answered) = serving_actions(LINEWRIGHT, re_run_twice()).await;
+
+            read::every_attempt_of_a_run_re_run_twice_is_read(&github).await;
+
+            for n in 1..=2 {
+                let path = format!("/repos/{LINEWRIGHT}/actions/runs/40834616225/attempts/{n}");
+                assert_eq!(asked(&answered, &path).len(), 1, "{path}");
+            }
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn a_run_in_progress_is_left_out() {
+            let mut actions = re_run_twice();
+            actions.runs.push(recorded(include_str!(
+                "fixtures/workflow-run-in-progress.json"
+            )));
+            let (github, _) = serving_actions(LINEWRIGHT, actions).await;
+
+            read::every_attempt_of_a_run_re_run_twice_is_read(&github).await;
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn a_forks_run_on_a_branch_named_main_reads_with_no_branch() {
+            let actions = Actions {
+                runs: vec![fork_run_on_main()],
+                ..Actions::default()
+            };
+            let (github, _) = serving_actions(REGISTER, actions).await;
+
+            read::the_attempt_is_read(&github, read::fork_run_on_main()).await;
+        }
+
+        #[test_log::test(tokio::test)]
+        async fn a_conclusion_outside_the_nine_reads_as_other() {
+            let mut run = fork_run_on_main();
+            run["conclusion"] = json!(read::UNKNOWN_CONCLUSION);
+            let actions = Actions {
+                runs: vec![run],
+                ..Actions::default()
+            };
+            let (github, _) = serving_actions(REGISTER, actions).await;
+
+            read::the_attempt_is_read(&github, read::concluded_outside_the_nine()).await;
+        }
+
+        /// GitHub answers 304 to a listing that has not changed since the
+        /// `ETag` sent
+        /// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate>):
+        /// a poll in the same hour lists the runs at the same URL.
+        #[test_log::test(tokio::test)]
+        async fn a_poll_with_nothing_new_is_answered_304() {
+            let (github, answered) = serving_actions(LINEWRIGHT, re_run_twice()).await;
+
+            read::a_poll_with_nothing_new_reads_the_same(&github).await;
+
+            let listings = asked(&answered, &format!("/repos/{LINEWRIGHT}/actions/runs"));
+            let statuses: Vec<u16> = listings.iter().map(|(_, status)| *status).collect();
+            assert_eq!(statuses, [200, 304]);
+            let query = listings[0].0.split_once('?').unwrap().1;
+            let created = form_urlencoded::parse(query.as_bytes())
+                .find(|(name, _)| name == "created")
+                .unwrap()
+                .1;
+            assert_eq!(created, ">=2026-10-29T07:00:00Z");
+        }
+
+        /// GitHub lists at most 1000 runs for a filter
+        /// (<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository>),
+        /// and lists none past them however many it counts.
+        #[test_log::test(tokio::test)]
+        async fn a_window_of_more_than_a_thousand_runs_is_read_in_narrower_ranges() {
+            let run = recorded(include_str!("fixtures/workflow-run-re-run-twice.json"));
+            let since = read::re_run_created();
+            let runs: Vec<Value> = (0..1200u64)
+                .map(|n| {
+                    let mut run = run.clone();
+                    let created = since + TimeDelta::minutes(i64::try_from(n).unwrap());
+                    run["id"] = json!(n + 1);
+                    run["run_attempt"] = json!(1);
+                    run["created_at"] = json!(query_time(created));
+                    run
+                })
+                .collect();
+            let (github, _) = serving_actions(
+                LINEWRIGHT,
+                Actions {
+                    runs,
+                    ..Actions::default()
+                },
+            )
+            .await;
+
+            let read = github
+                .completed_attempts(since, &BTreeSet::new())
+                .await
+                .unwrap();
+
+            let ids: BTreeSet<u64> = read.iter().map(|attempt| attempt.id.run.0).collect();
+            assert_eq!(ids, (1..=1200).collect());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -7545,6 +8213,7 @@ mod retry_tests {
             openings: Arc::default(),
             sending: Arc::default(),
             pushes_kept: Arc::default(),
+            runs_listed: Arc::default(),
         }
     }
 
@@ -8041,6 +8710,7 @@ mod recording_tests {
             openings: Arc::default(),
             sending: Arc::default(),
             pushes_kept: Arc::default(),
+            runs_listed: Arc::default(),
         }
     }
 
