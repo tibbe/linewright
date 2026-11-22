@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod attempts_read;
 pub mod github;
 mod job_log;
 pub mod local;
@@ -14,11 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::domain::{
     CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
     MergeMethods, MergedPull, Number, Opening, Pull, Repo, Scope, Snapshot, TicketBranchName,
-    Windows, label,
+    Timestamp, Windows, label,
 };
 pub use crate::domain::{IssueRead, PeoplesPullRead};
 use crate::git::CommitId;
 use crate::redaction::Redaction;
+use crate::workflow_run::{AttemptId, CompletedAttempt};
 pub use properties::{Properties, Property, RecordedProperties};
 
 /// Reads into `snapshot` the openings it lacks
@@ -546,6 +549,15 @@ pub trait Store: Send + Sync {
     /// The pull request's changes to `paths`, as a unified diff.
     async fn diff(&self, pr: Number, paths: &[String]) -> Result<String>;
     async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>>;
+    /// Every completed attempt of every workflow run GitHub created at or
+    /// after `created_since`, and perhaps of some created earlier, in no
+    /// order. It never fetches an attempt of `known`, and need not give one.
+    /// Fails when the runs or an attempt cannot be read.
+    async fn completed_attempts(
+        &self,
+        created_since: Timestamp,
+        known: &BTreeSet<AttemptId>,
+    ) -> Result<Vec<CompletedAttempt>>;
 
     /// The contents of `path` at the head of `branch`, or `None` when it has
     /// no such file.
