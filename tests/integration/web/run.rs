@@ -196,8 +196,8 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
     let layers: Vec<String> = [
-        "model: the harness's",
-        "effort: the harness's",
+        "model: Default",
+        "effort: Default",
         "session-timeout: the operator's",
         "session-env: Linewright's own",
         "session-pass-env: Linewright's own",
@@ -207,7 +207,7 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     ]
     .map(String::from)
     .to_vec();
-    let line = "model the harness's choice, effort the harness's choice".to_string();
+    let line = "model Default, effort Default".to_string();
     assert_eq!(settings_shown(&html), (line.clone(), layers.clone(), false));
     assert_eq!(settings_shown(&verbose), (line, layers, true));
     let chevron = select(&html, "#s1 .settings > details > summary > .chevron");

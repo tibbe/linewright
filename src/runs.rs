@@ -1242,13 +1242,14 @@ pub(crate) fn describe_ran(ran: Option<&Ran>) -> String {
     };
     format!(
         "model {}, effort {}",
-        ran.model_ran().unwrap_or(HARNESS_CHOICE),
-        ran.effort.map_or(HARNESS_CHOICE, Effort::name)
+        ran.model_ran().unwrap_or(DEFAULT),
+        ran.effort.map_or(DEFAULT, Effort::name)
     )
 }
 
-/// A model or effort Linewright left unset.
-pub(crate) const HARNESS_CHOICE: &str = "the harness's choice";
+/// A model or effort nothing set, which the harness did not report
+/// (`docs/specs/runs.md`, Default).
+pub(crate) const DEFAULT: &str = "Default";
 
 pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
     format!("left out: {}", left_out_phrase(left_out, how))
