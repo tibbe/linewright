@@ -46,15 +46,17 @@ writes, and on nothing else.
 - **Acting on a delivery.** Linewright reads the issue or pull request again
   from GitHub and does what a poll would do with it, without a poll of
   everything. A push to the default branch names every open pull request
-  Linewright opened. What it acts on is what it read, never the delivery's
-  own account of the change, so a delivery that arrives late, twice or out
-  of order changes nothing a poll would not.
+  Linewright opened. A delivery about a workflow run has Linewright read the
+  repository's workflow runs at once, as a poll does for the automations
+  ([Workflow runs](automations.md#workflow-runs)). What it acts on is what it
+  read, never the delivery's own account of the change, so a delivery that
+  arrives late, twice or out of order changes nothing a poll would not.
 - **What Linewright wrote.** When Linewright acts on a delivery, it also
   reads again the items it wrote to since it last read them. It acts on them
   as on what the delivery names.
 - **Events.** The webhook sends the events about what a poll reads, and only
-  those: issues, pull requests, their comments and reviews, CI and pushes.
-  Linewright accepts any other event and ignores it.
+  those: issues, pull requests, their comments and reviews, CI, workflow runs
+  and pushes. Linewright accepts any other event and ignores it.
 - **Content types.** Linewright reads a delivery in either content type
   GitHub offers, `application/json` or `application/x-www-form-urlencoded`,
   as its `Content-Type` header says.

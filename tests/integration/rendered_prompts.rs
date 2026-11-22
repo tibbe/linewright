@@ -237,10 +237,40 @@ fn automation_is_filled_as_before() {
         &common::marker_briefs().templates,
         &repo(&name),
         &automation,
+        None,
         std::path::Path::new(ATTACHMENTS),
     );
 
     assert_filled_as(&prompt, "automation.txt");
+}
+
+#[test_log::test]
+fn an_automation_a_workflow_run_started_is_given_the_attempt() {
+    let name = repo_name();
+    let automation = linewright::automation::parse(
+        &"main-ci".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\n---\nFile an issue to fix what failed.\n",
+    )
+    .unwrap();
+    let prompt = |branch| {
+        prompts::automation(
+            &common::marker_briefs().templates,
+            &repo(&name),
+            &automation,
+            Some(prompts::WorkflowRunAttempt {
+                workflow: "CI",
+                attempt: 2,
+                conclusion: "failure",
+                branch,
+                commit: "9f2c1e7",
+                link: "https://github.com/owner/widgets/actions/runs/7/attempts/2",
+            }),
+            std::path::Path::new(ATTACHMENTS),
+        )
+    };
+
+    assert_filled_as(&prompt(Some("main")), "automation-workflow-run.txt");
+    assert_eq!(common::filled_in(&prompt(None), "branch"), "none");
 }
 
 #[test_log::test]

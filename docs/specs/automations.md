@@ -8,7 +8,9 @@ issues.
 
 For example, an automation that runs every Monday morning looks at the bugs
 fixed in the past week and files an issue for each that lacks a regression
-test. The pipeline then works those issues like any other.
+test. The pipeline then works those issues like any other. Another runs
+when a workflow run fails on the default branch, and files an issue to fix
+what failed.
 
 ## User Stories
 
@@ -19,10 +21,12 @@ test. The pipeline then works those issues like any other.
 3. As an operator, I want automations defined in the repository, so that adding
    one is a reviewed change, versioned with the code.
 4. As an operator, I want to run an automation by hand, so that I can try its
-   instructions without waiting for its schedule.
+   instructions without waiting for its trigger.
 5. As a maintainer, I want to see each automation's last and next run, and
    each automation file that does not parse, so that I know my automations
    run.
+6. As an operator, I want an agent to run when a workflow run completes, so
+   that the factory repairs a failure on the default branch without me.
 
 ## The automation file
 
@@ -40,10 +44,15 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ```
 
-| key           | meaning                                 | default  |
-| ------------- | --------------------------------------- | -------- |
-| `on.schedule` | when it runs: a cron expression, in UTC | required |
-| `max-issues`  | the most issues one run files           | 3        |
+| key          | meaning                       | default  |
+| ------------ | ----------------------------- | -------- |
+| `on`         | its trigger                   | required |
+| `max-issues` | the most issues one run files | 3        |
+
+| trigger           | it runs                                                         |
+| ----------------- | --------------------------------------------------------------- |
+| `on.schedule`     | on a schedule: a cron expression, in UTC                        |
+| `on.workflow_run` | when a workflow run completes ([Workflow runs](#workflow-runs)) |
 
 - **Session settings.** The front matter also takes the session settings the
   repository's file takes
@@ -53,9 +62,11 @@ Look at the bugs fixed in the past week ...
 - **A file that does not parse.** Every file in `.linewright/automations/`,
   hidden files aside, is an automation file; one that does not parse is
   logged and skipped, and the other automations run.
-- **`status`.** It shows each automation with its last and next run, and each
-  file that does not parse.
-- **The trigger.** `on` is a schedule, the only kind for now.
+- **`status`.** It shows each automation with its trigger and its last run,
+  and each file that does not parse. For an automation on a schedule, it
+  also shows the next run.
+- **The trigger.** `on` holds exactly one trigger of the table. A file with
+  any other `on` does not parse.
 
 ## Scheduling
 
@@ -64,15 +75,53 @@ scheduled run.
 
 - **Missed ticks.** Ticks missed while Linewright was down, or while a run of
   the automation was in flight, collapse into one run.
-- **A new automation.** An automation seen for the first time counts as having
-  had a scheduled run then, so adding one does not start it at once.
+- **A new automation.** An automation counts as having had a scheduled run
+  when Linewright first sees it, or first sees it with a schedule, so adding
+  one does not start it at once.
 - **The last scheduled run.** Linewright records each automation's last
   scheduled run in its database ([Storage](architecture.md#storage)).
-- **By hand.** `lw automation run NAME` runs one automation now and exits, and
-  leaves its schedule as it was. A run by hand is marked as one wherever the
-  run is shown.
-- **The last run.** An automation's last run is its newest, whether by its
-  schedule or by hand.
+
+## Workflow runs
+
+An automation with `on.workflow_run` runs once for each attempt of a workflow
+run that completes and matches all the trigger's filters.
+
+```markdown
+---
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    conclusions: [failure]
+---
+A workflow run failed on the default branch ...
+```
+
+| filter        | matches                                 | values |
+| ------------- | --------------------------------------- | ------ |
+| `workflows`   | the name of the workflow run's workflow | any    |
+| `branches`    | the workflow run's branch               | any    |
+| `conclusions` | the conclusion GitHub gives the attempt | `success`, `failure`, `cancelled`, `skipped`, `timed_out`, `action_required`, `neutral`, `stale`, `startup_failure` |
+
+- **Filters.** A filter is a list, and matches what is equal to one of its
+  values. A filter left out matches everything.
+- **Filters that do not parse.** A file does not parse when a filter:
+  - is empty;
+  - is not in the table;
+  - holds a conclusion that is not in the table.
+- **The branch.** A workflow run's branch is the head branch GitHub gives it.
+  A workflow run for a fork's commit has none.
+- **The time limit.** An attempt runs the automation only when Linewright
+  sees it within `ci-timeout` after GitHub created its workflow run.
+- **Earlier attempts.** An attempt that completed before Linewright first saw
+  the automation's present `on` does not run it. One that completed later
+  while Linewright was down does.
+- **In order.** The runs that an automation's trigger starts go one at a
+  time, in the order in which the attempts completed.
+- **A cancelled run.** An attempt whose run is cancelled
+  ([Ending](runs.md#ending)) runs the automation again.
+- **What has run it.** Linewright records the attempts that have run each
+  automation in its database ([Storage](architecture.md#storage)).
 
 ## Runs
 
@@ -87,6 +136,11 @@ counts against the ceiling on simultaneous runs.
   - `ready-for-agent`, for work an agent can do.
   - `ready-for-human`, when a person must decide or help.
 - **Beyond `max-issues`.** Issues beyond `max-issues` are dropped and logged.
+- **By hand.** `lw automation run NAME` runs one automation now and exits. It
+  changes neither the automation's schedule nor which attempts have run it.
+  A run by hand is marked as one wherever the run is shown.
+- **The last run.** An automation's last run is its newest, whether by its
+  trigger or by hand.
 
 ## The session
 
@@ -98,6 +152,10 @@ filled besides those of every prompt ([Contract](runs.md#contract)).
 | `{{name}}`         | the automation's name          |
 | `{{instructions}}` | its instructions               |
 | `{{max_issues}}`   | its `max-issues`               |
+| `{{trigger}}`      | the workflow run that started it (`trigger-workflow-run.md`), or nothing |
+
+- **`{{trigger}}`.** It gives the workflow run's workflow, attempt,
+  conclusion, commit and link, and its branch where it has one.
 
 The session ends with a result that matches
 [`briefs/results/automation.schema.json`](../../briefs/results/automation.schema.json).
@@ -119,12 +177,15 @@ The session ends with a result that matches
 | Column     | Holds                                                                                                  |
 | ---------- | ------------------------------------------------------------------------------------------------------ |
 | Automation | the automation's name                                                                                  |
-| Schedule   | when it runs, in words                                                                                 |
+| Trigger    | when it runs, in words                                                                                 |
 | Last run   | its last run, with its outcome, linking to its Run; or, before its first, when Linewright first saw it |
-| Next run   | when it runs next                                                                                      |
+| Next run   | when it runs next; nothing for an automation not on a schedule                                         |
 
 ## Out of scope
 
-- Other triggers, such as a merged pull request touching certain paths.
+- Other triggers, such as a merged pull request touching certain paths, a
+  check suite or a commit status.
+- More than one trigger in an automation.
+- Filters that match by pattern, such as a glob of branch names.
 - Automations that open pull requests; they hand code changes to the pipeline
   as issues.

@@ -269,7 +269,16 @@ values!(AutomationRun: Shared {
     max_issues,
     name,
     instructions,
+    trigger,
     output
+});
+values!(TriggerWorkflowRun {
+    workflow,
+    attempt,
+    conclusion,
+    branch,
+    commit,
+    link
 });
 values!(
     /// What the scorer of a trial is sent, from `scorer.md`.
@@ -563,6 +572,7 @@ templates! {
     update_rebase: Stopped = "parts/update-rebase.md", UPDATE, Trimmed;
     update_merge: Stopped = "parts/update-merge.md", UPDATE, Trimmed;
     full_log: FullLog = "parts/full-log.md", FIX_CI, Trimmed;
+    trigger_workflow_run: TriggerWorkflowRun = "parts/trigger-workflow-run.md", AUTOMATIONS, Trimmed;
     filed_gaps: FiledGapsPart = "parts/filed-gaps.md", TICKET_WORK, Trimmed;
     fold_unfinished: Commits = "parts/fold-unfinished.md", BRANCH_WORK, Trimmed;
     held_secret: HeldSecret = "parts/held-credential.md", BRANCH_WORK, Trimmed;
@@ -1110,17 +1120,48 @@ fn unfinished_sentence(part: &Template<Commits>, unfinished: Option<&UnfinishedC
         .unwrap_or_default()
 }
 
+/// The attempt of a workflow run that started an automation's run
+/// (`docs/specs/automations.md`, "Workflow runs").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkflowRunAttempt<'a> {
+    /// The name of the workflow run's workflow.
+    pub workflow: &'a str,
+    pub attempt: u32,
+    /// The conclusion GitHub gives the attempt, such as `failure`.
+    pub conclusion: &'a str,
+    /// The workflow run's head branch, which a run for a fork's commit lacks.
+    pub branch: Option<&'a str>,
+    pub commit: &'a str,
+    pub link: &'a str,
+}
+
+/// The prompt of a run of `automation`, which `trigger` started unless its
+/// schedule or a person did.
 pub fn automation(
     templates: &Templates,
     repo: &Repo,
     automation: &Automation,
+    trigger: Option<WorkflowRunAttempt>,
     attachments: &Path,
 ) -> String {
+    let trigger = trigger.map(|attempt| {
+        templates.trigger_workflow_run.fill(&TriggerWorkflowRun {
+            workflow: attempt.workflow.into(),
+            attempt: attempt.attempt.to_string(),
+            conclusion: attempt.conclusion.into(),
+            branch: attempt
+                .branch
+                .map_or_else(|| "none".into(), |branch| format!("`{branch}`")),
+            commit: attempt.commit.into(),
+            link: attempt.link.into(),
+        })
+    });
     templates.automation.fill(&AutomationRun {
         base: shared(templates, repo),
         max_issues: automation.max_issues.to_string(),
         name: automation.name.to_string(),
         instructions: or_none(&automation.instructions).into(),
+        trigger: trigger.unwrap_or_default(),
         output: with_attachments(
             templates,
             &templates.automation_output.fill(&NoValues {}),
