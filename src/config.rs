@@ -7,7 +7,7 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::benchmarks::{BenchmarkId, BenchmarkRunId, Repetitions, TaskId};
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, ConfigurationId, Repetitions, TaskId};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
@@ -207,13 +207,15 @@ pub enum Command {
         json: bool,
     },
     /// Benchmarks: `benchmark show` shows one, `benchmark add` makes one,
-    /// and `benchmark remove-task` removes a task from one.
+    /// `benchmark rename` renames one, `benchmark edit-task` changes a task of
+    /// one, and `benchmark remove-task` removes a task from one.
     Benchmark {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
     /// Benchmark runs: `benchmark-run show` shows one, `benchmark-run launch`
-    /// launches one, and `benchmark-run cancel` cancels one.
+    /// launches one, `benchmark-run rename-configuration` renames a
+    /// configuration of one, and `benchmark-run cancel` cancels one.
     BenchmarkRun {
         #[command(subcommand)]
         command: BenchmarkRunCommand,
@@ -242,6 +244,17 @@ pub enum BenchmarkRunCommand {
         /// How many trials to make of each task under each configuration.
         #[arg(long, value_name = "N", default_value = "1")]
         repetitions: Repetitions,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name of the configuration whose ID is CONFIGURATION, of the
+    /// benchmark run ID, to NAME; `as-is`, configuration 1, keeps its name.
+    RenameConfiguration {
+        id: BenchmarkRunId,
+        configuration: ConfigurationId,
+        /// One line of any text, refused when blank.
+        name: Name,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
@@ -285,6 +298,31 @@ pub enum BenchmarkCommand {
         /// One line of any text, refused when blank.
         name: Name,
         stage: TaskStage,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name of the benchmark whose ID is BENCHMARK to NAME.
+    Rename {
+        benchmark: BenchmarkId,
+        /// One line of any text, refused when blank.
+        name: Name,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name, the criteria, or both, of the task whose ID is TASK
+    /// in the benchmark whose ID is BENCHMARK.
+    #[command(group = clap::ArgGroup::new("change").required(true).multiple(true))]
+    EditTask {
+        benchmark: BenchmarkId,
+        task: TaskId,
+        /// The task's new name: one line of any text, refused when blank.
+        #[arg(long, group = "change")]
+        name: Option<Name>,
+        /// The file that holds the task's new criteria.
+        #[arg(long, value_name = "FILE", group = "change")]
+        criteria: Option<PathBuf>,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,

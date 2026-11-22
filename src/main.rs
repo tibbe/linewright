@@ -9,7 +9,8 @@ use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::benchmarks::{
     self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkRunAnswer, BenchmarkRunId,
     BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer,
-    CancelRefusal, LaunchRefusal, RemoveError, Repetitions, Shown, TaskId,
+    CancelRefusal, ConfigurationId, EditTaskError, LaunchRefusal, RemoveError,
+    RenameConfigurationError, RenameError, Repetitions, Shown, TaskChange, TaskId,
 };
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
@@ -944,6 +945,26 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         } => return Ok(make_benchmark(&config, &name, stage, json).await),
         Command::Benchmark {
             command:
+                BenchmarkCommand::Rename {
+                    benchmark,
+                    name,
+                    json,
+                },
+        } => return Ok(rename_benchmark(&config, benchmark, &name, json).await),
+        Command::Benchmark {
+            command:
+                BenchmarkCommand::EditTask {
+                    benchmark,
+                    task,
+                    name,
+                    criteria,
+                    json,
+                },
+        } => {
+            return Ok(edit_task(&config, benchmark, task, name, criteria.as_deref(), json).await);
+        }
+        Command::Benchmark {
+            command:
                 BenchmarkCommand::RemoveTask {
                     benchmark,
                     task,
@@ -971,6 +992,15 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
             )
             .await);
         }
+        Command::BenchmarkRun {
+            command:
+                BenchmarkRunCommand::RenameConfiguration {
+                    id,
+                    configuration,
+                    name,
+                    json,
+                },
+        } => return Ok(rename_configuration(&config, id, configuration, &name, json).await),
         Command::BenchmarkRun {
             command: BenchmarkRunCommand::Cancel { id, json },
         } => return Ok(cancel_benchmark_run(&config, id, json).await),
@@ -1159,6 +1189,100 @@ async fn make_benchmark(config: &Config, name: &Name, stage: TaskStage, json: bo
     )
 }
 
+/// What `benchmark rename` answers.
+#[derive(serde::Serialize)]
+struct Renamed<'a> {
+    id: BenchmarkId,
+    name: &'a Name,
+}
+
+async fn rename_benchmark(config: &Config, id: BenchmarkId, name: &Name, json: bool) -> u8 {
+    let benchmarks = match existing_benchmarks(config).await {
+        Ok(Some(benchmarks)) => benchmarks,
+        Ok(None) => return print_answer(Err(no_such_benchmark(id))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        benchmarks
+            .rename(id, name)
+            .await
+            .map(|()| {
+                answer_text(&Renamed { id, name }, json, |renamed| {
+                    format!("Renamed the benchmark {} to {}\n", renamed.id, renamed.name)
+                })
+            })
+            .map_err(|e| match e {
+                RenameError::NoSuchBenchmark(_) => no_such_benchmark(id),
+                RenameError::Taken(_) => (FAILURE, e.to_string()),
+                RenameError::Failed(e) => failed(&e),
+            }),
+    )
+}
+
+/// What `benchmark edit-task` answers.
+#[derive(serde::Serialize)]
+struct Edited {
+    benchmark: BenchmarkId,
+    task: TaskId,
+}
+
+/// Changes the task `task` of the benchmark `benchmark` to the name `name`
+/// and the criteria in the file `criteria`, failing on a file that does not
+/// read and refusing criteria that hold only white space before anything is
+/// written.
+async fn edit_task(
+    config: &Config,
+    benchmark: BenchmarkId,
+    task: TaskId,
+    name: Option<Name>,
+    criteria: Option<&Path>,
+    json: bool,
+) -> u8 {
+    let criteria = match criteria.map(read_criteria).transpose() {
+        Ok(criteria) => criteria,
+        Err(refused) => return print_answer(Err(refused)),
+    };
+    let Some(change) = TaskChange::of(name, criteria) else {
+        return print_answer(Err((
+            FAILURE,
+            "a change of a task needs a name, criteria or both".to_string(),
+        )));
+    };
+    let benchmarks = match existing_benchmarks(config).await {
+        Ok(Some(benchmarks)) => benchmarks,
+        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        benchmarks
+            .edit_task(benchmark, task, &change)
+            .await
+            .map(|()| {
+                answer_text(&Edited { benchmark, task }, json, |edited| {
+                    format!(
+                        "Changed the task {} of the benchmark {}\n",
+                        edited.task, edited.benchmark
+                    )
+                })
+            })
+            .map_err(|e| match e {
+                EditTaskError::NoSuchBenchmark(_) | EditTaskError::NoSuchTask { .. } => {
+                    refused(&RequestError::NotFound(e.to_string()))
+                }
+                EditTaskError::Taken { .. } => (FAILURE, e.to_string()),
+                EditTaskError::Failed(e) => failed(&e),
+            }),
+    )
+}
+
+/// The criteria in the file `file`, failing on a file that does not read
+/// and refusing one that holds only white space.
+fn read_criteria(file: &Path) -> Result<Criteria, (u8, String)> {
+    let criteria = std::fs::read_to_string(file)
+        .map_err(|e| failed(&anyhow::Error::from(e).context("reading the criteria")))?;
+    Criteria::parse(&criteria).ok_or_else(|| (FAILURE, CRITERIA_REQUIRED.to_string()))
+}
+
 /// What `benchmark remove-task` answers.
 #[derive(serde::Serialize)]
 struct Removed {
@@ -1317,6 +1441,56 @@ async fn show_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> 
     }))
 }
 
+/// What `benchmark-run rename-configuration` answers.
+#[derive(serde::Serialize)]
+struct RenamedConfiguration<'a> {
+    id: BenchmarkRunId,
+    configuration: ConfigurationId,
+    name: &'a Name,
+}
+
+async fn rename_configuration(
+    config: &Config,
+    id: BenchmarkRunId,
+    configuration: ConfigurationId,
+    name: &Name,
+    json: bool,
+) -> u8 {
+    let benchmark_runs = match existing_benchmark_runs(config).await {
+        Ok(Some(benchmark_runs)) => benchmark_runs,
+        Ok(None) => return print_answer(Err(no_such_benchmark_run(id))),
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    print_answer(
+        benchmark_runs
+            .rename_configuration(id, configuration, name)
+            .await
+            .map(|()| {
+                let renamed = RenamedConfiguration {
+                    id,
+                    configuration,
+                    name,
+                };
+                answer_text(&renamed, json, |renamed| {
+                    format!(
+                        "Renamed the configuration {} of benchmark run {} to {}\n",
+                        renamed.configuration, renamed.id, renamed.name
+                    )
+                })
+            })
+            .map_err(|e| match e {
+                RenameConfigurationError::NoSuchBenchmarkRun(_) => no_such_benchmark_run(id),
+                RenameConfigurationError::NoSuchConfiguration { .. } => {
+                    refused(&RequestError::NotFound(e.to_string()))
+                }
+                RenameConfigurationError::AsIs | RenameConfigurationError::Taken(_) => {
+                    (FAILURE, e.to_string())
+                }
+                RenameConfigurationError::Failed(e) => failed(&e),
+            }),
+    )
+}
+
 /// What `benchmark-run cancel` answers.
 #[derive(serde::Serialize)]
 struct Cancelled {
@@ -1397,15 +1571,9 @@ impl Capture {
             Ok(capturable) => capturable,
             Err(e) => return print_answer(Err(refusal(e))),
         };
-        let criteria = match std::fs::read_to_string(criteria) {
+        let criteria = match read_criteria(criteria) {
             Ok(criteria) => criteria,
-            Err(e) => {
-                let e = anyhow::Error::from(e).context("reading the criteria");
-                return print_answer(Err(failed(&e)));
-            }
-        };
-        let Some(criteria) = Criteria::parse(&criteria) else {
-            return print_answer(Err((FAILURE, CRITERIA_REQUIRED.to_string())));
+            Err(refused) => return print_answer(Err(refused)),
         };
         let github = match token() {
             Ok(token) => connect(config, token).await,

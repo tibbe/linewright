@@ -3,7 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -575,6 +576,74 @@ pub fn read_criteria(dir: &Path) -> Result<Criteria, TaskRefusal> {
     })
 }
 
+/// Replaces the criteria of the task in the directory `dir` with `criteria`,
+/// by a rename, so that a reader sees the old criteria or the new; gives
+/// what the file held before, for [`ReplacedCriteria::put_back`].
+pub(crate) fn replace_criteria(
+    dir: &Path,
+    criteria: &Criteria,
+) -> anyhow::Result<ReplacedCriteria> {
+    let place = dir.join(CRITERIA_FILE);
+    let was = match std::fs::read(&place) {
+        Ok(was) => Some(was),
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(anyhow::Error::from(e).context(format!("reading {}", place.display())));
+        }
+    };
+    write_criteria(dir, criteria.as_str().as_bytes())?;
+    Ok(ReplacedCriteria {
+        dir: dir.to_path_buf(),
+        was,
+    })
+}
+
+/// Writes `contents` as the criteria file of the task in the directory
+/// `dir`, with the mode of the file it replaces: a new file, written and
+/// synced beside the task's directory so that a copy of the directory never
+/// holds it, is renamed into place.
+fn write_criteria(dir: &Path, contents: &[u8]) -> anyhow::Result<()> {
+    let place = dir.join(CRITERIA_FILE);
+    let writing = || format!("writing {}", place.display());
+    let beside = dir.parent().with_context(writing)?;
+    let permissions = match std::fs::metadata(&place) {
+        Ok(metadata) => metadata.permissions(),
+        Err(_) => std::fs::Permissions::from_mode(0o644),
+    };
+    let mut file = tempfile::Builder::new()
+        .prefix(".criteria-")
+        .permissions(permissions)
+        .tempfile_in(beside)
+        .with_context(writing)?;
+    file.write_all(contents).with_context(writing)?;
+    file.as_file().sync_all().with_context(writing)?;
+    file.persist(&place)
+        .map_err(|e| e.error)
+        .with_context(writing)?;
+    std::fs::File::open(dir)
+        .and_then(|dir| dir.sync_all())
+        .with_context(writing)?;
+    Ok(())
+}
+
+/// A task's criteria just replaced, with what its file held before, `None`
+/// when it had none.
+pub(crate) struct ReplacedCriteria {
+    dir: PathBuf,
+    was: Option<Vec<u8>>,
+}
+
+impl ReplacedCriteria {
+    /// Puts back the criteria the task had before.
+    pub(crate) fn put_back(self) -> anyhow::Result<()> {
+        match self.was {
+            Some(was) => write_criteria(&self.dir, &was),
+            None => std::fs::remove_file(self.dir.join(CRITERIA_FILE))
+                .context("removing the new criteria"),
+        }
+    }
+}
+
 /// What a task's directory gives of the task beside its criteria and its
 /// repository: its stage, its item with the item's title as at the start, and
 /// its start.
@@ -609,7 +678,8 @@ pub fn read_facts(dir: &Path) -> Result<TaskFacts, TaskRefusal> {
     })
 }
 
-const CRITERIA_FILE: &str = "criteria.md";
+/// The file, in a task's directory, of its criteria.
+pub(crate) const CRITERIA_FILE: &str = "criteria.md";
 
 /// The file, in a task's directory, of its stage, repository and run.
 const TASK_FILE: &str = "task.json";
