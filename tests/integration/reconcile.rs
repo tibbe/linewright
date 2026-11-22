@@ -3335,6 +3335,35 @@ fn an_automation_seen_for_the_first_time_does_not_run_and_counts_as_having_had_a
 }
 
 #[test_log::test]
+fn an_automation_not_on_a_schedule_is_left_alone_and_loses_its_last_scheduled_run() {
+    let on_workflow_runs = linewright::automation::parse(
+        &"fix-ci.md".parse().unwrap(),
+        "---\non:\n  workflow_run:\n    conclusions: [failure]\n---\nFix it.\n",
+    )
+    .unwrap();
+    let world = Automations {
+        defined: vec![on_workflow_runs, hourly("hourly.md")],
+        last_scheduled_runs: last_scheduled_runs(&[("fix-ci.md", 10), ("hourly.md", 30)]),
+        in_flight: vec![],
+    };
+
+    assert_eq!(
+        scheduled(&world, 70),
+        vec![
+            scheduled_run("hourly.md"),
+            Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 70)])),
+        ]
+    );
+    assert_eq!(
+        scheduled(&world, 59),
+        vec![Action::RecordLastScheduledRuns(last_scheduled_runs(&[(
+            "hourly.md",
+            30
+        )])),]
+    );
+}
+
+#[test_log::test]
 fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
     let last_run_at_12_30 = automations(&["hourly.md"], &[("hourly.md", 30)], &[]);
     let five_ticks_later = 310;

@@ -251,6 +251,9 @@ impl Listed {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutomationRuns {
     pub name: String,
+    /// When it runs, in words; `None` from a `serve` that does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<String>,
     #[serde(flatten)]
     pub trigger: Trigger,
     /// `None` before its first run.
@@ -258,11 +261,21 @@ pub struct AutomationRuns {
     pub last_run: Option<LastRun>,
 }
 
-/// Where an automation's trigger stands, by its kind.
+/// Where an automation's trigger stands, by its kind. A schedule's is told by
+/// its `schedule` key, and another kind's by its `trigger` key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Trigger {
     Schedule(Schedule),
+    WorkflowRun(OnWorkflowRuns),
+}
+
+/// The trigger of an automation on workflow runs, which has no next run to
+/// show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "trigger", rename_all = "kebab-case")]
+pub enum OnWorkflowRuns {
+    WorkflowRun,
 }
 
 /// Where an automation's schedule stands, counted from its last scheduled
@@ -402,6 +415,7 @@ pub fn status(sources: StatusSources<'_>) -> Status {
         .iter()
         .map(|automation| AutomationRuns {
             name: automation.name.to_string(),
+            when: Some(automation.trigger.describe()),
             trigger: trigger_of(automation, &view.last_scheduled_runs, now),
             last_run: last_of_automation(recorded, &automation.name).map(LastRun::of),
         })
@@ -444,7 +458,7 @@ fn unusable_files(view: &View) -> Vec<FileError> {
 }
 
 /// Where `automation`'s trigger stands: a schedule counted from its last
-/// scheduled run.
+/// scheduled run, or workflow runs.
 fn trigger_of(
     automation: &Automation,
     last_scheduled_runs: &LastScheduledRuns,
@@ -461,6 +475,7 @@ fn trigger_of(
                 },
             })
         }
+        automation::Trigger::WorkflowRun(_) => Trigger::WorkflowRun(OnWorkflowRuns::WorkflowRun),
     }
 }
 
@@ -704,11 +719,18 @@ pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
                 run.started_at,
             )),
         };
-        let next = describe_next_run(automation.trigger);
         let name = &automation.name;
+        let trigger = automation
+            .when
+            .as_ref()
+            .map(|when| Phrase::from(format!("automation {name} trigger: {when}")));
         let last = Phrase::from(format!("automation {name} last run: ")).then(last);
-        let next = Phrase::from(format!("automation {name} next run: ")).then(next);
-        [last, next].map(Fact::Plain)
+        let next = describe_next_run(automation.trigger)
+            .map(|next| Phrase::from(format!("automation {name} next run: ")).then(next));
+        [trigger, Some(last), next]
+            .into_iter()
+            .flatten()
+            .map(Fact::Plain)
     });
     let unparsed = status
         .unparsed_automations
@@ -724,17 +746,20 @@ pub(crate) fn does_not_parse(file: &UnparsedAutomation) -> Phrase {
         .text(format!(" does not parse: {}", file.reason))
 }
 
-/// When an automation runs next, from where its trigger stands.
-pub(crate) fn describe_next_run(trigger: Trigger) -> Phrase {
-    let Trigger::Schedule(schedule) = trigger;
-    match schedule {
+/// When an automation runs next, from where its trigger stands; `None` for
+/// one not on a schedule.
+pub(crate) fn describe_next_run(trigger: Trigger) -> Option<Phrase> {
+    let Trigger::Schedule(schedule) = trigger else {
+        return None;
+    };
+    Some(match schedule {
         Schedule::NotRunYet => {
             "not yet counted, its schedule starts when a poll first sees it".into()
         }
         Schedule::Due => "due now".into(),
         Schedule::Scheduled { next_run } => Phrase::default().time(next_run),
         Schedule::Ended => "none, its schedule ticks no more".into(),
-    }
+    })
 }
 
 /// An item's state in the States words (`docs/specs/board.md`, States), then

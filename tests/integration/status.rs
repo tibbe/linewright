@@ -118,6 +118,15 @@ fn after_linewright_with(view: &View, recorded: &[Recorded], now: &str) -> Vec<S
     lines[blank + 1..].to_vec()
 }
 
+/// The line of the one automation's last run, at 2026-10-01 12:00:30.
+#[track_caller]
+fn last_run_line(view: &View, recorded: &[Recorded]) -> String {
+    after_linewright_with(view, recorded, "2026-10-01T12:00:30Z")
+        .into_iter()
+        .find(|line| line.contains(" last run: "))
+        .expect("a last run")
+}
+
 #[test_log::test]
 fn the_linewright_section_says_since_when_serve_runs_its_polls_and_the_runs_in_flight() {
     let view = View {
@@ -795,6 +804,7 @@ fn an_automation_is_listed_with_its_last_run_and_its_next_tick_in_utc() {
     assert_eq!(
         after_linewright_with(&view, &recorded, "2026-10-01T12:00:30Z"),
         [
+            "automation weekly.md trigger: At 06:00, on Monday.",
             "automation weekly.md last run: weekly.md/3, started 2026-09-28 06:00:02 UTC",
             "automation weekly.md next run: 2026-10-05 06:00:00 UTC",
         ]
@@ -814,6 +824,7 @@ fn a_newer_run_by_hand_is_the_last_run_and_leaves_the_next_run_as_it_was() {
     assert_eq!(
         after_linewright_with(&view, &[scheduled, by_hand], "2026-10-01T12:00:30Z"),
         [
+            "automation weekly.md trigger: At 06:00, on Monday.",
             "automation weekly.md last run: weekly.md/4 by hand, started 2026-09-30 09:15:00 UTC",
             "automation weekly.md next run: 2026-10-05 06:00:00 UTC",
         ]
@@ -831,7 +842,7 @@ fn a_newer_scheduled_run_is_the_last_run_with_no_mark() {
     let scheduled = automation_run("weekly.md/4", StartedBy::Schedule, "2026-09-28T06:00:02Z");
 
     assert_eq!(
-        after_linewright_with(&view, &[scheduled, by_hand], "2026-10-01T12:00:30Z")[0],
+        last_run_line(&view, &[scheduled, by_hand]),
         "automation weekly.md last run: weekly.md/4, started 2026-09-28 06:00:02 UTC"
     );
 }
@@ -846,7 +857,7 @@ fn only_the_automations_own_runs_count_toward_its_last_run() {
     let other = automation_run("daily.md/9", StartedBy::Schedule, "2026-10-01T06:00:00Z");
 
     assert_eq!(
-        after_linewright_with(&view, &[other], "2026-10-01T12:00:30Z")[0],
+        last_run_line(&view, &[other]),
         "automation weekly.md last run: none yet"
     );
 }
@@ -862,6 +873,7 @@ fn an_automation_seen_but_never_run_has_no_last_run_yet_and_its_next_run_as_befo
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:00:30Z"),
         [
+            "automation weekly.md trigger: At 06:00, on Monday.",
             "automation weekly.md last run: none yet",
             "automation weekly.md next run: 2026-10-05 06:00:00 UTC",
         ]
@@ -879,6 +891,7 @@ fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_is_due_now()
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
+            "automation hourly.md trigger: At minute 0 past every hour.",
             "automation hourly.md last run: none yet",
             "automation hourly.md next run: due now",
         ]
@@ -896,6 +909,7 @@ fn an_automation_whose_schedule_never_ticks_again_has_no_next_run() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
+            "automation leap.md trigger: At 00:00, on day 30, in February.",
             "automation leap.md last run: none yet",
             "automation leap.md next run: none, its schedule ticks no more",
         ]
@@ -912,10 +926,81 @@ fn an_automation_no_poll_has_seen_yet_has_no_next_run_until_one_does() {
     assert_eq!(
         after_linewright(&view, "2026-10-01T12:10:00Z"),
         [
+            "automation hourly.md trigger: At minute 0 past every hour.",
             "automation hourly.md last run: none yet",
             "automation hourly.md next run: not yet counted, its schedule starts when a poll first sees it",
         ]
     );
+}
+
+#[track_caller]
+fn on_workflow_runs(name: &str) -> AutomationFiles {
+    AutomationFiles {
+        parsed: vec![
+            linewright::automation::parse(
+                &name.parse().unwrap(),
+                "---\non:\n  workflow_run:\n    workflows: [CI]\n    branches: [main]\n    conclusions: [failure, timed_out]\n---\nFix it.\n",
+            )
+            .unwrap(),
+        ],
+        unparsed: vec![],
+    }
+}
+
+#[test_log::test]
+fn an_automation_on_workflow_runs_is_listed_with_its_trigger_and_last_run_and_no_next_run() {
+    let view = View {
+        automations: on_workflow_runs("fix-ci.md"),
+        ..view(vec![])
+    };
+    let by_hand = automation_run("fix-ci.md/1", StartedBy::Hand, "2026-09-30T09:15:00Z");
+
+    assert_eq!(
+        after_linewright_with(&view, &[by_hand], "2026-10-01T12:00:30Z"),
+        [
+            "automation fix-ci.md trigger: When a workflow run of \"CI\" on \"main\" completes as failure or timed_out.",
+            "automation fix-ci.md last run: fix-ci.md/1 by hand, started 2026-09-30 09:15:00 UTC",
+        ]
+    );
+}
+
+#[test_log::test]
+fn an_automation_on_workflow_runs_has_a_trigger_and_no_next_run_in_its_json() {
+    let view = View {
+        automations: on_workflow_runs("fix-ci.md"),
+        ..view(vec![])
+    };
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &[automation_run(
+            "fix-ci.md/1",
+            StartedBy::Hand,
+            "2026-09-30T09:15:00Z",
+        )],
+        environment: None,
+        trials: TrialsInFlight::default(),
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
+
+    assert_eq!(
+        serde_json::to_value(&answer).unwrap()["automations"],
+        serde_json::json!([
+            {
+                "name": "fix-ci.md",
+                "when": "When a workflow run of \"CI\" on \"main\" completes as failure or timed_out.",
+                "trigger": "workflow-run",
+                "last_run": "2026-09-30T09:15:00Z",
+                "last_run_id": "fix-ci.md/1",
+                "last_run_started_by": "hand",
+            },
+        ])
+    );
+    let json = serde_json::to_string(&answer).unwrap();
+    assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
 }
 
 #[test_log::test]
@@ -937,8 +1022,10 @@ fn the_items_come_before_the_automations_by_name_then_the_files_that_do_not_pars
         [
             "#7: Waiting for Linewright — Do the thing",
             "",
+            "automation hourly.md trigger: At minute 0 past every hour.",
             "automation hourly.md last run: none yet",
             "automation hourly.md next run: 2026-10-01 13:00:00 UTC",
+            "automation weekly.md trigger: At 06:00, on Monday.",
             "automation weekly.md last run: none yet",
             "automation weekly.md next run: 2026-10-05 06:00:00 UTC",
             "`broken.md` does not parse: no front matter",
@@ -1090,6 +1177,7 @@ fn the_json_names_each_fact() {
             "automations": [
                 {
                     "name": "weekly.md",
+                    "when": "At 06:00, on Monday.",
                     "schedule": "scheduled",
                     "next_run": "2026-10-05T06:00:00Z",
                     "last_run": "2026-09-30T09:15:00Z",
@@ -1162,6 +1250,7 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
         serde_json::json!([
             {
                 "name": "weekly.md",
+                "when": "At 06:00, on Monday.",
                 "schedule": "scheduled",
                 "next_run": "2026-10-05T06:00:00Z",
             },
@@ -1169,6 +1258,46 @@ fn before_an_automations_first_run_its_json_has_no_last_run() {
     );
     let json = serde_json::to_string(&answer).unwrap();
     assert_eq!(serde_json::from_str::<Status>(&json).unwrap(), answer);
+}
+
+#[test_log::test]
+fn the_json_of_a_serve_that_does_not_say_when_an_automation_runs_reads() {
+    let view = View {
+        automations: files(&[("weekly.md", "0 6 * * 1")], &[]),
+        last_scheduled_runs: last_scheduled_runs(&[("weekly.md", "2026-09-28T06:00:00Z")]),
+        ..view(vec![])
+    };
+    let answer = status(StatusSources {
+        serving: &serving(),
+        webhooks: None,
+        polling: None,
+        view: Some(&view),
+        recorded: &[],
+        environment: None,
+        trials: TrialsInFlight::default(),
+        drain_deadline: None,
+        now: at("2026-10-01T12:10:00Z"),
+    });
+    let mut json = serde_json::to_value(&answer).unwrap();
+    json["automations"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("when");
+
+    let read: Status = serde_json::from_value(json).unwrap();
+
+    assert_eq!(read.automations[0].when, None);
+    assert_eq!(read.automations[0].trigger, answer.automations[0].trigger);
+    assert_eq!(
+        render(&read, false)
+            .lines()
+            .filter(|line| line.starts_with("automation "))
+            .collect::<Vec<_>>(),
+        [
+            "automation weekly.md last run: none yet",
+            "automation weekly.md next run: 2026-10-05 06:00:00 UTC",
+        ]
+    );
 }
 
 #[test_log::test]

@@ -982,7 +982,9 @@ pub fn next_run(schedule: &Schedule, last_scheduled_run: Timestamp, now: Timesta
 
 /// The runs of the automations due, at most `room`, followed by the record
 /// of the last scheduled runs if it changed. An automation a hold in
-/// `in_force` holds stays due, to run once the hold ends.
+/// `in_force` holds stays due, to run once the hold ends. One not on a
+/// schedule loses its last scheduled run, so that it counts as new when it
+/// comes back to one (`docs/specs/automations.md`, A new automation).
 fn schedule(
     automations: &Automations,
     now: Timestamp,
@@ -992,7 +994,10 @@ fn schedule(
     let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
     for automation in &automations.defined {
-        let Trigger::Schedule(schedule) = &automation.trigger;
+        let Trigger::Schedule(schedule) = &automation.trigger else {
+            last_scheduled_runs.forget(&automation.name);
+            continue;
+        };
         let Some(last_scheduled_run) = automations.last_scheduled_runs.get(&automation.name) else {
             last_scheduled_runs.record(&automation.name, now);
             continue;

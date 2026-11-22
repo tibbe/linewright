@@ -48,6 +48,9 @@ const SETTINGS: &str = "[setup]\ncommand = \"echo ready\"\n";
 /// after.
 const WEEKLY: &str = "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook around.\n";
 
+/// An automation that runs when CI fails on the default branch.
+const FIX_CI: &str = "---\non:\n  workflow_run:\n    workflows: [CI]\n    branches: [main]\n    conclusions: [failure]\n---\nFix what failed.\n";
+
 /// An automation file that does not parse: its schedule is not a cron
 /// expression.
 const NIGHTLY: &str = "---\non:\n  schedule: \"every night\"\n---\nTidy up.\n";
@@ -85,6 +88,7 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
                 (".linewright/config.toml", SETTINGS),
                 (".linewright/automations/team/weekly.md", WEEKLY),
                 (".linewright/automations/nightly.md", NIGHTLY),
+                (".linewright/automations/fix-ci.md", FIX_CI),
                 (
                     ".linewright/briefs/plugin/skills/triage/SKILL.md",
                     "# Triage\n\nTriage the widgets' issues.\n",

@@ -16,13 +16,14 @@ use super::shell::{self, Area, Frame, Navigation, Place, Read};
 use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
 use crate::api::{Sources, Unexplained};
+use crate::automation;
 use crate::domain::Timestamp;
 use crate::phrase::{Phrase, Status};
 use crate::runs::{self, Recorded, Run};
 use crate::status::{self, Trigger, UnparsedAutomation, View};
 
 /// The automations as `status` answers for them, with what the page shows
-/// beside: each schedule in words, and each last run's outcome.
+/// beside: each trigger in words, and each last run's outcome.
 pub(super) struct Automations {
     /// By path.
     pub(super) unparsed: Vec<UnparsedAutomation>,
@@ -33,7 +34,7 @@ pub(super) struct Automations {
 pub(super) struct Row {
     pub(super) name: String,
     /// When it runs, in words.
-    schedule: String,
+    trigger: String,
     pub(super) last_run: LastRun,
     next_run: Trigger,
 }
@@ -41,7 +42,7 @@ pub(super) struct Row {
 pub(super) enum LastRun {
     Run(Run),
     /// Before its first run, with when Linewright first saw it, which is
-    /// unknown until a poll has.
+    /// unknown until a poll has, and for an automation not on a schedule.
     NoneYet {
         first_seen: Option<Timestamp>,
     },
@@ -71,12 +72,17 @@ impl Automations {
                 let last_run = match last_run {
                     Some(run) => LastRun::Run(run.clone().at(now)),
                     None => LastRun::NoneYet {
-                        first_seen: view.last_scheduled_runs.get(&automation.name),
+                        first_seen: match automation.trigger {
+                            automation::Trigger::Schedule(_) => {
+                                view.last_scheduled_runs.get(&automation.name)
+                            }
+                            automation::Trigger::WorkflowRun(_) => None,
+                        },
                     },
                 };
                 Some(Row {
                     name: answered.name.clone(),
-                    schedule: automation.trigger.describe(),
+                    trigger: automation.trigger.describe(),
                     last_run,
                     next_run: answered.trigger,
                 })
@@ -99,16 +105,17 @@ struct AutomationsShown {
 
 struct RowShown {
     name: String,
-    schedule: String,
+    trigger: String,
     last_run: LastRunShown,
-    next_run: Html,
+    /// `None` for an automation not on a schedule.
+    next_run: Option<Html>,
 }
 
 /// A column of the table of automations, the first naming each row.
 #[derive(Clone, Copy)]
 enum AutomationsColumn {
     Name,
-    Schedule,
+    Trigger,
     LastRun,
     NextRun,
 }
@@ -116,7 +123,7 @@ enum AutomationsColumn {
 impl AutomationsColumn {
     const ALL: [AutomationsColumn; 4] = [
         AutomationsColumn::Name,
-        AutomationsColumn::Schedule,
+        AutomationsColumn::Trigger,
         AutomationsColumn::LastRun,
         AutomationsColumn::NextRun,
     ];
@@ -124,7 +131,7 @@ impl AutomationsColumn {
     fn head(self) -> &'static str {
         match self {
             AutomationsColumn::Name => "Automation",
-            AutomationsColumn::Schedule => "Schedule",
+            AutomationsColumn::Trigger => "Trigger",
             AutomationsColumn::LastRun => "Last run",
             AutomationsColumn::NextRun => "Next run",
         }
@@ -134,7 +141,7 @@ impl AutomationsColumn {
     fn align(self) -> &'static str {
         let column = match self {
             AutomationsColumn::Name
-            | AutomationsColumn::Schedule
+            | AutomationsColumn::Trigger
             | AutomationsColumn::LastRun
             | AutomationsColumn::NextRun => Column::Other,
         };
@@ -167,7 +174,7 @@ impl AutomationsShown {
                 .iter()
                 .map(|row| RowShown {
                     name: row.name.clone(),
-                    schedule: row.schedule.clone(),
+                    trigger: row.trigger.clone(),
                     last_run: match &row.last_run {
                         LastRun::Run(run) => LastRunShown::Run {
                             id: html::escape(&run.id.to_string()),
@@ -186,7 +193,7 @@ impl AutomationsShown {
                             }))
                         }
                     },
-                    next_run: html(&status::describe_next_run(row.next_run)),
+                    next_run: status::describe_next_run(row.next_run).map(|next| html(&next)),
                 })
                 .collect(),
             pages: pages.shown("automations", |page| {

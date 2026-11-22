@@ -79,7 +79,7 @@ fn unparsed_shown(html: &Html) -> Vec<String> {
         .collect()
 }
 
-/// Each automation's row: its name, schedule, last run and next run.
+/// Each automation's row: its name, trigger, last run and next run.
 fn rows_shown(html: &Html) -> Vec<Vec<String>> {
     select(html, "#automations tbody tr")
         .into_iter()
@@ -171,6 +171,42 @@ async fn the_automations_page_lists_the_unparsed_files_then_each_automation_by_n
     assert_eq!(events_path(&html), Some("/events/automations"));
 }
 
+#[test_log::test(tokio::test)]
+async fn an_automation_on_workflow_runs_shows_its_trigger_in_words_and_no_first_seen_or_next_run() {
+    let fix_ci = "---\non:\n  workflow_run:\n    workflows: [CI]\n    branches: [main]\n    conclusions: [failure]\n---\nFix it.\n";
+    let everything = "---\non:\n  workflow_run:\n---\nLook.\n";
+    let pages = Pages::of(View {
+        last_scheduled_runs: [("fix-ci.md".parse().unwrap(), at("2026-10-01T12:00:00Z"))]
+            .into_iter()
+            .collect::<LastScheduledRuns>(),
+        ..with(
+            &[("fix-ci.md", fix_ci), ("every-run.md", everything)],
+            false,
+        )
+    })
+    .await;
+
+    let html = pages.page("/automations").await;
+
+    assert_eq!(
+        rows_shown(&html),
+        [
+            [
+                "every-run.md",
+                "When a workflow run completes.",
+                "none yet",
+                ""
+            ],
+            [
+                "fix-ci.md",
+                "When a workflow run of \"CI\" on \"main\" completes as failure.",
+                "none yet",
+                ""
+            ],
+        ]
+    );
+}
+
 /// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
 /// Tables.
 #[test_log::test(tokio::test)]
@@ -189,7 +225,7 @@ async fn the_automations_table_is_in_a_card_showing_no_name_under_the_unparsed_f
         .into_iter()
         .map(text)
         .collect();
-    assert_eq!(heads, ["Automation", "Schedule", "Last run", "Next run"]);
+    assert_eq!(heads, ["Automation", "Trigger", "Last run", "Next run"]);
     let names: Vec<String> = select(&html, "#automations tbody tr > th:first-child")
         .into_iter()
         .map(text)
