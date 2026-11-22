@@ -49,6 +49,36 @@ then try a change to the brief of the design stage, and see whether it fixes
     or unlucky trial does not decide.
 16. As an operator, I want benchmark runs to let the runs of the pipeline go
     first, so that benchmarking does not keep the factory waiting.
+17. As a maintainer, I want to name tasks and benchmarks in plain words, such
+    as "Design an HTTP caching solution for images", so that I can tell them
+    apart at a glance.
+18. As a maintainer, I want to change a task's name and criteria after I
+    capture it, so that its later benchmark runs score against what I mean.
+
+## Names and IDs
+
+Each task, benchmark and configuration has a name, which a person gives it,
+and an ID, which Linewright gives it
+([Names are for people](product.md#solution)).
+
+- **A name.** One line of any text. Linewright removes the white space at
+  its start and its end before it keeps the name. A name that holds only white
+  space is no name.
+- **No name.** Linewright refuses a task, a benchmark or a configuration with
+  no name, and a change to no name.
+- **One of each name.** No two benchmarks have the same name. No two tasks of
+  a benchmark have the same name. No two configurations of a benchmark run have
+  the same name. Two names are the same when they hold the same characters in
+  the same order, letter case included.
+- **A benchmark's or a task's ID.** A number that Linewright gives in the order
+  in which they are made, from 1. Linewright never gives an ID again, also when
+  its benchmark or task is removed.
+- **A configuration's ID.** Its place in its benchmark run, from 1 for
+  `as-is` ([Benchmark runs](#benchmark-runs)).
+- **Where an ID shows.** In addresses, in paths under the work directory, on
+  the command line, and in "No such" for a thing that does not exist
+  ([Screen states](design_system.md#screen-states)). Everywhere else, a screen
+  names a thing by its name.
 
 ## Tasks
 
@@ -66,6 +96,7 @@ what a good result is.
 | properties   | the repository's properties ([The repository's properties](repository.md#the-repositorys-properties)) |
 | criteria     | what a good result is, in the capturer's words |
 | run          | the ID of the run it was captured from                                                                                                                        |
+| name         | the task's name ([Names and IDs](#names-and-ids))                                                                                                            |
 
 - **The stage.** A task is a task of its stage: the stage is run on it again
   whatever Linewright would now decide to start on its item.
@@ -74,8 +105,8 @@ what a good result is.
   change to how Linewright reads them then leaves the task usable.
 - **The repository.** A bare git repository in the task.
 - **The criteria.** Criteria that hold only white space are no criteria.
-- **A directory.** A task is a directory holding all of it, with its
-  criteria as a file in it.
+- **A directory.** A task is a directory. It holds each part of the task other
+  than its name, and its criteria are a file in it.
 
 ## Recording a run's input
 
@@ -90,17 +121,18 @@ Capturing a triage, design or implement run that recorded its input writes a
 task of it, whatever its outcome.
 
 - **Where.** In `tasks/` under the work directory, in a directory named for the
-  task.
+  task's ID.
 - **Into a benchmark.** A capture puts the task into a benchmark of the run's
   stage ([Benchmarks](#benchmarks-1)).
 - **From the UI.** [Run](runs.md#run) and [New task](#new-task).
 - **From the command line.**
-  `lw capture ID NAME --benchmark BENCHMARK --criteria FILE`. It works whether
+  `lw capture ID --benchmark BENCHMARK --name NAME --criteria FILE`, where
+  BENCHMARK is the benchmark's ID. It writes the task's ID. It works whether
   or not `serve` is running, and exits as the monitoring commands do
   ([Output](operation.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
-- **The name.** Given by the capturer: lowercase letters, digits and hyphens,
-  starting with a letter or a digit. A name a task already has is refused.
+- **The name.** Given by the capturer ([Names and IDs](#names-and-ids)).
+  Linewright refuses a capture that has no name.
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
@@ -113,8 +145,7 @@ task of it, whatever its outcome.
 
   | Refusal                                              | Message                                                       |
   | ---------------------------------------------------- | ------------------------------------------------------------- |
-  | a name that a task has                               | "A task named NAME already exists."                           |
-  | a name that is not in the form of a name             | as on [New benchmark](#new-benchmark)                         |
+  | a name that another task of the benchmark has        | "A task named NAME already exists in BENCHMARK."              |
   | a run of a stage other than the benchmark's          | "Run ID is of STAGE, and BENCHMARK holds tasks of STAGE."     |
   | a run that recorded no input                         | "Run ID recorded no input."                                   |
   | a run whose record lacks a part                      | "The record of run ID lacks PART."                            |
@@ -126,14 +157,16 @@ task of it, whatever its outcome.
 A benchmark is a named set of tasks of one stage. A maintainer makes a benchmark
 in the UI, captures runs of its stage into it and runs benchmark runs on it.
 
-- **The name.** In the form of the name of a task
-  ([Capturing](#capturing)). A name that a benchmark already has is refused.
+- **The name.** Given as the benchmark is made
+  ([Names and IDs](#names-and-ids)).
 - **The stage.** Triage, design or implement, given as the benchmark is made.
 - **One benchmark for each task.** A task belongs to the benchmark it was
   captured into. A run captured into two benchmarks gives two tasks, each with
   its own criteria.
 - **The order of its tasks.** The order in which they were captured into it,
   oldest first.
+- **Changing.** A maintainer can change a benchmark's name, and a task's name
+  and criteria. Linewright refuses a change to no criteria ([Tasks](#tasks)).
 - **Removing a task.** Removing a task from its benchmark removes the task.
 
 ## Trials
@@ -330,13 +363,17 @@ makes a trial of each task under each configuration.
   cancels it.
 - **The configurations.** The first configuration is `as-is`, which holds
   nothing ([Configurations](#configurations)). The maintainer adds the others,
-  each with a name that no other configuration of the benchmark run has, in the
-  form of the name of a task ([Capturing](#capturing)).
+  each with a name ([Names and IDs](#names-and-ids)). The maintainer can change
+  the name of each configuration but `as-is`, also after the launch.
 - **Repetitions.** One or more. The default is 1.
 - **At its launch.** The benchmark run keeps the tasks of the benchmark with
   their criteria, the configurations and the repetitions. A later change to the
-  benchmark or to a task does not change the benchmark run. Linewright refuses a
+  benchmark or to a task does not change the benchmark run, but for the names
+  that it shows ([Names](#benchmark-runs)). Linewright refuses a
   launch on a benchmark with no tasks, or with a configuration with an error.
+- **Names.** A benchmark run shows each task by its name as it is now. It
+  shows a task that was removed after its launch by the name that the task had
+  when it was removed.
 - **Under `serve`.** `serve` runs the trials and the scorers of a benchmark run,
   each as `lw trial` and `lw score` do. A drain, the usage limit and stopping
   apply to each trial and scorer as to a run of `serve` ([Holds](runs.md#holds),
@@ -365,7 +402,8 @@ makes a trial of each task under each configuration.
   trial and each scorer that the restart interrupted, a trial into a new
   output.
 - **The output.** The output of each trial of benchmark run ID is in
-  `benchmark-runs/ID/CONFIGURATION/TASK/REPETITION/` under the work directory
+  `benchmark-runs/ID/CONFIGURATION/TASK/REPETITION/` under the work directory,
+  where CONFIGURATION is the configuration's ID and TASK is the task's ID
   ([The output of a trial](#the-output-of-a-trial)).
 
 | State     | Event                                      | Next      | Effect                                  |
@@ -400,15 +438,21 @@ The results of a benchmark run give these figures for each configuration.
 The commands work whether or not `serve` is running, and exit as the
 monitoring commands do ([Output](operation.md#output)). A benchmark, a task or a
 benchmark run that does not exist is as an item or run that does not exist.
+In these commands, BENCHMARK and TASK are IDs
+([Names and IDs](#names-and-ids)), and a task that
+is not in BENCHMARK does not exist.
 
 | Command                                                                     | What it does                                                    |
 | --------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `lw benchmarks`                                                                 | list the benchmarks                                                 |
-| `lw benchmark add NAME STAGE`                                                   | make a benchmark                                                    |
-| `lw benchmark show NAME`                                                        | show a benchmark: its tasks with their criteria, and its benchmark runs |
-| `lw benchmark remove-task NAME TASK`                                            | remove a task from a benchmark                                      |
-| `lw benchmark-run launch BENCHMARK [--configuration NAME=DIR]... [--repetitions N]` | launch a benchmark run, with `as-is` and a configuration for each DIR ([Configurations](#configurations)) |
-| `lw benchmark-run show ID`                                                     | show a benchmark run: its state, its trials and its results      |
+| `lw benchmarks`                                                                 | list the benchmarks, each with its ID                               |
+| `lw benchmark add NAME STAGE`                                                   | make a benchmark, and write its ID                                  |
+| `lw benchmark show BENCHMARK`                                                   | show a benchmark: its tasks with their IDs and criteria, and its benchmark runs |
+| `lw benchmark rename BENCHMARK NAME`                                            | change a benchmark's name                                           |
+| `lw benchmark edit-task BENCHMARK TASK [--name NAME] [--criteria FILE]`         | change a task's name, its criteria, or both; it needs one of them at least |
+| `lw benchmark remove-task BENCHMARK TASK`                                       | remove a task from a benchmark                                      |
+| `lw benchmark-run launch BENCHMARK [--configuration NAME=DIR]... [--repetitions N]` | launch a benchmark run, with `as-is` and a configuration for each DIR ([Configurations](#configurations)); NAME is the text before the first `=` |
+| `lw benchmark-run show ID`                                                     | show a benchmark run: its state, its configurations with their IDs, its trials and its results |
+| `lw benchmark-run rename-configuration ID CONFIGURATION NAME`                  | change the name of a configuration of a benchmark run, where CONFIGURATION is the configuration's ID |
 | `lw benchmark-run cancel ID`                                                   | cancel a benchmark run                                            |
 
 ## Screens
@@ -418,10 +462,14 @@ benchmark run that does not exist is as an item or run that does not exist.
 | Benchmarks            | the navigation ([Shell](shell.md))                              | find a benchmark                                                                               |
 | New benchmark         | "New" on Benchmarks                                                 | make a benchmark                                                                               |
 | Benchmark             | a benchmark on Benchmarks                                               | see a benchmark's benchmark runs and tasks                                                        |
+| Edit benchmark        | "Edit" on Benchmark                                                 | change the benchmark's name                                                                    |
 | New task          | "New" on Benchmark's tasks                                          | capture a run into the benchmark                                                               |
+| Task              | a task on Benchmark's tasks                                         | see a task, change it and remove it                                                            |
+| Edit task         | "Edit" on Task                                                      | change the task's name and criteria                                                            |
 | New benchmark run    | "New" on Benchmark's benchmark runs                                    | launch a benchmark run on the benchmark                                                          |
 | Benchmark run        | a benchmark run on Benchmark, and a benchmark's last benchmark run on Benchmarks | follow a benchmark run, see its results, and cancel it                                       |
-| Remove task       | "Remove" on a task, on Benchmark                                    | confirm removing the task                                                                  |
+| Remove task       | "Remove" on Task                                                    | confirm removing the task                                                                  |
+| Edit configuration   | "Edit" on a configuration, on Benchmark run                        | change the configuration's name                                                               |
 | Cancel benchmark run | "Cancel", on Benchmark run                                         | confirm cancelling the benchmark run                                                          |
 
 ### Benchmarks
@@ -431,7 +479,8 @@ benchmark run that does not exist is as an item or run that does not exist.
 - **Filters.** Filters for the benchmark's name and its stage narrow the list.
   The filter for the name keeps each benchmark whose name holds the text typed,
   whatever its letter case.
-- **The table.** A row per benchmark, in the order of their names.
+- **The table.** A row per benchmark, in the order of their names by the Unicode
+  Collation Algorithm.
 
   | Column          | Holds                                                |
   | --------------- | ---------------------------------------------------- |
@@ -445,10 +494,8 @@ benchmark run that does not exist is as an item or run that does not exist.
   ([Making](design_system.md#making)).
 - **Fields.** "Name" and "Stage" ([Benchmarks](#benchmarks-1)), then "Create".
   "Stage" starts on the first stage, triage.
-- **Refusals.** The message for a name that a benchmark has is "A benchmark
-  named NAME already exists." The message for a name that is not in the form of
-  a name ([Capturing](#capturing)) is "A name holds only lowercase letters,
-  digits and hyphens, and starts with a letter or a digit."
+- **Refusals.** The message for a name that another benchmark has is "A
+  benchmark named NAME already exists."
 
 ### Benchmark
 
@@ -473,14 +520,46 @@ benchmark run that does not exist is as an item or run that does not exist.
 
 - **Tasks.** A table that fills the tab ([Tables](design_system.md#tables)),
   with a row per task in the benchmark's order ([Benchmarks](#benchmarks-1)),
-  and "New" ([Making](design_system.md#making)). A task's row opens to the whole
-  of its criteria.
+  and "New" ([Making](design_system.md#making)).
 
   | Column        | Holds                                                         |
   | ------------- | ------------------------------------------------------------- |
   | Task          | the task's name, with the first line of its criteria under it |
   | Captured from | the run it was captured from, linking to its Run              |
-  |               | "Remove"                                                      |
+
+### Edit benchmark
+
+- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Fields.** "Name".
+- **Refusals.** As on [New benchmark](#new-benchmark).
+
+### Task
+
+- **Layout.** The heading at the top, then the task's facts, then its criteria.
+- **Heading.** The task's name, with its stage under it. "Remove" is with the
+  screen's buttons ([Shell](shell.md)), after "Edit"
+  ([Editing](design_system.md#editing)).
+- **Facts.** The task's facts are side by side in a row, each with its label
+  above its value.
+
+  | Fact          | Holds                                                                 |
+  | ------------- | --------------------------------------------------------------------- |
+  | Captured from | the run it was captured from, linking to its Run                      |
+  | Item          | its item's number and title as at the start, linking to the item on GitHub |
+  | Started       | when Linewright decided to start the run ([Tasks](#tasks))            |
+
+- **Criteria.** A card titled "Criteria" that holds the whole of the task's
+  criteria.
+- **After "Remove".** The message of what was removed
+  ([Confirming](design_system.md#confirming)) is "Removed the task NAME." on
+  the benchmark's Tasks.
+
+### Edit task
+
+- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Fields.** "Name", then "Criteria".
+- **Refusals.** The message for a name that another task of the benchmark has
+  is as for a capture ([Capturing](#capturing)).
 
 ### New task
 
@@ -491,7 +570,7 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Field    | Holds                                                                                                      |
   | -------- | ---------------------------------------------------------------------------------------------------------- |
   | Run      | a choice of the runs of the benchmark's stage that Linewright can capture ([Capturing](#capturing)), latest first, or "No runs" when there is none, and then "Add task" is disabled |
-  | Name     | the task's name, which Linewright makes from the run's ID as on Run ([Run](runs.md#run)) |
+  | Name     | the task's name ([Names and IDs](#names-and-ids))                                                          |
   | Criteria | the criteria                                                                                               |
 
 ### New benchmark run
@@ -517,7 +596,6 @@ benchmark run that does not exist is as an item or run that does not exist.
   | Refusal                                                  | Message                                      |
   | -------------------------------------------------------- | -------------------------------------------- |
   | a benchmark with no tasks                                | "The benchmark NAME has no tasks."           |
-  | a name that is not in the form of a name                 | as on [New benchmark](#new-benchmark)        |
   | a name that another configuration has                    | "Another configuration is named NAME."       |
   | a file with an error ([Configurations](#configurations)) | "FILE has an error: ERROR"                   |
   | repetitions that are not a whole number, 1 or more       | "Repetitions are a whole number, 1 or more." |
@@ -623,6 +701,13 @@ benchmark run that does not exist is as an item or run that does not exist.
   ([Confirming](design_system.md#confirming)): "Remove the task NAME and its
   directory?"
 
+### Edit configuration
+
+- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Fields.** "Name".
+- **Refusals.** The message for a name that another configuration has is as
+  on [New benchmark run](#new-benchmark-run).
+
 ### Cancel benchmark run
 
 - **Layout.** A confirmation
@@ -652,3 +737,4 @@ benchmark run that does not exist is as an item or run that does not exist.
   into the operator's settings.
 - Adding to a benchmark a task that no benchmark holds.
 - Copying a task or a benchmark to another Linewright.
+- Showing on Task how the task did in each benchmark run.

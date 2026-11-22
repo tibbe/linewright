@@ -288,7 +288,8 @@ sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `lw trial TASK --out DIR` runs a task's stage again
 ([Capturing a task](tuning-briefs.md#capturing-a-task)), and `lw score TASK DIR`
 then scores what it made against the task's criteria. A capture needs its
-criteria, as `lw capture ID NAME --benchmark BENCHMARK --criteria FILE`, since
+criteria, as `lw capture ID --benchmark BENCHMARK --name NAME --criteria FILE`,
+since
 they are what the scorer scores by. The scorer is an agent in a session of its
 own: it reads the trial's sessions and writes, and its clone has the branch the
 trial pushed checked out, or the default branch when it pushed none. It also
@@ -337,23 +338,26 @@ launches one under `as-is`, which changes nothing, and a configuration for each
 `--repetitions N` trials of each task under each configuration, 1 by default:
 
 ```sh
-lw benchmark-run launch implements --configuration short-brief=tries/short --repetitions 3
+lw benchmark-run launch 1 --configuration "Short brief=tries/short" --repetitions 3
 ```
 
 The launch keeps a copy of each task of the benchmark and of each configuration
 under `benchmark-runs/ID/` in the work directory, so a later change to the
-benchmark, a task's criteria or a configuration's directory leaves the
-benchmark run as it was. It refuses a benchmark with no tasks, a configuration
-with an error and two configurations with one name, `as-is` among them, and
-then writes nothing. The trials' outputs are to go in
-`benchmark-runs/ID/CONFIG/TASK/REP`.
+benchmark, a task's criteria or a configuration's directory leaves the benchmark
+run as it was. Only names follow: the benchmark run shows each task under its
+name as it is now. It refuses a benchmark with no tasks, a configuration with an
+error and two configurations with one name, `as-is` among them, and then writes
+nothing. The trials' outputs are to go in `benchmark-runs/ID/CONFIG/TASK/REP`,
+where CONFIG and TASK are the configuration's and the task's IDs.
 
 `lw benchmark-run show ID` shows a benchmark run's state, each trial, and each
 configuration's results: its pass rate and passes for each task, of the trials
 with a score and no leak, the mean and total of its trials' cost and time, its
 leaks and its trials without a score, with the scorers' cost apart.
-`lw benchmark show NAME` lists the benchmark's benchmark runs, latest first,
-and `lw benchmark-run cancel ID` cancels one, stopping its trials and scorers in
+`lw benchmark show BENCHMARK` lists the benchmark's benchmark runs, latest
+first, `lw benchmark-run rename-configuration ID CONFIGURATION NAME` changes
+the name of a configuration, other than `as-is`, by its ID, and
+`lw benchmark-run cancel ID` cancels one, stopping its trials and scorers in
 flight. The commands work whether `serve` is running or not, and exit 4 for a
 benchmark or a benchmark run that does not exist.
 
@@ -365,8 +369,8 @@ it when the form opens; only the files you change go into it. Each benchmark
 run's page follows it as it runs, with a chart of each configuration's mean cost
 against its pass rate, the passes of each task under each configuration, and
 each configuration's figures, which open to its tasks and their trials, and from
-each trial to the transcripts of its run and of its scorer. It cancels an open
-benchmark run too.
+each trial to the transcripts of its run and of its scorer. It renames a
+configuration and cancels an open benchmark run too.
 
 `serve` runs the benchmark runs' trials and scorers, oldest benchmark run
 first, a trial's scorer before the next trial, and at most `max-trials` of them

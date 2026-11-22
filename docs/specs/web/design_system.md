@@ -106,6 +106,9 @@ The web UI follows daisyUI, with two themes of its own.
 | "Run benchmark"                            | `play`                      |
 | "Add a configuration"                      | `plus`                      |
 | "Keep running"                             | `play`                      |
+| "Edit"                                     | `pencil-square`             |
+| "Save"                                     | `check`                     |
+| The card "Criteria"                        | `clipboard-document-check`  |
 | "Cancel" that closes a dialog              | `x-mark`                    |
 | The button that opens the navigation       | `bars-3`                    |
 | The button that expands the navigation     | `chevron-double-right`      |
@@ -144,7 +147,7 @@ The web UI follows daisyUI, with two themes of its own.
   This modal already closes as [Dialogs](../design_system.md#dialogs) says.
 - **The button that goes ahead** in a confirmation is a `btn-error`.
 - **A tab** is at the address of its screen, then `/` and the tab's name in
-  lowercase, such as `/benchmarks/NAME/tasks`.
+  lowercase, such as `/benchmarks/ID/tasks`.
 
 | Screen      | Address           |
 | ----------- | ----------------- |
@@ -154,7 +157,8 @@ The web UI follows daisyUI, with two themes of its own.
 | Run         | `/runs/ID`        |
 | Automations | `/automations`    |
 | Benchmarks      | `/benchmarks`         |
-| Benchmark       | `/benchmarks/NAME`    |
+| Benchmark       | `/benchmarks/ID`      |
+| Task            | `/tasks/ID`           |
 | Benchmark run  | `/benchmark-runs/ID` |
 | Server      | `/server`         |
 
@@ -171,7 +175,15 @@ The web UI follows daisyUI, with two themes of its own.
 - **A refusal that is not of one field** is a daisyUI `alert` in the
   `alert-error` style.
 - **What was made**, on a screen that does not show it, is a daisyUI `alert` in
-  the `alert-success` style.
+  the `alert-success` style. So is what was removed
+  ([Confirming](../design_system.md#confirming)).
+
+## Editing
+
+- **The dialog in which the reader changes a thing** is as the dialog in which
+  the reader makes one ([Making](#making)), with "Save" in place of the button
+  that makes the thing.
+- **"Edit"** with a screen's buttons is a plain `btn`.
 
 ## Layout
 

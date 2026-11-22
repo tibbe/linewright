@@ -499,7 +499,7 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   | -------------- | ------------------------------------------------------------------------------------------------------- |
   | Benchmark      | a choice of the benchmarks of the run's stage, then "New benchmark"                                     |
   | Benchmark name | the name of the new benchmark, shown while "New benchmark" is chosen                                    |
-  | Name           | the task's name, filled in with the run ID's letters and digits joined by hyphens, such as `43-implement-2` |
+  | Name           | the task's name ([Names and IDs](benchmarks.md#names-and-ids))                                          |
   | Criteria       | the criteria                                                                                            |
 
   - **A new benchmark's refusals.** Linewright refuses a new benchmark as on
