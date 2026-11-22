@@ -44,6 +44,8 @@ pub enum Subject {
     Item(Item),
     Commit(String),
     Push(String),
+    /// The repository's workflow runs, which name no item.
+    WorkflowRuns,
 }
 
 impl Subject {
@@ -58,7 +60,7 @@ impl Subject {
             Subject::Push(branch) if *branch == snapshot.default_branch => {
                 open.map(|pull| Item::Pull(pull.number)).collect()
             }
-            Subject::Push(_) => vec![],
+            Subject::Push(_) | Subject::WorkflowRuns => vec![],
         }
     }
 }
@@ -75,6 +77,7 @@ impl fmt::Display for Subject {
             Subject::Item(item) => write!(f, "{item}"),
             Subject::Commit(sha) => write!(f, "commit {sha}"),
             Subject::Push(branch) => write!(f, "a push to branch {branch}"),
+            Subject::WorkflowRuns => f.write_str("the workflow runs"),
         }
     }
 }
@@ -137,6 +140,7 @@ enum Event {
     CheckSuite,
     Status,
     Push,
+    WorkflowRun,
 }
 
 impl Event {
@@ -150,6 +154,7 @@ impl Event {
             "check_suite" => Event::CheckSuite,
             "status" => Event::Status,
             "push" => Event::Push,
+            "workflow_run" => Event::WorkflowRun,
             _ => return None,
         })
     }
@@ -288,6 +293,7 @@ fn read_delivery(event: Event, body: &[u8]) -> serde_json::Result<Delivery> {
                 None => return Ok(Delivery::Ignored),
             }
         }
+        Event::WorkflowRun => Subject::WorkflowRuns,
     };
     Ok(Delivery::Accepted(subject))
 }

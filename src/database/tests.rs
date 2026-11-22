@@ -1184,3 +1184,67 @@ async fn a_database_from_before_automations_were_named_by_their_paths_opens_with
     ids.sort();
     assert_eq!(ids, ["7/triage-1", "weekly.md/3"]);
 }
+
+static BEFORE_WORKFLOW_RUN_TRIGGERS: &[Migration] = MIGRATIONS.split_at(17).0;
+
+#[test_log::test(tokio::test)]
+async fn a_database_from_before_workflow_run_triggers_opens_with_its_runs_sessions_and_inputs() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_WORKFLOW_RUN_TRIGGERS, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO runs (id, kind, automation, n, started_by, started_at, ended_at, ending)
+             VALUES (1, 'automation', 'weekly.md', 3, 'hand', '2026-11-16T09:00:00Z',
+                 '2026-11-16T09:10:00Z', 'done');
+         INSERT INTO runs (id, kind, item, stage, n, started_at)
+             VALUES (2, 'item', 7, 'triage', 1, '2026-11-16T10:00:00Z');
+         INSERT INTO sessions (run, seq, dir) VALUES (2, 0, 'sessions/issue-7/1');
+         INSERT INTO run_inputs (run, input) VALUES (2, '{}')",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let runs = crate::runs::Runs::new(db.clone()).read().await.unwrap();
+    let read: Vec<(String, Option<crate::runs::StartedBy>, usize)> = runs
+        .iter()
+        .map(|run| (run.id.to_string(), run.started().by(), run.sessions.len()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            ("weekly.md/3".into(), Some(crate::runs::StartedBy::Hand), 0),
+            ("7/triage-1".into(), None, 1),
+        ]
+    );
+    sqlx::query("DELETE FROM runs WHERE id = 2")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "a run's sessions go with it");
+    let refused = sqlx::query(
+        "INSERT INTO runs (kind, automation, n, started_by, started_at)
+             VALUES ('automation', 'weekly.md', 3, 'hand', '2026-11-16T11:00:00Z')",
+    )
+    .execute(db.pool())
+    .await;
+    assert!(refused.is_err(), "an automation's runs are numbered once");
+    let without_its_attempt = sqlx::query(
+        "INSERT INTO runs (kind, automation, n, started_by, workflow_run, started_at)
+             VALUES ('automation', 'fix-ci.md', 1, 'workflow-run', 9, '2026-11-16T11:00:00Z')",
+    )
+    .execute(db.pool())
+    .await;
+    assert!(
+        without_its_attempt.is_err(),
+        "a run an attempt started names its run and attempt"
+    );
+}

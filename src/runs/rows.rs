@@ -12,11 +12,12 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{Row as _, SqliteConnection, SqliteExecutor, SqlitePool};
 
 use super::files::{End, Record, RecordedSession};
-use super::{Ran, Recorded, RunId, RunOf, SessionEntry, SessionKept, Started, State};
+use super::{Ran, Recorded, RunId, RunOf, SessionEntry, SessionKept, Started, StartedBy, State};
 use crate::cost::SessionCost;
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Number;
 use crate::input::Input;
+use crate::workflow_run::AttemptId;
 
 /// What a write of a run changes of its rows.
 #[derive(Clone, Copy)]
@@ -143,6 +144,42 @@ impl OfColumns {
     }
 }
 
+/// How an automation's run started, as the columns of `runs` hold it.
+struct StartedByColumns {
+    started_by: Option<&'static str>,
+    /// `workflow_run` and `run_attempt`, of a run an attempt started.
+    attempt: Option<(i64, i64)>,
+}
+
+const WORKFLOW_RUN: &str = "workflow-run";
+
+impl StartedByColumns {
+    fn of(by: Option<StartedBy>) -> Result<StartedByColumns> {
+        let (started_by, attempt) = match by {
+            None => (None, None),
+            Some(StartedBy::Schedule) => (Some("schedule"), None),
+            Some(StartedBy::Hand) => (Some("hand"), None),
+            Some(StartedBy::WorkflowRun(attempt)) => (Some(WORKFLOW_RUN), Some(attempt.columns()?)),
+        };
+        Ok(StartedByColumns {
+            started_by,
+            attempt,
+        })
+    }
+
+    /// How the run of `row` started.
+    fn read(row: &SqliteRow) -> Result<Option<StartedBy>> {
+        Ok(match row.try_get::<Option<&str>, _>("started_by")? {
+            None => None,
+            Some(WORKFLOW_RUN) => Some(StartedBy::WorkflowRun(AttemptId::of_columns(
+                row.try_get("workflow_run")?,
+                row.try_get("run_attempt")?,
+            )?)),
+            Some(by) => Some(parse_enum(by)?),
+        })
+    }
+}
+
 /// The next number of a run of `of`: one after every run of it kept.
 pub(super) async fn next_n(conn: &mut SqliteConnection, of: &RunOf) -> Result<u32> {
     let of = OfColumns::of(of)?;
@@ -163,10 +200,12 @@ pub(super) async fn next_n(conn: &mut SqliteConnection, of: &RunOf) -> Result<u3
 pub(super) async fn insert(conn: &mut SqliteConnection, record: &Record) -> Result<i64> {
     let of = OfColumns::of(&record.of)?;
     let (ended_at, ending) = end_columns(record.end)?;
+    let by = StartedByColumns::of(record.started_by)?;
     let row: i64 = sqlx::query_scalar(
         "INSERT INTO runs
-            (kind, item, stage, automation, n, started_by, started_at, ended_at, ending, answered_until)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (kind, item, stage, automation, n, started_by, workflow_run, run_attempt, started_at,
+                ended_at, ending, answered_until)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id",
     )
     .bind(of.kind)
@@ -174,7 +213,9 @@ pub(super) async fn insert(conn: &mut SqliteConnection, record: &Record) -> Resu
     .bind(of.stage)
     .bind(of.automation)
     .bind(record.n)
-    .bind(record.started_by.map(|by| enum_text(&by)).transpose()?)
+    .bind(by.started_by)
+    .bind(by.attempt.map(|(run, _)| run))
+    .bind(by.attempt.map(|(_, attempt)| attempt))
     .bind(time_text(record.started_at))
     .bind(ended_at)
     .bind(ending)
@@ -241,8 +282,8 @@ async fn write_input(conn: &mut SqliteConnection, row: i64, input: &Input) -> Re
 }
 
 /// A run's row, with what it is of.
-const SELECT_RUNS: &str = "SELECT id, kind, item, stage, automation, n, started_by, started_at, \
-    ended_at, ending, answered_until FROM runs";
+const SELECT_RUNS: &str = "SELECT id, kind, item, stage, automation, n, started_by, workflow_run, \
+    run_attempt, started_at, ended_at, ending, answered_until FROM runs";
 
 /// Every run kept, each with no end in flight when `in_flight` says so of
 /// it, and interrupted otherwise. Session directories are under `work_dir`.
@@ -343,10 +384,7 @@ fn recorded(
         of: OfColumns::read(row)?,
         n: u32::try_from(row.try_get::<i64, _>("n")?)?,
     };
-    let started_by = row
-        .try_get::<Option<&str>, _>("started_by")?
-        .map(parse_enum)
-        .transpose()?;
+    let started_by = StartedByColumns::read(row)?;
     let ended_at = row.try_get::<Option<&str>, _>("ended_at")?;
     let ending = row.try_get::<Option<&str>, _>("ending")?;
     let state = match (ended_at, ending) {

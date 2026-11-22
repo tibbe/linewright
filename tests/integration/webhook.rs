@@ -85,7 +85,7 @@ async fn a_delivery_with_a_missing_or_wrong_signature_is_refused_and_logged() {
     }
 }
 
-const DELIVERIES: [(&str, &str, &str); 9] = [
+const DELIVERIES: [(&str, &str, &str); 10] = [
     (
         "issues",
         r#"{"action":"labeled","issue":{"number":7}}"#,
@@ -130,6 +130,11 @@ const DELIVERIES: [(&str, &str, &str); 9] = [
         "push",
         r#"{"ref":"refs/heads/main"}"#,
         "a push to branch main",
+    ),
+    (
+        "workflow_run",
+        r#"{"action":"completed","workflow_run":{"id":18000000001,"run_attempt":2}}"#,
+        "the workflow runs",
     ),
 ];
 
@@ -495,6 +500,7 @@ fn a_delivery_names_its_item_the_open_pull_request_whose_head_its_commit_is_or_o
             Subject::Push("50-pull".into()),
             vec![],
         ),
+        ("the workflow runs", Subject::WorkflowRuns, vec![]),
     ];
 
     for (case, subject, items) in cases {

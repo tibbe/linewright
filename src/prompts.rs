@@ -22,6 +22,7 @@ use crate::store::FoundSecrets;
 use crate::task::Criteria;
 use crate::trial::scorer::TrialCopy;
 use crate::work_settings::RunKind;
+use crate::workflow_run::CompletedAttempt;
 use crate::working_pull::Feedback;
 
 mod list;
@@ -1133,6 +1134,19 @@ pub struct WorkflowRunAttempt<'a> {
     pub branch: Option<&'a str>,
     pub commit: &'a str,
     pub link: &'a str,
+}
+
+impl<'a> From<&'a CompletedAttempt> for WorkflowRunAttempt<'a> {
+    fn from(attempt: &'a CompletedAttempt) -> WorkflowRunAttempt<'a> {
+        WorkflowRunAttempt {
+            workflow: &attempt.workflow,
+            attempt: attempt.id.attempt.get(),
+            conclusion: attempt.conclusion.wire(),
+            branch: attempt.branch.as_deref(),
+            commit: &attempt.commit,
+            link: &attempt.link,
+        }
+    }
 }
 
 /// The prompt of a run of `automation`, which `trigger` started unless its
