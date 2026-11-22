@@ -9,6 +9,8 @@ Run one of the maintainer's automations, the one below: do what its instructions
 
 {{instructions}}
 
+{{trigger}}
+
 ## Steps
 
 ### 1. Read the instructions

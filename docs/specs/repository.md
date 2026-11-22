@@ -133,7 +133,7 @@ assigning itself and lets go of it by unassigning itself.
   Linewright when it carries the required label, checked each time Linewright
   claims an item on its own. Work already started carries on without it.
   Linewright puts the label on every issue and pull request it creates.
-  Automations run on their schedule either way. Unset, every issue and pull
+  Automations run on their triggers either way. Unset, every issue and pull
   request is marked for Linewright.
 
 ## State

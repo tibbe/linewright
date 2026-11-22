@@ -1623,6 +1623,7 @@ pub(crate) async fn automation(
                 &ctx.with.briefs.templates,
                 &shell.repo(),
                 automation,
+                None,
                 attachments,
             )
         });

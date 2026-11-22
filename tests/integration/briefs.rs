@@ -423,7 +423,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
     let dir = briefs_dir(&[(
         "prompts/automation.md",
         "Mind the schedule of `{{name}}`, at most {{max_issues}}: {{instructions}}\n\
-         {{facts}}\n\n{{output}}\n",
+         {{facts}}\n\n{{trigger}}\n\n{{output}}\n",
     )]);
     let automation = linewright::automation::parse(
         &"weekly".parse().unwrap(),
@@ -441,6 +441,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
             spec_glob: "docs/**",
         },
         &automation,
+        None,
         std::path::Path::new("/attachments"),
     );
 
