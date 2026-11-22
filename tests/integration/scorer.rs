@@ -152,17 +152,19 @@ async fn a_scorer_keeps_its_score_in_the_output_with_its_record() {
     harness.reports_model("claude-judge-1");
     harness.on_scorer(|_| Ok(scored_as("pass", &[])));
     let scorer_settings = |config: &mut FactoryConfig| {
-        config.work.stages.insert(
-            StageKey::Scorer,
-            StageTable {
-                settings: Partial {
-                    model: Some("judge-model".into()),
-                    effort: Some(Effort::High),
-                    session_timeout: None,
+        edit_work(config, |work| {
+            work.stages.insert(
+                StageKey::Scorer,
+                StageTable {
+                    settings: Partial {
+                        model: Some("judge-model".into()),
+                        effort: Some(Effort::High),
+                        session_timeout: None,
+                    },
+                    ..StageTable::default()
                 },
-                ..StageTable::default()
-            },
-        );
+            );
+        });
     };
 
     let scored = scoring(&task, &out, under.path(), harness.clone(), scorer_settings).await;
@@ -348,9 +350,11 @@ async fn a_scorer_whose_environment_cannot_be_built_says_so_with_the_builds_log(
     let harness = Arc::new(ScriptedHarness::default());
 
     let scored = scoring(&task, &out, under.path(), harness.clone(), |config| {
-        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
-            SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
-        ));
+        edit_work(config, |work| {
+            work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+                SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
+            ));
+        });
     })
     .await;
 

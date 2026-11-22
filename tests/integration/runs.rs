@@ -62,17 +62,19 @@ async fn triage_on_opus() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let mut world = World::with(|config| {
         config.work_dir = work_dir.path().join(REPO);
-        config.work.stages.insert(
-            StageKey::Work(WorkKind::Triage),
-            StageTable {
-                settings: Partial {
-                    model: Some("opus".into()),
-                    ..Partial::default()
+        edit_work(config, |work| {
+            work.stages.insert(
+                StageKey::Work(WorkKind::Triage),
+                StageTable {
+                    settings: Partial {
+                        model: Some("opus".into()),
+                        ..Partial::default()
+                    },
+                    session_env: Some(SetEnv::new([("CI".into(), "true".into())]).unwrap()),
+                    ..StageTable::default()
                 },
-                session_env: Some(SetEnv::new([("CI".into(), "true".into())]).unwrap()),
-                ..StageTable::default()
-            },
-        );
+            );
+        });
     })
     .await;
     triage_ready(&world);

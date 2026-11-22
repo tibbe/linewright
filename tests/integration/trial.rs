@@ -401,9 +401,11 @@ async fn a_trial_whose_build_fails_keeps_the_builds_output_and_time_and_its_own_
     let under = tempfile::tempdir().unwrap();
 
     let ran_trial = ran_trial(&task, under.path(), harness.clone(), |config| {
-        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
-            SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
-        ));
+        edit_work(config, |work| {
+            work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+                SetupCommand::new("echo the build broke; exit 3".into()).unwrap(),
+            ));
+        });
     })
     .await;
 
@@ -461,9 +463,11 @@ async fn an_implement_task_is_run_pushing_its_branch_into_the_output() {
     let under = tempfile::tempdir().unwrap();
 
     let ran_trial = ran_trial(&task, under.path(), harness, |config| {
-        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
-            SetupCommand::new("echo built the environment".into()).unwrap(),
-        ));
+        edit_work(config, |work| {
+            work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+                SetupCommand::new("echo built the environment".into()).unwrap(),
+            ));
+        });
     })
     .await;
 
@@ -572,9 +576,11 @@ async fn a_later_trial_from_the_same_head_uses_the_environment_an_earlier_one_bu
     harness.on(WorkKind::Triage, |_| Ok(triaged()));
     let under = tempfile::tempdir().unwrap();
     let setup = |config: &mut FactoryConfig| {
-        config.work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
-            SetupCommand::new("echo built the environment".into()).unwrap(),
-        ));
+        edit_work(config, |work| {
+            work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+                SetupCommand::new("echo built the environment".into()).unwrap(),
+            ));
+        });
     };
     let first = ran_trial(&task, under.path(), harness.clone(), setup).await;
     assert_eq!(first.ended.as_ref().unwrap(), &Ending::Done);
@@ -1298,7 +1304,11 @@ async fn a_configuration_wins_over_the_tasks_files_and_the_flags_leaving_the_res
         &task,
         under.path(),
         harness.clone(),
-        |config| config.work.flags_and_env.model = Some("flag-model".into()),
+        |config| {
+            edit_work(config, |work| {
+                work.flags_and_env.model = Some("flag-model".into());
+            });
+        },
         Some(&configuration),
     )
     .await;

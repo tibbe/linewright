@@ -1083,18 +1083,20 @@ async fn a_pull_request_run_that_ends_unexpectedly_hands_the_pull_request_back()
 async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is_named_in_the_hand_back()
  {
     let mut world = World::with(|config| {
-        config.work.flags_and_env.model = Some("sonnet".into());
-        config.work.stages.insert(
-            StageKey::Work(WorkKind::Implement),
-            StageTable {
-                settings: Partial {
-                    model: Some("opus".into()),
-                    effort: Some(Effort::Xhigh),
-                    session_timeout: Some(std::time::Duration::from_mins(90)),
+        edit_work(config, |work| {
+            work.flags_and_env.model = Some("sonnet".into());
+            work.stages.insert(
+                StageKey::Work(WorkKind::Implement),
+                StageTable {
+                    settings: Partial {
+                        model: Some("opus".into()),
+                        effort: Some(Effort::Xhigh),
+                        session_timeout: Some(std::time::Duration::from_mins(90)),
+                    },
+                    ..StageTable::default()
                 },
-                ..StageTable::default()
-            },
-        );
+            );
+        });
     })
     .await;
     let given = Arc::new(Mutex::new(None));

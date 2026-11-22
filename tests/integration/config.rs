@@ -53,7 +53,7 @@ fn session(config: &Config) -> SessionSettings {
 
 /// What a `stage` run's sessions run with under `config`.
 fn stage_session(config: &Config, stage: WorkKind) -> SessionSettings {
-    config.work.for_run(
+    config.work.clone().for_sessions().for_run(
         RunKind::Stage(stage),
         &RepoSettings::default(),
         &Environments::default(),
@@ -257,7 +257,7 @@ fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
 
     let config = resolve(&["--model", "haiku"], &[], Some(file)).unwrap();
 
-    let scorer = config.work.for_run(
+    let scorer = config.work.clone().for_sessions().for_run(
         RunKind::Scorer,
         &RepoSettings::default(),
         &Environments::default(),
@@ -303,9 +303,11 @@ fn the_repositorys_scorer_table_ranks_above_the_operators() {
     )
     .unwrap();
 
-    let scorer = config
-        .work
-        .for_run(RunKind::Scorer, &repo, &Environments::default());
+    let scorer = config.work.clone().for_sessions().for_run(
+        RunKind::Scorer,
+        &repo,
+        &Environments::default(),
+    );
 
     assert_eq!(
         scorer.effort,
@@ -354,6 +356,8 @@ fn the_scorers_table_adds_to_the_scorers_environment() {
 
     let mut scorer: Vec<(String, String)> = config
         .work
+        .clone()
+        .for_sessions()
         .for_run(
             RunKind::Scorer,
             &RepoSettings::default(),
@@ -404,7 +408,7 @@ fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_scorer_among_the
 /// What a `stage` run's sessions run with under `config` and the
 /// repository's file `repo`.
 fn repo_session(config: &Config, repo: &str, stage: WorkKind) -> SessionSettings {
-    config.work.for_run(
+    config.work.clone().for_sessions().for_run(
         RunKind::Stage(stage),
         &RepoSettings::parse(repo).unwrap(),
         &Environments::default(),
@@ -554,6 +558,8 @@ fn a_stage_has_no_flag() {
 fn given(config: &Config, split: &Split, stage: WorkKind) -> Vec<(String, String)> {
     let mut given: Vec<(String, String)> = config
         .work
+        .clone()
+        .for_sessions()
         .for_run(
             RunKind::Stage(stage),
             &RepoSettings::default(),
@@ -678,7 +684,7 @@ fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
     )
     .unwrap();
 
-    let session = config.work.for_run(
+    let session = config.work.for_sessions().for_run(
         RunKind::Automation(&automation),
         &RepoSettings::default(),
         &Environments::default(),
@@ -766,7 +772,7 @@ fn an_automations_session_timeout_comes_from_the_repository_before_the_operators
     )
     .unwrap();
 
-    let session = config.work.for_run(
+    let session = config.work.for_sessions().for_run(
         RunKind::Automation(&automation),
         &RepoSettings::default(),
         &Environments::default(),
@@ -2035,7 +2041,7 @@ fn an_automations_front_matter_holds_no_maintenance_so_it_runs_the_whole_pipelin
     )
     .unwrap();
 
-    let settings = config.work.for_run(
+    let settings = config.work.for_sessions().for_run(
         RunKind::Automation(&automation),
         &RepoSettings::parse("maintenance = \"npm ci\"\n").unwrap(),
         &Environments::default(),
