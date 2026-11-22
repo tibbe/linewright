@@ -199,6 +199,18 @@ struct Pages {
     dir: tempfile::TempDir,
 }
 
+/// The session settings a run of `stage` uses in [`Pages`]: an implement
+/// run's model and effort set, every other stage's not, and every stage's
+/// session timeout 6 hours.
+fn stage_settings(stage: linewright::task::TaskStage) -> linewright::work_settings::Partial {
+    let implement = stage == linewright::task::TaskStage::Implement;
+    linewright::work_settings::Partial {
+        model: implement.then(|| "claude-opus-5-5".to_string()),
+        effort: implement.then_some(linewright::work_settings::Effort::High),
+        session_timeout: Some(std::time::Duration::from_hours(6)),
+    }
+}
+
 impl Pages {
     /// The pages of `view`, as `serve` shows them once a poll has made it.
     async fn of(view: linewright::status::View) -> Pages {
@@ -240,6 +252,7 @@ impl Pages {
             store.clone(),
             linewright::redaction::Redaction::default(),
             std::sync::Arc::new(linewright::briefs::Briefs::shipped()),
+            stage_settings,
         ));
         let (served, served_receiver) = tokio::sync::watch::channel(served);
         let (_, polling) = tokio::sync::watch::channel(Some(polling));
@@ -268,11 +281,22 @@ impl Pages {
 
     /// Publishes `view` as the next one `serve` shows, as a poll would.
     fn publish(&self, view: linewright::status::View) {
+        self.publish_with_settings(view, stage_settings);
+    }
+
+    /// Publishes `view` as [`Pages::publish`] does, a run of each stage
+    /// using the session settings `settings` gives.
+    fn publish_with_settings(
+        &self,
+        view: linewright::status::View,
+        settings: impl Fn(linewright::task::TaskStage) -> linewright::work_settings::Partial,
+    ) {
         let served = linewright::api::Served::new(
             view,
             self.store.clone(),
             linewright::redaction::Redaction::default(),
             std::sync::Arc::new(linewright::briefs::Briefs::shipped()),
+            settings,
         );
         self.served.send_replace(Some(served));
     }

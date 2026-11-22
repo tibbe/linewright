@@ -1,7 +1,8 @@
 //! The New benchmark run dialog (`docs/specs/benchmarks.md`, New benchmark
-//! run): its form, which starts each file of the brief as the text a run of the
-//! stage uses as the dialog opens, and the `POST` that launches what it sends:
-//! a file whose text is not changed is not part of the configuration.
+//! run): its form, which starts each setting and each file of the brief as a
+//! run of the stage uses it as the dialog opens, and the `POST` that launches
+//! what it sends: a setting or a file left as it started is not part of the
+//! configuration.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
@@ -10,6 +11,7 @@ use askama::Template;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
+use serde::Serialize;
 use tracing::{info, warn};
 
 use super::benchmark_page::{InBenchmark, benchmark_for_making};
@@ -24,8 +26,9 @@ use crate::api::Sources;
 use crate::benchmarks::{Benchmark, ConfigurationName, LaunchRefusal};
 use crate::config;
 use crate::repo_files::FileError;
+use crate::task::TaskStage;
 use crate::trial::Configuration;
-use crate::work_settings::Effort;
+use crate::work_settings::{Effort, Partial};
 
 /// The text of each file of the brief that a configuration may give, by its
 /// path under `briefs/`, as a run of the stage would use it now: the
@@ -38,6 +41,102 @@ fn starting_texts(sources: &Sources) -> BTreeMap<String, String> {
         .as_ref()
         .map(|served| served.briefs().texts())
         .unwrap_or_default()
+}
+
+/// The settings a run of `stage` uses now, as the dialog shows them: as
+/// `serve` last read them, or all unset before its first poll.
+fn starting_settings(sources: &Sources, stage: TaskStage) -> SettingTexts {
+    sources
+        .served
+        .borrow()
+        .as_ref()
+        .map(|served| SettingTexts::of(served.session_settings(stage)))
+        .unwrap_or_default()
+}
+
+/// A configuration's `model`, `effort` and `session-timeout` as the dialog
+/// shows them, each empty where unset.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) struct SettingTexts {
+    model: String,
+    effort: String,
+    session_timeout: String,
+}
+
+impl SettingTexts {
+    /// `settings` as the dialog shows them, a session timeout as `humantime`
+    /// writes it, such as `6h`.
+    fn of(settings: &Partial) -> SettingTexts {
+        SettingTexts {
+            model: settings.model.clone().unwrap_or_default(),
+            effort: settings
+                .effort
+                .map(Effort::name)
+                .unwrap_or_default()
+                .to_string(),
+            session_timeout: settings
+                .session_timeout
+                .map(|timeout| humantime::format_duration(timeout).to_string())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The text of the setting `key`.
+    fn get(&self, key: SettingKey) -> &str {
+        match key {
+            SettingKey::Model => &self.model,
+            SettingKey::Effort => &self.effort,
+            SettingKey::SessionTimeout => &self.session_timeout,
+        }
+    }
+
+    fn set(&mut self, key: SettingKey, text: String) {
+        match key {
+            SettingKey::Model => self.model = text,
+            SettingKey::Effort => self.effort = text,
+            SettingKey::SessionTimeout => self.session_timeout = text,
+        }
+    }
+}
+
+/// A setting a configuration may give.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum SettingKey {
+    Model,
+    Effort,
+    SessionTimeout,
+}
+
+impl SettingKey {
+    const ALL: [SettingKey; 3] = [
+        SettingKey::Model,
+        SettingKey::Effort,
+        SettingKey::SessionTimeout,
+    ];
+
+    /// Its key in `config.toml` and in its field's name, `cN.KEY`.
+    fn key(self) -> &'static str {
+        match self {
+            SettingKey::Model => "model",
+            SettingKey::Effort => "effort",
+            SettingKey::SessionTimeout => "session-timeout",
+        }
+    }
+
+    fn named(key: &str) -> Option<SettingKey> {
+        SettingKey::ALL
+            .into_iter()
+            .find(|setting| setting.key() == key)
+    }
+
+    fn field(self) -> ConfigurationField {
+        match self {
+            SettingKey::Model => ConfigurationField::Model,
+            SettingKey::Effort => ConfigurationField::Effort,
+            SettingKey::SessionTimeout => ConfigurationField::SessionTimeout,
+        }
+    }
 }
 
 /// How many trials `configurations` configurations, `as-is` among them,
@@ -75,9 +174,10 @@ pub(super) struct ConfigurationFields {
     /// Its number in its fields' names, `cN.KEY`.
     n: u32,
     name: String,
-    model: String,
-    effort: String,
-    session_timeout: String,
+    settings: SettingTexts,
+    /// The text each setting started with in the dialog, where the dialog
+    /// sent it.
+    settings_started: BTreeMap<SettingKey, String>,
     /// Each file of the brief given, by its path under `briefs/`, with its
     /// text, in the order the reader chose them.
     briefs: Vec<(String, String)>,
@@ -89,9 +189,9 @@ pub(super) struct ConfigurationFields {
 #[derive(Clone, Copy)]
 enum ConfigurationKey<'a> {
     Name,
-    Model,
-    Effort,
-    SessionTimeout,
+    Setting(SettingKey),
+    /// The text that setting started with in the dialog.
+    SettingStarted(SettingKey),
     /// The text of the file of the brief at this path under `briefs/`.
     Brief(&'a str),
     /// The text that file started with in the dialog.
@@ -109,14 +209,19 @@ impl ConfigurationKey<'_> {
         }
         let key = match key {
             "name" => ConfigurationKey::Name,
-            "model" => ConfigurationKey::Model,
-            "effort" => ConfigurationKey::Effort,
-            "session-timeout" => ConfigurationKey::SessionTimeout,
-            _ => match (key.strip_prefix("briefs/"), key.strip_prefix("started/")) {
-                (Some(path), _) => ConfigurationKey::Brief(path),
-                (None, Some(path)) => ConfigurationKey::Started(path),
-                (None, None) => return None,
-            },
+            _ => {
+                if let Some(setting) = SettingKey::named(key) {
+                    ConfigurationKey::Setting(setting)
+                } else if let Some(setting) =
+                    key.strip_prefix("started-").and_then(SettingKey::named)
+                {
+                    ConfigurationKey::SettingStarted(setting)
+                } else if let Some(path) = key.strip_prefix("briefs/") {
+                    ConfigurationKey::Brief(path)
+                } else {
+                    ConfigurationKey::Started(key.strip_prefix("started/")?)
+                }
+            }
         };
         Some((parsed, key))
     }
@@ -213,9 +318,10 @@ impl LaunchFields {
                     });
             match key {
                 ConfigurationKey::Name => configuration.name = value,
-                ConfigurationKey::Model => configuration.model = value,
-                ConfigurationKey::Effort => configuration.effort = value,
-                ConfigurationKey::SessionTimeout => configuration.session_timeout = value,
+                ConfigurationKey::Setting(setting) => configuration.settings.set(setting, value),
+                ConfigurationKey::SettingStarted(setting) => {
+                    configuration.settings_started.insert(setting, value);
+                }
                 ConfigurationKey::Brief(path) => {
                     let text = value.replace("\r\n", "\n");
                     match configuration
@@ -242,12 +348,10 @@ impl LaunchFields {
     }
 
     /// The repetitions and each configuration but `as-is`, by its name, its
-    /// files of the brief given over `starting`, or else every refusal of
-    /// the fields (`docs/specs/benchmarks.md`, New benchmark run, Refusals).
-    fn check(
-        &self,
-        starting: &BTreeMap<String, String>,
-    ) -> Result<Launch, FieldRefusals<LaunchField>> {
+    /// settings and files of the brief given over `starting`, or else every
+    /// refusal of the fields (`docs/specs/benchmarks.md`, New benchmark run,
+    /// Refusals).
+    fn check(&self, starting: &Starting) -> Result<Launch, FieldRefusals<LaunchField>> {
         let mut refused = vec![];
         let names: Vec<Option<ConfigurationName>> = self
             .configurations
@@ -320,48 +424,53 @@ impl ConfigurationFields {
         LaunchField::Configuration { n: self.n, field }
     }
 
-    /// Its settings, each with its key and its field.
-    fn settings(&self) -> [(ConfigurationField, &'static str, &str); 3] {
-        [
-            (ConfigurationField::Model, "model", &self.model),
-            (ConfigurationField::Effort, "effort", &self.effort),
-            (
-                ConfigurationField::SessionTimeout,
-                "session-timeout",
-                &self.session_timeout,
-            ),
-        ]
+    /// The text its setting `key` started with in the dialog, or else
+    /// `starting`'s.
+    fn setting_started<'a>(&'a self, key: SettingKey, starting: &'a SettingTexts) -> &'a str {
+        self.settings_started
+            .get(&key)
+            .map_or_else(|| starting.get(key), String::as_str)
     }
 
-    /// Its configuration, its files of the brief given over `starting`, or
-    /// else the refusal of each of its settings and files with an error,
-    /// under its field: a setting checked on its own as a `config.toml` of
+    /// The settings it gives, each with its key and its text: those neither
+    /// empty nor left as they started in the dialog, or else as `starting`
+    /// has them (`docs/specs/benchmarks.md`, New benchmark run, Settings).
+    fn settings_given<'a>(&'a self, starting: &'a SettingTexts) -> Vec<(SettingKey, &'a str)> {
+        SettingKey::ALL
+            .into_iter()
+            .map(|key| (key, self.settings.get(key).trim()))
+            .filter(|&(key, text)| {
+                !text.is_empty() && text != self.setting_started(key, starting).trim()
+            })
+            .collect()
+    }
+
+    /// Its configuration, its settings and files of the brief given over
+    /// `starting`, or else the refusal of each of its settings and files
+    /// with an error, under its field: a session timeout that is not a
+    /// duration, any other setting checked on its own as a `config.toml` of
     /// that one key, and a file of the brief under its box, by its path as
     /// the box's label shows it. An error of its settings together, which
-    /// none has on its own, goes under the first it sets.
-    fn checked(
-        &self,
-        starting: &BTreeMap<String, String>,
-    ) -> Result<Configuration, Vec<(LaunchField, String)>> {
-        let mut refused: Vec<(LaunchField, String)> = self
-            .settings()
-            .into_iter()
-            .filter_map(|(field, key, value)| {
-                let value = value.trim();
-                if value.is_empty() {
-                    return None;
-                }
-                let table =
-                    toml::Table::from_iter([(key.to_string(), toml::Value::String(value.into()))]);
-                let text = toml::to_string(&table).expect("a table of strings serializes");
-                let error = config::configuration_settings(&text).err()?;
-                Some((
-                    self.field(field),
-                    format!("{SETTINGS} has an error: {error:#}"),
-                ))
+    /// none has on its own, goes under the first it gives.
+    fn checked(&self, starting: &Starting) -> Result<Configuration, Vec<(LaunchField, String)>> {
+        let given = self.settings_given(&starting.settings);
+        let mut refused: Vec<(LaunchField, String)> = given
+            .iter()
+            .filter_map(|&(key, text)| {
+                let refusal = match key {
+                    SettingKey::SessionTimeout => humantime::parse_duration(text)
+                        .err()
+                        .map(|_| NOT_A_DURATION.to_string()),
+                    SettingKey::Model | SettingKey::Effort => {
+                        config::configuration_settings(&settings_file(&[(key, text)]))
+                            .err()
+                            .map(|error| format!("{SETTINGS} has an error: {error:#}"))
+                    }
+                };
+                Some((self.field(key.field()), refusal?))
             })
             .collect();
-        let errors = match Configuration::parse(self.files(starting)) {
+        let errors = match Configuration::parse(self.files(&given, &starting.texts)) {
             Ok(configuration) if refused.is_empty() => return Ok(configuration),
             Ok(_) => vec![],
             Err(errors) => errors,
@@ -375,13 +484,11 @@ impl ConfigurationFields {
                 )),
                 None if settings_refused => {}
                 None => {
-                    let first_set = self
-                        .settings()
-                        .into_iter()
-                        .find(|(_, _, value)| !value.trim().is_empty())
-                        .map_or(ConfigurationField::Name, |(field, _, _)| field);
+                    let first_given = given
+                        .first()
+                        .map_or(ConfigurationField::Name, |(key, _)| key.field());
                     refused.push((
-                        self.field(first_set),
+                        self.field(first_given),
                         format!("{path} has an error: {error}"),
                     ));
                 }
@@ -391,21 +498,17 @@ impl ConfigurationFields {
     }
 
     /// The configuration's files, by their paths under CONFIG, as
-    /// [`Configuration::parse`] takes them: its settings, if it sets any,
+    /// [`Configuration::parse`] takes them: the settings `given`, if any,
     /// and each file of the brief whose text is not the one it started with
     /// in the dialog, or else `starting`'s.
-    fn files(&self, starting: &BTreeMap<String, String>) -> BTreeMap<String, Vec<u8>> {
+    fn files(
+        &self,
+        given: &[(SettingKey, &str)],
+        starting: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, Vec<u8>> {
         let mut files = BTreeMap::new();
-        let mut settings = toml::Table::new();
-        for (_, key, value) in self.settings() {
-            let value = value.trim();
-            if !value.is_empty() {
-                settings.insert(key.into(), toml::Value::String(value.into()));
-            }
-        }
-        if !settings.is_empty() {
-            let text = toml::to_string(&settings).expect("a table of strings serializes");
-            files.insert(SETTINGS.to_string(), text.into_bytes());
+        if !given.is_empty() {
+            files.insert(SETTINGS.to_string(), settings_file(given).into_bytes());
         }
         for (path, text) in &self.briefs {
             let started = self.started.get(path).or_else(|| starting.get(path));
@@ -417,6 +520,24 @@ impl ConfigurationFields {
     }
 }
 
+/// The `config.toml` that gives the settings `given`.
+fn settings_file(given: &[(SettingKey, &str)]) -> String {
+    let table: toml::Table = given
+        .iter()
+        .map(|&(key, text)| (key.key().to_string(), toml::Value::String(text.into())))
+        .collect();
+    toml::to_string(&table).expect("a table of strings serializes")
+}
+
+/// What a configuration starts from as the dialog opens: the settings and
+/// the texts of the files of the brief that a run of the stage uses.
+#[derive(Clone, Default)]
+struct Starting {
+    settings: SettingTexts,
+    /// The text of each file of the brief, by its path under `briefs/`.
+    texts: BTreeMap<String, String>,
+}
+
 /// What the New benchmark run dialog's form holds.
 #[derive(Template)]
 #[template(path = "new_benchmark_run.html")]
@@ -425,8 +546,9 @@ pub(super) struct NewBenchmarkRunForm {
     /// How many tasks the benchmark has.
     tasks: usize,
     making: Making<LaunchFields>,
-    /// The paths under `briefs/` of the files a configuration may give.
-    paths: Vec<String>,
+    /// What a configuration starts from, and what one is compared with
+    /// where the dialog sent no start of its own.
+    starting: Starting,
 }
 
 impl NewBenchmarkRunForm {
@@ -440,7 +562,10 @@ impl NewBenchmarkRunForm {
             benchmark: InBenchmark::Found(benchmark.name.clone()),
             tasks,
             making: Making::blank(),
-            paths: starting_texts(sources).into_keys().collect(),
+            starting: Starting {
+                settings: starting_settings(sources, benchmark.stage),
+                texts: starting_texts(sources),
+            },
         }
     }
 
@@ -464,7 +589,13 @@ impl NewBenchmarkRunForm {
     /// What "Add a configuration" adds, its number `__N__` for the script
     /// to fill in.
     pub(super) fn added(&self) -> Html {
-        self.configuration_box(None, &ConfigurationFields::default())
+        self.configuration_box(
+            None,
+            &ConfigurationFields {
+                settings: self.starting.settings.clone(),
+                ..ConfigurationFields::default()
+            },
+        )
     }
 
     /// The box of the configuration `fields` numbered `n`, or else
@@ -474,7 +605,7 @@ impl NewBenchmarkRunForm {
             n,
             fields,
             making: &self.making,
-            paths: &self.paths,
+            starting: &self.starting,
             efforts: efforts(),
         })
     }
@@ -511,7 +642,9 @@ struct ConfigurationBox<'a> {
     n: Option<u32>,
     fields: &'a ConfigurationFields,
     making: &'a Making<LaunchFields>,
-    paths: &'a [String],
+    /// What it starts from, where the dialog sent no start of its own, and
+    /// the files of the brief it may give, by their paths under `briefs/`.
+    starting: &'a Starting,
     efforts: [&'static str; 5],
 }
 
@@ -519,6 +652,16 @@ impl ConfigurationBox<'_> {
     /// Its number as its fields' names give it.
     fn number(&self) -> String {
         self.n.map_or(UNNUMBERED.into(), |n| n.to_string())
+    }
+
+    /// The text of its setting `key`.
+    fn setting(&self, key: SettingKey) -> &str {
+        self.fields.settings.get(key)
+    }
+
+    /// The text its setting `key` started with in the dialog.
+    fn started(&self, key: SettingKey) -> &str {
+        self.fields.setting_started(key, &self.starting.settings)
     }
 
     /// The id of its field `key`.
@@ -592,6 +735,27 @@ impl BriefTexts {
     }
 }
 
+/// The settings a run of a benchmark's stage uses now, as a region of the
+/// benchmark page's stream, from which the dialog starts a configuration
+/// it adds.
+#[derive(Template)]
+#[template(
+    source = r#"<div id="stage-settings" hidden data-settings="{{ json }}"></div>"#,
+    ext = "html"
+)]
+pub(super) struct StageSettings {
+    json: String,
+}
+
+impl StageSettings {
+    pub(super) fn of(sources: &Sources, stage: TaskStage) -> StageSettings {
+        StageSettings {
+            json: serde_json::to_string(&starting_settings(sources, stage))
+                .expect("strings serialize"),
+        }
+    }
+}
+
 /// Launches a benchmark run on benchmark `id` as the New benchmark
 /// run dialog's form in `body` asks, tells `serve` so, and answers with the
 /// dialog's form: as it starts once launched, or as sent with why it was
@@ -610,13 +774,18 @@ pub(super) async fn launch(
         Ok(sent) => LaunchFields::read(sent.clone()),
         Err(_) => (LaunchFields::default(), None),
     };
-    let starting = starting_texts(&sources);
     let found = benchmark_for_making(&sources, &id).await;
     let mut form = NewBenchmarkRunForm {
         benchmark: InBenchmark::of(&found, id),
         tasks: found.as_ref().map_or(0, |shown| shown.tasks.len()),
         making: Making::of(fields),
-        paths: starting.keys().cloned().collect(),
+        starting: Starting {
+            settings: found.as_ref().map_or_else(
+                |_| SettingTexts::default(),
+                |shown| starting_settings(&sources, shown.benchmark.stage),
+            ),
+            texts: starting_texts(&sources),
+        },
     };
     if let Err(refused) = WRITE.same_origin(&headers, &uri).and(sent) {
         let (status, why) = refused.into_parts();
@@ -629,7 +798,7 @@ pub(super) async fn launch(
         Ok(shown) => shown.benchmark,
         Err((status, why)) => return form.refused((status, Refusal::Whole(why))),
     };
-    let (repetitions, configurations) = match form.making.fields.check(&starting) {
+    let (repetitions, configurations) = match form.making.fields.check(&form.starting) {
         Ok(launch) => launch,
         Err(refusals) => {
             return form.refused((StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals)));
@@ -670,6 +839,9 @@ const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 fn another_named(name: &ConfigurationName) -> String {
     format!("Another configuration is named {name}.")
 }
+
+/// The refusal of a session timeout that is not a duration.
+const NOT_A_DURATION: &str = "A session timeout is a duration, such as 6h.";
 
 /// The path under a configuration of its settings.
 const SETTINGS: &str = "config.toml";
@@ -732,7 +904,7 @@ mod tests {
     /// The refusals of the launch sent as `fields`, over no starting texts.
     #[track_caller]
     fn refused(fields: &[(&str, &str)]) -> FieldRefusals<LaunchField> {
-        match sent(fields).check(&BTreeMap::new()) {
+        match sent(fields).check(&Starting::default()) {
             Ok(_) => panic!("{fields:?} is not refused"),
             Err(refusals) => refusals,
         }
@@ -809,9 +981,10 @@ mod tests {
     }
 
     /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: each setting
-    /// is checked on its own, its error under it.
+    /// is checked on its own, its error under it, a session timeout that is
+    /// not a duration saying so.
     #[test_log::test]
-    fn a_setting_with_an_error_is_refused_under_it_as_config_toml() {
+    fn a_setting_with_an_error_is_refused_under_it() {
         let refusals = refused(&[
             ("repetitions", "1"),
             ("c1.name", "short"),
@@ -829,8 +1002,7 @@ mod tests {
             )
             .and(
                 configuration_field(1, ConfigurationField::SessionTimeout),
-                "config.toml has an error: the setting `session-timeout` is \"soon\": expected \
-                 number at 0"
+                "A session timeout is a duration, such as 6h."
             )
         );
     }
@@ -955,7 +1127,10 @@ mod tests {
             ("c2.name", "careful"),
             ("c2.effort", "max"),
         ])
-        .check(&starting)
+        .check(&Starting {
+            texts: starting,
+            ..Starting::default()
+        })
         .unwrap_or_else(|refusals| panic!("{refusals:?}"));
 
         assert_eq!(repetitions.get(), 3);
@@ -993,6 +1168,102 @@ mod tests {
                     vec![("config.toml".to_string(), "effort = \"max\"\n".to_string())]
                 ),
             ]
+        );
+    }
+
+    /// The `config.toml` each configuration of the launch sent as `fields`
+    /// keeps over `starting`, or none where it keeps none.
+    #[track_caller]
+    fn settings_kept(fields: &[(&str, &str)], starting: &Starting) -> Vec<Option<String>> {
+        let (_, configurations) = sent(fields)
+            .check(starting)
+            .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+        configurations
+            .iter()
+            .map(|(_, configuration)| {
+                let dir = tempfile::tempdir().unwrap();
+                configuration.keep(dir.path()).unwrap();
+                std::fs::read_to_string(dir.path().join("config.toml")).ok()
+            })
+            .collect()
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Settings: a setting
+    /// left as it started in the dialog, or emptied, is not part of the
+    /// configuration, even where a run of the stage now uses another.
+    #[test_log::test]
+    fn a_setting_left_as_it_started_or_emptied_is_not_part_of_the_configuration() {
+        let polled_since = Starting {
+            settings: SettingTexts {
+                model: "claude-sonnet-5-5".into(),
+                effort: "low".into(),
+                session_timeout: "2h".into(),
+            },
+            ..Starting::default()
+        };
+
+        assert_eq!(
+            settings_kept(
+                &[
+                    ("repetitions", "1"),
+                    ("c1.name", "as-started"),
+                    ("c1.model", "claude-opus-5-5"),
+                    ("c1.started-model", "claude-opus-5-5"),
+                    ("c1.effort", "high"),
+                    ("c1.started-effort", "high"),
+                    ("c1.session-timeout", " 6h "),
+                    ("c1.started-session-timeout", "6h"),
+                    ("c2.name", "emptied"),
+                    ("c2.model", " "),
+                    ("c2.started-model", "claude-opus-5-5"),
+                    ("c2.effort", ""),
+                    ("c2.started-effort", "high"),
+                    ("c2.session-timeout", ""),
+                    ("c2.started-session-timeout", "6h"),
+                    ("c3.name", "changed"),
+                    ("c3.model", "claude-haiku-5-5"),
+                    ("c3.started-model", "claude-opus-5-5"),
+                    ("c3.effort", "high"),
+                    ("c3.started-effort", ""),
+                    ("c3.session-timeout", "6h"),
+                    ("c3.started-session-timeout", "6h"),
+                ],
+                &polled_since,
+            ),
+            [
+                None,
+                None,
+                Some("effort = \"high\"\nmodel = \"claude-haiku-5-5\"\n".to_string())
+            ]
+        );
+    }
+
+    /// `docs/specs/benchmarks.md`, New benchmark run, Settings: a setting
+    /// the dialog sent no starting value of is compared with the one a run
+    /// of the stage uses now.
+    #[test_log::test]
+    fn a_setting_sent_without_its_start_is_compared_with_the_stages() {
+        let starting = Starting {
+            settings: SettingTexts {
+                model: "claude-opus-5-5".into(),
+                effort: String::new(),
+                session_timeout: "6h".into(),
+            },
+            ..Starting::default()
+        };
+
+        assert_eq!(
+            settings_kept(
+                &[
+                    ("repetitions", "1"),
+                    ("c1.name", "short"),
+                    ("c1.model", "claude-opus-5-5"),
+                    ("c1.effort", ""),
+                    ("c1.session-timeout", "30m"),
+                ],
+                &starting,
+            ),
+            [Some("session-timeout = \"30m\"\n".to_string())]
         );
     }
 }

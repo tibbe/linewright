@@ -40,10 +40,12 @@ use crate::redaction::Redaction;
 use crate::runs::{self, ListError, Recorded, RepoWorkDir, Runs};
 use crate::status::{self, Polling, Serving, Status, StatusSources, TrialsInFlight, View};
 use crate::store::Store;
+use crate::task::TaskStage;
 use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::web;
 use crate::webhook::{self, Tally};
 use crate::winding_up::{Remaining, WindingUp};
+use crate::work_settings::Partial;
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
@@ -186,23 +188,38 @@ pub struct Served {
     store: Arc<dyn Store>,
     redaction: Redaction,
     briefs: Arc<Briefs>,
+    session_settings: Arc<StageSessionSettings>,
+}
+
+/// The session settings a run of each stage of a task uses.
+struct StageSessionSettings {
+    triage: Partial,
+    design: Partial,
+    implement: Partial,
 }
 
 impl Served {
     /// `view`, with the store it was read from, the redaction of
-    /// Linewright's secrets and the briefs a run of a stage gets from the
-    /// repository's files as last read.
+    /// Linewright's secrets, and the briefs and, by `session_settings`, the
+    /// session settings a run of a stage gets from the repository's files as
+    /// last read.
     pub fn new(
         view: View,
         store: Arc<dyn Store>,
         redaction: Redaction,
         briefs: Arc<Briefs>,
+        session_settings: impl Fn(TaskStage) -> Partial,
     ) -> Served {
         Served {
             view,
             store,
             redaction,
             briefs,
+            session_settings: Arc::new(StageSessionSettings {
+                triage: session_settings(TaskStage::Triage),
+                design: session_settings(TaskStage::Design),
+                implement: session_settings(TaskStage::Implement),
+            }),
         }
     }
 
@@ -210,6 +227,18 @@ impl Served {
     /// operator's and Linewright's own.
     pub fn briefs(&self) -> &Briefs {
         &self.briefs
+    }
+
+    /// The model, effort and session timeout a run of `stage` uses with the
+    /// repository's files as last read, the model and effort `None` where
+    /// nothing sets them.
+    pub fn session_settings(&self, stage: TaskStage) -> &Partial {
+        let settings = &self.session_settings;
+        match stage {
+            TaskStage::Triage => &settings.triage,
+            TaskStage::Design => &settings.design,
+            TaskStage::Implement => &settings.implement,
+        }
     }
 
     pub fn store(&self) -> &dyn Store {

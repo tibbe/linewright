@@ -546,6 +546,16 @@ pub struct SessionSettings {
 }
 
 impl SessionSettings {
+    /// The model, effort and session timeout these hold, as one layer
+    /// would set them: the model and effort `None` where nothing sets them.
+    pub fn chosen(&self) -> Partial {
+        Partial {
+            model: self.model.as_ref().map(|model| model.value.clone()),
+            effort: self.effort.as_ref().map(|effort| effort.value),
+            session_timeout: Some(self.session_timeout.value),
+        }
+    }
+
     /// These with each of `model`, `effort` and `session-timeout` that `by`
     /// sets in place of the value they hold, as the configuration's
     /// (`docs/specs/benchmarks.md`, Configurations).
