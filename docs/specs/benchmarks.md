@@ -584,6 +584,12 @@ is not in BENCHMARK does not exist.
   "model", "effort" and "session-timeout", and give the text of any file of the
   brief. Each such configuration has "Remove". "Add a configuration" adds one at
   the end.
+- **Settings.** "effort" is a choice of its levels
+  ([Configuration](operation.md#configuration)). Each setting starts as the one
+  that a run of the stage uses when the dialog opens. A model or effort that
+  nothing sets shows as "Default": the first choice of "effort", and the
+  placeholder of an empty "model". A setting that the maintainer leaves as it
+  started, or empties, is not part of the configuration.
 - **Files of the brief.** A configuration has "Files of the brief", a choice of
   the files that a layer of the brief can hold ([Briefs](operation.md#briefs)).
   When the maintainer chooses one, a box for its text opens. Its text starts as
@@ -593,12 +599,13 @@ is not in BENCHMARK does not exist.
   is empty ([Making](design_system.md#making)). A benchmark with no tasks shows
   its reason above the buttons.
 
-  | Refusal                                                  | Message                                      |
-  | -------------------------------------------------------- | -------------------------------------------- |
-  | a benchmark with no tasks                                | "The benchmark NAME has no tasks."           |
-  | a name that another configuration has                    | "Another configuration is named NAME."       |
-  | a file with an error ([Configurations](#configurations)) | "FILE has an error: ERROR"                   |
-  | repetitions that are not a whole number, 1 or more       | "Repetitions are a whole number, 1 or more." |
+  | Refusal                                                               | Message                                        |
+  | --------------------------------------------------------------------- | ---------------------------------------------- |
+  | a benchmark with no tasks                                             | "The benchmark NAME has no tasks."             |
+  | a name that another configuration has                                 | "Another configuration is named NAME."         |
+  | a file of the brief with an error ([Configurations](#configurations)) | "FILE has an error: ERROR"                     |
+  | a "session-timeout" that is not a duration                            | "A session timeout is a duration, such as 6h." |
+  | repetitions that are not a whole number, 1 or more                    | "Repetitions are a whole number, 1 or more."   |
 
 ### Benchmark run
 

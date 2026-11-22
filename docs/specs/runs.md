@@ -279,6 +279,9 @@ A run ends in one of these outcomes, each with its name in JSON.
   harness reports it ran them or else as they were set, and where each of its
   settings and brief files came from: the repository, the operator or
   Linewright's own, or, for a model or effort none set, the harness.
+- **Default.** Other than in `--json`, a session's model or effort that nothing
+  set shows as "Default": as where it came from, and as its value when the
+  harness did not report one.
 
 ## Holds
 

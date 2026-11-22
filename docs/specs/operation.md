@@ -196,8 +196,8 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `max-runs`                                   | 4                                           |
 | `max-trials`                                | 1                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
-| `model`                                      | the harness's choice                        |
-| `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | the harness's choice                  |
+| `model`                                      | none: the harness's default                 |
+| `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | none: the harness's default           |
 | `briefs` (the operator's layer, [Briefs](#briefs)) | none |
 | `session-env` (variables' values)            | none                                        |
 | `session-pass-env` (variable names)          | none                                        |
