@@ -278,10 +278,7 @@ A run ends in one of these outcomes, each with its name in JSON.
   cost ([Cost](#cost)) and its model and effort, as the
   harness reports it ran them or else as they were set, and where each of its
   settings and brief files came from: the repository, the operator or
-  Linewright's own, or, for a model or effort none set, the harness.
-- **Default.** Other than in `--json`, a session's model or effort that nothing
-  set shows as "Default": as where it came from, and as its value when the
-  harness did not report one.
+  Linewright's own.
 
 ## Holds
 

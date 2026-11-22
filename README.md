@@ -36,7 +36,7 @@ it from source with `cargo install --path .`. Then:
 ```sh
 export GH_TOKEN=...            # the token of Linewright's GitHub account
 export ANTHROPIC_API_KEY=...
-lw --repo owner/name serve
+lw --repo owner/name --model opus serve
 ```
 
 To run it in a container, build your own image from

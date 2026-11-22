@@ -20,7 +20,7 @@ distributions), and macOS on Apple silicon. Or build it from source with
 export GH_TOKEN=...            # Linewright's account's token (or GITHUB_TOKEN)
 export LINEWRIGHT_SESSION_GITHUB_TOKEN=...  # optional: agents' token, see Secrets
 export ANTHROPIC_API_KEY=...   # or any login Claude Code already has
-lw --repo owner/name serve
+lw --repo owner/name --model opus serve
 ```
 
 `lw serve` polls the repository until stopped, and runs the automations in
@@ -41,8 +41,10 @@ in `linewright.toml`, except `session-env`, which has no variable;
 
 `model`, `effort` (`low`, `medium`, `high`, `xhigh` or `max`) and
 `session-timeout` are for the whole pipeline, and a stage's table in
-`linewright.toml` can set its own for its sessions. Without a `model` or
-`effort`, Claude Code chooses. A stage's `session-pass-env` and `session-env`
+`linewright.toml` can set its own for its sessions. `model` has no default:
+you set it for the whole pipeline, to one your credentials can use, and
+Linewright starts no session without it. `effort` is `medium` unless
+you set it. A stage's `session-pass-env` and `session-env`
 add their variables to the whole pipeline's for that stage's sessions only,
 and a value the stage's `session-env` sets wins over the whole pipeline's.
 The stages are `triage`, `design`, `implement`, `rework`, `fix-ci` and
@@ -365,8 +367,8 @@ The web UI does the same from a benchmark's page: it lists the benchmark's
 benchmark runs and launches one, with `as-is` first and each other
 configuration given a name, its `model`, `effort` and `session-timeout`, and
 the text of any file of the brief. Each starts as a run of the stage would use
-it when the form opens, a model or effort nothing sets as "Default", and only
-the settings and files you change go into it. Each benchmark
+it when the form opens, and only the settings and files you change go into
+it. Each benchmark
 run's page follows it as it runs, with a chart of each configuration's mean cost
 against its pass rate, the passes of each task under each configuration, and
 each configuration's figures, which open to its tasks and their trials, and from
