@@ -201,13 +201,19 @@ struct Pages {
 }
 
 /// The session settings a run of `stage` uses in [`Pages`]: an implement
-/// run's model and effort set, every other stage's not, and every stage's
-/// session timeout 6 hours.
+/// run's model `claude-opus-5-5` and effort high, every other stage's
+/// `claude-sonnet-5-5` and medium, and every stage's session timeout 6
+/// hours.
 fn stage_settings(stage: linewright::task::TaskStage) -> linewright::work_settings::Partial {
-    let implement = stage == linewright::task::TaskStage::Implement;
+    use linewright::work_settings::Effort;
+    let (name, effort) = if stage == linewright::task::TaskStage::Implement {
+        ("claude-opus-5-5", Effort::High)
+    } else {
+        ("claude-sonnet-5-5", Effort::Medium)
+    };
     linewright::work_settings::Partial {
-        model: implement.then(|| "claude-opus-5-5".to_string()),
-        effort: implement.then_some(linewright::work_settings::Effort::High),
+        model: Some(model(name)),
+        effort: Some(effort),
         session_timeout: Some(std::time::Duration::from_hours(6)),
     }
 }

@@ -5,11 +5,12 @@
 <input id="{{ self.id("name") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.name" value="{{ fields.name }}" autocomplete="off"{{ attributes }}>
 {%- endcall %}
 {%- call(attributes) ui::field(self.id("model"), "model", self.shown(ConfigurationField::Model), crate::web::making::Control::Input) %}
-<input id="{{ self.id("model") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.model" value="{{ self.setting(SettingKey::Model) }}" placeholder="Default" autocomplete="off"{{ attributes }}>
+<input id="{{ self.id("model") }}" class="input input-sm validator w-full" name="c{{ self.number() }}.model" value="{{ self.setting(SettingKey::Model) }}" autocomplete="off"{{ attributes }}>
 <input type="hidden" name="c{{ self.number() }}.started-model" value="{{ self.started(SettingKey::Model) }}">
 {%- endcall %}
 {%- call(attributes) ui::field(self.id("effort"), "effort", self.shown(ConfigurationField::Effort), crate::web::making::Control::Select) %}
-<select id="{{ self.id("effort") }}" class="select select-sm validator w-full" name="c{{ self.number() }}.effort"{{ attributes }}><option value="">Default</option>
+<select id="{{ self.id("effort") }}" class="select select-sm validator w-full" name="c{{ self.number() }}.effort"{{ attributes }}>
+{%- if self.setting(SettingKey::Effort).is_empty() %}<option value="" hidden></option>{% endif %}
 {%- for effort in efforts %}<option value="{{ effort }}"{% if *effort == self.setting(SettingKey::Effort) %} selected{% endif %}>{{ effort }}</option>{% endfor -%}
 </select>
 <input type="hidden" name="c{{ self.number() }}.started-effort" value="{{ self.started(SettingKey::Effort) }}">

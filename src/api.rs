@@ -230,8 +230,7 @@ impl Served {
     }
 
     /// The model, effort and session timeout a run of `stage` uses with the
-    /// repository's files as last read, the model and effort `None` where
-    /// nothing sets them.
+    /// repository's files as last read.
     pub fn session_settings(&self, stage: TaskStage) -> &Partial {
         let settings = &self.session_settings;
         match stage {

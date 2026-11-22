@@ -258,7 +258,7 @@ mod tests {
     use crate::runs::{Begin, Ending, Running};
     use crate::transcript::OUTPUT;
     use crate::work_settings::{
-        Environments, RepoSettings, RunKind, SessionSettings, WorkSettings,
+        Environments, Model, RepoSettings, RunKind, SessionSettings, SessionWork,
     };
 
     fn at(time: &str) -> Timestamp {
@@ -266,7 +266,7 @@ mod tests {
     }
 
     fn settings() -> SessionSettings {
-        WorkSettings::default().for_sessions().for_run(
+        SessionWork::with_model(Model::new("opus".into()).unwrap()).for_run(
             RunKind::Stage(WorkKind::Triage),
             &RepoSettings::default(),
             &Environments::default(),

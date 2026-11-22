@@ -157,7 +157,7 @@ async fn a_scorer_keeps_its_score_in_the_output_with_its_record() {
                 StageKey::Scorer,
                 StageTable {
                     settings: Partial {
-                        model: Some("judge-model".into()),
+                        model: Some(model("judge-model")),
                         effort: Some(Effort::High),
                         session_timeout: None,
                     },
@@ -775,6 +775,30 @@ fn lw_score<'a>(bin: &'a Path, task: &'a Path, out: &'a Path) -> impl Future<Out
 }
 
 #[test_log::test(tokio::test)]
+async fn lw_score_without_a_model_exits_saying_where_to_set_it_and_keeps_nothing() {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = triage_output(under.path(), "done").await;
+    let bin = bin_with_git();
+    fake_claude(bin.path(), &scored_as("pass", &[]));
+    let work = tempfile::tempdir().unwrap();
+
+    let ran = lw_command(bin.path(), work.path(), work.path())
+        .args(["score", task.to_str().unwrap(), out.to_str().unwrap()])
+        .env_remove("LINEWRIGHT_MODEL")
+        .output()
+        .await
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("`model` is required to start a session"),
+        "{stderr}"
+    );
+    assert_eq!(scorer_records(&out), Vec::<String>::new());
+}
+
+#[test_log::test(tokio::test)]
 async fn lw_score_without_repo_keeps_the_score_and_prints_it() {
     let under = tempfile::tempdir().unwrap();
     let (task, out) = triage_output(under.path(), "done").await;
@@ -973,13 +997,13 @@ async fn a_scorer_of_a_trial_with_a_configuration_runs_without_it() {
     assert_eq!(
         *models.lock().unwrap(),
         vec![
-            ("triage", Some("configuration-model".to_string())),
-            ("scorer", None),
+            ("triage", model("configuration-model")),
+            ("scorer", model(MODEL)),
         ]
     );
     let score = score_in(&scoreable.out);
     assert_eq!(
-        score["session"]["layers"]["settings"]["model"], "harness",
+        score["session"]["layers"]["settings"]["model"], "operator",
         "{score}"
     );
 }

@@ -129,8 +129,8 @@ fn triage_session(dir: &Path) -> SessionSpec {
         attachments: dir.join("attachments"),
         plugin: dir.join("plugin"),
         prompt: "Triage #1.".into(),
-        model: None,
-        effort: None,
+        model: model("sonnet"),
+        effort: Effort::Medium,
         environment: Arc::new(Given::default()),
         gh: GhReach::Direct,
         deadline: Deadline::after(tokio::time::Instant::now(), Duration::from_secs(30)),
@@ -169,7 +169,7 @@ async fn a_session_reports_the_model_its_init_event_names() {
     let dir = tempfile::tempdir().unwrap();
     let harness = harness_streaming(dir.path(), &[init_naming("claude-opus-5-5"), done()]);
     let mut session = triage_session(dir.path());
-    session.model = Some("opus".into());
+    session.model = model("opus");
     let reports = reports_of(&mut session);
 
     harness.start(&session).await.unwrap();
@@ -484,6 +484,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
             "ANTHROPIC_MODEL",
             "CARGO_HOME",
             "CARGO_TARGET_DIR",
+            "CLAUDE_CODE_EFFORT_LEVEL",
             "CLAUDE_CODE_SHELL",
             "CLAUDE_CONFIG_DIR",
             "DISABLE_UPDATES",
@@ -602,7 +603,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
     );
     let harness = harness_done(dir.path());
     let mut session = triage_session(dir.path());
-    session.effort = Some(Effort::High);
+    session.effort = Effort::High;
     session.environment = Arc::new(
         session_env
             .split(
@@ -620,7 +621,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
     let environment = harness.environment(
         &session.environment,
         &session.scratch,
-        session.effort,
+        Some(session.effort),
         &session.gh,
     );
     harness.start(&session).await.unwrap();
@@ -763,8 +764,8 @@ fn session_variable<'a>(env: &'a str, name: &str) -> Option<&'a str> {
 async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_settings() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = session_choosing_in_its_environment(dir.path());
-    session.model = Some("opus".into());
-    session.effort = Some(Effort::High);
+    session.model = model("opus");
+    session.effort = Effort::High;
     let harness = harness_done(dir.path());
 
     let turn = harness.start(&session).await.unwrap();
@@ -793,7 +794,7 @@ async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_s
 async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = triage_session(dir.path());
-    session.effort = Some(Effort::Max);
+    session.effort = Effort::Max;
 
     harness_done(dir.path()).start(&session).await.unwrap();
 
@@ -805,31 +806,6 @@ async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() 
         session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
         Some("max")
     );
-}
-
-#[test_log::test(tokio::test)]
-async fn without_a_model_or_effort_a_session_runs_on_the_harnesss_choice() {
-    let dir = tempfile::tempdir().unwrap();
-
-    harness_done(dir.path())
-        .start(&session_choosing_in_its_environment(dir.path()))
-        .await
-        .unwrap();
-
-    let args = &turn_args(dir.path())[0];
-    assert_eq!(flag_value(args, "--model"), None);
-    assert_eq!(flag_value(args, "--effort"), None);
-    let passed = settings(args);
-    assert_eq!(
-        (&passed["model"], &passed["effortLevel"]),
-        (&Value::Null, &Value::Null)
-    );
-    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
-    assert_eq!(
-        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
-        Some("low")
-    );
-    assert_eq!(session_variable(&env, "ANTHROPIC_MODEL"), Some("haiku"));
 }
 
 #[test_log::test(tokio::test)]

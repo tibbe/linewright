@@ -70,7 +70,7 @@ async fn the_repositorys_file_on_the_default_branch_sets_its_sessions_settings()
 
     world.poll().await;
 
-    assert_eq!(*effort.lock().unwrap(), Some(Some(Effort::High)));
+    assert_eq!(*effort.lock().unwrap(), Some(Effort::High));
 }
 
 #[test_log::test(tokio::test)]

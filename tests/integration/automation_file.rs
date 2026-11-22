@@ -327,7 +327,7 @@ Look.
     assert_eq!(
         automation.session,
         Partial {
-            model: Some("opus".to_string()),
+            model: Some(crate::common::model("opus")),
             effort: Some(Effort::High),
             session_timeout: Some(Duration::from_mins(15)),
         }
@@ -355,7 +355,7 @@ fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
     )
     .unwrap();
 
-    assert_eq!(chosen.session.model.as_deref(), Some("opus"));
+    assert_eq!(chosen.session.model, Some(crate::common::model("opus")));
     assert_eq!(chosen.session.effort, Some(Effort::High));
     assert_eq!((unset.session.model, unset.session.effort), (None, None));
 }

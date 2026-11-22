@@ -5,6 +5,7 @@
 //! # `world`: worlds and servers
 //!
 //! - `LINEWRIGHT`: the login Linewright works as.
+//! - `MODEL`: the model the operator's file sets; `model`: a model by name.
 //! - `REQUIRED`: the label a factory requires when set to require one.
 //! - `AUTO_MERGE`: auto-merge on, by the repository's merge method.
 //! - `secrets_of`: the secrets of an environment holding some variables.

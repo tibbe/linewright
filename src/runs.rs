@@ -20,7 +20,7 @@ use crate::database::Database;
 use crate::domain::{Number, Repo, Timestamp};
 use crate::harness::{Purpose, Reported, Reporter};
 use crate::input::Input;
-use crate::layer::{Layer, Source};
+use crate::layer::Layer;
 use crate::phrase::{Phrase, Status};
 use crate::reconcile::{EndedRun, WorkKind};
 use crate::records;
@@ -339,12 +339,12 @@ impl SessionReports {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "KeptRan")]
 pub struct Ran {
-    /// `None` is the harness's choice.
+    /// `None` only in a record kept before every session had a model.
     pub model: Option<String>,
     /// `None` until the harness reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reported_model: Option<String>,
-    /// `None` is the harness's choice.
+    /// `None` only in a record kept before every session had an effort.
     pub effort: Option<Effort>,
     pub layers: Layers,
 }
@@ -359,8 +359,9 @@ struct KeptRan {
     layers: Layers,
 }
 
-/// A record kept before the harness was a source gave a model or effort
-/// none set as Linewright's.
+/// A model or effort a record does not hold has no source. A record kept
+/// before every session had both gives one it does not hold a source
+/// anyway, Linewright's or the harness's, which no layer was.
 impl From<KeptRan> for Ran {
     fn from(kept: KeptRan) -> Ran {
         let mut layers = kept.layers;
@@ -368,11 +369,8 @@ impl From<KeptRan> for Ran {
             (Setting::MODEL, kept.model.is_some()),
             (Setting::EFFORT, kept.effort.is_some()),
         ] {
-            if let Some(source) = layers.settings.get_mut(&setting)
-                && !set
-                && *source == Source::Layer(Layer::Linewright)
-            {
-                *source = Source::Harness;
+            if !set {
+                layers.settings.remove(&setting);
             }
         }
         Ran {
@@ -387,7 +385,7 @@ impl From<KeptRan> for Ran {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "KeptLayers")]
 pub struct Layers {
-    pub settings: BTreeMap<Setting, Source>,
+    pub settings: BTreeMap<Setting, Layer>,
     /// By the file's path under `briefs/`, such as `prompts/triage.md` or
     /// `plugin/skills/tdd/SKILL.md`.
     pub briefs: BTreeMap<String, Layer>,
@@ -397,7 +395,7 @@ pub struct Layers {
 /// under `prompts` by their paths under `briefs/prompts/`.
 #[derive(Deserialize)]
 struct KeptLayers {
-    settings: BTreeMap<Setting, Source>,
+    settings: BTreeMap<Setting, KeptSource>,
     briefs: Option<BTreeMap<String, Layer>>,
     prompts: Option<BTreeMap<String, Layer>>,
 }
@@ -413,18 +411,47 @@ impl From<KeptLayers> for Layers {
                 .collect(),
         };
         Layers {
-            settings: kept.settings,
+            settings: kept
+                .settings
+                .into_iter()
+                .filter_map(|(setting, source)| match source {
+                    KeptSource::Layer(layer) => Some((setting, layer)),
+                    KeptSource::Harness => None,
+                })
+                .collect(),
             briefs,
         }
+    }
+}
+
+/// Where a setting came from, as a record holds it: a layer, or, in a
+/// record kept before every session had a model and effort, `harness`,
+/// for a model or effort none set.
+#[derive(Deserialize)]
+#[serde(try_from = "String")]
+enum KeptSource {
+    Layer(Layer),
+    Harness,
+}
+
+/// The error is `Layer`'s, naming the source and the layers.
+impl TryFrom<String> for KeptSource {
+    type Error = serde::de::value::Error;
+
+    fn try_from(name: String) -> Result<KeptSource, Self::Error> {
+        if name == "harness" {
+            return Ok(KeptSource::Harness);
+        }
+        Layer::deserialize(serde::de::value::StrDeserializer::new(&name)).map(KeptSource::Layer)
     }
 }
 
 impl Ran {
     pub fn new(settings: &SessionSettings, briefs: &Briefs) -> Ran {
         Ran {
-            model: settings.model_set(),
+            model: Some(settings.model.value.to_string()),
             reported_model: None,
-            effort: settings.effort_set(),
+            effort: Some(settings.effort.value),
             layers: Layers {
                 settings: settings.sources(),
                 briefs: briefs.layers().clone(),
@@ -1273,14 +1300,14 @@ pub(crate) fn describe_ran(ran: Option<&Ran>) -> String {
     };
     format!(
         "model {}, effort {}",
-        ran.model_ran().unwrap_or(DEFAULT),
-        ran.effort.map_or(DEFAULT, Effort::name)
+        ran.model_ran().unwrap_or(NOT_RECORDED),
+        ran.effort.map_or(NOT_RECORDED, Effort::name)
     )
 }
 
-/// A model or effort nothing set, which the harness did not report
-/// (`docs/specs/runs.md`, Default).
-pub(crate) const DEFAULT: &str = "Default";
+/// A model or effort a record kept before every session had one does not
+/// hold.
+const NOT_RECORDED: &str = "not recorded";
 
 pub(crate) fn render_left_out(left_out: usize, how: &str) -> String {
     format!("left out: {}", left_out_phrase(left_out, how))
@@ -1446,7 +1473,7 @@ mod tests {
 
     use super::*;
     use crate::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
-    use crate::work_settings::{Environments, Partial, RepoSettings, RunKind, WorkSettings};
+    use crate::work_settings::{Environments, Model, RepoSettings, RunKind, SessionWork};
 
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()
@@ -1742,13 +1769,13 @@ mod tests {
                 ran.reported_model.as_deref(),
                 ran.effort
             ),
-            (Some("opus"), Some("claude-opus-5-5"), None)
+            (Some("opus"), Some("claude-opus-5-5"), Some(Effort::Medium))
         );
         assert_eq!(
             serde_json::to_value(&ran.layers.settings).unwrap(),
             serde_json::json!({
                 "model": "operator",
-                "effort": "harness",
+                "effort": "linewright",
                 "session-timeout": "linewright",
                 "maintenance": "linewright",
                 "session-env": "linewright",
@@ -1763,15 +1790,7 @@ mod tests {
 
     /// A triage run's settings, with the operator's model `opus`.
     fn opus_for_triage() -> SessionSettings {
-        WorkSettings {
-            flags_and_env: Partial {
-                model: Some("opus".into()),
-                ..Partial::default()
-            },
-            ..WorkSettings::default()
-        }
-        .for_sessions()
-        .for_run(
+        SessionWork::with_model(Model::new("opus".into()).unwrap()).for_run(
             RunKind::Stage(WorkKind::Triage),
             &RepoSettings::default(),
             &Environments::default(),

@@ -141,7 +141,7 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
     let work = std::env::var_os(WORK_DIR).map_or_else(|| dir.join("work"), PathBuf::from);
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
-         poll-interval = \"1s\"\n",
+         poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",
         repo = seed::REPO,
         work = work.display(),
     );

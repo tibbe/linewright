@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::automation::Automation;
-use crate::layer::{Layer, Source, Sourced};
+use crate::layer::{Layer, Sourced};
 use crate::reconcile::WorkKind;
 use crate::session_env::{Given, PassEnv, SessionEnv, SetEnv};
 
@@ -74,6 +74,32 @@ impl std::str::FromStr for Effort {
 impl fmt::Display for Effort {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
+    }
+}
+
+/// The model a session runs on, never empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Model(String);
+
+impl Model {
+    /// # Errors
+    ///
+    /// When `name` is empty or only whitespace, naming the setting.
+    pub fn new(name: String) -> Result<Model, String> {
+        if name.trim().is_empty() {
+            return Err("the setting `model` is empty: it names a model".into());
+        }
+        Ok(Model(name))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Model {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
     }
 }
 
@@ -346,7 +372,7 @@ pub struct SetupSettings {
 /// stage's table and an automation's front matter can set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Partial {
-    pub model: Option<String>,
+    pub model: Option<Model>,
     pub effort: Option<Effort>,
     pub session_timeout: Option<Duration>,
 }
@@ -532,10 +558,8 @@ impl fmt::Display for TimeoutSetting {
 /// What one run's sessions run with.
 #[derive(Clone, Debug)]
 pub struct SessionSettings {
-    /// `None` is the harness's choice.
-    pub model: Option<Sourced<String>>,
-    /// `None` is the harness's choice.
-    pub effort: Option<Sourced<Effort>>,
+    pub model: Sourced<Model>,
+    pub effort: Sourced<Effort>,
     pub session_timeout: Sourced<Duration>,
     pub timeout_setting: TimeoutSetting,
     /// The maintenance command, which runs within its session's timeout,
@@ -547,11 +571,11 @@ pub struct SessionSettings {
 
 impl SessionSettings {
     /// The model, effort and session timeout these hold, as one layer
-    /// would set them: the model and effort `None` where nothing sets them.
+    /// would set them.
     pub fn chosen(&self) -> Partial {
         Partial {
-            model: self.model.as_ref().map(|model| model.value.clone()),
-            effort: self.effort.as_ref().map(|effort| effort.value),
+            model: Some(self.model.value.clone()),
+            effort: Some(self.effort.value),
             session_timeout: Some(self.session_timeout.value),
         }
     }
@@ -569,53 +593,27 @@ impl SessionSettings {
             None => (self.session_timeout, self.timeout_setting),
         };
         SessionSettings {
-            model: by
-                .model
-                .clone()
-                .map(|model| Sourced::new(model, Layer::Configuration))
-                .or(self.model),
-            effort: by
-                .effort
-                .map(|effort| Sourced::new(effort, Layer::Configuration))
-                .or(self.effort),
+            model: by.model.clone().map_or(self.model, |model| {
+                Sourced::new(model, Layer::Configuration)
+            }),
+            effort: by.effort.map_or(self.effort, |effort| {
+                Sourced::new(effort, Layer::Configuration)
+            }),
             session_timeout,
             timeout_setting,
             ..self
         }
     }
 
-    /// The model set, `None` leaving it to the harness.
-    pub fn model_set(&self) -> Option<String> {
-        self.model.as_ref().map(|model| model.value.clone())
-    }
-
-    /// The effort set, `None` leaving it to the harness.
-    pub fn effort_set(&self) -> Option<Effort> {
-        self.effort.as_ref().map(|effort| effort.value)
-    }
-
     /// Where each setting came from.
-    pub fn sources(&self) -> BTreeMap<Setting, Source> {
-        let set_or_harness = |layer: Option<Layer>| layer.map_or(Source::Harness, Source::Layer);
+    pub fn sources(&self) -> BTreeMap<Setting, Layer> {
         BTreeMap::from([
-            (
-                Setting::MODEL,
-                set_or_harness(self.model.as_ref().map(|model| model.layer)),
-            ),
-            (
-                Setting::EFFORT,
-                set_or_harness(self.effort.as_ref().map(|effort| effort.layer)),
-            ),
-            (
-                Setting::SESSION_TIMEOUT,
-                Source::Layer(self.session_timeout.layer),
-            ),
-            (Setting::Maintenance, Source::Layer(self.maintenance.layer)),
-            (Setting::SESSION_ENV, Source::Layer(self.env_layers.set)),
-            (
-                Setting::SESSION_PASS_ENV,
-                Source::Layer(self.env_layers.pass),
-            ),
+            (Setting::MODEL, self.model.layer),
+            (Setting::EFFORT, self.effort.layer),
+            (Setting::SESSION_TIMEOUT, self.session_timeout.layer),
+            (Setting::Maintenance, self.maintenance.layer),
+            (Setting::SESSION_ENV, self.env_layers.set),
+            (Setting::SESSION_PASS_ENV, self.env_layers.pass),
         ])
     }
 }
@@ -654,13 +652,40 @@ fn first<'a, T>(
 #[derive(Clone, Debug)]
 pub struct SessionWork {
     layers: WorkSettings,
+    /// The whole pipeline's model, from the operator's layers.
+    model: Model,
 }
 
+/// The operator's layers set no `model`, which a session needs
+/// (`docs/specs/operation.md`, Configuration).
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "`model` is required to start a session: set it with `--model`, `LINEWRIGHT_MODEL` or \
+     `model` in the operator's config file"
+)]
+pub struct MissingModel;
+
 impl SessionWork {
+    /// The operator's settings for sessions when its flags and environment
+    /// set `model` and nothing else.
+    pub fn with_model(model: Model) -> SessionWork {
+        SessionWork {
+            layers: WorkSettings {
+                flags_and_env: Partial {
+                    model: Some(model.clone()),
+                    ..Partial::default()
+                },
+                ..WorkSettings::default()
+            },
+            model,
+        }
+    }
+
     /// A session setting takes the first value set among: the automation's
     /// front matter, the repository's stage table, the operator's stage
     /// table, the flags and environment, the repository's file, the
-    /// operator's file, and the default. `maintenance` takes the first
+    /// operator's file, and the default, which for `model` is the whole
+    /// pipeline's and for `effort` is medium. `maintenance` takes the first
     /// among the flags and environment, the repository's file, the
     /// operator's file, and the default.
     pub fn for_run(
@@ -699,10 +724,14 @@ impl SessionWork {
             Rung::new(&repo.top, Layer::Repository, TimeoutSetting::Pipeline),
             Rung::new(&self.layers.file, Layer::Operator, TimeoutSetting::Pipeline),
         ];
-        let model = first(&ladder, |partial| partial.model.clone())
-            .map(|(model, rung)| Sourced::new(model, rung.layer));
-        let effort = first(&ladder, |partial| partial.effort)
-            .map(|(effort, rung)| Sourced::new(effort, rung.layer));
+        let model = first(&ladder, |partial| partial.model.clone()).map_or_else(
+            || Sourced::new(self.model.clone(), Layer::Operator),
+            |(model, rung)| Sourced::new(model, rung.layer),
+        );
+        let effort = first(&ladder, |partial| partial.effort).map_or(
+            Sourced::new(Effort::Medium, Layer::Linewright),
+            |(effort, rung)| Sourced::new(effort, rung.layer),
+        );
         let (session_timeout, timeout_setting) =
             match first(&ladder, |partial| partial.session_timeout) {
                 Some((timeout, rung)) => (Sourced::new(timeout, rung.layer), rung.timeout_setting),
@@ -760,8 +789,22 @@ impl SessionWork {
 
 impl WorkSettings {
     /// These, as a command that starts sessions takes them.
-    pub fn for_sessions(self) -> SessionWork {
-        SessionWork { layers: self }
+    ///
+    /// # Errors
+    ///
+    /// When neither the flags and environment nor the operator's file set
+    /// `model`.
+    pub fn for_sessions(self) -> Result<SessionWork, MissingModel> {
+        let model = self
+            .flags_and_env
+            .model
+            .clone()
+            .or_else(|| self.file.model.clone())
+            .ok_or(MissingModel)?;
+        Ok(SessionWork {
+            layers: self,
+            model,
+        })
     }
 
     /// The `setup` table, each key from the first layer that sets it: the

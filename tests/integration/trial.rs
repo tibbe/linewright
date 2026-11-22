@@ -782,8 +782,9 @@ pub(crate) fn lw_isolated<'a>(
 }
 
 /// `lw` with `bin` as its path and `work` as its work directory, run in
-/// `cwd`, with Linewright's token `linewright-token` in `GH_TOKEN`, and
-/// neither `GITHUB_TOKEN`, the separate token nor `repo` set.
+/// `cwd`, with Linewright's token `linewright-token` in `GH_TOKEN`, the
+/// model `MODEL`, and neither `GITHUB_TOKEN`, the separate token nor `repo`
+/// set.
 pub(crate) fn lw_command(bin: &Path, work: &Path, cwd: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"));
     command
@@ -793,6 +794,7 @@ pub(crate) fn lw_command(bin: &Path, work: &Path, cwd: &Path) -> tokio::process:
         .env("PATH", bin)
         .env("XDG_RUNTIME_DIR", cwd)
         .env("GH_TOKEN", "linewright-token")
+        .env("LINEWRIGHT_MODEL", MODEL)
         .env_remove("GITHUB_TOKEN")
         .env_remove(SESSION_TOKEN_VARIABLE)
         .env_remove("LINEWRIGHT_REPO");
@@ -954,6 +956,35 @@ async fn lw_trial_warns_that_sessions_given_linewrights_token_can_write_to_githu
                 && message.contains("LINEWRIGHT_SESSION_GITHUB_TOKEN")
         });
     assert!(warned, "{}", ran.stderr);
+}
+
+#[test_log::test(tokio::test)]
+async fn lw_trial_without_a_model_exits_saying_where_to_set_it() {
+    let mut world = World::new().await;
+    let (_, task) = triage_task(&mut world).await;
+    let bin = bin_triaging();
+    let work = tempfile::tempdir().unwrap();
+    let out = work.path().join("out");
+
+    let ran = lw_command(bin.path(), work.path(), work.path())
+        .args([
+            "trial",
+            task.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ])
+        .env_remove("LINEWRIGHT_MODEL")
+        .output()
+        .await
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&ran.stderr);
+    assert_ne!(ran.status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("`model` is required to start a session"),
+        "{stderr}"
+    );
+    assert!(!out.exists(), "{stderr}");
 }
 
 #[test_log::test(tokio::test)]
@@ -1306,7 +1337,7 @@ async fn a_configuration_wins_over_the_tasks_files_and_the_flags_leaving_the_res
         harness.clone(),
         |config| {
             edit_work(config, |work| {
-                work.flags_and_env.model = Some("flag-model".into());
+                work.flags_and_env.model = Some(model("flag-model"));
             });
         },
         Some(&configuration),
@@ -1316,7 +1347,7 @@ async fn a_configuration_wins_over_the_tasks_files_and_the_flags_leaving_the_res
     assert_eq!(ran_trial.ended.as_ref().unwrap(), &Ending::Done);
     assert_eq!(
         *ran_with.lock().unwrap(),
-        vec![(Some("configuration-model".to_string()), Some(Effort::Low))]
+        vec![(model("configuration-model"), Effort::Low)]
     );
     let [prompt] = harness.prompts(WorkKind::Triage).try_into().unwrap();
     assert!(prompt.contains("THE CONFIGURATION'S TRIAGE"), "{prompt}");

@@ -70,7 +70,7 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
 
     assert_eq!(
         given.lock().unwrap().clone(),
-        Some((true, Some("opus".to_string()), Some(Effort::Low)))
+        Some((true, model("opus"), Effort::Low))
     );
     let sessions = world
         .dir

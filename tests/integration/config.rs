@@ -1,18 +1,19 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::common::model;
 use clap::{CommandFactory, Parser};
 use linewright::automation;
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::MergeMethod;
 use linewright::host::HostName;
-use linewright::layer::{Layer, Source, Sourced};
+use linewright::layer::{Layer, Sourced};
 use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
 use linewright::variable_names::VariableNames;
 use linewright::work_settings::{
-    Effort, Environments, Maintenance, Partial, RepoSettings, RunKind, SessionSettings, Setting,
-    SetupCommand, SetupSettings, Split, StageKey, StageSet, TimeoutSetting,
+    Effort, Environments, Maintenance, Partial, RepoSettings, RunKind, SessionSettings,
+    SessionWork, Setting, SetupCommand, SetupSettings, Split, StageKey, StageSet, TimeoutSetting,
 };
 
 fn resolve(args: &[&str], env: &[(&str, &str)], file: Option<&str>) -> Result<Config, String> {
@@ -46,6 +47,17 @@ fn resolve_blaming(
     )
 }
 
+/// The operator's settings for sessions under `config`, its file's model
+/// `opus` where its layers set none.
+fn sessions(config: &Config) -> SessionWork {
+    let mut work = config.work.clone();
+    if work.flags_and_env.model.is_none() {
+        work.file.model.get_or_insert_with(|| model("opus"));
+    }
+    work.for_sessions()
+        .expect("the operator's layers set a model")
+}
+
 /// What a triage run's sessions run with under `config`.
 fn session(config: &Config) -> SessionSettings {
     stage_session(config, WorkKind::Triage)
@@ -53,7 +65,7 @@ fn session(config: &Config) -> SessionSettings {
 
 /// What a `stage` run's sessions run with under `config`.
 fn stage_session(config: &Config, stage: WorkKind) -> SessionSettings {
-    config.work.clone().for_sessions().for_run(
+    sessions(config).for_run(
         RunKind::Stage(stage),
         &RepoSettings::default(),
         &Environments::default(),
@@ -71,23 +83,17 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
     let implement = stage_session(&config, WorkKind::Implement);
     assert_eq!(
         implement.model,
-        Some(Sourced::new("opus".into(), Layer::Operator))
+        Sourced::new(model("opus"), Layer::Operator)
     );
-    assert_eq!(
-        implement.effort,
-        Some(Sourced::new(Effort::Max, Layer::Operator))
-    );
+    assert_eq!(implement.effort, Sourced::new(Effort::Max, Layer::Operator));
     assert_eq!(implement.session_timeout.value, Duration::from_hours(2));
     assert_eq!(
         implement.timeout_setting,
         TimeoutSetting::Stage(StageKey::Work(WorkKind::Implement))
     );
     let design = stage_session(&config, WorkKind::Design);
-    assert_eq!(
-        design.model.map(|model| model.value).as_deref(),
-        Some("sonnet")
-    );
-    assert_eq!(design.effort.map(|effort| effort.value), Some(Effort::Low));
+    assert_eq!(design.model.value, model("sonnet"));
+    assert_eq!(design.effort.value, Effort::Low);
     assert_eq!(design.session_timeout.value, Duration::from_mins(10));
     assert_eq!(design.timeout_setting, TimeoutSetting::Pipeline);
 }
@@ -95,13 +101,13 @@ fn a_stages_table_replaces_the_whole_pipelines_model_effort_and_session_timeout_
 #[test_log::test]
 fn a_configuration_replaces_what_it_sets_over_a_stages_table_and_leaves_the_rest() {
     let config = resolve(
-        &["--effort", "high"],
+        &["--model", "sonnet", "--effort", "high"],
         &[],
         Some("[stage.triage]\nmodel = \"haiku\"\nsession-timeout = \"5m\"\n"),
     )
     .unwrap();
     let by = Partial {
-        model: Some("opus".into()),
+        model: Some(model("opus")),
         effort: None,
         session_timeout: Some(Duration::from_hours(2)),
     };
@@ -110,11 +116,11 @@ fn a_configuration_replaces_what_it_sets_over_a_stages_table_and_leaves_the_rest
 
     assert_eq!(
         overridden.model,
-        Some(Sourced::new("opus".into(), Layer::Configuration))
+        Sourced::new(model("opus"), Layer::Configuration)
     );
     assert_eq!(
         overridden.effort,
-        Some(Sourced::new(Effort::High, Layer::Operator))
+        Sourced::new(Effort::High, Layer::Operator)
     );
     assert_eq!(
         overridden.session_timeout,
@@ -124,16 +130,13 @@ fn a_configuration_replaces_what_it_sets_over_a_stages_table_and_leaves_the_rest
         overridden.timeout_setting.to_string(),
         "`session-timeout` in the configuration"
     );
-    assert_eq!(
-        overridden.sources()[&Setting::MODEL],
-        Source::Layer(Layer::Configuration)
-    );
+    assert_eq!(overridden.sources()[&Setting::MODEL], Layer::Configuration);
 }
 
 #[test_log::test]
 fn a_configuration_that_sets_nothing_changes_nothing() {
     let config = resolve(
-        &[],
+        &["--model", "sonnet"],
         &[],
         Some("[stage.triage]\nmodel = \"haiku\"\nsession-timeout = \"5m\"\n"),
     )
@@ -143,9 +146,12 @@ fn a_configuration_that_sets_nothing_changes_nothing() {
 
     assert_eq!(
         overridden.model,
-        Some(Sourced::new("haiku".into(), Layer::Operator))
+        Sourced::new(model("haiku"), Layer::Operator)
     );
-    assert_eq!(overridden.effort, None);
+    assert_eq!(
+        overridden.effort,
+        Sourced::new(Effort::Medium, Layer::Linewright)
+    );
     assert_eq!(
         overridden.session_timeout,
         Sourced::new(Duration::from_mins(5), Layer::Operator)
@@ -166,32 +172,90 @@ fn a_stages_table_wins_over_the_whole_pipelines_flag() {
     .unwrap();
 
     let fix_ci = stage_session(&config, WorkKind::FixCi);
-    assert_eq!(
-        fix_ci.model.map(|model| model.value).as_deref(),
-        Some("haiku")
-    );
-    assert_eq!(
-        fix_ci.effort.map(|effort| effort.value),
-        Some(Effort::Medium)
-    );
+    assert_eq!(fix_ci.model.value, model("haiku"));
+    assert_eq!(fix_ci.effort.value, Effort::Medium);
     assert_eq!(fix_ci.session_timeout.value, Duration::from_mins(5));
 }
 
 #[test_log::test]
-fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
+fn without_a_model_in_the_operators_layers_sessions_cannot_start_and_the_error_says_where_to_set_it()
+ {
+    let config = resolve(&[], &[], Some("[stage.triage]\nmodel = \"haiku\"\n")).unwrap();
+
+    let error = config.work.for_sessions().unwrap_err().to_string();
+
+    assert_eq!(
+        error,
+        "`model` is required to start a session: set it with `--model`, `LINEWRIGHT_MODEL` \
+         or `model` in the operator's config file"
+    );
+}
+
+#[test_log::test]
+fn the_operators_model_is_a_flag_a_variable_or_a_key() {
+    let model_of = |args: &[&str], env: &[(&str, &str)], file| {
+        session(&resolve(args, env, file).unwrap()).model
+    };
+    let file = Some("model = \"haiku\"\n");
+
+    assert_eq!(
+        model_of(&[], &[], file),
+        Sourced::new(model("haiku"), Layer::Operator)
+    );
+    assert_eq!(
+        model_of(&[], &[("LINEWRIGHT_MODEL", "sonnet")], file).value,
+        model("sonnet")
+    );
+    assert_eq!(
+        model_of(
+            &["--model", "opus"],
+            &[("LINEWRIGHT_MODEL", "sonnet")],
+            file
+        )
+        .value,
+        model("opus")
+    );
+}
+
+#[test_log::test]
+fn an_empty_model_is_an_error_naming_the_setting_and_where_it_was_given() {
+    let in_file = resolve(&[], &[], Some("model = \"\"\n")).unwrap_err();
+    let in_stage = resolve(&[], &[], Some("[stage.triage]\nmodel = \"\"\n")).unwrap_err();
+    let in_repo = format!("{:#}", RepoSettings::parse("model = \"\"\n").unwrap_err());
+
+    assert!(in_file.contains("linewright.toml"), "{in_file}");
+    assert!(in_stage.contains("linewright.toml"), "{in_stage}");
+    for error in [
+        resolve(&["--model", ""], &[], None).unwrap_err(),
+        resolve(&[], &[("LINEWRIGHT_MODEL", "")], None).unwrap_err(),
+        resolve(&[], &[("LINEWRIGHT_MODEL", " ")], None).unwrap_err(),
+        in_file,
+        in_stage,
+        in_repo,
+    ] {
+        assert!(error.contains("the setting `model` is empty"), "{error}");
+    }
+}
+
+#[test_log::test]
+fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_linewrights_medium() {
     let effort = |args: &[&str], env: &[(&str, &str)], file| {
-        session(&resolve(args, env, file).unwrap()).effort
+        let args: Vec<&str> = ["--model", "opus"].iter().chain(args).copied().collect();
+        session(&resolve(&args, env, file).unwrap()).effort
     };
     let file = Some("effort = \"low\"\n");
 
-    assert_eq!(effort(&[], &[], None), None);
     assert_eq!(
-        effort(&[], &[], file),
-        Some(Sourced::new(Effort::Low, Layer::Operator))
+        effort(&[], &[], None),
+        Sourced::new(Effort::Medium, Layer::Linewright)
     );
     assert_eq!(
-        effort(&[], &[("LINEWRIGHT_EFFORT", "xhigh")], file).map(|effort| effort.value),
-        Some(Effort::Xhigh)
+        effort(&[], &[], file),
+        Sourced::new(Effort::Low, Layer::Operator)
+    );
+    assert_eq!(
+        effort(&[], &[("LINEWRIGHT_EFFORT", "xhigh")], file).value,
+        Effort::Xhigh
     );
     assert_eq!(
         effort(
@@ -199,8 +263,8 @@ fn effort_is_a_flag_a_variable_or_a_key_and_unset_is_the_harnesss_choice() {
             &[("LINEWRIGHT_EFFORT", "xhigh")],
             file
         )
-        .map(|effort| effort.value),
-        Some(Effort::High)
+        .value,
+        Effort::High
     );
 }
 
@@ -257,19 +321,13 @@ fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
 
     let config = resolve(&["--model", "haiku"], &[], Some(file)).unwrap();
 
-    let scorer = config.work.clone().for_sessions().for_run(
+    let scorer = sessions(&config).for_run(
         RunKind::Scorer,
         &RepoSettings::default(),
         &Environments::default(),
     );
-    assert_eq!(
-        scorer.model,
-        Some(Sourced::new("opus".into(), Layer::Operator))
-    );
-    assert_eq!(
-        scorer.effort,
-        Some(Sourced::new(Effort::Max, Layer::Operator))
-    );
+    assert_eq!(scorer.model, Sourced::new(model("opus"), Layer::Operator));
+    assert_eq!(scorer.effort, Sourced::new(Effort::Max, Layer::Operator));
     assert_eq!(scorer.session_timeout.value, Duration::from_hours(2));
     assert_eq!(
         scorer.timeout_setting,
@@ -281,11 +339,8 @@ fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
     );
     for stage in WorkKind::ALL {
         let session = stage_session(&config, stage);
-        assert_eq!(
-            session.model.map(|model| model.value).as_deref(),
-            Some("haiku")
-        );
-        assert_eq!(session.effort.map(|effort| effort.value), Some(Effort::Low));
+        assert_eq!(session.model.value, model("haiku"));
+        assert_eq!(session.effort.value, Effort::Low);
         assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
     }
 }
@@ -293,7 +348,7 @@ fn the_scorers_table_sets_the_scorers_sessions_and_no_stages() {
 #[test_log::test]
 fn the_repositorys_scorer_table_ranks_above_the_operators() {
     let config = resolve(
-        &[],
+        &["--model", "opus"],
         &[],
         Some("[stage.scorer]\nmodel = \"haiku\"\neffort = \"max\"\n"),
     )
@@ -303,20 +358,10 @@ fn the_repositorys_scorer_table_ranks_above_the_operators() {
     )
     .unwrap();
 
-    let scorer = config.work.clone().for_sessions().for_run(
-        RunKind::Scorer,
-        &repo,
-        &Environments::default(),
-    );
+    let scorer = sessions(&config).for_run(RunKind::Scorer, &repo, &Environments::default());
 
-    assert_eq!(
-        scorer.effort,
-        Some(Sourced::new(Effort::Low, Layer::Repository))
-    );
-    assert_eq!(
-        scorer.model,
-        Some(Sourced::new("haiku".into(), Layer::Operator))
-    );
+    assert_eq!(scorer.effort, Sourced::new(Effort::Low, Layer::Repository));
+    assert_eq!(scorer.model, Sourced::new(model("haiku"), Layer::Operator));
     assert_eq!(
         scorer.session_timeout,
         Sourced::new(Duration::from_mins(5), Layer::Repository)
@@ -332,7 +377,7 @@ fn the_repositorys_scorer_table_ranks_above_the_operators() {
             WorkKind::Design
         )
         .effort,
-        None
+        Sourced::new(Effort::Medium, Layer::Linewright)
     );
 }
 
@@ -354,10 +399,7 @@ fn the_scorers_table_adds_to_the_scorers_environment() {
         .work
         .environments(&config.session_env, environment, &[]);
 
-    let mut scorer: Vec<(String, String)> = config
-        .work
-        .clone()
-        .for_sessions()
+    let mut scorer: Vec<(String, String)> = sessions(&config)
         .for_run(
             RunKind::Scorer,
             &RepoSettings::default(),
@@ -408,7 +450,7 @@ fn an_unknown_stages_table_is_an_error_naming_the_table_and_the_scorer_among_the
 /// What a `stage` run's sessions run with under `config` and the
 /// repository's file `repo`.
 fn repo_session(config: &Config, repo: &str, stage: WorkKind) -> SessionSettings {
-    config.work.clone().for_sessions().for_run(
+    sessions(config).for_run(
         RunKind::Stage(stage),
         &RepoSettings::parse(repo).unwrap(),
         &Environments::default(),
@@ -428,19 +470,10 @@ fn the_repositorys_file_ranks_below_the_operators_flags_and_variables_and_above_
     .unwrap();
 
     let design = repo_session(&config, repo, WorkKind::Design);
-    assert_eq!(
-        design.effort,
-        Some(Sourced::new(Effort::High, Layer::Repository))
-    );
-    assert_eq!(
-        design.model,
-        Some(Sourced::new("opus".into(), Layer::Operator))
-    );
+    assert_eq!(design.effort, Sourced::new(Effort::High, Layer::Repository));
+    assert_eq!(design.model, Sourced::new(model("opus"), Layer::Operator));
     let triage = repo_session(&config, repo, WorkKind::Triage);
-    assert_eq!(
-        triage.effort,
-        Some(Sourced::new(Effort::Xhigh, Layer::Operator))
-    );
+    assert_eq!(triage.effort, Sourced::new(Effort::Xhigh, Layer::Operator));
     assert_eq!(
         triage.session_timeout,
         Sourced::new(Duration::from_mins(20), Layer::Repository)
@@ -468,7 +501,7 @@ fn the_repositorys_stage_table_sets_its_stages_session_timeout() {
     );
     assert_eq!(
         implement.model,
-        Some(Sourced::new("opus".into(), Layer::Repository))
+        Sourced::new(model("opus"), Layer::Repository)
     );
 }
 
@@ -556,10 +589,7 @@ fn a_stage_has_no_flag() {
 /// The variables a `stage` run's sessions are given, by name, under
 /// `config` and the environments `split` made.
 fn given(config: &Config, split: &Split, stage: WorkKind) -> Vec<(String, String)> {
-    let mut given: Vec<(String, String)> = config
-        .work
-        .clone()
-        .for_sessions()
+    let mut given: Vec<(String, String)> = sessions(config)
         .for_run(
             RunKind::Stage(stage),
             &RepoSettings::default(),
@@ -684,7 +714,7 @@ fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
     )
     .unwrap();
 
-    let session = config.work.for_sessions().for_run(
+    let session = sessions(&config).for_run(
         RunKind::Automation(&automation),
         &RepoSettings::default(),
         &Environments::default(),
@@ -692,11 +722,11 @@ fn an_automations_model_and_effort_come_before_the_whole_pipelines() {
 
     assert_eq!(
         session.model,
-        Some(Sourced::new("opus".into(), Layer::Repository))
+        Sourced::new(model("opus"), Layer::Repository)
     );
     assert_eq!(
         session.effort,
-        Some(Sourced::new(Effort::Xhigh, Layer::Repository))
+        Sourced::new(Effort::Xhigh, Layer::Repository)
     );
     assert_eq!(session.timeout_setting, TimeoutSetting::Pipeline);
 }
@@ -710,16 +740,22 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
         Some("session-timeout = \"10m\"\n"),
     )
     .unwrap();
-    let from_variable =
-        resolve(&[], &[("LINEWRIGHT_SESSION_PASS_ENV", "CARGO_HOME")], None).unwrap();
-    let set_in_file = resolve(&[], &[], Some("session-env = { CI = \"true\" }\n")).unwrap();
-    let defaults = resolve(&[], &[], None).unwrap();
+    let from_variable = resolve(
+        &["--model", "opus"],
+        &[("LINEWRIGHT_SESSION_PASS_ENV", "CARGO_HOME")],
+        None,
+    )
+    .unwrap();
+    let set_in_file = resolve(
+        &["--model", "opus"],
+        &[],
+        Some("session-env = { CI = \"true\" }\n"),
+    )
+    .unwrap();
+    let defaults = resolve(&["--model", "opus"], &[], None).unwrap();
 
     let flagged = session(&from_flag);
-    assert_eq!(
-        flagged.model,
-        Some(Sourced::new("opus".into(), Layer::Operator))
-    );
+    assert_eq!(flagged.model, Sourced::new(model("opus"), Layer::Operator));
     assert_eq!(
         flagged.session_timeout,
         Sourced::new(Duration::from_mins(10), Layer::Operator)
@@ -730,33 +766,27 @@ fn a_runs_settings_name_the_operator_for_a_flag_or_the_operators_file_and_linewr
             sources(&from_flag)[&Setting::SESSION_PASS_ENV],
             sources(&from_flag)[&Setting::SESSION_ENV]
         ),
-        (
-            Source::Layer(Layer::Linewright),
-            Source::Layer(Layer::Linewright)
-        )
+        (Layer::Linewright, Layer::Linewright)
     );
     assert_eq!(
         (
             sources(&from_variable)[&Setting::SESSION_PASS_ENV],
             sources(&from_variable)[&Setting::SESSION_ENV]
         ),
-        (
-            Source::Layer(Layer::Operator),
-            Source::Layer(Layer::Linewright)
-        )
+        (Layer::Operator, Layer::Linewright)
     );
     assert_eq!(
         (
             sources(&set_in_file)[&Setting::SESSION_PASS_ENV],
             sources(&set_in_file)[&Setting::SESSION_ENV]
         ),
-        (
-            Source::Layer(Layer::Linewright),
-            Source::Layer(Layer::Operator)
-        )
+        (Layer::Linewright, Layer::Operator)
     );
     let defaulted = session(&defaults);
-    assert_eq!(defaulted.model, None);
+    assert_eq!(
+        defaulted.effort,
+        Sourced::new(Effort::Medium, Layer::Linewright)
+    );
     assert_eq!(
         defaulted.session_timeout,
         Sourced::new(Duration::from_hours(6), Layer::Linewright)
@@ -772,7 +802,7 @@ fn an_automations_session_timeout_comes_from_the_repository_before_the_operators
     )
     .unwrap();
 
-    let session = config.work.for_sessions().for_run(
+    let session = sessions(&config).for_run(
         RunKind::Automation(&automation),
         &RepoSettings::default(),
         &Environments::default(),
@@ -854,17 +884,22 @@ fn defaults_follow_the_spec() {
     assert_eq!(config.done_window, chrono::TimeDelta::days(7));
     assert_eq!(config.max_runs, 4);
     assert_eq!(config.max_trials, 1);
+    assert!(
+        config.work.clone().for_sessions().is_err(),
+        "model has none"
+    );
+    let with_model = resolve(&["--repo", "acme/widgets", "--model", "opus"], &[], None).unwrap();
     assert_eq!(
-        session(&config).session_timeout,
+        session(&with_model).session_timeout,
         Sourced::new(Duration::from_hours(6), Layer::Linewright)
     );
+    assert_eq!(session(&with_model).effort.value, Effort::Medium);
     assert_eq!(config.result_retries, 1);
     assert_eq!(config.ci_grace, chrono::TimeDelta::minutes(5));
     assert_eq!(config.ci_timeout, chrono::TimeDelta::hours(6));
     assert_eq!(config.ci_attempts, 2);
     assert!(!config.auto_merge);
     assert_eq!(config.merge_method, None);
-    assert_eq!(session(&config).model, None);
     assert_eq!(config.log_format, LogFormat::Json, "not a terminal");
     assert!(config.work_dir.ends_with("linewright"));
     assert_eq!(config.session_env, SessionEnv::default());
@@ -1777,7 +1812,7 @@ fn maintenance_is_a_flag_a_variable_or_a_key_and_unset_runs_nothing() {
     );
     assert_eq!(
         session(&resolve(&[], &[], file).unwrap()).sources()[&Setting::Maintenance],
-        Source::Layer(Layer::Operator)
+        Layer::Operator
     );
 }
 
@@ -2041,7 +2076,7 @@ fn an_automations_front_matter_holds_no_maintenance_so_it_runs_the_whole_pipelin
     )
     .unwrap();
 
-    let settings = config.work.for_sessions().for_run(
+    let settings = sessions(&config).for_run(
         RunKind::Automation(&automation),
         &RepoSettings::parse("maintenance = \"npm ci\"\n").unwrap(),
         &Environments::default(),
