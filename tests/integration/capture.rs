@@ -5,7 +5,7 @@ use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use linewright::benchmarks::{BenchmarkName, Benchmarks, MakeError};
+use linewright::benchmarks::{BenchmarkId, BenchmarkName, Benchmarks, KeptTask, MakeError};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
 use linewright::runs::{RunId, Runs};
@@ -38,38 +38,57 @@ fn benchmarks(world: &World) -> impl Future<Output = Benchmarks> + use<> {
     async move { Benchmarks::new(runs.await.database().clone()) }
 }
 
+/// The ID of the benchmark `name` of `world` of implement tasks, made if
+/// missing, also by another capture at once.
+#[track_caller]
+fn made<'a>(world: &'a World, name: &str) -> impl Future<Output = BenchmarkId> + 'a {
+    let caller = Location::caller();
+    let name = benchmark(name);
+    async move {
+        let benchmarks = benchmarks(world).await;
+        if let Some(found) = benchmarks
+            .named(&name)
+            .await
+            .unwrap_or_else(|e| panic!("finding the benchmark at {caller}: {e:#}"))
+        {
+            return found.id;
+        }
+        match benchmarks.make(&name, TaskStage::Implement).await {
+            Ok(made) => made.id,
+            Err(MakeError::Taken(_)) => {
+                benchmarks
+                    .named(&name)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| panic!("finding the benchmark made at {caller}"))
+                    .id
+            }
+            Err(e) => panic!("making the benchmark at {caller}: {e:#}"),
+        }
+    }
+}
+
 /// Captures run `run` of `world` as the task `named`, with `criteria`, into
 /// the benchmark [`IMPLEMENTS`], made if missing.
 #[track_caller]
 fn capture<'a>(
     world: &'a World,
-    run: &str,
-    named: &str,
-    criteria: &str,
-) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
-    let caller = Location::caller();
-    let benchmarks = benchmarks(world);
-    let made = async move {
-        let benchmarks = benchmarks.await;
-        match benchmarks
-            .make(&benchmark(IMPLEMENTS), TaskStage::Implement)
-            .await
-        {
-            Ok(_) | Err(MakeError::Taken(_)) => {}
-            Err(e) => panic!("making the benchmark at {caller}: {e:#}"),
-        }
-        benchmarks
-    };
-    let into = capture_into(
-        world,
-        run,
-        named,
-        criteria,
-        BenchmarkChoice::Named(benchmark(IMPLEMENTS)),
-    );
+    run: &'a str,
+    named: &'a str,
+    criteria: &'a str,
+) -> impl Future<Output = Result<KeptTask, CaptureError>> + 'a {
+    let made = made(world, IMPLEMENTS);
     Box::pin(async move {
-        made.await;
-        into.await
+        let implements = made.await;
+        capture_into(
+            world,
+            run,
+            named,
+            criteria,
+            BenchmarkChoice::Existing(implements),
+        )
+        .await
     })
 }
 
@@ -82,7 +101,7 @@ fn capture_into<'a>(
     named: &str,
     criteria: &str,
     benchmark: BenchmarkChoice,
-) -> impl Future<Output = Result<PathBuf, CaptureError>> + 'a {
+) -> impl Future<Output = Result<KeptTask, CaptureError>> + 'a {
     let named: TaskName = named.parse().unwrap();
     let criteria = Criteria::parse(criteria).unwrap();
     let run = id(run);
@@ -221,11 +240,15 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         .unwrap()
         .started_at;
 
-    let dir = capture(&world, &run, "gadgets-1", "A good result adds gadgets.\n")
+    let kept = capture(&world, &run, "gadgets-1", "A good result adds gadgets.\n")
         .await
         .unwrap();
 
-    assert_eq!(dir, tasks(&world).join("gadgets-1"));
+    let dir = kept.dir;
+    assert_eq!(
+        (kept.id.to_string(), &dir),
+        ("1".to_string(), &tasks(&world).join("1"))
+    );
     assert_eq!(
         entries(&dir),
         BTreeSet::from(
@@ -292,14 +315,67 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
 }
 
 #[test_log::test(tokio::test)]
+async fn a_task_reads_with_its_benchmark_and_what_its_directory_gives_and_once_removed_by_its_name()
+{
+    let mut world = World::new().await;
+    let (ticket, run, _) = implemented_on_a_branch(&mut world).await;
+    let started_at = runs(&world)
+        .await
+        .read_run(&id(&run))
+        .await
+        .unwrap()
+        .started_at;
+    let kept = capture(&world, &run, "gadgets", "Adds gadgets.\n")
+        .await
+        .unwrap();
+    let benchmarks = benchmarks(&world).await;
+
+    let shown = benchmarks.task(kept.id).await.unwrap().unwrap();
+
+    assert_eq!(
+        (
+            shown.name.as_str(),
+            shown.benchmark.name.as_str(),
+            shown.run.to_string(),
+            shown.criteria.unwrap().as_str()
+        ),
+        ("gadgets", IMPLEMENTS, run, "Adds gadgets.\n")
+    );
+    let facts = shown.facts.unwrap();
+    assert_eq!(
+        (facts.stage, facts.item, facts.title, facts.start),
+        (
+            TaskStage::Implement,
+            ticket,
+            world.issue(ticket).title,
+            started_at
+        )
+    );
+    assert_eq!(benchmarks.removed_task(kept.id).await.unwrap(), None);
+    benchmarks
+        .remove_task(kept.benchmark.id, kept.id)
+        .await
+        .unwrap();
+    assert_eq!(benchmarks.task(kept.id).await.unwrap(), None);
+    assert_eq!(
+        benchmarks
+            .removed_task(kept.id)
+            .await
+            .unwrap()
+            .map(|name| name.to_string()),
+        Some("gadgets".into())
+    );
+}
+
+#[test_log::test(tokio::test)]
 async fn the_criteria_are_kept_as_given_even_with_a_secret() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let criteria = format!("It never shows {SECRET}.\n");
 
-    let dir = capture(&world, &run, "gadgets", &criteria).await.unwrap();
+    let kept = capture(&world, &run, "gadgets", &criteria).await.unwrap();
 
-    assert_eq!(read(&dir.join("criteria.md")), criteria);
+    assert_eq!(read(&kept.dir.join("criteria.md")), criteria);
 }
 
 #[test_log::test(tokio::test)]
@@ -376,26 +452,81 @@ async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_name_a_task_already_has_is_refused_and_the_task_kept() {
+async fn a_name_another_task_of_the_benchmark_has_is_refused_and_the_task_kept() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    let dir = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
+    let kept = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
 
     let refused = capture(&world, &run, "gadgets", "Second.\n").await;
 
     assert!(
-        matches!(refused, Err(CaptureError::Taken(_))),
+        matches!(refused, Err(CaptureError::Taken { .. })),
         "{refused:?}"
     );
     assert_eq!(
         refused.unwrap_err().to_string(),
-        "a task is already named gadgets"
+        "a task named gadgets already exists in implements"
     );
-    assert_eq!(read(&dir.join("criteria.md")), "First.\n");
+    assert_eq!(read(&kept.dir.join("criteria.md")), "First.\n");
+    assert_eq!(entries(&tasks(&world)), BTreeSet::from(["1".to_string()]));
+}
+
+#[test_log::test(tokio::test)]
+async fn two_benchmarks_each_hold_a_task_of_one_name() {
+    let mut world = World::new().await;
+    let run = implemented(&mut world).await;
+    capture(&world, &run, "gadgets", "Adds gadgets.\n")
+        .await
+        .unwrap();
+    let fast = made(&world, "fast").await;
+
+    let kept = capture_into(
+        &world,
+        &run,
+        "gadgets",
+        "Adds gadgets fast.\n",
+        BenchmarkChoice::Existing(fast),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(kept.id.to_string(), "2");
     assert_eq!(
-        entries(&tasks(&world)),
-        BTreeSet::from(["gadgets".to_string()])
+        tasks_of(&world, "fast").await,
+        Some(vec![(
+            "gadgets".into(),
+            run.clone(),
+            "Adds gadgets fast.\n".into()
+        )])
     );
+    assert_eq!(
+        tasks_of(&world, IMPLEMENTS).await,
+        Some(vec![("gadgets".into(), run, "Adds gadgets.\n".into())])
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_removed_tasks_name_is_captured_again_in_its_benchmark_with_a_new_id() {
+    let mut world = World::new().await;
+    let run = implemented(&mut world).await;
+    let first = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
+    benchmarks(&world)
+        .await
+        .remove_task(first.benchmark.id, first.id)
+        .await
+        .unwrap();
+
+    let again = capture(&world, &run, "gadgets", "Again.\n").await.unwrap();
+
+    assert_eq!(
+        (first.id.to_string(), again.id.to_string()),
+        ("1".into(), "2".into())
+    );
+    assert_eq!(
+        tasks_of(&world, IMPLEMENTS).await,
+        Some(vec![("gadgets".into(), run, "Again.\n".into())])
+    );
+    assert_eq!(entries(&tasks(&world)), BTreeSet::from(["2".to_string()]));
 }
 
 #[test_log::test(tokio::test)]
@@ -413,13 +544,13 @@ async fn of_two_captures_under_one_name_one_wins_and_the_other_is_refused() {
         (first, second) => panic!("neither won: {first:?}, {second:?}"),
     };
     assert!(
-        matches!(refused, Err(CaptureError::Taken(_))),
+        matches!(refused, Err(CaptureError::Taken { .. })),
         "{refused:?}"
     );
-    assert_eq!(read(&won.join("criteria.md")), criteria);
+    assert_eq!(read(&won.dir.join("criteria.md")), criteria);
     assert_eq!(
-        entries(&tasks(&world)),
-        BTreeSet::from(["gadgets".to_string()])
+        tasks_of(&world, IMPLEMENTS).await.map(|tasks| tasks.len()),
+        Some(1)
     );
 }
 
@@ -445,9 +576,13 @@ fn tasks_of<'a>(
     let caller = Location::caller();
     let name: BenchmarkName = name.parse().unwrap();
     async move {
-        let shown = benchmarks(world)
+        let benchmarks = benchmarks(world).await;
+        let found = benchmarks
+            .named(&name)
             .await
-            .show(&name)
+            .unwrap_or_else(|e| panic!("finding the benchmark at {caller}: {e:#}"))?;
+        let shown = benchmarks
+            .show(found.id)
             .await
             .unwrap_or_else(|e| panic!("showing the benchmark at {caller}: {e:#}"))?;
         Some(
@@ -489,7 +624,7 @@ async fn a_capture_keeps_the_task_in_its_benchmark() {
 async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothing() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
-    benchmarks(&world)
+    let designs = benchmarks(&world)
         .await
         .make(&benchmark("designs"), TaskStage::Design)
         .await
@@ -500,7 +635,7 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
         &run,
         "gadgets",
         "Gadgets.\n",
-        BenchmarkChoice::Named(benchmark("designs")),
+        BenchmarkChoice::Existing(designs.id),
     )
     .await;
 
@@ -526,7 +661,7 @@ async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
         &run,
         "gadgets",
         "Gadgets.\n",
-        BenchmarkChoice::Named(benchmark("nowhere")),
+        BenchmarkChoice::Existing("9".parse().unwrap()),
     )
     .await;
 
@@ -534,10 +669,7 @@ async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
         matches!(refused, Err(CaptureError::NoSuchBenchmark(_))),
         "{refused:?}"
     );
-    assert_eq!(
-        refused.unwrap_err().to_string(),
-        "there is no benchmark nowhere"
-    );
+    assert_eq!(refused.unwrap_err().to_string(), "there is no benchmark 9");
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
@@ -558,7 +690,7 @@ async fn a_capture_into_a_new_benchmark_makes_it_of_the_runs_stage() {
 
     let found = benchmarks(&world)
         .await
-        .find(&benchmark("fresh"))
+        .named(&benchmark("fresh"))
         .await
         .unwrap();
     assert_eq!(
@@ -594,10 +726,7 @@ async fn a_new_benchmark_a_benchmark_already_has_the_name_of_is_refused() {
         refused.unwrap_err().to_string(),
         "a benchmark is already named implements"
     );
-    assert_eq!(
-        entries(&tasks(&world)),
-        BTreeSet::from(["first".to_string()])
-    );
+    assert_eq!(entries(&tasks(&world)), BTreeSet::from(["1".to_string()]));
 }
 
 #[test_log::test(tokio::test)]
@@ -663,19 +792,16 @@ fn gadgets_capturable<'a>(
     run: &'a str,
 ) -> impl Future<Output = task::Capturable> + 'a {
     let caller = Location::caller();
-    let (implements, run, gadgets) = (benchmark(IMPLEMENTS), id(run), "gadgets".parse().unwrap());
+    let (run, gadgets) = (id(run), "gadgets".parse().unwrap());
+    let made = made(world, IMPLEMENTS);
     async move {
-        let benchmarks = benchmarks(world).await;
-        benchmarks
-            .make(&implements, TaskStage::Implement)
-            .await
-            .unwrap_or_else(|e| panic!("making the benchmark at {caller}: {e:#}"));
+        let implements = made.await;
         task::capturable(
             &runs(world).await,
-            &benchmarks,
+            &benchmarks(world).await,
             &run,
             &gadgets,
-            &BenchmarkChoice::Named(implements),
+            &BenchmarkChoice::Existing(implements),
         )
         .await
         .unwrap_or_else(|e| panic!("checking the capture at {caller}: {e}"))
@@ -683,34 +809,31 @@ fn gadgets_capturable<'a>(
 }
 
 #[test_log::test(tokio::test)]
-async fn a_capture_whose_directory_cannot_be_moved_into_place_keeps_no_row() {
+async fn a_capture_passes_over_an_id_a_directory_in_the_tasks_is_named_as() {
     let mut world = World::new().await;
     let run = implemented(&mut world).await;
     let capturable = gadgets_capturable(&world, &run).await;
-    let before = tasks(&world).join("gadgets");
+    let before = tasks(&world).join("1");
     std::fs::create_dir_all(&before).unwrap();
     std::fs::write(before.join("criteria.md"), "Captured before benchmarks.\n").unwrap();
 
-    let refused = task::capture(
+    let kept = task::capture(
         &*world.store,
         capturable,
         &Criteria::parse("Gadgets.\n").unwrap(),
         &benchmarks(&world).await,
     )
-    .await;
+    .await
+    .unwrap();
 
-    assert!(
-        matches!(refused, Err(CaptureError::Taken(_))),
-        "{refused:?}"
-    );
-    assert_eq!(tasks_of(&world, IMPLEMENTS).await, Some(vec![]));
+    assert_eq!(kept.id.to_string(), "2");
     assert_eq!(
         read(&before.join("criteria.md")),
         "Captured before benchmarks.\n"
     );
     assert_eq!(
-        entries(&tasks(&world)),
-        BTreeSet::from(["gadgets".to_string()])
+        tasks_of(&world, IMPLEMENTS).await,
+        Some(vec![("gadgets".into(), run, "Gadgets.\n".into())])
     );
 }
 
@@ -736,14 +859,15 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
     .await;
 
     assert!(
-        matches!(refused, Err(CaptureError::Taken(_))),
+        matches!(refused, Err(CaptureError::Taken { .. })),
         "{refused:?}"
     );
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
 }
 
-/// Runs `lw capture run name --benchmark implements --criteria FILE` in
-/// `work_dir`, the file holding `criteria`.
+/// Runs `lw capture run --benchmark 1 --name name --criteria FILE` in
+/// `work_dir`, the file holding `criteria`, 1 being the ID of the first
+/// benchmark made.
 #[track_caller]
 fn lw_capture<'a>(
     work_dir: &'a Path,
@@ -762,9 +886,10 @@ fn lw_capture<'a>(
             &[
                 "capture",
                 run,
-                name,
                 "--benchmark",
-                IMPLEMENTS,
+                "1",
+                "--name",
+                name,
                 "--criteria",
                 &path,
             ],
@@ -831,7 +956,11 @@ async fn lw_capture_without_criteria_is_a_command_line_error() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
 
-    let output = lw_in(work_dir.path(), &["capture", &run, "gadgets"]).await;
+    let output = lw_in(
+        work_dir.path(),
+        &["capture", &run, "--benchmark", "1", "--name", "gadgets"],
+    )
+    .await;
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(output.stderr.contains("--criteria"), "{}", output.stderr);
@@ -863,7 +992,7 @@ async fn lw_capture_into_a_benchmark_that_does_not_exist_exits_4_saying_why() {
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(4), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: there is no benchmark implements\n");
+    assert_eq!(output.stderr, "lw: there is no benchmark 1\n");
     assert!(!work_dir.path().join(REPO).join("tasks").exists());
 }
 
@@ -897,6 +1026,7 @@ async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
         &[
             "capture",
             &run,
+            "--name",
             "gadgets",
             "--criteria",
             &file.path().to_string_lossy(),
@@ -909,7 +1039,7 @@ async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_of_a_name_a_benchmarks_task_has_exits_1_before_reaching_github() {
+async fn lw_capture_of_a_name_another_task_of_the_benchmark_has_exits_1_before_reaching_github() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
     let repo = work_dir.path().join(REPO);
@@ -919,6 +1049,9 @@ async fn lw_capture_of_a_name_a_benchmarks_task_has_exits_1_before_reaching_gith
     let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: a task is already named gadgets\n");
+    assert_eq!(
+        output.stderr,
+        "lw: a task named gadgets already exists in implements\n"
+    );
     assert!(!repo.join("tasks").exists());
 }

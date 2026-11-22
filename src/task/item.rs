@@ -283,6 +283,12 @@ fn issue_state(number: Number, issue: &RestIssue) -> Result<IssueState, String> 
     }
 }
 
+/// The title of `item`, as its issue gives it, or why it lacks it or it
+/// does not read.
+pub fn title(item: &RecordedItem) -> Result<String, String> {
+    resource::<RestIssue>(item, Resource::Issue).map(|issue| issue.title)
+}
+
 /// `item`'s `resource`, or why it lacks it or it does not read.
 fn resource<T: DeserializeOwned>(item: &RecordedItem, resource: Resource) -> Result<T, String> {
     let path = resource.path(item.number);

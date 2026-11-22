@@ -303,7 +303,7 @@ impl std::fmt::Display for Missing {
         match self {
             Missing::Item(number) => write!(f, "No such item {number}"),
             Missing::Run(id) => write!(f, "No such run {id}"),
-            Missing::Benchmark(name) => write!(f, "No such benchmark {name}"),
+            Missing::Benchmark(id) => write!(f, "No such benchmark {id}"),
             Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
         }
     }

@@ -81,7 +81,7 @@ fn design_task() -> impl Future<Output = DesignTask> {
             "the criteria",
         );
         let dir = task::capture(&*world.store, capturable, &criteria, &benchmarks).await;
-        let dir = ok(dir, caller, "capturing");
+        let dir = ok(dir, caller, "capturing").dir;
         DesignTask {
             world,
             dir,

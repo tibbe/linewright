@@ -36,8 +36,9 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationName,
-    ScoreFigures, Shown, TrialKey, TrialShown, TrialState, dollars, duration, percent, without,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationId,
+    ConfigurationName, RunTask, ScoreFigures, Shown, TaskId, TrialKey, TrialShown, TrialState,
+    dollars, duration, percent, without,
 };
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
@@ -493,8 +494,8 @@ impl ConfigurationsColumn {
 /// under `configuration` in `repetition` of benchmark run `id`.
 fn transcript_path(
     id: BenchmarkRunId,
-    configuration: &ConfigurationName,
-    task: &TaskName,
+    configuration: ConfigurationId,
+    task: TaskId,
     repetition: NonZeroU32,
     of: Of,
 ) -> String {
@@ -690,7 +691,7 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
         .map(|(configuration, mean, rate)| {
             let named_left = x(mean) > 60.0;
             Point {
-                id: format!("point-{}-{}", axis.name(), configuration.name),
+                id: format!("point-{}-{}", axis.name(), configuration.id),
                 name: configuration.name.clone(),
                 tip: format!(
                     "{}: pass rate {}, {} {}",
@@ -753,7 +754,7 @@ fn grid(
             .iter()
             .zip(tasks)
             .map(|(task, k)| GridRow {
-                task: task.clone(),
+                task: task.name.clone(),
                 cells: ranked
                     .iter()
                     .map(|(_, configuration)| {
@@ -819,8 +820,8 @@ fn rows(
 ) -> Vec<Row> {
     let mut rows = vec![];
     for &(c, configuration) in ranked {
-        let configuration_id = format!("configuration-{}", configuration.name);
-        let task_id = |task: &TaskName| format!("{configuration_id}_task-{task}");
+        let configuration_id = format!("configuration-{}", configuration.id);
+        let task_id = |task: &RunTask| format!("{configuration_id}_task-{}", task.id);
         rows.push(Row::Figures(FiguresRow {
             id: configuration_id.clone(),
             level: Level::Configuration,
@@ -852,9 +853,12 @@ fn rows(
                 },
                 fold: Fold::of(
                     trials.iter().map(|(key, _)| trial_id(key)).collect(),
-                    format!("Show the trials of {task} under {}", configuration.name),
+                    format!(
+                        "Show the trials of {} under {}",
+                        task.name, configuration.name
+                    ),
                 ),
-                name: task.to_string(),
+                name: task.name.to_string(),
                 pass_rate: PassRate::Text(passes_of(of_task.and_then(|of_task| of_task.passes))),
                 figures: of_task
                     .map_or_else(Default::default, |of_task| figure_cells(&of_task.figures)),
@@ -862,7 +866,8 @@ fn rows(
             for (key, state) in trials {
                 let trial = TrialAt {
                     id: record.id,
-                    configuration: configuration.name.clone(),
+                    configuration: configuration.id,
+                    configuration_name: configuration.name.clone(),
                     task: task.clone(),
                     repetition: key.repetition,
                     of: Of::Run,
@@ -896,8 +901,7 @@ fn trial_rows(
 ) -> Vec<Row> {
     let shown = TrialShown::of(benchmark_run, state);
     let run = state.run();
-    let output =
-        benchmark_runs(sources).output_dir(at.id, &at.configuration, &at.task, at.repetition);
+    let output = at.output_dir(sources);
     let began = outputs.began(&output);
     let said = match (state.score(), shown.reason()) {
         (Some(score), _) => Some(Said::score(score, outputs.reasoning(&output).as_deref())),
@@ -920,7 +924,7 @@ fn trial_rows(
             opens.then(|| details.id.clone()).into_iter().collect(),
             format!(
                 "Show the details of trial {} of {} under {}",
-                at.repetition, at.task, at.configuration
+                at.repetition, at.task.name, at.configuration_name
             ),
         ),
         name: format!("Trial {}", at.repetition),
@@ -1144,7 +1148,7 @@ fn benchmark_run_name(id: impl std::fmt::Display) -> String {
 fn benchmark_crumbs(record: &BenchmarkRunRecord) -> Within {
     Place::within(Area::Benchmarks).under(
         record.benchmark.name.to_string(),
-        benchmark_path(&record.benchmark.name),
+        benchmark_path(record.benchmark.id),
     )
 }
 
@@ -1302,25 +1306,40 @@ impl Of {
 /// A trial of a benchmark run whose transcript a page shows.
 struct TrialAt {
     id: BenchmarkRunId,
-    configuration: ConfigurationName,
-    task: TaskName,
+    configuration: ConfigurationId,
+    configuration_name: ConfigurationName,
+    task: RunTask,
     repetition: NonZeroU32,
     of: Of,
 }
 
 impl TrialAt {
-    /// The trial `path` names: its name in the benchmark run.
+    /// The trial's name in the benchmark run, by the names of its
+    /// configuration and its task.
     fn name(&self) -> String {
-        format!("{}/{}/{}", self.configuration, self.task, self.repetition)
+        format!(
+            "{}/{}/{}",
+            self.configuration_name, self.task.name, self.repetition
+        )
     }
 
     fn path(&self, of: Of) -> String {
         transcript_path(
             self.id,
-            &self.configuration,
-            &self.task,
+            self.configuration,
+            self.task.id,
             self.repetition,
             of,
+        )
+    }
+
+    /// Its output.
+    fn output_dir(&self, sources: &Sources) -> std::path::PathBuf {
+        benchmark_runs(sources).output_dir(
+            self.id,
+            self.configuration,
+            self.task.id,
+            self.repetition,
         )
     }
 }
@@ -1340,15 +1359,17 @@ fn transcribed(
             format!("benchmark run {} has no trial {trial}", path.id),
         )
     };
-    let configuration = record
-        .configurations
-        .iter()
-        .position(|name| name.as_str() == path.configuration)
+    let (configuration, configuration_name) = path
+        .configuration
+        .parse::<ConfigurationId>()
+        .ok()
+        .and_then(|id| Some((id, record.configurations.get(id.place())?.clone())))
         .ok_or_else(none)?;
-    let task = record
-        .tasks
-        .iter()
-        .position(|name| name.as_str() == path.task)
+    let task = path
+        .task
+        .parse::<TaskId>()
+        .ok()
+        .and_then(|id| record.tasks.iter().find(|task| task.id == id))
         .ok_or_else(none)?;
     let repetition = path
         .repetition
@@ -1362,12 +1383,13 @@ fn transcribed(
         .ok_or_else(none)?;
     let at = TrialAt {
         id: record.id,
-        configuration: record.configurations[configuration].clone(),
-        task: record.tasks[task].clone(),
+        configuration,
+        configuration_name,
+        task: task.clone(),
         repetition,
         of,
     };
-    let output = benchmark_runs(sources).output_dir(at.id, &at.configuration, &at.task, repetition);
+    let output = at.output_dir(sources);
     let unread = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"));
     let task_run: RunId = trial::task_run(&output).map_err(unread)?.ok_or_else(|| {
         (
@@ -1434,12 +1456,13 @@ async fn trial_transcript(
         Err(_) => Place::within(Area::Benchmarks),
     };
     let transcribed = record.and_then(|record| transcribed(sources, path, &record));
+    let named = transcribed.as_ref().ok().map_or_else(
+        || format!("{}/{}/{}", path.configuration, path.task, path.repetition),
+        |(at, _)| at.name(),
+    );
     let heading = Heading {
         line: transcribed.as_ref().ok().map(|(at, _)| context(at)),
-        ..Heading::named(format!(
-            "Trial {}/{}/{}'s {}",
-            path.configuration, path.task, path.repetition, path.of
-        ))
+        ..Heading::named(format!("Trial {named}'s {}", path.of))
     };
     let place = within.screen(TRIAL, Thing::Found(heading));
     Ok((place, transcribed.map(|(_, transcribed)| transcribed)))
@@ -1535,6 +1558,7 @@ mod tests {
             none: 0,
         };
         ConfigurationResults {
+            id: ConfigurationId::AS_IS,
             name: name.parse().unwrap(),
             pass_rate: Some(0.5),
             figures: Figures {

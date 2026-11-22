@@ -52,7 +52,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{Sources, Unanswered};
-use crate::benchmarks::{BenchmarkName, BenchmarkRunId, BenchmarkRuns, Benchmarks};
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, BenchmarkRuns, Benchmarks};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 use crate::runs::RunId;
@@ -127,23 +127,23 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(benchmarks_page::benchmarks_events),
         )
         .route(
-            "/benchmarks/{name}",
+            "/benchmarks/{id}",
             get(benchmark_page::benchmark_page).post(benchmark_page::add_task),
         )
         .route(
-            "/benchmarks/{name}/{tab}",
+            "/benchmarks/{id}/{tab}",
             get(benchmark_page::benchmark_tab_page),
         )
         .route(
-            "/benchmarks/{name}/remove-task",
+            "/benchmarks/{id}/remove-task",
             get(no_such_page).post(benchmark_page::remove_task),
         )
         .route(
-            "/benchmarks/{name}/launch",
+            "/benchmarks/{id}/launch",
             get(no_such_page).post(launch::launch),
         )
         .route(
-            "/events/benchmarks/{name}",
+            "/events/benchmarks/{id}",
             get(benchmark_page::benchmark_events),
         )
         .route(
@@ -424,15 +424,15 @@ fn benchmark_run_path(id: BenchmarkRunId) -> String {
     format!("/benchmark-runs/{id}")
 }
 
-/// The path of benchmark `name`'s page.
-fn benchmark_path(name: &BenchmarkName) -> String {
-    format!("/benchmarks/{name}")
+/// The path of benchmark `id`'s page.
+fn benchmark_path(id: BenchmarkId) -> String {
+    format!("/benchmarks/{id}")
 }
 
-/// The path of tab `tab` of benchmark `name`'s page
+/// The path of tab `tab` of benchmark `id`'s page
 /// (`docs/specs/web/design_system.md`, A tab).
-fn benchmark_tab_path(name: &BenchmarkName, tab: BenchmarkTab) -> String {
-    format!("{}/{}", benchmark_path(name), tab.segment())
+fn benchmark_tab_path(id: BenchmarkId, tab: BenchmarkTab) -> String {
+    format!("{}/{}", benchmark_path(id), tab.segment())
 }
 
 /// The answer to a path that is no page's.

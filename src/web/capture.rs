@@ -17,7 +17,7 @@ use super::making::{
 use super::write::Write;
 use super::{benchmark_tab_path, benchmarks, run_path};
 use crate::api::{Served, Sources};
-use crate::benchmarks::{BenchmarkName, Benchmarks};
+use crate::benchmarks::{Benchmark, Benchmarks};
 use crate::runs::RunId;
 use crate::task::{
     self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskName, TaskStage, capturable_stage,
@@ -30,7 +30,7 @@ pub(super) const DIALOG: &str = "capture";
 pub(super) struct Offer {
     run: RunId,
     /// The benchmarks of the run's stage, by name.
-    benchmarks: Vec<BenchmarkName>,
+    benchmarks: Vec<Benchmark>,
 }
 
 impl Offer {
@@ -68,23 +68,23 @@ impl Offer {
     }
 }
 
-/// The names of the benchmarks of `stage`.
+/// The benchmarks of `stage`, by name.
 async fn benchmarks_of(
     benchmarks: &Benchmarks,
     stage: TaskStage,
-) -> anyhow::Result<Vec<BenchmarkName>> {
+) -> anyhow::Result<Vec<Benchmark>> {
     Ok(benchmarks
         .list()
         .await?
         .into_iter()
         .filter(|listed| listed.benchmark.stage == stage)
-        .map(|listed| listed.benchmark.name)
+        .map(|listed| listed.benchmark)
         .collect())
 }
 
-/// The names of the benchmarks of `run`'s stage, none for a run of no such
-/// stage or when they do not read, which is logged.
-async fn benchmarks_of_run(sources: &Sources, run: &RunId) -> Vec<BenchmarkName> {
+/// The benchmarks of `run`'s stage, by name, none for a run of no such stage
+/// or when they do not read, which is logged.
+async fn benchmarks_of_run(sources: &Sources, run: &RunId) -> Vec<Benchmark> {
     let Some((stage, _)) = capturable_stage(&run.of) else {
         return vec![];
     };
@@ -113,7 +113,7 @@ impl CaptureDialog {
 /// The capture's fields, as the form sends them.
 #[derive(Default, Deserialize)]
 pub(super) struct CaptureFields {
-    /// The benchmark chosen, empty for a new one.
+    /// The ID of the benchmark chosen, empty for a new one.
     #[serde(default)]
     benchmark: String,
     /// The new benchmark's name.
@@ -139,7 +139,7 @@ impl CaptureFields {
         } else {
             self.benchmark
                 .parse()
-                .map(BenchmarkChoice::Named)
+                .map(BenchmarkChoice::Existing)
                 .map_err(|why: String| FieldRefusals::of(CaptureField::Benchmark, why))
         };
         both(
@@ -177,7 +177,7 @@ impl From<TaskField> for CaptureField {
 impl CapturingField for CaptureField {
     fn naming(choice: &BenchmarkChoice) -> Option<CaptureField> {
         Some(match choice {
-            BenchmarkChoice::Named(_) => CaptureField::Benchmark,
+            BenchmarkChoice::Existing(_) => CaptureField::Benchmark,
             BenchmarkChoice::New(_) => CaptureField::NewBenchmark,
         })
     }
@@ -192,21 +192,21 @@ pub(super) struct CaptureForm {
     /// Where it posts: the run's path.
     path: String,
     making: Making<CaptureFields>,
-    /// The benchmarks it offers, then a new one.
-    benchmarks: Vec<BenchmarkName>,
+    /// The benchmarks it offers, by name, then a new one.
+    benchmarks: Vec<Benchmark>,
 }
 
 impl CaptureForm {
     /// The form of the capture of `run` as it starts, offering `benchmarks`:
     /// the first of them chosen, or else a new one, and the name suggested
     /// for `run`.
-    fn blank(run: &RunId, benchmarks: Vec<BenchmarkName>) -> CaptureForm {
+    fn blank(run: &RunId, benchmarks: Vec<Benchmark>) -> CaptureForm {
         CaptureForm {
             path: run_path(run),
             making: Making::of(CaptureFields {
                 benchmark: benchmarks
                     .first()
-                    .map(ToString::to_string)
+                    .map(|benchmark| benchmark.id.to_string())
                     .unwrap_or_default(),
                 new_benchmark: String::new(),
                 task: TaskFields {
@@ -243,6 +243,11 @@ impl CaptureForm {
     /// is no longer offered leaves the first offered chosen.
     fn new_benchmark_chosen(&self) -> bool {
         self.making.fields.benchmark.is_empty() || self.benchmarks.is_empty()
+    }
+
+    /// Whether `benchmark` is the one chosen.
+    fn chosen(&self, benchmark: &Benchmark) -> bool {
+        benchmark.id.to_string() == self.making.fields.benchmark
     }
 }
 
@@ -332,18 +337,19 @@ pub(super) async fn capture(
     match capture_sent(&sources, &run, &sent).await {
         Ok(captured) => Answer::Made {
             shown: MadeShown::Elsewhere(captured.said(&run)),
-            blank: CaptureForm::blank(&run, with_made(form.benchmarks, &captured.into)),
+            blank: CaptureForm::blank(&run, with_made(form.benchmarks, &captured)),
         },
         Err(why) => form.refused_as_sent(sent, why),
     }
 }
 
-/// `benchmarks`, by name, with the one a capture `into` made among them.
-fn with_made(mut benchmarks: Vec<BenchmarkName>, into: &BenchmarkChoice) -> Vec<BenchmarkName> {
-    if let BenchmarkChoice::New(made) = into
-        && let Err(at) = benchmarks.binary_search(made)
+/// `benchmarks`, by name, with the one `captured` made among them.
+fn with_made(mut benchmarks: Vec<Benchmark>, captured: &Captured) -> Vec<Benchmark> {
+    if captured.made
+        && let Err(at) =
+            benchmarks.binary_search_by(|benchmark| benchmark.name.cmp(&captured.benchmark.name))
     {
-        benchmarks.insert(at, made.clone());
+        benchmarks.insert(at, captured.benchmark.clone());
     }
     benchmarks
 }
@@ -372,24 +378,22 @@ pub(super) struct Captured {
     /// The task's name.
     name: TaskName,
     /// The benchmark it was captured into.
-    into: BenchmarkChoice,
+    benchmark: Benchmark,
+    /// Whether the capture made the benchmark.
+    made: bool,
 }
 
 impl Captured {
     /// What the screen says of `run` captured as it (`docs/specs/runs.md`,
     /// Run, Capturing, What was made), linking to the benchmark's Tasks.
     fn said(&self, run: &RunId) -> Html {
-        let new = match self.into {
-            BenchmarkChoice::Named(_) => "",
-            BenchmarkChoice::New(_) => "new ",
-        };
-        let benchmark = self.into.benchmark();
+        let new = if self.made { "new " } else { "" };
         html::built(format!(
             r#"Captured run {} as the task {} in the {new}benchmark <a class="link" href="{}">{}</a>."#,
             html::escape(&run.to_string()),
             html::escape(self.name.as_str()),
-            html::escape(&benchmark_tab_path(benchmark, BenchmarkTab::Tasks)),
-            html::escape(benchmark.as_str()),
+            html::escape(&benchmark_tab_path(self.benchmark.id, BenchmarkTab::Tasks)),
+            html::escape(self.benchmark.name.as_str()),
         ))
     }
 }
@@ -414,7 +418,7 @@ impl NotCaptured {
     ) -> (StatusCode, making::Refusal<F>) {
         let reason = self.reason();
         let field = match &self.error {
-            CaptureError::Taken(_) => Some(F::from(TaskField::Name)),
+            CaptureError::Taken { .. } => Some(F::from(TaskField::Name)),
             CaptureError::BenchmarkTaken(_) | CaptureError::NoSuchBenchmark(_) => F::naming(choice),
             CaptureError::NoSuchRun(_)
             | CaptureError::NotCapturable(_)
@@ -436,7 +440,9 @@ impl NotCaptured {
     /// the capture's own wording.
     fn reason(&self) -> String {
         match &self.error {
-            CaptureError::Taken(name) => format!("A task named {name} already exists."),
+            CaptureError::Taken { task, benchmark } => {
+                format!("A task named {task} already exists in {benchmark}.")
+            }
             CaptureError::OtherStage {
                 run,
                 stage,
@@ -497,11 +503,12 @@ pub(super) async fn capture_run(
         Err(e) => Err(e),
     };
     match captured {
-        Ok(dir) => {
-            info!(run = %run, task = %dir.display(), benchmark = %choice.benchmark(), "captured a run as a task");
+        Ok(kept) => {
+            info!(run = %run, task = %kept.id, benchmark = %kept.benchmark.id, "captured a run as a task");
             Ok(Captured {
                 name,
-                into: choice.clone(),
+                benchmark: kept.benchmark,
+                made: matches!(choice, BenchmarkChoice::New(_)),
             })
         }
         Err(error) => {

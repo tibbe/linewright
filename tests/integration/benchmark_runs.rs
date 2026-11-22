@@ -6,7 +6,8 @@ use common::*;
 use serde_json::json;
 
 /// The work directory of `REPO` under `work_dir`, its database made, with
-/// the design benchmark `board` holding the tasks `columns` and `lanes`.
+/// the design benchmark `board`, 1, holding the tasks `lanes`, 1, and
+/// `columns`, 2.
 #[track_caller]
 fn board(work_dir: &Path) -> impl Future<Output = PathBuf> + use<> {
     let repo = work_dir.join(REPO);
@@ -26,14 +27,14 @@ fn board(work_dir: &Path) -> impl Future<Output = PathBuf> + use<> {
         "3/design-2",
         "Names them.\n",
     ));
-    let git = repo.join("tasks/columns/commits.git");
-    std::fs::create_dir_all(git.join("objects")).unwrap();
-    std::fs::write(git.join("HEAD"), "ref\n").unwrap();
     async move {
         runs.await;
         benchmark.await;
         lanes.await;
-        columns.await;
+        let columns = columns.await;
+        let git = repo.join(format!("tasks/{columns}/commits.git"));
+        std::fs::create_dir_all(git.join("objects")).unwrap();
+        std::fs::write(git.join("HEAD"), "ref\n").unwrap();
         repo
     }
 }
@@ -69,7 +70,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
         &[
             "benchmark-run",
             "launch",
-            "board",
+            "1",
             "--configuration",
             &format!("short={}", short.display()),
             "--repetitions",
@@ -81,26 +82,26 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "Launched benchmark run 1 on the benchmark board: 8 trials\n"
+        "Launched benchmark run 1 on the benchmark 1 (board): 8 trials\n"
     );
     let kept = repo.join("benchmark-runs/1/.kept");
     assert_eq!(names_in(&repo.join("benchmark-runs")), ["1"]);
-    assert_eq!(names_in(&kept.join("tasks")), ["columns", "lanes"]);
+    assert_eq!(names_in(&kept.join("tasks")), ["1", "2"]);
     assert_eq!(
-        std::fs::read_to_string(kept.join("tasks/columns/criteria.md")).unwrap(),
+        std::fs::read_to_string(kept.join("tasks/2/criteria.md")).unwrap(),
         "Names them.\n"
     );
     assert_eq!(
-        std::fs::read_to_string(kept.join("tasks/columns/commits.git/HEAD")).unwrap(),
+        std::fs::read_to_string(kept.join("tasks/2/commits.git/HEAD")).unwrap(),
         "ref\n"
     );
-    assert_eq!(names_in(&kept.join("configurations")), ["as-is", "short"]);
+    assert_eq!(names_in(&kept.join("configurations")), ["1", "2"]);
     assert_eq!(
-        names_in(&kept.join("configurations/as-is")),
+        names_in(&kept.join("configurations/1")),
         Vec::<String>::new()
     );
     assert_eq!(
-        std::fs::read_to_string(kept.join("configurations/short/config.toml")).unwrap(),
+        std::fs::read_to_string(kept.join("configurations/2/config.toml")).unwrap(),
         "model = \"haiku\"\n"
     );
 }
@@ -111,16 +112,16 @@ async fn lw_benchmark_run_launch_takes_an_id_past_a_directory_a_stopped_launch_l
     let repo = board(work_dir.path()).await;
     std::fs::create_dir_all(repo.join("benchmark-runs/1/.kept")).unwrap();
 
-    let output = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
+    let output = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
-        "Launched benchmark run 2 on the benchmark board: 2 trials\n"
+        "Launched benchmark run 2 on the benchmark 1 (board): 2 trials\n"
     );
     assert_eq!(
         names_in(&repo.join("benchmark-runs/2/.kept/tasks")),
-        ["columns", "lanes"]
+        ["1", "2"]
     );
 }
 
@@ -129,16 +130,12 @@ async fn lw_benchmark_run_launch_with_no_configuration_runs_as_is_once() {
     let work_dir = tempfile::tempdir().unwrap();
     board(work_dir.path()).await;
 
-    let output = lw_in(
-        work_dir.path(),
-        &["benchmark-run", "launch", "board", "--json"],
-    )
-    .await;
+    let output = lw_in(work_dir.path(), &["benchmark-run", "launch", "1", "--json"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&output.stdout).unwrap(),
-        json!({"id": 1, "benchmark": "board", "trials": 2})
+        json!({"id": 1, "benchmark": 1, "trials": 2})
     );
 }
 
@@ -159,19 +156,19 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
         &[
             "benchmark-run",
             "launch",
-            "lanes",
+            "9",
             "--configuration",
             &format!("broken={}", broken.display()),
         ],
     )
     .await;
-    let no_tasks = lw_in(work_dir.path(), &["benchmark-run", "launch", "empty"]).await;
+    let no_tasks = lw_in(work_dir.path(), &["benchmark-run", "launch", "2"]).await;
     let with_an_error = lw_in(
         work_dir.path(),
         &[
             "benchmark-run",
             "launch",
-            "board",
+            "1",
             "--configuration",
             &format!("broken={}", broken.display()),
         ],
@@ -182,7 +179,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
         &[
             "benchmark-run",
             "launch",
-            "board",
+            "1",
             "--configuration",
             &short_named("short"),
             "--configuration",
@@ -195,7 +192,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
         &[
             "benchmark-run",
             "launch",
-            "board",
+            "1",
             "--configuration",
             &short_named("as-is"),
         ],
@@ -203,7 +200,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     .await;
 
     assert_eq!(no_benchmark.code, Some(4), "{}", no_benchmark.stderr);
-    assert_eq!(no_benchmark.stderr, "lw: there is no benchmark lanes\n");
+    assert_eq!(no_benchmark.stderr, "lw: there is no benchmark 9\n");
     assert_eq!(no_tasks.code, Some(1), "{}", no_tasks.stderr);
     assert_eq!(no_tasks.stderr, "lw: the benchmark empty has no tasks\n");
     assert_eq!(with_an_error.code, Some(1), "{}", with_an_error.stderr);
@@ -219,7 +216,7 @@ async fn lw_benchmark_run_launch_refuses_writing_nothing() {
     assert_eq!(as_is.stderr, "lw: two configurations are named as-is\n");
     let benchmark_runs = repo.join("benchmark-runs");
     assert!(!benchmark_runs.exists() || names_in(&benchmark_runs).is_empty());
-    let shown = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
+    let shown = lw_in(work_dir.path(), &["benchmark", "show", "1"]).await;
     assert!(
         shown.stdout.ends_with("benchmark runs: none\n"),
         "{}",
@@ -234,29 +231,17 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
 
     let no_dir = lw_in(
         work_dir.path(),
-        &[
-            "benchmark-run",
-            "launch",
-            "board",
-            "--configuration",
-            "short",
-        ],
+        &["benchmark-run", "launch", "1", "--configuration", "short"],
     )
     .await;
     let named = lw_in(
         work_dir.path(),
-        &[
-            "benchmark-run",
-            "launch",
-            "board",
-            "--configuration",
-            "Short=x",
-        ],
+        &["benchmark-run", "launch", "1", "--configuration", "Short=x"],
     )
     .await;
     let none = lw_in(
         work_dir.path(),
-        &["benchmark-run", "launch", "board", "--repetitions", "0"],
+        &["benchmark-run", "launch", "1", "--repetitions", "0"],
     )
     .await;
 
@@ -266,35 +251,37 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
 }
 
 #[test_log::test(tokio::test)]
-async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch() {
+async fn a_benchmark_run_keeps_its_tasks_as_they_were_at_its_launch_but_their_names() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
-    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
+    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
     assert_eq!(launched.code, Some(0), "{}", launched.stderr);
 
-    std::fs::write(repo.join("tasks/lanes/criteria.md"), "Hides them.\n").unwrap();
-    let removed = lw_in(
-        work_dir.path(),
-        &["benchmark", "remove-task", "board", "columns"],
-    )
-    .await;
+    std::fs::write(repo.join("tasks/1/criteria.md"), "Hides them.\n").unwrap();
+    let removed = lw_in(work_dir.path(), &["benchmark", "remove-task", "1", "2"]).await;
     assert_eq!(removed.code, Some(0), "{}", removed.stderr);
+    let pool = back_door(&repo).await;
+    sqlx::query("UPDATE tasks SET name = 'stacks' WHERE id = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
 
     let kept = repo.join("benchmark-runs/1/.kept/tasks");
-    assert_eq!(names_in(&kept), ["columns", "lanes"]);
+    assert_eq!(names_in(&kept), ["1", "2"]);
     assert_eq!(
-        std::fs::read_to_string(kept.join("lanes/criteria.md")).unwrap(),
+        std::fs::read_to_string(kept.join("1/criteria.md")).unwrap(),
         "Stacks them.\n"
     );
     assert_eq!(
-        std::fs::read_to_string(kept.join("columns/criteria.md")).unwrap(),
+        std::fs::read_to_string(kept.join("2/criteria.md")).unwrap(),
         "Names them.\n"
     );
     let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
     assert_eq!(shown.code, Some(0), "{}", shown.stderr);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["tasks"],
-        json!(["lanes", "columns"])
+        json!([{"id": 1, "name": "stacks"}, {"id": 2, "name": "columns"}])
     );
 }
 
@@ -309,7 +296,7 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
         &[
             "benchmark-run",
             "launch",
-            "board",
+            "1",
             "--configuration",
             &format!("short={}", short.display()),
         ],
@@ -342,8 +329,13 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
         "launched: 2026-11-17 12:00:00 UTC",
         "state: waiting for serve",
         "trials ended: 2 of 4",
-        "trial as-is/lanes/1: scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05",
-        "trial short/columns/1: pending",
+        "benchmark: 1 (board)",
+        "configuration 1 (as-is):",
+        "configuration 2 (short):",
+        "  task 1 (lanes):",
+        "  task 2 (columns):",
+        "trial as-is/lanes/1 (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05",
+        "trial short/columns/1 (2/2/1): pending",
     ] {
         assert!(
             text.stdout.lines().any(|shown| shown == line),
@@ -356,13 +348,21 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     assert_eq!(json["state"], "waiting");
     assert_eq!(json["waiting_for"], "serve");
     assert_eq!(json.get("ended_at"), None);
-    assert_eq!(json["configurations"], json!(["as-is", "short"]));
+    assert_eq!(json["benchmark"], json!({"id": 1, "name": "board"}));
+    assert_eq!(
+        json["tasks"],
+        json!([{"id": 1, "name": "lanes"}, {"id": 2, "name": "columns"}])
+    );
+    assert_eq!(
+        json["configurations"],
+        json!([{"id": 1, "name": "as-is"}, {"id": 2, "name": "short"}])
+    );
     assert_eq!(
         json["trials"][0],
         json!({
             "repetition": 1,
-            "task": "lanes",
-            "configuration": "as-is",
+            "task": 1,
+            "configuration": 1,
             "state": "scored",
             "outcome": "done",
             "cost": 0.3,
@@ -376,8 +376,8 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
         json["trials"][1],
         json!({
             "repetition": 1,
-            "task": "lanes",
-            "configuration": "short",
+            "task": 1,
+            "configuration": 2,
             "state": "unscored",
             "outcome": "failed",
             "seconds": 30.0,
@@ -388,6 +388,7 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
     assert_eq!(
         json["results"]["configurations"][0],
         json!({
+            "id": 1,
             "name": "as-is",
             "pass_rate": 1.0,
             "cost": {"mean": 0.3, "total": 0.3, "none": 0},
@@ -396,7 +397,8 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
             "unscored": 0,
             "tasks": [
                 {
-                    "task": "lanes",
+                    "id": 1,
+                    "name": "lanes",
                     "passes": {"pass": 1, "of": 1},
                     "cost": {"mean": 0.3, "total": 0.3, "none": 0},
                     "time": {"mean": 90.0, "total": 90.0, "none": 0},
@@ -404,7 +406,8 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
                     "unscored": 0,
                 },
                 {
-                    "task": "columns",
+                    "id": 2,
+                    "name": "columns",
                     "passes": null,
                     "cost": none,
                     "time": none,
@@ -446,7 +449,7 @@ async fn lw_benchmark_run_show_of_a_benchmark_run_that_does_not_exist_exits_4() 
 async fn lw_benchmark_run_cancel_cancels_an_open_benchmark_run_once() {
     let work_dir = tempfile::tempdir().unwrap();
     board(work_dir.path()).await;
-    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
+    let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
     assert_eq!(launched.code, Some(0), "{}", launched.stderr);
 
     let cancelled = lw_in(work_dir.path(), &["benchmark-run", "cancel", "1"]).await;
@@ -463,7 +466,9 @@ async fn lw_benchmark_run_cancel_cancels_an_open_benchmark_run_once() {
         shown.stdout
     );
     assert!(
-        shown.stdout.contains("\ntrial as-is/columns/1: pending\n"),
+        shown
+            .stdout
+            .contains("\ntrial as-is/columns/1 (1/2/1): pending\n"),
         "{}",
         shown.stdout
     );
@@ -477,7 +482,7 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
     for _ in 0..2 {
-        let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "board"]).await;
+        let launched = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
         assert_eq!(launched.code, Some(0), "{}", launched.stderr);
     }
     launched_at(&repo, 1, "2026-11-16T09:00:00Z").await;
@@ -492,8 +497,8 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
     let cancelled = lw_in(work_dir.path(), &["benchmark-run", "cancel", "1"]).await;
     assert_eq!(cancelled.code, Some(0), "{}", cancelled.stderr);
 
-    let text = lw_in(work_dir.path(), &["benchmark", "show", "board"]).await;
-    let json = lw_in(work_dir.path(), &["benchmark", "show", "board", "--json"]).await;
+    let text = lw_in(work_dir.path(), &["benchmark", "show", "1"]).await;
+    let json = lw_in(work_dir.path(), &["benchmark", "show", "1", "--json"]).await;
 
     assert_eq!(text.code, Some(0), "{}", text.stderr);
     assert!(
@@ -512,13 +517,13 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
                 "launched_at": "2026-11-17T12:00:00Z",
                 "state": "waiting",
                 "waiting_for": "serve",
-                "pass_rates": [{"configuration": "as-is", "pass_rate": null}],
+                "pass_rates": [{"configuration": {"id": 1, "name": "as-is"}, "pass_rate": null}],
             },
             {
                 "id": 1,
                 "launched_at": "2026-11-16T09:00:00Z",
                 "state": "cancelled",
-                "pass_rates": [{"configuration": "as-is", "pass_rate": 0.0}],
+                "pass_rates": [{"configuration": {"id": 1, "name": "as-is"}, "pass_rate": 0.0}],
             },
         ])
     );

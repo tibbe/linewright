@@ -9,7 +9,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
-    BenchmarkName, BenchmarkRuns, Benchmarks, ScoreFigures, TrialChange, TrialFigures, TrialRef,
+    BenchmarkId, BenchmarkName, BenchmarkRuns, Benchmarks, RunTask, ScoreFigures, TrialChange,
+    TrialFigures, TrialRef,
 };
 use linewright::cost::Usd;
 use linewright::database::Database;
@@ -18,7 +19,7 @@ use linewright::input::{self, Wanted};
 use linewright::results::Verdict;
 use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
-use linewright::task::{self, BenchmarkChoice, Criteria, TaskName, TaskStage};
+use linewright::task::{self, BenchmarkChoice, Criteria, TaskStage};
 use linewright::trial::Configuration;
 use linewright::trial::scorer::Unscored;
 use serde_json::{Value, json};
@@ -213,14 +214,14 @@ pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
         record_run(work_dir, task, start, &serde_json::to_string(&input)?).await?;
     }
     let board: BenchmarkName = BOARD.parse().map_err(anyhow::Error::msg)?;
-    benchmarks.make(&board, TaskStage::Design).await?;
+    let board = benchmarks.make(&board, TaskStage::Design).await?.id;
     for task in &BOARD_TASKS {
         let capturable = task::capturable(
             &runs,
             &benchmarks,
             &run_of(task)?,
             &task.name.parse().map_err(anyhow::Error::msg)?,
-            &BenchmarkChoice::Named(board.clone()),
+            &BenchmarkChoice::Existing(board),
         )
         .await
         .map_err(|e| anyhow::anyhow!(e.why()))?;
@@ -232,8 +233,8 @@ pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
     let empty: BenchmarkName = EMPTY_BENCHMARK.parse().map_err(anyhow::Error::msg)?;
     benchmarks.make(&empty, TaskStage::Triage).await?;
     let benchmark_runs = BenchmarkRuns::new(runs.database().clone());
-    benchmark_run(&benchmark_runs, &board).await?;
-    cancelled_benchmark_run(&benchmark_runs, &board).await
+    benchmark_run(&benchmark_runs, board).await?;
+    cancelled_benchmark_run(&benchmark_runs, board).await
 }
 
 /// How each trial of the seed's benchmark run ended, in start order: by
@@ -344,7 +345,7 @@ impl ScorerWhy {
 /// output holds what its run and its scorer left, as [`trial_output`] says,
 /// the output of a trial with a leak its score, as [`leak_output`] says, and
 /// that of a trial whose build failed the task it began on.
-async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) -> Result<()> {
+async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: BenchmarkId) -> Result<()> {
     let terse = Configuration::parse(BTreeMap::from([(
         "config.toml".to_string(),
         b"effort = \"low\"\n".to_vec(),
@@ -369,12 +370,9 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
             benchmark_run: launched.id,
             key: *key,
         };
-        let output = benchmark_runs.output_dir(
-            launched.id,
-            &record.configurations[key.configuration],
-            &record.tasks[key.task],
-            key.repetition,
-        );
+        let output = benchmark_runs
+            .trial_output(&record, key)
+            .context("the trial is of the benchmark run")?;
         benchmark_runs
             .step(&trial, TrialChange::RunStarts, at)
             .await?;
@@ -444,15 +442,11 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
         .keys()
         .next()
         .context("the benchmark run has trials")?;
-    let task = &record.tasks[first.task];
-    let task_run = seed_task(task)?;
+    let task_run = seed_task(&record.tasks[first.task])?;
     trial_output(
-        &benchmark_runs.output_dir(
-            launched.id,
-            &record.configurations[first.configuration],
-            task,
-            first.repetition,
-        ),
+        &benchmark_runs
+            .trial_output(&record, first)
+            .context("the trial is of the benchmark run")?,
         task_run,
     )
 }
@@ -463,10 +457,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: &BenchmarkName) ->
 /// that trial ends cancelled with its run; the cancel stops the run of the
 /// second, which keeps what it cost until then; and the second repetition's
 /// trials have not started.
-async fn cancelled_benchmark_run(
-    benchmark_runs: &BenchmarkRuns,
-    board: &BenchmarkName,
-) -> Result<()> {
+async fn cancelled_benchmark_run(benchmark_runs: &BenchmarkRuns, board: BenchmarkId) -> Result<()> {
     let launched_at: Timestamp = "2026-03-01T18:00:00Z".parse()?;
     let launched = benchmark_runs
         .launch(
@@ -525,15 +516,11 @@ async fn cancelled_benchmark_run(
             at,
         )
         .await?;
-    let task = &record.tasks[stopped.key.task];
     run_output(
-        &benchmark_runs.output_dir(
-            launched.id,
-            &record.configurations[stopped.key.configuration],
-            task,
-            stopped.key.repetition,
-        ),
-        seed_task(task)?,
+        &benchmark_runs
+            .trial_output(&record, &stopped.key)
+            .context("the trial is of the benchmark run")?,
+        seed_task(&record.tasks[stopped.key.task])?,
         STOPPED,
         "The board's columns are half named when the run stops.",
     )
@@ -544,10 +531,10 @@ async fn cancelled_benchmark_run(
 const STOPPED: Ending = Ending::Cancelled;
 
 /// The seed's task `task`.
-fn seed_task(task: &TaskName) -> Result<&'static SeedTask> {
+fn seed_task(task: &RunTask) -> Result<&'static SeedTask> {
     BOARD_TASKS
         .iter()
-        .find(|seeded| seeded.name == task.as_str())
+        .find(|seeded| seeded.name == task.name.as_str())
         .context("the trial's task is the seed's")
 }
 

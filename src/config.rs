@@ -7,7 +7,9 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::benchmarks::{BenchmarkName, BenchmarkRunId, ConfigurationName, Repetitions};
+use crate::benchmarks::{
+    BenchmarkId, BenchmarkName, BenchmarkRunId, ConfigurationName, Repetitions, TaskId,
+};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
@@ -162,16 +164,18 @@ pub enum Command {
         #[command(subcommand)]
         command: AutomationCommand,
     },
-    /// Capture run ID, such as 43/implement-2, as the task NAME of the
-    /// benchmark BENCHMARK, in `tasks/` under the work directory.
+    /// Capture run ID, such as 43/implement-2, as a task named NAME in the
+    /// benchmark BENCHMARK, in `tasks/` under the work directory, and write
+    /// the task's ID.
     Capture {
         id: RunId,
-        /// Lowercase letters, digits and hyphens, starting with a letter or a
-        /// digit.
-        name: TaskName,
-        /// The benchmark the task goes into: one of the run's stage.
+        /// The ID of the benchmark the task goes into: one of the run's stage.
         #[arg(long)]
-        benchmark: BenchmarkName,
+        benchmark: BenchmarkId,
+        /// The task's name: lowercase letters, digits and hyphens, starting
+        /// with a letter or a digit.
+        #[arg(long)]
+        name: TaskName,
         /// What a good result is, as `criteria.md` in the task: refused
         /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
@@ -197,7 +201,8 @@ pub enum Command {
     /// Score DIR, the output of a trial of the task in the directory TASK,
     /// against the task's criteria, keeping the score in DIR.
     Score { task: PathBuf, dir: PathBuf },
-    /// List the benchmarks, each with its stage and how many tasks it holds.
+    /// List the benchmarks, each with its ID, its stage and how many tasks it
+    /// holds.
     Benchmarks {
         /// Print the answer as JSON.
         #[arg(long)]
@@ -219,17 +224,18 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BenchmarkRunCommand {
-    /// Show the benchmark run ID: its state, its trials and its results.
+    /// Show the benchmark run ID: its state, its configurations with their
+    /// IDs, its trials and its results.
     Show {
         id: BenchmarkRunId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Launch a benchmark run on the tasks of the benchmark BENCHMARK, under
-    /// `as-is` and each configuration given.
+    /// Launch a benchmark run on the tasks of the benchmark whose ID is
+    /// BENCHMARK, under `as-is` and each configuration given.
     Launch {
-        benchmark: BenchmarkName,
+        benchmark: BenchmarkId,
         /// A configuration named NAME, of lowercase letters, digits and
         /// hyphens starting with a letter or a digit, laid out in the
         /// directory DIR as a repository's `.linewright/`: its `config.toml`
@@ -265,16 +271,16 @@ fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), Stri
 
 #[derive(Subcommand, Debug)]
 pub enum BenchmarkCommand {
-    /// Show the benchmark NAME: its tasks with their criteria, and its
-    /// benchmark runs.
+    /// Show the benchmark whose ID is BENCHMARK: its tasks with their IDs and
+    /// criteria, and its benchmark runs.
     Show {
-        name: BenchmarkName,
+        benchmark: BenchmarkId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Make the benchmark NAME, of the stage STAGE: triage, design or
-    /// implement.
+    /// implement, and write its ID.
     Add {
         /// Lowercase letters, digits and hyphens, starting with a letter or a
         /// digit.
@@ -284,11 +290,11 @@ pub enum BenchmarkCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove the task TASK from the benchmark NAME, and with it the task's
-    /// directory.
+    /// Remove the task whose ID is TASK from the benchmark whose ID is
+    /// BENCHMARK, and with it the task's directory.
     RemoveTask {
-        name: BenchmarkName,
-        task: TaskName,
+        benchmark: BenchmarkId,
+        task: TaskId,
         /// Print the answer as JSON.
         #[arg(long)]
         json: bool,

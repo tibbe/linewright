@@ -11,7 +11,8 @@ use crate::results::Verdict;
 use crate::task::TaskName;
 
 use super::{
-    BenchmarkRunRecord, Cancelled, ConfigurationName, NoScore, TrialEnd, TrialFigures, TrialState,
+    BenchmarkRunRecord, Cancelled, ConfigurationId, ConfigurationName, NoScore, TaskId, TrialEnd,
+    TrialFigures, TrialState,
 };
 
 /// A benchmark run's results.
@@ -35,6 +36,7 @@ pub struct Results {
 /// A configuration's figures.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ConfigurationResults {
+    pub id: ConfigurationId,
     pub name: ConfigurationName,
     /// Of its trials with a score and no leak, the share that pass;
     /// `None` with no such trial.
@@ -62,7 +64,8 @@ pub struct Figures {
 /// A configuration's figures of its trials of a task.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskResults {
-    pub task: TaskName,
+    pub id: TaskId,
+    pub name: TaskName,
     /// `None` with no trial with a score and no leak.
     pub passes: Option<Passes>,
     #[serde(flatten)]
@@ -167,9 +170,11 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
         .configurations
         .iter()
         .zip(tallies)
-        .map(|(name, tasks)| {
+        .enumerate()
+        .map(|(place, (name, tasks))| {
             let all = tasks.iter().fold(Tally::default(), Tally::and);
             ConfigurationResults {
+                id: ConfigurationId::of_place(place),
                 name: name.clone(),
                 pass_rate: share(all.pass, all.of),
                 figures: all.figures(),
@@ -178,7 +183,8 @@ pub fn results(record: &BenchmarkRunRecord) -> Results {
                     .iter()
                     .zip(tasks)
                     .map(|(task, tally)| TaskResults {
-                        task: task.clone(),
+                        id: task.id,
+                        name: task.name.clone(),
                         passes: NonZeroUsize::new(tally.of).map(|of| Passes {
                             pass: tally.pass,
                             of,
@@ -325,7 +331,7 @@ mod tests {
 
     use super::*;
     use crate::benchmarks::{
-        Benchmark, BenchmarkRunId, BenchmarkRunState, ScoreFigures, TrialFigures, TrialKey,
+        Benchmark, BenchmarkRunId, BenchmarkRunState, RunTask, ScoreFigures, TrialFigures, TrialKey,
     };
     use crate::cost::Usd;
     use crate::runs::{Ending, OutcomeName};
@@ -352,13 +358,21 @@ mod tests {
         BenchmarkRunRecord {
             id: "1".parse::<BenchmarkRunId>().unwrap(),
             benchmark: Benchmark {
+                id: "1".parse().unwrap(),
                 name: "board".parse().unwrap(),
                 stage: TaskStage::Design,
             },
             launched_at: "2026-11-17T12:00:00Z".parse().unwrap(),
             repetitions: repetitions.try_into().unwrap(),
             state: BenchmarkRunState::Open,
-            tasks: tasks.iter().map(|task| task.parse().unwrap()).collect(),
+            tasks: tasks
+                .iter()
+                .zip(1..)
+                .map(|(task, id)| RunTask {
+                    id: id.to_string().parse().unwrap(),
+                    name: task.parse().unwrap(),
+                })
+                .collect(),
             configurations: std::iter::once("as-is")
                 .chain(configurations.iter().copied())
                 .map(|name| name.parse().unwrap())
@@ -493,7 +507,7 @@ mod tests {
         let as_is = &results(&record).configurations[0];
 
         let columns = &as_is.tasks[0];
-        assert_eq!(columns.task.as_str(), "columns");
+        assert_eq!(columns.name.as_str(), "columns");
         assert_eq!(columns.passes, Some(passes(2, 3)));
         approx(columns.figures.cost.mean, 0.5);
         approx(Some(columns.figures.cost.total), 1.5);

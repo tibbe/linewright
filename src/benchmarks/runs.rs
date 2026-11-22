@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,7 +13,7 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row as _, SqliteConnection};
 
-use crate::benchmarks::{Benchmark, BenchmarkName};
+use crate::benchmarks::{Benchmark, BenchmarkId, BenchmarkName, TaskId};
 use crate::cost::Usd;
 use crate::database::{self, Database};
 use crate::domain::Timestamp;
@@ -93,6 +93,52 @@ impl Serialize for ConfigurationName {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
     }
+}
+
+/// A configuration's ID: its place in its benchmark run, from 1 for `as-is`
+/// (`docs/specs/benchmarks.md`, Names and IDs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ConfigurationId(NonZeroUsize);
+
+impl ConfigurationId {
+    /// The ID of `as-is`, first in every benchmark run.
+    pub const AS_IS: ConfigurationId = ConfigurationId(NonZeroUsize::MIN);
+
+    /// The ID of the configuration at `place` in its benchmark run's, from 0.
+    pub fn of_place(place: usize) -> ConfigurationId {
+        ConfigurationId(NonZeroUsize::MIN.saturating_add(place))
+    }
+
+    /// Its place in its benchmark run's configurations, from 0.
+    pub fn place(self) -> usize {
+        self.0.get() - 1
+    }
+}
+
+impl std::str::FromStr for ConfigurationId {
+    type Err = String;
+
+    fn from_str(id: &str) -> Result<ConfigurationId, String> {
+        let place: usize = super::positive(id, "a configuration's")?;
+        NonZeroUsize::new(place)
+            .map(ConfigurationId)
+            .ok_or_else(|| format!("{id:?} is not a configuration's ID"))
+    }
+}
+
+impl fmt::Display for ConfigurationId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A task of a benchmark run: its ID, and its name as it is now, or as it
+/// was when it was removed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RunTask {
+    pub id: TaskId,
+    pub name: TaskName,
 }
 
 /// How many times a benchmark run runs each task under each configuration.
@@ -355,8 +401,8 @@ pub struct BenchmarkRunRecord {
     pub repetitions: Repetitions,
     pub state: BenchmarkRunState,
     /// The benchmark's tasks at the launch, in its order.
-    pub tasks: Vec<TaskName>,
-    /// `as-is` first.
+    pub tasks: Vec<RunTask>,
+    /// In the order of their IDs, `as-is` first.
     pub configurations: Vec<ConfigurationName>,
     /// Every trial, in start order, each of a task and a configuration of
     /// the benchmark run's.
@@ -374,6 +420,24 @@ impl BenchmarkRunRecord {
         };
         Some((end - self.launched_at).to_std().unwrap_or_default())
     }
+
+    /// What its trial `key` is of; `None` when it lacks the trial's
+    /// configuration or task.
+    pub fn trial_of(&self, key: &TrialKey) -> Option<TrialOf<'_>> {
+        Some(TrialOf {
+            configuration_name: self.configurations.get(key.configuration)?,
+            configuration: ConfigurationId::of_place(key.configuration),
+            task: self.tasks.get(key.task)?,
+        })
+    }
+}
+
+/// What a trial of a benchmark run is of: a configuration and a task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TrialOf<'a> {
+    pub configuration: ConfigurationId,
+    pub configuration_name: &'a ConfigurationName,
+    pub task: &'a RunTask,
 }
 
 /// The directory, under the work directory, that holds the benchmark runs.
@@ -390,7 +454,7 @@ const CONFIGURATIONS: &str = "configurations";
 #[derive(Debug, thiserror::Error)]
 pub enum LaunchRefusal {
     #[error("there is no benchmark {0}")]
-    NoSuchBenchmark(BenchmarkName),
+    NoSuchBenchmark(BenchmarkId),
     #[error("the benchmark {0} has no tasks")]
     NoTasks(BenchmarkName),
     #[error("two configurations are named {0}")]
@@ -497,14 +561,14 @@ impl BenchmarkRuns {
 
     /// The benchmark run `id`'s copy of the task `task`, as it was at the
     /// launch.
-    pub fn task_dir(&self, id: BenchmarkRunId, task: &TaskName) -> PathBuf {
+    pub fn task_dir(&self, id: BenchmarkRunId, task: TaskId) -> PathBuf {
         kept_task(&self.dir(id), task)
     }
 
-    /// The benchmark run `id`'s copy of the configuration `name`, laid out as a
-    /// repository's `.linewright/`.
-    pub fn configuration_dir(&self, id: BenchmarkRunId, name: &ConfigurationName) -> PathBuf {
-        kept_configuration(&self.dir(id), name)
+    /// The benchmark run `id`'s copy of the configuration `configuration`,
+    /// laid out as a repository's `.linewright/`.
+    pub fn configuration_dir(&self, id: BenchmarkRunId, configuration: ConfigurationId) -> PathBuf {
+        kept_configuration(&self.dir(id), configuration)
     }
 
     /// The output of the trial of `task` under `configuration` in the
@@ -513,14 +577,21 @@ impl BenchmarkRuns {
     pub fn output_dir(
         &self,
         id: BenchmarkRunId,
-        configuration: &ConfigurationName,
-        task: &TaskName,
+        configuration: ConfigurationId,
+        task: TaskId,
         repetition: NonZeroU32,
     ) -> PathBuf {
         self.dir(id)
-            .join(configuration.as_str())
-            .join(task.as_str())
+            .join(configuration.to_string())
+            .join(task.to_string())
             .join(repetition.to_string())
+    }
+
+    /// The output of the trial `key` of `record`; `None` when `record` lacks
+    /// the trial's configuration or task.
+    pub fn trial_output(&self, record: &BenchmarkRunRecord, key: &TrialKey) -> Option<PathBuf> {
+        let of = record.trial_of(key)?;
+        Some(self.output_dir(record.id, of.configuration, of.task.id, key.repetition))
     }
 
     /// Launches a benchmark run at `at` on the tasks the benchmark `benchmark`
@@ -535,7 +606,7 @@ impl BenchmarkRuns {
     /// written, such as when the benchmark's tasks change as they are copied.
     pub async fn launch(
         &self,
-        benchmark: &BenchmarkName,
+        benchmark: BenchmarkId,
         configurations: Vec<(ConfigurationName, Configuration)>,
         repetitions: Repetitions,
         at: Timestamp,
@@ -550,11 +621,11 @@ impl BenchmarkRuns {
         let mut conn = self.db.pool().acquire().await.context(launching.clone())?;
         let tasks = benchmark_tasks(&mut conn, benchmark).await;
         drop(conn);
-        let Some(tasks) = tasks.context(launching.clone())? else {
-            return Err(LaunchRefusal::NoSuchBenchmark(benchmark.clone()));
+        let Some((found, tasks)) = tasks.context(launching.clone())? else {
+            return Err(LaunchRefusal::NoSuchBenchmark(benchmark));
         };
         if tasks.is_empty() {
-            return Err(LaunchRefusal::NoTasks(benchmark.clone()));
+            return Err(LaunchRefusal::NoTasks(found.name));
         }
         let built = self
             .build(&tasks, &configurations)
@@ -581,7 +652,7 @@ impl BenchmarkRuns {
     /// gives the directory with the task directories it copied.
     async fn build(
         &self,
-        tasks: &[TaskName],
+        tasks: &[TaskId],
         configurations: &[(ConfigurationName, Configuration)],
     ) -> Result<Built> {
         let benchmark_runs_dir = self.benchmark_runs_dir();
@@ -592,19 +663,20 @@ impl BenchmarkRuns {
             .tempdir_in(&benchmark_runs_dir)?;
         let tasks_dir = self.db.work_dir().join(task::TASKS);
         let mut copied = Vec::with_capacity(tasks.len());
-        for task in tasks {
-            let from = tasks_dir.join(task.as_str());
+        for &task in tasks {
+            let from = tasks_dir.join(task.to_string());
             let before = TaskDir::of(&from)?;
             tree::copy(&from, &kept_task(dir.path(), task))
                 .await
                 .with_context(|| format!("copying the task {task} from {}", from.display()))?;
             copied.push(before);
         }
-        let as_is = kept_configuration(dir.path(), &ConfigurationName::as_is());
+        let as_is = kept_configuration(dir.path(), ConfigurationId::AS_IS);
         std::fs::create_dir_all(&as_is).with_context(|| format!("making {}", as_is.display()))?;
-        for (name, configuration) in configurations {
+        let after_as_is = (1..).map(ConfigurationId::of_place);
+        for (id, (name, configuration)) in after_as_is.zip(configurations) {
             configuration
-                .keep(&kept_configuration(dir.path(), name))
+                .keep(&kept_configuration(dir.path(), id))
                 .with_context(|| format!("copying the configuration {name}"))?;
         }
         Ok(Built { dir, copied })
@@ -615,8 +687,8 @@ impl BenchmarkRuns {
     /// long as the benchmark's tasks are still those it copied.
     async fn keep(
         &self,
-        benchmark: &BenchmarkName,
-        tasks: &[TaskName],
+        benchmark: BenchmarkId,
+        tasks: &[TaskId],
         configurations: &[ConfigurationName],
         repetitions: Repetitions,
         at: Timestamp,
@@ -625,9 +697,9 @@ impl BenchmarkRuns {
         let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
         let now = benchmark_tasks(&mut tx, benchmark).await?;
         let tasks_dir = self.db.work_dir().join(task::TASKS);
-        let unchanged = now.as_deref() == Some(tasks)
+        let unchanged = now.as_ref().map(|(_, now)| now.as_slice()) == Some(tasks)
             && tasks.iter().zip(&built.copied).all(|(task, copied)| {
-                TaskDir::of(&tasks_dir.join(task.as_str())).ok().as_ref() == Some(copied)
+                TaskDir::of(&tasks_dir.join(task.to_string())).ok().as_ref() == Some(copied)
             });
         if !unchanged {
             anyhow::bail!("the benchmark's tasks changed as they were copied: launch again");
@@ -669,18 +741,18 @@ impl BenchmarkRuns {
     }
 
     /// The benchmark `benchmark`'s benchmark runs, latest first.
-    pub async fn of_benchmark(&self, benchmark: &BenchmarkName) -> Result<Vec<BenchmarkRunRecord>> {
+    pub async fn of_benchmark(&self, benchmark: BenchmarkId) -> Result<Vec<BenchmarkRunRecord>> {
         self.records_of(
             "SELECT id FROM benchmark_runs WHERE benchmark = ? ORDER BY id DESC",
-            Some(benchmark.as_str()),
+            Some(benchmark.row()),
         )
         .await
     }
 
     /// Each benchmark's latest benchmark run, with when it was launched, by the
-    /// benchmark's name: none for a benchmark with no benchmark run.
-    pub async fn latest(&self) -> Result<BTreeMap<BenchmarkName, (BenchmarkRunId, Timestamp)>> {
-        let rows: Vec<(String, i64, String)> = sqlx::query_as(
+    /// benchmark's ID: none for a benchmark with no benchmark run.
+    pub async fn latest(&self) -> Result<BTreeMap<BenchmarkId, (BenchmarkRunId, Timestamp)>> {
+        let rows: Vec<(i64, i64, String)> = sqlx::query_as(
             "SELECT benchmark, id, launched_at FROM benchmark_runs
              WHERE id IN (SELECT MAX(id) FROM benchmark_runs GROUP BY benchmark)",
         )
@@ -690,7 +762,7 @@ impl BenchmarkRuns {
         rows.into_iter()
             .map(|(benchmark, id, launched_at)| {
                 Ok((
-                    parsed(&benchmark)?,
+                    BenchmarkId::from_row(benchmark)?,
                     (
                         BenchmarkRunId::from_row(id)?,
                         database::parse_time(&launched_at)?,
@@ -716,7 +788,7 @@ impl BenchmarkRuns {
     async fn records_of(
         &self,
         selecting: &'static str,
-        bound: Option<&str>,
+        bound: Option<i64>,
     ) -> Result<Vec<BenchmarkRunRecord>> {
         let mut tx = self.db.pool().begin().await.context(READING)?;
         let mut query = sqlx::query_scalar(selecting);
@@ -784,16 +856,12 @@ impl BenchmarkRuns {
             .execute(&mut *tx)
             .await?;
             let left = sqlx::query(
-                "SELECT trials.*, benchmark_run_tasks.name AS task_name,
-                     benchmark_run_configurations.name AS configuration_name
+                "SELECT trials.*, benchmark_run_tasks.task AS task_id
                  FROM trials
                  JOIN benchmark_runs ON benchmark_runs.id = trials.benchmark_run
                  JOIN benchmark_run_tasks
                      ON benchmark_run_tasks.benchmark_run = trials.benchmark_run
                      AND benchmark_run_tasks.seq = trials.task_seq
-                 JOIN benchmark_run_configurations
-                     ON benchmark_run_configurations.benchmark_run = trials.benchmark_run
-                     AND benchmark_run_configurations.seq = trials.configuration_seq
                  WHERE trials.state IN ('running', 'scoring') AND benchmark_runs.state != 'open'",
             )
             .fetch_all(&mut *tx)
@@ -804,8 +872,8 @@ impl BenchmarkRuns {
                 let stopped = if state == TrialState::Running {
                     let output = self.output_dir(
                         benchmark_run,
-                        &parsed(&row.try_get::<String, _>("configuration_name")?)?,
-                        &parsed(&row.try_get::<String, _>("task_name")?)?,
+                        ConfigurationId::of_place(key.configuration),
+                        TaskId::from_row(row.try_get("task_id")?)?,
                         key.repetition,
                     );
                     Some(interrupted_run(trial::kept_spent(&output)))
@@ -1020,40 +1088,37 @@ impl TaskDir {
 }
 
 /// The copy of the task `task` in the benchmark run's directory `dir`.
-fn kept_task(dir: &Path, task: &TaskName) -> PathBuf {
-    dir.join(KEPT).join(task::TASKS).join(task.as_str())
+fn kept_task(dir: &Path, task: TaskId) -> PathBuf {
+    dir.join(KEPT).join(task::TASKS).join(task.to_string())
 }
 
-/// The copy of the configuration `name` in the benchmark run's directory `dir`.
-fn kept_configuration(dir: &Path, name: &ConfigurationName) -> PathBuf {
-    dir.join(KEPT).join(CONFIGURATIONS).join(name.as_str())
+/// The copy of the configuration `configuration` in the benchmark run's
+/// directory `dir`.
+fn kept_configuration(dir: &Path, configuration: ConfigurationId) -> PathBuf {
+    dir.join(KEPT)
+        .join(CONFIGURATIONS)
+        .join(configuration.to_string())
 }
 
-/// The tasks of the benchmark `benchmark`, in its order, or `None` when there
-/// is no such benchmark.
+/// The benchmark `benchmark` with its tasks, in its order, or `None` when
+/// there is no such benchmark.
 async fn benchmark_tasks(
     conn: &mut SqliteConnection,
-    benchmark: &BenchmarkName,
-) -> Result<Option<Vec<TaskName>>> {
-    let found: Option<String> = sqlx::query_scalar("SELECT name FROM benchmarks WHERE name = ?")
-        .bind(benchmark.as_str())
-        .fetch_optional(&mut *conn)
+    benchmark: BenchmarkId,
+) -> Result<Option<(Benchmark, Vec<TaskId>)>> {
+    let Some(found) = super::find_benchmark(&mut *conn, benchmark).await? else {
+        return Ok(None);
+    };
+    let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM tasks WHERE benchmark = ? ORDER BY seq")
+        .bind(benchmark.row())
+        .fetch_all(&mut *conn)
         .await
         .context(READING)?;
-    if found.is_none() {
-        return Ok(None);
-    }
-    let names: Vec<String> =
-        sqlx::query_scalar("SELECT name FROM tasks WHERE benchmark = ? ORDER BY seq")
-            .bind(benchmark.as_str())
-            .fetch_all(&mut *conn)
-            .await
-            .context(READING)?;
-    names
-        .iter()
-        .map(|name| parsed(name))
-        .collect::<Result<_>>()
-        .map(Some)
+    let ids = ids
+        .into_iter()
+        .map(TaskId::from_row)
+        .collect::<Result<_>>()?;
+    Ok(Some((found, ids)))
 }
 
 /// The ID of the next benchmark run: past every benchmark run's, and past every
@@ -1085,8 +1150,8 @@ async fn next_id(conn: &mut SqliteConnection, benchmark_runs_dir: &Path) -> Resu
 async fn insert_benchmark_run(
     conn: &mut SqliteConnection,
     id: BenchmarkRunId,
-    benchmark: &BenchmarkName,
-    tasks: &[TaskName],
+    benchmark: BenchmarkId,
+    tasks: &[TaskId],
     configurations: &[ConfigurationName],
     repetitions: Repetitions,
     at: Timestamp,
@@ -1096,16 +1161,16 @@ async fn insert_benchmark_run(
          VALUES (?, ?, ?, ?, 'open')",
     )
     .bind(id.0)
-    .bind(benchmark.as_str())
+    .bind(benchmark.row())
     .bind(database::time_text(at))
     .bind(repetitions.get())
     .execute(&mut *conn)
     .await?;
     for (i, task) in tasks.iter().enumerate() {
-        sqlx::query("INSERT INTO benchmark_run_tasks (benchmark_run, seq, name) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO benchmark_run_tasks (benchmark_run, seq, task) VALUES (?, ?, ?)")
             .bind(id.0)
             .bind(seq(i))
-            .bind(task.as_str())
+            .bind(task.row())
             .execute(&mut *conn)
             .await?;
     }
@@ -1155,27 +1220,36 @@ fn parsed<T: std::str::FromStr<Err = String>>(name: &str) -> Result<T> {
     name.parse().map_err(anyhow::Error::msg)
 }
 
+/// A benchmark run's row with its benchmark's: the benchmark's ID, name and
+/// stage, then the benchmark run's launch, repetitions, state and end.
+type BenchmarkRunRow = (i64, String, String, String, i64, String, Option<String>);
+
 /// The benchmark run `id` as its rows hold it, if there is one.
 async fn read_record(
     conn: &mut SqliteConnection,
     id: BenchmarkRunId,
 ) -> Result<Option<BenchmarkRunRecord>> {
-    let row: Option<(String, String, String, i64, String, Option<String>)> = sqlx::query_as(
-        "SELECT benchmark_runs.benchmark, benchmarks.stage, benchmark_runs.launched_at,
+    let row: Option<BenchmarkRunRow> = sqlx::query_as(
+        "SELECT benchmarks.id, benchmarks.name, benchmarks.stage, benchmark_runs.launched_at,
                 benchmark_runs.repetitions, benchmark_runs.state, benchmark_runs.ended_at
-         FROM benchmark_runs JOIN benchmarks ON benchmarks.name = benchmark_runs.benchmark
+         FROM benchmark_runs JOIN benchmarks ON benchmarks.id = benchmark_runs.benchmark
          WHERE benchmark_runs.id = ?",
     )
     .bind(id.0)
     .fetch_optional(&mut *conn)
     .await
     .context(READING)?;
-    let Some((benchmark, stage, launched_at, repetitions, state, ended_at)) = row else {
+    let Some((benchmark, benchmark_name, stage, launched_at, repetitions, state, ended_at)) = row
+    else {
         return Ok(None);
     };
     let reading = || format!("reading benchmark run {id}");
-    let tasks: Vec<String> = sqlx::query_scalar(
-        "SELECT name FROM benchmark_run_tasks WHERE benchmark_run = ? ORDER BY seq",
+    let tasks: Vec<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT benchmark_run_tasks.task, COALESCE(tasks.name, removed_tasks.name)
+         FROM benchmark_run_tasks
+         LEFT JOIN tasks ON tasks.id = benchmark_run_tasks.task
+         LEFT JOIN removed_tasks ON removed_tasks.id = benchmark_run_tasks.task
+         WHERE benchmark_run_tasks.benchmark_run = ? ORDER BY benchmark_run_tasks.seq",
     )
     .bind(id.0)
     .fetch_all(&mut *conn)
@@ -1194,9 +1268,17 @@ async fn read_record(
         .await
         .with_context(reading)?;
     let record = (|| {
-        let tasks: Vec<TaskName> = tasks
-            .iter()
-            .map(|name| parsed(name))
+        let tasks: Vec<RunTask> = tasks
+            .into_iter()
+            .map(|(task, task_name)| {
+                let task = TaskId::from_row(task)?;
+                Ok(RunTask {
+                    id: task,
+                    name: parsed(
+                        &task_name.with_context(|| format!("the task {task} has no name"))?,
+                    )?,
+                })
+            })
             .collect::<Result<_>>()?;
         let configurations: Vec<ConfigurationName> = configurations
             .iter()
@@ -1212,10 +1294,7 @@ async fn read_record(
         }
         Ok::<_, anyhow::Error>(BenchmarkRunRecord {
             id,
-            benchmark: Benchmark {
-                name: parsed(&benchmark)?,
-                stage: parsed(&stage)?,
-            },
+            benchmark: super::benchmark_of(benchmark, &benchmark_name, &stage)?,
             launched_at: database::parse_time(&launched_at)?,
             repetitions: u32::try_from(repetitions)
                 .ok()
@@ -1404,8 +1483,8 @@ mod tests {
     use super::*;
 
     /// The benchmark runs of a database in `work_dir` with the design benchmark
-    /// `board` of the tasks `columns` and `lanes`, and a benchmark run
-    /// launched on it with one repetition under `as-is` alone.
+    /// `board`, 1, of the tasks `columns`, 1, and `lanes`, 2, and a benchmark
+    /// run launched on it with one repetition under `as-is` alone.
     #[track_caller]
     fn launched(work_dir: &Path) -> impl Future<Output = (BenchmarkRuns, BenchmarkRunId)> + '_ {
         let caller = Location::caller();
@@ -1413,19 +1492,19 @@ mod tests {
             let db = Database::open(work_dir)
                 .await
                 .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-            sqlx::query("INSERT INTO benchmarks (name, stage) VALUES ('board', 'design')")
+            sqlx::query("INSERT INTO benchmarks (id, name, stage) VALUES (1, 'board', 'design')")
                 .execute(db.pool())
                 .await
                 .unwrap_or_else(|e| panic!("keeping the benchmark at {caller}: {e}"));
-            for (seq, task, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
-                std::fs::create_dir_all(work_dir.join(task::TASKS).join(task))
+            for (id, task, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
+                std::fs::create_dir_all(work_dir.join(task::TASKS).join(id.to_string()))
                     .unwrap_or_else(|e| panic!("making the task at {caller}: {e}"));
                 sqlx::query(
-                    "INSERT INTO tasks (name, benchmark, run, seq) VALUES (?, 'board', ?, ?)",
+                    "INSERT INTO tasks (id, name, benchmark, run, seq) VALUES (?1, ?2, 1, ?3, ?1)",
                 )
+                .bind(id)
                 .bind(task)
                 .bind(run)
-                .bind(seq)
                 .execute(db.pool())
                 .await
                 .unwrap_or_else(|e| panic!("keeping the task at {caller}: {e}"));
@@ -1441,7 +1520,7 @@ mod tests {
     async fn launch(benchmark_runs: &BenchmarkRuns) -> Result<Launched, LaunchRefusal> {
         benchmark_runs
             .launch(
-                &"board".parse().expect("a benchmark's name"),
+                "1".parse().expect("a benchmark's ID"),
                 vec![],
                 Repetitions::MIN,
                 "2026-11-17T12:00:00Z".parse().expect("a time"),
@@ -1860,8 +1939,8 @@ mod tests {
         .await;
         let output = benchmark_runs.output_dir(
             id,
-            &ConfigurationName::as_is(),
-            &"columns".parse().unwrap(),
+            ConfigurationId::AS_IS,
+            "1".parse().unwrap(),
             NonZeroU32::MIN,
         );
         std::fs::create_dir_all(&output).unwrap();

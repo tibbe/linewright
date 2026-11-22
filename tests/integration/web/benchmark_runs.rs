@@ -34,17 +34,21 @@ pub(super) fn launched<'a>(
         .collect();
     let at = at.parse().unwrap();
     async move {
-        let benchmark_runs =
-            linewright::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone());
-        let launched = benchmark_runs
-            .launch(
-                &benchmark.parse().unwrap(),
-                configurations,
-                std::num::NonZeroU32::new(repetitions).unwrap(),
-                at,
-            )
+        let db = pages.sources.runs.database().clone();
+        let benchmark = linewright::benchmarks::Benchmarks::new(db.clone())
+            .named(&benchmark.parse().unwrap())
             .await
-            .unwrap_or_else(|e| panic!("launching at {caller}: {e:#}"));
+            .unwrap_or_else(|e| panic!("finding the benchmark at {caller}: {e:#}"))
+            .unwrap_or_else(|| panic!("no benchmark {benchmark} at {caller}"));
+        let benchmark_runs = linewright::benchmarks::BenchmarkRuns::new(db);
+        let launched = Box::pin(benchmark_runs.launch(
+            benchmark.id,
+            configurations,
+            std::num::NonZeroU32::new(repetitions).unwrap(),
+            at,
+        ))
+        .await
+        .unwrap_or_else(|e| panic!("launching at {caller}: {e:#}"));
         launched.id.to_string().parse().unwrap()
     }
 }
@@ -58,8 +62,15 @@ pub(super) fn launched<'a>(
 pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
-        let pages = with_benchmarks().await;
-        launched(&pages, "board", &["short"], 2, "2026-11-17T12:00:00Z").await;
+        let pages = Box::pin(with_benchmarks()).await;
+        Box::pin(launched(
+            &pages,
+            "board",
+            &["short"],
+            2,
+            "2026-11-17T12:00:00Z",
+        ))
+        .await;
         let work_dir = pages.path("");
         let trials: [((i64, i64, i64), &'static str); 7] = [
             (
@@ -124,7 +135,7 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
             "session": session,
             "linewright": "0.1.0",
         });
-        let output = "benchmark-runs/1/as-is/columns/1";
+        let output = "benchmark-runs/1/1/1/1";
         let turn = include_str!("../fixtures/transcript/turn-1.jsonl");
         pages.write(&[
             (&format!("{output}/task"), "1/implement-1\n"),
@@ -169,7 +180,7 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_fr
         .await
         .unwrap();
 
-    let html = pages.page("/benchmarks/board").await;
+    let html = pages.page("/benchmarks/1").await;
 
     let heads: Vec<String> = select(&html, "#benchmark-runs thead th")
         .into_iter()
@@ -252,8 +263,8 @@ async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_fr
 async fn new_benchmark_run_shows_in_the_benchmark_runs_bar_only_on_a_benchmark_with_tasks() {
     let pages = with_benchmarks().await;
 
-    let board = pages.page("/benchmarks/board").await;
-    let empty = pages.page("/benchmarks/triage-basics").await;
+    let board = pages.page("/benchmarks/1").await;
+    let empty = pages.page("/benchmarks/2").await;
 
     let new = select(
         &board,
@@ -615,12 +626,12 @@ async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the
         points(&html, "cost"),
         [
             (
-                "point-cost-as-is".into(),
+                "point-cost-1".into(),
                 "as-is".into(),
                 "as-is: pass rate 100%, mean cost $0.40".into()
             ),
             (
-                "point-cost-short".into(),
+                "point-cost-2".into(),
                 "short".into(),
                 "short: pass rate 0%, mean cost $0.23".into()
             ),
@@ -630,12 +641,12 @@ async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the
         points(&html, "time"),
         [
             (
-                "point-time-as-is".into(),
+                "point-time-1".into(),
                 "as-is".into(),
                 "as-is: pass rate 100%, mean time 50s".into()
             ),
             (
-                "point-time-short".into(),
+                "point-time-2".into(),
                 "short".into(),
                 "short: pass rate 0%, mean time 23s".into()
             ),
@@ -643,8 +654,8 @@ async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the
     );
     for axis in ["cost", "time"] {
         let (as_is, short) = (
-            drawn_at(&html, &format!("point-{axis}-as-is")),
-            drawn_at(&html, &format!("point-{axis}-short")),
+            drawn_at(&html, &format!("point-{axis}-1")),
+            drawn_at(&html, &format!("point-{axis}-2")),
         );
         assert!(
             as_is.0 > short.0,
@@ -813,7 +824,7 @@ async fn the_configurations_table_shows_each_configurations_figures() {
         fold_rows(&html, None),
         [
             (
-                "configuration-as-is".into(),
+                "configuration-1".into(),
                 false,
                 vec![
                     "as-is".into(),
@@ -827,7 +838,7 @@ async fn the_configurations_table_shows_each_configurations_figures() {
                 ]
             ),
             (
-                "configuration-short".into(),
+                "configuration-2".into(),
                 false,
                 vec![
                     "short".into(),
@@ -848,19 +859,15 @@ async fn the_configurations_table_shows_each_configurations_figures() {
     ];
     assert_eq!(alignments[0], expected);
     assert_eq!(alignments[1], expected);
-    let chevron = select(&html, "#configuration-as-is > td:first-child > button")[0];
+    let chevron = select(&html, "#configuration-1 > td:first-child > button")[0];
     assert_eq!(
         chevron.attr("aria-controls"),
-        Some("configuration-as-is_task-columns configuration-as-is_task-lanes")
+        Some("configuration-1_task-1 configuration-1_task-2")
     );
     assert_eq!(chevron.attr("aria-expanded"), Some("false"));
     assert_eq!(chevron.attr("aria-label"), Some("Show the tasks of as-is"));
     assert_eq!(
-        select(
-            &html,
-            "#configuration-as-is_task-columns > td:first-child > button"
-        )[0]
-        .attr("aria-label"),
+        select(&html, "#configuration-1_task-1 > td:first-child > button")[0].attr("aria-label"),
         Some("Show the trials of columns under as-is")
     );
     assert_eq!(select(&html, "#configurations th button").len(), 0);
@@ -884,14 +891,14 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         )
     };
     assert_eq!(
-        fold_rows(&html, Some("configuration-as-is")),
+        fold_rows(&html, Some("configuration-1")),
         [
             row(
-                "configuration-as-is_task-columns",
+                "configuration-1_task-1",
                 &["columns", "2 of 2", "$0.40", "$0.80", "1m", "2m", "0", "0"]
             ),
             row(
-                "configuration-as-is_task-lanes",
+                "configuration-1_task-2",
                 &[
                     "lanes",
                     "–",
@@ -906,14 +913,14 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         ]
     );
     assert_eq!(
-        fold_rows(&html, Some("configuration-short")),
+        fold_rows(&html, Some("configuration-2")),
         [
             row(
-                "configuration-short_task-columns",
+                "configuration-2_task-1",
                 &["columns", "–", "$0.25", "$0.50", "25s", "50s", "1", "1"]
             ),
             row(
-                "configuration-short_task-lanes",
+                "configuration-2_task-2",
                 &["lanes", "0 of 1", "$0.20", "$0.20", "20s", "20s", "0", "0"]
             ),
         ]
@@ -923,17 +930,17 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
     };
     let trials = |of: &str| fold_rows(&html, Some(of));
     assert_eq!(
-        trials("configuration-as-is_task-columns"),
+        trials("configuration-1_task-1"),
         [
             trial(
-                "configuration-as-is_task-columns_trial-1",
+                "configuration-1_task-1_trial-1",
                 "Trial 1",
                 "pass",
                 "$0.30",
                 "1m 30s"
             ),
             trial(
-                "configuration-as-is_task-columns_trial-2",
+                "configuration-1_task-1_trial-2",
                 "Trial 2",
                 "pass",
                 "$0.50",
@@ -942,17 +949,17 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         ]
     );
     assert_eq!(
-        trials("configuration-as-is_task-lanes"),
+        trials("configuration-1_task-2"),
         [
             trial(
-                "configuration-as-is_task-lanes_trial-1",
+                "configuration-1_task-2_trial-1",
                 "Trial 1",
                 "no score",
                 "–",
                 "30s"
             ),
             trial(
-                "configuration-as-is_task-lanes_trial-2",
+                "configuration-1_task-2_trial-2",
                 "Trial 2",
                 "running",
                 "–",
@@ -961,17 +968,17 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         ]
     );
     assert_eq!(
-        trials("configuration-short_task-columns"),
+        trials("configuration-2_task-1"),
         [
             trial(
-                "configuration-short_task-columns_trial-1",
+                "configuration-2_task-1_trial-1",
                 "Trial 1",
                 "leak",
                 "$0.10",
                 "10s"
             ),
             trial(
-                "configuration-short_task-columns_trial-2",
+                "configuration-2_task-1_trial-2",
                 "Trial 2",
                 "no score",
                 "$0.40",
@@ -980,17 +987,17 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         ]
     );
     assert_eq!(
-        trials("configuration-short_task-lanes"),
+        trials("configuration-2_task-2"),
         [
             trial(
-                "configuration-short_task-lanes_trial-1",
+                "configuration-2_task-2_trial-1",
                 "Trial 1",
                 "fail",
                 "$0.20",
                 "20s"
             ),
             trial(
-                "configuration-short_task-lanes_trial-2",
+                "configuration-2_task-2_trial-2",
                 "Trial 2",
                 "waiting",
                 "–",
@@ -999,10 +1006,10 @@ async fn a_configuration_opens_to_its_tasks_and_a_task_to_its_trials() {
         ]
     );
     assert_eq!(
-        text(select(&html, "#configuration-as-is_task-columns_trial-1 > th")[0]),
+        text(select(&html, "#configuration-1_task-1_trial-1 > th")[0]),
         "Trial 1"
     );
-    let waiting = select(&html, "#configuration-short_task-lanes_trial-2 .badge")[0];
+    let waiting = select(&html, "#configuration-2_task-2_trial-2 .badge")[0];
     assert!(
         has_classes(waiting, &["badge-outline"]),
         "{}",
@@ -1032,31 +1039,28 @@ async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_
         "linewright": "0.1.0",
     });
     pages.write(&[
-        ("benchmark-runs/1/short/columns/2/task", "1/implement-1\n"),
-        (
-            "benchmark-runs/1/short/columns/1/score.json",
-            &leak.to_string(),
-        ),
+        ("benchmark-runs/1/2/1/2/task", "1/implement-1\n"),
+        ("benchmark-runs/1/2/1/1/score.json", &leak.to_string()),
     ]);
 
     let html = pages.page("/benchmark-runs/1").await;
 
     let opens = select(
         &html,
-        "#configuration-as-is_task-columns_trial-1 > td:first-child > button",
+        "#configuration-1_task-1_trial-1 > td:first-child > button",
     );
     assert_eq!(
         opens[0].attr("aria-controls"),
-        Some("configuration-as-is_task-columns_trial-1_details")
+        Some("configuration-1_task-1_trial-1_details")
     );
     assert_eq!(
         opens[0].attr("aria-label"),
         Some("Show the details of trial 1 of columns under as-is")
     );
-    let details = select(&html, "#configuration-as-is_task-columns_trial-1_details")[0];
+    let details = select(&html, "#configuration-1_task-1_trial-1_details")[0];
     assert_eq!(
         details.attr("data-fold-of"),
-        Some("configuration-as-is_task-columns_trial-1")
+        Some("configuration-1_task-1_trial-1")
     );
     assert!(details.attr("hidden").is_some());
     assert_eq!(texts_in(details, ".score dt"), ["Correctness", "Leak"]);
@@ -1072,11 +1076,11 @@ async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_
     assert_eq!(
         hrefs(select_in(details, "a")),
         [
-            "/benchmark-runs/1/as-is/columns/1/run",
-            "/benchmark-runs/1/as-is/columns/1/scorer"
+            "/benchmark-runs/1/1/1/1/run",
+            "/benchmark-runs/1/1/1/1/scorer"
         ]
     );
-    let leaked = select(&html, "#configuration-short_task-columns_trial-1_details")[0];
+    let leaked = select(&html, "#configuration-2_task-1_trial-1_details")[0];
     assert_eq!(
         texts_in(leaked, ".score dd"),
         [
@@ -1088,13 +1092,13 @@ async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_
         texts_in(leaked, ".score code"),
         ["gh pr view 7", "git log origin/7-columns"]
     );
-    let run_failed = select(&html, "#configuration-as-is_task-lanes_trial-1_details")[0];
+    let run_failed = select(&html, "#configuration-1_task-2_trial-1_details")[0];
     assert_eq!(
         texts_in(run_failed, ".reason"),
         ["No score. The run's outcome: failed"]
     );
     assert_eq!(texts_in(run_failed, ".score"), [] as [String; 0]);
-    let scorer_made_none = select(&html, "#configuration-short_task-columns_trial-2_details")[0];
+    let scorer_made_none = select(&html, "#configuration-2_task-1_trial-2_details")[0];
     assert_eq!(
         texts_in(scorer_made_none, ".reason"),
         ["No score. it gave up"]
@@ -1103,22 +1107,19 @@ async fn a_trial_opens_to_its_score_or_its_reason_and_the_transcripts_that_have_
     assert_eq!(
         hrefs(select_in(scorer_made_none, "a")),
         [
-            "/benchmark-runs/1/short/columns/2/run",
-            "/benchmark-runs/1/short/columns/2/scorer"
+            "/benchmark-runs/1/2/1/2/run",
+            "/benchmark-runs/1/2/1/2/scorer"
         ],
         "a scorer that made no score had started"
     );
-    let leading = select(
-        &html,
-        "#configuration-short_task-lanes_trial-2 > :first-child",
-    )[0];
+    let leading = select(&html, "#configuration-2_task-2_trial-2 > :first-child")[0];
     assert_eq!(
         (leading.value().name(), leading.children().count()),
         ("td", 0),
         "a trial with nothing to open to has an empty leading cell"
     );
     assert_eq!(
-        select(&html, "#configuration-short_task-lanes_trial-2_details"),
+        select(&html, "#configuration-2_task-2_trial-2_details"),
         [] as [scraper::ElementRef<'_>; 0]
     );
 }
@@ -1137,14 +1138,14 @@ async fn a_trial_whose_build_failed_shows_no_score_and_opens_to_its_reason() {
         "state = 'unscored', seconds = 12, unscored = 'build'",
     )
     .await;
-    pages.write(&[("benchmark-runs/1/short/lanes/2/task", "2/implement-1\n")]);
+    pages.write(&[("benchmark-runs/1/2/2/2/task", "2/implement-1\n")]);
 
     let html = pages.page("/benchmark-runs/1").await;
 
-    let (_, opens, cells) = &fold_rows(&html, Some("configuration-short_task-lanes"))[1];
+    let (_, opens, cells) = &fold_rows(&html, Some("configuration-2_task-2"))[1];
     assert!(opens);
     assert_eq!(cells, &["Trial 2", "no score", "–", "", "12s", "", "", ""]);
-    let details = select(&html, "#configuration-short_task-lanes_trial-2_details")[0];
+    let details = select(&html, "#configuration-2_task-2_trial-2_details")[0];
     assert_eq!(
         texts_in(details, ".reason"),
         ["No score. The build of its environment failed."]
@@ -1174,7 +1175,7 @@ async fn a_trial_of_a_cancelled_benchmark_run_shows_cancelled_while_the_cancel_s
     let html = pages.page("/benchmark-runs/1").await;
 
     assert_eq!(
-        text(select(&html, "#configuration-as-is_task-lanes_trial-2 td")[1]),
+        text(select(&html, "#configuration-1_task-2_trial-2 td")[1]),
         "cancelled"
     );
 }
@@ -1260,7 +1261,7 @@ async fn the_configurations_and_the_grid_each_show_their_rows_25_at_a_time_on_a_
         .map(|(_, _, cells)| cells[0].clone())
         .collect();
     assert_eq!(configurations, ["c-25", "c-26"]);
-    assert_eq!(fold_rows(&html, Some("configuration-c-25")).len(), 28);
+    assert_eq!(fold_rows(&html, Some("configuration-26")).len(), 28);
     assert_eq!(
         pages_nav(&html, "#configurations"),
         Some(PagesNav {
@@ -1339,8 +1340,8 @@ async fn the_grid_shows_the_passes_leaks_and_unscored_of_each_task_and_configura
 async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     let pages = with_benchmark_run().await;
 
-    let run = pages.page("/benchmark-runs/1/as-is/columns/1/run").await;
-    let scorer = pages.page("/benchmark-runs/1/as-is/columns/1/scorer").await;
+    let run = pages.page("/benchmark-runs/1/1/1/1/run").await;
+    let scorer = pages.page("/benchmark-runs/1/1/1/1/scorer").await;
 
     assert_eq!(
         text(select(&run, "#heading .card-title")[0]),
@@ -1352,10 +1353,7 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     );
     assert_eq!(
         hrefs(select(&run, "#trial a")),
-        [
-            "/benchmark-runs/1",
-            "/benchmark-runs/1/as-is/columns/1/scorer"
-        ]
+        ["/benchmark-runs/1", "/benchmark-runs/1/1/1/1/scorer"]
     );
     assert!(!select(&run, "#s1 .entry").is_empty(), "{}", run.html());
     assert_eq!(
@@ -1373,7 +1371,7 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     );
     assert_eq!(
         events_path(&scorer),
-        Some("/events/benchmark-runs/1/as-is/columns/1/scorer")
+        Some("/events/benchmark-runs/1/1/1/1/scorer")
     );
 }
 
@@ -1384,8 +1382,8 @@ async fn a_trials_transcripts_are_drawn_as_the_run_pages_is() {
     let pages = with_benchmark_run().await;
 
     for path in [
-        "/benchmark-runs/1/as-is/columns/1/run?verbose=",
-        "/benchmark-runs/1/as-is/columns/1/scorer?verbose=",
+        "/benchmark-runs/1/1/1/1/run?verbose=",
+        "/benchmark-runs/1/1/1/1/scorer?verbose=",
     ] {
         let html = pages.page(path).await;
 
@@ -1398,9 +1396,9 @@ async fn a_trials_transcripts_are_drawn_as_the_run_pages_is() {
 async fn a_trial_with_no_output_or_scorer_answers_404() {
     let pages = with_benchmark_run().await;
 
-    let (pending, _) = pages.get("/benchmark-runs/1/short/lanes/2/run").await;
-    let (no_scorer, _) = pages.get("/benchmark-runs/1/as-is/columns/2/scorer").await;
-    let (no_task, _) = pages.get("/benchmark-runs/1/as-is/rows/1/run").await;
+    let (pending, _) = pages.get("/benchmark-runs/1/2/2/2/run").await;
+    let (no_scorer, _) = pages.get("/benchmark-runs/1/1/1/2/scorer").await;
+    let (no_task, _) = pages.get("/benchmark-runs/1/1/3/1/run").await;
     let (no_benchmark_run, _) = pages.get("/benchmark-runs/9").await;
 
     assert_eq!([pending, no_scorer, no_task, no_benchmark_run], [404; 4]);
@@ -1413,7 +1411,7 @@ async fn the_page_of_no_benchmark_run_says_there_is_none() {
 
     let (no_benchmark_run, no_benchmark_run_body) = pages.get("/benchmark-runs/9").await;
     let (no_id, no_id_body) = pages.get("/benchmark-runs/first").await;
-    let (trial, trial_body) = pages.get("/benchmark-runs/9/as-is/columns/1/run").await;
+    let (trial, trial_body) = pages.get("/benchmark-runs/9/1/1/1/run").await;
 
     for (status, body, region, shown) in [
         (
@@ -1463,8 +1461,7 @@ async fn the_benchmark_run_pages_stream_sends_the_benchmark_run_as_it_changes() 
             .iter()
             .filter(|(id, _)| id == "configurations")
             .any(|(_, table)| {
-                text(select(table, "#configuration-as-is_task-lanes_trial-2 td")[1])
-                    .starts_with("no score")
+                text(select(table, "#configuration-1_task-2_trial-2 td")[1]).starts_with("no score")
             });
         if trials && row {
             break;
@@ -1589,7 +1586,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
  {
     let pages = with_benchmarks().await;
 
-    let html = pages.page("/benchmarks/board").await;
+    let html = pages.page("/benchmarks/1").await;
 
     let dialog = select(&html, "dialog#new-benchmark-run");
     assert_eq!(dialog.len(), 1, "{}", html.html());
@@ -1601,7 +1598,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
     assert_eq!(text(legend[0]), "New benchmark run on board");
     assert_eq!(dialog.attr("aria-labelledby"), legend[0].attr("id"));
     let form = select_in(dialog, "form[hx-post]")[0];
-    assert_eq!(form.attr("hx-post"), Some("/benchmarks/board/launch"));
+    assert_eq!(form.attr("hx-post"), Some("/benchmarks/1/launch"));
     assert_eq!(form.attr("hx-target"), Some("this"));
     assert!(form.attr("data-new").is_some());
     assert_eq!(
@@ -1769,7 +1766,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_stream_sends_the_texts_of_the_files_of_the_brief() {
     let pages = with_benchmarks().await;
-    let mut events = stream(&pages, "/events/benchmarks/board").await;
+    let mut events = stream(&pages, "/events/benchmarks/1").await;
 
     let first = events.recv().await.unwrap();
 
@@ -1793,7 +1790,7 @@ async fn a_launch_on_a_benchmark_with_no_tasks_is_refused() {
 
     let (status, answer) = post(
         &pages,
-        "/benchmarks/triage-basics/launch",
+        "/benchmarks/2/launch",
         &[SAME_ORIGIN],
         &[("repetitions", "1")],
     )
@@ -1914,7 +1911,7 @@ async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_fi
 
     for (sent, configurations, refused) in refusals {
         let (status, headers, answer) =
-            post_answer(&pages, "/benchmarks/board/launch", &[SAME_ORIGIN], sent).await;
+            post_answer(&pages, "/benchmarks/1/launch", &[SAME_ORIGIN], sent).await;
         assert_eq!(status, 422, "{sent:?}");
         assert!(headers.get("hx-trigger").is_none());
         let shown = making_shown(&answer);
@@ -1943,7 +1940,7 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
 
     let (status, answer) = post(
         &pages,
-        "/benchmarks/board/launch",
+        "/benchmarks/1/launch",
         &[SAME_ORIGIN],
         &[
             ("repetitions", "3"),
@@ -2005,7 +2002,7 @@ async fn a_launch_from_another_site_is_refused_keeping_the_form_as_sent() {
 
     let (cross_site, cross_site_answer) = post(
         &pages,
-        "/benchmarks/board/launch",
+        "/benchmarks/1/launch",
         &[CROSS_SITE],
         &[
             ("repetitions", "2"),
@@ -2039,12 +2036,12 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
     let design = format!("{DESIGN}\nCut the work finely.\n");
     let implement = IMPLEMENT.replace('\n', "\r\n");
     let fix_ci = format!("{FIX_CI}\nAs the page started it.\n");
-    let mut events = stream(&pages, "/events/benchmarks/board").await;
+    let mut events = stream(&pages, "/events/benchmarks/1").await;
     events.recv().await.unwrap();
 
     let (status, headers, answer) = post_answer(
         &pages,
-        "/benchmarks/board/launch",
+        "/benchmarks/1/launch",
         &[SAME_ORIGIN],
         &[
             ("repetitions", "2"),
@@ -2096,17 +2093,17 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
         files.sort();
         files
     };
-    assert_eq!(files("as-is"), Vec::<String>::new());
-    assert_eq!(files("short"), ["briefs/prompts/design.md", "config.toml"]);
+    assert_eq!(files("1"), Vec::<String>::new());
+    assert_eq!(files("2"), ["briefs/prompts/design.md", "config.toml"]);
     assert_eq!(
-        std::fs::read_to_string(kept.join("short/config.toml")).unwrap(),
+        std::fs::read_to_string(kept.join("2/config.toml")).unwrap(),
         "model = \"haiku\"\nsession-timeout = \"30m\"\n"
     );
     assert_eq!(
-        std::fs::read_to_string(kept.join("short/briefs/prompts/design.md")).unwrap(),
+        std::fs::read_to_string(kept.join("2/briefs/prompts/design.md")).unwrap(),
         design
     );
-    assert_eq!(files("careful"), ["config.toml"]);
+    assert_eq!(files("3"), ["config.toml"]);
     let html = pages.page("/benchmark-runs/1").await;
     let heads: Vec<String> = select(&html, "#grid thead th")
         .into_iter()

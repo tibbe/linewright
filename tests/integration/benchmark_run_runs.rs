@@ -16,7 +16,7 @@ use common::*;
 use linewright::api::Sources;
 use linewright::benchmarks::{
     BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, Cancelled,
-    ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
+    ConfigurationId, ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
 };
 use linewright::clock::Clock as _;
 use linewright::cost::Usd;
@@ -44,8 +44,8 @@ fn passes() -> String {
 
 /// A world whose factory runs `max_trials` trials and scorers at once,
 /// its work directory `REPO`'s in the directory given with it, holding the
-/// triage benchmark `triage` of the tasks `export` and `import`, captured from
-/// the triage of two issues, then closed. Each scorer passes.
+/// triage benchmark `triage`, 1, of the tasks `export`, 1, and `import`, 2,
+/// captured from the triage of two issues, then closed. Each scorer passes.
 #[track_caller]
 fn with_benchmark(max_trials: usize) -> impl Future<Output = (World, tempfile::TempDir)> {
     let caller = Location::caller();
@@ -70,29 +70,25 @@ fn with_benchmark(max_trials: usize) -> impl Future<Output = (World, tempfile::T
         world.poll().await;
         let runs = runs_in(&repo).await;
         let benchmarks = Benchmarks::new(runs.database().clone());
-        for (n, (task, issue)) in issues.into_iter().enumerate() {
-            let benchmark = "triage".parse().unwrap();
-            let choice = if n == 0 {
-                BenchmarkChoice::New(benchmark)
-            } else {
-                BenchmarkChoice::Named(benchmark)
-            };
+        let mut choice = BenchmarkChoice::New("triage".parse().unwrap());
+        for (task, issue) in issues {
             let run = format!("{}/triage-1", issue.0).parse().unwrap();
             let name: TaskName = task.parse().unwrap();
             let capturable = task::capturable(&runs, &benchmarks, &run, &name, &choice)
                 .await
                 .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
             let criteria = Criteria::parse("It triages the issue.\n").unwrap();
-            task::capture(&*world.store, capturable, &criteria, &benchmarks)
+            let kept = task::capture(&*world.store, capturable, &criteria, &benchmarks)
                 .await
                 .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
+            choice = BenchmarkChoice::Existing(kept.benchmark.id);
             world.store.close_issue_as_completed(issue).unwrap();
         }
         (world, work_dir)
     }
 }
 
-/// Launches a benchmark run on the benchmark `triage` of the database in
+/// Launches a benchmark run on the benchmark `triage`, 1, of the database in
 /// `repo`, under `as-is` and `configurations`, `repetitions` times.
 #[track_caller]
 fn launch(
@@ -106,7 +102,7 @@ fn launch(
         let benchmark_runs = BenchmarkRuns::new(runs_in(&repo).await.database().clone());
         let launched = benchmark_runs
             .launch(
-                &"triage".parse().unwrap(),
+                "1".parse().unwrap(),
                 configurations,
                 NonZeroU32::new(repetitions).unwrap(),
                 at("2026-11-17T12:00:00Z"),
@@ -217,7 +213,7 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
         record.trials
     );
     assert_eq!(
-        std::fs::read_to_string(repo.join("benchmark-runs/1/short/import/2/outcome")).unwrap(),
+        std::fs::read_to_string(repo.join("benchmark-runs/1/2/2/2/outcome")).unwrap(),
         "done\n"
     );
     let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
@@ -225,11 +221,11 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
     for line in [
         "state: ended\n",
         "trials ended: 8 of 8\n",
-        "configuration as-is:\n  pass rate: 100%\n",
-        "configuration short:\n  pass rate: 100%\n",
-        "  task export:\n    passes: 2 of 2\n",
-        "  task import:\n    passes: 2 of 2\n",
-        "trial short/import/2: scored pass",
+        "configuration 1 (as-is):\n  pass rate: 100%\n",
+        "configuration 2 (short):\n  pass rate: 100%\n",
+        "  task 1 (export):\n    passes: 2 of 2\n",
+        "  task 2 (import):\n    passes: 2 of 2\n",
+        "trial short/import/2 (2/2/2): scored pass",
     ] {
         assert!(
             shown.stdout.contains(line),
@@ -365,7 +361,7 @@ async fn a_serve_killed_mid_trial_runs_it_again_into_a_new_output_when_restarted
     held.begun().await;
 
     killed.kill().await;
-    let out = repo.join("benchmark-runs/1/as-is/export/1");
+    let out = repo.join("benchmark-runs/1/1/1/1");
     std::fs::write(out.join("left-by-the-kill"), "").unwrap();
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);
@@ -408,7 +404,7 @@ async fn a_serve_killed_mid_scorer_scores_again_keeping_only_the_new_scorers_rec
     held.begun().await;
 
     killed.kill().await;
-    let scorers = repo.join("benchmark-runs/1/as-is/export/1/scorer");
+    let scorers = repo.join("benchmark-runs/1/1/1/1/scorer");
     std::fs::create_dir_all(scorers.join("left-by-the-kill")).unwrap();
     let restarted = restarted(world.store, world.harness, world.clock, &repo);
     let serving = serve(restarted.await);
@@ -545,8 +541,8 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
     };
     let kept = trial::kept_spent(&benchmark_runs.output_dir(
         id,
-        &ConfigurationName::as_is(),
-        &record.tasks[0],
+        ConfigurationId::AS_IS,
+        record.tasks[0].id,
         NonZeroU32::MIN,
     ))
     .expect("the stopped trial's output keeps its cost");

@@ -9,12 +9,14 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use chrono::{DateTime, SecondsFormat};
-use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{Connection as _, SqlitePool};
 
 use crate::domain::Timestamp;
 
+mod benchmark_ids;
 mod benchmark_names;
+mod moves;
 
 /// The database's file, in the work directory.
 const DATABASE_FILE: &str = "linewright.db";
@@ -26,7 +28,11 @@ const LOCK_FILE: &str = "linewright.db.lock";
 /// How long a statement waits for another connection's write lock.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A change of the schema, from the version before it to its own.
+/// A change of the schema, from the version before it to its own. It runs
+/// with foreign keys unenforced, so that it can make a table again that
+/// others refer to, and is refused when it leaves a foreign key unmet.
+/// <https://www.sqlite.org/lang_altertable.html#otheralter>
+#[derive(Clone, Copy)]
 pub(crate) enum Migration {
     Sql(&'static str),
     /// A change of the files of the work directory that the database
@@ -34,6 +40,18 @@ pub(crate) enum Migration {
     /// change, which it rolls back by failing, so it must be idempotent:
     /// the next open runs it again on what a failed run left.
     WorkDir(fn(&Path) -> anyhow::Result<()>),
+    /// Moves of the files of the work directory that the database refers
+    /// to, which the query gives, run on the schema as the change has made
+    /// it so far: rows of a source and a target, each a path relative to
+    /// the work directory in a directory of it.
+    Moves(&'static str),
+    /// Keeps in `table`, which an earlier change made with the column
+    /// `name`, the name of each entry of the directory `dir` under the work
+    /// directory, none when there is no such directory.
+    Entries {
+        table: &'static str,
+        dir: &'static str,
+    },
 }
 
 /// Every change of the schema, in order: the schema's version is how many of
@@ -52,6 +70,10 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(benchmark_names::TABLES),
     Migration::WorkDir(benchmark_names::move_files),
     Migration::Sql(TRIALS_BUILD_FAILED),
+    Migration::Sql(benchmark_ids::TASK_DIRS),
+    benchmark_ids::TASK_DIRS_ENTRIES,
+    Migration::Sql(benchmark_ids::TABLES),
+    Migration::Moves(benchmark_ids::MOVES),
 ];
 
 /// The table of the release that made each schema version.
@@ -471,10 +493,13 @@ async fn settle(
 }
 
 /// Runs the migrations after `version` on the database and on `work_dir` in
-/// one `BEGIN IMMEDIATE` transaction, which ends by setting the version and
+/// one `BEGIN IMMEDIATE` transaction, on a connection of its own with foreign
+/// keys unenforced, which ends by checking them, setting the version and
 /// recording this release as the one that made it. It commits only once
-/// every migration has succeeded. A change of the work directory holds
-/// `lock` until it ends, even when the schema change is dropped first.
+/// every migration has succeeded, and on disk, so that the work directory's
+/// changes are never ahead of a commit that is lost. A change of the work
+/// directory holds `lock` until it ends, even when the schema change is
+/// dropped first, and starts only once the foreign keys are met.
 async fn migrate(
     pool: &SqlitePool,
     work_dir: &Path,
@@ -482,12 +507,40 @@ async fn migrate(
     version: u32,
     migrations: &'static [Migration],
 ) -> anyhow::Result<()> {
-    let mut tx = pool
+    moves::clear(work_dir, version);
+    let mut conn = pool
+        .acquire()
+        .await
+        .context("connecting for the database's schema change")?
+        .detach();
+    sqlx::raw_sql("PRAGMA foreign_keys = OFF; PRAGMA synchronous = FULL")
+        .execute(&mut conn)
+        .await
+        .context("setting up the connection of the database's schema change")?;
+    let migrated = migrate_on(&mut conn, work_dir, lock, version, migrations).await;
+    if let Err(e) = conn.close().await {
+        tracing::warn!(error = %e, "closing the connection of the database's schema change failed");
+    }
+    migrated?;
+    moves::clear(work_dir, schema_version(migrations));
+    Ok(())
+}
+
+/// Runs the migrations after `version` on `conn`, as [`migrate`] says.
+async fn migrate_on(
+    conn: &mut sqlx::SqliteConnection,
+    work_dir: &Path,
+    lock: &Lock,
+    version: u32,
+    migrations: &'static [Migration],
+) -> anyhow::Result<()> {
+    let mut tx = conn
         .begin_with("BEGIN IMMEDIATE")
         .await
         .context("beginning the database's schema change")?;
     for (index, migration) in migrations.iter().enumerate().skip(version as usize) {
-        let changing = || format!("changing the database's schema to version {}", index + 1);
+        let to = u32::try_from(index + 1).expect("fewer than 2^32 migrations");
+        let changing = || format!("changing the database's schema to version {to}");
         match migration {
             Migration::Sql(sql) => {
                 sqlx::raw_sql(sqlx::AssertSqlSafe(*sql))
@@ -496,18 +549,50 @@ async fn migrate(
                     .with_context(changing)?;
             }
             Migration::WorkDir(change) => {
-                let (change, work_dir, held) = (*change, work_dir.to_path_buf(), lock.clone());
-                tokio::task::spawn_blocking(move || {
-                    let _held = held;
-                    change(&work_dir)
+                foreign_keys_met(&mut tx).await.with_context(changing)?;
+                let change = *change;
+                on_work_dir(work_dir, lock, change)
+                    .await
+                    .context("changing the work directory")
+                    .with_context(changing)?;
+            }
+            Migration::Moves(query) => {
+                foreign_keys_met(&mut tx).await.with_context(changing)?;
+                let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(*query))
+                    .fetch_all(&mut *tx)
+                    .await
+                    .context("reading the moves of the work directory")
+                    .with_context(changing)?;
+                let moves = rows
+                    .into_iter()
+                    .map(|(source, target)| moves::Move::of(source, target))
+                    .collect::<anyhow::Result<Vec<_>>>()
+                    .with_context(changing)?;
+                on_work_dir(work_dir, lock, move |work_dir| {
+                    moves::carry_out(work_dir, to, &moves)
                 })
                 .await
-                .context("changing the work directory")
-                .flatten()
+                .context("moving the files of the work directory")
                 .with_context(changing)?;
+            }
+            Migration::Entries { table, dir } => {
+                let listed = work_dir.join(dir);
+                let names = on_work_dir(work_dir, lock, move |_| entry_names(&listed))
+                    .await
+                    .with_context(changing)?;
+                for name in names {
+                    sqlx::query(sqlx::AssertSqlSafe(format!(
+                        "INSERT INTO {table} (name) VALUES (?)"
+                    )))
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await
+                    .with_context(changing)?;
+                }
             }
         }
     }
+    foreign_keys_met(&mut tx).await?;
     let target = schema_version(migrations);
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "PRAGMA user_version = {target}"
@@ -524,6 +609,55 @@ async fn migrate(
     tx.commit()
         .await
         .context("committing the database's schema change")
+}
+
+/// Runs `change` on `work_dir` off the runtime's threads, holding `lock`
+/// until it ends.
+async fn on_work_dir<T: Send + 'static>(
+    work_dir: &Path,
+    lock: &Lock,
+    change: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<T> {
+    let (work_dir, held) = (work_dir.to_path_buf(), lock.clone());
+    tokio::task::spawn_blocking(move || {
+        let _held = held;
+        change(&work_dir)
+    })
+    .await
+    .context("waiting for the work directory")
+    .flatten()
+}
+
+/// Refuses a schema change that leaves a row referring to one that does not
+/// exist.
+async fn foreign_keys_met(conn: &mut sqlx::SqliteConnection) -> anyhow::Result<()> {
+    let unmet: Vec<(String,)> = sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+        .fetch_all(&mut *conn)
+        .await
+        .context("checking the foreign keys of the database's schema change")?;
+    match unmet.first() {
+        None => Ok(()),
+        Some((table,)) => anyhow::bail!(
+            "the database's schema change leaves a row of {table} referring to one that does not exist"
+        ),
+    }
+}
+
+/// The names of the entries of `dir`, none when there is no `dir`.
+fn entry_names(dir: &Path) -> anyhow::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    };
+    let mut names = vec![];
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
+        if let Some(name) = entry.file_name().to_str() {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
 }
 
 /// Reads where the schema stands against the one `migrations` make, and

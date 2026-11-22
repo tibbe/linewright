@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use tracing::{info, warn};
 
-use super::benchmark_page::benchmark_for_making;
+use super::benchmark_page::{InBenchmark, benchmark_for_making};
 use super::benchmark_runs;
 use super::html::{self, Html};
 use super::making::{
@@ -21,7 +21,7 @@ use super::making::{
 };
 use super::write::Write;
 use crate::api::Sources;
-use crate::benchmarks::{BenchmarkName, ConfigurationName, LaunchRefusal};
+use crate::benchmarks::{Benchmark, ConfigurationName, LaunchRefusal};
 use crate::config;
 use crate::repo_files::FileError;
 use crate::trial::Configuration;
@@ -421,8 +421,7 @@ impl ConfigurationFields {
 #[derive(Template)]
 #[template(path = "new_benchmark_run.html")]
 pub(super) struct NewBenchmarkRunForm {
-    /// The benchmark's name, as its path gives it.
-    benchmark: String,
+    benchmark: InBenchmark,
     /// How many tasks the benchmark has.
     tasks: usize,
     making: Making<LaunchFields>,
@@ -434,11 +433,11 @@ impl NewBenchmarkRunForm {
     /// The form as it starts, for benchmark `benchmark` with `tasks` tasks.
     pub(super) fn blank(
         sources: &Sources,
-        benchmark: &BenchmarkName,
+        benchmark: &Benchmark,
         tasks: usize,
     ) -> NewBenchmarkRunForm {
         NewBenchmarkRunForm {
-            benchmark: benchmark.to_string(),
+            benchmark: InBenchmark::Found(benchmark.name.clone()),
             tasks,
             making: Making::blank(),
             paths: starting_texts(sources).into_keys().collect(),
@@ -593,14 +592,14 @@ impl BriefTexts {
     }
 }
 
-/// Launches a benchmark run on benchmark `benchmark_named` as the New benchmark
+/// Launches a benchmark run on benchmark `id` as the New benchmark
 /// run dialog's form in `body` asks, tells `serve` so, and answers with the
 /// dialog's form: as it starts once launched, or as sent with why it was
 /// refused. Refused, launching nothing, unless the browser shows the request
 /// came from the web UI's own pages.
 pub(super) async fn launch(
     State(sources): State<Sources>,
-    Path(benchmark_named): Path<String>,
+    Path(id): Path<String>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
@@ -612,16 +611,13 @@ pub(super) async fn launch(
         Err(_) => (LaunchFields::default(), None),
     };
     let starting = starting_texts(&sources);
+    let found = benchmark_for_making(&sources, &id).await;
     let mut form = NewBenchmarkRunForm {
-        benchmark: benchmark_named,
-        tasks: 0,
+        benchmark: InBenchmark::of(&found, id),
+        tasks: found.as_ref().map_or(0, |shown| shown.tasks.len()),
         making: Making::of(fields),
         paths: starting.keys().cloned().collect(),
     };
-    let found = benchmark_for_making(&sources, &form.benchmark).await;
-    if let Ok(shown) = &found {
-        form.tasks = shown.tasks.len();
-    }
     if let Err(refused) = WRITE.same_origin(&headers, &uri).and(sent) {
         let (status, why) = refused.into_parts();
         return form.refused((status, Refusal::Whole(why)));
@@ -630,7 +626,7 @@ pub(super) async fn launch(
         return form.refused((StatusCode::BAD_REQUEST, Refusal::Whole(why)));
     }
     let benchmark = match found {
-        Ok(shown) => shown.benchmark.name,
+        Ok(shown) => shown.benchmark,
         Err((status, why)) => return form.refused((status, Refusal::Whole(why))),
     };
     let (repetitions, configurations) = match form.making.fields.check(&starting) {
@@ -640,12 +636,17 @@ pub(super) async fn launch(
         }
     };
     match benchmark_runs(&sources)
-        .launch(&benchmark, configurations, repetitions, sources.clock.now())
+        .launch(
+            benchmark.id,
+            configurations,
+            repetitions,
+            sources.clock.now(),
+        )
         .await
     {
         Ok(launched) => {
             sources.benchmark_runs.changed();
-            info!(benchmark_run = %launched.id, benchmark = %benchmark, trials = launched.trials, "launched a benchmark run");
+            info!(benchmark_run = %launched.id, benchmark = %benchmark.id, trials = launched.trials, "launched a benchmark run");
             form.making = Making::blank();
             Answer::Made {
                 blank: form,
@@ -654,7 +655,7 @@ pub(super) async fn launch(
         }
         Err(refusal) => {
             if let LaunchRefusal::Failed(e) = &refusal {
-                warn!(benchmark = %benchmark, error = format!("{e:#}"), "launching a benchmark run failed");
+                warn!(benchmark = %benchmark.id, error = format!("{e:#}"), "launching a benchmark run failed");
             }
             let refused = launch_refused(&form.making.fields, &refusal);
             form.refused(refused)

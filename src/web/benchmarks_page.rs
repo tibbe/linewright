@@ -158,7 +158,7 @@ impl Row {
     fn of(listed: BenchmarkListed, last: Option<(BenchmarkRunId, Timestamp)>) -> Row {
         Row {
             view: View {
-                href: benchmark_path(&listed.benchmark.name),
+                href: benchmark_path(listed.benchmark.id),
                 name: format!("benchmark {}", listed.benchmark.name),
             },
             name: listed.benchmark.name,
@@ -311,7 +311,7 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
                 .shows(kept)
                 .into_iter()
                 .map(|kept| {
-                    let last = latest.remove(&kept.benchmark.name);
+                    let last = latest.remove(&kept.benchmark.id);
                     Row::of(kept, last)
                 })
                 .collect();
@@ -498,6 +498,7 @@ mod tests {
     fn listed(name: &str, stage: TaskStage) -> BenchmarkListed {
         BenchmarkListed {
             benchmark: Benchmark {
+                id: "1".parse().unwrap(),
                 name: name.parse().unwrap(),
                 stage,
             },

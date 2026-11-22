@@ -285,7 +285,7 @@ async fn serve_fake_seeds_an_ended_benchmark_run_with_leaks_and_trials_without_a
     }
     assert_eq!(
         attributes(&page, r#"nav[aria-label="Breadcrumb"] a"#, "href"),
-        ["/benchmarks", "/benchmarks/board"]
+        ["/benchmarks", "/benchmarks/1"]
     );
     let opened = attributes(&page, "#configurations tr[id$=_details] a", "href");
     assert_eq!(opened.len(), 2, "{opened:?}");

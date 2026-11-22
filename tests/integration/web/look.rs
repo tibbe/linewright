@@ -13,7 +13,7 @@ const PATHS: [&str; 9] = [
     "/runs/1/triage-1",
     "/automations",
     "/benchmarks",
-    "/benchmarks/board",
+    "/benchmarks/1",
     "/benchmark-runs/1",
     "/server",
 ];
@@ -299,10 +299,7 @@ async fn each_button_has_its_icon_before_its_label() {
     let pages = with_a_run().await;
 
     let mut buttons = std::collections::BTreeSet::new();
-    for path in PATHS
-        .into_iter()
-        .chain(["/benchmark-runs/1/as-is/columns/1/run"])
-    {
+    for path in PATHS.into_iter().chain(["/benchmark-runs/1/1/1/1/run"]) {
         let html = pages.page(path).await;
         for button in select(&html, "button") {
             let label = text(button);

@@ -309,59 +309,83 @@ pub fn session_events(
     }
 }
 
-/// Keeps the benchmark `name` of `stage` in the database of `work_dir`.
+/// Keeps the benchmark `name` of `stage` in the database of `work_dir`, with
+/// the next benchmark's ID, and gives the ID.
 #[track_caller]
 pub fn keep_benchmark(
     work_dir: &Path,
     name: &str,
     stage: &str,
-) -> impl Future<Output = ()> + use<> {
+) -> impl Future<Output = i64> + use<> {
     let caller = Location::caller();
     let pool = back_door(work_dir);
     let (name, stage) = (name.to_string(), stage.to_string());
     async move {
         let pool = pool.await;
-        sqlx::query("INSERT INTO benchmarks (name, stage) VALUES (?, ?)")
+        let mut tx = pool.begin().await.unwrap();
+        let id: i64 = sqlx::query_scalar(
+            "UPDATE ids SET last = last + 1 WHERE of = 'benchmarks' RETURNING last",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("giving a benchmark's ID at {caller}: {e}"));
+        sqlx::query("INSERT INTO benchmarks (id, name, stage) VALUES (?, ?, ?)")
+            .bind(id)
             .bind(name)
             .bind(stage)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await
-            .unwrap_or_else(|e| panic!("keeping a suite at {caller}: {e}"));
+            .unwrap_or_else(|e| panic!("keeping a benchmark at {caller}: {e}"));
+        tx.commit().await.unwrap();
         pool.close().await;
+        id
     }
 }
 
-/// Keeps the task `name` of the benchmark `benchmark`, captured from `run`, in
-/// the database of `work_dir`, without its directory, last in the benchmark's
-/// order as a capture keeps it.
+/// Keeps the task `name` of the benchmark named `benchmark`, captured from
+/// `run`, in the database of `work_dir`, with the next task's ID, without its
+/// directory, last in the benchmark's order as a capture keeps it, and gives
+/// its ID.
 #[track_caller]
 pub fn keep_task_row(
     work_dir: &Path,
     benchmark: &str,
     name: &str,
     run: &str,
-) -> impl Future<Output = ()> + use<> {
+) -> impl Future<Output = i64> + use<> {
     let caller = Location::caller();
     let pool = back_door(work_dir);
     let (benchmark, name, run) = (benchmark.to_string(), name.to_string(), run.to_string());
     async move {
         let pool = pool.await;
+        let mut tx = pool.begin().await.unwrap();
+        let id: i64 =
+            sqlx::query_scalar("UPDATE ids SET last = last + 1 WHERE of = 'tasks' RETURNING last")
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap_or_else(|e| panic!("giving a task's ID at {caller}: {e}"));
         sqlx::query(
-            "INSERT INTO tasks (name, benchmark, run, seq) VALUES (?1, ?2, ?3,
-                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM tasks WHERE benchmark = ?2))",
+            "INSERT INTO tasks (id, name, benchmark, run, seq)
+             SELECT ?1, ?2, benchmarks.id, ?3,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM tasks WHERE benchmark = benchmarks.id)
+             FROM benchmarks WHERE benchmarks.name = ?4",
         )
+        .bind(id)
         .bind(name)
-        .bind(benchmark)
         .bind(run)
-        .execute(&pool)
+        .bind(benchmark)
+        .execute(&mut *tx)
         .await
-        .unwrap_or_else(|e| panic!("keeping a case at {caller}: {e}"));
+        .unwrap_or_else(|e| panic!("keeping a task at {caller}: {e}"));
+        tx.commit().await.unwrap();
         pool.close().await;
+        id
     }
 }
 
-/// Keeps the task `name` of the benchmark `benchmark`, captured from `run`, in
-/// the database of `work_dir`, with its directory holding `criteria`.
+/// Keeps the task `name` of the benchmark named `benchmark`, captured from
+/// `run`, in the database of `work_dir`, with its directory holding
+/// `criteria`, and gives its ID.
 #[track_caller]
 pub fn keep_task(
     work_dir: &Path,
@@ -369,11 +393,17 @@ pub fn keep_task(
     name: &str,
     run: &str,
     criteria: &str,
-) -> impl Future<Output = ()> + use<> {
-    let dir = work_dir.join("tasks").join(name);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("criteria.md"), criteria).unwrap();
-    keep_task_row(work_dir, benchmark, name, run)
+) -> impl Future<Output = i64> + use<> {
+    let row = keep_task_row(work_dir, benchmark, name, run);
+    let tasks = work_dir.join("tasks");
+    let criteria = criteria.to_string();
+    async move {
+        let id = row.await;
+        let dir = tasks.join(id.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("criteria.md"), criteria).unwrap();
+        id
+    }
 }
 
 /// Sets when the benchmark run `id` of `work_dir` was launched, through the

@@ -527,9 +527,10 @@ fn the_earlier_names_of_the_benchmarking_commands_and_flags_are_unknown() {
             &[
                 "capture",
                 "43/implement-2",
+                "--name",
                 "lanes",
                 "--suite",
-                "board",
+                "1",
                 "--criteria",
                 "c.md",
             ],
