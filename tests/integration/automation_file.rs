@@ -1,12 +1,14 @@
 use std::time::Duration;
 
 use crate::common;
+use crate::workflow_run::set;
 
 use chrono::{DateTime, Utc};
 use linewright::automation::{
     self, Automation, AutomationName, Schedule, Trigger, Unparsed, parse,
 };
 use linewright::work_settings::{Effort, Partial};
+use linewright::workflow_run::{Conclusion, Filters};
 
 fn utc(text: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(text)
@@ -31,10 +33,32 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
+#[track_caller]
 fn schedule(automation: &Automation) -> &Schedule {
-    let Trigger::Schedule(schedule) = &automation.trigger;
+    let Trigger::Schedule(schedule) = &automation.trigger else {
+        panic!("{automation:?} is not on a schedule");
+    };
     schedule
 }
+
+#[track_caller]
+fn filters(text: &str) -> Filters {
+    let automation = parse(&name("fix-ci.md"), text).unwrap();
+    let Trigger::WorkflowRun(filters) = automation.trigger else {
+        panic!("{automation:?} is not on workflow runs");
+    };
+    filters
+}
+
+const WORKFLOW_RUN_EXAMPLE: &str = "---
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    conclusions: [failure]
+---
+A workflow run failed on the default branch ...
+";
 
 #[test_log::test]
 fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions() {
@@ -95,10 +119,137 @@ fn a_file_without_a_schedule_does_not_parse() {
 }
 
 #[test_log::test]
-fn a_trigger_without_a_schedule_does_not_parse() {
+fn an_on_without_a_trigger_does_not_parse() {
     let error = error("---\non: {}\n---\nLook.\n");
 
-    assert!(error.contains("missing field `schedule`"), "{error}");
+    assert!(error.contains("`on` holds no trigger"), "{error}");
+}
+
+#[test_log::test]
+fn an_on_with_both_triggers_does_not_parse() {
+    let error = error(
+        "---\non:\n  schedule: \"0 6 * * 1\"\n  workflow_run:\n    workflows: [CI]\n---\nLook.\n",
+    );
+
+    assert!(
+        error.contains("`on` holds both `schedule` and `workflow_run`"),
+        "{error}"
+    );
+}
+
+#[test_log::test]
+fn a_trigger_given_no_value_is_still_held() {
+    let error = error("---\non:\n  schedule:\n  workflow_run:\n---\nLook.\n");
+
+    assert!(
+        error.contains("`on` holds both `schedule` and `workflow_run`"),
+        "{error}"
+    );
+}
+
+#[test_log::test]
+fn a_schedule_given_no_value_does_not_parse() {
+    let error = error("---\non:\n  schedule:\n---\nLook.\n");
+
+    assert!(error.contains("`on.schedule` is \"\""), "{error}");
+}
+
+#[test_log::test]
+fn an_unknown_trigger_does_not_parse() {
+    let error = error("---\non:\n  push: {}\n---\nLook.\n");
+
+    assert!(error.contains("unknown field `push`"), "{error}");
+}
+
+#[test_log::test]
+fn the_spec_example_on_workflow_runs_parses_into_its_filters() {
+    assert_eq!(
+        filters(WORKFLOW_RUN_EXAMPLE),
+        Filters {
+            workflows: Some(set(["CI".to_string()])),
+            branches: Some(set(["main".to_string()])),
+            conclusions: Some(set([Conclusion::Failure])),
+        }
+    );
+}
+
+#[test_log::test]
+fn a_workflow_run_trigger_takes_every_conclusion_in_the_spec() {
+    let filters = filters(
+        "---
+on:
+  workflow_run:
+    conclusions: [success, failure, cancelled, skipped, timed_out, action_required, neutral, stale, startup_failure]
+---
+Look.
+",
+    );
+
+    assert_eq!(
+        filters.conclusions,
+        Some(set([
+            Conclusion::Success,
+            Conclusion::Failure,
+            Conclusion::Cancelled,
+            Conclusion::Skipped,
+            Conclusion::TimedOut,
+            Conclusion::ActionRequired,
+            Conclusion::Neutral,
+            Conclusion::Stale,
+            Conclusion::StartupFailure,
+        ]))
+    );
+}
+
+#[test_log::test]
+fn a_workflow_run_trigger_with_its_filters_left_out_parses_into_no_filters() {
+    let empty_map = filters("---\non:\n  workflow_run: {}\n---\nLook.\n");
+    let nothing = filters("---\non:\n  workflow_run:\n---\nLook.\n");
+
+    assert_eq!(empty_map, Filters::default());
+    assert_eq!(nothing, Filters::default());
+}
+
+#[test_log::test]
+fn filters_listing_the_same_values_in_another_order_are_the_same() {
+    assert_eq!(
+        filters("---\non:\n  workflow_run:\n    branches: [main, next, main]\n---\nLook.\n"),
+        filters("---\non:\n  workflow_run:\n    branches: [next, main]\n---\nLook.\n"),
+    );
+}
+
+#[test_log::test]
+fn an_empty_filter_does_not_parse() {
+    for (filter, value) in ["workflows", "branches", "conclusions"]
+        .into_iter()
+        .flat_map(|filter| [(filter, " []"), (filter, "")])
+    {
+        let error = error(&format!(
+            "---\non:\n  workflow_run:\n    {filter}:{value}\n---\nLook.\n"
+        ));
+
+        assert!(error.contains(filter), "{error}");
+        assert!(error.contains("is empty"), "{error}");
+    }
+}
+
+#[test_log::test]
+fn a_filter_not_in_the_table_does_not_parse() {
+    let error = error("---\non:\n  workflow_run:\n    paths: [src]\n---\nLook.\n");
+
+    assert!(error.contains("unknown field `paths`"), "{error}");
+}
+
+#[test_log::test]
+fn a_conclusion_not_in_the_table_does_not_parse() {
+    let error = error("---\non:\n  workflow_run:\n    conclusions: [failed]\n---\nLook.\n");
+
+    assert!(
+        error.contains(
+            "unknown variant `failed`, expected one of `success`, `failure`, `cancelled`"
+        ),
+        "{error}"
+    );
 }
 
 #[test_log::test]

@@ -300,6 +300,7 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
             "",
             "#1",
             "",
+            "automation weekly.md trigger",
             "automation weekly.md last run",
             "automation weekly.md next run",
         ],

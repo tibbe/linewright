@@ -15,6 +15,7 @@ use crate::domain::Timestamp;
 use crate::repo_files;
 use crate::store::Store;
 use crate::work_settings::{MAINTENANCE, Partial, RepositorySetting, SETUP};
+use crate::workflow_run::{Filters, null_as_default};
 
 pub const DIR: &str = repo_files::linewright_path!("/automations");
 
@@ -35,6 +36,7 @@ pub struct Automation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trigger {
     Schedule(Schedule),
+    WorkflowRun(Filters),
 }
 
 impl Trigger {
@@ -42,13 +44,14 @@ impl Trigger {
     pub fn describe(&self) -> String {
         match self {
             Trigger::Schedule(schedule) => schedule.describe(),
+            Trigger::WorkflowRun(filters) => filters.describe(),
         }
     }
 }
 
 /// A cron expression's five fields, in UTC.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Schedule(Cron);
+pub struct Schedule(Box<Cron>);
 
 impl Schedule {
     fn parse(expression: &str) -> Result<Schedule> {
@@ -57,7 +60,7 @@ impl Schedule {
             .year(Year::Disallowed)
             .build()
             .parse(expression)
-            .map(Schedule)
+            .map(|cron| Schedule(Box::new(cron)))
             .map_err(|e| anyhow!("`on.schedule` is {expression:?}, not a cron expression: {e}"))
     }
 
@@ -146,13 +149,16 @@ impl LastScheduledRuns {
         self.0.insert(name.clone(), at);
     }
 
+    /// Drops `name`'s last scheduled run, if it has one.
+    pub fn forget(&mut self, name: &AutomationName) {
+        self.0.remove(name);
+    }
+
     /// As `recorded` has `name`'s last scheduled run, or none.
     pub fn restore(&mut self, name: &AutomationName, recorded: &LastScheduledRuns) {
         match recorded.get(name) {
             Some(at) => self.record(name, at),
-            None => {
-                self.0.remove(name);
-            }
+            None => self.forget(name),
         }
     }
 
@@ -283,7 +289,25 @@ struct FrontMatter {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct On {
-    schedule: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    schedule: Option<String>,
+    /// With no value, it is every filter left out.
+    #[serde(default, deserialize_with = "null_as_default")]
+    workflow_run: Option<Filters>,
+}
+
+impl On {
+    /// Its one trigger (`docs/specs/automations.md`, The trigger).
+    fn trigger(self) -> Result<Trigger> {
+        match (self.schedule, self.workflow_run) {
+            (Some(schedule), None) => Ok(Trigger::Schedule(Schedule::parse(&schedule)?)),
+            (None, Some(filters)) => Ok(Trigger::WorkflowRun(filters)),
+            (Some(_), Some(_)) => bail!(
+                "`on` holds both `schedule` and `workflow_run`: an automation has exactly one trigger"
+            ),
+            (None, None) => bail!("`on` holds no trigger: it holds `schedule` or `workflow_run`"),
+        }
+    }
 }
 
 pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
@@ -311,7 +335,7 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
     }
     Ok(Automation {
         name: name.clone(),
-        trigger: Trigger::Schedule(Schedule::parse(&front.on.schedule)?),
+        trigger: front.on.trigger()?,
         session,
         max_issues: front.max_issues.unwrap_or(DEFAULT_MAX_ISSUES),
         instructions: body.to_string(),

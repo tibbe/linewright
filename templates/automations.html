@@ -25,8 +25,8 @@
 {%- match column %}
 {%- when AutomationsColumn::Name %}
 <th class="{{ column.align() }}">{{ row.name }}</th>
-{%- when AutomationsColumn::Schedule %}
-<td class="{{ column.align() }}">{{ row.schedule }}</td>
+{%- when AutomationsColumn::Trigger %}
+<td class="{{ column.align() }}">{{ row.trigger }}</td>
 {%- when AutomationsColumn::LastRun %}
 <td class="{{ column.align() }}">
 {%- match row.last_run -%}
@@ -37,7 +37,7 @@
 {%- endmatch -%}
 </td>
 {%- when AutomationsColumn::NextRun %}
-<td class="{{ column.align() }}">{{ row.next_run|safe }}</td>
+<td class="{{ column.align() }}">{%- if let Some(next_run) = row.next_run %}{{ next_run|safe }}{%- endif %}</td>
 {%- endmatch %}
 {%- endfor %}
 </tr>

@@ -82,3 +82,28 @@ async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
 
     assert_eq!(world.harness.automation_prompts().len(), 2);
 }
+
+#[test_log::test(tokio::test)]
+async fn an_automation_back_on_a_schedule_after_workflow_runs_counts_as_new() {
+    let mut world = World::new().await;
+    add_automation(&world, "hourly.md", HOURLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world.poll().await;
+    world.clock.advance(TimeDelta::minutes(30));
+    add_automation(
+        &world,
+        "hourly.md",
+        "---\non:\n  workflow_run:\n    conclusions: [failure]\n---\nLook around.\n",
+    )
+    .await;
+    world.poll().await;
+    world.clock.advance(TimeDelta::hours(1));
+
+    add_automation(&world, "hourly.md", HOURLY).await;
+    world.poll().await;
+    assert_eq!(world.harness.automation_prompts().len(), 0, "seen anew");
+    world.clock.advance(TimeDelta::hours(1));
+    world.poll().await;
+
+    assert_eq!(world.harness.automation_prompts().len(), 1);
+}
