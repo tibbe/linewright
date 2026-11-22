@@ -565,7 +565,7 @@ impl NewBenchmarkRunForm {
     }
 
     fn title(&self) -> String {
-        format!("New benchmark run on {}", self.benchmark)
+        launch_title(&self.benchmark)
     }
 
     fn count(&self) -> String {
@@ -827,11 +827,22 @@ pub(super) async fn launch(
     }
 }
 
+/// The id of the New benchmark run dialog.
+pub(super) const NEW_BENCHMARK_RUN: &str = "new-benchmark-run";
+
+/// The id of its title, a region of Benchmark's stream.
+pub(super) const NEW_BENCHMARK_RUN_TITLE: &str = "new-benchmark-run-title";
+
+/// The title of the New benchmark run dialog of benchmark `benchmark`.
+pub(super) fn launch_title(benchmark: impl std::fmt::Display) -> String {
+    format!("New benchmark run on {benchmark}")
+}
+
 /// The refusal of repetitions that are not a whole number, 1 or more.
 const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 
 /// The refusal of the name `name` that another configuration has.
-fn another_named(name: &Name) -> String {
+pub(super) fn another_named(name: &Name) -> String {
     format!("Another configuration is named {name}.")
 }
 

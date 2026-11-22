@@ -57,6 +57,8 @@ icons! {
     Trash: "trash", "icons/heroicons/trash.svg";
     Play: "play", "icons/heroicons/play.svg";
     XMark: "x-mark", "icons/heroicons/x-mark.svg";
+    PencilSquare: "pencil-square", "icons/heroicons/pencil-square.svg";
+    Check: "check", "icons/heroicons/check.svg";
     Bars3: "bars-3", "icons/heroicons/bars-3.svg";
     #[cfg_attr(
         not(test),
@@ -314,6 +316,8 @@ mod tests {
             (Verb::RunBenchmark, "Run benchmark", Icon::Play),
             (Verb::AddConfiguration, "Add a configuration", Icon::Plus),
             (Verb::KeepRunning, "Keep running", Icon::Play),
+            (Verb::Edit, "Edit", Icon::PencilSquare),
+            (Verb::Save, "Save", Icon::Check),
             (Verb::CloseDialog, "Cancel", Icon::XMark),
         ] {
             assert_eq!((verb.label(), verb.icon()), (label, icon), "{verb:?}");

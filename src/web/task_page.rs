@@ -1,5 +1,6 @@
-//! Task (`docs/specs/benchmarks.md`, Task and Remove task): task ID's
-//! heading, its facts and its criteria, and the confirmation that removes it.
+//! Task (`docs/specs/benchmarks.md`, Task, Edit task and Remove task): task
+//! ID's heading, its facts and its criteria, the dialog that changes it and
+//! the confirmation that removes it.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -12,6 +13,7 @@ use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
 use super::confirmation::{Confirmation, TurnDown};
+use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::stats::{Stat, absent};
@@ -24,6 +26,9 @@ const TASK: &str = "Task";
 
 /// The id of the dialog "Remove" opens.
 const REMOVE: &str = "remove-task";
+
+/// The id of its question, which the `confirm_dialog` macro gives it.
+const REMOVE_QUESTION: &str = "remove-task_question";
 
 /// A task's criteria, as Task shows them.
 enum CriteriaShown {
@@ -119,6 +124,8 @@ struct TaskPage {
     page: Page,
     frame: Frame,
     task: TaskView,
+    edit: EditDialog,
+    edit_values: Html,
 }
 
 #[derive(Template)]
@@ -133,8 +140,19 @@ struct CriteriaRegion<'a> {
     task: &'a TaskView,
 }
 
+/// The question of the task's removal, a region of Task's stream, so that
+/// it names the task as it is named now.
+#[derive(Template)]
+#[template(
+    source = r#"<p id="{{ REMOVE_QUESTION }}">{{ task.remove.question }}</p>"#,
+    ext = "html"
+)]
+struct QuestionRegion<'a> {
+    task: &'a TaskView,
+}
+
 /// The page of `task`: under its benchmark, its heading its name with its
-/// stage under it, and "Remove" among the screen's buttons
+/// stage under it, and "Edit" then "Remove" among the screen's buttons
 /// (`docs/specs/benchmarks.md`, Task, Heading).
 fn page(task: &TaskShown, navigation: Navigation) -> Page {
     let heading = Heading {
@@ -151,10 +169,13 @@ fn page(task: &TaskShown, navigation: Navigation) -> Page {
         stream(task.id),
         navigation,
     )
-    .buttons(vec![ScreenButton::Act {
-        verb: Verb::Remove,
-        dialog: REMOVE.into(),
-    }])
+    .buttons(vec![
+        editing::edit_task_button(),
+        ScreenButton::Act {
+            verb: Verb::Remove,
+            dialog: REMOVE.into(),
+        },
+    ])
 }
 
 /// Why there is no task page: no such task, or one that does not read.
@@ -184,6 +205,8 @@ pub(super) async fn task_page(
             page: page(&task, navigation),
             frame,
             task: TaskView::of(&task, &sources.work_dir.repo),
+            edit: editing::edit_task(&task),
+            edit_values: html::built(editing::task_values(&task)),
         }
         .into_response(),
         Err(unshown) => {
@@ -214,7 +237,8 @@ pub(super) async fn task_page(
 }
 
 /// Task's regions: the notices, and while the task reads, the rest of the
-/// shell's, its facts and its criteria.
+/// shell's, its facts, its criteria, the question of its removal and the
+/// values Edit task starts from.
 pub(super) async fn task_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -233,6 +257,8 @@ pub(super) async fn task_events(
             let mut regions = shell::regions(&frame, &page(&task, navigation));
             regions.push(("task", render(&FactsRegion { task: &view })));
             regions.push(("criteria", render(&CriteriaRegion { task: &view })));
+            regions.push((REMOVE_QUESTION, render(&QuestionRegion { task: &view })));
+            regions.push((editing::EDIT_TASK_VALUES, editing::task_values(&task)));
             regions
         }
     };

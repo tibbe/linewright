@@ -21,19 +21,21 @@
 {%- call(part) ui::table_card("Tasks", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
-{%- call ui::new_button("new-task") %}{% endcall %}
+{%- call ui::new_button(NEW_TASK) %}{% endcall %}
 {%- when crate::web::table::Part::Table %}
 {%- include "benchmark_tasks.html" %}
 {%- when crate::web::table::Part::Filters %}
 {%- endmatch %}
 {%- endcall %}
 </div>
-{%- call ui::new_dialog("new-task", path) %}
+{%- call ui::new_dialog(NEW_TASK, path) %}
 {{ new_task }}
 {%- endcall %}
-{%- call ui::new_dialog("new-benchmark-run", self.launch_path(), wide = true, form_class = "launch") %}
+{%- call ui::new_dialog(NEW_BENCHMARK_RUN, self.launch_path(), wide = true, form_class = "launch") %}
 {{ new_benchmark_run }}
 {%- endcall %}
+{%- call ui::edit_dialog(edit_benchmark) %}{% endcall %}
+{{ edit_benchmark_values }}
 <template id="configuration-template">{{ added_configuration }}</template>
 <template id="brief-file-template">{{ added_file }}</template>
 {{ brief_texts }}

@@ -17,6 +17,8 @@ pub(super) enum Verb {
     RunBenchmark,
     AddConfiguration,
     KeepRunning,
+    Edit,
+    Save,
     /// "Cancel" that closes a dialog.
     CloseDialog,
 }
@@ -31,6 +33,8 @@ impl Verb {
             Verb::RunBenchmark => "Run benchmark",
             Verb::AddConfiguration => "Add a configuration",
             Verb::KeepRunning => "Keep running",
+            Verb::Edit => "Edit",
+            Verb::Save => "Save",
         }
     }
 
@@ -41,6 +45,8 @@ impl Verb {
             Verb::AddTask | Verb::Create | Verb::AddConfiguration => Icon::Plus,
             Verb::Remove => Icon::Trash,
             Verb::RunBenchmark | Verb::KeepRunning => Icon::Play,
+            Verb::Edit => Icon::PencilSquare,
+            Verb::Save => Icon::Check,
             Verb::CloseDialog => Icon::XMark,
         }
     }

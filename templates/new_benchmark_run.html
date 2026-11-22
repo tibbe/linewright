@@ -1,5 +1,5 @@
 {%- import "macros.html" as ui -%}
-{%- call ui::new_form("new-benchmark-run", self.title(), crate::web::buttons::Verb::RunBenchmark, making.whole()) %}
+{%- call ui::new_form(NEW_BENCHMARK_RUN, self.title(), crate::web::buttons::Verb::RunBenchmark, making.whole()) %}
 <p class="label">Configurations</p>
 <div class="configurations flex flex-col gap-3">
 <fieldset class="configuration as-is fieldset rounded-box border border-base-300 p-3"><legend class="fieldset-legend">as-is</legend><p class="text-base-content/60 text-sm">It holds nothing: the stage as it is.</p></fieldset>

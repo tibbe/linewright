@@ -1,4 +1,4 @@
-use super::benchmarks::with_benchmarks;
+use super::benchmarks::{edit_form, saved_regions, with_benchmarks};
 use super::*;
 
 use std::panic::Location;
@@ -759,7 +759,8 @@ async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
 
 /// The configurations table's rows that are not under another, and those
 /// under the row `of`, each its id, whether it is hidden and the text of its
-/// cells after its leading cell, which holds its chevron.
+/// cells between its leading cell, which holds its chevron, and its last,
+/// which holds its buttons.
 #[track_caller]
 fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> {
     let selector = match of {
@@ -772,10 +773,13 @@ fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> 
             (
                 row.attr("id").unwrap().to_string(),
                 row.attr("hidden").is_some(),
-                select_in(row, ":scope > th, :scope > td:not(:first-child)")
-                    .into_iter()
-                    .map(text)
-                    .collect(),
+                select_in(
+                    row,
+                    ":scope > th, :scope > td:not(:first-child):not(:last-child)",
+                )
+                .into_iter()
+                .map(text)
+                .collect(),
             )
         })
         .collect()
@@ -809,7 +813,8 @@ async fn the_configurations_table_shows_each_configurations_figures() {
             "Mean time",
             "Total time",
             "Leaks",
-            "Unscored"
+            "Unscored",
+            ""
         ]
     );
     assert_eq!(
@@ -847,7 +852,7 @@ async fn the_configurations_table_shows_each_configurations_figures() {
     );
     let alignments = alignments(&html, "#configurations");
     let expected = [
-        "none", "start", "start", "end", "end", "end", "end", "start", "start",
+        "none", "start", "start", "end", "end", "end", "end", "start", "start", "start",
     ];
     assert_eq!(alignments[0], expected);
     assert_eq!(alignments[1], expected);
@@ -2253,4 +2258,247 @@ fn as_sent(fields: &[(String, String)]) -> Vec<(&str, &str)> {
         .iter()
         .map(|(field, value)| (field.as_str(), value.as_str()))
         .collect()
+}
+
+/// A button at the end of a row: its label, what a screen reader reads and
+/// the dialog it opens.
+type RowButton = (String, String, String);
+
+/// The buttons at the end of each of the configurations table's rows that
+/// is not under another, by row id, each a ghost `btn-xs` with its icon
+/// before its label.
+#[track_caller]
+fn row_buttons(html: &Html) -> Vec<(String, Vec<RowButton>)> {
+    select(html, "#configurations tbody tr:not([data-fold-of])")
+        .into_iter()
+        .map(|row| {
+            let buttons = select_in(row, ":scope > td:last-child button")
+                .into_iter()
+                .map(|button| {
+                    assert!(
+                        has_classes(button, &["btn", "btn-ghost", "btn-xs"]),
+                        "{}",
+                        button.html()
+                    );
+                    assert_eq!(
+                        select_in(button, ":scope > svg:first-child")[0].attr("data-icon"),
+                        Some("pencil-square")
+                    );
+                    (
+                        text(button),
+                        button.attr("aria-label").unwrap_or_default().to_string(),
+                        button.attr("commandfor").unwrap_or_default().to_string(),
+                    )
+                })
+                .collect();
+            (row.attr("id").unwrap().to_string(), buttons)
+        })
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, Edit configuration and Benchmark runs, The
+/// configurations: "Edit" at the end of each configuration's row but
+/// `as-is`'s; `docs/specs/design_system.md`, Editing, Edit and The dialog.
+#[test_log::test(tokio::test)]
+async fn each_configuration_but_as_is_has_edit_at_the_end_of_its_row() {
+    let pages = with_benchmark_run().await;
+
+    let html = pages.page("/benchmark-runs/1").await;
+
+    assert_eq!(
+        row_buttons(&html),
+        [
+            ("configuration-1".to_string(), vec![]),
+            (
+                "configuration-2".to_string(),
+                vec![(
+                    "Edit".to_string(),
+                    "Edit short".to_string(),
+                    "edit-configuration-2".to_string()
+                )]
+            ),
+        ]
+    );
+    assert_eq!(
+        select(&html, "#configurations tr[data-fold-of] button[commandfor]").len(),
+        0
+    );
+    assert_eq!(select(&html, "dialog[id='edit-configuration-1']").len(), 0);
+    assert_eq!(select(&html, "#configurations dialog").len(), 0);
+    let dialog = select(&html, "dialog[id='edit-configuration-2']")[0];
+    let form = edit_form(
+        dialog,
+        "Edit configuration",
+        &["Name"],
+        "/benchmark-runs/1/configurations/2",
+    );
+    assert_eq!(
+        making_shown(&form),
+        MakingShown {
+            values: vec![("name", "short".into())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+}
+
+/// `docs/specs/design_system.md`, Editing, Saving: the dialog closes holding
+/// what was saved, and the table names the configuration so, while the
+/// benchmark run runs and after it ends.
+#[test_log::test(tokio::test)]
+async fn saving_a_configurations_name_closes_the_dialog_and_the_table_shows_it() {
+    let pages = with_benchmark_run().await;
+    let mut events = stream(&pages, "/events/benchmark-runs/1").await;
+    events.recv().await.unwrap();
+
+    let (status, headers, answer) = post_answer(
+        &pages,
+        "/benchmark-runs/1/configurations/2",
+        &[SAME_ORIGIN],
+        &[("name", " Short brief ")],
+    )
+    .await;
+
+    assert_eq!(status, 200, "{}", answer.html());
+    assert_eq!(headers.get("hx-trigger").unwrap(), "made");
+    assert_eq!(
+        making_shown(&answer),
+        MakingShown {
+            values: vec![("name", "Short brief".into())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+    let changed = saved_regions(
+        &mut events,
+        "configurations",
+        "#configuration-2 > th",
+        "Short brief",
+    )
+    .await;
+    assert_eq!(
+        row_buttons(region_of(&changed, "configurations"))[1].1[0].1,
+        "Edit Short brief"
+    );
+    let values: Vec<(Option<&str>, Option<&str>)> = select(
+        region_of(&changed, "edit-configurations-values"),
+        "div[hidden] > div",
+    )
+    .into_iter()
+    .map(|values| (values.attr("id"), values.attr("data-name")))
+    .collect();
+    assert_eq!(
+        values,
+        [(Some("edit-configuration-2-values"), Some("Short brief"))]
+    );
+
+    let (cancelled, _) = post(&pages, "/benchmark-runs/1/cancel", &[SAME_ORIGIN], &[]).await;
+    assert_eq!(cancelled, 200);
+    let (after, _) = post(
+        &pages,
+        "/benchmark-runs/1/configurations/2",
+        &[SAME_ORIGIN],
+        &[("name", "Shorter")],
+    )
+    .await;
+    assert_eq!(after, 200);
+    let html = pages.page("/benchmark-runs/1").await;
+    assert_eq!(text(select(&html, "#configuration-2 > th")[0]), "Shorter");
+    assert_eq!(
+        select(&html, "dialog[id='edit-configuration-2'] form")[0].attr("data-values"),
+        Some("edit-configuration-2-values")
+    );
+    assert_eq!(
+        select(&html, "[id='edit-configuration-2-values']")[0].attr("data-name"),
+        Some("Shorter")
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Edit configuration, Refusals;
+/// `docs/specs/design_system.md`, Editing, Required and refused, and A thing
+/// that is gone.
+#[test_log::test(tokio::test)]
+async fn a_refused_configuration_name_keeps_what_the_reader_typed_with_its_reason() {
+    let pages = with_benchmark_run().await;
+
+    for (path, name, status, refused, whole) in [
+        (
+            "/benchmark-runs/1/configurations/2",
+            "",
+            422,
+            vec![("name", "Required.")],
+            None,
+        ),
+        (
+            "/benchmark-runs/1/configurations/2",
+            "as-is",
+            422,
+            vec![("name", "Another configuration is named as-is.")],
+            None,
+        ),
+        (
+            "/benchmark-runs/1/configurations/1",
+            "plain",
+            422,
+            vec![],
+            Some("The configuration as-is keeps its name."),
+        ),
+        (
+            "/benchmark-runs/1/configurations/5",
+            "fresh",
+            404,
+            vec![],
+            Some("No such configuration 5"),
+        ),
+        (
+            "/benchmark-runs/9/configurations/2",
+            "fresh",
+            404,
+            vec![],
+            Some("No such benchmark run 9"),
+        ),
+        (
+            "/benchmark-runs/9/configurations/2",
+            "",
+            404,
+            vec![],
+            Some("No such benchmark run 9"),
+        ),
+        (
+            "/benchmark-runs/1/configurations/1",
+            "",
+            422,
+            vec![],
+            Some("The configuration as-is keeps its name."),
+        ),
+    ] {
+        let (answered, headers, form) =
+            post_answer(&pages, path, &[SAME_ORIGIN], &[("name", name)]).await;
+
+        assert_eq!(answered, status, "{path} {name:?}");
+        assert!(headers.get("hx-trigger").is_none());
+        assert_eq!(
+            making_shown(&form),
+            MakingShown {
+                values: vec![("name", name.to_string())],
+                refused: refused
+                    .iter()
+                    .map(|(field, reason)| (*field, (*reason).to_string()))
+                    .collect(),
+                whole: whole.map(String::from),
+            },
+            "{path} {name:?}"
+        );
+        assert_eq!(text(select(&form, "legend")[0]), "Edit configuration");
+    }
+    let (cross_site, _) = post(
+        &pages,
+        "/benchmark-runs/1/configurations/2",
+        &[CROSS_SITE],
+        &[("name", "fresh")],
+    )
+    .await;
+    assert_eq!(cross_site, 403);
+    let html = pages.page("/benchmark-runs/1").await;
+    assert_eq!(text(select(&html, "#configuration-2 > th")[0]), "short");
 }

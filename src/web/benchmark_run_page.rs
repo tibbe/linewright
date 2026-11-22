@@ -21,6 +21,7 @@ use tracing::{info, warn};
 
 use super::buttons::{ScreenButton, Verb};
 use super::confirmation::{Confirmation, TurnDown};
+use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::launch::counted;
 use super::names::Names;
@@ -312,6 +313,9 @@ struct FiguresRow {
     pass_rate: PassRate,
     /// Its cells under `ConfigurationsColumn::FIGURES`.
     figures: [String; 6],
+    /// The id of the dialog its "Edit" opens: a configuration's but `as-is`
+    /// (`docs/specs/benchmarks.md`, Benchmark runs, The configurations).
+    edit: Option<String>,
 }
 
 /// What a figures row is of, and the id of the row a task's or a
@@ -430,10 +434,12 @@ enum ConfigurationsColumn {
     TotalTime,
     Leaks,
     Unscored,
+    /// "Edit", at the end of a configuration's row.
+    Edit,
 }
 
 impl ConfigurationsColumn {
-    const ALL: [ConfigurationsColumn; 8] = [
+    const ALL: [ConfigurationsColumn; 9] = [
         ConfigurationsColumn::Name,
         ConfigurationsColumn::PassRate,
         ConfigurationsColumn::MeanCost,
@@ -442,6 +448,7 @@ impl ConfigurationsColumn {
         ConfigurationsColumn::TotalTime,
         ConfigurationsColumn::Leaks,
         ConfigurationsColumn::Unscored,
+        ConfigurationsColumn::Edit,
     ];
 
     /// The columns of a row's figures.
@@ -464,6 +471,7 @@ impl ConfigurationsColumn {
             ConfigurationsColumn::TotalTime => "Total time",
             ConfigurationsColumn::Leaks => "Leaks",
             ConfigurationsColumn::Unscored => "Unscored",
+            ConfigurationsColumn::Edit => "",
         }
     }
 
@@ -474,7 +482,8 @@ impl ConfigurationsColumn {
             ConfigurationsColumn::Name
             | ConfigurationsColumn::PassRate
             | ConfigurationsColumn::Leaks
-            | ConfigurationsColumn::Unscored => Column::Other,
+            | ConfigurationsColumn::Unscored
+            | ConfigurationsColumn::Edit => Column::Other,
         })
         .class()
     }
@@ -825,6 +834,7 @@ fn rows(
                     .map_or_else(|| ABSENT.into(), |rate| percent(Some(rate))),
             ),
             figures: figure_cells(&configuration.figures),
+            edit: editing::edit_configuration_id(configuration.id),
         }));
         for (k, task) in record.tasks.iter().enumerate() {
             let id = task_id(task);
@@ -851,6 +861,7 @@ fn rows(
                 pass_rate: PassRate::Text(passes_of(of_task.and_then(|of_task| of_task.passes))),
                 figures: of_task
                     .map_or_else(Default::default, |of_task| figure_cells(&of_task.figures)),
+                edit: None,
             }));
             for (key, state) in trials {
                 let trial = TrialAt {
@@ -932,6 +943,7 @@ fn trial_rows(
             String::new(),
             String::new(),
         ],
+        edit: None,
     })];
     if opens {
         rows.push(Row::Trial(details));
@@ -945,6 +957,10 @@ struct BenchmarkRunPage {
     page: Page,
     frame: Frame,
     benchmark_run: BenchmarkRunView,
+    /// The Edit configuration dialog of each configuration but `as-is`.
+    edits: Vec<EditDialog>,
+    /// The values they start from.
+    edit_values: Html,
 }
 
 #[derive(Template)]
@@ -1160,10 +1176,13 @@ pub(super) async fn benchmark_run_page(
                 paging,
                 cancels,
             );
+            let edits = editing::edit_configurations(&record);
             BenchmarkRunPage {
                 page: benchmark_run.page(&record, cancels, paging, navigation),
                 frame,
                 benchmark_run,
+                edits,
+                edit_values: html::built(editing::configuration_values(&record)),
             }
             .into_response()
         }
@@ -1193,7 +1212,8 @@ pub(super) async fn benchmark_run_page(
 }
 
 /// The benchmark run page's regions: the notices, and once the benchmark run
-/// reads, the rest of the shell's and the benchmark run's.
+/// reads, the rest of the shell's, the benchmark run's and the values its
+/// Edit configuration dialogs start from.
 pub(super) async fn benchmark_run_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -1219,6 +1239,10 @@ pub(super) async fn benchmark_run_events(
                 &benchmark_run.page(&record, cancels, paging, navigation),
             );
             regions.extend(benchmark_run.regions());
+            regions.push((
+                editing::EDIT_CONFIGURATIONS_VALUES,
+                editing::configuration_values(&record),
+            ));
             regions
         }
     };

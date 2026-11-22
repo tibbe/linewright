@@ -787,8 +787,9 @@ async fn the_benchmark_pages_tab_links_carry_its_pages_and_open_on_the_page_aske
 #[test_log::test(tokio::test)]
 async fn every_write_from_another_site_is_refused_and_writes_nothing() {
     let pages = with_benchmarks().await;
-    let writes: [(&str, &[(&str, &str)]); 3] = [
+    let writes: [(&str, &[(&str, &str)]); 4] = [
         ("/benchmarks", &[("name", "fresh"), ("stage", "design")]),
+        ("/benchmarks/1/edit", &[("name", "fresh")]),
         (
             "/benchmarks/1",
             &[
@@ -1715,4 +1716,230 @@ async fn benchmarks_named_in_plain_words_are_listed_by_the_unicode_collation_alg
         rows(&filtered, "#benchmarks"),
         [["Banana", "design", "", "View"]]
     );
+}
+
+/// The dialog "Edit" opens on `html`: its button among the screen's buttons,
+/// a plain `btn` with `pencil-square` before its label
+/// (`docs/specs/web/design_system.md`, Editing and Icons), and the form of
+/// the dialog it opens.
+#[track_caller]
+pub(super) fn edit_dialog(html: &Html) -> ElementRef<'_> {
+    let edit: Vec<ElementRef> = select(html, "#buttons button")
+        .into_iter()
+        .filter(|button| text(*button) == "Edit")
+        .collect();
+    assert_eq!(edit.len(), 1, "{}", html.html());
+    assert!(has_classes(edit[0], &["btn"]), "{}", edit[0].html());
+    assert!(
+        !edit[0]
+            .value()
+            .classes()
+            .any(|class| class.starts_with("btn-") && class != "btn-sm"),
+        "{}",
+        edit[0].html()
+    );
+    assert_eq!(
+        select_in(edit[0], ":scope > svg:first-child")[0].attr("data-icon"),
+        Some("pencil-square")
+    );
+    let id = edit[0].attr("commandfor").unwrap();
+    let dialog = select(html, &format!("dialog[id='{id}']"));
+    assert_eq!(dialog.len(), 1, "{}", html.html());
+    dialog[0]
+}
+
+/// A dialog's form drawn as Editing says (`docs/specs/design_system.md`,
+/// Editing, The dialog; `docs/specs/web/design_system.md`, Editing): titled
+/// `title`, with the fields `labels` above them, then "Cancel" and "Save",
+/// posting to `action`, and what its form holds.
+#[track_caller]
+pub(super) fn edit_form(
+    dialog: ElementRef<'_>,
+    title: &str,
+    labels: &[&str],
+    action: &str,
+) -> Html {
+    let legend = select_in(dialog, "form fieldset > legend.fieldset-legend");
+    assert_eq!(text(legend[0]), title);
+    assert_eq!(dialog.attr("aria-labelledby"), legend[0].attr("id"));
+    let form = select_in(dialog, "form[hx-post]")[0];
+    assert_eq!(form.attr("hx-post"), Some(action));
+    assert_eq!(form.attr("action"), Some(action));
+    assert_eq!(form.attr("hx-target"), Some("this"));
+    let shown: Vec<String> = select_in(form, "fieldset label")
+        .into_iter()
+        .map(text)
+        .collect();
+    assert_eq!(shown, labels);
+    let buttons = select_in(form, ".modal-action button");
+    assert_eq!(
+        buttons
+            .iter()
+            .map(|button| text(*button))
+            .collect::<Vec<_>>(),
+        ["Cancel", "Save"]
+    );
+    assert_eq!(buttons[0].attr("commandfor"), dialog.attr("id"));
+    assert_eq!(buttons[1].attr("type"), Some("submit"));
+    assert!(has_classes(buttons[1], &["btn-primary"]));
+    assert_eq!(
+        select_in(buttons[1], ":scope > svg:first-child")[0].attr("data-icon"),
+        Some("check")
+    );
+    Html::parse_fragment(&form.inner_html())
+}
+
+/// `docs/specs/benchmarks.md`, Edit benchmark; `docs/specs/design_system.md`,
+/// Editing, Edit and The dialog.
+#[test_log::test(tokio::test)]
+async fn edit_opens_the_edit_benchmark_dialog_holding_its_name() {
+    let pages = with_benchmarks().await;
+
+    let html = pages.page("/benchmarks/1").await;
+
+    let form = edit_form(
+        edit_dialog(&html),
+        "Edit benchmark",
+        &["Name"],
+        "/benchmarks/1/edit",
+    );
+    assert_eq!(
+        making_shown(&form),
+        MakingShown {
+            values: vec![("name", "board".into())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+}
+
+/// `docs/specs/design_system.md`, Editing, Saving: the dialog closes holding
+/// what was saved, and the screen shows the new name.
+#[test_log::test(tokio::test)]
+async fn saving_a_benchmarks_name_closes_the_dialog_and_the_screen_shows_it() {
+    let pages = with_benchmarks().await;
+    let mut events = stream(&pages, "/events/benchmarks/1").await;
+    events.recv().await.unwrap();
+
+    let (status, headers, answer) = post_answer(
+        &pages,
+        "/benchmarks/1/edit",
+        &[SAME_ORIGIN],
+        &[("name", "  Board games ")],
+    )
+    .await;
+
+    assert_eq!(status, 200, "{}", answer.html());
+    assert_eq!(headers.get("hx-trigger").unwrap(), "made");
+    assert_eq!(
+        making_shown(&answer),
+        MakingShown {
+            values: vec![("name", "Board games".into())],
+            refused: vec![],
+            whole: None,
+        }
+    );
+    let changed = saved_regions(&mut events, "heading", "h1", "Board games").await;
+    assert_eq!(
+        text(select(region_of(&changed, "new-task-title"), "legend")[0]),
+        "New task in Board games"
+    );
+    assert_eq!(
+        text(select(region_of(&changed, "new-benchmark-run-title"), "legend")[0]),
+        "New benchmark run on Board games"
+    );
+    assert_eq!(
+        select(region_of(&changed, "edit-benchmark-values"), "div")[0].attr("data-name"),
+        Some("Board games")
+    );
+    let html = pages.page("/benchmarks/1").await;
+    for (id, _) in &changed {
+        assert_eq!(select(&html, &format!("[id='{id}']")).len(), 1, "{id}");
+    }
+    assert_eq!(
+        select(&html, "dialog[id='edit-benchmark'] form")[0].attr("data-values"),
+        Some("edit-benchmark-values")
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Edit benchmark, Refusals;
+/// `docs/specs/design_system.md`, Editing, Required and refused, and A thing
+/// that is gone.
+#[test_log::test(tokio::test)]
+async fn a_refused_benchmark_name_keeps_what_the_reader_typed_with_its_reason() {
+    let pages = with_benchmarks().await;
+
+    for (path, name, status, refused, whole) in [
+        (
+            "/benchmarks/1/edit",
+            " ",
+            422,
+            vec![("name", "Required.")],
+            None,
+        ),
+        (
+            "/benchmarks/1/edit",
+            "Board\n2",
+            422,
+            vec![("name", ONE_LINE)],
+            None,
+        ),
+        (
+            "/benchmarks/1/edit",
+            "triage-basics",
+            422,
+            vec![("name", "A benchmark named triage-basics already exists.")],
+            None,
+        ),
+        (
+            "/benchmarks/9/edit",
+            "fresh",
+            404,
+            vec![],
+            Some("No such benchmark 9"),
+        ),
+    ] {
+        let (answered, headers, form) =
+            post_answer(&pages, path, &[SAME_ORIGIN], &[("name", name)]).await;
+
+        assert_eq!(answered, status, "{path} {name:?}");
+        assert!(headers.get("hx-trigger").is_none());
+        assert_eq!(
+            making_shown(&form),
+            MakingShown {
+                values: vec![("name", name.to_string())],
+                refused: refused
+                    .iter()
+                    .map(|(field, reason)| (*field, (*reason).to_string()))
+                    .collect(),
+                whole: whole.map(String::from),
+            },
+            "{path} {name:?}"
+        );
+        assert_eq!(text(select(&form, "legend")[0]), "Edit benchmark");
+    }
+    let html = pages.page("/benchmarks/1").await;
+    assert_eq!(text(select(&html, "#heading h1")[0]), "board");
+}
+
+/// The regions of the first event from `events` whose region `region` holds
+/// `text` in its `selector`: the regions a save changed, which a stream sends
+/// together.
+pub(super) async fn saved_regions(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<String>,
+    region: &str,
+    selector: &str,
+    text_now: &str,
+) -> Vec<(String, Html)> {
+    loop {
+        let changed = regions(&events.recv().await.unwrap());
+        if changed.iter().any(|(id, html)| {
+            id == region
+                && select(html, selector)
+                    .first()
+                    .is_some_and(|shown| text(*shown) == text_now)
+        }) {
+            return changed;
+        }
+    }
 }

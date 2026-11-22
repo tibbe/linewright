@@ -13,6 +13,7 @@ use super::benchmark_page::BenchmarkTab;
 use super::html::{self, Html};
 use super::making::{
     self, Answer, Field, FieldRefusals, Form, MadeShown, Making, REQUIRED, benchmark_taken, both,
+    task_taken,
 };
 use super::write::Write;
 use super::{benchmark_tab_path, benchmarks, run_path};
@@ -251,8 +252,8 @@ impl CaptureForm {
     }
 }
 
-/// What a capture's form sends of the task.
-#[derive(Default, Deserialize)]
+/// What a capture's form, or Edit task's, sends of the task.
+#[derive(Clone, Default, Deserialize)]
 pub(super) struct TaskFields {
     #[serde(default)]
     pub(super) name: String,
@@ -261,22 +262,29 @@ pub(super) struct TaskFields {
 }
 
 impl TaskFields {
-    /// The task they name, or else the refusal of each field that does not
-    /// hold its part (`docs/specs/benchmarks.md`, Capturing, Refusals on a
-    /// screen; `docs/specs/design_system.md`, Making, Required).
+    /// The task they name, its criteria with each line break as typed, which
+    /// a browser sends as CR LF
+    /// (<https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element>),
+    /// or else the refusal of each field that does not hold its part
+    /// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen;
+    /// `docs/specs/design_system.md`, Making, Required).
     pub(super) fn checked(&self) -> Result<Task, FieldRefusals<TaskField>> {
         let name =
             making::parse_name(&self.name).map_err(|why| FieldRefusals::of(TaskField::Name, why));
-        let criteria = Criteria::parse(&self.criteria)
+        let criteria = Criteria::parse(&self.criteria.replace("\r\n", "\n"))
             .ok_or_else(|| FieldRefusals::of(TaskField::Criteria, REQUIRED));
         both(name, criteria).map(|(name, criteria)| Task { name, criteria })
     }
 }
 
-/// A task a capture makes.
+impl Form for TaskFields {
+    type Field = TaskField;
+}
+
+/// A task a capture makes, or the change of a task that Edit task saves.
 pub(super) struct Task {
-    name: Name,
-    criteria: Criteria,
+    pub(super) name: Name,
+    pub(super) criteria: Criteria,
 }
 
 /// A field of a capture's task, which New task and Add task both draw.
@@ -440,9 +448,7 @@ impl NotCaptured {
     /// the capture's own wording.
     fn reason(&self) -> String {
         match &self.error {
-            CaptureError::Taken { task, benchmark } => {
-                format!("A task named {task} already exists in {benchmark}.")
-            }
+            CaptureError::Taken { task, benchmark } => task_taken(task, benchmark),
             CaptureError::OtherStage {
                 run,
                 stage,

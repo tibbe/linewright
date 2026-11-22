@@ -183,15 +183,35 @@
     leaves it and what the reader typed in it as they were. Its form posts
     to `action`, and the answer, the form that `new_form` draws, replaces
     what the form holds. A `wide` dialog has room for fields side by
-    side, and `form_class` gives the form its classes. -#}
-{%- macro new_dialog(id, action, wide = false, form_class = "") -%}
+    side, and `form_class` gives the form its classes. A dialog that changes
+    a thing names in `values` the element whose values its fields start
+    from as it opens. -#}
+{%- macro new_dialog(id, action, wide = false, form_class = "", values = "") -%}
 <dialog id="{{ id }}" class="modal" aria-labelledby="{{ id }}-title">
 <div class="modal-box{% if wide %} max-w-3xl{% endif %}">
-<form{% if !form_class.is_empty() %} class="{{ form_class }}"{% endif %} method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new>
+<form{% if !form_class.is_empty() %} class="{{ form_class }}"{% endif %} method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new{% if !values.is_empty() %} data-values="{{ values }}"{% endif %}>
 {{- caller() }}
 </form>
 </div>
 </dialog>
+{%- endmacro -%}
+
+{#- A dialog that "Edit" opens (`docs/specs/design_system.md`, Editing;
+    `docs/specs/web/design_system.md`, Editing), a
+    `crate::web::editing::EditDialog`: the dialog that makes a thing, its
+    form holding the thing's values, and starting from those of its
+    `crate::web::editing::EditValues` as it opens. -#}
+{%- macro edit_dialog(dialog) -%}
+{%- call new_dialog(dialog.id, dialog.action, values = dialog.values_id()) %}
+{{ dialog.form }}
+{%- endcall %}
+{%- endmacro -%}
+
+{#- The title `title` of the making dialog `id`'s form, which a stream can
+    send as a region of its page, so that it names a thing as it is named
+    now. -#}
+{%- macro form_title(id, title) -%}
+<legend id="{{ id }}-title" class="fieldset-legend" data-region>{{ title }}</legend>
 {%- endmacro -%}
 
 {#- What the form of the making dialog `id` holds: the fieldset titled
@@ -201,7 +221,7 @@
     makes the thing, drawn by `new_submit` with `region` and `disabled`. -#}
 {%- macro new_form(id, title, verb, whole, region = "", disabled = false) -%}
 <fieldset class="fieldset">
-<legend id="{{ id }}-title" class="fieldset-legend">{{ title }}</legend>
+{% call form_title(id, title) %}{% endcall %}
 {{- caller() }}
 </fieldset>
 {%- if let Some(whole) = whole %}
@@ -273,11 +293,13 @@
 <a class="row-view btn btn-ghost btn-xs" href="{{ view.href }}" aria-label="View {{ view.name }}">View</a>
 {%- endmacro -%}
 
-{#- A button on a table's row (`docs/specs/web/design_system.md`, Buttons):
-    its verb's label after its icon, opening the dialog `dialog` with no
-    request. -#}
-{%- macro row_button(verb, dialog) -%}
-<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}">{{ verb.labelled() }}</button>
+{#- A button on a table's row named `name` (`docs/specs/design_system.md`,
+    Tables, A row's buttons, and Editing, Edit;
+    `docs/specs/web/design_system.md`, Buttons): its verb's label after its
+    icon, which a screen reader reads with the row's name after it, opening
+    the dialog `dialog` with no request. -#}
+{%- macro row_button(verb, dialog, name) -%}
+<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}" aria-label="{{ verb.label() }} {{ name }}">{{ verb.labelled() }}</button>
 {%- endmacro -%}
 
 {#- A screen's facts side by side, each a `crate::web::stats::Stat`, in a

@@ -1,5 +1,5 @@
 {%- import "macros.html" as ui -%}
-{%- call ui::new_form("new-task", self.title(), crate::web::buttons::Verb::AddTask, making.whole(), region = NEW_TASK_READY, disabled = self.ready().disabled) %}
+{%- call ui::new_form(NEW_TASK, self.title(), crate::web::buttons::Verb::AddTask, making.whole(), region = NEW_TASK_READY, disabled = self.ready().disabled) %}
 {%- call(attributes) ui::field(NEW_TASK_RUN, "Run", making.field(&NewTaskField::Run), crate::web::making::Control::Select) %}
 {{ self.runs(attributes) }}
 {%- endcall %}

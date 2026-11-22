@@ -4,5 +4,7 @@
 <div id="task-said" class="max-w-xl empty:hidden" role="status"></div>
 {%- include "task_facts.html" %}
 {%- include "task_criteria.html" %}
+{%- call ui::edit_dialog(edit) %}{% endcall %}
+{{ edit_values }}
 {%- call ui::confirm_dialog(task.remove) %}{% endcall %}
 {%- endblock -%}
