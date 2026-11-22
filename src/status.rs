@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{Automation, AutomationFiles, AutomationName, LastScheduledRuns};
+use crate::automation::{self, Automation, AutomationFiles, AutomationName, LastScheduledRuns};
 use crate::domain::{Item, Number, Requirement, Snapshot, Timestamp, label};
 use crate::environment::shown::{self, EnvironmentShown};
 use crate::lifecycle::State;
@@ -252,10 +252,17 @@ impl Listed {
 pub struct AutomationRuns {
     pub name: String,
     #[serde(flatten)]
-    pub schedule: Schedule,
+    pub trigger: Trigger,
     /// `None` before its first run.
     #[serde(flatten)]
     pub last_run: Option<LastRun>,
+}
+
+/// Where an automation's trigger stands, by its kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Trigger {
+    Schedule(Schedule),
 }
 
 /// Where an automation's schedule stands, counted from its last scheduled
@@ -395,7 +402,7 @@ pub fn status(sources: StatusSources<'_>) -> Status {
         .iter()
         .map(|automation| AutomationRuns {
             name: automation.name.to_string(),
-            schedule: schedule_of(automation, &view.last_scheduled_runs, now),
+            trigger: trigger_of(automation, &view.last_scheduled_runs, now),
             last_run: last_of_automation(recorded, &automation.name).map(LastRun::of),
         })
         .collect();
@@ -436,19 +443,24 @@ fn unusable_files(view: &View) -> Vec<FileError> {
     files
 }
 
-/// Where `automation`'s schedule stands, counted from its last scheduled run.
-pub(crate) fn schedule_of(
+/// Where `automation`'s trigger stands: a schedule counted from its last
+/// scheduled run.
+fn trigger_of(
     automation: &Automation,
     last_scheduled_runs: &LastScheduledRuns,
     now: Timestamp,
-) -> Schedule {
-    match last_scheduled_runs.get(&automation.name) {
-        None => Schedule::NotRunYet,
-        Some(last_scheduled_run) => match next_run(automation, last_scheduled_run, now) {
-            NextRun::Due => Schedule::Due,
-            NextRun::At(next_run) => Schedule::Scheduled { next_run },
-            NextRun::Never => Schedule::Ended,
-        },
+) -> Trigger {
+    match &automation.trigger {
+        automation::Trigger::Schedule(schedule) => {
+            Trigger::Schedule(match last_scheduled_runs.get(&automation.name) {
+                None => Schedule::NotRunYet,
+                Some(last_scheduled_run) => match next_run(schedule, last_scheduled_run, now) {
+                    NextRun::Due => Schedule::Due,
+                    NextRun::At(next_run) => Schedule::Scheduled { next_run },
+                    NextRun::Never => Schedule::Ended,
+                },
+            })
+        }
     }
 }
 
@@ -692,7 +704,7 @@ pub(crate) fn automation_facts(status: &Status) -> Vec<Fact> {
                 run.started_at,
             )),
         };
-        let next = describe_next_run(automation.schedule);
+        let next = describe_next_run(automation.trigger);
         let name = &automation.name;
         let last = Phrase::from(format!("automation {name} last run: ")).then(last);
         let next = Phrase::from(format!("automation {name} next run: ")).then(next);
@@ -712,8 +724,9 @@ pub(crate) fn does_not_parse(file: &UnparsedAutomation) -> Phrase {
         .text(format!(" does not parse: {}", file.reason))
 }
 
-/// When an automation runs next, from where its schedule stands.
-pub(crate) fn describe_next_run(schedule: Schedule) -> Phrase {
+/// When an automation runs next, from where its trigger stands.
+pub(crate) fn describe_next_run(trigger: Trigger) -> Phrase {
+    let Trigger::Schedule(schedule) = trigger;
     match schedule {
         Schedule::NotRunYet => {
             "not yet counted, its schedule starts when a poll first sees it".into()

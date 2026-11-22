@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 
-use crate::automation::{Automation, AutomationName, LastScheduledRuns};
+use crate::automation::{Automation, AutomationName, LastScheduledRuns, Schedule, Trigger};
 use crate::domain::{
     BranchIssue, ClosingPull, DesignedLabel, HandBackKind, Issue, Item, Linked, Login, Marking,
     Merge, MergeMethod, MergedPull, Number, Pull, PullState, Requirement, Snapshot, StatusLabel,
@@ -465,7 +465,17 @@ pub enum Action {
         branch: TicketBranchName,
     },
     RecordLastScheduledRuns(LastScheduledRuns),
-    RunAutomation(Box<Automation>),
+    RunAutomation {
+        automation: Box<Automation>,
+        start: AutomationStart,
+    },
+}
+
+/// What started a run of an automation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutomationStart {
+    /// Its schedule ticked.
+    Schedule,
 }
 
 impl Action {
@@ -501,7 +511,7 @@ impl Action {
             Action::DeleteBranch { branch } => vec![Item::Issue(branch.issue())],
             Action::Cancel { .. }
             | Action::RecordLastScheduledRuns(_)
-            | Action::RunAutomation(_) => vec![],
+            | Action::RunAutomation { .. } => vec![],
         }
     }
 }
@@ -907,7 +917,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
     let held_back: Vec<AutomationName> = rest
         .iter()
         .filter_map(|action| {
-            if let Action::RunAutomation(automation) = action {
+            if let Action::RunAutomation { automation, .. } = action {
                 Some(automation.name.clone())
             } else {
                 None
@@ -929,7 +939,7 @@ pub fn held_back_by_drain(rest: Vec<Action>, recorded: &LastScheduledRuns) -> Ve
             Action::ClearStall { item } => {
                 (!claimed.contains(&item)).then_some(Action::ClearStall { item })
             }
-            Action::Start(_) | Action::Claim { .. } | Action::RunAutomation(_) => None,
+            Action::Start(_) | Action::Claim { .. } | Action::RunAutomation { .. } => None,
             Action::RecordLastScheduledRuns(mut last_scheduled_runs) => {
                 for name in &held_back {
                     last_scheduled_runs.restore(name, recorded);
@@ -962,8 +972,8 @@ pub enum NextRun {
     Never,
 }
 
-pub fn next_run(automation: &Automation, last_scheduled_run: Timestamp, now: Timestamp) -> NextRun {
-    match automation.schedule.next_after(last_scheduled_run) {
+pub fn next_run(schedule: &Schedule, last_scheduled_run: Timestamp, now: Timestamp) -> NextRun {
+    match schedule.next_after(last_scheduled_run) {
         Some(tick) if tick <= now => NextRun::Due,
         Some(tick) => NextRun::At(tick),
         None => NextRun::Never,
@@ -982,6 +992,7 @@ fn schedule(
     let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
     for automation in &automations.defined {
+        let Trigger::Schedule(schedule) = &automation.trigger;
         let Some(last_scheduled_run) = automations.last_scheduled_runs.get(&automation.name) else {
             last_scheduled_runs.record(&automation.name, now);
             continue;
@@ -990,7 +1001,7 @@ fn schedule(
         let held = !in_force
             .holding(&RunKind::Automation(automation))
             .is_empty();
-        if next_run(automation, last_scheduled_run, now) == NextRun::Due && !running && !held {
+        if next_run(schedule, last_scheduled_run, now) == NextRun::Due && !running && !held {
             due.push(automation);
         }
     }
@@ -1000,7 +1011,10 @@ fn schedule(
         .take(room)
         .map(|automation| {
             last_scheduled_runs.record(&automation.name, now);
-            Action::RunAutomation(Box::new(automation.clone()))
+            Action::RunAutomation {
+                automation: Box::new(automation.clone()),
+                start: AutomationStart::Schedule,
+            }
         })
         .collect();
     let mut actions = runs;

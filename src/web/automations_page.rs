@@ -19,7 +19,7 @@ use crate::api::{Sources, Unexplained};
 use crate::domain::Timestamp;
 use crate::phrase::{Phrase, Status};
 use crate::runs::{self, Recorded, Run};
-use crate::status::{self, Schedule, UnparsedAutomation, View};
+use crate::status::{self, Trigger, UnparsedAutomation, View};
 
 /// The automations as `status` answers for them, with what the page shows
 /// beside: each schedule in words, and each last run's outcome.
@@ -35,7 +35,7 @@ pub(super) struct Row {
     /// When it runs, in words.
     schedule: String,
     pub(super) last_run: LastRun,
-    next_run: Schedule,
+    next_run: Trigger,
 }
 
 pub(super) enum LastRun {
@@ -76,9 +76,9 @@ impl Automations {
                 };
                 Some(Row {
                     name: answered.name.clone(),
-                    schedule: automation.schedule.describe(),
+                    schedule: automation.trigger.describe(),
                     last_run,
-                    next_run: answered.schedule,
+                    next_run: answered.trigger,
                 })
             })
             .collect();

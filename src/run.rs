@@ -27,6 +27,7 @@ use crate::harness::{NextTurn, Purpose, Turn, UsageLimit};
 use crate::input;
 use crate::prompts::{
     self, DesignOf, LooseEnd, Repo, SentBack, SpecChangeAndDiff, Ticket, TicketRead,
+    WorkflowRunAttempt,
 };
 use crate::pushed_branches::PushedBranches;
 use crate::reconcile::{Policy, PullStop, Subject, Work, WorkKind, pull_stop};
@@ -1609,10 +1610,13 @@ pub(crate) enum AutomationEnd {
     UsageLimit(UsageLimit),
 }
 
-/// Runs `automation`, and ends its run. A run that fails is an error.
+/// Runs `automation`, which the workflow run attempt `trigger` started unless
+/// its schedule or a person did, and ends its run. A run that fails is an
+/// error.
 pub(crate) async fn automation(
     shell: &Shell,
     automation: &Automation,
+    trigger: Option<&WorkflowRunAttempt<'_>>,
     ctx: Ctx,
 ) -> Result<AutomationEnd> {
     let session = async {
@@ -1623,7 +1627,7 @@ pub(crate) async fn automation(
                 &ctx.with.briefs.templates,
                 &shell.repo(),
                 automation,
-                None,
+                trigger.copied(),
                 attachments,
             )
         });

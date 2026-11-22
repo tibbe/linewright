@@ -32,8 +32,8 @@ use crate::holds::InForce;
 use crate::pull_records::PullRecords;
 use crate::pushed_branches::PushedBranches;
 use crate::reconcile::{
-    Action, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote, Subject, Work,
-    decisions, held_back_by_drain, requirements_note,
+    Action, AutomationStart, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote,
+    Subject, Work, decisions, held_back_by_drain, requirements_note,
 };
 use crate::repo_files::{self, RepoLayer, Unusable, holding};
 use crate::run::{self, AutomationEnd, Shell, ShellParts};
@@ -1246,7 +1246,10 @@ impl Factory {
                 self.last_scheduled_runs = last_scheduled_runs.clone();
                 last_scheduled_runs.save(&self.database).await?;
             }
-            Action::RunAutomation(automation) => {
+            Action::RunAutomation {
+                automation,
+                start: AutomationStart::Schedule,
+            } => {
                 let running = begin_automation(
                     &self.recorded_runs,
                     &automation.name,
@@ -1319,7 +1322,7 @@ async fn run_and_log(
         cancel,
         run: running,
     };
-    match run::automation(shell, automation, ctx).await {
+    match run::automation(shell, automation, None, ctx).await {
         Ok(AutomationEnd::Finished(result)) => {
             info!(automation = %name, summary = result.summary, "automation run finished");
             Ok(())
