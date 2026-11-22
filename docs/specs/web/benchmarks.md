@@ -9,6 +9,10 @@
 
 - **The tabs** are daisyUI `tabs` in the `tabs-border` style.
 
+## Task
+
+- **The facts** are as on Benchmark run.
+
 ## Benchmark run
 
 - **The facts** are a daisyUI `stats`, drawn as a card is

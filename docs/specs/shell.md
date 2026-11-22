@@ -12,7 +12,7 @@
   [Automations](automations.md#automations-1),
   [Benchmarks](benchmarks.md#benchmarks-2) and [Server](operation.md#server).
 - **Breadcrumbs.** They show where the screen is in the UI, such as
-  "Benchmarks › design-cuts › Benchmark run" on Benchmark run.
+  "Benchmarks › Design cuts › Benchmark run" on Benchmark run.
   - **The crumbs.** The first crumb is the screen's area, by its name in the
     navigation. Then comes a crumb for each thing in that area that the screen
     belongs to. The last crumb is the screen itself. A screen of one thing that
@@ -23,7 +23,7 @@
     run". On a screen of the navigation that lists things, it is "All" and what
     the screen lists, such as "All runs", or "All items" on Board. On Server,
     it is "Status". Each crumb between the first and the
-    last shows the name in its screen's heading, such as "design-cuts".
+    last shows the name in its screen's heading, such as "Design cuts".
   - **No such thing.** A screen that shows "No such"
     ([Screen states](design_system.md#screen-states)) has the crumbs of the
     screen that its link names. A thing that Linewright cannot find has no

@@ -61,6 +61,9 @@ request that is reviewed, green and ready for a person.
 - **Tuned against real work.** A run of a stage can be captured as a task
   holding what it was given, so that the stage is run on it again with its
   briefs or settings changed.
+- **Names are for people.** A person names what they make in Linewright, such
+  as a benchmark, in words of their own. Linewright knows each such thing by
+  an ID that it gives it, so that a name can be any words and can change.
 - **The maintainer in the UI, the operator on the command line.** A
   maintainer works with Linewright in GitHub and the UI. The operator runs
   Linewright from the command line, where an agent can also do what a person

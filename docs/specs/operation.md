@@ -50,7 +50,7 @@ The command is `lw`.
 | `logs N`              | show a run's transcript (see [`lw logs`](runs.md#lw-logs))               |
 | `export ID DIR`       | write run ID as plain files (see [`lw export`](runs.md#lw-export))       |
 | `automation run NAME` | run one automation now (see [Automations](automations.md))               |
-| `capture ID NAME`     | capture run ID as a task in a benchmark (see [Benchmarks](benchmarks.md))    |
+| `capture ID`          | capture run ID as a task in a benchmark (see [Benchmarks](benchmarks.md))    |
 | `trial TASK`         | run a task's stage on it again (see [Benchmarks](benchmarks.md))         |
 | `score TASK DIR`       | score the output of a trial (see [Benchmarks](benchmarks.md))           |
 | `benchmarks`, `benchmark`, `benchmark-run` | work with benchmarks and benchmark runs (see [Benchmarks](benchmarks.md#benchmarks-and-benchmark-runs-on-the-command-line)) |

@@ -44,13 +44,15 @@ path, is a file.
 | each run outside a trial, with the input it recorded ([Recording a run's input](benchmarks.md#recording-a-runs-input)) | rows in the database                                                   |
 | bookkeeping that no person sets, such as Linewright's pull requests and each automation's last scheduled run | rows in the database                                                  |
 | the environment's commit, and the time of its build                                          | rows in the database                                                          |
-| benchmarks and benchmark runs ([Benchmarks](benchmarks.md))                                             | rows in the database                                                          |
+| benchmarks, benchmark runs, and the names of tasks ([Benchmarks](benchmarks.md))                       | rows in the database                                                          |
 | a session's brief, follow-ups and transcript, and its maintenance command's output               | files of the session, with the transcript as one JSON Lines file that only grows |
 | a session's attachments                                                                          | its attachments directory, each file by its own name ([Attachments](runs.md#attachments)) |
 | the output of the environment's builds                                                           | files                                                                         |
 | the clones and the environment                                                                   | directories                                                                   |
 | tasks and the outputs of trials                                                                 | directories of plain files ([Benchmarks](benchmarks.md))                      |
 
+- **IDs.** The database gives each benchmark and each task its ID
+  ([Names and IDs](benchmarks.md#names-and-ids)).
 - **Many processes.** Each Linewright process on the host opens the database
   in WAL mode, so that it reads while another process writes.
 - **The schema.** When a release first opens the database, it changes the

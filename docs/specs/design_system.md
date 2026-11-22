@@ -16,7 +16,7 @@
 - **Buttons.** A button's label is a verb, or "New" for a button that makes
   something, but for the buttons of a table's pages ([Tables](#tables)). The
   label also names what the button acts on where the screen does not show it.
-  For example, "Remove" on a task's row and "Cancel" on Benchmark run need no
+  For example, "Remove" on Task and "Cancel" on Benchmark run need no
   more, but "Add task" on Run names the task.
 
 ## Titles
@@ -41,9 +41,9 @@
 - **Lost.** A screen that loses `serve` keeps what it last showed, shows
   "Lost `serve` 5 minutes ago; reconnecting.", with the time as a past time
   ([Time](#time)), and reconnects on its own.
-- **Nothing there.** A link can name an item, run, benchmark or benchmark run
-  that does not exist. The screen it opens shows "No such" and the name, as the
-  screens give it, such as "No such run 43/rework-9" or "No such item #812".
+- **Nothing there.** A link can name an item, run, benchmark, task or benchmark
+  run that does not exist. The screen it opens shows "No such" and the name, as
+  the screens give it, such as "No such run 43/rework-9" or "No such item #812".
 - **Absent.** A figure that is absent, such as a mean with nothing to
   count, shows as "–".
 - **Loading.** A screen shows once it has all that it holds; it has no
@@ -166,6 +166,9 @@
 - **Its buttons.** The button that goes ahead comes last. It has the label of
   the button that asked, and is in the Error colour. The other comes first and
   says "Cancel", or "Keep running" where the action cancels.
+- **What was removed.** When the reader removes the thing that a screen
+  shows, the screen of what held it opens. A message under its heading says
+  what was removed. The message stays until the reader leaves the screen.
 
 ## Making
 
@@ -189,6 +192,27 @@
   Linewright refuses shows the reason under it. A refusal that is not of one
   field shows its reason above the buttons. The fields keep what the reader
   typed or chose.
+
+## Editing
+
+- **Edit.** A thing that the reader can change has "Edit". For a thing with a
+  screen of its own, "Edit" is with that screen's buttons ([Shell](shell.md)).
+  For any other thing, "Edit" is at the end of its row ([Tables](#tables)). A
+  screen reader reads the row's name after it, such as "Edit opus-high".
+- **The dialog.** "Edit" opens a dialog ([Dialogs](#dialogs)) titled "Edit"
+  and what it changes, such as "Edit task". The dialog shows each field
+  that the reader can change, with its label above it and the thing's value in
+  it, then "Cancel" and "Save".
+- **Saving.** When the reader clicks "Save" and Linewright keeps the change,
+  the dialog closes and the screen shows the change.
+- **Required and refused.** A field is required when Linewright cannot keep
+  the change without it. Linewright refuses a change as it refuses a thing in
+  a dialog that makes it ([Making](#making)).
+- **A thing that is gone.** When the thing does not exist, the dialog
+  shows "No such" and the thing, as its screen does
+  ([Screen states](#screen-states)), above the buttons.
+- **At once.** When two readers change the same thing, the change saved last
+  is the one that Linewright keeps.
 
 ## Layout
 
