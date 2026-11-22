@@ -467,8 +467,8 @@ still runs, for the reason [the spec](specs/webhooks.md) gives.
    - **Which events would you like to trigger this webhook?**: _Let me select
      individual events_, and tick **Issues**, **Issue comments**,
      **Pull requests**, **Pull request reviews**, **Pull request review
-     comments**, **Check runs**, **Check suites**, **Statuses** and
-     **Pushes**. Linewright ignores any other event.
+     comments**, **Check runs**, **Check suites**, **Statuses**,
+     **Workflow runs** and **Pushes**. Linewright ignores any other event.
    - **Active**: ticked.
 
 GitHub sends a `ping` delivery when the webhook is created. The log shows it
