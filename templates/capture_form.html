@@ -3,7 +3,7 @@
 {%- call(attributes) ui::field("capture-benchmark", "Benchmark", making.field(&CaptureField::Benchmark), crate::web::making::Control::SelectWithBlank) %}
 <select id="capture-benchmark" class="select validator w-full" name="benchmark"{{ attributes }}>
 {%- for benchmark in benchmarks %}
-<option value="{{ benchmark }}"{% if benchmark.as_str() == making.fields.benchmark %} selected{% endif %}>{{ benchmark }}</option>
+<option value="{{ benchmark.id }}"{% if self.chosen(benchmark) %} selected{% endif %}>{{ benchmark.name }}</option>
 {%- endfor %}
 <option class="new-benchmark" value=""{% if self.new_benchmark_chosen() %} selected{% endif %}>New benchmark</option>
 </select>

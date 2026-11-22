@@ -123,7 +123,7 @@ pub(super) fn with_a_run() -> impl Future<Output = Pages> {
 async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading() {
     let pages = with_a_run().await;
     let benchmarks = || link("Benchmarks", "/benchmarks");
-    let board = || link("board", "/benchmarks/board");
+    let board = || link("board", "/benchmarks/1");
     let benchmark_run = || link("Benchmark run 1", "/benchmark-runs/1");
 
     for (path, names, named, shown) in [
@@ -152,7 +152,7 @@ async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading()
             "All benchmarks",
             "Benchmarks · Linewright",
         ),
-        ("/benchmarks/board", vec![], "board", "board · Linewright"),
+        ("/benchmarks/1", vec![], "board", "board · Linewright"),
         (
             "/benchmark-runs/1",
             vec![benchmarks(), board(), here("Benchmark run")],
@@ -160,13 +160,13 @@ async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading()
             "Benchmark run 1 · Linewright",
         ),
         (
-            "/benchmark-runs/1/as-is/columns/1/run",
+            "/benchmark-runs/1/1/1/1/run",
             vec![benchmarks(), board(), benchmark_run(), here("Trial")],
             "Trial",
             "Trial as-is/columns/1's run · Linewright",
         ),
         (
-            "/benchmark-runs/1/as-is/columns/1/scorer",
+            "/benchmark-runs/1/1/1/1/scorer",
             vec![benchmarks(), board(), benchmark_run(), here("Trial")],
             "Trial",
             "Trial as-is/columns/1's scorer · Linewright",
@@ -230,10 +230,7 @@ async fn each_screen_of_one_thing_has_a_heading_card_and_no_other_screen_has_one
         ("/runs", None),
         ("/benchmarks", None),
         ("/server", None),
-        (
-            "/benchmarks/board",
-            Some(card("board", &[], Some("implement"))),
-        ),
+        ("/benchmarks/1", Some(card("board", &[], Some("implement")))),
         (
             "/benchmark-runs/1",
             Some(card("Benchmark run 1", &["waiting"], None)),
@@ -321,20 +318,20 @@ async fn a_no_such_screen_has_the_crumbs_of_the_screen_its_link_names_without_a_
         ("/items/99", vec![]),
         ("/runs/9/triage-1", vec![]),
         ("/runs/nothing", vec![]),
-        ("/benchmarks/nothing", vec![]),
+        ("/benchmarks/9", vec![]),
         (
             "/benchmark-runs/9",
             vec![link("Benchmarks", "/benchmarks"), here("Benchmark run")],
         ),
         (
-            "/benchmark-runs/9/as-is/columns/1/run",
+            "/benchmark-runs/9/1/1/1/run",
             vec![link("Benchmarks", "/benchmarks"), here("Trial")],
         ),
         (
-            "/benchmark-runs/1/as-is/columns/2/scorer",
+            "/benchmark-runs/1/1/1/2/scorer",
             vec![
                 link("Benchmarks", "/benchmarks"),
-                link("board", "/benchmarks/board"),
+                link("board", "/benchmarks/1"),
                 link("Benchmark run 1", "/benchmark-runs/1"),
                 here("Trial"),
             ],
@@ -395,7 +392,7 @@ async fn every_stream_sends_the_shells_regions_first() {
         "/events/runs",
         "/events/automations",
         "/events/benchmarks",
-        "/events/benchmarks/board",
+        "/events/benchmarks/1",
         "/events/benchmark-runs/1",
         "/events/items/1",
         "/events/runs/1/triage-1",
@@ -428,7 +425,7 @@ async fn every_page_starts_an_empty_slot_for_what_was_made_under_its_heading_tha
     for path in [
         "/",
         "/runs",
-        "/benchmarks/board",
+        "/benchmarks/1",
         "/items/1",
         "/runs/1/triage-1",
     ] {
@@ -593,9 +590,9 @@ async fn every_page_draws_the_navigation_the_readers_cookie_chose_and_otherwise_
         "/runs/1/triage-1",
         "/automations",
         "/benchmarks",
-        "/benchmarks/board",
+        "/benchmarks/1",
         "/benchmark-runs/1",
-        "/benchmark-runs/1/as-is/columns/1/run",
+        "/benchmark-runs/1/1/1/1/run",
         "/server",
         "/items/99",
     ] {

@@ -15,7 +15,6 @@ use crate::environment::kept::Builds;
 use crate::pull_records::PullRecords;
 use crate::results::Verdict;
 use crate::runs::OutcomeName;
-use crate::task::TaskName;
 use tokio::process::{Child, Command};
 
 /// The bytes of a database file's header that give its write and read
@@ -356,7 +355,7 @@ async fn a_database_from_before_ends_and_order_were_kept_opens_with_ends_unknown
     let db = Database::open(work_dir.path()).await.unwrap();
 
     let benchmark = crate::benchmarks::Benchmarks::new(db.clone())
-        .show(&"board".parse().unwrap())
+        .show("1".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -451,32 +450,33 @@ fn files_under(dir: &Path) -> Vec<String> {
     files
 }
 
-/// The files of [`FILES_OF_0_24_0`] at the paths this release keeps them.
+/// The files of [`FILES_OF_0_24_0`] at the paths this release keeps them,
+/// with the task `lanes` as 1 and the configuration `short` as 2.
 const FILES_UNDER_BENCHMARK_NAMES: [(&str, &str); 10] = [
     (
-        "benchmark-runs/1/.kept/configurations/short/config.toml",
+        "benchmark-runs/1/.kept/configurations/2/config.toml",
         "model = \"short\"\n",
     ),
     (
-        "benchmark-runs/1/.kept/tasks/lanes/task.json",
+        "benchmark-runs/1/.kept/tasks/1/task.json",
         r#"{"stage": "design"}"#,
     ),
     (
-        "benchmark-runs/1/as-is/lanes/1/judge/20261117T120000Z-judge/transcript.jsonl",
+        "benchmark-runs/1/1/1/1/judge/20261117T120000Z-judge/transcript.jsonl",
         "{}\n",
     ),
     (
-        "benchmark-runs/1/as-is/lanes/1/score.json",
+        "benchmark-runs/1/1/1/1/score.json",
         r#"{"session": {"record": "judge/20261117T120000Z-judge"}}"#,
     ),
-    ("benchmark-runs/1/as-is/lanes/1/task", "4/design-1\n"),
+    ("benchmark-runs/1/1/1/1/task", "4/design-1\n"),
     (
-        "benchmark-runs/1/short/lanes/3/scorer/20261117T130000Z-judge/transcript.jsonl",
+        "benchmark-runs/1/2/1/3/scorer/20261117T130000Z-judge/transcript.jsonl",
         "{}\n",
     ),
-    ("benchmark-runs/1/short/lanes/3/task", "4/design-1\n"),
-    ("tasks/lanes/criteria.md", "Lanes for each stage.\n"),
-    ("tasks/lanes/task.json", r#"{"stage": "design"}"#),
+    ("benchmark-runs/1/2/1/3/task", "4/design-1\n"),
+    ("tasks/1/criteria.md", "Lanes for each stage.\n"),
+    ("tasks/1/task.json", r#"{"stage": "design"}"#),
     ("trials/environments/abc123-f1f1/held", ""),
 ];
 
@@ -546,7 +546,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
         .collect();
     assert_eq!(listed, [("board".into(), 2), ("rows".into(), 1)]);
     let board = benchmarks
-        .show(&"board".parse().unwrap())
+        .show("1".parse().unwrap())
         .await
         .unwrap()
         .unwrap();
@@ -564,7 +564,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
     );
     let benchmark_runs = crate::benchmarks::BenchmarkRuns::new(db.clone());
     let of_board: Vec<BenchmarkRunId> = benchmark_runs
-        .of_benchmark(&"board".parse().unwrap())
+        .of_benchmark("1".parse().unwrap())
         .await
         .unwrap()
         .iter()
@@ -581,7 +581,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
             record
                 .tasks
                 .iter()
-                .map(TaskName::as_str)
+                .map(|task| task.name.as_str())
                 .collect::<Vec<_>>(),
             record
                 .configurations
@@ -659,10 +659,18 @@ async fn a_move_of_the_work_directory_that_fails_leaves_the_schema_as_it_was_and
     let before = Database::open_in(work_dir.path(), BEFORE_BENCHMARK_NAMES, Absent::Make)
         .await
         .unwrap();
-    sqlx::raw_sql("INSERT INTO suites (name, stage) VALUES ('board', 'design')")
-        .execute(before.pool())
-        .await
-        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO suites (name, stage) VALUES ('board', 'design');
+         INSERT INTO cases (name, suite, run, seq) VALUES ('lanes', 'board', '4/design-1', 1);
+         INSERT INTO experiments (id, suite, launched_at, repetitions, state, ended_at)
+             VALUES (1, 'board', '2026-11-17T12:00:00Z', 3, 'ended', '2026-11-17T14:00:00Z');
+         INSERT INTO experiment_cases (experiment, seq, name) VALUES (1, 0, 'lanes');
+         INSERT INTO experiment_configurations (experiment, seq, name)
+             VALUES (1, 0, 'as-is'), (1, 1, 'short');",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
     drop(before);
     write_files_of_0_24_0(work_dir.path());
     let in_the_way = work_dir.path().join("experiments/1/.kept/tasks");
@@ -698,4 +706,439 @@ async fn a_move_of_the_work_directory_that_fails_leaves_the_schema_as_it_was_and
         .collect();
     assert_eq!(benchmarks, ["board"]);
     assert_files_under_benchmark_names(work_dir.path());
+}
+
+/// The schema of the release before benchmarks and tasks had IDs.
+static BEFORE_IDS: &[Migration] = MIGRATIONS.split_at(12).0;
+
+/// Opens a database in `work_dir` with the schema [`BEFORE_IDS`] makes, and
+/// keeps `rows` in it.
+#[track_caller]
+fn before_ids<'a>(work_dir: &'a Path, rows: &'static str) -> impl Future<Output = ()> + 'a {
+    let caller = Location::caller();
+    async move {
+        let before = Database::open_in(work_dir, BEFORE_IDS, Absent::Make)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
+        sqlx::raw_sql(rows)
+            .execute(before.pool())
+            .await
+            .unwrap_or_else(|e| panic!("keeping the rows at {caller}: {e}"));
+    }
+}
+
+/// The rows of a work directory before IDs: the benchmarks `board` and
+/// `rows`; the tasks `lanes`, `stacks` and `columns`, captured in that order;
+/// and benchmark run 1 on `board`, launched on `lanes` and on `gone`, a task
+/// since removed, under `as-is` and `short`.
+const ROWS_BEFORE_IDS: &str = "INSERT INTO benchmarks (name, stage)
+        VALUES ('board', 'design'), ('rows', 'triage');
+    INSERT INTO tasks (name, benchmark, run, seq) VALUES ('lanes', 'board', '4/design-1', 1),
+        ('stacks', 'rows', '5/triage-1', 1), ('columns', 'board', '3/design-1', 2);
+    INSERT INTO benchmark_runs (id, benchmark, launched_at, repetitions, state, ended_at)
+        VALUES (1, 'board', '2026-11-17T12:00:00Z', 1, 'ended', '2026-11-17T14:00:00Z');
+    INSERT INTO benchmark_run_tasks (benchmark_run, seq, name) VALUES (1, 0, 'lanes'), (1, 1, 'gone');
+    INSERT INTO benchmark_run_configurations (benchmark_run, seq, name)
+        VALUES (1, 0, 'as-is'), (1, 1, 'short');
+    INSERT INTO trials (benchmark_run, repetition, task_seq, configuration_seq, state,
+            outcome, money, seconds, correctness, leak, scorer_money, unscored, reason)
+        VALUES (1, 1, 0, 0, 'scored', 'done', 1.5, 60.0, 'pass', 0, 0.25, NULL, NULL),
+            (1, 1, 0, 1, 'unscored', 'failed', 0.5, 10.0, NULL, NULL, NULL, 'outcome', NULL),
+            (1, 1, 1, 0, 'unscored', NULL, NULL, NULL, NULL, NULL, NULL, 'cancelled', NULL),
+            (1, 1, 1, 1, 'unscored', NULL, NULL, NULL, NULL, NULL, NULL, 'cancelled', NULL);";
+
+/// The files of the work directory of [`ROWS_BEFORE_IDS`], each holding its
+/// own path.
+const FILES_BEFORE_IDS: [&str; 10] = [
+    "tasks/lanes/criteria.md",
+    "tasks/stacks/criteria.md",
+    "tasks/columns/criteria.md",
+    "benchmark-runs/1/.kept/tasks/lanes/criteria.md",
+    "benchmark-runs/1/.kept/tasks/gone/criteria.md",
+    "benchmark-runs/1/.kept/configurations/short/config.toml",
+    "benchmark-runs/1/as-is/lanes/1/task",
+    "benchmark-runs/1/short/lanes/1/task",
+    "benchmark-runs/1/as-is/gone/1/task",
+    "trials/environments/abc123-f1f1/held",
+];
+
+/// Writes each of `paths` under `work_dir`, holding its path.
+#[track_caller]
+fn write_own_paths(work_dir: &Path, paths: &[&str]) {
+    for path in paths {
+        let file = work_dir.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, path).unwrap();
+    }
+}
+
+/// The files under `work_dir`, each with what it holds.
+#[track_caller]
+fn files_with_text(work_dir: &Path) -> Vec<(String, String)> {
+    files_under(work_dir)
+        .into_iter()
+        .map(|file| {
+            let text = std::fs::read_to_string(work_dir.join(&file)).unwrap();
+            (file, text)
+        })
+        .collect()
+}
+
+/// What [`FILES_BEFORE_IDS`] are at once each is at its ID's path, with what
+/// they held.
+fn files_by_ids() -> Vec<(String, String)> {
+    let mut files: Vec<(String, String)> = [
+        ("tasks/1/criteria.md", "tasks/lanes/criteria.md"),
+        ("tasks/2/criteria.md", "tasks/stacks/criteria.md"),
+        ("tasks/3/criteria.md", "tasks/columns/criteria.md"),
+        (
+            "benchmark-runs/1/.kept/tasks/1/criteria.md",
+            "benchmark-runs/1/.kept/tasks/lanes/criteria.md",
+        ),
+        (
+            "benchmark-runs/1/.kept/tasks/4/criteria.md",
+            "benchmark-runs/1/.kept/tasks/gone/criteria.md",
+        ),
+        (
+            "benchmark-runs/1/.kept/configurations/2/config.toml",
+            "benchmark-runs/1/.kept/configurations/short/config.toml",
+        ),
+        (
+            "benchmark-runs/1/1/1/1/task",
+            "benchmark-runs/1/as-is/lanes/1/task",
+        ),
+        (
+            "benchmark-runs/1/2/1/1/task",
+            "benchmark-runs/1/short/lanes/1/task",
+        ),
+        (
+            "benchmark-runs/1/1/4/1/task",
+            "benchmark-runs/1/as-is/gone/1/task",
+        ),
+        (
+            "trials/environments/abc123-f1f1/held",
+            "trials/environments/abc123-f1f1/held",
+        ),
+    ]
+    .into_iter()
+    .map(|(path, text)| (path.to_string(), text.to_string()))
+    .collect();
+    files.sort();
+    files
+}
+
+#[test_log::test(tokio::test)]
+async fn a_work_directory_from_before_ids_opens_with_each_benchmark_task_copy_and_output_at_its_id()
+{
+    let work_dir = tempfile::tempdir().unwrap();
+    before_ids(work_dir.path(), ROWS_BEFORE_IDS).await;
+    write_own_paths(work_dir.path(), &FILES_BEFORE_IDS);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    assert_eq!(files_with_text(work_dir.path()), files_by_ids());
+    let benchmarks = crate::benchmarks::Benchmarks::new(db.clone());
+    let listed: Vec<(String, String)> = benchmarks
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|listed| {
+            (
+                listed.benchmark.id.to_string(),
+                listed.benchmark.name.to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [("1".into(), "board".into()), ("2".into(), "rows".into())]
+    );
+    let board = benchmarks
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let tasks: Vec<(String, &str, String)> = board
+        .tasks
+        .iter()
+        .map(|task| {
+            (
+                task.id.to_string(),
+                task.name.as_str(),
+                task.criteria.as_ref().unwrap().as_str().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        tasks,
+        [
+            ("1".into(), "lanes", "tasks/lanes/criteria.md".into()),
+            ("3".into(), "columns", "tasks/columns/criteria.md".into())
+        ]
+    );
+    let record = crate::benchmarks::BenchmarkRuns::new(db)
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let run_tasks: Vec<(String, &str)> = record
+        .tasks
+        .iter()
+        .map(|task| (task.id.to_string(), task.name.as_str()))
+        .collect();
+    assert_eq!(run_tasks, [("1".into(), "lanes"), ("4".into(), "gone")]);
+    assert_eq!(
+        (
+            record.benchmark.id.to_string(),
+            record
+                .configurations
+                .iter()
+                .map(ConfigurationName::as_str)
+                .collect::<Vec<_>>(),
+            record.trials.len()
+        ),
+        ("1".into(), vec!["as-is", "short"], 4)
+    );
+    assert_eq!(
+        benchmarks
+            .removed_task("4".parse().unwrap())
+            .await
+            .unwrap()
+            .map(|name| name.to_string()),
+        Some("gone".into())
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_task_named_as_another_tasks_id_moves_to_its_own_id() {
+    let work_dir = tempfile::tempdir().unwrap();
+    before_ids(
+        work_dir.path(),
+        "INSERT INTO benchmarks (name, stage) VALUES ('board', 'design');
+         INSERT INTO tasks (name, benchmark, run, seq) VALUES ('a', 'board', '1/design-1', 1),
+             ('5', 'board', '2/design-1', 2), ('b', 'board', '3/design-1', 3),
+             ('c', 'board', '4/design-1', 4), ('2', 'board', '5/design-1', 5);",
+    )
+    .await;
+    write_own_paths(
+        work_dir.path(),
+        &[
+            "tasks/a/criteria.md",
+            "tasks/5/criteria.md",
+            "tasks/b/criteria.md",
+            "tasks/c/criteria.md",
+            "tasks/2/criteria.md",
+        ],
+    );
+
+    let _db = Database::open(work_dir.path()).await.unwrap();
+
+    assert_eq!(
+        files_with_text(work_dir.path()),
+        [
+            ("tasks/1/criteria.md", "tasks/a/criteria.md"),
+            ("tasks/2/criteria.md", "tasks/5/criteria.md"),
+            ("tasks/3/criteria.md", "tasks/b/criteria.md"),
+            ("tasks/4/criteria.md", "tasks/c/criteria.md"),
+            ("tasks/5/criteria.md", "tasks/2/criteria.md"),
+        ]
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_move_to_ids_that_fails_part_way_leaves_the_schema_as_it_was_and_the_next_open_finishes_it()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    before_ids(work_dir.path(), ROWS_BEFORE_IDS).await;
+    write_own_paths(work_dir.path(), &FILES_BEFORE_IDS);
+    let in_the_way = work_dir.path().join("benchmark-runs/1/2");
+    std::fs::write(&in_the_way, "").unwrap();
+
+    let failed = Database::open(work_dir.path()).await;
+
+    let Err(OpenError::Failed(e)) = failed else {
+        panic!("{:?}", failed.map(|_| ()));
+    };
+    assert!(format!("{e:#}").contains("benchmark-runs/1/2"), "{e:#}");
+    let unchanged = Database::open_in(work_dir.path(), BEFORE_IDS, Absent::Leave)
+        .await
+        .unwrap();
+    let benchmarks: Vec<String> = sqlx::query_scalar("SELECT name FROM benchmarks")
+        .fetch_all(unchanged.pool())
+        .await
+        .unwrap();
+    assert_eq!(benchmarks, ["board", "rows"]);
+    drop(unchanged);
+    std::fs::remove_file(&in_the_way).unwrap();
+    let db = Database::open(work_dir.path()).await.unwrap();
+    assert_eq!(files_with_text(work_dir.path()), files_by_ids());
+    let record = crate::benchmarks::BenchmarkRuns::new(db)
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record
+            .tasks
+            .iter()
+            .map(|task| task.name.as_str())
+            .collect::<Vec<_>>(),
+        ["lanes", "gone"]
+    );
+}
+
+/// A later change of the schema that makes `tasks` again, as it is.
+const TASKS_MADE_AGAIN: Migration = Migration::Sql(
+    "CREATE TABLE tasks_again (
+        id INTEGER PRIMARY KEY CHECK (id > 0),
+        benchmark INTEGER NOT NULL REFERENCES benchmarks (id),
+        name TEXT NOT NULL,
+        run TEXT NOT NULL,
+        seq INTEGER NOT NULL CHECK (seq > 0),
+        UNIQUE (benchmark, seq),
+        UNIQUE (benchmark, name)
+    ) STRICT;
+    INSERT INTO tasks_again SELECT * FROM tasks;
+    DROP TABLE tasks;
+    ALTER TABLE tasks_again RENAME TO tasks;",
+);
+
+/// Keeps a task named `name` captured from `run` in `benchmark`, built in
+/// the work directory of `benchmarks`.
+#[track_caller]
+fn kept_task<'a>(
+    benchmarks: &'a crate::benchmarks::Benchmarks,
+    benchmark: &'a crate::benchmarks::Benchmark,
+    name: &'a str,
+) -> impl Future<Output = crate::benchmarks::TaskId> + 'a {
+    let caller = Location::caller();
+    async move {
+        std::fs::create_dir_all(benchmarks.tasks_dir()).unwrap();
+        let built = tempfile::tempdir_in(benchmarks.tasks_dir()).unwrap();
+        std::fs::write(built.path().join("criteria.md"), name).unwrap();
+        let kept = benchmarks
+            .keep_task(
+                &crate::benchmarks::ChosenBenchmark::Existing(benchmark.clone()),
+                &name.parse().unwrap(),
+                &"4/design-1".parse().unwrap(),
+                built.path(),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("keeping the task at {caller}: {e:#}"));
+        let _moved = built.keep();
+        kept.id
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_tasks_id_is_never_given_again_after_its_removal_nor_after_tasks_is_made_again() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let db = Database::open(work_dir.path()).await.unwrap();
+    let benchmarks = crate::benchmarks::Benchmarks::new(db);
+    let board = benchmarks
+        .make(&"board".parse().unwrap(), crate::task::TaskStage::Design)
+        .await
+        .unwrap();
+    kept_task(&benchmarks, &board, "lanes").await;
+    let columns = kept_task(&benchmarks, &board, "columns").await;
+    benchmarks.remove_task(board.id, columns).await.unwrap();
+
+    let after_removal = kept_task(&benchmarks, &board, "rows").await;
+    drop(benchmarks);
+    let made_again: &'static [Migration] = Box::leak(
+        MIGRATIONS
+            .iter()
+            .copied()
+            .chain([TASKS_MADE_AGAIN])
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let again = crate::benchmarks::Benchmarks::new(
+        Database::open_in(work_dir.path(), made_again, Absent::Leave)
+            .await
+            .unwrap(),
+    );
+    again.remove_task(board.id, after_removal).await.unwrap();
+    let after_made_again = kept_task(&again, &board, "stacks").await;
+
+    assert_eq!(
+        [columns, after_removal, after_made_again].map(|id| id.to_string()),
+        ["2", "3", "4"]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_task_gets_no_id_that_names_a_directory_of_no_task() {
+    let work_dir = tempfile::tempdir().unwrap();
+    before_ids(
+        work_dir.path(),
+        "INSERT INTO benchmarks (name, stage) VALUES ('board', 'design');
+         INSERT INTO tasks (name, benchmark, run, seq) VALUES ('lanes', 'board', '1/design-1', 1),
+             ('columns', 'board', '2/design-1', 2);",
+    )
+    .await;
+    write_own_paths(
+        work_dir.path(),
+        &[
+            "tasks/1/criteria.md",
+            "tasks/lanes/criteria.md",
+            "tasks/columns/criteria.md",
+        ],
+    );
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    assert_eq!(
+        files_with_text(work_dir.path()),
+        [
+            ("tasks/1/criteria.md", "tasks/1/criteria.md"),
+            ("tasks/2/criteria.md", "tasks/lanes/criteria.md"),
+            ("tasks/3/criteria.md", "tasks/columns/criteria.md"),
+        ]
+        .map(|(path, text)| (path.to_string(), text.to_string()))
+    );
+    let board = crate::benchmarks::Benchmarks::new(db)
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let tasks: Vec<(String, &str)> = board
+        .tasks
+        .iter()
+        .map(|task| (task.id.to_string(), task.name.as_str()))
+        .collect();
+    assert_eq!(tasks, [("2".into(), "lanes"), ("3".into(), "columns")]);
+}
+
+#[test_log::test(tokio::test)]
+async fn moves_left_part_way_are_not_carried_on_once_the_database_gives_others() {
+    let work_dir = tempfile::tempdir().unwrap();
+    before_ids(work_dir.path(), ROWS_BEFORE_IDS).await;
+    write_own_paths(work_dir.path(), &FILES_BEFORE_IDS);
+    let in_the_way = work_dir.path().join("benchmark-runs/1/2");
+    std::fs::write(&in_the_way, "").unwrap();
+    let failed = Database::open(work_dir.path()).await;
+    assert!(failed.is_err(), "{:?}", failed.map(|_| ()));
+    let before = Database::open_in(work_dir.path(), BEFORE_IDS, Absent::Leave)
+        .await
+        .unwrap();
+    sqlx::raw_sql("DELETE FROM tasks WHERE name = 'stacks'")
+        .execute(before.pool())
+        .await
+        .unwrap();
+    drop(before);
+    std::fs::remove_file(&in_the_way).unwrap();
+
+    let refused = Database::open(work_dir.path()).await;
+
+    let Err(OpenError::Failed(e)) = refused else {
+        panic!("{:?}", refused.map(|_| ()));
+    };
+    assert!(
+        format!("{e:#}").contains("are not those the database gives now"),
+        "{e:#}"
+    );
+    assert!(work_dir.path().join("benchmark-runs/1/1/1/1/task").exists());
 }

@@ -11,7 +11,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::benchmarks::{Benchmark, BenchmarkName, Benchmarks, ChosenBenchmark};
+use crate::benchmarks::{
+    Benchmark, BenchmarkId, BenchmarkName, Benchmarks, ChosenBenchmark, KeptTask,
+};
 use crate::domain::{Number, Timestamp};
 use crate::git::{self, CommitId};
 use crate::input::Input;
@@ -147,10 +149,13 @@ pub enum CaptureError {
     NoInput(RunId),
     #[error("the run {run}'s record lacks the {part}, so it cannot be captured")]
     Lacks { run: RunId, part: TaskPart },
-    #[error("a task is already named {0}")]
-    Taken(TaskName),
+    #[error("a task named {task} already exists in {benchmark}")]
+    Taken {
+        task: TaskName,
+        benchmark: BenchmarkName,
+    },
     #[error("there is no benchmark {0}")]
-    NoSuchBenchmark(BenchmarkName),
+    NoSuchBenchmark(BenchmarkId),
     #[error("a benchmark is already named {0}")]
     BenchmarkTaken(BenchmarkName),
     #[error(
@@ -185,7 +190,7 @@ impl CaptureError {
             CaptureError::NotCapturable(_)
             | CaptureError::NoInput(_)
             | CaptureError::Lacks { .. }
-            | CaptureError::Taken(_)
+            | CaptureError::Taken { .. }
             | CaptureError::BenchmarkTaken(_)
             | CaptureError::OtherStage { .. } => Refusal::Refused,
             CaptureError::Failed(_) => Refusal::Failed,
@@ -201,7 +206,7 @@ impl CaptureError {
             | CaptureError::NotCapturable(_)
             | CaptureError::NoInput(_)
             | CaptureError::Lacks { .. }
-            | CaptureError::Taken(_)
+            | CaptureError::Taken { .. }
             | CaptureError::BenchmarkTaken(_)
             | CaptureError::OtherStage { .. } => self.to_string(),
         }
@@ -308,18 +313,9 @@ pub async fn capturable_run(runs: &Runs, run: &RunId) -> Result<CapturableRun, C
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BenchmarkChoice {
     /// A benchmark there is.
-    Named(BenchmarkName),
+    Existing(BenchmarkId),
     /// A benchmark made, of the run's stage, as the task is captured into it.
     New(BenchmarkName),
-}
-
-impl BenchmarkChoice {
-    /// The benchmark's name.
-    pub fn benchmark(&self) -> &BenchmarkName {
-        match self {
-            BenchmarkChoice::Named(benchmark) | BenchmarkChoice::New(benchmark) => benchmark,
-        }
-    }
 }
 
 /// A run that can be captured, with what it is to be captured as.
@@ -349,32 +345,36 @@ pub async fn capturable(
 ) -> Result<Capturable, CaptureError> {
     let run = capturable_run(runs, run).await?;
     let benchmark = match choice {
-        BenchmarkChoice::Named(named) => ChosenBenchmark::Existing(
-            benchmarks
-                .find(named)
+        BenchmarkChoice::Existing(id) => {
+            let existing = benchmarks
+                .find(*id)
                 .await?
-                .ok_or_else(|| CaptureError::NoSuchBenchmark(named.clone()))?,
-        ),
+                .ok_or(CaptureError::NoSuchBenchmark(*id))?;
+            if run.stage != existing.stage {
+                return Err(CaptureError::OtherStage {
+                    stage: run.stage,
+                    run: run.run,
+                    benchmark: existing,
+                });
+            }
+            if benchmarks.has_task(existing.id, name).await? {
+                return Err(CaptureError::Taken {
+                    task: name.clone(),
+                    benchmark: existing.name,
+                });
+            }
+            ChosenBenchmark::Existing(existing)
+        }
         BenchmarkChoice::New(new) => {
-            if benchmarks.find(new).await?.is_some() {
+            if benchmarks.named(new).await?.is_some() {
                 return Err(CaptureError::BenchmarkTaken(new.clone()));
             }
-            ChosenBenchmark::New(Benchmark {
+            ChosenBenchmark::New {
                 name: new.clone(),
                 stage: run.stage,
-            })
+            }
         }
     };
-    if run.stage != benchmark.benchmark().stage {
-        return Err(CaptureError::OtherStage {
-            stage: run.stage,
-            run: run.run,
-            benchmark: benchmark.benchmark().clone(),
-        });
-    }
-    if benchmarks.has_task(name).await? {
-        return Err(CaptureError::Taken(name.clone()));
-    }
     Ok(Capturable {
         run,
         name: name.clone(),
@@ -384,16 +384,16 @@ pub async fn capturable(
 
 /// Captures `capturable` as its task, with `criteria` as what a good result is,
 /// and its commits fetched from `store`, into its benchmark of `benchmarks`,
-/// making the benchmark when it is a new one, and returns the task's directory.
-/// All or nothing: the task's directory, its benchmark's record of it and a new
-/// benchmark are all written or none is, and of two captures under one name,
-/// one is refused as [`CaptureError::Taken`].
+/// making the benchmark when it is a new one, and gives the task kept. All or
+/// nothing: the task's directory, its benchmark's record of it and a new
+/// benchmark are all written or none is, and of two captures under one name
+/// into one benchmark, one is refused as [`CaptureError::Taken`].
 pub async fn capture(
     store: &dyn Store,
     capturable: Capturable,
     criteria: &Criteria,
     benchmarks: &Benchmarks,
-) -> Result<PathBuf, CaptureError> {
+) -> Result<KeptTask, CaptureError> {
     let Capturable {
         run:
             CapturableRun {
@@ -429,11 +429,11 @@ pub async fn capture(
     store
         .fetch_commits(&building.path().join("repository.git"), &input.heads)
         .await?;
-    let place = benchmarks
+    let kept = benchmarks
         .keep_task(&benchmark, &name, &run, building.path())
         .await?;
     let _moved = building.keep();
-    Ok(place)
+    Ok(kept)
 }
 
 /// The stage of a task: one that can be captured.
@@ -634,6 +634,40 @@ pub fn read_criteria(dir: &Path) -> Result<Criteria, TaskRefusal> {
             TaskPart::Criteria,
             format!("{CRITERIA_FILE} holds only white space"),
         )
+    })
+}
+
+/// What a task's directory gives of the task beside its criteria and its
+/// repository: its stage, its item with the item's title as at the start, and
+/// its start.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskFacts {
+    pub stage: TaskStage,
+    pub item: Number,
+    pub title: String,
+    /// When Linewright decided to start the task's run.
+    pub start: Timestamp,
+}
+
+/// The facts of the task in the directory `dir`, refused when a part they
+/// come from does not read.
+pub fn read_facts(dir: &Path) -> Result<TaskFacts, TaskRefusal> {
+    let file = read_task_file(dir)?;
+    let items: Vec<RecordedItem> = read_json(dir, "items.json", TaskPart::Items)?;
+    let item = items
+        .iter()
+        .find(|item| item.number == file.item)
+        .ok_or_else(|| {
+            refusal(
+                TaskPart::Items,
+                format!("they lack the task's item {}", file.item),
+            )
+        })?;
+    Ok(TaskFacts {
+        stage: file.stage,
+        item: file.item,
+        title: item::title(item).map_err(|why| refusal(TaskPart::Items, why))?,
+        start: file.start,
     })
 }
 

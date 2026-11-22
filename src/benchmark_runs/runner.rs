@@ -14,15 +14,15 @@ use tracing::{error, info, warn};
 
 use super::plan::{Gate, Step, plan};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, ConfigurationName,
-    ScoreFigures, Shown, TrialChange, TrialFigures, TrialRef,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, ConfigurationId,
+    ScoreFigures, Shown, TaskId, TrialChange, TrialFigures, TrialRef,
 };
 use crate::clock::Clock;
 use crate::factory::FactoryConfig;
 use crate::harness::{Harness, UsageLimit};
 use crate::runs::{Ending, OutcomeName};
 use crate::session::Cancellation;
-use crate::task::{Task, TaskName};
+use crate::task::Task;
 use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord, Unscored};
 use crate::trial::{self, Configuration, OnUsageLimit, Output, Spent, Under, Unrun};
 
@@ -332,18 +332,19 @@ impl BenchmarkRunsRunner {
 /// Where a step's trial is in its benchmark run.
 struct StepAt {
     trial: TrialRef,
-    task: TaskName,
-    configuration: ConfigurationName,
+    task: TaskId,
+    configuration: ConfigurationId,
 }
 
 impl StepAt {
     /// Where `trial` of `record` is, `None` when `record` lacks its task or
     /// configuration.
     fn of(record: &BenchmarkRunRecord, trial: TrialRef) -> Option<StepAt> {
+        let of = record.trial_of(&trial.key)?;
         Some(StepAt {
             trial,
-            task: record.tasks.get(trial.key.task)?.clone(),
-            configuration: record.configurations.get(trial.key.configuration)?.clone(),
+            task: of.task.id,
+            configuration: of.configuration,
         })
     }
 }
@@ -353,8 +354,8 @@ impl StepContext {
     fn output_dir(&self, at: &StepAt) -> PathBuf {
         self.benchmark_runs.output_dir(
             at.trial.benchmark_run,
-            &at.configuration,
-            &at.task,
+            at.configuration,
+            at.task,
             at.trial.key.repetition,
         )
     }
@@ -364,7 +365,7 @@ impl StepContext {
         Task::open(
             &self
                 .benchmark_runs
-                .task_dir(at.trial.benchmark_run, &at.task),
+                .task_dir(at.trial.benchmark_run, at.task),
         )
         .await
         .context("opening the benchmark run's copy of the task")
@@ -406,12 +407,12 @@ impl StepContext {
 
     async fn trial_into(&self, at: &StepAt, out: &Output, under: &Under) -> Result<Ending, Unrun> {
         let task = self.task(at).await?;
-        let configuration = if at.configuration == ConfigurationName::as_is() {
+        let configuration = if at.configuration == ConfigurationId::AS_IS {
             None
         } else {
             let dir = self
                 .benchmark_runs
-                .configuration_dir(at.trial.benchmark_run, &at.configuration);
+                .configuration_dir(at.trial.benchmark_run, at.configuration);
             Some(
                 Configuration::read(&dir)
                     .context("reading the benchmark run's copy of the configuration")?,

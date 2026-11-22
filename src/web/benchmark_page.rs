@@ -1,5 +1,5 @@
 //! The benchmark page (`docs/specs/benchmarks.md`, Benchmark and New task):
-//! benchmark NAME's heading, then its benchmark runs and its tasks, each in a
+//! benchmark ID's heading, then its benchmark runs and its tasks, each in a
 //! tab of its own at its own address, the New task dialog that captures a run
 //! of the benchmark's stage into it, and the New benchmark run dialog that
 //! launches a benchmark run on it.
@@ -36,8 +36,8 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results;
 use crate::benchmarks::{
-    Benchmark, BenchmarkName, BenchmarkRunRecord, BenchmarkRunState, BenchmarkShown, RemoveError,
-    TaskEntry, dollars, without,
+    Benchmark, BenchmarkId, BenchmarkName, BenchmarkRunRecord, BenchmarkRunState, BenchmarkShown,
+    RemoveError, TaskEntry, TaskId, dollars, without,
 };
 use crate::domain::Timestamp;
 use crate::phrase::Status;
@@ -46,6 +46,7 @@ use crate::task::{self, BenchmarkChoice, Refusal, TaskName, TaskStage};
 
 /// A task's row.
 struct TaskRow {
+    id: TaskId,
     name: TaskName,
     run: RunId,
     run_href: String,
@@ -65,9 +66,9 @@ enum CriteriaShown {
 }
 
 impl TaskRow {
-    /// Its row's id, keyed by the task's name.
+    /// Its row's id, keyed by the task's ID.
     fn row_id(&self) -> String {
-        format!("task-{}", self.name)
+        format!("task-{}", self.id)
     }
 
     /// The id of the row of its whole criteria, which its row opens to.
@@ -89,14 +90,15 @@ impl TaskRow {
     fn of(task: TaskEntry, path: &str) -> TaskRow {
         TaskRow {
             remove: Confirmation {
-                id: format!("remove-{}", task.name),
+                id: format!("remove-{}", task.id),
                 verb: Verb::Remove,
                 question: format!("Remove the task {} and its directory?", task.name),
                 turn_down: TurnDown::Cancel,
                 action: format!("{path}/remove-task"),
-                fields: vec![("task", task.name.to_string())],
+                fields: vec![("task", task.id.to_string())],
                 said: "benchmark-said",
             },
+            id: task.id,
             run_href: run_path(&task.run),
             name: task.name,
             run: task.run,
@@ -345,23 +347,23 @@ impl Paging {
         )
     }
 
-    /// Where a link to these pages of benchmark `name`, on its tab `tab`,
+    /// Where a link to these pages of benchmark `id`, on its tab `tab`,
     /// leads. The stream is the same on every tab.
-    fn href(self, name: &BenchmarkName, tab: BenchmarkTab) -> PageHref {
+    fn href(self, id: BenchmarkId, tab: BenchmarkTab) -> PageHref {
         PageHref {
-            page: self.tab_path(name, tab),
-            stream: self.stream(name),
+            page: self.tab_path(id, tab),
+            stream: self.stream(id),
         }
     }
 
-    /// The address of tab `tab` of benchmark `name` on these pages.
-    fn tab_path(self, name: &BenchmarkName, tab: BenchmarkTab) -> String {
-        self.path(&benchmark_tab_path(name, tab))
+    /// The address of tab `tab` of benchmark `id` on these pages.
+    fn tab_path(self, id: BenchmarkId, tab: BenchmarkTab) -> String {
+        self.path(&benchmark_tab_path(id, tab))
     }
 
-    /// The page's stream on these pages of benchmark `name`.
-    fn stream(self, name: &BenchmarkName) -> String {
-        self.path(&format!("/events{}", benchmark_path(name)))
+    /// The page's stream on these pages of benchmark `id`.
+    fn stream(self, id: BenchmarkId) -> String {
+        self.path(&format!("/events{}", benchmark_path(id)))
     }
 }
 
@@ -488,6 +490,32 @@ impl NewTaskFields {
     }
 }
 
+/// The benchmark a making dialog makes a thing in, as its title names it.
+pub(super) enum InBenchmark {
+    Found(BenchmarkName),
+    /// One that is not found, by the ID its path gives.
+    Asked(String),
+}
+
+impl InBenchmark {
+    /// The benchmark of `found`, which was looked for by the ID `asked`.
+    pub(super) fn of<T>(found: &Result<BenchmarkShown, T>, asked: String) -> InBenchmark {
+        match found {
+            Ok(shown) => InBenchmark::Found(shown.benchmark.name.clone()),
+            Err(_) => InBenchmark::Asked(asked),
+        }
+    }
+}
+
+impl std::fmt::Display for InBenchmark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InBenchmark::Found(name) => write!(f, "{name}"),
+            InBenchmark::Asked(id) => f.write_str(id),
+        }
+    }
+}
+
 /// The region of the New task dialog that holds the button "Add task".
 const NEW_TASK_READY: &str = "new-task-ready";
 
@@ -495,8 +523,7 @@ const NEW_TASK_READY: &str = "new-task-ready";
 #[derive(Template)]
 #[template(path = "new_task.html")]
 pub(super) struct NewTaskForm {
-    /// The benchmark's name, as its path gives it.
-    benchmark: String,
+    benchmark: InBenchmark,
     making: Making<NewTaskFields>,
     /// The runs of the benchmark's stage that can be captured, latest first.
     runs: Vec<RunChoice>,
@@ -504,10 +531,10 @@ pub(super) struct NewTaskForm {
 
 impl NewTaskForm {
     /// The form as it starts, for benchmark `benchmark` of `stage`.
-    async fn blank(sources: &Sources, benchmark: &BenchmarkName, stage: TaskStage) -> NewTaskForm {
-        let runs = runs_of(sources, stage).await;
+    async fn blank(sources: &Sources, benchmark: &Benchmark) -> NewTaskForm {
+        let runs = runs_of(sources, benchmark.stage).await;
         NewTaskForm {
-            benchmark: benchmark.to_string(),
+            benchmark: InBenchmark::Found(benchmark.name.clone()),
             making: Making::of(NewTaskFields::starting(&runs)),
             runs,
         }
@@ -593,16 +620,16 @@ enum Unshown {
     Failed(anyhow::Error),
 }
 
-/// What is said of a benchmark named `name` that there is none of.
-fn no_such(name: &str) -> String {
-    format!("there is no benchmark {name}")
+/// What is said of a benchmark whose ID is `id` that there is none of.
+fn no_such(id: &str) -> String {
+    format!("there is no benchmark {id}")
 }
 
-/// Benchmark `name` with the pages `paging` asks for of its tasks, in its
+/// Benchmark `id` with the pages `paging` asks for of its tasks, in its
 /// order, and of its benchmark runs, latest first.
-async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, Unshown> {
-    let parsed: BenchmarkName = name.parse().map_err(|_| Unshown::NoSuch)?;
-    match benchmarks(sources).show(&parsed).await {
+async fn shown(sources: &Sources, id: &str, paging: Paging) -> Result<Shown, Unshown> {
+    let parsed: BenchmarkId = id.parse().map_err(|_| Unshown::NoSuch)?;
+    match benchmarks(sources).show(parsed).await {
         Ok(Some(BenchmarkShown {
             benchmark,
             tasks,
@@ -610,7 +637,7 @@ async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, U
         })) => {
             let tasks_page = Pages::of(tasks.len(), paging.tasks);
             let benchmark_runs_page = Pages::of(benchmark_runs.len(), paging.benchmark_runs);
-            let path = benchmark_path(&benchmark.name);
+            let path = benchmark_path(benchmark.id);
             let now = sources.clock.now();
             Ok(Shown {
                 task_count: tasks.len(),
@@ -624,7 +651,7 @@ async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, U
                         tasks: page,
                         ..paging
                     }
-                    .href(&benchmark.name, BenchmarkTab::Tasks)
+                    .href(benchmark.id, BenchmarkTab::Tasks)
                 }),
                 benchmark_runs: benchmark_runs_page
                     .shows(benchmark_runs)
@@ -636,7 +663,7 @@ async fn shown(sources: &Sources, name: &str, paging: Paging) -> Result<Shown, U
                         benchmark_runs: page,
                         ..paging
                     }
-                    .href(&benchmark.name, BenchmarkTab::Runs)
+                    .href(benchmark.id, BenchmarkTab::Runs)
                 }),
                 benchmark,
             })
@@ -692,45 +719,45 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     };
     Page::new(
         Place::Alone(Area::Benchmarks, Thing::Found(heading)),
-        paging.stream(&benchmark.name),
+        paging.stream(benchmark.id),
         navigation,
     )
 }
 
 pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
 ) -> Response {
-    benchmark_page_on(sources, name, None, paging, navigation).await
+    benchmark_page_on(sources, id, None, paging, navigation).await
 }
 
 /// The benchmark page at tab `tab`'s address, or else no page.
 pub(super) async fn benchmark_tab_page(
     State(sources): State<Sources>,
-    Path((name, tab)): Path<(String, String)>,
+    Path((id, tab)): Path<(String, String)>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
 ) -> Response {
     let Ok(tab) = tab.parse() else {
         return no_such_page().await;
     };
-    benchmark_page_on(sources, name, Some(tab), paging, navigation).await
+    benchmark_page_on(sources, id, Some(tab), paging, navigation).await
 }
 
-/// The benchmark page of benchmark `name` on tab `tab`, or without one, on the
+/// The benchmark page of benchmark `id` on tab `tab`, or without one, on the
 /// tab it opens on: its benchmark runs, or its tasks while it has no benchmark
 /// runs.
 async fn benchmark_page_on(
     sources: Sources,
-    name: String,
+    id: String,
     tab: Option<BenchmarkTab>,
     paging: Paging,
     navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
-    match shown(&sources, &name, paging).await {
+    match shown(&sources, &id, paging).await {
         Ok(Shown {
             benchmark,
             task_count,
@@ -739,18 +766,17 @@ async fn benchmark_page_on(
             benchmark_runs,
             benchmark_runs_nav,
         }) => {
-            let path = benchmark_path(&benchmark.name);
+            let path = benchmark_path(benchmark.id);
             let tab = BenchmarkTab::opened(tab, !benchmark_runs.is_empty());
             let tab_links = BenchmarkTab::ALL
                 .into_iter()
                 .map(|link| TabLink {
                     tab: link,
-                    href: paging.tab_path(&benchmark.name, link),
+                    href: paging.tab_path(benchmark.id, link),
                 })
                 .collect();
-            let new_task = NewTaskForm::blank(&sources, &benchmark.name, benchmark.stage).await;
-            let new_benchmark_run =
-                NewBenchmarkRunForm::blank(&sources, &benchmark.name, task_count);
+            let new_task = NewTaskForm::blank(&sources, &benchmark).await;
+            let new_benchmark_run = NewBenchmarkRunForm::blank(&sources, &benchmark, task_count);
             BenchmarkPage {
                 page: page(&benchmark, paging, navigation),
                 frame,
@@ -773,20 +799,20 @@ async fn benchmark_page_on(
             .into_response()
         }
         Err(unshown) => {
-            let events = paging.path(&format!("/events/benchmarks/{name}"));
+            let events = paging.path(&format!("/events/benchmarks/{id}"));
             match unshown {
                 Unshown::NoSuch => nothing_there(
                     |thing| Page::new(Place::Alone(Area::Benchmarks, thing), events, navigation),
-                    Missing::Benchmark(name),
+                    Missing::Benchmark(id),
                     frame,
                     "tasks",
                 ),
                 Unshown::Failed(e) => {
                     let error = format!("{e:#}");
-                    warn!(benchmark = name, error, "reading a benchmark failed");
+                    warn!(benchmark = id, error, "reading a benchmark failed");
                     let page = ErrorPage {
                         page: Page::new(
-                            Place::Alone(Area::Benchmarks, Thing::Found(Heading::named(name))),
+                            Place::Alone(Area::Benchmarks, Thing::Found(Heading::named(id))),
                             events,
                             navigation,
                         ),
@@ -807,13 +833,13 @@ async fn benchmark_page_on(
 pub(super) async fn benchmark_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
         let sources = sources.clone();
-        let name = name.clone();
+        let id = id.clone();
         async move {
             let frame = Frame::of(&sources).await;
             let Ok(Shown {
@@ -823,7 +849,7 @@ pub(super) async fn benchmark_events(
                 tasks_nav,
                 benchmark_runs,
                 benchmark_runs_nav,
-            }) = shown(&sources, &name, paging).await
+            }) = shown(&sources, &id, paging).await
             else {
                 return vec![shell::holds(&frame)];
             };
@@ -866,11 +892,11 @@ pub(super) async fn benchmark_events(
     events(regions, stopping)
 }
 
-/// Benchmark `name` of a write's path, or else what the page says of there
-/// being none.
-fn benchmark_of_path(write: Write, name: &str) -> Result<BenchmarkName, Refused> {
-    name.parse()
-        .map_err(|_| write.refused(StatusCode::NOT_FOUND, &no_such(name)))
+/// The ID of the benchmark of a write's path, or else what the page says of
+/// there being none.
+fn benchmark_of_path(write: Write, id: &str) -> Result<BenchmarkId, Refused> {
+    id.parse()
+        .map_err(|_| write.refused(StatusCode::NOT_FOUND, &no_such(id)))
 }
 
 /// What the New task dialog's form sends, a field it lacks being empty.
@@ -900,18 +926,19 @@ impl AddForm {
     }
 }
 
-/// Benchmark `name` with its tasks and benchmark runs, or else the status and
-/// why there is no benchmark for a making dialog to make a thing in.
+/// Benchmark `id`, as its path gives it, with its tasks and benchmark runs,
+/// or else the status and why there is no benchmark for a making dialog to
+/// make a thing in.
 pub(super) async fn benchmark_for_making(
     sources: &Sources,
-    name: &str,
+    id: &str,
 ) -> Result<BenchmarkShown, (StatusCode, String)> {
-    let benchmark: BenchmarkName = name
+    let benchmark: BenchmarkId = id
         .parse()
-        .map_err(|_| (StatusCode::NOT_FOUND, no_such(name)))?;
-    match benchmarks(sources).show(&benchmark).await {
+        .map_err(|_| (StatusCode::NOT_FOUND, no_such(id)))?;
+    match benchmarks(sources).show(benchmark).await {
         Ok(Some(shown)) => Ok(shown),
-        Ok(None) => Err((StatusCode::NOT_FOUND, no_such(name))),
+        Ok(None) => Err((StatusCode::NOT_FOUND, no_such(id))),
         Err(e) => {
             let why = format!("{e:#}");
             warn!(benchmark = %benchmark, error = why, "reading a benchmark failed");
@@ -921,12 +948,12 @@ pub(super) async fn benchmark_for_making(
 }
 
 /// Captures the run the New task dialog's form in `body` names into benchmark
-/// `name`, and answers with the dialog's form: as it starts once made, or as
+/// `id`, and answers with the dialog's form: as it starts once made, or as
 /// sent with why it was refused. Refused, writing nothing, unless the browser
 /// shows the request came from the web UI's own pages.
 pub(super) async fn add_task(
     State(sources): State<Sources>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
@@ -941,8 +968,9 @@ pub(super) async fn add_task(
             criteria: sent.task.criteria.clone(),
         })
         .unwrap_or_default();
+    let found = benchmark_for_making(&sources, &id).await;
     let mut form = NewTaskForm {
-        benchmark: name,
+        benchmark: InBenchmark::of(&found, id),
         making: Making::of(fields),
         runs: vec![],
     };
@@ -950,11 +978,11 @@ pub(super) async fn add_task(
         Ok(sent) => sent,
         Err(refused) => return form.refused_whole(refused.into_parts()),
     };
-    let (benchmark, stage) = match benchmark_for_making(&sources, &form.benchmark).await {
-        Ok(shown) => (shown.benchmark.name, shown.benchmark.stage),
+    let benchmark = match found {
+        Ok(shown) => shown.benchmark,
         Err(refused) => return form.refused_whole(refused),
     };
-    form.runs = runs_of(&sources, stage).await;
+    form.runs = runs_of(&sources, benchmark.stage).await;
     let (run, task) = match sent.checked() {
         Ok(checked) => checked,
         Err(refusal) => return form.refused((StatusCode::UNPROCESSABLE_ENTITY, refusal)),
@@ -963,7 +991,7 @@ pub(super) async fn add_task(
         Ok(served) => served,
         Err(NotPolled) => return form.refused(NotPolled::refusal()),
     };
-    let choice = BenchmarkChoice::Named(benchmark);
+    let choice = BenchmarkChoice::Existing(benchmark.id);
     match capture_run(&sources, &served, &run, &choice, task).await {
         Ok(_) => {
             form.making = Making::of(NewTaskFields::starting(&form.runs));
@@ -982,28 +1010,28 @@ struct RemoveForm {
     task: String,
 }
 
-/// Removes the task the form in `body` names from benchmark `name`, and answers
-/// with what the page says of it. Refused, removing nothing, unless the
+/// Removes the task the form in `body` names by its ID from benchmark `id`, and
+/// answers with what the page says of it. Refused, removing nothing, unless the
 /// browser shows the request came from the web UI's own pages.
 pub(super) async fn remove_task(
     State(sources): State<Sources>,
-    Path(name): Path<String>,
+    Path(id): Path<String>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, Refused> {
     const WRITE: Write = Write::RemoveTask;
     WRITE.same_origin(&headers, &uri)?;
-    let benchmark = benchmark_of_path(WRITE, &name)?;
+    let benchmark = benchmark_of_path(WRITE, &id)?;
     let form: RemoveForm = WRITE.read_form(&body)?;
-    let task: TaskName = form
+    let task: TaskId = form
         .task
         .parse()
         .map_err(|error: String| WRITE.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    match benchmarks(&sources).remove_task(&benchmark, &task).await {
-        Ok(()) => {
-            info!(benchmark = %benchmark, task = %task, "removed a task");
-            let said = format!("Removed the task {}", html::escape(task.as_str()));
+    match benchmarks(&sources).remove_task(benchmark, task).await {
+        Ok(name) => {
+            info!(benchmark = %benchmark, task = %task, name = %name, "removed a task");
+            let said = format!("Removed the task {}", html::escape(name.as_str()));
             Ok((StatusCode::OK, alert("alert-success", &said)).into_response())
         }
         Err(e @ (RemoveError::NoSuchBenchmark(_) | RemoveError::NoSuchTask { .. })) => {
@@ -1063,8 +1091,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            benchmark_tab_path(&"board".parse().unwrap(), BenchmarkTab::Tasks),
-            "/benchmarks/board/tasks"
+            benchmark_tab_path("1".parse().unwrap(), BenchmarkTab::Tasks),
+            "/benchmarks/1/tasks"
         );
     }
 }

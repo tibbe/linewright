@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use linewright::benchmark_runs::plan::{Gate, Step, plan};
 use linewright::benchmarks::{
-    Benchmark, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ScoreFigures, Shown,
+    Benchmark, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, RunTask, ScoreFigures, Shown,
     TrialEnd, TrialFigures, TrialKey, TrialRef, TrialState, WaitingFor,
 };
 use linewright::holds::{BenchmarkRunHold, InForce};
@@ -85,6 +85,7 @@ fn benchmark_run(
     BenchmarkRunRecord {
         id: id(n),
         benchmark: Benchmark {
+            id: "1".parse().unwrap(),
             name: "board".parse().unwrap(),
             stage: TaskStage::Design,
         },
@@ -92,7 +93,10 @@ fn benchmark_run(
         repetitions: NonZeroU32::new(repetitions).unwrap(),
         state: BenchmarkRunState::Open,
         tasks: (0..tasks)
-            .map(|task| format!("case-{task}").parse().unwrap())
+            .map(|task| RunTask {
+                id: (task + 1).to_string().parse().unwrap(),
+                name: format!("case-{task}").parse().unwrap(),
+            })
             .collect(),
         configurations: (0..configurations)
             .map(|configuration| format!("config-{configuration}").parse().unwrap())

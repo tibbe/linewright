@@ -13,8 +13,14 @@ const CRITERIA: &str = "A good result ships gh.\n";
 /// The benchmark of implement tasks #1's run is captured into.
 const IMPLEMENTS: &str = "implements";
 
+/// The ID of [`IMPLEMENTS`], made first.
+const IMPLEMENTS_ID: &str = "1";
+
 /// A benchmark of design tasks.
 const DESIGNS: &str = "designs";
+
+/// The ID of [`DESIGNS`], made second.
+const DESIGNS_ID: &str = "2";
 
 /// What run 1 recorded of its input.
 enum Recorded {
@@ -175,7 +181,7 @@ async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under
     let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
         form_shown(&fragment),
-        shown(IMPLEMENTS, "", "1-implement-1", "", None)
+        shown(IMPLEMENTS_ID, "", "1-implement-1", "", None)
     );
     assert_eq!(placed(&fragment), (vec![], None));
     let required: Vec<(&str, Option<&str>)> = select(&fragment, "[name][required]")
@@ -310,7 +316,7 @@ fn submit<'a>(
     name: &'a str,
     criteria: &'a str,
 ) -> impl Future<Output = (u16, Html)> + 'a {
-    submit_into(pages, Chosen::Benchmark(IMPLEMENTS), name, criteria)
+    submit_into(pages, Chosen::Benchmark(IMPLEMENTS_ID), name, criteria)
 }
 
 /// The benchmark a capture goes into.
@@ -405,7 +411,7 @@ async fn a_capture_closes_the_dialog_and_says_under_the_heading_what_it_made_lin
  {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, closes, form, messages) = made(&pages, Chosen::Benchmark(IMPLEMENTS)).await;
+    let (status, closes, form, messages) = made(&pages, Chosen::Benchmark(IMPLEMENTS_ID)).await;
 
     assert_eq!(status, 200, "{}", form.html());
     assert!(closes);
@@ -413,16 +419,16 @@ async fn a_capture_closes_the_dialog_and_says_under_the_heading_what_it_made_lin
         messages,
         [(
             "Captured run 1/implement-1 as the task gadgets in the benchmark implements.".into(),
-            Some("/benchmarks/implements/tasks".into())
+            Some("/benchmarks/1/tasks".into())
         )]
     );
     assert_eq!(
         form_shown(&form),
-        shown(IMPLEMENTS, "", "1-implement-1", "", None)
+        shown(IMPLEMENTS_ID, "", "1-implement-1", "", None)
     );
-    assert_eq!(tasks(&pages), ["gadgets"]);
+    assert_eq!(tasks(&pages), ["1"]);
     assert_eq!(
-        std::fs::read_to_string(pages.path("tasks/gadgets").join("criteria.md")).unwrap(),
+        std::fs::read_to_string(pages.path("tasks/1").join("criteria.md")).unwrap(),
         CRITERIA
     );
 }
@@ -448,7 +454,7 @@ async fn a_taken_name_is_refused_under_the_name() {
     assert_eq!(status, 422);
     assert_eq!(
         placed(&answer),
-        under("name", "A task named gadgets already exists.")
+        under("name", "A task named gadgets already exists in implements.")
     );
 }
 
@@ -509,7 +515,7 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     let (status, form) = post_capture(
         &pages,
         &[CROSS_SITE],
-        Chosen::Benchmark(IMPLEMENTS),
+        Chosen::Benchmark(IMPLEMENTS_ID),
         "gadgets",
         CRITERIA,
     )
@@ -519,7 +525,7 @@ async fn a_cross_site_capture_is_refused_and_writes_nothing() {
     assert_eq!(
         form_shown(&form),
         shown(
-            IMPLEMENTS,
+            IMPLEMENTS_ID,
             "",
             "gadgets",
             CRITERIA,
@@ -567,8 +573,8 @@ async fn the_form_offers_the_benchmarks_of_the_runs_stage_or_a_new_one() {
     assert_eq!(
         options,
         [
-            (Some("board"), "board".to_string()),
-            (Some(IMPLEMENTS), IMPLEMENTS.to_string()),
+            (Some("3"), "board".to_string()),
+            (Some(IMPLEMENTS_ID), IMPLEMENTS.to_string()),
             (Some(""), "New benchmark".to_string()),
         ]
     );
@@ -588,13 +594,10 @@ async fn a_capture_into_a_new_benchmark_makes_it_says_so_and_offers_it_next_time
         messages,
         [(
             "Captured run 1/implement-1 as the task gadgets in the new benchmark fresh.".into(),
-            Some("/benchmarks/fresh/tasks".into())
+            Some("/benchmarks/3/tasks".into())
         )]
     );
-    assert_eq!(
-        form_shown(&form),
-        shown("fresh", "", "1-implement-1", "", None)
-    );
+    assert_eq!(form_shown(&form), shown("3", "", "1-implement-1", "", None));
     let offered = |answered: &Html| -> Vec<String> {
         select(answered, "select[name=benchmark] option")
             .into_iter()
@@ -618,7 +621,7 @@ async fn a_refused_capture_answers_the_form_as_sent_with_the_reason_and_leaves_t
         &pages,
         RUN_PAGE,
         &[SAME_ORIGIN],
-        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", "Ships.\n"),
+        &fields(Chosen::Benchmark(IMPLEMENTS_ID), "gadgets", "Ships.\n"),
     )
     .await;
 
@@ -637,7 +640,7 @@ async fn a_refused_capture_answers_the_form_as_sent_with_the_reason_and_leaves_t
     assert_eq!(
         form_shown(&form),
         shown(
-            IMPLEMENTS,
+            IMPLEMENTS_ID,
             "",
             "gadgets",
             "Ships.\n",
@@ -652,7 +655,7 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
     let pages = implemented(Recorded::Whole).await;
 
     let (status, answer) =
-        submit_into(&pages, Chosen::Benchmark(DESIGNS), "gadgets", CRITERIA).await;
+        submit_into(&pages, Chosen::Benchmark(DESIGNS_ID), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(
@@ -721,7 +724,7 @@ async fn a_run_that_does_not_exist_is_refused_and_says_so() {
         "/runs/1/implement-9",
         &[SAME_ORIGIN],
         &[
-            ("benchmark", IMPLEMENTS),
+            ("benchmark", IMPLEMENTS_ID),
             ("name", "gadgets"),
             ("criteria", CRITERIA),
         ],
@@ -744,7 +747,7 @@ async fn with_no_benchmark_offered_new_benchmark_is_chosen_and_its_name_enabled(
         &pages,
         "/runs/1/rework-1",
         &[SAME_ORIGIN],
-        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", CRITERIA),
+        &fields(Chosen::Benchmark(IMPLEMENTS_ID), "gadgets", CRITERIA),
     )
     .await;
 
@@ -779,7 +782,7 @@ async fn a_run_that_cannot_be_captured_is_refused_above_the_buttons() {
         &pages,
         "/runs/1/rework-1",
         &[SAME_ORIGIN],
-        &fields(Chosen::Benchmark(IMPLEMENTS), "gadgets", CRITERIA),
+        &fields(Chosen::Benchmark(IMPLEMENTS_ID), "gadgets", CRITERIA),
     )
     .await;
 
@@ -796,13 +799,12 @@ async fn a_run_that_cannot_be_captured_is_refused_above_the_buttons() {
 async fn a_benchmark_that_no_longer_exists_is_refused_under_benchmark() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) =
-        submit_into(&pages, Chosen::Benchmark("gone"), "gadgets", CRITERIA).await;
+    let (status, answer) = submit_into(&pages, Chosen::Benchmark("9"), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
     assert_eq!(
         placed(&answer),
-        under("benchmark", "there is no benchmark gone")
+        under("benchmark", "there is no benchmark 9")
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }

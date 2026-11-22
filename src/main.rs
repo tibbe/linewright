@@ -7,9 +7,10 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::benchmarks::{
-    self, BenchmarkAnswer, BenchmarkName, BenchmarkRunAnswer, BenchmarkRunId, BenchmarkRunRecord,
-    BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer, CancelRefusal,
-    ConfigurationName, LaunchRefusal, RemoveError, Repetitions, Shown,
+    self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkName, BenchmarkRunAnswer,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks,
+    BenchmarksAnswer, CancelRefusal, ConfigurationName, LaunchRefusal, RemoveError, Repetitions,
+    Shown, TaskId,
 };
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
@@ -937,14 +938,19 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         }
         Command::Benchmarks { json } => return Ok(list_benchmarks(&config, json).await),
         Command::Benchmark {
-            command: BenchmarkCommand::Show { name, json },
-        } => return Ok(show_benchmark(&config, &name, json).await),
+            command: BenchmarkCommand::Show { benchmark, json },
+        } => return Ok(show_benchmark(&config, benchmark, json).await),
         Command::Benchmark {
             command: BenchmarkCommand::Add { name, stage, json },
         } => return Ok(make_benchmark(&config, &name, stage, json).await),
         Command::Benchmark {
-            command: BenchmarkCommand::RemoveTask { name, task, json },
-        } => return Ok(remove_task(&config, &name, &task, json).await),
+            command:
+                BenchmarkCommand::RemoveTask {
+                    benchmark,
+                    task,
+                    json,
+                },
+        } => return Ok(remove_task(&config, benchmark, task, json).await),
         Command::BenchmarkRun {
             command: BenchmarkRunCommand::Show { id, json },
         } => return Ok(show_benchmark_run(&config, id, json).await),
@@ -959,7 +965,7 @@ async fn work(command: Command, config: Config, winding_up: &WindingUp, log: &Lo
         } => {
             return Ok(launch_benchmark_run(
                 &config,
-                &benchmark,
+                benchmark,
                 &configurations,
                 repetitions,
                 json,
@@ -1036,9 +1042,9 @@ async fn made_benchmarks(config: &Config) -> Result<Benchmarks> {
     Ok(Benchmarks::new(Database::open(&work_dir).await?))
 }
 
-fn no_such_benchmark(name: &BenchmarkName) -> (u8, String) {
+fn no_such_benchmark(id: BenchmarkId) -> (u8, String) {
     refused(&RequestError::NotFound(format!(
-        "there is no benchmark {name}"
+        "there is no benchmark {id}"
     )))
 }
 
@@ -1079,16 +1085,16 @@ async fn list_benchmarks(config: &Config, json: bool) -> u8 {
     )
 }
 
-async fn show_benchmark(config: &Config, name: &BenchmarkName, json: bool) -> u8 {
+async fn show_benchmark(config: &Config, id: BenchmarkId, json: bool) -> u8 {
     let shown = async {
         match existing_benchmarks(config).await? {
-            Some(benchmarks) => benchmarks.show(name).await,
+            Some(benchmarks) => benchmarks.show(id).await,
             None => Ok(None),
         }
     };
     let shown = match shown.await {
         Ok(Some(shown)) => shown,
-        Ok(None) => return print_answer(Err(no_such_benchmark(name))),
+        Ok(None) => return print_answer(Err(no_such_benchmark(id))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
     let mut states = Vec::with_capacity(shown.benchmark_runs.len());
@@ -1145,8 +1151,8 @@ async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage,
             .map(|benchmark| {
                 answer_text(&benchmark, json, |benchmark| {
                     format!(
-                        "Made the benchmark {}, of {}\n",
-                        benchmark.name, benchmark.stage
+                        "Made the benchmark {} ({}), of {}\n",
+                        benchmark.id, benchmark.name, benchmark.stage
                     )
                 })
             })
@@ -1156,32 +1162,34 @@ async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage,
 
 /// What `benchmark remove-task` answers.
 #[derive(serde::Serialize)]
-struct Removed<'a> {
-    benchmark: &'a BenchmarkName,
-    task: &'a TaskName,
+struct Removed {
+    benchmark: BenchmarkId,
+    task: TaskId,
+    name: TaskName,
 }
 
-async fn remove_task(config: &Config, name: &BenchmarkName, task: &TaskName, json: bool) -> u8 {
+async fn remove_task(config: &Config, benchmark: BenchmarkId, task: TaskId, json: bool) -> u8 {
     let benchmarks = match existing_benchmarks(config).await {
         Ok(Some(benchmarks)) => benchmarks,
-        Ok(None) => return print_answer(Err(no_such_benchmark(name))),
+        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
     print_answer(
         benchmarks
-            .remove_task(name, task)
+            .remove_task(benchmark, task)
             .await
-            .map(|()| {
+            .map(|name| {
                 answer_text(
                     &Removed {
-                        benchmark: name,
+                        benchmark,
                         task,
+                        name,
                     },
                     json,
                     |removed| {
                         format!(
-                            "Removed the task {} from the benchmark {}\n",
-                            removed.task, removed.benchmark
+                            "Removed the task {} ({}) from the benchmark {}\n",
+                            removed.task, removed.name, removed.benchmark
                         )
                     },
                 )
@@ -1212,9 +1220,9 @@ fn no_such_benchmark_run(id: BenchmarkRunId) -> (u8, String) {
 
 /// What `benchmark-run launch` answers.
 #[derive(serde::Serialize)]
-struct LaunchedAnswer<'a> {
+struct LaunchedAnswer {
     id: BenchmarkRunId,
-    benchmark: &'a BenchmarkName,
+    benchmark: BenchmarkId,
     trials: usize,
 }
 
@@ -1224,7 +1232,7 @@ struct LaunchedAnswer<'a> {
 /// is written.
 async fn launch_benchmark_run(
     config: &Config,
-    benchmark: &BenchmarkName,
+    benchmark: BenchmarkId,
     configurations: &[(ConfigurationName, PathBuf)],
     repetitions: Repetitions,
     json: bool,
@@ -1235,10 +1243,10 @@ async fn launch_benchmark_run(
             return Ok(None);
         };
         let found = Benchmarks::new(db.clone()).find(benchmark).await?;
-        anyhow::Ok(found.map(|_| db))
+        anyhow::Ok(found.map(|found| (db, found)))
     };
-    let db = match database.await {
-        Ok(Some(db)) => db,
+    let (db, found) = match database.await {
+        Ok(Some(found)) => found,
         Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
         Err(e) => return print_answer(Err(failed(&e))),
     };
@@ -1270,8 +1278,8 @@ async fn launch_benchmark_run(
                 };
                 answer_text(&answer, json, |answer| {
                     format!(
-                        "Launched benchmark run {} on the benchmark {}: {} trials\n",
-                        answer.id, answer.benchmark, answer.trials
+                        "Launched benchmark run {} on the benchmark {} ({}): {} trials\n",
+                        answer.id, answer.benchmark, found.name, answer.trials
                     )
                 })
             })
@@ -1345,7 +1353,7 @@ async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -
 struct Capture {
     id: RunId,
     name: TaskName,
-    benchmark: BenchmarkName,
+    benchmark: BenchmarkId,
     /// The file that holds the criteria.
     criteria: PathBuf,
 }
@@ -1354,8 +1362,9 @@ struct Capture {
 #[derive(serde::Serialize)]
 struct Captured<'a> {
     run: &'a RunId,
-    task: &'a TaskName,
-    benchmark: &'a BenchmarkName,
+    task: TaskId,
+    name: &'a TaskName,
+    benchmark: &'a Benchmark,
     dir: &'a Path,
 }
 
@@ -1384,7 +1393,7 @@ impl Capture {
             Err(e) => return print_answer(Err(failed(&e))),
         };
         let benchmarks = Benchmarks::new(runs.database().clone());
-        let choice = BenchmarkChoice::Named(benchmark.clone());
+        let choice = BenchmarkChoice::Existing(*benchmark);
         let capturable = match task::capturable(&runs, &benchmarks, id, name, &choice).await {
             Ok(capturable) => capturable,
             Err(e) => return print_answer(Err(refusal(e))),
@@ -1410,19 +1419,23 @@ impl Capture {
         print_answer(
             task::capture(&github, capturable, &criteria, &benchmarks)
                 .await
-                .map(|dir| {
+                .map(|kept| {
                     let captured = Captured {
                         run: id,
-                        task: name,
-                        benchmark,
-                        dir: &dir,
+                        task: kept.id,
+                        name,
+                        benchmark: &kept.benchmark,
+                        dir: &kept.dir,
                     };
                     answer_text(&captured, json, |captured| {
                         format!(
-                            "Captured {} as the task {} in the benchmark {}\n",
+                            "Captured {} as the task {} ({}) in the benchmark {} ({}), in {}\n",
                             captured.run,
+                            captured.task,
+                            captured.name,
+                            captured.benchmark.id,
+                            captured.benchmark.name,
                             captured.dir.display(),
-                            captured.benchmark
                         )
                     })
                 })

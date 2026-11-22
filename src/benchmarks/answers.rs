@@ -14,13 +14,14 @@ use crate::reconcile::Wait;
 use crate::results::Verdict;
 use crate::runs::OutcomeName;
 use crate::status::describe_wait;
-use crate::task::{TaskName, TaskStage};
+use crate::task::TaskStage;
 
 use super::results::{self, Figures, Mean, Results};
 use super::runs::outcome_name;
 use super::{
-    BenchmarkName, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ConfigurationName,
-    NoScore, Repetitions, TrialEnd, TrialFigures, TrialState,
+    BenchmarkId, BenchmarkName, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState,
+    ConfigurationId, ConfigurationName, NoScore, Repetitions, RunTask, TaskId, TrialEnd,
+    TrialFigures, TrialState,
 };
 
 /// A benchmark run's state as it is shown: an open benchmark run runs or waits,
@@ -98,11 +99,25 @@ impl Shown {
     }
 }
 
+/// A benchmark as a benchmark run's answer names it.
+#[derive(Serialize)]
+pub struct BenchmarkOfRun {
+    pub id: BenchmarkId,
+    pub name: BenchmarkName,
+}
+
+/// A configuration of a benchmark run, by its ID.
+#[derive(Serialize)]
+pub struct ConfigurationAnswer {
+    pub id: ConfigurationId,
+    pub name: ConfigurationName,
+}
+
 /// What `benchmark-run show ID` answers.
 #[derive(Serialize)]
 pub struct BenchmarkRunAnswer {
     pub id: BenchmarkRunId,
-    pub benchmark: BenchmarkName,
+    pub benchmark: BenchmarkOfRun,
     pub stage: TaskStage,
     pub launched_at: Timestamp,
     /// When it ended or was cancelled, if it has and that was kept.
@@ -111,19 +126,20 @@ pub struct BenchmarkRunAnswer {
     #[serde(flatten)]
     pub shown: Shown,
     pub repetitions: Repetitions,
-    pub tasks: Vec<TaskName>,
-    pub configurations: Vec<ConfigurationName>,
+    pub tasks: Vec<RunTask>,
+    pub configurations: Vec<ConfigurationAnswer>,
     /// Every trial, in the order they start.
     pub trials: Vec<KeyedTrialAnswer>,
     pub results: Results,
 }
 
-/// A trial of a benchmark run, with its score.
+/// A trial of a benchmark run, by the IDs of its configuration and its task,
+/// with its score.
 #[derive(Serialize)]
 pub struct KeyedTrialAnswer {
     pub repetition: NonZeroU32,
-    pub task: TaskName,
-    pub configuration: ConfigurationName,
+    pub task: TaskId,
+    pub configuration: ConfigurationId,
     #[serde(flatten)]
     pub state: TrialAnswer,
 }
@@ -237,24 +253,36 @@ impl BenchmarkRunAnswer {
             .trials
             .iter()
             .filter_map(|(key, state)| {
+                let of = record.trial_of(key)?;
                 Some(KeyedTrialAnswer {
                     repetition: key.repetition,
-                    task: record.tasks.get(key.task)?.clone(),
-                    configuration: record.configurations.get(key.configuration)?.clone(),
+                    task: of.task.id,
+                    configuration: of.configuration,
                     state: state.into(),
                 })
             })
             .collect();
         BenchmarkRunAnswer {
             id: record.id,
-            benchmark: record.benchmark.name.clone(),
+            benchmark: BenchmarkOfRun {
+                id: record.benchmark.id,
+                name: record.benchmark.name.clone(),
+            },
             stage: record.benchmark.stage,
             launched_at: record.launched_at,
             ended_at: record.state.ended_at(),
             shown,
             repetitions: record.repetitions,
             tasks: record.tasks.clone(),
-            configurations: record.configurations.clone(),
+            configurations: record
+                .configurations
+                .iter()
+                .enumerate()
+                .map(|(place, name)| ConfigurationAnswer {
+                    id: ConfigurationId::of_place(place),
+                    name: name.clone(),
+                })
+                .collect(),
             trials,
             results: results::results(record),
         }
@@ -270,10 +298,11 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
     let mut scorers = dollars(results.scorers.total);
     without(&mut scorers, results.scorers.none, "a cost");
     let mut text = format!(
-        "benchmark run: {}\nbenchmark: {}\nstage: {}\nlaunched: {}\n{}state: {}\nrepetitions: {}\n\
-         trials ended: {} of {}\ncost: {cost}\nscorers' cost: {scorers}\n",
+        "benchmark run: {}\nbenchmark: {} ({})\nstage: {}\nlaunched: {}\n{}state: {}\n\
+         repetitions: {}\ntrials ended: {} of {}\ncost: {cost}\nscorers' cost: {scorers}\n",
         answer.id,
-        answer.benchmark,
+        answer.benchmark.id,
+        answer.benchmark.name,
         answer.stage,
         Phrase::default().time(answer.launched_at),
         answer.ended_at.map_or_else(String::new, |at| format!(
@@ -288,7 +317,8 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
     for configuration in &results.configurations {
         let _ = write!(
             text,
-            "configuration {}:\n  pass rate: {}\n{}",
+            "configuration {} ({}):\n  pass rate: {}\n{}",
+            configuration.id,
             configuration.name,
             percent(configuration.pass_rate),
             describe_figures(&configuration.figures, "  "),
@@ -296,8 +326,9 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
         for task in &configuration.tasks {
             let _ = write!(
                 text,
-                "  task {}:\n    passes: {}\n{}",
-                task.task,
+                "  task {} ({}):\n    passes: {}\n{}",
+                task.id,
+                task.name,
                 task.passes
                     .map_or_else(|| "none".into(), |passes| passes.to_string()),
                 describe_figures(&task.figures, "    "),
@@ -305,9 +336,20 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
         }
     }
     for trial in &answer.trials {
+        let configuration = answer
+            .configurations
+            .iter()
+            .find(|configuration| configuration.id == trial.configuration)
+            .map_or_else(String::new, |configuration| configuration.name.to_string());
+        let task = answer
+            .tasks
+            .iter()
+            .find(|task| task.id == trial.task)
+            .map_or_else(String::new, |task| task.name.to_string());
         let _ = writeln!(
             text,
-            "trial {}/{}/{}: {}",
+            "trial {configuration}/{task}/{} ({}/{}/{}): {}",
+            trial.repetition,
             trial.configuration,
             trial.task,
             trial.repetition,
@@ -422,7 +464,7 @@ pub fn duration(seconds: f64) -> String {
         .to_string()
 }
 
-/// A benchmark run as `benchmark show NAME` lists it.
+/// A benchmark run as `benchmark show BENCHMARK` lists it.
 #[derive(Serialize)]
 pub struct BenchmarkRunSummary {
     pub id: BenchmarkRunId,
@@ -434,7 +476,7 @@ pub struct BenchmarkRunSummary {
 
 #[derive(Serialize)]
 pub struct PassRate {
-    pub configuration: ConfigurationName,
+    pub configuration: ConfigurationAnswer,
     pub pass_rate: Option<f64>,
 }
 
@@ -448,7 +490,10 @@ impl BenchmarkRunSummary {
                 .configurations
                 .into_iter()
                 .map(|configuration| PassRate {
-                    configuration: configuration.name,
+                    configuration: ConfigurationAnswer {
+                        id: configuration.id,
+                        name: configuration.name,
+                    },
                     pass_rate: configuration.pass_rate,
                 })
                 .collect(),
@@ -456,12 +501,12 @@ impl BenchmarkRunSummary {
     }
 }
 
-/// A benchmark run as a line of `benchmark show NAME`.
+/// A benchmark run as a line of `benchmark show BENCHMARK`.
 pub(super) fn render_summary(summary: &BenchmarkRunSummary) -> String {
     let rates: Vec<String> = summary
         .pass_rates
         .iter()
-        .map(|rate| format!("{} {}", rate.configuration, percent(rate.pass_rate)))
+        .map(|rate| format!("{} {}", rate.configuration.name, percent(rate.pass_rate)))
         .collect();
     format!(
         "benchmark run {}: {}, launched {}, pass rates {}\n",
@@ -480,6 +525,19 @@ mod tests {
     use super::*;
     use crate::benchmarks::{Benchmark, Cancelled, ScoreFigures, TrialKey};
     use crate::runs::Ending;
+
+    /// The tasks `names`, their IDs from 1.
+    #[track_caller]
+    fn run_tasks(names: &[&str]) -> Vec<RunTask> {
+        names
+            .iter()
+            .zip(1..)
+            .map(|(name, id)| RunTask {
+                id: id.to_string().parse().unwrap(),
+                name: name.parse().unwrap(),
+            })
+            .collect()
+    }
 
     #[track_caller]
     fn key(task: usize, configuration: usize) -> TrialKey {
@@ -563,6 +621,7 @@ mod tests {
         let record = BenchmarkRunRecord {
             id: "7".parse().unwrap(),
             benchmark: Benchmark {
+                id: "1".parse().unwrap(),
                 name: "board".parse().unwrap(),
                 stage: TaskStage::Design,
             },
@@ -571,10 +630,7 @@ mod tests {
             state: BenchmarkRunState::Cancelled {
                 at: Some("2026-11-17T12:30:00Z".parse().unwrap()),
             },
-            tasks: ["columns", "lanes", "rows"]
-                .iter()
-                .map(|task| task.parse().unwrap())
-                .collect(),
+            tasks: run_tasks(&["columns", "lanes", "rows"]),
             configurations: ["as-is", "short"]
                 .iter()
                 .map(|name| name.parse().unwrap())
@@ -590,7 +646,7 @@ mod tests {
         assert_eq!(
             text,
             "benchmark run: 7\n\
-             benchmark: board\n\
+             benchmark: 1 (board)\n\
              stage: design\n\
              launched: 2026-11-17 12:00:00 UTC\n\
              ended: 2026-11-17 12:30:00 UTC\n\
@@ -599,61 +655,61 @@ mod tests {
              trials ended: 5 of 7\n\
              cost: $0.70, 1 without a cost\n\
              scorers' cost: $0.06, 1 without a cost\n\
-             configuration as-is:\n  \
+             configuration 1 (as-is):\n  \
                pass rate: 100%\n  \
                cost: mean $0.20, total $0.40\n  \
                time: mean 50s, total 1m 40s\n  \
                leaks: 1\n  \
                unscored: 0\n  \
-               task columns:\n    \
+               task 1 (columns):\n    \
                  passes: 1 of 1\n    \
                  cost: mean $0.30, total $0.30\n    \
                  time: mean 1m 30s, total 1m 30s\n    \
                  leaks: 0\n    \
                  unscored: 0\n  \
-               task lanes:\n    \
+               task 2 (lanes):\n    \
                  passes: none\n    \
                  cost: mean $0.10, total $0.10\n    \
                  time: mean 10s, total 10s\n    \
                  leaks: 1\n    \
                  unscored: 0\n  \
-               task rows:\n    \
+               task 3 (rows):\n    \
                  passes: none\n    \
                  cost: none\n    \
                  time: none\n    \
                  leaks: 0\n    \
                  unscored: 0\n\
-             configuration short:\n  \
+             configuration 2 (short):\n  \
                pass rate: none\n  \
                cost: mean $0.20, total $0.20, 1 without a cost\n  \
                time: mean 25s, total 50s\n  \
                leaks: 0\n  \
                unscored: 2\n  \
-               task columns:\n    \
+               task 1 (columns):\n    \
                  passes: none\n    \
                  cost: none, 1 without a cost\n    \
                  time: mean 30s, total 30s\n    \
                  leaks: 0\n    \
                  unscored: 1\n  \
-               task lanes:\n    \
+               task 2 (lanes):\n    \
                  passes: none\n    \
                  cost: mean $0.20, total $0.20\n    \
                  time: mean 20s, total 20s\n    \
                  leaks: 0\n    \
                  unscored: 1\n  \
-               task rows:\n    \
+               task 3 (rows):\n    \
                  passes: none\n    \
                  cost: none\n    \
                  time: none\n    \
                  leaks: 0\n    \
                  unscored: 0\n\
-             trial as-is/columns/1: scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
-             trial short/columns/1: no score: its run is not done or handed back, run failed, cost none, took 30s\n\
-             trial as-is/lanes/1: scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
-             trial short/lanes/1: no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
-             trial as-is/rows/1: no score: cancelled\n\
-             trial short/rows/1: no score: cancelled, run cancelled, cost $0.04, took 15s\n\
-             trial short/rows/2: running\n"
+             trial as-is/columns/1 (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
+             trial short/columns/1 (2/1/1): no score: its run is not done or handed back, run failed, cost none, took 30s\n\
+             trial as-is/lanes/1 (1/2/1): scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
+             trial short/lanes/1 (2/2/1): no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
+             trial as-is/rows/1 (1/3/1): no score: cancelled\n\
+             trial short/rows/1 (2/3/1): no score: cancelled, run cancelled, cost $0.04, took 15s\n\
+             trial short/rows/2 (2/3/2): running\n"
         );
     }
 
@@ -680,13 +736,14 @@ mod tests {
         let record = BenchmarkRunRecord {
             id: "3".parse().unwrap(),
             benchmark: Benchmark {
+                id: "1".parse().unwrap(),
                 name: "board".parse().unwrap(),
                 stage: TaskStage::Design,
             },
             launched_at: "2026-11-17T12:00:00Z".parse().unwrap(),
             repetitions: NonZeroU32::MIN,
             state: BenchmarkRunState::Open,
-            tasks: vec!["columns".parse().unwrap()],
+            tasks: run_tasks(&["columns"]),
             configurations: vec!["as-is".parse().unwrap()],
             trials: BTreeMap::from([(key(0, 0), TrialState::Pending)]),
         };

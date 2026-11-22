@@ -85,6 +85,7 @@ async fn task_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
     task::capture(&*world.store, capturable, &criteria, &benchmarks)
         .await
         .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"))
+        .dir
 }
 
 /// A trial's output, and how its run ended or why it did not run.
