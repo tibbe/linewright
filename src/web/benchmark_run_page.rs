@@ -27,6 +27,7 @@ use super::names::Names;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_page::{PageOf, RunQuery, Transcribed, transcript_events, transcript_page};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing, Within};
+use super::stats::{ABSENT, Stat, absent};
 use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
@@ -150,7 +151,7 @@ struct BenchmarkRunView {
     /// Its cancelling, while it is open (`docs/specs/benchmarks.md`,
     /// Benchmark run, Heading).
     cancel: Option<Confirmation>,
-    facts: Vec<Fact>,
+    facts: Vec<Stat>,
     chart: [Plot; 2],
     /// A page of the configurations' rows, ranked, each followed by the rows
     /// it opens to.
@@ -160,17 +161,6 @@ struct BenchmarkRunView {
     grid: Grid,
     grid_nav: Option<PagesShown>,
 }
-
-/// A fact (`docs/specs/benchmarks.md`, Benchmark run, Facts): its label and
-/// its value, "–" where the value is absent.
-struct Fact {
-    label: &'static str,
-    value: Html,
-}
-
-/// What the page shows of a figure that is absent
-/// (`docs/specs/design_system.md`, Screen states, Absent).
-const ABSENT: &str = "–";
 
 /// The horizontal axis of the chart.
 #[derive(Clone, Copy)]
@@ -580,41 +570,40 @@ fn facts(
     results: &Results,
     now: Timestamp,
     names: &Names,
-) -> Vec<Fact> {
-    let absent = || html::escape(ABSENT);
-    let mut facts = vec![Fact {
+) -> Vec<Stat> {
+    let mut facts = vec![Stat {
         label: "Launched",
         value: html::time(record.launched_at),
     }];
     if record.state != BenchmarkRunState::Open {
-        facts.push(Fact {
+        facts.push(Stat {
             label: "Ended",
             value: record.state.ended_at().map_or_else(absent, html::time),
         });
     }
     let running = (record.state == BenchmarkRunState::Open).then_some(record.launched_at);
-    facts.push(Fact {
+    facts.push(Stat {
         label: "Duration",
         value: record.duration(now).map_or_else(absent, |duration| {
             html::duration(None, duration.as_secs(), running)
         }),
     });
-    facts.push(Fact {
+    facts.push(Stat {
         label: "Trials",
         value: html::escape(&format!("{} of {}", results.trials_ended, results.all)),
     });
     let mut cost = dollars(results.cost.total);
     without(&mut cost, results.cost.none, "a cost");
-    facts.push(Fact {
+    facts.push(Stat {
         label: "Cost",
         value: html::escape(&cost),
     });
-    facts.push(Fact {
+    facts.push(Stat {
         label: "Scorers",
         value: html::escape(&dollars(results.scorers.total)),
     });
     if let Shown::Waiting(waiting_for) = shown {
-        facts.push(Fact {
+        facts.push(Stat {
             label: "Waiting for",
             value: html::phrase(&waiting_for.phrase(), names),
         });

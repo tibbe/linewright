@@ -280,6 +280,20 @@
 <button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}">{{ verb.labelled() }}</button>
 {%- endmacro -%}
 
+{#- A screen's facts side by side, each a `crate::web::stats::Stat`, in a
+    daisyUI `stats` drawn as a card is (`docs/specs/web/benchmarks.md`,
+    Benchmark run and Task). -#}
+{%- macro stats(stats) -%}
+<div class="stats max-w-full {% call card_look() %}{% endcall %}">
+{%- for stat in stats %}
+<div class="stat">
+<div class="stat-title">{{ stat.label }}</div>
+<div class="stat-value text-xl font-semibold">{{ stat.value }}</div>
+</div>
+{%- endfor %}
+</div>
+{%- endmacro -%}
+
 {#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
     `bg-base-200`, or in `colour`. -#}
 {%- macro card_look(colour = "bg-base-200") -%}
