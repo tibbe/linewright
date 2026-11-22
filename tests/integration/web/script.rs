@@ -1648,6 +1648,72 @@ steps.join("\n")
     );
 }
 
+/// `docs/specs/benchmarks.md`, New benchmark run, Settings: a configuration
+/// that "Add a configuration" adds starts each setting, and what it started
+/// with, as a run of the stage used it when the dialog opened, not as the
+/// page drew it or as `serve` read it later.
+#[test_log::test(tokio::test)]
+async fn an_added_configuration_starts_its_settings_as_the_stage_used_them_when_the_dialog_opened()
+{
+    let script = served_script().await;
+    let page = r#"
+var settings = element("DIV", { id: "stage-settings" });
+function serve(given) { settings.attributes["data-settings"] = JSON.stringify(given); }
+var held = [];
+var configurations = { append(fieldset) { held.push(fieldset); } };
+var count = { textContent: "" };
+var launch = Object.assign(element("FORM", {}), {
+  elements: { repetitions: { value: "1" } },
+  querySelectorAll: (selector) => (selector.startsWith("fieldset.configuration") ? held : []),
+  querySelector: (selector) =>
+    selector === ".trial-count" ? count : selector === ".configurations" ? configurations : null,
+});
+function drawn() {
+  const fields = [
+    "model", "started-model", "effort", "started-effort", "session-timeout",
+    "started-session-timeout",
+  ].map((key) => Object.assign(element("INPUT", {}), { name: `c__N__.${key}`, value: "as drawn" }));
+  const choice = { options: [{}], replaceChildren() {} };
+  const fieldset = Object.assign(element("FIELDSET", {}), { dataset: {}, fields });
+  fieldset.querySelectorAll = () => fields;
+  fieldset.querySelector = (selector) =>
+    selector === "select.brief-file" ? choice
+      : fields.find((field) => selector === `[name="${field.name}"]`) ?? null;
+  return fieldset;
+}
+var template = { content: { firstElementChild: { cloneNode: drawn } } };
+var adding = element("BUTTON", {});
+adding.classList = { contains: (name) => name === "add-configuration" };
+adding.closest = (selector) =>
+  selector === "button" ? adding : selector === "form.launch" ? launch : null;
+var dialog = element("DIALOG", {});
+dialog.querySelector = (selector) => (selector === "form.launch" ? launch : null);
+var opening = element("BUTTON", { command: "show-modal", commandfor: "new-benchmark-run" });
+opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
+const byId = document.getElementById;
+document.getElementById = (id) =>
+  id === "new-benchmark-run" ? dialog
+    : id === "stage-settings" ? settings
+    : id === "configuration-template" ? template
+    : byId(id);
+"#;
+    let asked = r#"
+serve({ model: "claude-opus-5-5", effort: "", "session-timeout": "6h" });
+fire("click", event(opening));
+serve({ model: "claude-sonnet-5-5", effort: "low", "session-timeout": "2h" });
+fire("click", event(adding));
+held[0].fields.map((field) => `${field.name}=${field.value}`).join(" ")
+"#;
+
+    let added = evaluated(&[BROWSER, FILTERS, page, &script, asked]);
+
+    assert_eq!(
+        added,
+        "c1.model=claude-opus-5-5 c1.started-model=claude-opus-5-5 c1.effort= c1.started-effort= \
+         c1.session-timeout=6h c1.started-session-timeout=6h"
+    );
+}
+
 /// `docs/specs/web/shell.md`, Expanding and collapsing, Remembered: the foot
 /// button collapses the sidebar to the rail and expands it again at once,
 /// naming what it does next, and posts each choice to the URL it holds for

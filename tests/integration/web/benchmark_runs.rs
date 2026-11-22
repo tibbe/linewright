@@ -1671,9 +1671,9 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
         MakingShown {
             values: vec![
                 ("c__N__.name", String::new()),
-                ("c__N__.model", String::new()),
-                ("c__N__.effort", String::new()),
-                ("c__N__.session-timeout", String::new()),
+                ("c__N__.model", "claude-opus-5-5".into()),
+                ("c__N__.effort", "high".into()),
+                ("c__N__.session-timeout", "6h".into()),
             ],
             refused: vec![],
             whole: None,
@@ -1731,17 +1731,46 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
         [
             "c__N__.name",
             "c__N__.model",
+            "c__N__.started-model",
             "c__N__.effort",
-            "c__N__.session-timeout"
+            "c__N__.started-effort",
+            "c__N__.session-timeout",
+            "c__N__.started-session-timeout"
         ]
     );
-    let efforts: Vec<String> = select(&added, "select[name='c__N__.effort'] option")
+    let started: Vec<(String, String)> = select(&added, "input[type=hidden]")
         .into_iter()
-        .map(text)
+        .map(|field| {
+            (
+                field.attr("name").unwrap().to_string(),
+                field.attr("value").unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        started,
+        [
+            ("c__N__.started-model".into(), "claude-opus-5-5".into()),
+            ("c__N__.started-effort".into(), "high".into()),
+            ("c__N__.started-session-timeout".into(), "6h".into()),
+        ]
+    );
+    let model = select(&added, "input[name='c__N__.model']")[0];
+    assert_eq!(model.attr("placeholder"), Some("Default"));
+    let efforts: Vec<(String, bool)> = select(&added, "select[name='c__N__.effort'] option")
+        .into_iter()
+        .map(|option| (text(option), option.attr("selected").is_some()))
         .collect();
     assert_eq!(
         efforts,
-        ["as it is", "low", "medium", "high", "xhigh", "max"]
+        [
+            ("Default".to_string(), false),
+            ("low".to_string(), false),
+            ("medium".to_string(), false),
+            ("high".to_string(), true),
+            ("xhigh".to_string(), false),
+            ("max".to_string(), false),
+        ]
     );
     let files: Vec<&str> = select(&added, "select.brief-file option")
         .into_iter()
@@ -1754,17 +1783,28 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
     let texts: std::collections::BTreeMap<String, String> =
         serde_json::from_str(select(&html, "#brief-texts")[0].attr("data-texts").unwrap()).unwrap();
     assert_eq!(texts["prompts/implement.md"], IMPLEMENT);
+    let settings: serde_json::Value = serde_json::from_str(
+        select(&html, "#stage-settings")[0]
+            .attr("data-settings")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({"model": "claude-opus-5-5", "effort": "high", "session-timeout": "6h"})
+    );
     assert_eq!(
         texts["plugin/skills/tdd/SKILL.md"],
         include_str!("../../../briefs/plugin/skills/tdd/SKILL.md")
     );
 }
 
-/// `docs/specs/benchmarks.md`, New benchmark run, Files of the brief: the
-/// page's stream sends the texts a run of the stage uses, from which the
-/// dialog starts a file.
+/// `docs/specs/benchmarks.md`, New benchmark run, Settings and Files of the
+/// brief: the page's stream sends the settings and the texts a run of the
+/// stage uses, from which the dialog starts a configuration and a file.
 #[test_log::test(tokio::test)]
-async fn the_benchmark_pages_stream_sends_the_texts_of_the_files_of_the_brief() {
+async fn the_benchmark_pages_stream_sends_the_stages_settings_and_the_texts_of_the_files_of_the_brief()
+ {
     let pages = with_benchmarks().await;
     let mut events = stream(&pages, "/events/benchmarks/1").await;
 
@@ -1782,6 +1822,21 @@ async fn the_benchmark_pages_stream_sends_the_texts_of_the_files_of_the_brief() 
     )
     .unwrap();
     assert_eq!(texts["prompts/design.md"], DESIGN);
+    let settings = regions(&first)
+        .into_iter()
+        .find(|(id, _)| id == "stage-settings")
+        .map(|(_, region)| region)
+        .expect("the stage's settings");
+    let settings: serde_json::Value = serde_json::from_str(
+        select(&settings, "#stage-settings")[0]
+            .attr("data-settings")
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        settings,
+        serde_json::json!({"model": "claude-opus-5-5", "effort": "high", "session-timeout": "6h"})
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -1862,8 +1917,7 @@ async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_fi
             }],
             vec![(
                 "c1.session-timeout",
-                "config.toml has an error: the setting `session-timeout` is \"soon\": expected \
-                 number at 0",
+                "A session timeout is a duration, such as 6h.",
             )],
         ),
         (
@@ -2046,7 +2100,7 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
         &[
             ("repetitions", "2"),
             ("c3.name", "careful"),
-            ("c3.effort", "high"),
+            ("c3.effort", "max"),
             ("c1.name", "short"),
             ("c1.model", "haiku"),
             ("c1.effort", ""),
@@ -2125,4 +2179,86 @@ fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+/// The value of each field named `cN.started-KEY` in `form`, by its name.
+fn settings_started(form: &Html) -> Vec<(String, String)> {
+    field_values(select(form, "input[type=hidden][name*='.started-']"))
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, New benchmark run, Settings: a setting left
+/// as it started when the dialog opened is not part of the configuration,
+/// even once `serve` has read other settings since, and a refused form
+/// keeps what each setting started with.
+#[test_log::test(tokio::test)]
+async fn a_setting_left_as_it_started_stays_out_of_the_configuration_after_a_poll_changes_the_stages()
+ {
+    let pages = with_benchmarks().await;
+    let html = pages.page("/benchmarks/1").await;
+    let added =
+        Html::parse_fragment(&select(&html, "template#configuration-template")[0].inner_html());
+    let opened: Vec<(String, String)> = field_values(select(&added, "[name]"))
+        .into_iter()
+        .map(|(name, value)| (name.replace("__N__", "1"), value))
+        .collect();
+    pages.publish_with_settings(view(vec![ticket(1, "Ship gh")], vec![]), |_| {
+        linewright::work_settings::Partial {
+            model: Some("claude-sonnet-5-5".into()),
+            effort: Some(linewright::work_settings::Effort::Low),
+            session_timeout: Some(std::time::Duration::from_hours(2)),
+        }
+    });
+    let sent = |name: &str, timeout: &str| -> Vec<(String, String)> {
+        opened
+            .iter()
+            .map(|(field, value)| match field.as_str() {
+                "c1.name" => (field.clone(), name.to_string()),
+                "c1.session-timeout" => (field.clone(), timeout.to_string()),
+                _ => (field.clone(), value.clone()),
+            })
+            .chain([("repetitions".to_string(), "1".to_string())])
+            .collect()
+    };
+
+    let (refused, refused_answer) = post(
+        &pages,
+        "/benchmarks/1/launch",
+        &[SAME_ORIGIN],
+        &as_sent(&sent("short", "soon")),
+    )
+    .await;
+    let (launched, _) = post(
+        &pages,
+        "/benchmarks/1/launch",
+        &[SAME_ORIGIN],
+        &as_sent(&sent("short", "6h")),
+    )
+    .await;
+
+    assert_eq!(refused, 422);
+    assert_eq!(
+        settings_started(&refused_answer),
+        [
+            (
+                "c1.started-model".to_string(),
+                "claude-opus-5-5".to_string()
+            ),
+            ("c1.started-effort".to_string(), "high".to_string()),
+            ("c1.started-session-timeout".to_string(), "6h".to_string()),
+        ]
+    );
+    assert_eq!(launched, 200);
+    let kept = pages.path("benchmark-runs/1/.kept/configurations/1");
+    assert_eq!(files_under(&kept), Vec::<std::path::PathBuf>::new());
+}
+
+/// `fields` as [`post`] takes them.
+fn as_sent(fields: &[(String, String)]) -> Vec<(&str, &str)> {
+    fields
+        .iter()
+        .map(|(field, value)| (field.as_str(), value.as_str()))
+        .collect()
 }

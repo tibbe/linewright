@@ -245,6 +245,7 @@
     const launch = dialog?.querySelector?.("form.launch");
     if (!launch) return;
     openedTexts.set(launch, briefTexts());
+    openedSettings.set(launch, stageSettings());
     countTrials(launch);
   });
 
@@ -637,6 +638,20 @@
    */
   const openedTexts = new Map();
 
+  /**
+   * The settings a run of the benchmark's stage uses, by key, as the stream
+   * last sent them.
+   */
+  const stageSettings = () =>
+    JSON.parse(document.getElementById("stage-settings")?.getAttribute("data-settings") || "{}");
+
+  /**
+   * The settings a run of the stage used as New benchmark run's form was
+   * opened, by form, from which each configuration it adds starts
+   * (docs/specs/benchmarks.md, New benchmark run, Settings).
+   */
+  const openedSettings = new Map();
+
   /** The number the last configuration added took, for its fields' names. */
   let configurations = 0;
 
@@ -687,8 +702,9 @@
 
   /**
    * Adds a configuration at the end of `form` from the page's template,
-   * numbered past every configuration it holds, offering the files of the
-   * brief the form starts from.
+   * numbered past every configuration it holds, its settings and what they
+   * started with as the form opened, offering the files of the brief the
+   * form starts from.
    */
   function addConfiguration(form) {
     const template = document.getElementById("configuration-template");
@@ -700,6 +716,13 @@
     const fieldset = template.content.firstElementChild.cloneNode(true);
     fieldset.dataset.n = n;
     fillIn(fieldset, n, "");
+    const settings = openedSettings.get(form) ?? stageSettings();
+    for (const [key, value] of Object.entries(settings)) {
+      for (const name of [`c${n}.${key}`, `c${n}.started-${key}`]) {
+        const field = fieldset.querySelector(`[name="${name}"]`);
+        if (field) field.value = value;
+      }
+    }
     const choice = fieldset.querySelector("select.brief-file");
     const unchosen = choice.options[0];
     choice.replaceChildren(

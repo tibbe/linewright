@@ -639,11 +639,18 @@ impl Factory {
     }
 
     fn served(&self, next_poll: Timestamp) -> Option<Served> {
+        let repo = &self.kept.as_ref()?.repo;
         Some(Served::new(
             self.view(next_poll)?,
             self.shell.sessions.store.clone(),
             self.shell.sessions.secrets.redaction().clone(),
-            self.kept.as_ref()?.repo.briefs.clone(),
+            repo.briefs.clone(),
+            |stage| {
+                self.shell
+                    .run_with(repo, RunKind::Stage(stage.kind()))
+                    .settings
+                    .chosen()
+            },
         ))
     }
 

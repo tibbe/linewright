@@ -20,7 +20,7 @@ use super::buttons::Verb;
 use super::capture::{CapturingField, NotPolled, Task, TaskField, TaskFields, capture_run, polled};
 use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
-use super::launch::{BriefTexts, NewBenchmarkRunForm};
+use super::launch::{BriefTexts, NewBenchmarkRunForm, StageSettings};
 use super::making::{
     self, Answer, Control, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, REQUIRED,
     both,
@@ -396,6 +396,7 @@ struct BenchmarkPage {
     /// What choosing a file of the brief adds to a configuration.
     added_file: Html,
     brief_texts: Html,
+    stage_settings: Html,
     /// The New task dialog's form.
     new_task: Html,
 }
@@ -787,6 +788,7 @@ async fn benchmark_page_on(
                 added_file: NewBenchmarkRunForm::added_file(),
                 new_benchmark_run: html::rendered(&new_benchmark_run),
                 brief_texts: html::rendered(&BriefTexts::of(&sources)),
+                stage_settings: html::rendered(&StageSettings::of(&sources, benchmark.stage)),
                 new_task: html::rendered(&new_task),
                 path,
                 tab,
@@ -873,6 +875,10 @@ pub(super) async fn benchmark_events(
                 }),
             ));
             regions.push(("brief-texts", render(&BriefTexts::of(&sources))));
+            regions.push((
+                "stage-settings",
+                render(&StageSettings::of(&sources, benchmark.stage)),
+            ));
             let runs = runs_of(&sources, benchmark.stage).await;
             let unrefused =
                 FieldShown::unrefused(&NewTaskField::Run).attributes(NEW_TASK_RUN, Control::Select);

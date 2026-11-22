@@ -364,8 +364,9 @@ benchmark or a benchmark run that does not exist.
 The web UI does the same from a benchmark's page: it lists the benchmark's
 benchmark runs and launches one, with `as-is` first and each other
 configuration given a name, its `model`, `effort` and `session-timeout`, and
-the text of any file of the brief, which starts as a run of the stage would use
-it when the form opens; only the files you change go into it. Each benchmark
+the text of any file of the brief. Each starts as a run of the stage would use
+it when the form opens, a model or effort nothing sets as "Default", and only
+the settings and files you change go into it. Each benchmark
 run's page follows it as it runs, with a chart of each configuration's mean cost
 against its pass rate, the passes of each task under each configuration, and
 each configuration's figures, which open to its tasks and their trials, and from
