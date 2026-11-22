@@ -21,7 +21,7 @@ use super::results::{self, Figures, Mean, Results};
 use super::runs::outcome_name;
 use super::{
     BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ConfigurationId, NoScore,
-    Repetitions, RunTask, TaskId, TrialEnd, TrialFigures, TrialState,
+    Repetitions, RunTask, TaskId, TrialEnd, TrialFigures, TrialName, TrialState,
 };
 
 /// A benchmark run's state as it is shown: an open benchmark run runs or waits,
@@ -140,6 +140,8 @@ pub struct KeyedTrialAnswer {
     pub repetition: NonZeroU32,
     pub task: TaskId,
     pub configuration: ConfigurationId,
+    #[serde(skip)]
+    pub name: TrialName,
     #[serde(flatten)]
     pub state: TrialAnswer,
 }
@@ -258,6 +260,7 @@ impl BenchmarkRunAnswer {
                     repetition: key.repetition,
                     task: of.task.id,
                     configuration: of.configuration,
+                    name: TrialName::new(key.repetition, &of.task.name, of.configuration_name),
                     state: state.into(),
                 })
             })
@@ -336,20 +339,10 @@ pub fn render_benchmark_run(answer: &BenchmarkRunAnswer) -> String {
         }
     }
     for trial in &answer.trials {
-        let configuration = answer
-            .configurations
-            .iter()
-            .find(|configuration| configuration.id == trial.configuration)
-            .map_or_else(String::new, |configuration| configuration.name.to_string());
-        let task = answer
-            .tasks
-            .iter()
-            .find(|task| task.id == trial.task)
-            .map_or_else(String::new, |task| task.name.to_string());
         let _ = writeln!(
             text,
-            "trial {configuration}/{task}/{} ({}/{}/{}): {}",
-            trial.repetition,
+            "{} ({}/{}/{}): {}",
+            trial.name,
             trial.configuration,
             trial.task,
             trial.repetition,
@@ -703,13 +696,13 @@ mod tests {
                  time: none\n    \
                  leaks: 0\n    \
                  unscored: 0\n\
-             trial as-is/columns/1 (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
-             trial short/columns/1 (2/1/1): no score: its run is not done or handed back, run failed, cost none, took 30s\n\
-             trial as-is/lanes/1 (1/2/1): scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
-             trial short/lanes/1 (2/2/1): no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
-             trial as-is/rows/1 (1/3/1): no score: cancelled\n\
-             trial short/rows/1 (2/3/1): no score: cancelled, run cancelled, cost $0.04, took 15s\n\
-             trial short/rows/2 (2/3/2): running\n"
+             trial 1 of columns under as-is (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
+             trial 1 of columns under short (2/1/1): no score: its run is not done or handed back, run failed, cost none, took 30s\n\
+             trial 1 of lanes under as-is (1/2/1): scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
+             trial 1 of lanes under short (2/2/1): no score: the scorer made none: it gave up, run done, cost $0.20, took 20s, scorer's cost $0.01\n\
+             trial 1 of rows under as-is (1/3/1): no score: cancelled\n\
+             trial 1 of rows under short (2/3/1): no score: cancelled, run cancelled, cost $0.04, took 15s\n\
+             trial 2 of rows under short (2/3/2): running\n"
         );
     }
 

@@ -109,6 +109,45 @@ pub struct RunTask {
     pub name: Name,
 }
 
+/// A trial's name outside the rows of its task and its configuration:
+/// "trial N of TASK under CONFIGURATION", by its repetition and the names of
+/// its task and its configuration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrialName {
+    repetition: NonZeroU32,
+    task: Name,
+    configuration: Name,
+}
+
+impl TrialName {
+    pub fn new(repetition: NonZeroU32, task: &Name, configuration: &Name) -> TrialName {
+        TrialName {
+            repetition,
+            task: task.clone(),
+            configuration: configuration.clone(),
+        }
+    }
+
+    /// The name for the start of a sentence or a heading.
+    pub fn capitalized(&self) -> String {
+        self.with("Trial")
+    }
+
+    /// The name, beginning with `trial`, the word for a trial.
+    fn with(&self, trial: &str) -> String {
+        format!(
+            "{trial} {} of {} under {}",
+            self.repetition, self.task, self.configuration
+        )
+    }
+}
+
+impl fmt::Display for TrialName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.with("trial"))
+    }
+}
+
 /// How many times a benchmark run runs each task under each configuration.
 pub type Repetitions = NonZeroU32;
 

@@ -1342,11 +1342,11 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
 
     assert_eq!(
         text(select(&run, "#heading .card-title")[0]),
-        "Trial as-is/columns/1's run"
+        "Trial 1 of columns under as-is's run"
     );
     assert_eq!(
         text(select(&run, "#trial")[0]),
-        "Trial as-is/columns/1 of benchmark run 1: its run's transcript, or its scorer's"
+        "Trial 1 of columns under as-is of benchmark run 1: its run's transcript, or its scorer's"
     );
     assert_eq!(
         hrefs(select(&run, "#trial a")),
@@ -1355,11 +1355,11 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     assert!(!select(&run, "#s1 .entry").is_empty(), "{}", run.html());
     assert_eq!(
         text(select(&scorer, "#heading .card-title")[0]),
-        "Trial as-is/columns/1's scorer"
+        "Trial 1 of columns under as-is's scorer"
     );
     assert_eq!(
         text(select(&scorer, "#heading .line")[0]),
-        "Trial as-is/columns/1 of benchmark run 1: its scorer's transcript, or its run's"
+        "Trial 1 of columns under as-is of benchmark run 1: its scorer's transcript, or its run's"
     );
     assert!(
         !select(&scorer, "#s1 .entry").is_empty(),

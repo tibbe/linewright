@@ -39,8 +39,8 @@ use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
     BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationId, RunTask,
-    ScoreFigures, Shown, TaskId, TrialKey, TrialShown, TrialState, dollars, duration, percent,
-    without,
+    ScoreFigures, Shown, TaskId, TrialKey, TrialName, TrialShown, TrialState, dollars, duration,
+    percent, without,
 };
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
@@ -922,10 +922,7 @@ fn trial_rows(
         level: Level::Trial { of },
         fold: Fold::of(
             opens.then(|| details.id.clone()).into_iter().collect(),
-            format!(
-                "Show the details of trial {} of {} under {}",
-                at.repetition, at.task.name, at.configuration_name
-            ),
+            format!("Show the details of {}", at.name()),
         ),
         name: format!("Trial {}", at.repetition),
         pass_rate: PassRate::Status {
@@ -1327,13 +1324,8 @@ struct TrialAt {
 }
 
 impl TrialAt {
-    /// The trial's name in the benchmark run, by the names of its
-    /// configuration and its task.
-    fn name(&self) -> String {
-        format!(
-            "{}/{}/{}",
-            self.configuration_name, self.task.name, self.repetition
-        )
+    fn name(&self) -> TrialName {
+        TrialName::new(self.repetition, &self.task.name, &self.configuration_name)
     }
 
     fn path(&self, of: Of) -> String {
@@ -1441,8 +1433,8 @@ fn context(at: &TrialAt) -> Html {
         Of::Scorer => ("scorer's", Of::Run, "run's"),
     };
     html::built(format!(
-        r#"<span id="trial">Trial {} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></span>"#,
-        html::escape(&at.name()),
+        r#"<span id="trial">{} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></span>"#,
+        html::escape(&at.name().capitalized()),
         html::escape(&benchmark_run_path(at.id)),
         at.id,
         html::escape(&at.path(other)),
@@ -1470,12 +1462,17 @@ async fn trial_transcript(
     };
     let transcribed = record.and_then(|record| transcribed(sources, path, &record));
     let named = transcribed.as_ref().ok().map_or_else(
-        || format!("{}/{}/{}", path.configuration, path.task, path.repetition),
-        |(at, _)| at.name(),
+        || {
+            format!(
+                "Trial {}/{}/{}",
+                path.configuration, path.task, path.repetition
+            )
+        },
+        |(at, _)| at.name().capitalized(),
     );
     let heading = Heading {
         line: transcribed.as_ref().ok().map(|(at, _)| context(at)),
-        ..Heading::named(format!("Trial {named}'s {}", path.of))
+        ..Heading::named(format!("{named}'s {}", path.of))
     };
     let place = within.screen(TRIAL, Thing::Found(heading));
     Ok((place, transcribed.map(|(_, transcribed)| transcribed)))

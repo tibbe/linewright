@@ -226,7 +226,7 @@ async fn serve_runs_and_scores_every_trial_and_the_cli_shows_the_results() {
         "configuration 2 (short):\n  pass rate: 100%\n",
         "  task 1 (export):\n    passes: 2 of 2\n",
         "  task 2 (import):\n    passes: 2 of 2\n",
-        "trial short/import/2 (2/2/2): scored pass",
+        "trial 2 of import under short (2/2/2): scored pass",
     ] {
         assert!(
             shown.stdout.contains(line),
