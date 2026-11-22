@@ -663,12 +663,16 @@ fn leak_output(output: &Path, verdict: Verdict) -> Result<()> {
 /// under its output.
 const SCORER: &str = "scorer/20260301T161000Z-scorer";
 
-/// What a session of the seed's benchmark run ran with: the harness's model.
+/// What a session of the seed's benchmark run ran with: the operator's
+/// model and Linewright's own effort.
 fn ran() -> Value {
     json!({
-        "model": null,
-        "effort": null,
-        "layers": {"settings": {"model": "harness"}, "prompts": {}},
+        "model": "claude-opus-5-5",
+        "effort": "medium",
+        "layers": {
+            "settings": {"model": "operator", "effort": "linewright"},
+            "prompts": {},
+        },
     })
 }
 

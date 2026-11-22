@@ -1084,12 +1084,12 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
  {
     let mut world = World::with(|config| {
         edit_work(config, |work| {
-            work.flags_and_env.model = Some("sonnet".into());
+            work.flags_and_env.model = Some(model("sonnet"));
             work.stages.insert(
                 StageKey::Work(WorkKind::Implement),
                 StageTable {
                     settings: Partial {
-                        model: Some("opus".into()),
+                        model: Some(model("opus")),
                         effort: Some(Effort::Xhigh),
                         session_timeout: Some(std::time::Duration::from_mins(90)),
                     },
@@ -1123,10 +1123,7 @@ async fn a_stages_table_gives_its_sessions_its_settings_and_a_timeout_from_it_is
     world.poll().await;
 
     let (model, effort, left) = given.lock().unwrap().clone().expect("implement ran");
-    assert_eq!(
-        (model.as_deref(), effort),
-        (Some("opus"), Some(Effort::Xhigh))
-    );
+    assert_eq!((model.as_str(), effort), ("opus", Effort::Xhigh));
     assert!(
         left > std::time::Duration::from_mins(89) && left <= std::time::Duration::from_mins(90),
         "{left:?}"

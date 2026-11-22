@@ -29,7 +29,7 @@ use crate::name::Name;
 use crate::repo_files::FileError;
 use crate::task::TaskStage;
 use crate::trial::Configuration;
-use crate::work_settings::{Effort, Partial};
+use crate::work_settings::{Effort, Model, Partial};
 
 /// The text of each file of the brief that a configuration may give, by its
 /// path under `briefs/`, as a run of the stage would use it now: the
@@ -70,7 +70,11 @@ impl SettingTexts {
     /// writes it, such as `6h`.
     fn of(settings: &Partial) -> SettingTexts {
         SettingTexts {
-            model: settings.model.clone().unwrap_or_default(),
+            model: settings
+                .model
+                .as_ref()
+                .map(Model::to_string)
+                .unwrap_or_default(),
             effort: settings
                 .effort
                 .map(Effort::name)

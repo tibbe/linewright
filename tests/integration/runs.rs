@@ -6,7 +6,7 @@ use std::panic::Location;
 use chrono::TimeDelta;
 use common::*;
 use linewright::domain::Number;
-use linewright::layer::{Layer, Source};
+use linewright::layer::Layer;
 use linewright::reconcile::{EndedRun, WorkKind};
 use linewright::runs::{
     self, Ending, Layers, Listing, NoRuns, Query, Ran, Recorded, RunId, RunOf, SessionEntry,
@@ -57,7 +57,7 @@ fn triage_again(world: &World, issue: linewright::domain::Number) {
 }
 
 /// A world whose triage sessions run with the operator's `opus` and a
-/// value its table sets, leaving effort to the harness.
+/// value its table sets, leaving effort to Linewright's own.
 async fn triage_on_opus() -> (World, tempfile::TempDir) {
     let work_dir = tempfile::tempdir().unwrap();
     let mut world = World::with(|config| {
@@ -67,7 +67,7 @@ async fn triage_on_opus() -> (World, tempfile::TempDir) {
                 StageKey::Work(WorkKind::Triage),
                 StageTable {
                     settings: Partial {
-                        model: Some("opus".into()),
+                        model: Some(model("opus")),
                         ..Partial::default()
                     },
                     session_env: Some(SetEnv::new([("CI".into(), "true".into())]).unwrap()),
@@ -99,14 +99,14 @@ async fn an_items_runs_show_each_sessions_model_and_effort() {
         "{}",
         output.stdout
     );
-    assert_eq!(lines[1], "  session 1: model opus, effort Default");
+    assert_eq!(lines[1], "  session 1: model opus, effort medium");
 }
 
-/// A world whose triage sessions run with no model set, on a harness that
-/// reports running `claude-opus-5-5`.
+/// A world whose triage sessions run with the operator's model, on a
+/// harness that reports running `claude-opus-5-5-20261101`.
 async fn triage_reporting_opus() -> (World, tempfile::TempDir) {
     let (mut world, work_dir) = world_in_work_dir().await;
-    world.harness.reports_model("claude-opus-5-5");
+    world.harness.reports_model("claude-opus-5-5-20261101");
     triage_ready(&world);
     world
         .store
@@ -116,7 +116,7 @@ async fn triage_reporting_opus() -> (World, tempfile::TempDir) {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_the_harness_as_its_source()
+async fn a_session_records_the_model_and_effort_set_where_they_came_from_and_the_model_the_harness_reported()
  {
     let (_world, work_dir) = triage_reporting_opus().await;
 
@@ -125,9 +125,11 @@ async fn a_session_with_no_model_set_records_the_model_the_harness_reported_and_
     assert_eq!(json.code, Some(0), "{}", json.stderr);
     let answer: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
     let session = &answer["runs"][0]["sessions"][0];
-    assert_eq!(session["model"], serde_json::Value::Null);
-    assert_eq!(session["reported_model"], "claude-opus-5-5");
-    assert_eq!(session["layers"]["settings"]["model"], "harness");
+    assert_eq!(session["model"], MODEL);
+    assert_eq!(session["reported_model"], "claude-opus-5-5-20261101");
+    assert_eq!(session["effort"], "medium");
+    assert_eq!(session["layers"]["settings"]["model"], "operator");
+    assert_eq!(session["layers"]["settings"]["effort"], "linewright");
 }
 
 #[test_log::test(tokio::test)]
@@ -633,7 +635,7 @@ fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
         runs::render(&listing, false),
         "1/triage-1: done — #1 triage, started 2026-10-14 12:00:00 UTC, ran 1m\n  \
          session 1: model claude-opus-5-5, effort high\n  \
-         session 2: model Default, effort Default\n  \
+         session 2: model not recorded, effort not recorded\n  \
          session 3: model and effort not recorded\n"
     );
 }
@@ -648,9 +650,9 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
             Some(Ran {
                 layers: Layers {
                     settings: BTreeMap::from([
-                        (Setting::MODEL, Source::Layer(Layer::Operator)),
-                        (Setting::EFFORT, Source::Harness),
-                        (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Repository)),
+                        (Setting::MODEL, Layer::Operator),
+                        (Setting::EFFORT, Layer::Linewright),
+                        (Setting::SESSION_TIMEOUT, Layer::Repository),
                     ]),
                     briefs: BTreeMap::from([
                         ("prompts/triage.md".to_string(), Layer::Linewright),
@@ -660,7 +662,7 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
                         ),
                     ]),
                 },
-                ..ran(Some("opus"), Some("claude-opus-5-5"), None)
+                ..ran(Some("opus"), Some("claude-opus-5-5"), Some(Effort::Medium))
             }),
         ),
         session(2, None),
@@ -682,11 +684,11 @@ fn an_items_runs_as_json_give_what_each_session_ran_with_and_where_its_settings_
                     {
                         "model": "opus",
                         "reported_model": "claude-opus-5-5",
-                        "effort": null,
+                        "effort": "medium",
                         "layers": {
                             "settings": {
                                 "model": "operator",
-                                "effort": "harness",
+                                "effort": "linewright",
                                 "session-timeout": "repository",
                             },
                             "briefs": {
@@ -880,7 +882,7 @@ fn ran_as_read(sessions: &serde_json::Value) -> impl Future<Output = Ran> + use<
 }
 
 #[test_log::test(tokio::test)]
-async fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_the_harnesss()
+async fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_none_set_as_not_recorded()
  {
     let read = ran_as_read(&json!([{
         "dir": "sessions/5/rework-1",
@@ -903,15 +905,49 @@ async fn a_record_from_before_the_harness_was_a_source_reads_a_model_and_effort_
         Ran {
             layers: Layers {
                 settings: BTreeMap::from([
-                    (Setting::MODEL, Source::Harness),
-                    (Setting::EFFORT, Source::Harness),
-                    (Setting::SESSION_TIMEOUT, Source::Layer(Layer::Linewright)),
-                    (Setting::SESSION_ENV, Source::Layer(Layer::Linewright)),
+                    (Setting::SESSION_TIMEOUT, Layer::Linewright),
+                    (Setting::SESSION_ENV, Layer::Linewright),
                 ]),
                 briefs: BTreeMap::from([("prompts/rework.md".to_string(), Layer::Linewright)]),
             },
             ..ran(None, None, None)
         }
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_record_from_when_the_harness_was_a_source_reads_what_it_left_to_the_harness_as_not_recorded()
+ {
+    let read = ran_as_read(&json!([{
+        "dir": "sessions/5/rework-1",
+        "model": "opus",
+        "reported_model": "claude-opus-5-5",
+        "effort": null,
+        "layers": {
+            "settings": {
+                "model": "operator",
+                "effort": "harness",
+                "session-timeout": "linewright"
+            },
+            "briefs": {"prompts/rework.md": "linewright"}
+        }
+    }]))
+    .await;
+
+    assert_eq!(
+        read.layers.settings,
+        BTreeMap::from([
+            (Setting::MODEL, Layer::Operator),
+            (Setting::SESSION_TIMEOUT, Layer::Linewright),
+        ])
+    );
+    let mut run = work(5, WorkKind::Rework, 1, "2026-10-14T12:00:00Z");
+    run.sessions = vec![session(1, Some(read))];
+    let listing = runs::list(vec![run], &of_item(5), at("2026-10-14T13:00:00Z")).unwrap();
+    let shown = runs::render(&listing, false);
+    assert!(
+        shown.contains("session 1: model claude-opus-5-5, effort not recorded"),
+        "{shown}"
     );
 }
 

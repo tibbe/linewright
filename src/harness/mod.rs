@@ -15,7 +15,7 @@ use crate::reconcile::{Subject, WorkKind};
 use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::trial::GhConfigDir;
-use crate::work_settings::Effort;
+use crate::work_settings::{Effort, Model};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -61,10 +61,8 @@ pub struct SessionSpec {
     pub attachments: PathBuf,
     pub plugin: PathBuf,
     pub prompt: String,
-    /// `None` is the harness's choice.
-    pub model: Option<String>,
-    /// `None` is the harness's choice.
-    pub effort: Option<Effort>,
+    pub model: Model,
+    pub effort: Effort,
     /// A session starts from these alone, and what the harness sets itself.
     pub environment: Arc<Given>,
     pub gh: GhReach,
@@ -293,7 +291,8 @@ pub trait Harness: Send + Sync {
     /// The whole environment a session starts from, given `given`, its
     /// scratch directory, its effort and how its `gh` reaches GitHub:
     /// `given`, then what Linewright sets over it. A variable set twice
-    /// takes its later value.
+    /// takes its later value. The effort is `None` for a build of the
+    /// environment, which is no session.
     fn environment(
         &self,
         given: &Given,

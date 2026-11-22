@@ -21,7 +21,7 @@ use linewright::store::Store;
 use linewright::store::local::{CheckRecord, LocalStore, Paused, Seed, Write};
 use linewright::variable_names::VariableNames;
 use linewright::webhook::Pending;
-use linewright::work_settings::{Environments, Maintenance, Partial, WorkSettings};
+use linewright::work_settings::{Environments, Maintenance, Model, Partial, WorkSettings};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -33,6 +33,14 @@ use super::harness::{ScriptedHarness, failed_session, subject_file};
 use super::records::runs_in;
 
 pub const LINEWRIGHT: &str = "factory";
+
+/// The model the operator's file of a `World` sets.
+pub const MODEL: &str = "claude-opus-5-5";
+
+/// The model named `name`.
+pub fn model(name: &str) -> Model {
+    Model::new(name.into()).unwrap()
+}
 
 /// Opens an issue `author` filed, which Linewright then labeled `labels`, so
 /// that Linewright has worked it.
@@ -189,12 +197,14 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         bash: bash(),
         work: WorkSettings {
             file: Partial {
+                model: Some(model(MODEL)),
                 session_timeout: Some(std::time::Duration::from_mins(30)),
                 ..Partial::default()
             },
             ..WorkSettings::default()
         }
-        .for_sessions(),
+        .for_sessions()
+        .expect("the operator's file sets a model"),
         environments: Environments::default(),
         trial_environments: Environments::default(),
         merge_method: None,
@@ -510,7 +520,9 @@ pub fn maintaining_with(config: &mut FactoryConfig, maintenance: &str) {
 pub fn edit_work(config: &mut FactoryConfig, edit: impl FnOnce(&mut WorkSettings)) {
     let mut work = config.work.layers().clone();
     edit(&mut work);
-    config.work = work.for_sessions();
+    config.work = work
+        .for_sessions()
+        .expect("the operator's layers set a model");
 }
 
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,

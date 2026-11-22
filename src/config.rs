@@ -24,7 +24,7 @@ use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
 use crate::work_settings::{
-    Effort, EnvLayers, MAINTENANCE, Maintenance, Partial, PipelineSettings, RepoSettings,
+    Effort, EnvLayers, MAINTENANCE, Maintenance, Model, Partial, PipelineSettings, RepoSettings,
     RepositorySetting, SETUP, Setup, SetupPartial, StageKey, StageSetting, StageTable,
     WorkSettings,
 };
@@ -477,12 +477,13 @@ pub struct Settings {
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
     /// The model for every stage; a stage's table in the config file,
-    /// `[stage.NAME]`, can set its own [default: none: the harness's default]
+    /// `[stage.NAME]`, can set its own (required, for a command that starts
+    /// a session)
     #[arg(long, global = true)]
     pub model: Option<String>,
     /// How hard the agent thinks: `low`, `medium`, `high`, `xhigh` or `max`,
     /// for every stage; a stage's table in the config file, `[stage.NAME]`,
-    /// can set its own [default: none: the harness's default]
+    /// can set its own [default: medium]
     #[arg(long, global = true)]
     pub effort: Option<String>,
     /// A directory laid out as the briefs Linewright ships, each file in it
@@ -1214,6 +1215,10 @@ impl Config {
             set.map(|text| effort(&text).map_err(|e| refused("effort", e)))
                 .transpose()
         };
+        let model = |set: Option<String>| {
+            set.map(|text| parse_model(text).map_err(|e| refused("model", e)))
+                .transpose()
+        };
         let operator_if = |set: bool| {
             if set {
                 Layer::Operator
@@ -1237,12 +1242,12 @@ impl Config {
         };
         let work = WorkSettings {
             flags_and_env: Partial {
-                model: text(flag_or_env("model")),
+                model: model(text(flag_or_env("model")))?,
                 effort: effort(text(flag_or_env("effort")))?,
                 session_timeout: session_timeout(text(flag_or_env("session-timeout")))?,
             },
             file: Partial {
-                model: text(in_file("model")),
+                model: model(text(in_file("model")))?,
                 effort: effort(text(in_file("effort")))?,
                 session_timeout: session_timeout(text(in_file("session-timeout")))?,
             },
@@ -1438,7 +1443,7 @@ pub(crate) fn set_session(
 ) -> Result<()> {
     let text = |given| setting_value(setting.name(), Text::Value, given);
     match setting {
-        RepositorySetting::Model => settings.model = Some(text(value)?),
+        RepositorySetting::Model => settings.model = Some(parse_model(text(value)?)?),
         RepositorySetting::Effort => settings.effort = Some(effort(&text(value)?)?),
         RepositorySetting::SessionTimeout => {
             settings.session_timeout = Some(session_timeout(&text(value)?)?);
@@ -1562,6 +1567,10 @@ fn stage_tables(stages: toml::Value, owner: Owner) -> Result<BTreeMap<StageKey, 
             Ok((stage, parsed))
         })
         .collect()
+}
+
+fn parse_model(text: String) -> Result<Model> {
+    Model::new(text).map_err(|e| anyhow!(e))
 }
 
 fn effort(text: &str) -> Result<Effort> {

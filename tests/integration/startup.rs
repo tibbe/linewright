@@ -47,8 +47,8 @@ async fn the_merge_method_in_effect_is_logged() {
 }
 
 /// Runs `lw` with `args` and `env`, `path` as its path, a runtime directory
-/// of its own, the web UI on a port the system chooses and none of GitHub's
-/// tokens but `env`'s. Returns whether
+/// of its own, the model `MODEL`, the web UI on a port the system chooses
+/// and none of GitHub's tokens but `env`'s. Returns whether
 /// it succeeded and what it wrote to stderr.
 fn lw(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
     let (status, stderr) = lw_with_status(path, args, env);
@@ -61,8 +61,29 @@ fn lw_with_status(
     args: &[&str],
     env: &[(&str, &str)],
 ) -> (std::process::ExitStatus, String) {
+    lw_with_model(path, args, env, Some(MODEL))
+}
+
+/// As `lw`, but with no model set.
+fn lw_without_model(path: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String) {
+    let (status, stderr) = lw_with_model(path, args, env, None);
+    (status.success(), stderr)
+}
+
+/// As `lw_with_status`, but with the model `model`, or none.
+fn lw_with_model(
+    path: &std::path::Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+    model: Option<&str>,
+) -> (std::process::ExitStatus, String) {
     let dir = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_lw"));
+    match model {
+        Some(model) => command.env("LINEWRIGHT_MODEL", model),
+        None => command.env_remove("LINEWRIGHT_MODEL"),
+    };
+    let output = command
         .args(args)
         .current_dir(dir.path())
         .env("PATH", path)
@@ -277,6 +298,48 @@ fn a_command_that_runs_sessions_without_linewrights_token_is_an_error_at_startup
         error.contains("set GH_TOKEN or GITHUB_TOKEN to the token of Linewright's account"),
         "{error}"
     );
+}
+
+#[rstest::rstest]
+#[case::serve(&["serve"])]
+#[case::once(&["once"])]
+#[case::automation_run(&["automation", "run", "weekly.md"])]
+#[case::environment_rebuild(&["environment", "rebuild"])]
+#[test_log::test]
+fn a_command_that_runs_sessions_without_a_model_is_an_error_at_startup_saying_where_to_set_it(
+    #[case] command: &[&str],
+) {
+    let bin = path_to_start_on();
+    let args: Vec<&str> = ["--repo", "owner/name"]
+        .iter()
+        .chain(command)
+        .copied()
+        .collect();
+
+    let (succeeded, error) = lw_without_model(
+        bin.path(),
+        &args,
+        &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
+    );
+
+    assert!(!succeeded, "{error}");
+    assert!(
+        error.contains(
+            "`model` is required to start a session: set it with `--model`, \
+             `LINEWRIGHT_MODEL` or `model` in the operator's config file"
+        ),
+        "{error}"
+    );
+}
+
+#[test_log::test]
+fn status_runs_without_a_model() {
+    let empty = tempfile::tempdir().unwrap();
+
+    let (_, error) = lw_without_model(empty.path(), &["--repo", "owner/name", "status"], &[]);
+
+    assert!(error.contains("not running"), "{error}");
+    assert!(!error.contains("`model`"), "{error}");
 }
 
 #[test_log::test]
@@ -1046,6 +1109,7 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
         .env("XDG_RUNTIME_DIR", runtime_dir.path())
         .env("LINEWRIGHT_WORK_DIR", runtime_dir.path().join("work"))
         .env("GH_TOKEN", "token")
+        .env("LINEWRIGHT_MODEL", MODEL)
         .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .stderr(std::fs::File::create(&log).unwrap())

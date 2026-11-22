@@ -1576,6 +1576,38 @@ fn read_in_order(form: ElementRef) -> Vec<String> {
     .collect()
 }
 
+/// `docs/specs/benchmarks.md`, New benchmark run, Settings.
+#[test_log::test(tokio::test)]
+async fn before_the_first_poll_a_new_configuration_starts_with_no_effort_chosen() {
+    let pages = with_benchmarks().await;
+    pages.served.send_replace(None);
+
+    let html = pages.page("/benchmarks/1").await;
+
+    let added =
+        Html::parse_fragment(&select(&html, "template#configuration-template")[0].inner_html());
+    let efforts: Vec<(&str, bool)> = select(&added, "select[name='c__N__.effort'] option")
+        .into_iter()
+        .map(|option| {
+            (
+                option.attr("value").unwrap(),
+                option.attr("selected").is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        efforts,
+        [
+            ("", false),
+            ("low", false),
+            ("medium", false),
+            ("high", false),
+            ("xhigh", false),
+            ("max", false),
+        ]
+    );
+}
+
 /// `docs/specs/benchmarks.md`, New benchmark run;
 /// `docs/specs/design_system.md`, Dialogs and Making.
 #[test_log::test(tokio::test)]
@@ -1753,7 +1785,7 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
         ]
     );
     let model = select(&added, "input[name='c__N__.model']")[0];
-    assert_eq!(model.attr("placeholder"), Some("Default"));
+    assert_eq!(model.attr("placeholder"), None);
     let efforts: Vec<(String, bool)> = select(&added, "select[name='c__N__.effort'] option")
         .into_iter()
         .map(|option| (text(option), option.attr("selected").is_some()))
@@ -1761,7 +1793,6 @@ async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions
     assert_eq!(
         efforts,
         [
-            ("Default".to_string(), false),
             ("low".to_string(), false),
             ("medium".to_string(), false),
             ("high".to_string(), true),
@@ -2203,7 +2234,7 @@ async fn a_setting_left_as_it_started_stays_out_of_the_configuration_after_a_pol
         .collect();
     pages.publish_with_settings(view(vec![ticket(1, "Ship gh")], vec![]), |_| {
         linewright::work_settings::Partial {
-            model: Some("claude-sonnet-5-5".into()),
+            model: Some(model("claude-sonnet-5-5")),
             effort: Some(linewright::work_settings::Effort::Low),
             session_timeout: Some(std::time::Duration::from_hours(2)),
         }

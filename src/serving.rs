@@ -222,7 +222,7 @@ impl Starting {
         gh_through_gate: bool,
     ) -> Result<Starting> {
         let briefs = briefs(config)?;
-        let work = config.work.clone().for_sessions();
+        let work = config.work.clone().for_sessions()?;
         require_tool("git").await?;
         let bash = require_bash()?;
         require_tool(program).await?;

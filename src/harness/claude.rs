@@ -17,7 +17,7 @@ use crate::redaction::Redaction;
 use crate::session_env::Given;
 use crate::store::github::TOKEN_VARIABLES;
 use crate::transcript::{self, StartedBy};
-use crate::work_settings::Effort;
+use crate::work_settings::{Effort, Model};
 
 pub struct ClaudeCode {
     pub program: String,
@@ -296,15 +296,15 @@ impl RateLimitEvent {
 /// leaves the skill listed, so skills are turned off in `skillOverrides`:
 /// <https://code.claude.com/docs/en/skills>.
 ///
-/// A model or effort set for the session goes in the settings too, so that
-/// the repository's cannot choose another:
+/// The session's model and effort go in the settings too, so that the
+/// repository's cannot choose another:
 /// <https://code.claude.com/docs/en/model-config>. `effortLevel` does not
 /// take `max`, which `--effort` and the variable set alone.
 ///
 /// `clone` is the clone's real path, as Claude Code matches `CLAUDE.md`
 /// files by their absolute paths:
 /// <https://code.claude.com/docs/en/memory#exclude-specific-claude-md-files>.
-fn isolation_args(clone: &Path, model: Option<&str>, effort: Option<Effort>) -> [String; 4] {
+fn isolation_args(clone: &Path, model: &Model, effort: Effort) -> [String; 4] {
     let mut excludes = Vec::new();
     for dir in clone.ancestors().skip(1) {
         let pattern = escape_glob(dir.to_string_lossy().trim_end_matches('/'));
@@ -324,11 +324,9 @@ fn isolation_args(clone: &Path, model: Option<&str>, effort: Option<Effort>) -> 
         "disableArtifact": true,
         "skillOverrides": BTreeMap::from(UNUSED_SKILLS.map(|skill| (skill, "off"))),
         "permissions": { "deny": UNUSED_TOOLS },
+        "model": model.as_str(),
     });
-    if let Some(model) = model {
-        settings["model"] = model.into();
-    }
-    if let Some(effort) = effort.filter(|&effort| effort != Effort::Max) {
+    if effort != Effort::Max {
         settings["effortLevel"] = effort.name().into();
     }
     [
@@ -429,10 +427,11 @@ impl ClaudeCode {
     /// The variables Linewright sets for a session, given whether its `gh`
     /// reaches GitHub through a gate, as in a trial.
     pub fn variables_set_for_sessions(gh_through_gate: bool) -> Vec<&'static str> {
-        let gh_config = gh_through_gate.then_some(Path::new(""));
-        set_for_session(Path::new(""), Path::new(""), "", None, gh_config)
+        let gh_config = gh_through_gate.then_some(Own::GhConfigDir);
+        Own::NOT_SET_BY_OPERATOR
             .into_iter()
-            .map(|(name, _)| name)
+            .chain(gh_config)
+            .map(Own::name)
             .collect()
     }
 
@@ -471,22 +470,23 @@ impl ClaudeCode {
                 "--permission-mode",
                 "bypassPermissions",
             ])
-            .args(isolation_args(&clone, spec.model.as_deref(), spec.effort))
+            .args(isolation_args(&clone, &spec.model, spec.effort))
             .arg("--plugin-dir")
             .arg(&spec.plugin)
             .args(session.args())
             .current_dir(&spec.dir)
             .env_clear()
-            .envs(self.environment(&spec.environment, &spec.scratch, spec.effort, &spec.gh))
+            .envs(self.environment(
+                &spec.environment,
+                &spec.scratch,
+                Some(spec.effort),
+                &spec.gh,
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(model) = &spec.model {
-            command.args(["--model", model]);
-        }
-        if let Some(effort) = spec.effort {
-            command.args(["--effort", effort.name()]);
-        }
+            .stderr(Stdio::piped())
+            .args(["--model", spec.model.as_str()])
+            .args(["--effort", spec.effort.name()]);
         let mut child = match command.spawn().await {
             Ok(child) => child,
             Err(e) => {

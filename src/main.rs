@@ -1614,8 +1614,8 @@ impl Capture {
 /// Runs the task in the directory `task` into the output `out`, with
 /// the configuration in the directory `configuration` if one is given: 0
 /// once its run ended, whatever its outcome, and 1 when it did not run or
-/// end. A configuration with an error is refused before the output is
-/// made.
+/// end. A configuration with an error, or no model, is refused before the
+/// output is made.
 async fn trial(
     config: &Config,
     task: &Path,
@@ -1628,6 +1628,9 @@ async fn trial(
         Ok(token) => token,
         Err(e) => return print_answer(Err(failed(&e))),
     };
+    if let Err(e) = config.work.clone().for_sessions() {
+        return print_answer(Err(failed(&e.into())));
+    }
     let configuration = match configuration.map(Configuration::read).transpose() {
         Ok(configuration) => configuration,
         Err(e) => return print_answer(Err(failed(&e.into()))),
@@ -1710,13 +1713,17 @@ async fn on_task(
 /// Scores `dir`, the output of a trial of the task in the directory
 /// `task`, and keeps the score in it: 0 once the scorer made one,
 /// whatever it is, and 1 when it made none or the task or the output is
-/// refused. A signal ends it at once with the signal's status, keeping
-/// nothing of the scorer.
+/// refused. No model is refused before the scorer's record is made. A
+/// signal ends it at once with the signal's status, keeping nothing of the
+/// scorer.
 async fn score(config: &Config, task: &Path, dir: &Path, winding_up: &WindingUp, log: &Log) -> u8 {
     let token = match session_token() {
         Ok(token) => token,
         Err(e) => return print_answer(Err(failed(&e))),
     };
+    if let Err(e) = config.work.clone().for_sessions() {
+        return print_answer(Err(failed(&e.into())));
+    }
     let task = match Task::open(task).await {
         Ok(task) => task,
         Err(e) => return print_answer(Err((FAILURE, format!("the task cannot be scored: {e}")))),

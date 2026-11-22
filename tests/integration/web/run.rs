@@ -10,19 +10,19 @@ use serde_json::json;
 /// Where #1's implementing session keeps its record.
 const SESSION: &str = "sessions/issue-1/20261013T100908Z-implement";
 
-/// How a session that ran with the harness's model and effort, and the
-/// operator's implementing prompt, is kept in its run's record, its own
-/// record in `dir`: a record kept before `maintenance` was named, which
-/// names it `setup`.
+/// How a session that ran with the operator's model, Linewright's own
+/// effort and the operator's implementing prompt is kept in its run's
+/// record, its own record in `dir`: a record kept before `maintenance` was
+/// named, which names it `setup`.
 fn ran(dir: &str) -> serde_json::Value {
     json!({
         "dir": dir,
-        "model": null,
-        "effort": null,
+        "model": "claude-opus-5-5",
+        "effort": "medium",
         "layers": {
             "settings": {
-                "model": "harness",
-                "effort": "harness",
+                "model": "operator",
+                "effort": "linewright",
                 "session-timeout": "operator",
                 "setup": "linewright",
                 "session-env": "linewright",
@@ -196,8 +196,8 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     let verbose = pages.page("/runs/1/implement-1?verbose=").await;
 
     let layers: Vec<String> = [
-        "model: Default",
-        "effort: Default",
+        "model: the operator's",
+        "effort: Linewright's own",
         "session-timeout: the operator's",
         "session-env: Linewright's own",
         "session-pass-env: Linewright's own",
@@ -207,7 +207,7 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     ]
     .map(String::from)
     .to_vec();
-    let line = "model Default, effort Default".to_string();
+    let line = "model claude-opus-5-5, effort medium".to_string();
     assert_eq!(settings_shown(&html), (line.clone(), layers.clone(), false));
     assert_eq!(settings_shown(&verbose), (line, layers, true));
     let chevron = select(&html, "#s1 .settings > details > summary > .chevron");
