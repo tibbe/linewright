@@ -26,7 +26,7 @@ lw benchmark add "Implement runs" implement
 lw capture 43/implement-2 --benchmark 1 --name "Add invoices to the ledger" --criteria good-result.md
 ```
 
-A name is for people: one line of any text, which you can change later.
+A name is for people: one line, which you can change later.
 Linewright gives each benchmark and each task an ID, a number, and the commands
 take that. `lw benchmark add` writes the benchmark's ID, here 1, and
 `lw capture` writes the task's.

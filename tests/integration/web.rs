@@ -1054,10 +1054,6 @@ fn placed(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
     (shown.refused, shown.whole)
 }
 
-/// The refusal of a name of more than one line (`docs/specs/benchmarks.md`,
-/// Names and IDs).
-const ONE_LINE: &str = "A name is one line.";
-
 /// A table card (`docs/specs/design_system.md`, Tables) as a reader reads
 /// it: the name at the left of its top, if it shows one, the labels of the
 /// buttons at the right of its top, and the names of the filters in the row

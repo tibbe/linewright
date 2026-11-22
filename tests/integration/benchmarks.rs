@@ -80,11 +80,15 @@ async fn lw_benchmark_add_of_a_name_a_benchmark_has_exits_1_saying_why() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_blank_name_is_a_command_line_error() {
+async fn lw_benchmark_add_of_a_stage_no_task_has_or_no_name_is_a_command_line_error() {
     let work_dir = tempfile::tempdir().unwrap();
 
     let rework = lw_in(work_dir.path(), &["benchmark", "add", "board", "rework"]).await;
-    let named = lw_in(work_dir.path(), &["benchmark", "add", " \t", "design"]).await;
+    let named = lw_in(
+        work_dir.path(),
+        &["benchmark", "add", " \t\u{200b}", "design"],
+    )
+    .await;
 
     assert_eq!(rework.code, Some(2), "{}", rework.stderr);
     assert!(
@@ -96,7 +100,7 @@ async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_blank_name_is_a_command_li
     assert!(
         named
             .stderr
-            .contains("it holds only white space, which is no name"),
+            .contains("it holds nothing once it is clean, which is no name"),
         "{}",
         named.stderr
     );
@@ -120,6 +124,16 @@ async fn lw_benchmark_add_takes_a_name_in_plain_words_and_tells_letter_case_apar
     let upper = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
     let lower = lw_in(work_dir.path(), &["benchmark", "add", "board", "triage"]).await;
     let again = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
+    let clean = lw_in(
+        work_dir.path(),
+        &[
+            "benchmark",
+            "add",
+            " Two\nlines,  one\u{7} space ",
+            "triage",
+        ],
+    )
+    .await;
 
     assert_eq!(plain.code, Some(0), "{}", plain.stderr);
     assert_eq!(
@@ -130,12 +144,17 @@ async fn lw_benchmark_add_takes_a_name_in_plain_words_and_tells_letter_case_apar
     assert_eq!(lower.code, Some(0), "{}", lower.stderr);
     assert_eq!(again.code, Some(1), "{}", again.stderr);
     assert_eq!(again.stderr, "lw: a benchmark is already named Board\n");
+    assert_eq!(
+        clean.stdout,
+        "Made the benchmark 4 (Two lines, one space), of triage\n"
+    );
     let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
         "3 (board): triage, no tasks\n\
          2 (Board): triage, no tasks\n\
-         1 (Design an HTTP <cache>, für Bilder): design, no tasks\n"
+         1 (Design an HTTP <cache>, für Bilder): design, no tasks\n\
+         4 (Two lines, one space): triage, no tasks\n"
     );
 }
 
