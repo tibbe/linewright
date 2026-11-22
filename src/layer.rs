@@ -54,11 +54,12 @@ pub enum Source {
 }
 
 impl Source {
-    /// Whose a setting is, coming from here.
+    /// Whose a setting is, coming from here, or "Default" from the harness
+    /// (`docs/specs/runs.md`, Default).
     pub fn whose(self) -> &'static str {
         match self {
             Source::Layer(layer) => layer.whose(),
-            Source::Harness => "the harness's",
+            Source::Harness => "Default",
         }
     }
 }

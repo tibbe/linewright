@@ -97,10 +97,7 @@ async fn an_items_runs_show_each_sessions_model_and_effort() {
         "{}",
         output.stdout
     );
-    assert_eq!(
-        lines[1],
-        "  session 1: model opus, effort the harness's choice"
-    );
+    assert_eq!(lines[1], "  session 1: model opus, effort Default");
 }
 
 /// A world whose triage sessions run with no model set, on a harness that
@@ -634,7 +631,7 @@ fn an_items_runs_show_what_each_session_ran_with_or_that_it_was_not_recorded() {
         runs::render(&listing, false),
         "1/triage-1: done — #1 triage, started 2026-10-14 12:00:00 UTC, ran 1m\n  \
          session 1: model claude-opus-5-5, effort high\n  \
-         session 2: model the harness's choice, effort the harness's choice\n  \
+         session 2: model Default, effort Default\n  \
          session 3: model and effort not recorded\n"
     );
 }

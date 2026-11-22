@@ -439,12 +439,12 @@ pub struct Settings {
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
     /// The model for every stage; a stage's table in the config file,
-    /// `[stage.NAME]`, can set its own [default: the harness's]
+    /// `[stage.NAME]`, can set its own [default: none: the harness's default]
     #[arg(long, global = true)]
     pub model: Option<String>,
     /// How hard the agent thinks: `low`, `medium`, `high`, `xhigh` or `max`,
     /// for every stage; a stage's table in the config file, `[stage.NAME]`,
-    /// can set its own [default: the harness's]
+    /// can set its own [default: none: the harness's default]
     #[arg(long, global = true)]
     pub effort: Option<String>,
     /// A directory laid out as the briefs Linewright ships, each file in it
