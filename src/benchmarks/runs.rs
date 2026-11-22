@@ -453,6 +453,24 @@ pub enum CancelRefusal {
     Failed(#[from] anyhow::Error),
 }
 
+/// Why a configuration of a benchmark run was not renamed.
+#[derive(Debug, thiserror::Error)]
+pub enum RenameConfigurationError {
+    #[error("there is no benchmark run {0}")]
+    NoSuchBenchmarkRun(BenchmarkRunId),
+    #[error("benchmark run {id} has no configuration {configuration}")]
+    NoSuchConfiguration {
+        id: BenchmarkRunId,
+        configuration: ConfigurationId,
+    },
+    #[error("the configuration {}, as-is, keeps its name", ConfigurationId::AS_IS)]
+    AsIs,
+    #[error("another configuration is named {0}")]
+    Taken(Name),
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
 /// A change of a trial's state.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TrialChange {
@@ -798,6 +816,74 @@ impl BenchmarkRuns {
         Ok(())
     }
 
+    /// Changes the name of the configuration `configuration` of the benchmark
+    /// run `id` to `name`, also after its launch. Refuses `as-is` and a name
+    /// another configuration of the benchmark run has. Of two changes at once,
+    /// the last is kept.
+    pub async fn rename_configuration(
+        &self,
+        id: BenchmarkRunId,
+        configuration: ConfigurationId,
+        name: &Name,
+    ) -> Result<(), RenameConfigurationError> {
+        let renaming =
+            format!("renaming the configuration {configuration} of benchmark run {id} to {name}");
+        let mut tx = self
+            .db
+            .pool()
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .context(renaming.clone())?;
+        if read_state(&mut tx, id)
+            .await
+            .context(renaming.clone())?
+            .is_none()
+        {
+            return Err(RenameConfigurationError::NoSuchBenchmarkRun(id));
+        }
+        if configuration == ConfigurationId::AS_IS {
+            return Err(RenameConfigurationError::AsIs);
+        }
+        let Ok(place) = i64::try_from(configuration.place()) else {
+            return Err(RenameConfigurationError::NoSuchConfiguration { id, configuration });
+        };
+        let held: Option<i64> = sqlx::query_scalar(
+            "SELECT seq FROM benchmark_run_configurations WHERE benchmark_run = ? AND seq = ?",
+        )
+        .bind(id.0)
+        .bind(place)
+        .fetch_optional(&mut *tx)
+        .await
+        .context(renaming.clone())?;
+        if held.is_none() {
+            return Err(RenameConfigurationError::NoSuchConfiguration { id, configuration });
+        }
+        let other: Option<i64> = sqlx::query_scalar(
+            "SELECT seq FROM benchmark_run_configurations
+             WHERE benchmark_run = ? AND name = ? AND seq <> ?",
+        )
+        .bind(id.0)
+        .bind(name.as_str())
+        .bind(place)
+        .fetch_optional(&mut *tx)
+        .await
+        .context(renaming.clone())?;
+        if other.is_some() {
+            return Err(RenameConfigurationError::Taken(name.clone()));
+        }
+        sqlx::query(
+            "UPDATE benchmark_run_configurations SET name = ? WHERE benchmark_run = ? AND seq = ?",
+        )
+        .bind(name.as_str())
+        .bind(id.0)
+        .bind(place)
+        .execute(&mut *tx)
+        .await
+        .context(renaming.clone())?;
+        tx.commit().await.context(renaming)?;
+        Ok(())
+    }
+
     /// The state the benchmark run `id` is kept in, if there is one.
     pub async fn state(&self, id: BenchmarkRunId) -> Result<Option<BenchmarkRunState>> {
         let mut conn = self.db.pool().acquire().await.context(READING)?;
@@ -1035,21 +1121,28 @@ struct Built {
     copied: Vec<TaskDir>,
 }
 
-/// Which directory a task's is: another one in its place, such as of a
-/// task removed and captured again, is not the same.
+/// Which directory a task's is, and which file its criteria: another
+/// directory in its place, such as of a task removed and captured again, is
+/// not the same, nor are criteria changed since, which are renamed into
+/// place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TaskDir {
     dev: u64,
     ino: u64,
+    criteria: Option<u64>,
 }
 
 impl TaskDir {
     fn of(dir: &Path) -> Result<TaskDir> {
         let metadata =
             std::fs::symlink_metadata(dir).with_context(|| format!("reading {}", dir.display()))?;
+        let criteria = std::fs::symlink_metadata(dir.join(task::CRITERIA_FILE))
+            .ok()
+            .map(|criteria| criteria.ino());
         Ok(TaskDir {
             dev: metadata.dev(),
             ino: metadata.ino(),
+            criteria,
         })
     }
 }

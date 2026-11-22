@@ -534,3 +534,181 @@ async fn lw_benchmark_lists_its_benchmark_runs_latest_first() {
         ])
     );
 }
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, At its launch.
+#[test_log::test(tokio::test)]
+async fn a_criteria_edit_reaches_the_benchmark_runs_launched_after_it_and_not_before() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let repo = board(work_dir.path()).await;
+    let before = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
+    assert_eq!(before.code, Some(0), "{}", before.stderr);
+    let files = tempfile::tempdir().unwrap();
+    let hides = files.path().join("hides.md");
+    std::fs::write(&hides, "Hides them.\n").unwrap();
+
+    let edited = lw_in(
+        work_dir.path(),
+        &[
+            "benchmark",
+            "edit-task",
+            "1",
+            "1",
+            "--name",
+            "Hide the lanes",
+            "--criteria",
+            hides.to_str().unwrap(),
+        ],
+    )
+    .await;
+    let after = lw_in(work_dir.path(), &["benchmark-run", "launch", "1"]).await;
+
+    assert_eq!(edited.code, Some(0), "{}", edited.stderr);
+    assert_eq!(after.code, Some(0), "{}", after.stderr);
+    assert_eq!(
+        std::fs::read_to_string(repo.join("benchmark-runs/1/.kept/tasks/1/criteria.md")).unwrap(),
+        "Stacks them.\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("benchmark-runs/2/.kept/tasks/1/criteria.md")).unwrap(),
+        "Hides them.\n"
+    );
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["tasks"],
+        json!([{"id": 1, "name": "Hide the lanes"}, {"id": 2, "name": "columns"}])
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, The configurations.
+#[test_log::test(tokio::test)]
+async fn lw_benchmark_run_rename_configuration_changes_its_name_after_the_launch() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let repo = board(work_dir.path()).await;
+    keep_benchmark_run(&repo, 1, 1, &[1, 2], &["as-is", "short", "long"]).await;
+
+    let renamed = lw_in(
+        work_dir.path(),
+        &[
+            "benchmark-run",
+            "rename-configuration",
+            "1",
+            "2",
+            " Haiku, short ",
+        ],
+    )
+    .await;
+    let json = lw_in(
+        work_dir.path(),
+        &[
+            "benchmark-run",
+            "rename-configuration",
+            "1",
+            "3",
+            "Long",
+            "--json",
+        ],
+    )
+    .await;
+
+    assert_eq!(renamed.code, Some(0), "{}", renamed.stderr);
+    assert_eq!(
+        renamed.stdout,
+        "Renamed the configuration 2 of benchmark run 1 to Haiku, short\n"
+    );
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json.stdout).unwrap(),
+        json!({"id": 1, "configuration": 3, "name": "Long"})
+    );
+    let text = lw_in(work_dir.path(), &["benchmark-run", "show", "1"]).await;
+    assert!(
+        text.stdout
+            .lines()
+            .any(|line| line == "configuration 2 (Haiku, short):"),
+        "{}",
+        text.stdout
+    );
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["configurations"],
+        json!([
+            {"id": 1, "name": "as-is"},
+            {"id": 2, "name": "Haiku, short"},
+            {"id": 3, "name": "Long"},
+        ])
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, The configurations.
+#[test_log::test(tokio::test)]
+async fn lw_benchmark_run_rename_configuration_refuses_as_is_a_taken_name_and_one_that_does_not_exist()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let repo = board(work_dir.path()).await;
+    keep_benchmark_run(&repo, 1, 1, &[1, 2], &["as-is", "short", "long"]).await;
+
+    let as_is = lw_in(
+        work_dir.path(),
+        &["benchmark-run", "rename-configuration", "1", "1", "plain"],
+    )
+    .await;
+    let taken = lw_in(
+        work_dir.path(),
+        &["benchmark-run", "rename-configuration", "1", "2", "long"],
+    )
+    .await;
+    let taken_by_as_is = lw_in(
+        work_dir.path(),
+        &["benchmark-run", "rename-configuration", "1", "2", "as-is"],
+    )
+    .await;
+    let no_configuration = lw_in(
+        work_dir.path(),
+        &["benchmark-run", "rename-configuration", "1", "4", "long"],
+    )
+    .await;
+    let no_benchmark_run = lw_in(
+        work_dir.path(),
+        &["benchmark-run", "rename-configuration", "2", "2", "more"],
+    )
+    .await;
+
+    assert_eq!(as_is.code, Some(1), "{}", as_is.stderr);
+    assert_eq!(
+        as_is.stderr,
+        "lw: the configuration 1, as-is, keeps its name\n"
+    );
+    assert_eq!(taken.code, Some(1), "{}", taken.stderr);
+    assert_eq!(taken.stderr, "lw: another configuration is named long\n");
+    assert_eq!(taken_by_as_is.code, Some(1), "{}", taken_by_as_is.stderr);
+    assert_eq!(
+        taken_by_as_is.stderr,
+        "lw: another configuration is named as-is\n"
+    );
+    assert_eq!(
+        no_configuration.code,
+        Some(4),
+        "{}",
+        no_configuration.stderr
+    );
+    assert_eq!(
+        no_configuration.stderr,
+        "lw: benchmark run 1 has no configuration 4\n"
+    );
+    assert_eq!(
+        no_benchmark_run.code,
+        Some(4),
+        "{}",
+        no_benchmark_run.stderr
+    );
+    assert_eq!(no_benchmark_run.stderr, "lw: there is no benchmark run 2\n");
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&shown.stdout).unwrap()["configurations"],
+        json!([
+            {"id": 1, "name": "as-is"},
+            {"id": 2, "name": "short"},
+            {"id": 3, "name": "long"},
+        ])
+    );
+}

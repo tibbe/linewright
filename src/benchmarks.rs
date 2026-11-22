@@ -13,9 +13,9 @@ pub use answers::{
 };
 pub use runs::{
     BENCHMARK_RUNS, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns,
-    CancelRefusal, Cancelled, ConfigurationId, LaunchRefusal, NoScore, Repetitions, RunTask,
-    ScoreFigures, TrialChange, TrialEnd, TrialFigures, TrialKey, TrialOf, TrialRef, TrialState,
-    as_is_name,
+    CancelRefusal, Cancelled, ConfigurationId, LaunchRefusal, NoScore, RenameConfigurationError,
+    Repetitions, RunTask, ScoreFigures, TrialChange, TrialEnd, TrialFigures, TrialKey, TrialOf,
+    TrialRef, TrialState, as_is_name,
 };
 pub use trial_shown::TrialShown;
 
@@ -202,6 +202,67 @@ pub enum RemoveError {
         benchmark: BenchmarkId,
         task: TaskId,
     },
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
+/// Why a benchmark was not renamed.
+#[derive(Debug, thiserror::Error)]
+pub enum RenameError {
+    #[error("there is no benchmark {0}")]
+    NoSuchBenchmark(BenchmarkId),
+    #[error("a benchmark is already named {0}")]
+    Taken(Name),
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
+/// A change to a task: its name, its criteria, or both, never neither.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskChange {
+    Name(Name),
+    Criteria(Criteria),
+    Both(Name, Criteria),
+}
+
+impl TaskChange {
+    /// The change of `name` and `criteria`, `None` when both are absent.
+    pub fn of(name: Option<Name>, criteria: Option<Criteria>) -> Option<TaskChange> {
+        match (name, criteria) {
+            (Some(name), Some(criteria)) => Some(TaskChange::Both(name, criteria)),
+            (Some(name), None) => Some(TaskChange::Name(name)),
+            (None, Some(criteria)) => Some(TaskChange::Criteria(criteria)),
+            (None, None) => None,
+        }
+    }
+
+    pub fn name(&self) -> Option<&Name> {
+        match self {
+            TaskChange::Name(name) | TaskChange::Both(name, _) => Some(name),
+            TaskChange::Criteria(_) => None,
+        }
+    }
+
+    pub fn criteria(&self) -> Option<&Criteria> {
+        match self {
+            TaskChange::Criteria(criteria) | TaskChange::Both(_, criteria) => Some(criteria),
+            TaskChange::Name(_) => None,
+        }
+    }
+}
+
+/// Why a task was not changed.
+#[derive(Debug, thiserror::Error)]
+pub enum EditTaskError {
+    #[error("there is no benchmark {0}")]
+    NoSuchBenchmark(BenchmarkId),
+    #[error("the benchmark {benchmark} has no task {task}")]
+    NoSuchTask {
+        benchmark: BenchmarkId,
+        task: TaskId,
+    },
+    #[error("a task named {task} already exists in {benchmark}")]
+    Taken { task: Name, benchmark: Name },
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -442,6 +503,90 @@ impl Benchmarks {
             return Err(anyhow::Error::from(e).context(removing).into());
         }
         Ok(name)
+    }
+
+    /// Changes the name of the benchmark `id` to `name`, refused when
+    /// another benchmark has it. Of two changes at once, the last is kept.
+    pub async fn rename(&self, id: BenchmarkId, name: &Name) -> Result<(), RenameError> {
+        let renaming = || format!("renaming the benchmark {id} to {name}");
+        let updated = sqlx::query("UPDATE benchmarks SET name = ? WHERE id = ?")
+            .bind(name.as_str())
+            .bind(id.row())
+            .execute(self.db.pool())
+            .await;
+        match updated {
+            Ok(done) if done.rows_affected() == 0 => Err(RenameError::NoSuchBenchmark(id)),
+            Ok(_) => Ok(()),
+            Err(e) if unique_violation(&e) => Err(RenameError::Taken(name.clone())),
+            Err(e) => Err(anyhow::Error::from(e).context(renaming()).into()),
+        }
+    }
+
+    /// Changes the task `task` of the benchmark `benchmark` as `change` says:
+    /// in one transaction, its name changes and its criteria file is replaced
+    /// by a rename, so that both are kept or neither is. Refused as
+    /// [`EditTaskError::Taken`] when another task of the benchmark has the
+    /// name. Of two changes at once, the last is kept.
+    pub async fn edit_task(
+        &self,
+        benchmark: BenchmarkId,
+        task: TaskId,
+        change: &TaskChange,
+    ) -> Result<(), EditTaskError> {
+        let editing = format!("changing the task {task} of the benchmark {benchmark}");
+        let mut tx = self
+            .db
+            .pool()
+            .begin_with("BEGIN IMMEDIATE")
+            .await
+            .context(editing.clone())?;
+        let Some(found) = find_benchmark(&mut tx, benchmark)
+            .await
+            .context(editing.clone())?
+        else {
+            return Err(EditTaskError::NoSuchBenchmark(benchmark));
+        };
+        let held: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM tasks WHERE id = ? AND benchmark = ?")
+                .bind(task.row())
+                .bind(benchmark.row())
+                .fetch_optional(&mut *tx)
+                .await
+                .context(editing.clone())?;
+        if held.is_none() {
+            return Err(EditTaskError::NoSuchTask { benchmark, task });
+        }
+        if let Some(name) = change.name() {
+            let updated = sqlx::query("UPDATE tasks SET name = ? WHERE id = ?")
+                .bind(name.as_str())
+                .bind(task.row())
+                .execute(&mut *tx)
+                .await;
+            match updated {
+                Ok(_) => {}
+                Err(e) if unique_violation(&e) => {
+                    return Err(EditTaskError::Taken {
+                        task: name.clone(),
+                        benchmark: found.name,
+                    });
+                }
+                Err(e) => return Err(anyhow::Error::from(e).context(editing).into()),
+            }
+        }
+        let replaced = change
+            .criteria()
+            .map(|criteria| task::replace_criteria(&self.task_dir(task), criteria))
+            .transpose()
+            .context(editing.clone())?;
+        if let Err(e) = tx.commit().await {
+            if let Some(replaced) = replaced
+                && let Err(back) = replaced.put_back()
+            {
+                tracing::warn!(task = %task, error = %back, "the criteria of a task whose change failed were not put back");
+            }
+            return Err(anyhow::Error::from(e).context(editing).into());
+        }
+        Ok(())
     }
 
     /// Keeps the task `name`, captured from `run` and built in the

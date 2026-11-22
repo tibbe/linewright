@@ -342,6 +342,61 @@ pub fn keep_benchmark(
     }
 }
 
+/// Keeps the open benchmark run `id` on the benchmark `benchmark` in the
+/// database of `work_dir`, with the tasks `tasks` and the configurations
+/// named `configurations`, `as-is` first, as a launch keeps its rows, without
+/// its trials or its directory.
+#[track_caller]
+pub fn keep_benchmark_run(
+    work_dir: &Path,
+    id: i64,
+    benchmark: i64,
+    tasks: &[i64],
+    configurations: &[&str],
+) -> impl Future<Output = ()> + use<> {
+    let caller = Location::caller();
+    let pool = back_door(work_dir);
+    let tasks = tasks.to_vec();
+    let configurations: Vec<String> = configurations.iter().map(ToString::to_string).collect();
+    async move {
+        let pool = pool.await;
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO benchmark_runs (id, benchmark, launched_at, repetitions, state)
+             VALUES (?, ?, '2026-11-17T12:00:00Z', 1, 'open')",
+        )
+        .bind(id)
+        .bind(benchmark)
+        .execute(&mut *tx)
+        .await
+        .unwrap_or_else(|e| panic!("keeping a benchmark run at {caller}: {e}"));
+        for (seq, task) in tasks.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO benchmark_run_tasks (benchmark_run, seq, task) VALUES (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(i64::try_from(seq).unwrap())
+            .bind(task)
+            .execute(&mut *tx)
+            .await
+            .unwrap_or_else(|e| panic!("keeping a benchmark run's task at {caller}: {e}"));
+        }
+        for (seq, name) in configurations.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO benchmark_run_configurations (benchmark_run, seq, name) VALUES (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(i64::try_from(seq).unwrap())
+            .bind(name)
+            .execute(&mut *tx)
+            .await
+            .unwrap_or_else(|e| panic!("keeping a benchmark run's configuration at {caller}: {e}"));
+        }
+        tx.commit().await.unwrap();
+        pool.close().await;
+    }
+}
+
 /// Keeps the task `name` of the benchmark named `benchmark`, captured from
 /// `run`, in the database of `work_dir`, with the next task's ID, without its
 /// directory, last in the benchmark's order as a capture keeps it, and gives
