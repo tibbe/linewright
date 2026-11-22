@@ -1,11 +1,4 @@
 {%- import "macros.html" as ui -%}
 <section id="benchmark-run">
-<div class="stats max-w-full {% call ui::card_look() %}{% endcall %}">
-{%- for fact in benchmark_run.facts %}
-<div class="stat">
-<div class="stat-title">{{ fact.label }}</div>
-<div class="stat-value text-xl font-semibold">{{ fact.value }}</div>
-</div>
-{%- endfor %}
-</div>
+{%- call ui::stats(benchmark_run.facts) %}{% endcall %}
 </section>

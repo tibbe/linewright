@@ -23,6 +23,7 @@ mod runs_page;
 mod runs_table;
 mod server_page;
 mod shell;
+mod stats;
 mod table;
 mod write;
 
