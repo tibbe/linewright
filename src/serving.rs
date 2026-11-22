@@ -27,7 +27,7 @@ use crate::variable_names::VariableNames;
 use crate::web;
 use crate::webhook::{Listener, Pending};
 use crate::winding_up::WindingUp;
-use crate::work_settings::{Environments, Split};
+use crate::work_settings::{Environments, SessionWork, Split};
 
 /// Serves `config`'s repository: claims its local API in `socket_dir`,
 /// listens for webhooks and serves the web UI where `config` says, and only
@@ -170,12 +170,14 @@ impl Signals {
 }
 
 /// What a factory starts with besides its store and its clock: `bash`,
-/// the operator's briefs, the token sessions are given and the secrets
-/// redacted from what they say, and their environments.
+/// the operator's briefs and settings for sessions, the token sessions are
+/// given and the secrets redacted from what they say, and their
+/// environments.
 pub struct Starting {
     program: String,
     bash: PathBuf,
     briefs: OperatorBriefs,
+    work: SessionWork,
     sessions: SessionCredentials,
     environments: Environments,
     trial_environments: Environments,
@@ -220,6 +222,7 @@ impl Starting {
         gh_through_gate: bool,
     ) -> Result<Starting> {
         let briefs = briefs(config)?;
+        let work = config.work.clone().for_sessions();
         require_tool("git").await?;
         let bash = require_bash()?;
         require_tool(program).await?;
@@ -230,6 +233,7 @@ impl Starting {
             program: program.into(),
             bash,
             briefs,
+            work,
             sessions,
             environments,
             trial_environments,
@@ -270,7 +274,7 @@ impl Starting {
             ci_attempts: config.ci_attempts,
             result_retries: config.result_retries,
             bash: self.bash,
-            work: config.work.clone(),
+            work: self.work,
             environments: self.environments,
             trial_environments: self.trial_environments,
             merge_method: config.merge_method,

@@ -193,7 +193,8 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
                 ..Partial::default()
             },
             ..WorkSettings::default()
-        },
+        }
+        .for_sessions(),
         environments: Environments::default(),
         trial_environments: Environments::default(),
         merge_method: None,
@@ -499,8 +500,17 @@ pub fn gated(world: &World, kind: WorkKind) -> Gate {
 
 /// Sets `maintenance` as the maintenance command of every session.
 pub fn maintaining_with(config: &mut FactoryConfig, maintenance: &str) {
-    config.work.pipeline_flags_and_env.maintenance =
-        Some(Maintenance::from(maintenance.to_string()));
+    edit_work(config, |work| {
+        work.pipeline_flags_and_env.maintenance = Some(Maintenance::from(maintenance.to_string()));
+    });
+}
+
+/// Makes `edit` to the operator's layers that `config`'s settings for
+/// sessions are resolved from, and resolves them again.
+pub fn edit_work(config: &mut FactoryConfig, edit: impl FnOnce(&mut WorkSettings)) {
+    let mut work = config.work.layers().clone();
+    edit(&mut work);
+    config.work = work.for_sessions();
 }
 
 /// A world whose work dir is `REPO`'s, holding an issue that needs triage,

@@ -46,7 +46,7 @@ use crate::spec_gap::{self, FiledGaps};
 use crate::spec_glob::SpecGlob;
 use crate::store::{AnyItem, AttachError, FoundSecrets, PushError, PushMode, RepoSettings, Store};
 use crate::tracking::FiledTicket;
-use crate::work_settings::{Environments, RunKind, SessionSettings, WorkSettings};
+use crate::work_settings::{Environments, RunKind, SessionSettings, SessionWork};
 use crate::workflow_run::CompletedAttempt;
 use crate::working_pull::feedback;
 
@@ -54,7 +54,7 @@ pub(crate) struct Shell {
     pub sessions: Sessions,
     pub policy: Policy,
     /// The operator's settings for sessions.
-    pub work: WorkSettings,
+    pub work: SessionWork,
     pub environments: Environments,
     /// The operator's layer of the briefs.
     pub operator_briefs: OperatorBriefs,
@@ -81,7 +81,7 @@ pub(crate) struct ShellParts {
     pub auto_merge: bool,
     pub require_label: Option<String>,
     /// The operator's settings for sessions.
-    pub work: WorkSettings,
+    pub work: SessionWork,
     pub environments: Environments,
     /// The operator's layer of the briefs.
     pub operator_briefs: OperatorBriefs,

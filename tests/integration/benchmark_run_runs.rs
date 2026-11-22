@@ -277,8 +277,10 @@ fn with_setup(world: World, repo: &Path, command: &str) -> impl Future<Output = 
         world.clock,
         repo,
         move |config| {
-            config.work.pipeline_flags_and_env.setup.command =
-                Some(Setup::Command(SetupCommand::new(command).unwrap()));
+            edit_work(config, |work| {
+                work.pipeline_flags_and_env.setup.command =
+                    Some(Setup::Command(SetupCommand::new(command).unwrap()));
+            });
         },
     )
 }

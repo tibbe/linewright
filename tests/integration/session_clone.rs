@@ -136,7 +136,9 @@ async fn a_fetch_into_the_copy_of_the_environment_that_fails_twice_hands_the_ite
 #[test_log::test(tokio::test)]
 async fn a_clone_still_being_made_at_its_sessions_deadline_is_the_session_timing_out() {
     let mut world = World::with(|config| {
-        config.work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        edit_work(config, |work| {
+            work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        });
     })
     .await;
     let issue =
@@ -316,7 +318,9 @@ async fn a_session_whose_clone_could_not_be_made_ends_with_its_end() {
 #[test_log::test(tokio::test)]
 async fn a_clone_still_being_made_at_its_sessions_deadline_or_when_its_run_is_cancelled_says_so() {
     let mut world = world_in_work_dir_with(|config| {
-        config.work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        edit_work(config, |work| {
+            work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        });
     })
     .await;
     world

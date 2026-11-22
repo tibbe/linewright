@@ -263,7 +263,11 @@ fn greeting(config: &mut FactoryConfig, greeting: &str) {
         PassEnv::default(),
         SetEnv::new([("GREETING".to_string(), greeting.to_string())]).unwrap(),
     );
-    config.environments = config.work.environments(&session_env, [], &[]).environments;
+    config.environments = config
+        .work
+        .layers()
+        .environments(&session_env, [], &[])
+        .environments;
 }
 
 #[test_log::test(tokio::test)]
@@ -403,7 +407,11 @@ async fn no_secret_is_kept_in_a_builds_record_its_output_or_the_environments_sta
             PassEnv::default(),
             SetEnv::new([("REGISTRY_TOKEN".to_string(), secret.to_string())]).unwrap(),
         );
-        config.environments = config.work.environments(&session_env, [], &[]).environments;
+        config.environments = config
+            .work
+            .layers()
+            .environments(&session_env, [], &[])
+            .environments;
     })
     .await;
     set_up_with(

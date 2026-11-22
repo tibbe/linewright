@@ -42,7 +42,11 @@ async fn the_repositorys_maintenance_runs_in_the_clones_root_with_the_sessions_e
             PassEnv::default(),
             SetEnv::new([("GREETING".to_string(), "hello".to_string())]).unwrap(),
         );
-        config.environments = config.work.environments(&session_env, [], &[]).environments;
+        config.environments = config
+            .work
+            .layers()
+            .environments(&session_env, [], &[])
+            .environments;
     })
     .await;
     commit_config(
@@ -197,7 +201,9 @@ fn a_session_goes_on_after_its_maintenance_command_unless_it_timed_out_or_was_ca
 async fn the_maintenance_commands_time_counts_against_its_sessions_timeout() {
     let mut world = World::with(|config| {
         maintaining_with(config, "sleep 2");
-        config.work.flags_and_env.session_timeout = Some(Duration::from_secs(10));
+        edit_work(config, |work| {
+            work.flags_and_env.session_timeout = Some(Duration::from_secs(10));
+        });
     })
     .await;
     let left = Arc::new(Mutex::new(None));
@@ -231,7 +237,9 @@ async fn a_maintenance_command_that_outlasts_its_sessions_timeout_is_the_session
     );
     let mut world = World::with(|config| {
         maintaining_with(config, &command);
-        config.work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        edit_work(config, |work| {
+            work.flags_and_env.session_timeout = Some(Duration::from_secs(1));
+        });
     })
     .await;
     let issue = open_for_triage(&world);

@@ -649,7 +649,14 @@ fn first<'a, T>(
         .find_map(|&rung| Some((get(rung.settings)?, rung)))
 }
 
-impl WorkSettings {
+/// The operator's settings for sessions, as a command that starts them
+/// takes them: what each run's settings are taken from.
+#[derive(Clone, Debug)]
+pub struct SessionWork {
+    layers: WorkSettings,
+}
+
+impl SessionWork {
     /// A session setting takes the first value set among: the automation's
     /// front matter, the repository's stage table, the operator's stage
     /// table, the flags and environment, the repository's file, the
@@ -668,7 +675,7 @@ impl WorkSettings {
             RunKind::Stage(stage) => (&none, Some(StageKey::Work(stage))),
             RunKind::Scorer => (&none, Some(StageKey::Scorer)),
         };
-        let table = stage.and_then(|stage| self.stages.get(&stage));
+        let table = stage.and_then(|stage| self.layers.stages.get(&stage));
         let stage_setting = stage.map_or(TimeoutSetting::Pipeline, TimeoutSetting::Stage);
         let ladder = [
             Rung::new(front_matter, Layer::Repository, TimeoutSetting::Automation),
@@ -685,12 +692,12 @@ impl WorkSettings {
                 stage_setting,
             ),
             Rung::new(
-                &self.flags_and_env,
+                &self.layers.flags_and_env,
                 Layer::Operator,
                 TimeoutSetting::Pipeline,
             ),
             Rung::new(&repo.top, Layer::Repository, TimeoutSetting::Pipeline),
-            Rung::new(&self.file, Layer::Operator, TimeoutSetting::Pipeline),
+            Rung::new(&self.layers.file, Layer::Operator, TimeoutSetting::Pipeline),
         ];
         let model = first(&ladder, |partial| partial.model.clone())
             .map(|(model, rung)| Sourced::new(model, rung.layer));
@@ -705,9 +712,9 @@ impl WorkSettings {
                 ),
             };
         let maintenance = [
-            (&self.pipeline_flags_and_env, Layer::Operator),
+            (&self.layers.pipeline_flags_and_env, Layer::Operator),
             (&repo.pipeline, Layer::Repository),
-            (&self.pipeline_file, Layer::Operator),
+            (&self.layers.pipeline_file, Layer::Operator),
         ]
         .into_iter()
         .find_map(|(pipeline, layer)| Some(Sourced::new(pipeline.maintenance.clone()?, layer)))
@@ -720,8 +727,41 @@ impl WorkSettings {
             timeout_setting,
             maintenance,
             environment: staged_environment.unwrap_or(&environments.pipeline).clone(),
-            env_layers: self.env_layers.with(table),
+            env_layers: self.layers.env_layers.with(table),
         }
+    }
+
+    /// The operator's layers these were resolved from.
+    pub fn layers(&self) -> &WorkSettings {
+        &self.layers
+    }
+
+    /// As [`WorkSettings::setup`].
+    pub fn setup(&self, repo: &RepoSettings) -> Option<SetupSettings> {
+        self.layers.setup(repo)
+    }
+
+    /// As [`WorkSettings::setup_max_age`].
+    pub fn setup_max_age(&self, repo: &RepoSettings) -> Duration {
+        self.layers.setup_max_age(repo)
+    }
+
+    /// As [`WorkSettings::environments`].
+    pub fn environments(
+        &self,
+        session_env: &SessionEnv,
+        environment: impl IntoIterator<Item = (OsString, OsString)>,
+        set_by_linewright: &[&str],
+    ) -> Split {
+        self.layers
+            .environments(session_env, environment, set_by_linewright)
+    }
+}
+
+impl WorkSettings {
+    /// These, as a command that starts sessions takes them.
+    pub fn for_sessions(self) -> SessionWork {
+        SessionWork { layers: self }
     }
 
     /// The `setup` table, each key from the first layer that sets it: the

@@ -1770,6 +1770,7 @@ mod tests {
             },
             ..WorkSettings::default()
         }
+        .for_sessions()
         .for_run(
             RunKind::Stage(WorkKind::Triage),
             &RepoSettings::default(),

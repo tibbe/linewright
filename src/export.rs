@@ -266,7 +266,7 @@ mod tests {
     }
 
     fn settings() -> SessionSettings {
-        WorkSettings::default().for_run(
+        WorkSettings::default().for_sessions().for_run(
             RunKind::Stage(WorkKind::Triage),
             &RepoSettings::default(),
             &Environments::default(),

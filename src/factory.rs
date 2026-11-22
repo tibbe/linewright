@@ -46,7 +46,7 @@ use crate::store::Store;
 use crate::store::github::SESSION_TOKEN_VARIABLE;
 use crate::webhook::{self, Pending};
 use crate::winding_up::WindingUp;
-use crate::work_settings::{Environments, RunKind, WorkSettings};
+use crate::work_settings::{Environments, RunKind, SessionWork};
 use crate::workflow_run::{self, Attempts, CompletedAttempt, TriggersSeen};
 
 #[derive(Clone, Debug)]
@@ -64,7 +64,7 @@ pub struct FactoryConfig {
     /// The `bash` that runs the maintenance command.
     pub bash: PathBuf,
     /// The operator's settings for sessions.
-    pub work: WorkSettings,
+    pub work: SessionWork,
     /// What sessions are given of Linewright's environment.
     pub environments: Environments,
     /// What the sessions of benchmark runs' trials and scorers are given of
