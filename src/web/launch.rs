@@ -18,13 +18,14 @@ use super::benchmark_page::{InBenchmark, benchmark_for_making};
 use super::benchmark_runs;
 use super::html::{self, Html};
 use super::making::{
-    Answer, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, NOT_A_NAME, REQUIRED,
-    Refusal,
+    Answer, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, REQUIRED, Refusal,
+    parse_name,
 };
 use super::write::Write;
 use crate::api::Sources;
-use crate::benchmarks::{Benchmark, ConfigurationName, LaunchRefusal};
+use crate::benchmarks::{Benchmark, LaunchRefusal, as_is_name};
 use crate::config;
+use crate::name::Name;
 use crate::repo_files::FileError;
 use crate::task::TaskStage;
 use crate::trial::Configuration;
@@ -353,24 +354,18 @@ impl LaunchFields {
     /// Refusals).
     fn check(&self, starting: &Starting) -> Result<Launch, FieldRefusals<LaunchField>> {
         let mut refused = vec![];
-        let names: Vec<Option<ConfigurationName>> = self
+        let names: Vec<Option<Name>> = self
             .configurations
             .iter()
-            .map(|fields| {
-                let typed = fields.name.trim();
-                let reason = if typed.is_empty() {
-                    REQUIRED
-                } else {
-                    match typed.parse() {
-                        Ok(name) => return Some(name),
-                        Err(_) => NOT_A_NAME,
-                    }
-                };
-                refused.push((fields.field(ConfigurationField::Name), reason.to_string()));
-                None
+            .map(|fields| match parse_name(&fields.name) {
+                Ok(name) => Some(name),
+                Err(reason) => {
+                    refused.push((fields.field(ConfigurationField::Name), reason.to_string()));
+                    None
+                }
             })
             .collect();
-        let mut counts = BTreeMap::from([(ConfigurationName::as_is(), 1_usize)]);
+        let mut counts = BTreeMap::from([(as_is_name(), 1_usize)]);
         for name in names.iter().flatten() {
             *counts.entry(name.clone()).or_default() += 1;
         }
@@ -416,7 +411,7 @@ impl LaunchFields {
 
 /// What a launch that passes the form's checks launches: its repetitions, and
 /// each configuration but `as-is`, by its name.
-type Launch = (NonZeroU32, Vec<(ConfigurationName, Configuration)>);
+type Launch = (NonZeroU32, Vec<(Name, Configuration)>);
 
 impl ConfigurationFields {
     /// Its field `field`.
@@ -836,7 +831,7 @@ pub(super) async fn launch(
 const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 
 /// The refusal of the name `name` that another configuration has.
-fn another_named(name: &ConfigurationName) -> String {
+fn another_named(name: &Name) -> String {
     format!("Another configuration is named {name}.")
 }
 
@@ -910,9 +905,6 @@ mod tests {
         }
     }
 
-    const NAME_FORM: &str = "A name holds only lowercase letters, digits and hyphens, and \
-                              starts with a letter or a digit.";
-
     /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
     /// `docs/specs/design_system.md`, Making, Required.
     #[test_log::test]
@@ -935,15 +927,14 @@ mod tests {
         }
     }
 
-    /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
+    /// `docs/specs/benchmarks.md`, Names and IDs, A name;
     /// `docs/specs/design_system.md`, Making, Required.
     #[test_log::test]
-    fn a_name_that_is_empty_is_required_and_one_out_of_form_refused() {
+    fn a_name_that_is_blank_is_required_and_one_of_two_lines_refused() {
         for (typed, reason) in [
             ("", "Required."),
             (" \t", "Required."),
-            ("Short", NAME_FORM),
-            ("short one", NAME_FORM),
+            ("two\nlines", "A name is one line."),
         ] {
             assert_eq!(
                 refused(&[("repetitions", "1"), ("c3.name", typed)]),
@@ -951,6 +942,28 @@ mod tests {
                 "{typed:?}"
             );
         }
+    }
+
+    /// `docs/specs/benchmarks.md`, Names and IDs, A name: one line of any
+    /// text.
+    #[test_log::test]
+    fn a_configuration_is_named_in_plain_words() {
+        let launch = sent(&[
+            ("repetitions", "1"),
+            ("c1.name", "Opus, high effort"),
+            ("c2.name", "As-is"),
+            ("c3.name", "<b>Éclair</b>"),
+        ])
+        .check(&Starting::default());
+
+        let (_, configurations) = launch.unwrap_or_else(|_| panic!("the launch is refused"));
+        assert_eq!(
+            configurations
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["Opus, high effort", "As-is", "<b>Éclair</b>"]
+        );
     }
 
     /// `docs/specs/benchmarks.md`, New benchmark run, Refusals: a name that
@@ -1034,7 +1047,7 @@ mod tests {
             refused(&[
                 ("repetitions", "0"),
                 ("c1.name", ""),
-                ("c2.name", "Short"),
+                ("c2.name", "two\nlines"),
                 ("c3.name", "twin"),
                 ("c3.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
                 ("c6.name", "twin"),
@@ -1048,7 +1061,10 @@ mod tests {
                 configuration_field(1, ConfigurationField::Name),
                 "Required."
             )
-            .and(configuration_field(2, ConfigurationField::Name), NAME_FORM)
+            .and(
+                configuration_field(2, ConfigurationField::Name),
+                "A name is one line."
+            )
             .and(
                 configuration_field(3, ConfigurationField::Name),
                 another_twin

@@ -13,9 +13,9 @@ pub use answers::{
 };
 pub use runs::{
     BENCHMARK_RUNS, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns,
-    CancelRefusal, Cancelled, ConfigurationId, ConfigurationName, LaunchRefusal, NoScore,
-    Repetitions, RunTask, ScoreFigures, TrialChange, TrialEnd, TrialFigures, TrialKey, TrialOf,
-    TrialRef, TrialState,
+    CancelRefusal, Cancelled, ConfigurationId, LaunchRefusal, NoScore, Repetitions, RunTask,
+    ScoreFigures, TrialChange, TrialEnd, TrialFigures, TrialKey, TrialOf, TrialRef, TrialState,
+    as_is_name,
 };
 pub use trial_shown::TrialShown;
 
@@ -29,8 +29,9 @@ use serde::Serialize;
 use sqlx::SqliteConnection;
 
 use crate::database::Database;
+use crate::name::{self, Name};
 use crate::runs::RunId;
-use crate::task::{self, CaptureError, Criteria, TaskFacts, TaskName, TaskRefusal, TaskStage};
+use crate::task::{self, CaptureError, Criteria, TaskFacts, TaskRefusal, TaskStage};
 
 /// An ID that Linewright gives: a positive number, the next of its counter
 /// (`docs/specs/benchmarks.md`, Names and IDs).
@@ -97,42 +98,11 @@ given_id!(
     "a task's"
 );
 
-/// A benchmark's name: one or more lowercase letters, digits and hyphens,
-/// starting with a letter or a digit.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BenchmarkName(String);
-
-impl BenchmarkName {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for BenchmarkName {
-    type Err = String;
-
-    fn from_str(name: &str) -> Result<BenchmarkName, String> {
-        task::check_name(name, "a benchmark's").map(|()| BenchmarkName(name.to_string()))
-    }
-}
-
-impl fmt::Display for BenchmarkName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Serialize for BenchmarkName {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
 /// A named set of tasks of one stage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Benchmark {
     pub id: BenchmarkId,
-    pub name: BenchmarkName,
+    pub name: Name,
     pub stage: TaskStage,
 }
 
@@ -141,14 +111,11 @@ pub struct Benchmark {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChosenBenchmark {
     Existing(Benchmark),
-    New {
-        name: BenchmarkName,
-        stage: TaskStage,
-    },
+    New { name: Name, stage: TaskStage },
 }
 
 impl ChosenBenchmark {
-    pub fn name(&self) -> &BenchmarkName {
+    pub fn name(&self) -> &Name {
         match self {
             ChosenBenchmark::Existing(benchmark) => &benchmark.name,
             ChosenBenchmark::New { name, .. } => name,
@@ -184,7 +151,7 @@ pub struct BenchmarkShown {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskEntry {
     pub id: TaskId,
-    pub name: TaskName,
+    pub name: Name,
     /// The run it was captured from.
     pub run: RunId,
     /// Its criteria, or why they do not read, such as once a person
@@ -196,7 +163,7 @@ pub struct TaskEntry {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskShown {
     pub id: TaskId,
-    pub name: TaskName,
+    pub name: Name,
     pub benchmark: Benchmark,
     /// The run it was captured from.
     pub run: RunId,
@@ -220,7 +187,7 @@ pub struct KeptTask {
 #[derive(Debug, thiserror::Error)]
 pub enum MakeError {
     #[error("a benchmark is already named {0}")]
-    Taken(BenchmarkName),
+    Taken(Name),
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -263,11 +230,7 @@ impl Benchmarks {
 
     /// Makes the benchmark `name` of `stage`, with the next benchmark's ID,
     /// refused when a benchmark has the name.
-    pub async fn make(
-        &self,
-        name: &BenchmarkName,
-        stage: TaskStage,
-    ) -> Result<Benchmark, MakeError> {
+    pub async fn make(&self, name: &Name, stage: TaskStage) -> Result<Benchmark, MakeError> {
         let making = || format!("making the benchmark {name}");
         let mut tx = self
             .db
@@ -281,7 +244,7 @@ impl Benchmarks {
     }
 
     /// Whether the benchmark `benchmark` holds a task named `name`.
-    pub async fn has_task(&self, benchmark: BenchmarkId, name: &TaskName) -> Result<bool> {
+    pub async fn has_task(&self, benchmark: BenchmarkId, name: &Name) -> Result<bool> {
         let row: Option<i64> =
             sqlx::query_scalar("SELECT id FROM tasks WHERE benchmark = ? AND name = ?")
                 .bind(benchmark.row())
@@ -292,25 +255,29 @@ impl Benchmarks {
         Ok(row.is_some())
     }
 
-    /// Every benchmark, by name, with how many tasks it holds.
+    /// Every benchmark, in the order of their names by the Unicode Collation
+    /// Algorithm, with how many tasks it holds.
     pub async fn list(&self) -> Result<Vec<BenchmarkListed>> {
         let rows: Vec<(i64, String, String, i64)> = sqlx::query_as(
             "SELECT benchmarks.id, benchmarks.name, benchmarks.stage, COUNT(tasks.id)
              FROM benchmarks
              LEFT JOIN tasks ON tasks.benchmark = benchmarks.id
-             GROUP BY benchmarks.id ORDER BY benchmarks.name",
+             GROUP BY benchmarks.id",
         )
         .fetch_all(self.db.pool())
         .await
         .context(READING)?;
-        rows.into_iter()
+        let mut listed = rows
+            .into_iter()
             .map(|(id, name, stage, tasks)| {
                 Ok(BenchmarkListed {
                     benchmark: benchmark_of(id, &name, &stage)?,
                     tasks: usize::try_from(tasks).context(READING)?,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        name::collated(&mut listed, |listed| &listed.benchmark.name);
+        Ok(listed)
     }
 
     /// The benchmark `id`, if there is one.
@@ -320,7 +287,7 @@ impl Benchmarks {
     }
 
     /// The benchmark named `name`, if there is one.
-    pub async fn named(&self, name: &BenchmarkName) -> Result<Option<Benchmark>> {
+    pub async fn named(&self, name: &Name) -> Result<Option<Benchmark>> {
         let row: Option<(i64, String)> =
             sqlx::query_as("SELECT id, stage FROM benchmarks WHERE name = ?")
                 .bind(name.as_str())
@@ -350,7 +317,7 @@ impl Benchmarks {
                 let task = TaskId::from_row(task)?;
                 Ok(TaskEntry {
                     id: task,
-                    name: name.parse().map_err(anyhow::Error::msg)?,
+                    name: Name::parse(&name)?,
                     run: run.parse().map_err(anyhow::Error::msg)?,
                     criteria: task::read_criteria(&self.task_dir(task)),
                 })
@@ -383,7 +350,7 @@ impl Benchmarks {
         let dir = self.task_dir(id);
         Ok(Some(TaskShown {
             id,
-            name: name.parse().map_err(anyhow::Error::msg).context(READING)?,
+            name: Name::parse(&name).context(READING)?,
             benchmark: benchmark_of(benchmark, &benchmark_name, &stage)?,
             run: run.parse().map_err(anyhow::Error::msg).context(READING)?,
             facts: task::read_facts(&dir),
@@ -393,14 +360,14 @@ impl Benchmarks {
 
     /// The name the task `id` had when it was removed; `None` when no task
     /// with that ID was removed.
-    pub async fn removed_task(&self, id: TaskId) -> Result<Option<TaskName>> {
+    pub async fn removed_task(&self, id: TaskId) -> Result<Option<Name>> {
         let name: Option<String> =
             sqlx::query_scalar("SELECT name FROM removed_tasks WHERE id = ?")
                 .bind(id.row())
                 .fetch_optional(self.db.pool())
                 .await
                 .context(READING)?;
-        name.map(|name| name.parse().map_err(anyhow::Error::msg))
+        name.map(|name| Name::parse(&name))
             .transpose()
             .context(READING)
     }
@@ -412,7 +379,7 @@ impl Benchmarks {
         &self,
         benchmark: BenchmarkId,
         task: TaskId,
-    ) -> Result<TaskName, RemoveError> {
+    ) -> Result<Name, RemoveError> {
         let removing = format!("removing the task {task} from the benchmark {benchmark}");
         let mut tx = self
             .db
@@ -444,10 +411,7 @@ impl Benchmarks {
             .execute(&mut *tx)
             .await
             .context(removing.clone())?;
-        let name: TaskName = name
-            .parse()
-            .map_err(anyhow::Error::msg)
-            .context(removing.clone())?;
+        let name = Name::parse(&name).context(removing.clone())?;
         let tasks_dir = self.tasks_dir();
         let place = self.task_dir(task);
         std::fs::create_dir_all(&tasks_dir)
@@ -489,7 +453,7 @@ impl Benchmarks {
     pub(crate) async fn keep_task(
         &self,
         chosen: &ChosenBenchmark,
-        name: &TaskName,
+        name: &Name,
         run: &RunId,
         built: &Path,
     ) -> Result<KeptTask, CaptureError> {
@@ -593,7 +557,7 @@ async fn next_task_id(conn: &mut SqliteConnection, tasks_dir: &Path) -> Result<T
 /// next benchmark's ID, refused when a benchmark has its name.
 async fn insert_benchmark(
     conn: &mut SqliteConnection,
-    name: &BenchmarkName,
+    name: &Name,
     stage: TaskStage,
 ) -> Result<Benchmark, MakeError> {
     let making = || format!("making the benchmark {name}");
@@ -637,7 +601,7 @@ const READING: &str = "reading the benchmarks";
 fn benchmark_of(id: i64, name: &str, stage: &str) -> Result<Benchmark> {
     Ok(Benchmark {
         id: BenchmarkId::from_row(id).context(READING)?,
-        name: name.parse().map_err(anyhow::Error::msg).context(READING)?,
+        name: Name::parse(name).context(READING)?,
         stage: stage.parse().map_err(anyhow::Error::msg).context(READING)?,
     })
 }
@@ -691,7 +655,7 @@ pub struct BenchmarkAnswer {
 #[derive(Serialize)]
 pub struct TaskAnswer {
     pub id: TaskId,
-    pub name: TaskName,
+    pub name: Name,
     pub run: RunId,
     #[serde(flatten)]
     pub criteria: CriteriaAnswer,
@@ -770,25 +734,4 @@ pub fn render_benchmark(answer: &BenchmarkAnswer) -> String {
         text.push_str(&answers::render_summary(benchmark_run));
     }
     text
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test_log::test]
-    fn a_benchmarks_name_is_lowercase_letters_digits_and_hyphens_starting_with_a_letter_or_a_digit()
-    {
-        for name in ["board", "design-2", "7"] {
-            assert_eq!(
-                name.parse::<BenchmarkName>().map(|n| n.to_string()),
-                Ok(name.into())
-            );
-        }
-        for name in [
-            "", "-", "-board", "Board", "board_1", "board 1", "../board", "bōard",
-        ] {
-            assert!(name.parse::<BenchmarkName>().is_err(), "{name:?}");
-        }
-    }
 }

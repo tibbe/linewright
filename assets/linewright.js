@@ -205,7 +205,7 @@
    * Starts the form of `dialog`, if it is a making dialog's, as it starts,
    * but for the regions of the page's stream it holds, which stay as the
    * stream last sent them (docs/specs/benchmarks.md, New task): its run is
-   * chosen as it starts, the first, with the name suggested for it.
+   * chosen as it starts, the first.
    */
   function startAfresh(dialog) {
     const form = dialog?.querySelector?.("form[data-new]");
@@ -216,7 +216,6 @@
     for (const select of form.querySelectorAll("select[name=run]")) {
       chosenRun = null;
       select.selectedIndex = 0;
-      suggestName(select, true);
     }
   }
 
@@ -574,29 +573,12 @@
   /** The run the reader chose to capture, if they chose one. */
   let chosenRun = null;
 
-  /**
-   * Fills the name of the capture of run choice `select` with the name
-   * suggested for the run chosen (docs/specs/benchmarks.md, New task), unless,
-   * but for `always`, the name holds one the reader typed: one suggested for
-   * none of the runs.
-   */
-  function suggestName(select, always) {
-    const name = Array.from(select.form?.elements ?? []).find((field) => field.name === "name");
-    const suggested = (option) => option.getAttribute("data-name");
-    const chosen = select.options[select.selectedIndex];
-    if (!name || !chosen) return;
-    if (always || name.value === "" || Array.from(select.options, suggested).includes(name.value)) {
-      name.value = suggested(chosen) ?? name.value;
-    }
-  }
-
   document.addEventListener("change", (event) => {
     const select = event.target;
     if (select?.tagName !== "SELECT" || select.name !== "run" || !select.form) return;
     const chosen = select.options[select.selectedIndex];
     if (!chosen) return;
     chosenRun = chosen.value;
-    suggestName(select, false);
   });
 
   /**
@@ -614,13 +596,12 @@
 
   /**
    * Chooses again the run the reader chose to capture, while an update
-   * still offers it, and suggests a name for the run chosen.
+   * still offers it.
    */
   function keepRun() {
     for (const select of document.querySelectorAll("select[name=run]")) {
       const at = Array.from(select.options).findIndex((option) => option.value === chosenRun);
       if (at !== -1) select.selectedIndex = at;
-      suggestName(select, false);
     }
   }
 

@@ -16,16 +16,17 @@ use common::*;
 use linewright::api::Sources;
 use linewright::benchmarks::{
     BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, Cancelled,
-    ConfigurationId, ConfigurationName, NoScore, TrialEnd, TrialKey, TrialState,
+    ConfigurationId, NoScore, TrialEnd, TrialKey, TrialState,
 };
 use linewright::clock::Clock as _;
 use linewright::cost::Usd;
 use linewright::ending::Ends;
 use linewright::factory::{Factory, FactoryConfig, ServeEnd};
+use linewright::name::Name;
 use linewright::reconcile::WorkKind;
 use linewright::runs::{Ending, OutcomeName, RepoWorkDir};
 use linewright::store::local::LocalStore;
-use linewright::task::{self, BenchmarkChoice, Criteria, TaskName};
+use linewright::task::{self, BenchmarkChoice, Criteria};
 use linewright::trial::{self, Configuration};
 use linewright::webhook::Pending;
 use linewright::work_settings::{Setup, SetupCommand};
@@ -73,7 +74,7 @@ fn with_benchmark(max_trials: usize) -> impl Future<Output = (World, tempfile::T
         let mut choice = BenchmarkChoice::New("triage".parse().unwrap());
         for (task, issue) in issues {
             let run = format!("{}/triage-1", issue.0).parse().unwrap();
-            let name: TaskName = task.parse().unwrap();
+            let name: Name = task.parse().unwrap();
             let capturable = task::capturable(&runs, &benchmarks, &run, &name, &choice)
                 .await
                 .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
@@ -93,7 +94,7 @@ fn with_benchmark(max_trials: usize) -> impl Future<Output = (World, tempfile::T
 #[track_caller]
 fn launch(
     repo: &Path,
-    configurations: Vec<(ConfigurationName, Configuration)>,
+    configurations: Vec<(Name, Configuration)>,
     repetitions: u32,
 ) -> impl Future<Output = (BenchmarkRuns, BenchmarkRunId)> + use<> {
     let caller = Location::caller();

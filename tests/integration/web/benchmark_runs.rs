@@ -1893,9 +1893,6 @@ type Refusal = (
     Vec<(&'static str, &'static str)>,
 );
 
-const NOT_A_NAME: &str = "A name holds only lowercase letters, digits and hyphens, and starts \
-                          with a letter or a digit.";
-
 /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
 /// `docs/specs/design_system.md`, Making, Required and A refusal;
 /// `docs/specs/web/design_system.md`, Making: each refusal of a field is
@@ -2006,7 +2003,7 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
             ("c1.started/prompts/fix-ci.md", FIX_CI),
             ("c1.briefs/prompts/design.md", &design.replace('\n', "\r\n")),
             ("c1.started/prompts/design.md", DESIGN),
-            ("c4.name", "Careful"),
+            ("c4.name", "as-is"),
             ("c4.effort", "max"),
         ],
     )
@@ -2028,7 +2025,7 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
                 },
                 ConfigurationShown {
                     effort: "max".into(),
-                    ..named("Careful")
+                    ..named("as-is")
                 },
             ],
             repetitions: "3".into(),
@@ -2038,7 +2035,10 @@ async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_fi
     );
     assert_eq!(
         making_shown(&answer).refused,
-        [("c4.name", NOT_A_NAME.to_string())]
+        [(
+            "c4.name",
+            "Another configuration is named as-is.".to_string()
+        )]
     );
     assert_eq!(
         select(&answer, "fieldset.configuration")[0]

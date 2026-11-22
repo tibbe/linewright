@@ -1230,7 +1230,7 @@ steps.join("\n")
 
 /// `docs/specs/benchmarks.md`, New task: a "New" dialog starts afresh
 /// with the regions of the page's stream it holds as the stream last sent
-/// them, New task's run chosen as it starts and its name suggested for it.
+/// them, New task's run chosen as it starts and its name empty.
 #[test_log::test(tokio::test)]
 async fn a_new_dialog_starts_afresh_keeping_its_regions_as_the_stream_last_sent_them() {
     let page = r#"
@@ -1249,7 +1249,7 @@ function hold(values, sent) {
     id: "new-task-run", name: "run", form: making, selectedIndex: 0, sent,
   });
   run.options = values.map((value) =>
-    Object.assign(element("OPTION", { "data-name": value.replace("/", "-") }), { value }));
+    Object.assign(element("OPTION", {}), { value }));
   run.replaceWith = (other) => { run = other; making.elements = [run, name]; };
   making.elements = [run, name];
   return run;
@@ -1257,7 +1257,7 @@ function hold(values, sent) {
 var html = "as it starts";
 Object.defineProperty(making, "innerHTML", {
   get: () => html,
-  set: (value) => { html = value; hold(["1/implement-1"], "as the page started"); name.value = "1-implement-1"; },
+  set: (value) => { html = value; hold(["1/implement-1"], "as the page started"); name.value = ""; },
 });
 hold(["1/implement-1"], "as the page started");
 making.querySelectorAll = (selector) =>
@@ -1267,7 +1267,7 @@ const others = document.querySelectorAll;
 document.querySelectorAll = (selector) =>
   selector === "dialog form[data-new]" ? [making] : selector === "select[name=run]" ? [run] : others(selector);
 const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
-const shown = () => `${run.sent}: ${run.options[run.selectedIndex].value} ${name.value}`;
+const shown = () => `${run.sent}: ${run.options[run.selectedIndex].value} [${name.value}]`;
 "#;
     let asked = r#"
 const steps = [];
@@ -1287,9 +1287,9 @@ steps.join("\n")
     assert_eq!(
         steps,
         [
-            "as the stream sent it: 1/implement-1 mine",
-            "as the stream sent it: 1/implement-2 1-implement-2",
-            "as the stream sent it: 1/implement-2 1-implement-2",
+            "as the stream sent it: 1/implement-1 [mine]",
+            "as the stream sent it: 1/implement-2 []",
+            "as the stream sent it: 1/implement-2 []",
         ]
     );
 }
@@ -1364,34 +1364,6 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark: Adding a task.
-#[test_log::test(tokio::test)]
-async fn choosing_a_run_to_capture_fills_in_its_suggested_name_unless_one_was_typed() {
-    let page = r#"
-var capture = element("FORM", {});
-var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
-run.options = [["1/implement-2", "1-implement-2"], ["1/implement-1", "1-implement-1"]].map(
-  ([value, name]) => Object.assign(element("OPTION", { "data-name": name }), { value }),
-);
-var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "1-implement-2" });
-capture.elements = [run, name];
-function choose(index) { run.selectedIndex = index; fire("change", event(run)); return name.value; }
-"#;
-    let asked = r#"
-const steps = [];
-steps.push(choose(1));
-name.value = "mine";
-steps.push(choose(0));
-name.value = "";
-steps.push(choose(0));
-steps.join("\n")
-"#;
-
-    let names = with_filters(page, asked).await;
-
-    assert_eq!(names, ["1-implement-1", "mine", "1-implement-2"]);
-}
-
 /// `docs/specs/runs.md`, Run, Capturing: "Benchmark name" is enabled while
 /// "New benchmark" is chosen alone, so that while it is hidden the browser
 /// neither checks nor sends it; another dialog's choice leaves it be.
@@ -1431,7 +1403,7 @@ async fn the_run_chosen_to_capture_stays_chosen_when_an_update_brings_new_runs()
 var capture = element("FORM", {});
 var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
 function offer(values) {
-  run.options = values.map((value) => Object.assign(element("OPTION", { "data-name": value }), { value }));
+  run.options = values.map((value) => Object.assign(element("OPTION", {}), { value }));
   run.selectedIndex = 0;
 }
 offer(["1/implement-2", "1/implement-1"]);
@@ -1458,26 +1430,25 @@ steps.join("\n")
 }
 
 /// `docs/specs/benchmarks.md`, New task, Fields, and
-/// `docs/specs/design_system.md`, Making, A refusal: the name follows the
-/// run an update chooses unless the reader typed one, and the run sent
-/// stays chosen through updates.
+/// `docs/specs/design_system.md`, Making, A refusal: the name stays as the
+/// reader typed it through updates, and the run sent stays chosen.
 #[test_log::test(tokio::test)]
-async fn the_suggested_name_follows_the_run_an_update_chooses_and_the_run_sent_stays_chosen() {
+async fn the_name_typed_stays_through_updates_and_the_run_sent_stays_chosen() {
     let page = r#"
 var capture = element("FORM", {});
 var run = Object.assign(element("SELECT", {}), { name: "run", form: capture, selectedIndex: 0 });
 function offer(values) {
-  run.options = values.map((value) => Object.assign(element("OPTION", { "data-name": value }), { value }));
+  run.options = values.map((value) => Object.assign(element("OPTION", {}), { value }));
   run.selectedIndex = 0;
 }
 offer(["1/implement-2"]);
-var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "1/implement-2" });
+var name = Object.assign(element("INPUT", {}), { name: "name", form: capture, value: "" });
 capture.elements = [run, name];
 capture.querySelectorAll = (selector) => (selector === "select[name=run]" ? [run] : []);
 const others = document.querySelectorAll;
 document.querySelectorAll = (selector) => (selector === "select[name=run]" ? [run] : others(selector));
 const message = () => fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
-const shown = () => `${run.options[run.selectedIndex].value} ${name.value}`;
+const shown = () => `${run.options[run.selectedIndex].value} [${name.value}]`;
 "#;
     let asked = r#"
 const steps = [];
@@ -1486,7 +1457,6 @@ steps.push(shown());
 name.value = "mine";
 offer(["1/implement-4", "1/implement-3", "1/implement-2"]); message();
 steps.push(shown());
-name.value = "1/implement-4";
 run.selectedIndex = 1; fire("submit", event(capture));
 offer(["1/implement-5", "1/implement-4", "1/implement-3", "1/implement-2"]); message();
 steps.push(shown());
@@ -1498,9 +1468,9 @@ steps.join("\n")
     assert_eq!(
         steps,
         [
-            "1/implement-3 1/implement-3",
-            "1/implement-4 mine",
-            "1/implement-3 1/implement-3",
+            "1/implement-3 []",
+            "1/implement-4 [mine]",
+            "1/implement-3 [mine]",
         ]
     );
 }

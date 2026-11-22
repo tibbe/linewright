@@ -1,4 +1,4 @@
-use super::benchmark_runs::launched;
+use super::benchmark_runs::{launched, with_benchmark_run};
 use super::*;
 
 use std::panic::Location;
@@ -414,10 +414,10 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_pl
         ("", "design", "design", vec![("name", "Required.")]),
         (" \t ", "design", "design", vec![("name", "Required.")]),
         (
-            "Board 2",
+            "Board\n2",
             "implement",
             "implement",
-            vec![("name", NOT_A_NAME)],
+            vec![("name", ONE_LINE)],
         ),
         (
             "board",
@@ -1236,18 +1236,18 @@ async fn new_opens_the_new_task_dialog_offering_the_runs_of_the_benchmarks_stage
             "{field}"
         );
     }
-    let runs: Vec<(Option<&str>, Option<&str>)> = select_in(form, "select[name=run] option")
+    let runs: Vec<Option<&str>> = select_in(form, "select[name=run] option")
         .into_iter()
-        .map(|option| (option.attr("value"), option.attr("data-name")))
+        .map(|option| option.attr("value"))
         .collect();
-    assert_eq!(runs, [(Some("1/implement-2"), Some("1-implement-2"))]);
+    assert_eq!(runs, [Some("1/implement-2")]);
     let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
         new_task_form(&fragment),
         (
             vec![
                 ("run", String::new()),
-                ("name", "1-implement-2".into()),
+                ("name", String::new()),
                 ("criteria", String::new())
             ],
             None
@@ -1299,7 +1299,7 @@ async fn adding_a_task_answers_the_form_as_it_starts_closing_the_dialog_and_the_
         (
             vec![
                 ("run", String::new()),
-                ("name", "1-implement-2".into()),
+                ("name", String::new()),
                 ("criteria", String::new())
             ],
             None
@@ -1348,8 +1348,8 @@ async fn a_refused_task_answers_the_form_as_sent_with_each_reason_in_its_place()
             ..sent("1/implement-2", "columns", "Ships gh.\n")
         },
         Case {
-            refused: vec![("name", NOT_A_NAME)],
-            ..sent("1/implement-2", "Gadgets 2", "Ships gh.\n")
+            refused: vec![("name", ONE_LINE)],
+            ..sent("1/implement-2", "Gadgets\n2", "Ships gh.\n")
         },
         Case {
             refused: vec![("criteria", "Required.")],
@@ -1769,4 +1769,98 @@ async fn a_writes_answer_is_an_alert_in_its_style_as_daisyui_draws_it() {
         classes.sort_unstable();
         assert_eq!(classes, ["alert", style], "{benchmark}");
     }
+}
+
+/// `docs/specs/benchmarks.md`, Names and IDs: a name is any text, which every
+/// screen shows as text, and no HTML id is made from it.
+#[test_log::test(tokio::test)]
+async fn a_name_holding_markup_shows_as_text_on_every_screen_and_names_no_id() {
+    const BENCHMARK: &str = "<script>quokka()</script> & Co";
+    const TASK: &str = "<script>wombat()</script>";
+    const CONFIGURATION: &str = "<script>numbat()</script>";
+    let pages = with_benchmark_run().await;
+    let head = committed(&pages).await;
+    record_run(&pages, "implement", 2, "2026-10-13T11:00:00Z", Some(&head)).await;
+    let pool = back_door(&pages.path("")).await;
+    for (update, name) in [
+        ("UPDATE benchmarks SET name = ? WHERE id = 1", BENCHMARK),
+        ("UPDATE tasks SET name = ? WHERE id = 1", TASK),
+        (
+            "UPDATE benchmark_run_configurations SET name = ? WHERE benchmark_run = 1 AND seq = 1",
+            CONFIGURATION,
+        ),
+    ] {
+        sqlx::query(update).bind(name).execute(&pool).await.unwrap();
+    }
+    pool.close().await;
+
+    for (path, names) in [
+        ("/benchmarks", &[BENCHMARK][..]),
+        ("/benchmarks/1/tasks", &[BENCHMARK, TASK][..]),
+        ("/benchmarks/1/runs", &[BENCHMARK][..]),
+        ("/benchmark-runs/1", &[BENCHMARK, TASK, CONFIGURATION][..]),
+        ("/benchmark-runs/1/1/1/1/run", &[BENCHMARK, TASK][..]),
+        ("/runs/1/implement-2", &[BENCHMARK][..]),
+    ] {
+        let (status, body) = pages.get(path).await;
+        assert_eq!(status, 200, "{path}: {body}");
+
+        assert!(!body.contains("<script>"), "{path}: {body}");
+        let html = Html::parse_document(&body);
+        let shown: String = html.root_element().text().collect();
+        let titles: String = select(&html, "title")
+            .into_iter()
+            .map(|title| title.text().collect::<String>())
+            .collect();
+        for name in names {
+            assert!(
+                shown.contains(name) || titles.contains(name),
+                "{path}: {name}: {body}"
+            );
+        }
+        let ids: Vec<&str> = select(&html, "[id]")
+            .into_iter()
+            .filter_map(|element| element.attr("id"))
+            .filter(|id| {
+                ["quokka", "wombat", "numbat"]
+                    .iter()
+                    .any(|word| id.contains(word))
+            })
+            .collect();
+        assert_eq!(ids, Vec::<&str>::new(), "{path}");
+    }
+}
+
+/// `docs/specs/benchmarks.md`, Names and IDs, and Benchmarks, The table: a
+/// benchmark is named in plain words, and the table is in the order of their
+/// names by the Unicode Collation Algorithm.
+#[test_log::test(tokio::test)]
+async fn benchmarks_named_in_plain_words_are_listed_by_the_unicode_collation_algorithm() {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+
+    for name in ["Éclair", "Banana", "apple"] {
+        let (status, _, form) = post_answer(
+            &pages,
+            "/benchmarks",
+            &[SAME_ORIGIN],
+            &[("name", name), ("stage", "design")],
+        )
+        .await;
+        assert_eq!(status, 200, "{name:?}: {}", form.html());
+    }
+
+    let html = pages.page("/benchmarks").await;
+    assert_eq!(
+        rows(&html, "#benchmarks"),
+        [
+            ["apple", "design", "", "View"],
+            ["Banana", "design", "", "View"],
+            ["Éclair", "design", "", "View"],
+        ]
+    );
+    let filtered = pages.page("/benchmarks?name=BAN").await;
+    assert_eq!(
+        rows(&filtered, "#benchmarks"),
+        [["Banana", "design", "", "View"]]
+    );
 }

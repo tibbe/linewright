@@ -7,11 +7,12 @@ use tokio::io::{AsyncBufReadExt as _, BufReader};
 
 use crate::automation::LastScheduledRuns;
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunState, Cancelled, ConfigurationName, NoScore, ScoreFigures,
-    TrialEnd, TrialFigures, TrialState,
+    BenchmarkRunId, BenchmarkRunState, Cancelled, NoScore, ScoreFigures, TrialEnd, TrialFigures,
+    TrialState,
 };
 use crate::cost::Usd;
 use crate::environment::kept::Builds;
+use crate::name::Name;
 use crate::pull_records::PullRecords;
 use crate::results::Verdict;
 use crate::runs::OutcomeName;
@@ -586,7 +587,7 @@ async fn a_work_directory_of_0_24_0_opens_with_its_suites_cases_and_experiments_
             record
                 .configurations
                 .iter()
-                .map(ConfigurationName::as_str)
+                .map(Name::as_str)
                 .collect::<Vec<_>>(),
             record.state,
         ),
@@ -894,7 +895,7 @@ async fn a_work_directory_from_before_ids_opens_with_each_benchmark_task_copy_an
             record
                 .configurations
                 .iter()
-                .map(ConfigurationName::as_str)
+                .map(Name::as_str)
                 .collect::<Vec<_>>(),
             record.trials.len()
         ),

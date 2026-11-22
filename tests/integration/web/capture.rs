@@ -181,7 +181,7 @@ async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under
     let fragment = Html::parse_fragment(&form.inner_html());
     assert_eq!(
         form_shown(&fragment),
-        shown(IMPLEMENTS_ID, "", "1-implement-1", "", None)
+        shown(IMPLEMENTS_ID, "", "", "", None)
     );
     assert_eq!(placed(&fragment), (vec![], None));
     let required: Vec<(&str, Option<&str>)> = select(&fragment, "[name][required]")
@@ -218,7 +218,7 @@ async fn the_benchmark_name_is_hidden_and_disabled_but_with_new_benchmark_chosen
     let pages = implemented(Recorded::Whole).await;
 
     let html = pages.page(RUN_PAGE).await;
-    let (_, refused) = submit_into(&pages, Chosen::New("Fresh"), "gadgets", CRITERIA).await;
+    let (_, refused) = submit_into(&pages, Chosen::New("Fresh\nones"), "gadgets", CRITERIA).await;
 
     let form = capture_form(&html).unwrap();
     let hidden = select_in(form, ".new-benchmark-name");
@@ -422,10 +422,7 @@ async fn a_capture_closes_the_dialog_and_says_under_the_heading_what_it_made_lin
             Some("/benchmarks/1/tasks".into())
         )]
     );
-    assert_eq!(
-        form_shown(&form),
-        shown(IMPLEMENTS_ID, "", "1-implement-1", "", None)
-    );
+    assert_eq!(form_shown(&form), shown(IMPLEMENTS_ID, "", "", "", None));
     assert_eq!(tasks(&pages), ["1"]);
     assert_eq!(
         std::fs::read_to_string(pages.path("tasks/1").join("criteria.md")).unwrap(),
@@ -459,13 +456,13 @@ async fn a_taken_name_is_refused_under_the_name() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_name_that_is_not_a_tasks_is_refused_under_the_name() {
+async fn a_name_of_two_lines_is_refused_under_the_name() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit(&pages, "../Gadgets", CRITERIA).await;
+    let (status, answer) = submit(&pages, "Gadgets\nand more", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("name", NOT_A_NAME));
+    assert_eq!(placed(&answer), under("name", ONE_LINE));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -597,7 +594,7 @@ async fn a_capture_into_a_new_benchmark_makes_it_says_so_and_offers_it_next_time
             Some("/benchmarks/3/tasks".into())
         )]
     );
-    assert_eq!(form_shown(&form), shown("3", "", "1-implement-1", "", None));
+    assert_eq!(form_shown(&form), shown("3", "", "", "", None));
     let offered = |answered: &Html| -> Vec<String> {
         select(answered, "select[name=benchmark] option")
             .into_iter()
@@ -677,13 +674,14 @@ async fn a_new_benchmark_without_a_name_is_refused_under_it_and_writes_nothing()
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_whose_name_is_not_a_name_is_refused_under_it_and_writes_nothing() {
+async fn a_new_benchmark_whose_name_is_of_two_lines_is_refused_under_it_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
-    let (status, answer) = submit_into(&pages, Chosen::New("Fresh"), "gadgets", CRITERIA).await;
+    let (status, answer) =
+        submit_into(&pages, Chosen::New("Fresh\nones"), "gadgets", CRITERIA).await;
 
     assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("new-benchmark", NOT_A_NAME));
+    assert_eq!(placed(&answer), under("new-benchmark", ONE_LINE));
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 

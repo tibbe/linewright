@@ -29,8 +29,9 @@ use super::{
     with_filters,
 };
 use crate::api::Sources;
-use crate::benchmarks::{BenchmarkListed, BenchmarkName, BenchmarkRunId, MakeError};
+use crate::benchmarks::{BenchmarkListed, BenchmarkRunId, MakeError};
 use crate::domain::Timestamp;
+use crate::name::Name;
 use crate::task::TaskStage;
 
 /// What the page's address carries: the filters and the page of the table.
@@ -140,7 +141,7 @@ impl Filters {
 
 /// A benchmark's row.
 struct Row {
-    name: BenchmarkName,
+    name: Name,
     stage: TaskStage,
     view: View,
     /// Its latest benchmark run, if it has one.
@@ -403,8 +404,8 @@ impl MakeForm {
     /// The name and stage it sends, or the refusal of each field that does
     /// not hold one (`docs/specs/benchmarks.md`, New benchmark, Refusals;
     /// `docs/specs/design_system.md`, Making, Required).
-    fn checked(&self) -> Result<(BenchmarkName, TaskStage), FieldRefusals<NewBenchmarkField>> {
-        let name = making::parse_name::<BenchmarkName>(&self.name);
+    fn checked(&self) -> Result<(Name, TaskStage), FieldRefusals<NewBenchmarkField>> {
+        let name = making::parse_name(&self.name);
         let stage = self.stage.parse::<TaskStage>();
         match (name, stage) {
             (Ok(name), Ok(stage)) => Ok((name, stage)),

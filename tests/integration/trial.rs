@@ -17,11 +17,12 @@ use linewright::domain::Timestamp;
 use linewright::factory::FactoryConfig;
 use linewright::harness::{GhReach, SessionSpec};
 use linewright::logs::{KeptRuns, RunRecords, Which};
+use linewright::name::Name;
 use linewright::reconcile::WorkKind;
 use linewright::runs::files::RunFiles;
 use linewright::runs::{Ending, Ran, RunId, State};
 use linewright::store::github::SESSION_TOKEN_VARIABLE;
-use linewright::task::{self, BenchmarkChoice, Criteria, Task, TaskName};
+use linewright::task::{self, BenchmarkChoice, Criteria, Task};
 use linewright::transcript;
 use linewright::trial::{self, Configuration, ConfigurationRefusal, OutputRefusal};
 use linewright::work_settings::{Effort, RunKind, Setup, SetupCommand};
@@ -70,16 +71,11 @@ async fn task_at(caller: &Location<'_>, world: &World, run: &str) -> PathBuf {
         .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
     let runs = runs_in(&work).await;
     let benchmarks = Benchmarks::new(runs.database().clone());
-    let benchmark = BenchmarkChoice::New(TaskName::suggested(&id).as_str().parse().unwrap());
-    let capturable = task::capturable(
-        &runs,
-        &benchmarks,
-        &id,
-        &TaskName::suggested(&id),
-        &benchmark,
-    )
-    .await
-    .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
+    let name = Name::parse(run).unwrap_or_else(|e| panic!("naming {run} at {caller}: {e}"));
+    let benchmark = BenchmarkChoice::New(name.clone());
+    let capturable = task::capturable(&runs, &benchmarks, &id, &name, &benchmark)
+        .await
+        .unwrap_or_else(|e| panic!("capturing {run} at {caller}: {e}"));
     let criteria = Criteria::parse("It triages the issue.\n")
         .unwrap_or_else(|| panic!("blank criteria at {caller}"));
     task::capture(&*world.store, capturable, &criteria, &benchmarks)

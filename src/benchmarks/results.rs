@@ -7,12 +7,12 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::cost::Usd;
+use crate::name::Name;
 use crate::results::Verdict;
-use crate::task::TaskName;
 
 use super::{
-    BenchmarkRunRecord, Cancelled, ConfigurationId, ConfigurationName, NoScore, TaskId, TrialEnd,
-    TrialFigures, TrialState,
+    BenchmarkRunRecord, Cancelled, ConfigurationId, NoScore, TaskId, TrialEnd, TrialFigures,
+    TrialState,
 };
 
 /// A benchmark run's results.
@@ -37,7 +37,7 @@ pub struct Results {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ConfigurationResults {
     pub id: ConfigurationId,
-    pub name: ConfigurationName,
+    pub name: Name,
     /// Of its trials with a score and no leak, the share that pass;
     /// `None` with no such trial.
     pub pass_rate: Option<f64>,
@@ -65,7 +65,7 @@ pub struct Figures {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TaskResults {
     pub id: TaskId,
-    pub name: TaskName,
+    pub name: Name,
     /// `None` with no trial with a score and no leak.
     pub passes: Option<Passes>,
     #[serde(flatten)]

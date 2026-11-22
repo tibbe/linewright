@@ -7,10 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use linewright::api::{self, EventId, RequestError, Resume, Unanswered};
 use linewright::benchmarks::{
-    self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkName, BenchmarkRunAnswer,
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks,
-    BenchmarksAnswer, CancelRefusal, ConfigurationName, LaunchRefusal, RemoveError, Repetitions,
-    Shown, TaskId,
+    self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkRunAnswer, BenchmarkRunId,
+    BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer,
+    CancelRefusal, LaunchRefusal, RemoveError, Repetitions, Shown, TaskId,
 };
 use linewright::clock::{Clock, SystemClock};
 use linewright::config::{
@@ -27,14 +26,14 @@ use linewright::export::{self, ExportError};
 use linewright::factory::{Factory, FactoryConfig, SessionToken};
 use linewright::harness::claude::ClaudeCode;
 use linewright::logs::{self, FollowQuery, Following, Which};
+use linewright::name::Name;
 use linewright::repo_files::RepoLayer;
 use linewright::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use linewright::serving::{self, OnUsageLimit, Starting, briefs};
 use linewright::store::Store as _;
 use linewright::store::github::{GitHub, SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
 use linewright::task::{
-    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, Task, TaskName,
-    TaskStage,
+    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, Task, TaskStage,
 };
 use linewright::transcript::{self, After, InFlight, Verbosity};
 use linewright::trial::scorer::{self, ScorerRecord};
@@ -1139,7 +1138,7 @@ async fn nudge_serve(config: &Config) {
     }
 }
 
-async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage, json: bool) -> u8 {
+async fn make_benchmark(config: &Config, name: &Name, stage: TaskStage, json: bool) -> u8 {
     let benchmarks = match made_benchmarks(config).await {
         Ok(benchmarks) => benchmarks,
         Err(e) => return print_answer(Err(failed(&e))),
@@ -1165,7 +1164,7 @@ async fn make_benchmark(config: &Config, name: &BenchmarkName, stage: TaskStage,
 struct Removed {
     benchmark: BenchmarkId,
     task: TaskId,
-    name: TaskName,
+    name: Name,
 }
 
 async fn remove_task(config: &Config, benchmark: BenchmarkId, task: TaskId, json: bool) -> u8 {
@@ -1233,7 +1232,7 @@ struct LaunchedAnswer {
 async fn launch_benchmark_run(
     config: &Config,
     benchmark: BenchmarkId,
-    configurations: &[(ConfigurationName, PathBuf)],
+    configurations: &[(Name, PathBuf)],
     repetitions: Repetitions,
     json: bool,
 ) -> u8 {
@@ -1352,7 +1351,7 @@ async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -
 /// What `capture` is asked to capture.
 struct Capture {
     id: RunId,
-    name: TaskName,
+    name: Name,
     benchmark: BenchmarkId,
     /// The file that holds the criteria.
     criteria: PathBuf,
@@ -1363,7 +1362,7 @@ struct Capture {
 struct Captured<'a> {
     run: &'a RunId,
     task: TaskId,
-    name: &'a TaskName,
+    name: &'a Name,
     benchmark: &'a Benchmark,
     dir: &'a Path,
 }
