@@ -196,8 +196,8 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `max-runs`                                   | 4                                           |
 | `max-trials`                                | 1                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
-| `model`                                      | none: the harness's default                 |
-| `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | none: the harness's default           |
+| `model`                                      | required, for a command that starts a session |
+| `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | medium                                |
 | `briefs` (the operator's layer, [Briefs](#briefs)) | none |
 | `session-env` (variables' values)            | none                                        |
 | `session-pass-env` (variable names)          | none                                        |
@@ -244,9 +244,10 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
   at startup when it is not at its default while that feature is off
   ([Startup](repository.md#startup)): `webhook-address` without the webhook
   secret, `ui-hosts` with `ui-address` empty.
-- **Model and effort.** A model or effort set for a session wins over what the
-  session's environment variables and the harness's own settings say. Linewright
-  sets no model or effort for a session's sub-agents.
+- **Model and effort.** The operator's layers set `model` for the whole
+  pipeline. A session's model and effort win over what the session's
+  environment variables and the harness's own settings say.
+  Linewright sets no model or effort for a session's sub-agents.
 - **Credentials come from environment variables only.** They are the environment
   variables their tools already use, so an existing setup is picked up:
   `GITHUB_TOKEN` or `GH_TOKEN` as `gh` reads them, and `ANTHROPIC_API_KEY`. The

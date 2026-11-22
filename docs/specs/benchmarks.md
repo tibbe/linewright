@@ -596,10 +596,9 @@ is not in BENCHMARK does not exist.
   the end.
 - **Settings.** "effort" is a choice of its levels
   ([Configuration](operation.md#configuration)). Each setting starts as the one
-  that a run of the stage uses when the dialog opens. A model or effort that
-  nothing sets shows as "Default": the first choice of "effort", and the
-  placeholder of an empty "model". A setting that the maintainer leaves as it
-  started, or empties, is not part of the configuration.
+  that a run of the stage uses when the dialog opens. A setting that the
+  maintainer leaves as it started, or empties, is not part of the
+  configuration.
 - **Files of the brief.** A configuration has "Files of the brief", a choice of
   the files that a layer of the brief can hold ([Briefs](operation.md#briefs)).
   When the maintainer chooses one, a box for its text opens. Its text starts as
