@@ -169,13 +169,13 @@ async fn every_screen_shows_its_crumbs_and_its_h1_and_is_titled_by_its_heading()
             "/benchmark-runs/1/1/1/1/run",
             vec![benchmarks(), board(), benchmark_run(), here("Trial")],
             "Trial",
-            "Trial as-is/columns/1's run · Linewright",
+            "Trial 1 of columns under as-is's run · Linewright",
         ),
         (
             "/benchmark-runs/1/1/1/1/scorer",
             vec![benchmarks(), board(), benchmark_run(), here("Trial")],
             "Trial",
-            "Trial as-is/columns/1's scorer · Linewright",
+            "Trial 1 of columns under as-is's scorer · Linewright",
         ),
         (
             "/server",

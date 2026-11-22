@@ -340,8 +340,8 @@ async fn lw_benchmark_run_show_shows_its_state_its_results_and_each_trial() {
         "configuration 2 (short):",
         "  task 1 (lanes):",
         "  task 2 (columns):",
-        "trial as-is/lanes/1 (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05",
-        "trial short/columns/1 (2/2/1): pending",
+        "trial 1 of lanes under as-is (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05",
+        "trial 1 of columns under short (2/2/1): pending",
     ] {
         assert!(
             text.stdout.lines().any(|shown| shown == line),
@@ -474,7 +474,7 @@ async fn lw_benchmark_run_cancel_cancels_an_open_benchmark_run_once() {
     assert!(
         shown
             .stdout
-            .contains("\ntrial as-is/columns/1 (1/2/1): pending\n"),
+            .contains("\ntrial 1 of columns under as-is (1/2/1): pending\n"),
         "{}",
         shown.stdout
     );
