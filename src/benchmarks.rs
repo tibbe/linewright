@@ -173,6 +173,14 @@ pub struct TaskShown {
     pub criteria: Result<Criteria, TaskRefusal>,
 }
 
+/// A task that was removed: the benchmark it was removed from, and its name
+/// then.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovedTask {
+    pub benchmark: BenchmarkId,
+    pub name: Name,
+}
+
 /// A task just kept in its benchmark.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeptTask {
@@ -419,18 +427,23 @@ impl Benchmarks {
         }))
     }
 
-    /// The name the task `id` had when it was removed; `None` when no task
-    /// with that ID was removed.
-    pub async fn removed_task(&self, id: TaskId) -> Result<Option<Name>> {
-        let name: Option<String> =
-            sqlx::query_scalar("SELECT name FROM removed_tasks WHERE id = ?")
+    /// The task `id` as it was when it was removed; `None` when no task with
+    /// that ID was removed.
+    pub async fn removed_task(&self, id: TaskId) -> Result<Option<RemovedTask>> {
+        let row: Option<(i64, String)> =
+            sqlx::query_as("SELECT benchmark, name FROM removed_tasks WHERE id = ?")
                 .bind(id.row())
                 .fetch_optional(self.db.pool())
                 .await
                 .context(READING)?;
-        name.map(|name| Name::parse(&name))
-            .transpose()
-            .context(READING)
+        row.map(|(benchmark, name)| -> Result<RemovedTask> {
+            Ok(RemovedTask {
+                benchmark: BenchmarkId::from_row(benchmark)?,
+                name: Name::parse(&name)?,
+            })
+        })
+        .transpose()
+        .context(READING)
     }
 
     /// Removes the task `task` from the benchmark `benchmark`, and with it the

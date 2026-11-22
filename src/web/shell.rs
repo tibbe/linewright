@@ -18,7 +18,7 @@ use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon};
 use super::names::Names;
-use super::{Page, render, run_path};
+use super::{Page, cookie_headers, cookie_values, render, run_path};
 use crate::api::{self, Sources};
 use crate::domain::{Number, Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
@@ -115,15 +115,9 @@ impl Navigation {
 
     /// The choice the `Cookie` headers `cookies` hold.
     fn of(cookies: impl IntoIterator<Item = impl AsRef<str>>) -> Navigation {
-        let rail = cookies.into_iter().any(|header| {
-            header
-                .as_ref()
-                .split(';')
-                .filter_map(|cookie| cookie.trim().split_once('='))
-                .any(|(name, value)| {
-                    name == Navigation::COOKIE && value == Navigation::Rail.value()
-                })
-        });
+        let rail = cookie_values(cookies, Navigation::COOKIE)
+            .iter()
+            .any(|value| value == Navigation::Rail.value());
         if rail {
             Navigation::Rail
         } else {
@@ -173,13 +167,7 @@ impl<S: Sync> FromRequestParts<S> for Navigation {
         parts: &mut Parts,
         _: &S,
     ) -> impl Future<Output = Result<Navigation, Infallible>> {
-        std::future::ready(Ok(Navigation::of(
-            parts
-                .headers
-                .get_all(header::COOKIE)
-                .iter()
-                .map(|value| String::from_utf8_lossy(value.as_bytes())),
-        )))
+        std::future::ready(Ok(Navigation::of(cookie_headers(&parts.headers))))
     }
 }
 
@@ -284,6 +272,7 @@ pub(super) enum Missing {
     Item(Number),
     Run(String),
     Benchmark(String),
+    Task(String),
     BenchmarkRun(String),
 }
 
@@ -292,7 +281,7 @@ impl Missing {
     fn name(&self) -> String {
         match self {
             Missing::Item(number) => number.to_string(),
-            Missing::Run(id) | Missing::Benchmark(id) => id.clone(),
+            Missing::Run(id) | Missing::Benchmark(id) | Missing::Task(id) => id.clone(),
             Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
         }
     }
@@ -304,6 +293,7 @@ impl std::fmt::Display for Missing {
             Missing::Item(number) => write!(f, "No such item {number}"),
             Missing::Run(id) => write!(f, "No such run {id}"),
             Missing::Benchmark(id) => write!(f, "No such benchmark {id}"),
+            Missing::Task(id) => write!(f, "No such task {id}"),
             Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
         }
     }

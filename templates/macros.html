@@ -294,6 +294,12 @@
 </div>
 {%- endmacro -%}
 
+{#- `said` of what does not read, in secondary text after Failed's icon,
+    and in `class` too. -#}
+{%- macro unreadable(said, class = "") -%}
+<div class="text-base-content/60 flex items-center gap-1{% if !class.is_empty() %} {{ class }}{% endif %}">{% call icon(crate::web::icons::status_icon(&crate::phrase::Status::Failed), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>{{ said }}</span></div>
+{%- endmacro -%}
+
 {#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
     `bg-base-200`, or in `colour`. -#}
 {%- macro card_look(colour = "bg-base-200") -%}

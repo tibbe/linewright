@@ -8,17 +8,18 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
 use axum::body::Bytes;
+use axum::extract::FromRequestParts;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
-use axum::response::{IntoResponse, Response};
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode, Uri, header};
+use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
+use std::convert::Infallible;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
-use super::buttons::Verb;
 use super::capture::{CapturingField, NotPolled, Task, TaskField, TaskFields, capture_run, polled};
-use super::confirmation::{Confirmation, TurnDown};
 use super::html::{self, Html};
 use super::launch::{BriefTexts, NewBenchmarkRunForm, StageSettings};
 use super::making::{
@@ -27,11 +28,12 @@ use super::making::{
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
-use super::table::{Align, Column, Fold, View};
-use super::write::{Refused, Write, alert};
+use super::table::{Align, Column, View};
+use super::write::{Refused, Write};
 use super::{
-    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, benchmarks, events,
-    no_such_page, nothing_there, render, run_path, with_filters,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, benchmarks,
+    cookie_headers, cookie_values, events, no_such_page, nothing_there, render, run_path,
+    task_path, with_filters,
 };
 use crate::api::Sources;
 use crate::benchmarks::results;
@@ -47,72 +49,41 @@ use crate::task::{self, BenchmarkChoice, Refusal, TaskStage};
 
 /// A task's row.
 struct TaskRow {
-    id: TaskId,
     name: Name,
     run: RunId,
     run_href: String,
     criteria: CriteriaShown,
-    remove: Confirmation,
+    /// "View", linking to the task's Task.
+    view: View,
 }
 
 /// A task's criteria, as its row shows them.
 enum CriteriaShown {
-    Read {
-        /// Their first line that holds more than white space.
-        first_line: String,
-        text: String,
-    },
+    /// Their first line that holds more than white space.
+    Read(String),
     /// Why they do not read.
     Unreadable(String),
 }
 
 impl TaskRow {
-    /// Its row's id, keyed by the task's ID.
-    fn row_id(&self) -> String {
-        format!("task-{}", self.id)
-    }
-
-    /// The id of the row of its whole criteria, which its row opens to.
-    fn criteria_id(&self) -> String {
-        format!("{}_criteria", self.row_id())
-    }
-
-    /// What its row opens to: its whole criteria, where they read.
-    fn fold(&self) -> Fold {
-        let rows = match self.criteria {
-            CriteriaShown::Read { .. } => vec![self.criteria_id()],
-            CriteriaShown::Unreadable(_) => vec![],
-        };
-        Fold::of(rows, format!("Show the criteria of {}", self.name))
-    }
-
-    /// The row of `task`, of the benchmark at `path`, removed after a
-    /// confirmation (`docs/specs/benchmarks.md`, Remove task).
-    fn of(task: TaskEntry, path: &str) -> TaskRow {
+    fn of(task: TaskEntry) -> TaskRow {
         TaskRow {
-            remove: Confirmation {
-                id: format!("remove-{}", task.id),
-                verb: Verb::Remove,
-                question: format!("Remove the task {} and its directory?", task.name),
-                turn_down: TurnDown::Cancel,
-                action: format!("{path}/remove-task"),
-                fields: vec![("task", task.id.to_string())],
-                said: "benchmark-said",
+            view: View {
+                href: task_path(task.id),
+                name: format!("task {}", task.name),
             },
-            id: task.id,
             run_href: run_path(&task.run),
             name: task.name,
             run: task.run,
             criteria: match task.criteria {
-                Ok(criteria) => CriteriaShown::Read {
-                    first_line: criteria
+                Ok(criteria) => CriteriaShown::Read(
+                    criteria
                         .as_str()
                         .lines()
                         .find(|line| !line.trim().is_empty())
                         .unwrap_or_default()
                         .to_string(),
-                    text: criteria.as_str().to_string(),
-                },
+                ),
                 Err(refused) => CriteriaShown::Unreadable(refused.why),
             },
         }
@@ -216,29 +187,30 @@ impl BenchmarkRunsColumn {
 enum TasksColumn {
     Name,
     CapturedFrom,
-    Remove,
+    /// "View", linking to the task's Task.
+    View,
 }
 
 impl TasksColumn {
     const ALL: [TasksColumn; 3] = [
         TasksColumn::Name,
         TasksColumn::CapturedFrom,
-        TasksColumn::Remove,
+        TasksColumn::View,
     ];
 
-    /// Empty for "Remove"'s, which has no head.
+    /// Empty for "View"'s, which has no head.
     fn head(self) -> &'static str {
         match self {
             TasksColumn::Name => "Task",
-            TasksColumn::Remove => "",
             TasksColumn::CapturedFrom => "Captured from",
+            TasksColumn::View => "",
         }
     }
 
     /// The class that aligns the column's head and cells as its kind does.
     fn align(self) -> &'static str {
         let column = match self {
-            TasksColumn::Name | TasksColumn::CapturedFrom | TasksColumn::Remove => Column::Other,
+            TasksColumn::Name | TasksColumn::CapturedFrom | TasksColumn::View => Column::Other,
         };
         Align::of(column).class()
     }
@@ -618,14 +590,13 @@ async fn shown(sources: &Sources, id: &str, paging: Paging) -> Result<Shown, Uns
         })) => {
             let tasks_page = Pages::of(tasks.len(), paging.tasks);
             let benchmark_runs_page = Pages::of(benchmark_runs.len(), paging.benchmark_runs);
-            let path = benchmark_path(benchmark.id);
             let now = sources.clock.now();
             Ok(Shown {
                 task_count: tasks.len(),
                 tasks: tasks_page
                     .shows(tasks)
                     .into_iter()
-                    .map(|task| TaskRow::of(task, &path))
+                    .map(TaskRow::of)
                     .collect(),
                 tasks_nav: tasks_page.shown("tasks", |page| {
                     Paging {
@@ -702,13 +673,75 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     )
 }
 
+/// The task, by its ID, that a benchmark's screen says was removed from it,
+/// under its heading, as it opens once (`docs/specs/design_system.md`,
+/// Confirming, What was removed): the request's `removed` cookie, which the
+/// removal sets on the benchmark's addresses alone and the screen clears as
+/// it opens. A value that is no task's ID is no task.
+pub(super) struct Removed(Option<TaskId>);
+
+impl Removed {
+    /// The name of the cookie.
+    const COOKIE: &str = "removed";
+
+    /// The `Set-Cookie` that has benchmark `benchmark`'s screen say that task
+    /// `task` was removed from it.
+    fn set_cookie(benchmark: BenchmarkId, task: TaskId) -> String {
+        format!(
+            "{}={task}; Path={}; SameSite=Lax; HttpOnly",
+            Removed::COOKIE,
+            benchmark_path(benchmark)
+        )
+    }
+
+    /// The `Set-Cookie` that clears it from benchmark `benchmark`'s addresses.
+    fn cleared(benchmark: BenchmarkId) -> String {
+        format!(
+            "{}=; Path={}; Max-Age=0; SameSite=Lax; HttpOnly",
+            Removed::COOKIE,
+            benchmark_path(benchmark)
+        )
+    }
+}
+
+impl<S: Sync> FromRequestParts<S> for Removed {
+    type Rejection = Infallible;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _: &S,
+    ) -> impl Future<Output = Result<Removed, Infallible>> {
+        let task = cookie_values(cookie_headers(&parts.headers), Removed::COOKIE)
+            .last()
+            .and_then(|value| value.parse().ok());
+        std::future::ready(Ok(Removed(task)))
+    }
+}
+
+/// What benchmark `benchmark`'s screen says of the task `task`, by its ID,
+/// removed from it: "Removed the task NAME." (`docs/specs/benchmarks.md`,
+/// Task, After "Remove"); nothing of a task that was not removed from it.
+async fn removed_said(sources: &Sources, benchmark: BenchmarkId, task: TaskId) -> Option<Html> {
+    match benchmarks(sources).removed_task(task).await {
+        Ok(Some(removed)) if removed.benchmark == benchmark => {
+            Some(html::escape(&format!("Removed the task {}.", removed.name)))
+        }
+        Ok(_) => None,
+        Err(e) => {
+            warn!(task = %task, error = format!("{e:#}"), "reading a removed task failed");
+            None
+        }
+    }
+}
+
 pub(super) async fn benchmark_page(
     State(sources): State<Sources>,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
+    removed: Removed,
 ) -> Response {
-    benchmark_page_on(sources, id, None, paging, navigation).await
+    benchmark_page_on(sources, id, None, paging, removed, navigation).await
 }
 
 /// The benchmark page at tab `tab`'s address, or else no page.
@@ -717,21 +750,24 @@ pub(super) async fn benchmark_tab_page(
     Path((id, tab)): Path<(String, String)>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
+    removed: Removed,
 ) -> Response {
     let Ok(tab) = tab.parse() else {
         return no_such_page().await;
     };
-    benchmark_page_on(sources, id, Some(tab), paging, navigation).await
+    benchmark_page_on(sources, id, Some(tab), paging, removed, navigation).await
 }
 
 /// The benchmark page of benchmark `id` on tab `tab`, or without one, on the
 /// tab it opens on: its benchmark runs, or its tasks while it has no benchmark
-/// runs.
+/// runs; saying under its heading that the task `removed` was removed from it,
+/// and clearing it.
 async fn benchmark_page_on(
     sources: Sources,
     id: String,
     tab: Option<BenchmarkTab>,
     paging: Paging,
+    removed: Removed,
     navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&sources).await;
@@ -755,8 +791,16 @@ async fn benchmark_page_on(
                 .collect();
             let new_task = NewTaskForm::blank(&sources, &benchmark).await;
             let new_benchmark_run = NewBenchmarkRunForm::blank(&sources, &benchmark, task_count);
-            BenchmarkPage {
-                page: page(&benchmark, paging, navigation),
+            let mut page = page(&benchmark, paging, navigation);
+            let Removed(removed) = removed;
+            if let Some(task) = removed
+                && let Some(said) = removed_said(&sources, benchmark.id, task).await
+            {
+                page = page.saying(&said);
+            }
+            let clear = removed.map(|_| [(header::SET_COOKIE, Removed::cleared(benchmark.id))]);
+            let shown = BenchmarkPage {
+                page,
                 frame,
                 new_benchmark_run_offer: html::rendered(&NewBenchmarkRunRegion {
                     tasks: task_count,
@@ -774,8 +818,8 @@ async fn benchmark_page_on(
                 tasks_nav,
                 benchmark_runs,
                 benchmark_runs_nav,
-            }
-            .into_response()
+            };
+            (clear, shown).into_response()
         }
         Err(unshown) => {
             let events = paging.path(&format!("/events/benchmarks/{id}"));
@@ -987,6 +1031,14 @@ pub(super) async fn add_task(
     }
 }
 
+/// The header htmx sends with each of its requests.
+/// <https://four.htmx.org/reference/headers/HX-Request>
+const HX_REQUEST: &str = "hx-request";
+
+/// The header on which htmx opens another page.
+/// <https://four.htmx.org/reference/headers/HX-Redirect>
+const HX_REDIRECT: &str = "hx-redirect";
+
 /// What the form that removes a task sends.
 #[derive(Deserialize)]
 struct RemoveForm {
@@ -994,8 +1046,11 @@ struct RemoveForm {
 }
 
 /// Removes the task the form in `body` names by its ID from benchmark `id`, and
-/// answers with what the page says of it. Refused, removing nothing, unless the
-/// browser shows the request came from the web UI's own pages.
+/// opens the benchmark's Tasks, which says so once (`docs/specs/design_system.md`,
+/// Confirming, What was removed): by `HX-Redirect` for htmx, and otherwise by
+/// a redirect. Refused, removing nothing, unless the browser shows the request
+/// came from the web UI's own pages, and answered then with what the page says
+/// of it.
 pub(super) async fn remove_task(
     State(sources): State<Sources>,
     Path(id): Path<String>,
@@ -1014,8 +1069,13 @@ pub(super) async fn remove_task(
     match benchmarks(&sources).remove_task(benchmark, task).await {
         Ok(name) => {
             info!(benchmark = %benchmark, task = %task, name = %name, "removed a task");
-            let said = format!("Removed the task {}", html::escape(name.as_str()));
-            Ok((StatusCode::OK, alert("alert-success", &said)).into_response())
+            let opened = benchmark_tab_path(benchmark, BenchmarkTab::Tasks);
+            let removed = [(header::SET_COOKIE, Removed::set_cookie(benchmark, task))];
+            if headers.contains_key(HX_REQUEST) {
+                Ok((StatusCode::OK, removed, [(HX_REDIRECT, opened)]).into_response())
+            } else {
+                Ok((removed, Redirect::to(&opened)).into_response())
+            }
         }
         Err(e @ (RemoveError::NoSuchBenchmark(_) | RemoveError::NoSuchTask { .. })) => {
             Err(WRITE.refused(StatusCode::NOT_FOUND, &e.to_string()))

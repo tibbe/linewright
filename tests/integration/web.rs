@@ -14,6 +14,7 @@ mod runs;
 mod script;
 mod serving;
 mod shell;
+mod task;
 mod theme;
 
 use std::time::Duration;
@@ -388,6 +389,18 @@ fn page_with_cookie<W: Routed>(
     path: &str,
     cookie: &str,
 ) -> impl Future<Output = Html> + use<W> {
+    let answer = answer_with_cookie(web, path, cookie);
+    async move { answer.await.2 }
+}
+
+/// As [`page_with_cookie`], with the status and the headers of the answer
+/// too.
+#[track_caller]
+fn answer_with_cookie<W: Routed>(
+    web: &W,
+    path: &str,
+    cookie: &str,
+) -> impl Future<Output = (u16, axum::http::HeaderMap, Html)> + use<W> {
     let caller = std::panic::Location::caller();
     let request = axum::http::Request::builder()
         .uri(path)
@@ -398,7 +411,9 @@ fn page_with_cookie<W: Routed>(
     let router = web.router().clone();
     async move {
         let Ok(response) = router.oneshot(request).await;
-        Html::parse_document(&status_and_body(response).await.1)
+        let answered = response.headers().clone();
+        let (status, body) = status_and_body(response).await;
+        (status, answered, Html::parse_document(&body))
     }
 }
 
@@ -561,6 +576,22 @@ fn confirmations(html: &Html) -> Vec<Confirmation> {
         });
     }
     confirmations
+}
+
+/// The facts in the `stats` of `section` on `html`
+/// (`docs/specs/web/benchmarks.md`, Benchmark run), each its `stat-title` and
+/// its `stat-value`.
+#[track_caller]
+fn stats(html: &Html, section: &str) -> Vec<(String, String)> {
+    select(html, &format!("{section} .stats > .stat"))
+        .into_iter()
+        .map(|stat| {
+            (
+                text(select_in(stat, ".stat-title")[0]),
+                text(select_in(stat, ".stat-value")[0]),
+            )
+        })
+        .collect()
 }
 
 /// Where each of `links` goes.

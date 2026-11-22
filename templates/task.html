@@ -1,0 +1,8 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<div id="task-said" class="max-w-xl empty:hidden" role="status"></div>
+{%- include "task_facts.html" %}
+{%- include "task_criteria.html" %}
+{%- call ui::confirm_dialog(task.remove) %}{% endcall %}
+{%- endblock -%}

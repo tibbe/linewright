@@ -45,6 +45,7 @@ icons! {
     AdjustmentsHorizontal: "adjustments-horizontal", "icons/heroicons/adjustments-horizontal.svg";
     TableCells: "table-cells", "icons/heroicons/table-cells.svg";
     ChartBar: "chart-bar", "icons/heroicons/chart-bar.svg";
+    ClipboardDocumentCheck: "clipboard-document-check", "icons/heroicons/clipboard-document-check.svg";
     CheckCircle: "check-circle", "icons/heroicons/check-circle.svg";
     XCircle: "x-circle", "icons/heroicons/x-circle.svg";
     HandRaised: "hand-raised", "icons/heroicons/hand-raised.svg";
@@ -216,6 +217,8 @@ pub(super) enum CardIcon {
     Grid,
     /// A chart.
     Chart,
+    /// A task's criteria.
+    Criteria,
 }
 
 impl CardIcon {
@@ -225,6 +228,7 @@ impl CardIcon {
             CardIcon::Configurations => Icon::AdjustmentsHorizontal,
             CardIcon::Grid => Icon::TableCells,
             CardIcon::Chart => Icon::ChartBar,
+            CardIcon::Criteria => Icon::ClipboardDocumentCheck,
         }
     }
 }
@@ -288,6 +292,7 @@ mod tests {
             (CardIcon::Configurations, Icon::AdjustmentsHorizontal),
             (CardIcon::Grid, Icon::TableCells),
             (CardIcon::Chart, Icon::ChartBar),
+            (CardIcon::Criteria, Icon::ClipboardDocumentCheck),
         ] {
             assert_eq!(card.icon(), icon, "{card:?}");
         }

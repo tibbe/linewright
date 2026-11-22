@@ -5,36 +5,29 @@
 {%- else %}
 <div class="overflow-x-auto">
 <table class="table">
-<thead><tr><th class="w-0"></th>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<thead><tr>{% for column in TasksColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
 <tbody>
 {%- for task in tasks %}
-{%- call ui::fold_row(task.row_id()) %}
-{%- call ui::fold_cell(task.fold()) %}{% endcall %}
+<tr>
 {%- for column in TasksColumn::ALL %}
 {%- match column %}
 {%- when TasksColumn::Name %}
 <th class="{{ column.align() }}">
-{%- match task.criteria %}
-{%- when CriteriaShown::Read { first_line, text: _ } %}
 <span>{{ task.name }}</span>
+{%- match task.criteria %}
+{%- when CriteriaShown::Read(first_line) %}
 <div class="text-base-content/60 text-sm font-normal">{{ first_line }}</div>
 {%- when CriteriaShown::Unreadable(why) %}
-<span>{{ task.name }}</span>
-<div class="text-base-content/60 flex items-center gap-1 text-sm font-normal">{% call ui::icon(crate::web::icons::status_icon(&crate::phrase::Status::Failed), crate::web::icons::IconSize::Inline) %}{% endcall %}<span>the criteria do not read: {{ why }}</span></div>
+{%- call ui::unreadable(format!("the criteria do not read: {why}"), "text-sm font-normal") %}{% endcall %}
 {%- endmatch -%}
 </th>
 {%- when TasksColumn::CapturedFrom %}
 <td class="{{ column.align() }}"><a class="link link-hover" href="{{ task.run_href }}">{{ task.run }}</a></td>
-{%- when TasksColumn::Remove %}
-<td class="{{ column.align() }}">{% call ui::row_button(task.remove.verb, task.remove.id) %}{% endcall %}{% call ui::confirm_dialog(task.remove) %}{% endcall %}</td>
+{%- when TasksColumn::View %}
+<td class="{{ column.align() }}">{% call ui::row_view(task.view) %}{% endcall %}</td>
 {%- endmatch %}
 {%- endfor %}
-{%- endcall %}
-{%- if let CriteriaShown::Read { first_line: _, text } = task.criteria %}
-{%- call ui::fold_row(task.criteria_id(), of = task.row_id()) %}
-<td colspan="{{ TasksColumn::ALL.len() + 1 }}"><pre class="font-sans whitespace-pre-wrap">{{ text }}</pre></td>
-{%- endcall %}
-{%- endif %}
+</tr>
 {%- endfor %}
 </tbody>
 </table>

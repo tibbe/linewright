@@ -268,12 +268,20 @@ impl<Form: Template> IntoResponse for Answer<Form> {
 }
 
 /// `said` of what was made, swapped out of band into the shell's `#made`,
-/// which no stream sends, as a daisyUI success alert
-/// (`docs/specs/web/design_system.md`, Making).
+/// which no stream sends.
 fn made_said(said: &Html) -> String {
     format!(
-        r#"<div id="made" hx-swap-oob="innerHTML"><div class="alert alert-success" role="status"><span>{said}</span></div></div>"#
+        r#"<div id="made" hx-swap-oob="innerHTML">{}</div>"#,
+        success(said)
     )
+}
+
+/// `said` of what was made or removed, as a daisyUI success alert
+/// (`docs/specs/web/design_system.md`, Making).
+pub(super) fn success(said: &Html) -> Html {
+    html::built(format!(
+        r#"<div class="alert alert-success" role="status"><span>{said}</span></div>"#
+    ))
 }
 
 /// The refusal of a required field that is empty or holds only white space
