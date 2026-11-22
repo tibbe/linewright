@@ -1248,3 +1248,115 @@ async fn a_database_from_before_workflow_run_triggers_opens_with_its_runs_sessio
         "a run an attempt started names its run and attempt"
     );
 }
+
+static BEFORE_CLEAN_NAMES: &[Migration] = MIGRATIONS.split_at(18).0;
+
+/// `docs/specs/benchmarks.md`, Names and IDs, Cleaning a name and One of
+/// each name.
+#[test_log::test(tokio::test)]
+async fn a_database_from_before_names_were_clean_opens_with_each_name_clean_or_named_by_its_kind_and_id()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_CLEAN_NAMES, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO benchmarks (id, name, stage) VALUES (1, 'board', 'design'),
+            (2, ' board ', 'design'), (3, 'two' || char(10) || 'lines', 'triage'),
+            (4, char(8203), 'triage'), (5, 'Benchmark 4', 'triage');
+        INSERT INTO tasks (id, benchmark, name, run, seq) VALUES (1, 1, 'lanes', '4/design-1', 1),
+            (2, 1, 'lanes  ', '5/design-1', 2), (3, 3, 'lanes  ', '6/triage-1', 1),
+            (6, 1, 'sta' || char(173) || 'cks', '7/design-1', 3);
+        INSERT INTO removed_tasks (id, benchmark, name) VALUES (4, 1, char(7)),
+            (5, 1, 'gone' || char(9) || 'away');
+        INSERT INTO benchmark_runs (id, benchmark, launched_at, repetitions, state)
+            VALUES (1, 1, '2026-11-17T12:00:00Z', 1, 'open');
+        INSERT INTO benchmark_run_tasks (benchmark_run, seq, task) VALUES (1, 0, 1), (1, 1, 4);
+        INSERT INTO benchmark_run_configurations (benchmark_run, seq, name)
+            VALUES (1, 0, 'as-is'), (1, 1, 'short' || char(9)), (1, 2, 'short'),
+                (1, 3, char(57344)), (1, 4, ' as-is');",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let benchmarks = crate::benchmarks::Benchmarks::new(db.clone());
+    let mut listed: Vec<(String, String)> = benchmarks
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|listed| {
+            (
+                listed.benchmark.id.to_string(),
+                listed.benchmark.name.to_string(),
+            )
+        })
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed,
+        [
+            ("1".into(), "board".into()),
+            ("2".into(), "Benchmark 2".into()),
+            ("3".into(), "two lines".into()),
+            ("4".into(), "Benchmark 4 (2)".into()),
+            ("5".into(), "Benchmark 4".into()),
+        ]
+    );
+    let tasks_of = |benchmark: &'static str| {
+        let benchmarks = benchmarks.clone();
+        async move {
+            benchmarks
+                .show(benchmark.parse().unwrap())
+                .await
+                .unwrap()
+                .unwrap()
+                .tasks
+                .iter()
+                .map(|task| (task.id.to_string(), task.name.to_string()))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        tasks_of("1").await,
+        [
+            ("1".into(), "lanes".into()),
+            ("2".into(), "Task 2".into()),
+            ("6".into(), "stacks".into())
+        ]
+    );
+    assert_eq!(tasks_of("3").await, [("3".into(), "lanes".into())]);
+    for (task, name) in [("4", "Task 4"), ("5", "gone away")] {
+        assert_eq!(
+            benchmarks
+                .removed_task(task.parse().unwrap())
+                .await
+                .unwrap()
+                .map(|removed| removed.name.to_string()),
+            Some(name.into())
+        );
+    }
+    let record = crate::benchmarks::BenchmarkRuns::new(db)
+        .show("1".parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        record
+            .configurations
+            .iter()
+            .map(Name::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "as-is",
+            "Configuration 2",
+            "short",
+            "Configuration 4",
+            "Configuration 5"
+        ]
+    );
+}
