@@ -3265,6 +3265,14 @@ fn hourly(name: &str) -> Automation {
     .unwrap()
 }
 
+/// The run of the hourly automation `name` its schedule starts.
+fn scheduled_run(name: &str) -> Action {
+    Action::RunAutomation {
+        automation: Box::new(hourly(name)),
+        start: AutomationStart::Schedule,
+    }
+}
+
 fn last_scheduled_runs(runs: &[(&str, i64)]) -> LastScheduledRuns {
     runs.iter()
         .map(|&(name, minute)| (name.parse().unwrap(), t(minute)))
@@ -3299,7 +3307,7 @@ fn an_automation_whose_schedule_ticked_since_its_last_scheduled_run_runs_and_the
     assert_eq!(
         scheduled(&world, 70),
         vec![
-            Action::RunAutomation(Box::new(hourly("hourly.md"))),
+            scheduled_run("hourly.md"),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 70)])),
         ]
     );
@@ -3334,7 +3342,7 @@ fn ticks_missed_since_the_last_scheduled_run_collapse_into_one_run() {
     assert_eq!(
         scheduled(&last_run_at_12_30, five_ticks_later),
         vec![
-            Action::RunAutomation(Box::new(hourly("hourly.md"))),
+            scheduled_run("hourly.md"),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 310)])),
         ]
     );
@@ -3353,7 +3361,7 @@ fn ticks_that_pass_while_a_run_is_in_flight_make_one_more_run_once_it_ends() {
     assert_eq!(
         scheduled(&ended, 131),
         vec![
-            Action::RunAutomation(Box::new(hourly("hourly.md"))),
+            scheduled_run("hourly.md"),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 131)])),
         ]
     );
@@ -3397,7 +3405,7 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
             &[]
         ),
         vec![
-            Action::RunAutomation(Box::new(hourly("b.md"))),
+            scheduled_run("b.md"),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[
                 ("a.md", 30),
                 ("b.md", 70),
@@ -3777,7 +3785,7 @@ fn once_the_usage_limit_resets_every_run_starts_and_the_due_automation_runs() {
             claim(3),
             implement(3),
             implement(4),
-            Action::RunAutomation(Box::new(hourly("hourly.md"))),
+            scheduled_run("hourly.md"),
             Action::RecordLastScheduledRuns(last_scheduled_runs(&[("hourly.md", 70)])),
         ]
     );
@@ -3860,7 +3868,7 @@ fn a_drain_begun_part_way_through_a_plan_holds_back_the_rest_of_its_claims_and_r
         claim(3),
         implement(3),
         let_go(12),
-        Action::RunAutomation(Box::new(hourly("weekly.md"))),
+        scheduled_run("weekly.md"),
         Action::RecordLastScheduledRuns(last_scheduled_runs(&[
             ("daily.md", 70),
             ("hourly.md", 70),
@@ -3903,7 +3911,7 @@ fn a_drain_begun_part_way_through_a_plan_clears_the_stalls_of_items_linewright_h
 fn a_drain_begun_part_way_through_a_plan_leaves_the_last_scheduled_runs_as_they_were_when_it_held_back_all()
  {
     let rest = vec![
-        Action::RunAutomation(Box::new(hourly("weekly.md"))),
+        scheduled_run("weekly.md"),
         Action::RecordLastScheduledRuns(last_scheduled_runs(&[("weekly.md", 70)])),
     ];
 

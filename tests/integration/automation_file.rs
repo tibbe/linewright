@@ -3,7 +3,9 @@ use std::time::Duration;
 use crate::common;
 
 use chrono::{DateTime, Utc};
-use linewright::automation::{self, Automation, AutomationName, Unparsed, parse};
+use linewright::automation::{
+    self, Automation, AutomationName, Schedule, Trigger, Unparsed, parse,
+};
 use linewright::work_settings::{Effort, Partial};
 
 fn utc(text: &str) -> DateTime<Utc> {
@@ -29,13 +31,18 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
+fn schedule(automation: &Automation) -> &Schedule {
+    let Trigger::Schedule(schedule) = &automation.trigger;
+    schedule
+}
+
 #[test_log::test]
 fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions() {
     let automation: Automation = parse(&name("weekly.md"), SPEC_EXAMPLE).unwrap();
 
     assert_eq!(automation.name.to_string(), "weekly.md");
     assert_eq!(
-        automation.schedule.next_after(utc("2026-10-01T12:00:00Z")),
+        schedule(&automation).next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
     );
     assert_eq!(
@@ -74,9 +81,7 @@ fn the_schedule_is_in_utc() {
     .unwrap();
 
     assert_eq!(
-        automation
-            .schedule
-            .next_after(utc("2026-10-01T03:00:00+02:00")),
+        schedule(&automation).next_after(utc("2026-10-01T03:00:00+02:00")),
         Some(utc("2026-10-01T02:30:00Z"))
     );
     assert_eq!(automation.max_issues, 1);

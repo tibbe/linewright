@@ -23,12 +23,27 @@ const DEFAULT_MAX_ISSUES: u32 = 3;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Automation {
     pub name: AutomationName,
-    pub schedule: Schedule,
+    pub trigger: Trigger,
     /// The session settings its front matter sets, a layer above every
     /// whole-pipeline layer.
     pub session: Partial,
     pub max_issues: u32,
     pub instructions: String,
+}
+
+/// What starts an automation's runs: its `on`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Trigger {
+    Schedule(Schedule),
+}
+
+impl Trigger {
+    /// When it runs, in words.
+    pub fn describe(&self) -> String {
+        match self {
+            Trigger::Schedule(schedule) => schedule.describe(),
+        }
+    }
 }
 
 /// A cron expression's five fields, in UTC.
@@ -259,7 +274,7 @@ fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct FrontMatter {
-    on: Trigger,
+    on: On,
     max_issues: Option<u32>,
     #[serde(flatten)]
     session: BTreeMap<String, serde_yaml_ng::Value>,
@@ -267,7 +282,7 @@ struct FrontMatter {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Trigger {
+struct On {
     schedule: String,
 }
 
@@ -296,7 +311,7 @@ pub fn parse(name: &AutomationName, text: &str) -> Result<Automation> {
     }
     Ok(Automation {
         name: name.clone(),
-        schedule: Schedule::parse(&front.on.schedule)?,
+        trigger: Trigger::Schedule(Schedule::parse(&front.on.schedule)?),
         session,
         max_issues: front.max_issues.unwrap_or(DEFAULT_MAX_ISSUES),
         instructions: body.to_string(),
