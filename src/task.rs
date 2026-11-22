@@ -953,7 +953,7 @@ mod tests {
             stage_of("4/implement-1"),
             Some((TaskStage::Implement, Number(4)))
         );
-        for id in ["9/rework-1", "9/fix-ci-1", "9/update-1", "hourly/1"] {
+        for id in ["9/rework-1", "9/fix-ci-1", "9/update-1", "hourly.md/1"] {
             assert_eq!(stage_of(id), None, "{id}");
         }
     }

@@ -25,7 +25,7 @@ async fn with_automation(name: &str, text: &str) -> World {
         .commit(
             "maintainer",
             "main",
-            &[(&format!(".linewright/automations/{name}.md"), text)],
+            &[(&format!(".linewright/automations/{name}"), text)],
             "Add an automation",
         )
         .await
@@ -36,7 +36,7 @@ async fn with_automation(name: &str, text: &str) -> World {
 #[test_log::test(tokio::test)]
 async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
     let mut world = with_automation(
-        "weekly",
+        "team/weekly.md",
         "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: low\n---\nLook.\n",
     )
     .await;
@@ -47,7 +47,7 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
             *given.lock().unwrap() = Some((
                 call.spec
                     .dir
-                    .join(".linewright/automations/weekly.md")
+                    .join(".linewright/automations/team/weekly.md")
                     .exists(),
                 call.spec.model.clone(),
                 call.spec.effort,
@@ -64,7 +64,7 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
 
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"team/weekly.md".parse().unwrap())
         .await
         .unwrap();
 
@@ -72,7 +72,10 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
         given.lock().unwrap().clone(),
         Some((true, Some("opus".to_string()), Some(Effort::Low)))
     );
-    let sessions = world.dir.path().join("work/sessions/automation-weekly");
+    let sessions = world
+        .dir
+        .path()
+        .join("work/sessions/automation-team%2Fweekly.md");
     assert_eq!(std::fs::read_dir(sessions).unwrap().count(), 1);
     let issues = world.store.issues();
     let filed: Vec<(&str, Vec<&str>, &str, &str)> = issues
@@ -93,13 +96,13 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
                 "Fix the widget count",
                 vec!["ready-for-agent"],
                 LINEWRIGHT,
-                "Count them all.\n\n- [ ] All counted\n\nFiled by the automation `weekly`."
+                "Count them all.\n\n- [ ] All counted\n\nFiled by the automation `team/weekly.md`."
             ),
             (
                 "Should gadgets expire?",
                 vec!["ready-for-human"],
                 LINEWRIGHT,
-                "Recommend: yes.\n\nFiled by the automation `weekly`."
+                "Recommend: yes.\n\nFiled by the automation `team/weekly.md`."
             ),
         ]
     );
@@ -125,12 +128,12 @@ fn three_issues() -> String {
 
 #[test_log::test(tokio::test)]
 async fn a_run_files_only_the_first_max_issues_issues() {
-    let mut world = with_automation("weekly", CAPPED).await;
+    let mut world = with_automation("weekly.md", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
 
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
 
@@ -140,13 +143,13 @@ async fn a_run_files_only_the_first_max_issues_issues() {
 
 #[test_log::test(tokio::test)]
 async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
-    let mut world = with_automation("weekly", CAPPED).await;
+    let mut world = with_automation("weekly.md", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
 
@@ -161,18 +164,21 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
 
 #[test_log::test(tokio::test)]
 async fn an_unknown_automation_fails_naming_its_file() {
-    let mut world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly.md", WEEKLY).await;
 
     let error = format!(
         "{:#}",
         world
             .factory
-            .run_automation(&"daily".parse().unwrap())
+            .run_automation(&"daily.md".parse().unwrap())
             .await
             .unwrap_err()
     );
 
-    assert!(error.contains("there is no automation `daily`"), "{error}");
+    assert!(
+        error.contains("there is no automation `daily.md`"),
+        "{error}"
+    );
     assert!(
         error.contains(".linewright/automations/daily.md"),
         "{error}"
@@ -182,7 +188,7 @@ async fn an_unknown_automation_fails_naming_its_file() {
 
 #[test_log::test(tokio::test)]
 async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_out() {
-    let mut world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly.md", WEEKLY).await;
     world.harness.on_automation(|_| {
         Err(SessionError::TimedOut {
             log_tail: String::new(),
@@ -193,7 +199,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
         "{:#}",
         world
             .factory
-            .run_automation(&"weekly".parse().unwrap())
+            .run_automation(&"weekly.md".parse().unwrap())
             .await
             .unwrap_err()
     );
@@ -210,7 +216,7 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
 
 #[test_log::test(tokio::test)]
 async fn a_session_that_fails_fails_the_run() {
-    let mut world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly.md", WEEKLY).await;
     world.harness.on_automation(|_| {
         Err(SessionError::NoResult {
             why: "it crashed".into(),
@@ -222,7 +228,7 @@ async fn a_session_that_fails_fails_the_run() {
         "{:#}",
         world
             .factory
-            .run_automation(&"weekly".parse().unwrap())
+            .run_automation(&"weekly.md".parse().unwrap())
             .await
             .unwrap_err()
     );
@@ -235,14 +241,14 @@ async fn a_session_that_fails_fails_the_run() {
 
 #[test_log::test(tokio::test)]
 async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
-    let mut world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly.md", WEEKLY).await;
     world
         .harness
         .on_automation(|_| Ok("I looked; all is well.".into()));
 
     let error = world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await;
 
     assert!(error.is_err());
@@ -262,19 +268,19 @@ fn the_help_says_how_to_run_one_now() {
 
 #[test_log::test]
 fn the_command_that_runs_one_now_is_named_after_automations() {
-    assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly"]).is_ok());
-    assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly"]).is_err());
+    assert!(Cli::try_parse_from(["lw", "automation", "run", "weekly.md"]).is_ok());
+    assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly.md"]).is_err());
 }
 
 #[test_log::test(tokio::test)]
 async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
-    let mut world = with_automation("weekly", WEEKLY).await;
+    let mut world = with_automation("weekly.md", WEEKLY).await;
     world.harness.on_automation(refused_for_the_usage_limit);
     let (log, _guard) = Log::capture();
 
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
 

@@ -17,7 +17,7 @@ fn name(name: &str) -> AutomationName {
 }
 
 fn error(text: &str) -> String {
-    format!("{:#}", parse(&name("weekly"), text).unwrap_err())
+    format!("{:#}", parse(&name("weekly.md"), text).unwrap_err())
 }
 
 const SPEC_EXAMPLE: &str = "---
@@ -31,9 +31,9 @@ Look at the bugs fixed in the past week ...
 
 #[test_log::test]
 fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions() {
-    let automation: Automation = parse(&name("weekly"), SPEC_EXAMPLE).unwrap();
+    let automation: Automation = parse(&name("weekly.md"), SPEC_EXAMPLE).unwrap();
 
-    assert_eq!(automation.name.to_string(), "weekly");
+    assert_eq!(automation.name.to_string(), "weekly.md");
     assert_eq!(
         automation.schedule.next_after(utc("2026-10-01T12:00:00Z")),
         Some(utc("2026-10-05T06:00:00Z"))
@@ -52,7 +52,7 @@ fn the_spec_example_parses_into_its_schedule_timeout_issue_cap_and_instructions(
 #[test_log::test]
 fn without_session_settings_or_an_issue_cap_an_automation_takes_the_defaults() {
     let automation = parse(
-        &name("nightly"),
+        &name("nightly.md"),
         "---\non:\n  schedule: \"30 2 * * *\"\n---\nTidy up.\n",
     )
     .unwrap();
@@ -68,7 +68,7 @@ fn without_session_settings_or_an_issue_cap_an_automation_takes_the_defaults() {
 #[test_log::test]
 fn the_schedule_is_in_utc() {
     let automation = parse(
-        &name("nightly"),
+        &name("nightly.md"),
         "---\non:\n  schedule: \"30 2 * * *\"\nmax-issues: 1\n---\nTidy up.\n",
     )
     .unwrap();
@@ -155,7 +155,7 @@ fn a_leftover_timeout_does_not_parse_naming_the_key() {
 #[test_log::test]
 fn the_front_matter_takes_model_effort_and_session_timeout() {
     let automation = parse(
-        &name("weekly"),
+        &name("weekly.md"),
         "---
 on:
   schedule: \"0 6 * * 1\"
@@ -189,12 +189,12 @@ fn the_front_matter_takes_no_operator_only_session_setting() {
 #[test_log::test]
 fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
     let chosen = parse(
-        &name("weekly"),
+        &name("weekly.md"),
         "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: high\n---\nLook.\n",
     )
     .unwrap();
     let unset = parse(
-        &name("weekly"),
+        &name("weekly.md"),
         "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
     )
     .unwrap();
@@ -216,7 +216,7 @@ fn an_effort_outside_its_levels_does_not_parse() {
 }
 
 #[test_log::test(tokio::test)]
-async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does_not_parse() {
+async fn every_file_under_the_automations_but_a_hidden_one_is_an_automation_or_does_not_parse() {
     let dir = tempfile::tempdir().unwrap();
     let store = common::store_holding(
         dir.path(),
@@ -227,8 +227,9 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
                 "---\non:\n  schedule: \"every hour\"\n---\nLook.\n",
             ),
             (".linewright/automations/notes.txt", "Notes.\n"),
-            (".linewright/automations/sub/x.md", common::HOURLY),
+            (".linewright/automations/team/weekly.md", common::HOURLY),
             (".linewright/automations/.gitkeep", ""),
+            (".linewright/automations/.drafts/x.md", common::HOURLY),
         ],
     )
     .await;
@@ -237,20 +238,17 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
 
     assert_eq!(
         files.parsed,
-        [parse(&name("hourly"), common::HOURLY).unwrap()]
+        [
+            parse(&name("hourly.md"), common::HOURLY).unwrap(),
+            parse(&name("team/weekly.md"), common::HOURLY).unwrap(),
+        ]
     );
     assert_eq!(
         files.unparsed,
         [
             Unparsed {
                 path: ".linewright/automations/notes.txt".into(),
-                reason: "an automation is a `.md` file directly in `.linewright/automations/`"
-                    .into(),
-            },
-            Unparsed {
-                path: ".linewright/automations/sub/x.md".into(),
-                reason: "an automation is a `.md` file directly in `.linewright/automations/`"
-                    .into(),
+                reason: "an automation is a `.md` file".into(),
             },
             Unparsed {
                 path: ".linewright/automations/broken.md".into(),
@@ -259,5 +257,59 @@ async fn every_file_in_the_automations_but_a_hidden_one_is_an_automation_or_does
                     .into(),
             },
         ]
+    );
+}
+
+#[test_log::test]
+fn an_automation_is_named_by_its_path_under_the_automations() {
+    let named = name("team/weekly.md");
+
+    assert_eq!(named.to_string(), "team/weekly.md");
+    assert_eq!(named.path(), ".linewright/automations/team/weekly.md");
+}
+
+#[test_log::test]
+fn a_name_is_a_path_of_visible_segments_ending_in_md() {
+    for bad in [
+        "",
+        "weekly",
+        "weekly.txt",
+        "/weekly.md",
+        "team//weekly.md",
+        "team/.weekly.md",
+        ".team/weekly.md",
+        "team/",
+        ".md/",
+    ] {
+        assert_eq!(
+            bad.parse::<AutomationName>(),
+            Err(format!(
+                "{bad:?} is not an automation's name: the path of a `.md` file under \
+                 `.linewright/automations/`, such as `team/weekly.md`"
+            ))
+        );
+    }
+}
+
+#[test_log::test]
+fn a_backslash_is_a_character_of_a_segment() {
+    assert_eq!(
+        name("team/a\\b.md").path(),
+        ".linewright/automations/team/a\\b.md"
+    );
+}
+
+#[test_log::test]
+fn names_that_differ_have_file_names_that_differ_and_hold_no_slash() {
+    let names = ["a/b.md", "a-b.md", "a%2Fb.md", "a--b.md", "a_b.md"];
+    let file_names: std::collections::BTreeSet<String> =
+        names.iter().map(|n| name(n).file_name()).collect();
+
+    assert_eq!(file_names.len(), names.len(), "{file_names:?}");
+    assert!(
+        file_names
+            .iter()
+            .all(|f| !f.contains('/') && !f.starts_with('.')),
+        "{file_names:?}"
     );
 }

@@ -409,7 +409,7 @@ async fn an_automations_run_whose_maintenance_command_fails_goes_on_to_its_promp
 
     world
         .factory
-        .run_automation(&"look".parse().unwrap())
+        .run_automation(&"look.md".parse().unwrap())
         .await
         .unwrap();
 

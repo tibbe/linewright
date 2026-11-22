@@ -12,7 +12,7 @@ async fn add_automation(world: &World, name: &str, text: &str) {
         .commit(
             "maintainer",
             "main",
-            &[(&format!(".linewright/automations/{name}.md"), text)],
+            &[(&format!(".linewright/automations/{name}"), text)],
             "Add an automation",
         )
         .await
@@ -33,7 +33,7 @@ async fn restart(world: &mut World) {
 #[test_log::test(tokio::test)]
 async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
     let mut world = World::new().await;
-    add_automation(&world, "hourly", HOURLY).await;
+    add_automation(&world, "hourly.md", HOURLY).await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
 
@@ -48,7 +48,7 @@ async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
 #[test_log::test(tokio::test)]
 async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
     let mut world = World::new().await;
-    add_automation(&world, "hourly", HOURLY).await;
+    add_automation(&world, "hourly.md", HOURLY).await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
 
@@ -56,7 +56,7 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
         .await
         .unwrap();
     let recorded = LastScheduledRuns::load(&db).await.unwrap();
-    assert!(recorded.get(&"hourly".parse().unwrap()).is_some());
+    assert!(recorded.get(&"hourly.md".parse().unwrap()).is_some());
     world.clock.advance(TimeDelta::hours(5));
     restart(&mut world).await;
     world.poll().await;
@@ -68,14 +68,14 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
 #[test_log::test(tokio::test)]
 async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     let mut world = World::new().await;
-    add_automation(&world, "hourly", HOURLY).await;
+    add_automation(&world, "hourly.md", HOURLY).await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 
     world
         .factory
-        .run_automation(&"hourly".parse().unwrap())
+        .run_automation(&"hourly.md".parse().unwrap())
         .await
         .unwrap();
     world.poll().await;

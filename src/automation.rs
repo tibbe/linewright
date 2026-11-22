@@ -56,13 +56,29 @@ impl Schedule {
     }
 }
 
+/// An automation's name: its path under [`DIR`], such as `team/weekly.md`
+/// (`docs/specs/automations.md`, The automation file).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct AutomationName(String);
 
 impl AutomationName {
     pub fn path(&self) -> String {
-        format!("{DIR}/{}.md", self.0)
+        format!("{DIR}/{}", self.0)
+    }
+
+    /// The name as a single path component, one for each name, that starts
+    /// with no `.`: what names its files and directories.
+    pub fn file_name(&self) -> String {
+        let mut file_name = String::with_capacity(self.0.len());
+        for c in self.0.chars() {
+            match c {
+                '%' => file_name.push_str("%25"),
+                '/' => file_name.push_str("%2F"),
+                c => file_name.push(c),
+            }
+        }
+        file_name
     }
 }
 
@@ -70,9 +86,13 @@ impl FromStr for AutomationName {
     type Err = String;
 
     fn from_str(name: &str) -> Result<AutomationName, String> {
-        if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+        let segments_visible = name
+            .split('/')
+            .all(|segment| !segment.is_empty() && !segment.starts_with('.'));
+        if !segments_visible || name.strip_suffix(".md").is_none() {
             return Err(format!(
-                "{name:?} is not an automation's name: the name of a file in `{DIR}`, without `.md`"
+                "{name:?} is not an automation's name: the path of a `.md` file under `{DIR}/`, \
+                 such as `team/weekly.md`"
             ));
         }
         Ok(AutomationName(name.to_string()))
@@ -185,7 +205,7 @@ pub struct Unparsed {
     pub reason: String,
 }
 
-/// Every file in [`DIR`], hidden ones aside, is an automation file
+/// Every file under [`DIR`], hidden ones aside, is an automation file
 /// (`docs/specs/automations.md`, A file that does not parse). Fails only
 /// when the directory cannot be listed or its files read: a file that cannot
 /// be read as text is one that does not parse.
@@ -210,9 +230,9 @@ pub async fn read(store: &dyn Store, branch: &str) -> Result<AutomationFiles> {
     Ok(files)
 }
 
-/// Splits `listed`, the files under [`DIR`] by their paths under it, hidden
-/// ones aside, into the automations they name and the files that do not
-/// parse.
+/// Splits `listed`, the files under [`DIR`] by their paths under it, in its
+/// subdirectories too, hidden ones aside, into the automations they name and
+/// the files that do not parse.
 fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
     let mut names = Vec::new();
     let mut files = AutomationFiles::default();
@@ -221,10 +241,8 @@ fn classify(listed: Vec<String>) -> (Vec<AutomationName>, AutomationFiles) {
             continue;
         }
         let name = file
-            .strip_suffix(".md")
-            .filter(|name| !name.contains('/'))
-            .ok_or_else(|| format!("an automation is a `.md` file directly in `{DIR}/`"))
-            .and_then(str::parse);
+            .parse()
+            .map_err(|_| "an automation is a `.md` file".to_string());
         match name {
             Ok(name) => names.push(name),
             Err(reason) => files.unparsed.push(Unparsed {

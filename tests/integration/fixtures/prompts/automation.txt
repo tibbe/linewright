@@ -1,3 +1,3 @@
-[prompts/automation.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» max_issues=«2» name=«weekly-bugs» instructions=«Look at the bugs fixed in the past week.» trigger=«» output=«[outputs/automation.md]
+[prompts/automation.md facts=«[parts/facts.md repo=«owner/widgets» default_branch=«main» spec_glob=«docs/specs/**/*.md»]» max_issues=«2» name=«weekly-bugs.md» instructions=«Look at the bugs fixed in the past week.» trigger=«» output=«[outputs/automation.md]
 
 [parts/attachments.md directory=«/work/sessions/issue-7/20261001T120000Z-implement/attachments» kinds=«`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp4`, `.mov`, `.webm`» videos=«`.mp4`, `.mov`, `.webm`»]»]

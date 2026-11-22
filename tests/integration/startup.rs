@@ -253,7 +253,7 @@ fn path_to_start_on() -> tempfile::TempDir {
 #[rstest::rstest]
 #[case::serve(&["serve"])]
 #[case::once(&["once"])]
-#[case::automation_run(&["automation", "run", "weekly"])]
+#[case::automation_run(&["automation", "run", "weekly.md"])]
 #[case::environment_rebuild(&["environment", "rebuild"])]
 #[test_log::test]
 fn a_command_that_runs_sessions_without_linewrights_token_is_an_error_at_startup_naming_its_variables(

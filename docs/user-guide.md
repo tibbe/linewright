@@ -239,7 +239,8 @@ Then open `http://localhost:8081`.
 
 ## Recurring work
 
-For engineering. An automation is a Markdown file in `.linewright/automations/`
+For engineering. An automation is a Markdown file anywhere under
+`.linewright/automations/`, named by its path there, such as `team/weekly.md`,
 that tells an agent what to do on a schedule, such as filing an issue for each
 bug fixed last week without a regression test. The issues it files say which
 automation filed them, and are worked like any others. See

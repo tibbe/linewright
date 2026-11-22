@@ -75,7 +75,7 @@ fn a_named_run_is_the_one_shown() {
     let recorded = vec![
         run("1/implement-1", "2026-10-14T10:00:00Z", 1),
         run("1/rework-1", "2026-10-14T11:00:00Z", 1),
-        run("weekly/1", "2026-10-14T12:00:00Z", 1),
+        run("weekly.md/1", "2026-10-14T12:00:00Z", 1),
     ];
     let named = |id: &str, of: Option<u64>| Which::Run {
         id: id.parse::<RunId>().unwrap(),
@@ -87,8 +87,8 @@ fn a_named_run_is_the_one_shown() {
         "1/implement-1"
     );
     assert_eq!(
-        picked(&recorded, &named("weekly/1", None)).unwrap(),
-        "weekly/1"
+        picked(&recorded, &named("weekly.md/1", None)).unwrap(),
+        "weekly.md/1"
     );
     assert_eq!(
         picked(&recorded, &named("1/rework-2", None)),

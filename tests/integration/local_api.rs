@@ -300,8 +300,8 @@ async fn status_shows_linewright_then_the_managed_items_then_the_automations() {
             "",
             "#1",
             "",
-            "automation weekly last run",
-            "automation weekly next run",
+            "automation weekly.md last run",
+            "automation weekly.md next run",
         ],
         "{}",
         output.stdout
@@ -381,7 +381,7 @@ async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
     let answering = Answering::start(world, false).await;
@@ -393,7 +393,8 @@ async fn status_shows_a_run_by_hand_from_its_record_as_the_last_run() {
         output
             .stdout
             .lines()
-            .any(|line| line.starts_with("automation weekly last run: weekly/1 by hand, started ")),
+            .any(|line| line
+                .starts_with("automation weekly.md last run: weekly.md/1 by hand, started ")),
         "{}",
         output.stdout
     );

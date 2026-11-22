@@ -74,6 +74,7 @@ static MIGRATIONS: &[Migration] = &[
     benchmark_ids::TASK_DIRS_ENTRIES,
     Migration::Sql(benchmark_ids::TABLES),
     Migration::Moves(benchmark_ids::MOVES),
+    Migration::Sql(AUTOMATION_PATHS),
 ];
 
 /// The table of the release that made each schema version.
@@ -297,6 +298,11 @@ const TRIALS_BUILD_FAILED: &str = "CREATE TABLE trials_build_failed (
     INSERT INTO trials_build_failed SELECT * FROM trials;
     DROP TABLE trials;
     ALTER TABLE trials_build_failed RENAME TO trials;";
+
+/// Names each automation recorded by its file's name without `.md` by its
+/// path under `.linewright/automations/`: that name with `.md`.
+const AUTOMATION_PATHS: &str = "UPDATE automation_schedules SET name = name || '.md';
+    UPDATE runs SET automation = automation || '.md' WHERE kind = 'automation';";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

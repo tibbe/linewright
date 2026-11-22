@@ -267,7 +267,7 @@ async fn filing_automation(
     });
     world
         .factory
-        .run_automation(&"weekly".parse().unwrap())
+        .run_automation(&"weekly.md".parse().unwrap())
         .await
         .unwrap();
     let all = all_labels(&world);

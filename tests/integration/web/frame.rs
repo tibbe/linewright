@@ -591,7 +591,7 @@ fn labelled(facts: &[ServerFact]) -> Vec<(&str, &str)> {
 async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label() {
     let pages = Pages::with_deliveries(View {
         snapshot: a_ticket().snapshot,
-        ..super::automations::with(&[("weekly", super::automations::WEEKLY)], false)
+        ..super::automations::with(&[("weekly.md", super::automations::WEEKLY)], false)
     })
     .await;
     signed(pages.deliveries(), "ping", "{}").await;
@@ -618,7 +618,7 @@ async fn the_server_page_shows_the_facts_about_linewright_each_under_its_label()
     assert!(select(&html, "#server table").is_empty(), "{}", html.html());
     assert_eq!(select(&html, "#server time[datetime]").len(), 4);
     assert!(
-        !html.html().contains("automation weekly"),
+        !html.html().contains("automation weekly.md"),
         "the automations' facts are not shown: {}",
         html.html()
     );

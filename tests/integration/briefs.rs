@@ -426,7 +426,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
          {{facts}}\n\n{{trigger}}\n\n{{output}}\n",
     )]);
     let automation = linewright::automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 6 * * 1\"\nmax-issues: 3\n---\nLook.\n",
     )
     .unwrap();
@@ -447,7 +447,7 @@ fn an_operators_automation_prompt_is_the_one_an_automation_is_sent() {
 
     assert!(
         prompt.starts_with(&format!(
-            "Mind the schedule of `weekly`, at most 3: Look.\n{}\n\n{}\n\n{}\n",
+            "Mind the schedule of `weekly.md`, at most 3: Look.\n{}\n\n{}\n\n{}\n",
             facts(),
             common::marker("outputs/automation.md", &[]),
             attachments()
@@ -602,7 +602,7 @@ fn a_prompt_is_read_only_by_the_runs_it_is_sent_to() {
     let fix_ci_prompt = prompts::readers("prompts/fix-ci.md").unwrap();
     let result_error = prompts::readers("prompts/follow-ups/result-error.md").unwrap();
     let automation = linewright::automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook.\n",
     )
     .unwrap();
@@ -684,7 +684,7 @@ fn files_under(root: &Path) -> BTreeMap<String, String> {
 fn the_loose_ends_follow_up_is_read_by_every_run_whose_result_may_attach_a_secret() {
     let readers = prompts::readers("prompts/follow-ups/loose-ends.md").unwrap();
     let automation = linewright::automation::parse(
-        &"weekly".parse().unwrap(),
+        &"weekly.md".parse().unwrap(),
         "---\non:\n  schedule: \"0 9 * * 1\"\n---\nLook.\n",
     )
     .unwrap();

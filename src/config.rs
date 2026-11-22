@@ -384,8 +384,9 @@ pub enum EnvironmentCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AutomationCommand {
-    /// Run the automation in `.linewright/automations/NAME.md` on the
-    /// default branch once, now, then exit; its schedule stays as it was.
+    /// Run the automation at `.linewright/automations/NAME`, such as
+    /// `team/weekly.md`, on the default branch once, now, then exit; its
+    /// schedule stays as it was.
     Run {
         #[arg(value_name = "NAME")]
         name: AutomationName,

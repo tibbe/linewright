@@ -164,7 +164,7 @@ impl std::str::FromStr for RunId {
 
     fn from_str(id: &str) -> Result<RunId, String> {
         let not_one = || format!("{id:?} is not a run ID");
-        let (head, tail) = id.split_once('/').ok_or_else(not_one)?;
+        let (head, tail) = id.rsplit_once('/').ok_or_else(not_one)?;
         let (of, n) = match tail.rsplit_once('-') {
             Some((stage, n)) => {
                 let item = head.parse().map(Number).map_err(|_| not_one())?;
@@ -1542,7 +1542,7 @@ mod tests {
         ] {
             keep(&runs, ended(item, stage, n)).await;
         }
-        keep(&runs, automation("weekly", 2)).await;
+        keep(&runs, automation("team/weekly.md", 2)).await;
 
         let ids = begun(
             &runs,
@@ -1554,11 +1554,11 @@ mod tests {
                 work(3, WorkKind::FixCi),
                 work(2, WorkKind::Triage),
                 Begin::Automation {
-                    automation: "weekly".parse().unwrap(),
+                    automation: "team/weekly.md".parse().unwrap(),
                     started_by: StartedBy::Hand,
                 },
                 Begin::Automation {
-                    automation: "daily".parse().unwrap(),
+                    automation: "daily.md".parse().unwrap(),
                     started_by: StartedBy::Hand,
                 },
             ],
@@ -1574,8 +1574,8 @@ mod tests {
                 "3/rework-2",
                 "3/fix-ci-1",
                 "2/triage-1",
-                "weekly/3",
-                "daily/1",
+                "team/weekly.md/3",
+                "daily.md/1",
             ]
         );
     }
@@ -1961,7 +1961,7 @@ mod tests {
         );
         let in_flight = |state| {
             Recorded::new(
-                Started::new("weekly/3".parse().unwrap(), Some(StartedBy::Hand)).unwrap(),
+                Started::new("team/weekly.md/3".parse().unwrap(), Some(StartedBy::Hand)).unwrap(),
                 at("2026-10-15T10:00:00Z"),
                 state,
                 vec![],
@@ -1979,7 +1979,7 @@ mod tests {
         assert_eq!(
             [
                 written("runs/items/7/implement-2.json"),
-                written("runs/automations/weekly/3.json"),
+                written("runs/automations/team%2Fweekly.md/3.json"),
             ],
             [
                 serde_json::json!({
@@ -1991,7 +1991,7 @@ mod tests {
                     "sessions": ["sessions/7/implement-2"],
                 }),
                 serde_json::json!({
-                    "automation": "weekly",
+                    "automation": "team/weekly.md",
                     "n": 3,
                     "started_by": "hand",
                     "started_at": "2026-10-15T10:00:00Z",

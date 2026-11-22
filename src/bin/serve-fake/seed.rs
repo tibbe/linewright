@@ -82,7 +82,7 @@ pub async fn seed(store: &LocalStore) -> Result<()> {
             &[
                 ("README.md", "# Widgets\n"),
                 (".linewright/config.toml", SETTINGS),
-                (".linewright/automations/weekly.md", WEEKLY),
+                (".linewright/automations/team/weekly.md", WEEKLY),
                 (".linewright/automations/nightly.md", NIGHTLY),
                 (
                     ".linewright/briefs/plugin/skills/triage/SKILL.md",

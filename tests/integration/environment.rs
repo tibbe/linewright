@@ -503,7 +503,7 @@ async fn without_an_environment_once_starts_no_session_and_an_automation_run_fai
     world.restart(|_| {}).await;
     let ran = world
         .factory
-        .run_automation(&"hourly".parse().unwrap())
+        .run_automation(&"hourly.md".parse().unwrap())
         .await
         .unwrap_err();
 

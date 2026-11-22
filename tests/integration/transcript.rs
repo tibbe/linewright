@@ -1345,7 +1345,7 @@ fn a_sub_agent_that_ran_for_hours_shows_how_long_as_a_duration_and_each_line_its
 
 fn automations_run(n: u32, by: StartedBy) -> Transcript {
     Transcript {
-        run: Started::new(format!("hourly/{n}").parse().unwrap(), Some(by)).unwrap(),
+        run: Started::new(format!("hourly.md/{n}").parse().unwrap(), Some(by)).unwrap(),
         ..of(&[recorded()])
     }
 }
@@ -1367,12 +1367,12 @@ fn an_automations_run_by_hand_says_so_in_its_header_and_a_scheduled_one_does_not
         [header(&by_hand), header(&scheduled)],
         [
             (
-                "run: hourly/2, by hand".to_string(),
-                json!({"type": "run", "run": "hourly/2", "started_by": "hand", "sessions": 1}),
+                "run: hourly.md/2, by hand".to_string(),
+                json!({"type": "run", "run": "hourly.md/2", "started_by": "hand", "sessions": 1}),
             ),
             (
-                "run: hourly/1".to_string(),
-                json!({"type": "run", "run": "hourly/1", "started_by": "schedule", "sessions": 1}),
+                "run: hourly.md/1".to_string(),
+                json!({"type": "run", "run": "hourly.md/1", "started_by": "schedule", "sessions": 1}),
             ),
         ]
     );

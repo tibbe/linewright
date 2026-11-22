@@ -155,7 +155,7 @@ async fn an_automations_runs_record_no_input() {
 
     world.hourly_by_schedule_then_by_hand().await;
 
-    for id in ["hourly/1", "hourly/2"] {
+    for id in ["hourly.md/1", "hourly.md/2"] {
         assert!(
             runs(&world)
                 .await

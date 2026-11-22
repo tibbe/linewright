@@ -769,9 +769,9 @@ async fn the_run_pages_stream_sends_its_heading_with_its_item_under_it() {
 #[test_log::test(tokio::test)]
 async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     let pages = Pages::of(view(vec![], vec![])).await;
-    let session = "sessions/automation-weekly/20261014T120005Z-automation";
+    let session = "sessions/automation-weekly.md/20261014T120005Z-automation";
     let record = json!({
-        "automation": "weekly",
+        "automation": "weekly.md",
         "n": 1,
         "started_by": "hand",
         "started_at": "2026-10-14T12:00:00Z",
@@ -790,17 +790,17 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     pages.write(&[(&format!("{session}/output.jsonl"), &output)]);
 
     let runs = pages.page("/runs").await;
-    let html = pages.page("/runs/weekly/1").await;
+    let html = pages.page("/runs/weekly.md/1").await;
 
     let links: Vec<&str> = select(&runs, "#runs tbody td:last-child a")
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
-    assert_eq!(links, ["/runs/weekly/1"]);
+    assert_eq!(links, ["/runs/weekly.md/1"]);
     assert_eq!(
         heading(&html),
         [
-            "weekly/1, by hand",
+            "weekly.md/1, by hand",
             "session 1: started 2026-10-14 12:00:05 UTC | 4s"
         ]
     );
@@ -812,7 +812,7 @@ async fn an_automations_run_whose_id_holds_a_slash_has_its_page() {
     assert_eq!(
         item_line(&html),
         (
-            "automation weekly".to_string(),
+            "automation weekly.md".to_string(),
             vec!["/automations".to_string()]
         )
     );
@@ -824,7 +824,7 @@ async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_
     let pages = Pages::of(view(vec![], vec![])).await;
     for (n, by) in [(1, "schedule"), (2, "hand")] {
         let record = json!({
-            "automation": "hourly",
+            "automation": "hourly.md",
             "n": n,
             "started_by": by,
             "started_at": "2026-10-14T12:00:00Z",
@@ -834,14 +834,17 @@ async fn the_page_of_an_automations_run_by_hand_says_so_in_its_heading_and_of_a_
         pages.record(&record).await;
     }
 
-    let by_hand = pages.page("/runs/hourly/2").await;
-    let scheduled = pages.page("/runs/hourly/1").await;
+    let by_hand = pages.page("/runs/hourly.md/2").await;
+    let scheduled = pages.page("/runs/hourly.md/1").await;
 
     assert_eq!(
         heading(&by_hand)[0],
-        "hourly/2, by hand (it started no session)"
+        "hourly.md/2, by hand (it started no session)"
     );
-    assert_eq!(heading(&scheduled)[0], "hourly/1 (it started no session)");
+    assert_eq!(
+        heading(&scheduled)[0],
+        "hourly.md/1 (it started no session)"
+    );
 }
 
 #[test_log::test(tokio::test)]

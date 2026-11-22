@@ -199,7 +199,7 @@ async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file()
 
     let error = world
         .factory
-        .run_automation(&"hourly".parse().unwrap())
+        .run_automation(&"hourly.md".parse().unwrap())
         .await
         .unwrap_err();
 
