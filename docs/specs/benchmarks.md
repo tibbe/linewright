@@ -61,11 +61,18 @@ Each task, benchmark and configuration has a name, which a person gives it,
 and an ID, which Linewright gives it
 ([Names are for people](product.md#solution)).
 
-- **A name.** One line of any text. Linewright removes the white space at
-  its start and its end before it keeps the name. A name that holds only white
-  space is no name.
-- **No name.** Linewright refuses a task, a benchmark or a configuration with
-  no name, and a change to no name.
+- **A name.** One line of letters, digits, punctuation, symbols and spaces,
+  of any script: the characters that the FreeformClass of PRECIS (RFC 8264)
+  allows.
+- **Cleaning a name.** Linewright cleans each name that it is given, and
+  keeps the clean name. It turns each white-space character that a name does
+  not hold, such as a line break, into a space, and removes each other
+  character that a name does not hold. Then it turns each run of spaces into
+  one space, and removes the space at each end.
+- **No name.** A name that holds nothing once it is clean is no name.
+  Linewright refuses a task, a benchmark or a configuration with no name, and
+  a change to no name. On a screen, the field of such a name gets the message
+  of a required field that is empty ([Making](design_system.md#making)).
 - **One of each name.** No two benchmarks have the same name. No two tasks of
   a benchmark have the same name. No two configurations of a benchmark run have
   the same name. Two names are the same when they hold the same characters in
@@ -132,7 +139,6 @@ task of it, whatever its outcome.
   ([Output](operation.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
 - **The name.** Given by the capturer ([Names and IDs](#names-and-ids)).
-  Linewright refuses a capture that has no name.
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
@@ -374,6 +380,10 @@ makes a trial of each task under each configuration.
 - **Names.** A benchmark run shows each task by its name as it is now. It
   shows a task that was removed after its launch by the name that the task had
   when it was removed.
+- **A trial's name.** Outside the rows of its task and its configuration
+  ([Benchmark run](#benchmark-run)), Linewright names a trial of a benchmark
+  run as "trial N of TASK under CONFIGURATION". N is the trial's repetition.
+  TASK and CONFIGURATION are the names of the trial's task and configuration.
 - **Under `serve`.** `serve` runs the trials and the scorers of a benchmark run,
   each as `lw trial` and `lw score` do. A drain, the usage limit and stopping
   apply to each trial and scorer as to a run of `serve` ([Holds](runs.md#holds),
@@ -676,7 +686,8 @@ is not in BENCHMARK does not exist.
   | it has not started | "waiting" | paused |
 
 - **A trial's row** opens to the trial's details. A screen reader reads its
-  button as "Show the details of trial N of TASK under CONFIGURATION".
+  button as "Show the details of" and the trial's name
+  ([A trial's name](#benchmark-runs)).
 - **A trial's score.** If the trial has a score ([Scoring](#scoring)), its row
   opens to a line for each of these parts:
 
