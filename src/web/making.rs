@@ -1,8 +1,9 @@
-//! Making a thing in a dialog, such as one that "New" opens
-//! (`docs/specs/design_system.md`, Dialogs and Making;
-//! `docs/specs/web/design_system.md`, Making), drawn by the `new_dialog` and
-//! `new_form` macros, its form answering into itself, and what was made said
-//! on a screen that does not show it.
+//! Making a thing in a dialog, such as one that "New" opens, or changing one
+//! in a dialog that "Edit" opens (`docs/specs/design_system.md`, Dialogs,
+//! Making and Editing; `docs/specs/web/design_system.md`, Making and
+//! Editing), drawn by the `new_dialog` and `new_form` macros, its form
+//! answering into itself, and what was made said on a screen that does not
+//! show it.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -221,6 +222,19 @@ pub(super) fn both<A, B, F: Field>(
     }
 }
 
+/// The title of the making dialog `dialog`'s form, drawn by the `form_title`
+/// macro, which a stream sends as a region of its page, so that it names a
+/// thing as it is named now.
+#[derive(Template)]
+#[template(
+    source = r#"{%- import "macros.html" as ui -%}{% call ui::form_title(dialog, title) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub(super) struct FormTitle<'a> {
+    pub(super) dialog: &'a str,
+    pub(super) title: String,
+}
+
 /// What a making dialog's form's POST answers, which htmx swaps into the
 /// form.
 pub(super) enum Answer<Form: Template> {
@@ -228,6 +242,10 @@ pub(super) enum Answer<Form: Template> {
     /// dialog closes; with what was made, if `shown` says the screen does
     /// not show it.
     Made { blank: Form, shown: MadeShown },
+    /// 200 with the form holding what was saved, and the `made` event, on
+    /// which the dialog closes (`docs/specs/design_system.md`, Editing,
+    /// Saving).
+    Saved { form: Form },
     /// The form as sent, with its refusal.
     Refused { status: StatusCode, form: Form },
 }
@@ -242,7 +260,8 @@ pub(super) enum MadeShown {
     Elsewhere(Html),
 }
 
-/// The event, sent in `HX-Trigger`, on which a making dialog closes.
+/// The event, sent in `HX-Trigger`, on which a making or editing dialog
+/// closes.
 const MADE: &str = "made";
 
 impl<Form: Template> IntoResponse for Answer<Form> {
@@ -260,6 +279,12 @@ impl<Form: Template> IntoResponse for Answer<Form> {
                 )
                     .into_response()
             }
+            Answer::Saved { form } => (
+                StatusCode::OK,
+                [("HX-Trigger", HeaderValue::from_static(MADE))],
+                axum::response::Html(render(&form)),
+            )
+                .into_response(),
             Answer::Refused { status, form } => {
                 (status, axum::response::Html(render(&form))).into_response()
             }
@@ -306,4 +331,10 @@ pub(super) fn parse_name(sent: &str) -> Result<Name, &'static str> {
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
 pub(super) fn benchmark_taken(name: &Name) -> String {
     format!("A benchmark named {name} already exists.")
+}
+
+/// The refusal of a task named as another task of its benchmark
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
+pub(super) fn task_taken(task: &Name, benchmark: &Name) -> String {
+    format!("A task named {task} already exists in {benchmark}.")
 }

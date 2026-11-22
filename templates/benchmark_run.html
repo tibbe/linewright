@@ -24,6 +24,10 @@
 {%- include "benchmark_run_grid.html" %}
 {%- endif %}
 {%- endcall %}
+{%- for edit in edits %}
+{%- call ui::edit_dialog(edit) %}{% endcall %}
+{%- endfor %}
+{{ edit_values }}
 {%- if let Some(cancel) = benchmark_run.cancel %}
 {%- call ui::confirm_dialog(cancel) %}{% endcall %}
 {%- endif %}

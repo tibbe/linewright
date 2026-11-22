@@ -329,6 +329,8 @@ async fn each_button_has_its_icon_before_its_label() {
         ("Run benchmark", "play"),
         ("Add a configuration", "plus"),
         ("Keep running", "play"),
+        ("Edit", "pencil-square"),
+        ("Save", "check"),
         ("Cancel that closes a dialog", "x-mark"),
         ("Jump to the latest entry", "arrow-down"),
     ];

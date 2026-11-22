@@ -20,11 +20,15 @@ use tracing::{info, warn};
 
 use super::benchmark_run_page::{shown_of, state_status};
 use super::capture::{CapturingField, NotPolled, Task, TaskField, TaskFields, capture_run, polled};
+use super::editing::{self, EditDialog};
 use super::html::{self, Html};
-use super::launch::{BriefTexts, NewBenchmarkRunForm, StageSettings};
+use super::launch::{
+    BriefTexts, NEW_BENCHMARK_RUN, NEW_BENCHMARK_RUN_TITLE, NewBenchmarkRunForm, StageSettings,
+    launch_title,
+};
 use super::making::{
-    self, Answer, Control, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, REQUIRED,
-    both,
+    self, Answer, Control, Field, FieldRefusals, FieldShown, Form, FormTitle, MadeShown, Making,
+    REQUIRED, both,
 };
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
@@ -365,6 +369,8 @@ struct BenchmarkPage {
     stage_settings: Html,
     /// The New task dialog's form.
     new_task: Html,
+    edit_benchmark: EditDialog,
+    edit_benchmark_values: Html,
 }
 
 impl BenchmarkPage {
@@ -469,6 +475,17 @@ impl std::fmt::Display for InBenchmark {
     }
 }
 
+/// The title of the New task dialog of benchmark `benchmark`.
+fn new_task_title(benchmark: impl std::fmt::Display) -> String {
+    format!("New task in {benchmark}")
+}
+
+/// The id of the New task dialog.
+const NEW_TASK: &str = "new-task";
+
+/// The id of its title, a region of Benchmark's stream.
+const NEW_TASK_TITLE: &str = "new-task-title";
+
 /// The region of the New task dialog that holds the button "Add task".
 const NEW_TASK_READY: &str = "new-task-ready";
 
@@ -494,7 +511,7 @@ impl NewTaskForm {
     }
 
     fn title(&self) -> String {
-        format!("New task in {}", self.benchmark)
+        new_task_title(&self.benchmark)
     }
 
     /// The choice of a run, the region of the page's stream that keeps it,
@@ -659,8 +676,9 @@ async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunId> {
 }
 
 /// The page of `benchmark`: its heading, its name with its stage under it
-/// (`docs/specs/benchmarks.md`, Benchmark, Heading), its stream's on the
-/// pages `paging` asks for.
+/// (`docs/specs/benchmarks.md`, Benchmark, Heading), and "Edit" among the
+/// screen's buttons (`docs/specs/design_system.md`, Editing, Edit), its
+/// stream's on the pages `paging` asks for.
 fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
     let heading = Heading {
         line: Some(html::escape(&benchmark.stage.to_string())),
@@ -671,6 +689,7 @@ fn page(benchmark: &Benchmark, paging: Paging, navigation: Navigation) -> Page {
         paging.stream(benchmark.id),
         navigation,
     )
+    .buttons(vec![editing::edit_benchmark_button()])
 }
 
 /// The task, by its ID, that a benchmark's screen says was removed from it,
@@ -811,6 +830,8 @@ async fn benchmark_page_on(
                 brief_texts: html::rendered(&BriefTexts::of(&sources)),
                 stage_settings: html::rendered(&StageSettings::of(&sources, benchmark.stage)),
                 new_task: html::rendered(&new_task),
+                edit_benchmark: editing::edit_benchmark(&benchmark),
+                edit_benchmark_values: html::built(editing::benchmark_values(&benchmark)),
                 path,
                 tab,
                 tab_links,
@@ -852,7 +873,8 @@ async fn benchmark_page_on(
 
 /// The benchmark page's regions: the notices, and once the benchmark reads,
 /// the rest of the shell's, its benchmark runs, whether it offers to launch one, its tasks, and the runs
-/// New task offers and whether it can add one.
+/// New task offers, whether it can add one and its title, New benchmark
+/// run's title, and the values Edit benchmark starts from.
 pub(super) async fn benchmark_events(
     State(sources): State<Sources>,
     Extension(stopping): Extension<CancellationToken>,
@@ -913,6 +935,24 @@ pub(super) async fn benchmark_events(
             ));
             let ready = NewTaskReady::of(&runs);
             regions.push((NEW_TASK_READY, render(&ready)));
+            regions.push((
+                NEW_TASK_TITLE,
+                render(&FormTitle {
+                    dialog: NEW_TASK,
+                    title: new_task_title(&benchmark.name),
+                }),
+            ));
+            regions.push((
+                NEW_BENCHMARK_RUN_TITLE,
+                render(&FormTitle {
+                    dialog: NEW_BENCHMARK_RUN,
+                    title: launch_title(&benchmark.name),
+                }),
+            ));
+            regions.push((
+                editing::EDIT_BENCHMARK_VALUES,
+                editing::benchmark_values(&benchmark),
+            ));
             regions
         }
     };

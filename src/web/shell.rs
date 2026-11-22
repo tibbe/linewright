@@ -274,6 +274,8 @@ pub(super) enum Missing {
     Benchmark(String),
     Task(String),
     BenchmarkRun(String),
+    /// A configuration of a benchmark run, which has no screen of its own.
+    Configuration(String),
 }
 
 impl Missing {
@@ -281,7 +283,10 @@ impl Missing {
     fn name(&self) -> String {
         match self {
             Missing::Item(number) => number.to_string(),
-            Missing::Run(id) | Missing::Benchmark(id) | Missing::Task(id) => id.clone(),
+            Missing::Run(id)
+            | Missing::Benchmark(id)
+            | Missing::Task(id)
+            | Missing::Configuration(id) => id.clone(),
             Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
         }
     }
@@ -295,6 +300,7 @@ impl std::fmt::Display for Missing {
             Missing::Benchmark(id) => write!(f, "No such benchmark {id}"),
             Missing::Task(id) => write!(f, "No such task {id}"),
             Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
+            Missing::Configuration(id) => write!(f, "No such configuration {id}"),
         }
     }
 }

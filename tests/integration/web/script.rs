@@ -1153,6 +1153,73 @@ steps.join("\n")
     );
 }
 
+/// `docs/specs/design_system.md`, Editing, The dialog and Saving: a dialog
+/// that changes a thing opens holding the thing's values as the page's
+/// stream last sent them, whatever the reader typed before, and once saved
+/// holds what was saved until the stream sends it.
+#[test_log::test(tokio::test)]
+async fn an_edit_dialog_opens_holding_the_values_the_stream_last_sent_and_once_saved_what_was_saved()
+ {
+    let page = r#"
+var dialog = Object.assign(element("DIALOG", {}), {
+  open: false,
+  close() { this.open = false; fire("close", event(this)); },
+});
+var editing = Object.assign(element("FORM", { "data-new": "", "data-values": "edit-task-values" }), {
+  method: "post",
+});
+editing.hasAttribute = (name) => name in editing.attributes;
+editing.closest = (selector) => (selector === "dialog" ? dialog : null);
+editing.querySelectorAll = () => [];
+var name = Object.assign(element("INPUT", {}), { name: "name", value: "board" });
+var criteria = Object.assign(element("TEXTAREA", {}), { name: "criteria", value: "Ships." });
+editing.elements = [name, criteria];
+var html = "board|Ships.";
+Object.defineProperty(editing, "innerHTML", {
+  get: () => html,
+  set: (value) => { html = value; [name.value, criteria.value] = value.split("|"); },
+});
+dialog.querySelector = (selector) => (selector === "form[data-new]" ? editing : null);
+var values = element("DIV", { id: "edit-task-values", "data-name": "board", "data-criteria": "Ships." });
+var opening = element("BUTTON", { command: "show-modal", commandfor: "edit-task" });
+opening.closest = (selector) => (selector === "button[command=show-modal]" ? opening : null);
+const others = document.querySelectorAll;
+document.querySelectorAll = (selector) =>
+  selector === "dialog form[data-new]" ? [editing] : others(selector);
+const byId = document.getElementById;
+document.getElementById = (id) =>
+  id === "edit-task" ? dialog : id === "edit-task-values" ? values : byId(id);
+const open = () => { fire("click", event(opening)); dialog.open = true; };
+const shown = () =>
+  `${dialog.open ? "open" : "closed"}: ${name.value}|${criteria.value} (${values.attributes["data-name"]})`;
+"#;
+    let asked = r#"
+const steps = [];
+values.setAttribute("data-name", "Board games");
+open();
+steps.push(shown());
+name.value = "typed"; dialog.close(); open();
+steps.push(shown());
+editing.innerHTML = "Saved|Ships whole."; fire("made", event(editing));
+steps.push(shown());
+open();
+steps.push(shown());
+steps.join("\n")
+"#;
+
+    let steps = with_filters(page, asked).await;
+
+    assert_eq!(
+        steps,
+        [
+            "open: Board games|Ships. (Board games)",
+            "open: Board games|Ships. (Board games)",
+            "closed: Saved|Ships whole. (Saved)",
+            "open: Saved|Ships whole. (Saved)",
+        ]
+    );
+}
+
 /// `docs/specs/design_system.md`, Making, Required and A refusal: the
 /// browser's message for a making dialog's field it finds empty or of white
 /// space alone is "Required.", as the field's hint says, until the reader

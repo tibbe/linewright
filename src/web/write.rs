@@ -1,5 +1,6 @@
-//! The web UI's writes: capturing a run, making a benchmark, removing a task
-//! from one, and launching and cancelling a benchmark run. Each is refused
+//! The web UI's writes: capturing a run, making a benchmark, changing a
+//! benchmark, a task or a configuration, removing a task from its benchmark,
+//! and launching and cancelling a benchmark run. Each is refused
 //! unless its request came from the web UI's own pages, and answered with
 //! what the page says of it.
 
@@ -14,6 +15,8 @@ use super::html;
 pub(super) enum Write {
     Capture,
     MakeBenchmark,
+    /// Changing a thing in the dialog that "Edit" opens.
+    Edit,
     RemoveTask,
     Launch,
     Cancel,
@@ -25,6 +28,7 @@ impl Write {
         match self {
             Write::Capture => "Not captured",
             Write::MakeBenchmark => "Not made",
+            Write::Edit => "Not saved",
             Write::RemoveTask => "Not removed",
             Write::Launch => "Not launched",
             Write::Cancel => "Not cancelled",
@@ -36,6 +40,7 @@ impl Write {
         match self {
             Write::Capture => "a capture",
             Write::MakeBenchmark => "a new benchmark",
+            Write::Edit => "an edit",
             Write::RemoveTask => "a task's removal",
             Write::Launch => "a launch",
             Write::Cancel => "a cancel",

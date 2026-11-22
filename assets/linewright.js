@@ -7,7 +7,8 @@
  * closed it through updates, closes a confirmation as it goes ahead and a
  * dialog that makes a thing once it is made, starts such a dialog's form
  * afresh as it closes, as the answer to the last thing made started it, but
- * for the regions of the stream it holds, says "Required." of such a dialog's
+ * for the regions of the stream it holds, and a dialog that changes a thing
+ * holding its values as the stream last sent them, says "Required." of such a dialog's
  * field the browser finds empty and drops Linewright's refusal of one the
  * reader edits,
  * keeps the options of the page's filters up and
@@ -205,7 +206,8 @@
    * Starts the form of `dialog`, if it is a making dialog's, as it starts,
    * but for the regions of the page's stream it holds, which stay as the
    * stream last sent them (docs/specs/benchmarks.md, New task): its run is
-   * chosen as it starts, the first.
+   * chosen as it starts, the first, and the fields of a dialog that changes
+   * a thing hold its values as the stream last sent them.
    */
   function startAfresh(dialog) {
     const form = dialog?.querySelector?.("form[data-new]");
@@ -217,15 +219,37 @@
       chosenRun = null;
       select.selectedIndex = 0;
     }
+    for (const [field, value] of editedValues(form)) field.value = value;
+  }
+
+  /**
+   * The values of a dialog that changes a thing (docs/specs/design_system.md,
+   * Editing), the element of the page's stream its form's `data-values`
+   * names, which holds each field's value as `data-` and the field's name.
+   */
+  const valuesOf = (form) => document.getElementById(form.getAttribute?.("data-values") || "");
+
+  /** Each field of `form` that its values hold, with its value there. */
+  function editedValues(form) {
+    const values = valuesOf(form);
+    if (!values) return [];
+    return Array.from(form.elements ?? [])
+      .map((field) => [field, values.getAttribute(`data-${field.name}`)])
+      .filter(([field, value]) => field.name && value !== null);
   }
 
   /**
    * Closes a making dialog once its thing is made, its form starting from
-   * then as the answer, swapped in before htmx sends `made`, started it.
+   * then as the answer, swapped in before htmx sends `made`, started it, and
+   * a dialog that changes a thing once it is saved, its values then those
+   * saved until the stream sends them.
    */
   document.addEventListener("made", (event) => {
     const form = event.target;
     if (blanks.has(form)) blanks.set(form, form.innerHTML);
+    for (const [field] of editedValues(form)) {
+      valuesOf(form).setAttribute(`data-${field.name}`, field.value);
+    }
     form?.closest?.("dialog")?.close();
   });
 

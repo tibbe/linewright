@@ -1,0 +1,10 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_form(EDIT_TASK, "Edit task", crate::web::buttons::Verb::Save, making.whole()) %}
+{%- call(attributes) ui::field("edit-task-name", "Name", making.field(&TaskField::Name), crate::web::making::Control::Input) %}
+<input id="edit-task-name" class="input validator w-full" name="name" value="{{ making.fields.name }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field("edit-task-criteria", "Criteria", making.field(&TaskField::Criteria), crate::web::making::Control::Textarea) %}
+<textarea id="edit-task-criteria" class="textarea validator w-full" name="criteria" rows="6"{{ attributes }}>
+{{ making.fields.criteria }}</textarea>
+{%- endcall %}
+{%- endcall %}

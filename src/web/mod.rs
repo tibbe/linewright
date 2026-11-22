@@ -10,6 +10,7 @@ mod buttons;
 mod capture;
 mod cards;
 mod confirmation;
+mod editing;
 mod facts;
 mod html;
 mod icons;
@@ -140,6 +141,10 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(no_such_page).post(benchmark_page::remove_task),
         )
         .route(
+            "/benchmarks/{id}/edit",
+            get(no_such_page).post(editing::save_benchmark),
+        )
+        .route(
             "/benchmarks/{id}/launch",
             get(no_such_page).post(launch::launch),
         )
@@ -148,6 +153,10 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
             get(benchmark_page::benchmark_events),
         )
         .route("/tasks/{id}", get(task_page::task_page))
+        .route(
+            "/tasks/{id}/edit",
+            get(no_such_page).post(editing::save_task),
+        )
         .route("/events/tasks/{id}", get(task_page::task_events))
         .route(
             "/benchmark-runs/{id}",
@@ -156,6 +165,10 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         .route(
             "/events/benchmark-runs/{id}",
             get(benchmark_run_page::benchmark_run_events),
+        )
+        .route(
+            "/benchmark-runs/{id}/configurations/{configuration}",
+            get(no_such_page).post(editing::save_configuration),
         )
         .route(
             "/benchmark-runs/{id}/cancel",
