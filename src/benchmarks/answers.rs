@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::cost::Usd;
 use crate::domain::Timestamp;
 use crate::holds::{BenchmarkRunHold, Hold};
+use crate::name::Name;
 use crate::phrase::Phrase;
 use crate::reconcile::Wait;
 use crate::results::Verdict;
@@ -19,9 +20,8 @@ use crate::task::TaskStage;
 use super::results::{self, Figures, Mean, Results};
 use super::runs::outcome_name;
 use super::{
-    BenchmarkId, BenchmarkName, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState,
-    ConfigurationId, ConfigurationName, NoScore, Repetitions, RunTask, TaskId, TrialEnd,
-    TrialFigures, TrialState,
+    BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ConfigurationId, NoScore,
+    Repetitions, RunTask, TaskId, TrialEnd, TrialFigures, TrialState,
 };
 
 /// A benchmark run's state as it is shown: an open benchmark run runs or waits,
@@ -103,14 +103,14 @@ impl Shown {
 #[derive(Serialize)]
 pub struct BenchmarkOfRun {
     pub id: BenchmarkId,
-    pub name: BenchmarkName,
+    pub name: Name,
 }
 
 /// A configuration of a benchmark run, by its ID.
 #[derive(Serialize)]
 pub struct ConfigurationAnswer {
     pub id: ConfigurationId,
-    pub name: ConfigurationName,
+    pub name: Name,
 }
 
 /// What `benchmark-run show ID` answers.

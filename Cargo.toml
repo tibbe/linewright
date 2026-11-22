@@ -90,6 +90,7 @@ http-body-util = "0.1"
 humantime = "2"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+icu_collator = "2.3"
 jsonschema = { version = "0.61.0", default-features = false }
 percent-encoding = "2.3"
 rayon = "1"

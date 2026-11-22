@@ -36,17 +36,17 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationId,
-    ConfigurationName, RunTask, ScoreFigures, Shown, TaskId, TrialKey, TrialShown, TrialState,
-    dollars, duration, percent, without,
+    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationId, RunTask,
+    ScoreFigures, Shown, TaskId, TrialKey, TrialShown, TrialState, dollars, duration, percent,
+    without,
 };
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
+use crate::name::Name;
 use crate::phrase::Status;
 use crate::results::Leak;
 use crate::runs::RunId;
 use crate::runs::files::RunFiles;
-use crate::task::TaskName;
 use crate::trial::{self, scorer};
 
 /// The status and the word a benchmark run's state shows with: that of the
@@ -280,7 +280,7 @@ struct Tick {
 /// from its place, so that its dot sits at that place.
 struct Point {
     id: String,
-    name: ConfigurationName,
+    name: Name,
     tip: String,
     x: f64,
     y: f64,
@@ -292,12 +292,12 @@ struct Point {
 }
 
 struct Grid {
-    configurations: Vec<ConfigurationName>,
+    configurations: Vec<Name>,
     rows: Vec<GridRow>,
 }
 
 struct GridRow {
-    task: TaskName,
+    task: Name,
     /// For each configuration, its passes, then its leaks and its trials
     /// without a score, if it has any.
     cells: Vec<String>,
@@ -1307,7 +1307,7 @@ impl Of {
 struct TrialAt {
     id: BenchmarkRunId,
     configuration: ConfigurationId,
-    configuration_name: ConfigurationName,
+    configuration_name: Name,
     task: RunTask,
     repetition: NonZeroU32,
     of: Of,

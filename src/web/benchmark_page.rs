@@ -36,18 +36,19 @@ use super::{
 use crate::api::Sources;
 use crate::benchmarks::results;
 use crate::benchmarks::{
-    Benchmark, BenchmarkId, BenchmarkName, BenchmarkRunRecord, BenchmarkRunState, BenchmarkShown,
-    RemoveError, TaskEntry, TaskId, dollars, without,
+    Benchmark, BenchmarkId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkShown, RemoveError,
+    TaskEntry, TaskId, dollars, without,
 };
 use crate::domain::Timestamp;
+use crate::name::Name;
 use crate::phrase::Status;
 use crate::runs::{Recorded, RunId};
-use crate::task::{self, BenchmarkChoice, Refusal, TaskName, TaskStage};
+use crate::task::{self, BenchmarkChoice, Refusal, TaskStage};
 
 /// A task's row.
 struct TaskRow {
     id: TaskId,
-    name: TaskName,
+    name: Name,
     run: RunId,
     run_href: String,
     criteria: CriteriaShown,
@@ -367,13 +368,6 @@ impl Paging {
     }
 }
 
-/// A run New task offers to capture.
-struct RunChoice {
-    id: RunId,
-    /// The name the dialog suggests for its task.
-    name: TaskName,
-}
-
 #[derive(Template, WebTemplate)]
 #[template(path = "benchmark.html")]
 struct BenchmarkPage {
@@ -477,23 +471,9 @@ impl CapturingField for NewTaskField {
     }
 }
 
-impl NewTaskFields {
-    /// The fields as they start: the latest run of `runs`, and the name
-    /// suggested for it.
-    fn starting(runs: &[RunChoice]) -> NewTaskFields {
-        NewTaskFields {
-            name: runs
-                .first()
-                .map(|run| run.name.to_string())
-                .unwrap_or_default(),
-            ..NewTaskFields::default()
-        }
-    }
-}
-
 /// The benchmark a making dialog makes a thing in, as its title names it.
 pub(super) enum InBenchmark {
-    Found(BenchmarkName),
+    Found(Name),
     /// One that is not found, by the ID its path gives.
     Asked(String),
 }
@@ -527,7 +507,7 @@ pub(super) struct NewTaskForm {
     benchmark: InBenchmark,
     making: Making<NewTaskFields>,
     /// The runs of the benchmark's stage that can be captured, latest first.
-    runs: Vec<RunChoice>,
+    runs: Vec<RunId>,
 }
 
 impl NewTaskForm {
@@ -536,7 +516,7 @@ impl NewTaskForm {
         let runs = runs_of(sources, benchmark.stage).await;
         NewTaskForm {
             benchmark: InBenchmark::Found(benchmark.name.clone()),
-            making: Making::of(NewTaskFields::starting(&runs)),
+            making: Making::of(NewTaskFields::default()),
             runs,
         }
     }
@@ -580,7 +560,7 @@ impl NewTaskForm {
 #[derive(Template)]
 #[template(path = "new_task_runs.html")]
 struct NewTaskRuns<'a> {
-    runs: &'a [RunChoice],
+    runs: &'a [RunId],
     chosen: Option<&'a RunId>,
     attributes: &'a Html,
 }
@@ -607,7 +587,7 @@ struct NewTaskReady {
 }
 
 impl NewTaskReady {
-    fn of(runs: &[RunChoice]) -> NewTaskReady {
+    fn of(runs: &[RunId]) -> NewTaskReady {
         NewTaskReady {
             disabled: runs.is_empty(),
         }
@@ -686,7 +666,7 @@ fn of_stage(recorded: Vec<Recorded>, stage: TaskStage) -> Vec<RunId> {
 
 /// The runs of `stage` that can be captured, latest first. Runs that do not
 /// read are logged and left out.
-async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunChoice> {
+async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunId> {
     let recorded = match sources.runs.read().await {
         Ok(recorded) => recorded,
         Err(e) => {
@@ -697,10 +677,7 @@ async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunChoice> {
     let mut runs = vec![];
     for id in of_stage(recorded, stage) {
         match task::capturable_run(&sources.runs, &id).await {
-            Ok(_) => runs.push(RunChoice {
-                name: TaskName::suggested(&id),
-                id,
-            }),
+            Ok(_) => runs.push(id),
             Err(e) if e.refusal() == Refusal::Failed => {
                 warn!(run = %id, error = e.why(), "reading whether a run can be captured failed");
             }
@@ -1000,7 +977,7 @@ pub(super) async fn add_task(
     let choice = BenchmarkChoice::Existing(benchmark.id);
     match capture_run(&sources, &served, &run, &choice, task).await {
         Ok(_) => {
-            form.making = Making::of(NewTaskFields::starting(&form.runs));
+            form.making = Making::of(NewTaskFields::default());
             Answer::Made {
                 blank: form,
                 shown: MadeShown::OnScreen,

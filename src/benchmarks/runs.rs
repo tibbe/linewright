@@ -13,13 +13,14 @@ use serde::Serialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row as _, SqliteConnection};
 
-use crate::benchmarks::{Benchmark, BenchmarkId, BenchmarkName, TaskId};
+use crate::benchmarks::{Benchmark, BenchmarkId, TaskId};
 use crate::cost::Usd;
 use crate::database::{self, Database};
 use crate::domain::Timestamp;
+use crate::name::Name;
 use crate::results::Verdict;
 use crate::runs::{Ending, OutcomeName, Unended};
-use crate::task::{self, TaskName};
+use crate::task;
 use crate::tree;
 use crate::trial::{self, Configuration};
 
@@ -56,43 +57,10 @@ impl BenchmarkRunId {
     }
 }
 
-/// A configuration's name in a benchmark run: one or more lowercase letters,
-/// digits and hyphens, starting with a letter or a digit.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ConfigurationName(String);
-
-impl ConfigurationName {
-    /// The name of the configuration that holds nothing, first in every
-    /// benchmark run.
-    pub const AS_IS: &str = "as-is";
-
-    pub fn as_is() -> ConfigurationName {
-        ConfigurationName(Self::AS_IS.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for ConfigurationName {
-    type Err = String;
-
-    fn from_str(name: &str) -> Result<ConfigurationName, String> {
-        task::check_name(name, "a configuration's").map(|()| ConfigurationName(name.to_string()))
-    }
-}
-
-impl fmt::Display for ConfigurationName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl Serialize for ConfigurationName {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
+/// The name of the configuration that holds nothing, first in every
+/// benchmark run.
+pub fn as_is_name() -> Name {
+    Name::parse("as-is").expect("as-is is a name")
 }
 
 /// A configuration's ID: its place in its benchmark run, from 1 for `as-is`
@@ -138,7 +106,7 @@ impl fmt::Display for ConfigurationId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RunTask {
     pub id: TaskId,
-    pub name: TaskName,
+    pub name: Name,
 }
 
 /// How many times a benchmark run runs each task under each configuration.
@@ -403,7 +371,7 @@ pub struct BenchmarkRunRecord {
     /// The benchmark's tasks at the launch, in its order.
     pub tasks: Vec<RunTask>,
     /// In the order of their IDs, `as-is` first.
-    pub configurations: Vec<ConfigurationName>,
+    pub configurations: Vec<Name>,
     /// Every trial, in start order, each of a task and a configuration of
     /// the benchmark run's.
     pub trials: BTreeMap<TrialKey, TrialState>,
@@ -436,7 +404,7 @@ impl BenchmarkRunRecord {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TrialOf<'a> {
     pub configuration: ConfigurationId,
-    pub configuration_name: &'a ConfigurationName,
+    pub configuration_name: &'a Name,
     pub task: &'a RunTask,
 }
 
@@ -456,9 +424,9 @@ pub enum LaunchRefusal {
     #[error("there is no benchmark {0}")]
     NoSuchBenchmark(BenchmarkId),
     #[error("the benchmark {0} has no tasks")]
-    NoTasks(BenchmarkName),
+    NoTasks(Name),
     #[error("two configurations are named {0}")]
-    DuplicateConfiguration(ConfigurationName),
+    DuplicateConfiguration(Name),
     #[error(transparent)]
     Failed(#[from] anyhow::Error),
 }
@@ -607,11 +575,11 @@ impl BenchmarkRuns {
     pub async fn launch(
         &self,
         benchmark: BenchmarkId,
-        configurations: Vec<(ConfigurationName, Configuration)>,
+        configurations: Vec<(Name, Configuration)>,
         repetitions: Repetitions,
         at: Timestamp,
     ) -> Result<Launched, LaunchRefusal> {
-        let mut names = BTreeSet::from([ConfigurationName::as_is()]);
+        let mut names = BTreeSet::from([as_is_name()]);
         for (name, _) in &configurations {
             if !names.insert(name.clone()) {
                 return Err(LaunchRefusal::DuplicateConfiguration(name.clone()));
@@ -631,10 +599,9 @@ impl BenchmarkRuns {
             .build(&tasks, &configurations)
             .await
             .context(launching.clone())?;
-        let configuration_names: Vec<ConfigurationName> =
-            std::iter::once(ConfigurationName::as_is())
-                .chain(configurations.into_iter().map(|(name, _)| name))
-                .collect();
+        let configuration_names: Vec<Name> = std::iter::once(as_is_name())
+            .chain(configurations.into_iter().map(|(name, _)| name))
+            .collect();
         self.keep(
             benchmark,
             &tasks,
@@ -653,7 +620,7 @@ impl BenchmarkRuns {
     async fn build(
         &self,
         tasks: &[TaskId],
-        configurations: &[(ConfigurationName, Configuration)],
+        configurations: &[(Name, Configuration)],
     ) -> Result<Built> {
         let benchmark_runs_dir = self.benchmark_runs_dir();
         std::fs::create_dir_all(&benchmark_runs_dir)
@@ -689,7 +656,7 @@ impl BenchmarkRuns {
         &self,
         benchmark: BenchmarkId,
         tasks: &[TaskId],
-        configurations: &[ConfigurationName],
+        configurations: &[Name],
         repetitions: Repetitions,
         at: Timestamp,
         built: Built,
@@ -1152,7 +1119,7 @@ async fn insert_benchmark_run(
     id: BenchmarkRunId,
     benchmark: BenchmarkId,
     tasks: &[TaskId],
-    configurations: &[ConfigurationName],
+    configurations: &[Name],
     repetitions: Repetitions,
     at: Timestamp,
 ) -> Result<usize> {
@@ -1215,11 +1182,6 @@ fn place(seq: i64) -> Result<usize> {
     usize::try_from(seq).with_context(|| format!("{seq} is not a place in a list"))
 }
 
-/// A name a row keeps, parsed.
-fn parsed<T: std::str::FromStr<Err = String>>(name: &str) -> Result<T> {
-    name.parse().map_err(anyhow::Error::msg)
-}
-
 /// A benchmark run's row with its benchmark's: the benchmark's ID, name and
 /// stage, then the benchmark run's launch, repetitions, state and end.
 type BenchmarkRunRow = (i64, String, String, String, i64, String, Option<String>);
@@ -1274,15 +1236,15 @@ async fn read_record(
                 let task = TaskId::from_row(task)?;
                 Ok(RunTask {
                     id: task,
-                    name: parsed(
+                    name: Name::parse(
                         &task_name.with_context(|| format!("the task {task} has no name"))?,
                     )?,
                 })
             })
             .collect::<Result<_>>()?;
-        let configurations: Vec<ConfigurationName> = configurations
+        let configurations: Vec<Name> = configurations
             .iter()
-            .map(|name| parsed(name))
+            .map(|name| Ok(Name::parse(name)?))
             .collect::<Result<_>>()?;
         let trials: BTreeMap<TrialKey, TrialState> =
             trials.iter().map(decode).collect::<Result<_>>()?;

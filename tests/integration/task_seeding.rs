@@ -13,13 +13,13 @@ use linewright::clock::RunningFrom;
 use linewright::domain::{MergeMethod, Number, Scope, Windows, label};
 use linewright::git::CommitId;
 use linewright::input;
+use linewright::name::Name;
 use linewright::reconcile::Work;
 use linewright::spec_gap;
 use linewright::store::local::LocalStore;
 use linewright::store::{NewIssue, NewPull, Store};
 use linewright::task::{
-    self, BenchmarkChoice, Criteria, Merge, Task, TaskItemKind, TaskName, TaskPart, TaskPull,
-    TaskPullState,
+    self, BenchmarkChoice, Criteria, Merge, Task, TaskItemKind, TaskPart, TaskPull, TaskPullState,
 };
 
 /// A design run on the first ticket of a spec change cut into tickets,
@@ -64,7 +64,7 @@ fn design_task() -> impl Future<Output = DesignTask> {
         design_issues(&world);
         world.poll().await;
         let work = world.dir.path().join("work");
-        let name: TaskName = ok("design".parse(), caller, "the name");
+        let name: Name = ok("design".parse(), caller, "the name");
         let run = ok(
             format!("{}/design-1", ticket.0).parse(),
             caller,

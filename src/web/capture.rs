@@ -18,9 +18,10 @@ use super::write::Write;
 use super::{benchmark_tab_path, benchmarks, run_path};
 use crate::api::{Served, Sources};
 use crate::benchmarks::{Benchmark, Benchmarks};
+use crate::name::Name;
 use crate::runs::RunId;
 use crate::task::{
-    self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskName, TaskStage, capturable_stage,
+    self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskStage, capturable_stage,
 };
 
 /// The id of the capture's dialog, which "Add task" opens.
@@ -198,8 +199,7 @@ pub(super) struct CaptureForm {
 
 impl CaptureForm {
     /// The form of the capture of `run` as it starts, offering `benchmarks`:
-    /// the first of them chosen, or else a new one, and the name suggested
-    /// for `run`.
+    /// the first of them chosen, or else a new one, and the name empty.
     fn blank(run: &RunId, benchmarks: Vec<Benchmark>) -> CaptureForm {
         CaptureForm {
             path: run_path(run),
@@ -210,7 +210,7 @@ impl CaptureForm {
                     .unwrap_or_default(),
                 new_benchmark: String::new(),
                 task: TaskFields {
-                    name: TaskName::suggested(run).to_string(),
+                    name: String::new(),
                     criteria: String::new(),
                 },
             }),
@@ -275,7 +275,7 @@ impl TaskFields {
 
 /// A task a capture makes.
 pub(super) struct Task {
-    name: TaskName,
+    name: Name,
     criteria: Criteria,
 }
 
@@ -376,7 +376,7 @@ async fn capture_sent(
 /// A run captured as a task.
 pub(super) struct Captured {
     /// The task's name.
-    name: TaskName,
+    name: Name,
     /// The benchmark it was captured into.
     benchmark: Benchmark,
     /// Whether the capture made the benchmark.

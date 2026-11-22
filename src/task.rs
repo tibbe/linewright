@@ -11,12 +11,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::benchmarks::{
-    Benchmark, BenchmarkId, BenchmarkName, Benchmarks, ChosenBenchmark, KeptTask,
-};
+use crate::benchmarks::{Benchmark, BenchmarkId, Benchmarks, ChosenBenchmark, KeptTask};
 use crate::domain::{Number, Timestamp};
 use crate::git::{self, CommitId};
 use crate::input::Input;
+use crate::name::Name;
 use crate::reconcile::{Work, WorkKind};
 use crate::runs::{RunId, RunOf, Runs};
 use crate::store::{Properties, RecordedItem, RecordedProperties, Store, properties};
@@ -27,64 +26,6 @@ pub use item::{IssueState, Merge, TaskItem, TaskItemKind, TaskPull, TaskPullStat
 
 /// The directory, under the work directory, that holds the tasks.
 pub const TASKS: &str = "tasks";
-
-/// A task's name: one or more lowercase letters, digits and hyphens,
-/// starting with a letter or a digit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TaskName(String);
-
-impl TaskName {
-    /// The letters and digits of `run`'s ID joined by hyphens, such as
-    /// `43-implement-2` for `43/implement-2`.
-    pub fn suggested(run: &RunId) -> TaskName {
-        let id = run.to_string().to_ascii_lowercase();
-        let words: Vec<&str> = id
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .collect();
-        TaskName(words.join("-"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for TaskName {
-    type Err = String;
-
-    fn from_str(name: &str) -> Result<TaskName, String> {
-        check_name(name, "a task's").map(|()| TaskName(name.to_string()))
-    }
-}
-
-/// Refuses `name` as `whose` name, such as "a task's", unless it is one or
-/// more lowercase letters, digits and hyphens, starting with a letter or a
-/// digit.
-pub(crate) fn check_name(name: &str, whose: &str) -> Result<(), String> {
-    let letter_or_digit = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
-    let mut chars = name.chars();
-    if !chars.next().is_some_and(letter_or_digit) || !chars.all(|c| letter_or_digit(c) || c == '-')
-    {
-        return Err(format!(
-            "{name:?} is not {whose} name: it is lowercase letters, digits and hyphens, \
-             starting with a letter or a digit"
-        ));
-    }
-    Ok(())
-}
-
-impl Serialize for TaskName {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl fmt::Display for TaskName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 /// What a good result is, in the capturer's words: text holding something
 /// other than white space, for criteria that hold only white space are no
@@ -150,14 +91,11 @@ pub enum CaptureError {
     #[error("the run {run}'s record lacks the {part}, so it cannot be captured")]
     Lacks { run: RunId, part: TaskPart },
     #[error("a task named {task} already exists in {benchmark}")]
-    Taken {
-        task: TaskName,
-        benchmark: BenchmarkName,
-    },
+    Taken { task: Name, benchmark: Name },
     #[error("there is no benchmark {0}")]
     NoSuchBenchmark(BenchmarkId),
     #[error("a benchmark is already named {0}")]
-    BenchmarkTaken(BenchmarkName),
+    BenchmarkTaken(Name),
     #[error(
         "the benchmark {} holds tasks of {}, and the run {run} is of {stage}",
         benchmark.name,
@@ -315,14 +253,14 @@ pub enum BenchmarkChoice {
     /// A benchmark there is.
     Existing(BenchmarkId),
     /// A benchmark made, of the run's stage, as the task is captured into it.
-    New(BenchmarkName),
+    New(Name),
 }
 
 /// A run that can be captured, with what it is to be captured as.
 #[derive(Debug)]
 pub struct Capturable {
     run: CapturableRun,
-    name: TaskName,
+    name: Name,
     benchmark: ChosenBenchmark,
 }
 
@@ -340,7 +278,7 @@ pub async fn capturable(
     runs: &Runs,
     benchmarks: &Benchmarks,
     run: &RunId,
-    name: &TaskName,
+    name: &Name,
     choice: &BenchmarkChoice,
 ) -> Result<Capturable, CaptureError> {
     let run = capturable_run(runs, run).await?;
@@ -909,28 +847,6 @@ mod tests {
     use super::*;
 
     #[test_log::test]
-    fn a_name_is_lowercase_letters_digits_and_hyphens_starting_with_a_letter_or_a_digit() {
-        for name in ["gadgets", "43-implement-2", "7", "gadgets-"] {
-            assert_eq!(
-                name.parse::<TaskName>().map(|n| n.to_string()),
-                Ok(name.into())
-            );
-        }
-        for name in [
-            "",
-            "-",
-            "-gadgets",
-            "Gadgets",
-            "gadgets_1",
-            "gadgets 1",
-            "../gadgets",
-            "gädgets",
-        ] {
-            assert!(name.parse::<TaskName>().is_err(), "{name:?}");
-        }
-    }
-
-    #[test_log::test]
     fn criteria_hold_something_other_than_white_space() {
         for text in ["A good result adds gadgets.\n", "  x  ", "\n\t-\n"] {
             assert_eq!(
@@ -956,14 +872,6 @@ mod tests {
         for id in ["9/rework-1", "9/fix-ci-1", "9/update-1", "hourly.md/1"] {
             assert_eq!(stage_of(id), None, "{id}");
         }
-    }
-
-    #[test_log::test]
-    fn the_suggested_name_is_the_run_ids_letters_and_digits_joined_by_hyphens() {
-        let suggested = |id: &str| TaskName::suggested(&id.parse().unwrap()).to_string();
-
-        assert_eq!(suggested("43/implement-2"), "43-implement-2");
-        assert_eq!(suggested("812/design-1"), "812-design-1");
     }
 
     #[track_caller]

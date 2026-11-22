@@ -7,20 +7,19 @@ use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::automation::AutomationName;
-use crate::benchmarks::{
-    BenchmarkId, BenchmarkName, BenchmarkRunId, ConfigurationName, Repetitions, TaskId,
-};
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, Repetitions, TaskId};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
 use crate::host::UiHosts;
 use crate::layer::{self, Layer};
 use crate::logs::Which;
+use crate::name::Name;
 use crate::reconcile::WorkKind;
 use crate::runs::{RepoWorkDir, RunId};
 use crate::secrets;
 use crate::session_env::{PassEnv, SessionEnv, SetEnv};
 use crate::spec_glob::SpecGlob;
-use crate::task::{TaskName, TaskStage};
+use crate::task::TaskStage;
 use crate::variable_names::{self, VariableNames};
 use crate::web;
 use crate::webhook::{self, Webhooks};
@@ -172,10 +171,9 @@ pub enum Command {
         /// The ID of the benchmark the task goes into: one of the run's stage.
         #[arg(long)]
         benchmark: BenchmarkId,
-        /// The task's name: lowercase letters, digits and hyphens, starting
-        /// with a letter or a digit.
+        /// The task's name: one line of any text, refused when blank.
         #[arg(long)]
-        name: TaskName,
+        name: Name,
         /// What a good result is, as `criteria.md` in the task: refused
         /// when it holds only white space.
         #[arg(long, value_name = "FILE")]
@@ -236,12 +234,11 @@ pub enum BenchmarkRunCommand {
     /// BENCHMARK, under `as-is` and each configuration given.
     Launch {
         benchmark: BenchmarkId,
-        /// A configuration named NAME, of lowercase letters, digits and
-        /// hyphens starting with a letter or a digit, laid out in the
-        /// directory DIR as a repository's `.linewright/`: its `config.toml`
-        /// and the files of its `briefs/`.
+        /// A configuration named NAME, the text before the first `=`, laid
+        /// out in the directory DIR as a repository's `.linewright/`: its
+        /// `config.toml` and the files of its `briefs/`.
         #[arg(long = "configuration", value_name = "NAME=DIR", value_parser = parse_configuration)]
-        configurations: Vec<(ConfigurationName, PathBuf)>,
+        configurations: Vec<(Name, PathBuf)>,
         /// How many trials to make of each task under each configuration.
         #[arg(long, value_name = "N", default_value = "1")]
         repetitions: Repetitions,
@@ -258,15 +255,18 @@ pub enum BenchmarkRunCommand {
     },
 }
 
-/// A configuration given as `NAME=DIR`.
-fn parse_configuration(value: &str) -> Result<(ConfigurationName, PathBuf), String> {
+/// A configuration given as `NAME=DIR`, NAME the text before the first `=`.
+fn parse_configuration(value: &str) -> Result<(Name, PathBuf), String> {
     let (name, dir) = value
         .split_once('=')
         .ok_or_else(|| format!("{value:?} is not NAME=DIR"))?;
     if dir.is_empty() {
         return Err(format!("{value:?} names no directory"));
     }
-    Ok((name.parse()?, PathBuf::from(dir)))
+    Ok((
+        Name::parse(name).map_err(|e| e.to_string())?,
+        PathBuf::from(dir),
+    ))
 }
 
 #[derive(Subcommand, Debug)]
@@ -282,9 +282,8 @@ pub enum BenchmarkCommand {
     /// Make the benchmark NAME, of the stage STAGE: triage, design or
     /// implement, and write its ID.
     Add {
-        /// Lowercase letters, digits and hyphens, starting with a letter or a
-        /// digit.
-        name: BenchmarkName,
+        /// One line of any text, refused when blank.
+        name: Name,
         stage: TaskStage,
         /// Print the answer as JSON.
         #[arg(long)]

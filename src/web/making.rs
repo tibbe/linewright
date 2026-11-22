@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 
 use super::html::{self, Html};
 use super::render;
-use crate::benchmarks::BenchmarkName;
+use crate::name::{Name, NameRefusal};
 
 /// A dialog's fields as the reader left them, with the fields it draws.
 pub(super) trait Form: Default {
@@ -280,23 +280,22 @@ fn made_said(said: &Html) -> String {
 /// (`docs/specs/design_system.md`, Making, Required).
 pub(super) const REQUIRED: &str = "Required.";
 
-/// The refusal of a name not in the form of a name
-/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
-pub(super) const NOT_A_NAME: &str =
-    "A name holds only lowercase letters, digits and hyphens, and starts with a letter or a digit.";
+/// The refusal of a name of more than one line (`docs/specs/benchmarks.md`,
+/// Names and IDs).
+const ONE_LINE: &str = "A name is one line.";
 
-/// The name `sent`, or else its refusal: [`REQUIRED`] while it is empty or
-/// holds only white space, and otherwise [`NOT_A_NAME`] while it is not in
-/// the form of a name.
-pub(super) fn parse_name<N: std::str::FromStr>(sent: &str) -> Result<N, &'static str> {
-    if sent.trim().is_empty() {
-        return Err(REQUIRED);
-    }
-    sent.parse().map_err(|_| NOT_A_NAME)
+/// The name `sent` (`docs/specs/benchmarks.md`, Names and IDs), or else its
+/// refusal: [`REQUIRED`] while it is empty or holds only white space, and
+/// [`ONE_LINE`] while it holds a line break.
+pub(super) fn parse_name(sent: &str) -> Result<Name, &'static str> {
+    Name::parse(sent).map_err(|refusal| match refusal {
+        NameRefusal::Blank => REQUIRED,
+        NameRefusal::LineBreak => ONE_LINE,
+    })
 }
 
 /// The refusal of a benchmark named as one that exists
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
-pub(super) fn benchmark_taken(name: &BenchmarkName) -> String {
+pub(super) fn benchmark_taken(name: &Name) -> String {
     format!("A benchmark named {name} already exists.")
 }

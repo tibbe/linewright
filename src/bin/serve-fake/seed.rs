@@ -9,13 +9,14 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
-    BenchmarkId, BenchmarkName, BenchmarkRuns, Benchmarks, RunTask, ScoreFigures, TrialChange,
-    TrialFigures, TrialRef,
+    BenchmarkId, BenchmarkRuns, Benchmarks, RunTask, ScoreFigures, TrialChange, TrialFigures,
+    TrialRef,
 };
 use linewright::cost::Usd;
 use linewright::database::Database;
 use linewright::domain::{Login, MergeMethods, Number, Timestamp, label};
 use linewright::input::{self, Wanted};
+use linewright::name::Name;
 use linewright::results::Verdict;
 use linewright::runs::{Ending, OutcomeName, RunId, Runs};
 use linewright::store::local::{LocalStore, Seed};
@@ -213,14 +214,14 @@ pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
         let input = input::record(store, &wanted, start).await?;
         record_run(work_dir, task, start, &serde_json::to_string(&input)?).await?;
     }
-    let board: BenchmarkName = BOARD.parse().map_err(anyhow::Error::msg)?;
+    let board = Name::parse(BOARD)?;
     let board = benchmarks.make(&board, TaskStage::Design).await?.id;
     for task in &BOARD_TASKS {
         let capturable = task::capturable(
             &runs,
             &benchmarks,
             &run_of(task)?,
-            &task.name.parse().map_err(anyhow::Error::msg)?,
+            &Name::parse(task.name)?,
             &BenchmarkChoice::Existing(board),
         )
         .await
@@ -230,7 +231,7 @@ pub async fn benchmarks(store: &LocalStore, work_dir: &Path) -> Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!(e.why()))?;
     }
-    let empty: BenchmarkName = EMPTY_BENCHMARK.parse().map_err(anyhow::Error::msg)?;
+    let empty = Name::parse(EMPTY_BENCHMARK)?;
     benchmarks.make(&empty, TaskStage::Triage).await?;
     let benchmark_runs = BenchmarkRuns::new(runs.database().clone());
     benchmark_run(&benchmark_runs, board).await?;
@@ -355,7 +356,7 @@ async fn benchmark_run(benchmark_runs: &BenchmarkRuns, board: BenchmarkId) -> Re
     let launched = benchmark_runs
         .launch(
             board,
-            vec![("terse".parse().map_err(anyhow::Error::msg)?, terse)],
+            vec![(Name::parse("terse")?, terse)],
             NonZeroU32::new(2).context("two repetitions")?,
             launched_at,
         )

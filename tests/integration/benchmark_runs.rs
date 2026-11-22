@@ -63,7 +63,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
     let configurations = tempfile::tempdir().unwrap();
-    let short = short(configurations.path());
+    let short = short(&configurations.path().join("a=b"));
 
     let output = lw_in(
         work_dir.path(),
@@ -72,7 +72,7 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
             "launch",
             "1",
             "--configuration",
-            &format!("short={}", short.display()),
+            &format!("Haiku, für <b>={}", short.display()),
             "--repetitions",
             "2",
         ],
@@ -103,6 +103,12 @@ async fn lw_benchmark_run_launch_keeps_a_copy_of_each_task_and_configuration() {
     assert_eq!(
         std::fs::read_to_string(kept.join("configurations/2/config.toml")).unwrap(),
         "model = \"haiku\"\n"
+    );
+    let shown = lw_in(work_dir.path(), &["benchmark-run", "show", "1", "--json"]).await;
+    let shown: serde_json::Value = serde_json::from_str(&shown.stdout).unwrap();
+    assert_eq!(
+        shown["configurations"],
+        json!([{"id": 1, "name": "as-is"}, {"id": 2, "name": "Haiku, für <b>"}])
     );
 }
 
@@ -236,7 +242,7 @@ async fn lw_benchmark_run_launch_of_a_wrong_configuration_or_repetitions_is_a_co
     .await;
     let named = lw_in(
         work_dir.path(),
-        &["benchmark-run", "launch", "1", "--configuration", "Short=x"],
+        &["benchmark-run", "launch", "1", "--configuration", " =x"],
     )
     .await;
     let none = lw_in(

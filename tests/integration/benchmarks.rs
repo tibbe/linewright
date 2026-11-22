@@ -80,12 +80,11 @@ async fn lw_benchmark_add_of_a_name_a_benchmark_has_exits_1_saying_why() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_name_not_a_benchmarks_is_a_command_line_error()
- {
+async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_blank_name_is_a_command_line_error() {
     let work_dir = tempfile::tempdir().unwrap();
 
     let rework = lw_in(work_dir.path(), &["benchmark", "add", "board", "rework"]).await;
-    let named = lw_in(work_dir.path(), &["benchmark", "add", "Board", "design"]).await;
+    let named = lw_in(work_dir.path(), &["benchmark", "add", " \t", "design"]).await;
 
     assert_eq!(rework.code, Some(2), "{}", rework.stderr);
     assert!(
@@ -97,9 +96,46 @@ async fn lw_benchmark_add_of_a_stage_no_task_has_or_a_name_not_a_benchmarks_is_a
     assert!(
         named
             .stderr
-            .contains("lowercase letters, digits and hyphens"),
+            .contains("it holds only white space, which is no name"),
         "{}",
         named.stderr
+    );
+}
+
+/// `docs/specs/benchmarks.md`, Names and IDs.
+#[test_log::test(tokio::test)]
+async fn lw_benchmark_add_takes_a_name_in_plain_words_and_tells_letter_case_apart() {
+    let work_dir = tempfile::tempdir().unwrap();
+
+    let plain = lw_in(
+        work_dir.path(),
+        &[
+            "benchmark",
+            "add",
+            "Design an HTTP <cache>, für Bilder",
+            "design",
+        ],
+    )
+    .await;
+    let upper = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
+    let lower = lw_in(work_dir.path(), &["benchmark", "add", "board", "triage"]).await;
+    let again = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
+
+    assert_eq!(plain.code, Some(0), "{}", plain.stderr);
+    assert_eq!(
+        plain.stdout,
+        "Made the benchmark 1 (Design an HTTP <cache>, für Bilder), of design\n"
+    );
+    assert_eq!(upper.code, Some(0), "{}", upper.stderr);
+    assert_eq!(lower.code, Some(0), "{}", lower.stderr);
+    assert_eq!(again.code, Some(1), "{}", again.stderr);
+    assert_eq!(again.stderr, "lw: a benchmark is already named Board\n");
+    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    assert_eq!(
+        listed.stdout,
+        "3 (board): triage, no tasks\n\
+         2 (Board): triage, no tasks\n\
+         1 (Design an HTTP <cache>, für Bilder): design, no tasks\n"
     );
 }
 

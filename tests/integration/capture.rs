@@ -5,12 +5,13 @@ use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use common::*;
-use linewright::benchmarks::{BenchmarkId, BenchmarkName, Benchmarks, KeptTask, MakeError};
+use linewright::benchmarks::{BenchmarkId, Benchmarks, KeptTask, MakeError};
 use linewright::domain::Number;
 use linewright::git::{self, CommitId};
+use linewright::name::Name;
 use linewright::runs::{RunId, Runs};
 use linewright::store::API_VERSION;
-use linewright::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskName, TaskStage};
+use linewright::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskStage};
 use serde_json::{Value, json};
 
 const SECRET: &str = "s3cr3t-of-the-maintainer";
@@ -102,7 +103,7 @@ fn capture_into<'a>(
     criteria: &str,
     benchmark: BenchmarkChoice,
 ) -> impl Future<Output = Result<KeptTask, CaptureError>> + 'a {
-    let named: TaskName = named.parse().unwrap();
+    let named: Name = named.parse().unwrap();
     let criteria = Criteria::parse(criteria).unwrap();
     let run = id(run);
     let benchmarks = benchmarks(world);
@@ -471,6 +472,57 @@ async fn a_name_another_task_of_the_benchmark_has_is_refused_and_the_task_kept()
     assert_eq!(entries(&tasks(&world)), BTreeSet::from(["1".to_string()]));
 }
 
+/// `docs/specs/benchmarks.md`, Names and IDs.
+#[test_log::test(tokio::test)]
+async fn tasks_are_named_in_plain_words_and_names_of_other_letter_case_are_two() {
+    let mut world = World::new().await;
+    let run = implemented(&mut world).await;
+    capture(
+        &world,
+        &run,
+        "Design an HTTP <cache>, für Bilder",
+        "First.\n",
+    )
+    .await
+    .unwrap();
+    capture(
+        &world,
+        &run,
+        "design an HTTP <cache>, für Bilder",
+        "Second.\n",
+    )
+    .await
+    .unwrap();
+
+    let refused = capture(
+        &world,
+        &run,
+        "Design an HTTP <cache>, für Bilder",
+        "Third.\n",
+    )
+    .await;
+
+    assert_eq!(
+        refused.unwrap_err().to_string(),
+        "a task named Design an HTTP <cache>, für Bilder already exists in implements"
+    );
+    assert_eq!(
+        tasks_of(&world, IMPLEMENTS).await,
+        Some(vec![
+            (
+                "Design an HTTP <cache>, für Bilder".into(),
+                run.clone(),
+                "First.\n".into()
+            ),
+            (
+                "design an HTTP <cache>, für Bilder".into(),
+                run,
+                "Second.\n".into()
+            ),
+        ])
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn two_benchmarks_each_hold_a_task_of_one_name() {
     let mut world = World::new().await;
@@ -574,7 +626,7 @@ fn tasks_of<'a>(
     name: &str,
 ) -> impl Future<Output = Option<Vec<(String, String, String)>>> + 'a {
     let caller = Location::caller();
-    let name: BenchmarkName = name.parse().unwrap();
+    let name: Name = name.parse().unwrap();
     async move {
         let benchmarks = benchmarks(world).await;
         let found = benchmarks
@@ -601,7 +653,7 @@ fn tasks_of<'a>(
 }
 
 #[track_caller]
-fn benchmark(name: &str) -> BenchmarkName {
+fn benchmark(name: &str) -> Name {
     name.parse().unwrap()
 }
 
@@ -899,16 +951,16 @@ fn lw_capture<'a>(
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_refuses_a_name_of_other_than_lowercase_letters_digits_and_hyphens() {
+async fn lw_capture_refuses_a_blank_name() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let output = lw_capture(work_dir.path(), "7/implement-1", "Gadgets_1", "Gadgets.\n").await;
+    let output = lw_capture(work_dir.path(), "7/implement-1", " \t ", "Gadgets.\n").await;
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(
         output
             .stderr
-            .contains("lowercase letters, digits and hyphens"),
+            .contains("it holds only white space, which is no name"),
         "{}",
         output.stderr
     );
