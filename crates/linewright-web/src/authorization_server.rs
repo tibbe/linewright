@@ -25,7 +25,6 @@ use linewright_core::access::oauth::{
     RegistrationRequest, SentBack, Server, TokenForm, TokenRequest, check_authorize, client_name,
     registration,
 };
-use linewright_core::access::sessions::Resolved;
 use linewright_core::api::Sources;
 
 use super::caller::{CrossSite, session_cookie, sessions};
@@ -269,15 +268,10 @@ async fn browser_caller(sources: &Sources, headers: &HeaderMap) -> anyhow::Resul
     let Some(cookie) = session_cookie(headers) else {
         return Ok(None);
     };
-    Ok(
-        match sessions(sources)
-            .resolve(&cookie, sources.clock.now())
-            .await?
-        {
-            Resolved::Caller(caller) => Some(caller),
-            Resolved::Ended | Resolved::NoOne => None,
-        },
-    )
+    Ok(sessions(sources)
+        .resolve(&cookie, sources.clock.now())
+        .await?
+        .caller())
 }
 
 /// Keeps the browser's address from the client: an authorization request's

@@ -616,25 +616,35 @@ impl Sent {
 }
 
 /// Sends every region `regions` gives at once, then each time one of them
-/// changed, each as a partial that morphs into the page.
+/// changed, each as a partial that morphs into the page, until the reader's
+/// browser no longer signs anyone in, which it says with
+/// [`caller::signed_out`], or its sign-in does not read.
 fn events<Regions>(regions: impl Fn() -> Regions + Send + 'static, watch: caller::Watch) -> Response
 where
     Regions: Future<Output = Vec<(&'static str, String)>> + Send,
 {
     let events = futures_util::stream::unfold(
-        (Sent::default(), samples(), regions, watch),
-        |(mut sent, mut samples, regions, watch)| async move {
+        (Sent::default(), samples(), regions, watch, false),
+        |(mut sent, mut samples, regions, watch, signed_out)| async move {
+            if signed_out {
+                return None;
+            }
             loop {
                 tokio::select! {
                     _ = samples.tick() => {}
                     () = watch.stopping().cancelled() => return None,
                 }
-                if !watch.signs_someone_in().await {
-                    return None;
+                match watch.signed().await {
+                    caller::Signed::In => {}
+                    caller::Signed::Out => {
+                        let event = Ok::<_, Infallible>(caller::signed_out());
+                        return Some((event, (sent, samples, regions, watch, true)));
+                    }
+                    caller::Signed::Unread => return None,
                 }
                 if let Some(message) = sent.changed(regions().await) {
-                    let event = Ok::<_, Infallible>(Event::default().data(message));
-                    return Some((event, (sent, samples, regions, watch)));
+                    let event = Ok(Event::default().data(message));
+                    return Some((event, (sent, samples, regions, watch, false)));
                 }
             }
         },

@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::panic::Location;
 
+use linewright_core::access::people::People;
 use linewright_core::access::providers::fake::{
     FakeAccount, FakeGitHub, FakeGitHubAccount, FakeGoogle,
 };
@@ -31,6 +32,11 @@ fn accounts() -> Vec<FakeAccount> {
     vec![
         account("2002", "nameless@example.com", None),
         account("2003", "mallory@elsewhere.example", Some("Mallory")),
+        account(
+            "subject-of-grace",
+            "grace@example.com",
+            Some("Grace Hopper"),
+        ),
         FakeAccount {
             picture: Some(BOSS_AVATAR.into()),
             ..account("2005", "boss@elsewhere.example", Some("The Boss"))
@@ -281,13 +287,16 @@ impl<'a> Browsing<'a> {
         }
     }
 
-    /// Opens `path`, is sent to Sign in, and begins a sign-in there with
-    /// `provider`: the provider's URL it is sent to.
+    /// Opens `path`, is sent to Sign in or shown it in the screen's place,
+    /// and begins a sign-in there with `provider`: the provider's URL it is
+    /// sent to.
     async fn begin(&mut self, path: &str, provider: Provider, caller: &Location<'_>) -> url::Url {
-        let sent = self.get(path).await;
-        assert_eq!(sent.status, 303, "{path} at {caller}");
-        let sign_in = self.get(sent.location()).await;
-        assert_eq!(sign_in.status, 200, "at {caller}");
+        let opened = self.get(path).await;
+        let sign_in = match opened.status {
+            303 => self.get(opened.location()).await,
+            _ => opened,
+        };
+        assert_eq!(sign_in.status, 200, "{path} at {caller}");
         let action = format!("/auth/{provider}");
         let form = select(&sign_in.html, &format!("form[action='{action}']"));
         assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
@@ -604,39 +613,102 @@ async fn the_identity_manager_names_signs_in_as_a_manager() {
     );
 }
 
-/// `docs/specs/access.md`, Signing in, Signed in; Sign in, The message.
+/// Sign in, as a screen of a browser whose sign-in ended shows it in its
+/// place: what it says, and the path it returns to after the sign-in.
+#[track_caller]
+fn in_place_of_the_screen(answer: &Answer) -> (Option<(String, bool)>, String) {
+    assert_eq!(answer.status, 200, "{}", answer.html.html());
+    let return_to = select(&answer.html, ".sign-in form input[name=return]")[0]
+        .attr("value")
+        .expect("the path to return to")
+        .to_string();
+    (message(&answer.html), return_to)
+}
+
+/// The events a stream sends, as their text, until it ends.
+#[track_caller]
+fn sent_until_it_ends(response: axum::response::Response) -> impl Future<Output = String> + use<> {
+    let caller = Location::caller();
+    async move {
+        let mut body = response.into_body();
+        let mut sent = Vec::new();
+        let ended = tokio::time::timeout(Duration::from_secs(10), async {
+            while let Some(Ok(frame)) = body.frame().await {
+                if let Ok(data) = frame.into_data() {
+                    sent.extend_from_slice(&data);
+                }
+            }
+        })
+        .await;
+        assert!(ended.is_ok(), "the stream still runs at {caller}");
+        String::from_utf8(sent).expect("a stream sends text")
+    }
+}
+
+/// What the event stream at `path` sends to the browser of `cookie`, until
+/// it ends.
+#[track_caller]
+fn streamed<'a>(
+    signing: &'a Signing,
+    path: &str,
+    cookie: &str,
+) -> impl Future<Output = String> + 'a {
+    let request = axum::http::Request::get(path)
+        .header("Host", UI_HOST)
+        .header("Cookie", cookie)
+        .body(Body::empty())
+        .unwrap();
+    let caller = Location::caller();
+    async move {
+        let Ok(response) = signing.router.clone().oneshot(request).await;
+        assert_eq!(response.status().as_u16(), 200, "at {caller}");
+        sent_until_it_ends(response).await
+    }
+}
+
+/// `docs/specs/access.md`, Signing in, Signed in and An open screen; Sign
+/// in, The message.
 #[test_log::test(tokio::test)]
-async fn after_30_days_a_screen_goes_to_sign_in_saying_the_sign_in_ended() {
+async fn after_30_days_a_screen_shows_sign_in_saying_the_sign_in_ended() {
     let signing = signing(None).await;
     let cookie = signed_in_as(&signing.pages.sources, Role::Viewer, "Grace Hopper").await;
     let mut browser = Browsing::with_cookie(&signing, &cookie);
 
     let fresh = browser.get("/runs").await;
     signing.pages.clock.advance(chrono::TimeDelta::days(30));
-    let ended = browser.get("/runs").await;
+    let ended = browser.get("/runs?state=failed").await;
 
     assert_eq!(fresh.status, 200);
-    assert_eq!(ended.status, 303);
-    assert_eq!(ended.location(), "/sign-in?return=%2Fruns&reason=ended");
-    let sign_in = browser.get(ended.location()).await;
     assert_eq!(
-        message(&sign_in.html),
-        Some(("Your sign-in ended.".into(), false))
+        in_place_of_the_screen(&ended),
+        (
+            Some(("Your sign-in ended.".into(), false)),
+            "/runs?state=failed".into()
+        )
     );
+    assert!(ended.set_cookies().is_empty(), "{:?}", ended.set_cookies());
     let mut another_tab = Browsing::with_cookie(&signing, &cookie);
     assert_eq!(
-        another_tab.get("/").await.location(),
-        "/sign-in?reason=ended"
+        in_place_of_the_screen(&another_tab.get("/").await),
+        (Some(("Your sign-in ended.".into(), false)), "/".into())
     );
+    assert_eq!(
+        streamed(&signing, "/events/runs", &cookie).await,
+        "event: signed-out\n\n"
+    );
+    let back = browser.sign_in("/runs", Some("grace@example.com")).await;
+    assert_eq!(back.location(), "/runs");
+    assert_eq!(browser.get("/runs").await.status, 200);
 }
 
 /// `docs/specs/shell.md`, The account; `docs/specs/access.md`, Signing in,
-/// Logged.
+/// Signed in, An open screen and Logged.
 #[test_log::test(tokio::test)]
-async fn sign_out_in_the_accounts_menu_signs_the_browser_out() {
+async fn sign_out_in_the_accounts_menu_signs_every_tab_of_the_browser_out() {
     let signing = signing(None).await;
     let cookie = signed_in_as(&signing.pages.sources, Role::Viewer, "Grace Hopper").await;
     let mut browser = Browsing::with_cookie(&signing, &cookie);
+    let mut another_tab = Browsing::with_cookie(&signing, &cookie);
     let board = browser.get("/").await;
     let sign_out = select(&board.html, "nav .account button[form]")[0];
     assert_eq!(text(sign_out), "Sign out");
@@ -656,6 +728,7 @@ async fn sign_out_in_the_accounts_menu_signs_the_browser_out() {
         )
         .await;
     assert_eq!(refused.status, 403);
+    assert_eq!(another_tab.get("/runs").await.status, 200);
     let (log, _guard) = Log::capture();
 
     let out = browser.post("/sign-out", &[]).await;
@@ -667,39 +740,107 @@ async fn sign_out_in_the_accounts_menu_signs_the_browser_out() {
         message(&sign_in.html),
         Some(("You signed out.".into(), false))
     );
-    let mut replayed = Browsing::with_cookie(&signing, &cookie);
-    assert_eq!(replayed.get("/").await.status, 303);
-    assert_eq!(replayed.post("/sign-out", &[]).await.status, 303);
+    assert_eq!(
+        in_place_of_the_screen(&another_tab.get("/runs").await),
+        (Some(("You signed out.".into(), false)), "/runs".into())
+    );
+    assert_eq!(
+        in_place_of_the_screen(&browser.get("/").await),
+        (Some(("You signed out.".into(), false)), "/".into())
+    );
+    assert_eq!(browser.post("/sign-out", &[]).await.status, 303);
     let logged = log.lines("INFO");
     assert!(
         logged.iter().any(|line| line.contains("signed out")
             && line.contains(r#"identity="google:grace@example.com""#)),
         "{logged:?}"
     );
+    let back = browser.sign_in("/runs", Some("grace@example.com")).await;
+    assert_eq!(back.location(), "/runs");
+    assert_eq!(browser.get("/runs").await.status, 200);
+    assert_eq!(
+        in_place_of_the_screen(&another_tab.get("/runs").await).0,
+        Some(("You signed out.".into(), false)),
+        "a tab that still sends the cookie that signed out"
+    );
 }
 
-/// `docs/specs/access.md`, Roles, At each request.
+/// `docs/specs/access.md`, People, Disabling; Signing in, An open screen;
+/// Sign in, The message.
 #[test_log::test(tokio::test)]
-async fn an_event_stream_ends_once_its_reader_signs_out() {
+async fn a_screen_of_a_disabled_person_shows_sign_in_saying_so() {
     let signing = signing(None).await;
     let cookie = signed_in_as(&signing.pages.sources, Role::Viewer, "Grace Hopper").await;
     let mut browser = Browsing::with_cookie(&signing, &cookie);
-    let request = axum::http::Request::get("/events/runs")
-        .header("Host", UI_HOST)
-        .header("Cookie", &cookie)
-        .body(Body::empty())
+    let people = People::new(signing.pages.sources.runs.database().clone());
+    let grace = people
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|person| person.shown_as == "grace@example.com")
         .unwrap();
-    let Ok(response) = signing.router.clone().oneshot(request).await;
-    assert_eq!(response.status(), 200);
-    let mut body = response.into_body();
+
+    assert_eq!(browser.get("/runs").await.status, 200);
+    people
+        .disable(grace.id, None, signing.pages.clock.now())
+        .await
+        .unwrap();
+    let disabled = browser.get("/runs").await;
+    let stream = streamed(&signing, "/events/runs", &cookie).await;
+    people.enable(grace.id).await.unwrap();
+    let enabled = browser.get("/runs").await;
+
+    assert_eq!(
+        in_place_of_the_screen(&disabled),
+        (
+            Some(("grace@example.com is disabled.".into(), true)),
+            "/runs".into()
+        )
+    );
+    assert_eq!(
+        (enabled.status, enabled.location()),
+        (303, "/sign-in?return=%2Fruns"),
+        "a sign-in that disabling ended, once enabled again"
+    );
+    assert_eq!(stream, "event: signed-out\n\n");
+}
+
+/// `docs/specs/access.md`, Roles, At each request; Signing in, An open
+/// screen.
+#[test_log::test(tokio::test)]
+async fn an_event_stream_says_its_reader_signed_out_and_ends() {
+    let signing = signing(None).await;
+    let cookie = signed_in_as(&signing.pages.sources, Role::Viewer, "Grace Hopper").await;
+    let mut browser = Browsing::with_cookie(&signing, &cookie);
+    let stream = |path: &str| {
+        let request = axum::http::Request::get(path)
+            .header("Host", UI_HOST)
+            .header("Cookie", &cookie)
+            .body(Body::empty())
+            .unwrap();
+        signing.router.clone().oneshot(request)
+    };
+    let Ok(runs) = stream("/events/runs").await;
+    let Ok(run) = stream("/events/runs/1").await;
+    assert_eq!((runs.status().as_u16(), run.status().as_u16()), (200, 200));
 
     browser.post("/sign-out", &[]).await;
 
-    let ended = tokio::time::timeout(Duration::from_secs(10), async {
-        while let Some(Ok(_)) = body.frame().await {}
-    })
-    .await;
-    assert!(ended.is_ok(), "the stream still runs");
+    for response in [runs, run] {
+        let sent = sent_until_it_ends(response).await;
+        assert!(
+            sent.ends_with("\n\nevent: signed-out\n\n") || sent == "event: signed-out\n\n",
+            "{sent:?}"
+        );
+    }
+    assert_eq!(
+        streamed(&signing, "/events/runs", &cookie).await,
+        "event: signed-out\n\n",
+        "a stream asked for once signed out"
+    );
+    let mut no_one = Browsing::new(&signing);
+    assert_eq!(no_one.post("/events/runs", &[]).await.status, 401);
 }
 
 /// `docs/specs/access.md`, Roles, At each request: a role changed, or a
@@ -726,11 +867,14 @@ async fn each_request_is_taken_as_the_persons_record_has_them_then() {
     set("UPDATE people SET role = 'contributor' WHERE shown_as = 'vera@example.com'").await;
     let contributing = viewer.page("/benchmarks").await;
     set("UPDATE people SET state = 'disabled' WHERE shown_as = 'vera@example.com'").await;
-    let disabled = viewer.response("/benchmarks").await;
+    let disabled = viewer.page("/benchmarks").await;
 
     assert_eq!(buttons(&before), Vec::<String>::new());
     assert_eq!(buttons(&contributing), ["New"]);
-    assert_eq!(disabled.status(), 303);
+    assert_eq!(
+        message(&disabled),
+        Some(("vera@example.com is disabled.".into(), true))
+    );
 }
 
 /// `docs/specs/access.md`, Actions: what the reader's role does not allow,

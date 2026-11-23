@@ -20,7 +20,7 @@ use linewright_core::access::people::{
     Claims, ManagerName, People, PersonId, Refusal, SignInDecision, SignUpRule, decide_sign_in,
 };
 use linewright_core::access::providers::{Begun, GitHub, Google, Provider, Providers};
-use linewright_core::access::sessions::SessionCookie;
+use linewright_core::access::sessions::{Reason, SessionCookie};
 use linewright_core::access::sign_ins::{After, SIGN_IN_COOKIE, SignIns};
 use linewright_core::api::Sources;
 use linewright_core::domain::Timestamp;
@@ -125,36 +125,47 @@ impl<'a> Offered<'a> {
     }
 }
 
-/// Why a browser is on Sign in, where there is a reason
-/// (`docs/specs/access.md`, Sign in, The message), as its query gives it.
+/// Why a browser is on Sign in, as its query gives it: never an identity,
+/// which anyone could put in a link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Reason {
+pub(super) enum QueryReason {
     SignedOut,
     Ended,
 }
 
-impl Reason {
+impl QueryReason {
     /// Its value in the query.
     fn value(self) -> &'static str {
         match self {
-            Reason::SignedOut => "signed-out",
-            Reason::Ended => "ended",
+            QueryReason::SignedOut => "signed-out",
+            QueryReason::Ended => "ended",
         }
     }
 
     /// The reason whose value in the query is `value`, if one is.
-    fn of(value: &str) -> Option<Reason> {
-        [Reason::SignedOut, Reason::Ended]
+    fn of(value: &str) -> Option<QueryReason> {
+        [QueryReason::SignedOut, QueryReason::Ended]
             .into_iter()
             .find(|reason| reason.value() == value)
     }
 
-    fn message(self) -> &'static str {
+    fn reason(self) -> Reason {
         match self {
-            Reason::SignedOut => "You signed out.",
-            Reason::Ended => "Your sign-in ended.",
+            QueryReason::SignedOut => Reason::SignedOut,
+            QueryReason::Ended => Reason::Expired,
         }
     }
+}
+
+/// What Sign in says for `reason` (`docs/specs/access.md`, Sign in, The
+/// message).
+fn reason_message(reason: &Reason) -> Message {
+    let (text, error) = match reason {
+        Reason::SignedOut => ("You signed out.".to_string(), false),
+        Reason::Expired => ("Your sign-in ended.".to_string(), false),
+        Reason::Disabled(identity) => (Refusal::Disabled(identity.clone()).to_string(), true),
+    };
+    Message { text, error }
 }
 
 /// A path of the web UI for a browser to return to once signed in: one
@@ -201,7 +212,7 @@ impl ReturnPath {
 
 /// The path of Sign in, for a browser to come back to `return_to` once it
 /// signs in, saying `reason` where there is one.
-pub(super) fn sign_in_path(return_to: &ReturnPath, reason: Option<Reason>) -> String {
+pub(super) fn sign_in_path(return_to: &ReturnPath, reason: Option<QueryReason>) -> String {
     let mut query = form_urlencoded::Serializer::new(String::new());
     if return_to.as_str() != "/" {
         query.append_pair("return", return_to.as_str());
@@ -295,12 +306,21 @@ pub(super) async fn sign_in_page(
             .find(|(named, _)| named == name)
             .map(|(_, value)| value.as_str())
     };
-    let (return_to, reason) = (first("return"), first("reason").and_then(Reason::of));
-    let message = reason.map(|reason| Message {
-        text: reason.message().to_string(),
-        error: false,
-    });
+    let (return_to, reason) = (first("return"), first("reason").and_then(QueryReason::of));
+    let message = reason.map(|reason| reason_message(&reason.reason()));
     SignInPage::new(&sign_in, &sources, ReturnPath::parse(return_to), message).into_response()
+}
+
+/// Sign in, in place of the screen at `return_to` of a browser whose
+/// sign-in ended for `reason`, saying why, to come back to the screen once
+/// signed in (`docs/specs/access.md`, Signing in, An open screen).
+pub(super) fn ended_page(
+    sign_in: &SignIn,
+    sources: &Sources,
+    return_to: ReturnPath,
+    reason: &Reason,
+) -> Response {
+    SignInPage::new(sign_in, sources, return_to, Some(reason_message(reason))).into_response()
 }
 
 #[derive(Deserialize)]
@@ -420,7 +440,7 @@ pub(super) async fn callback(
             match signed_in_for(&sources, &pending.after, person, now).await {
                 Ok(()) => Ok(Ok(cookie)),
                 Err(e) => {
-                    if let Err(ending) = sessions(&sources).end(&cookie).await {
+                    if let Err(ending) = sessions(&sources).end(&cookie, now).await {
                         warn!(
                             error = format!("{ending:#}"),
                             "ending a sign-in whose cookie the browser never got failed"
@@ -531,7 +551,8 @@ fn failed(
 
 /// Signs the browser out, for a request from the web UI's own pages, and
 /// sends it to Sign in saying so, whether or not it still signed someone
-/// in.
+/// in. The browser keeps its cookie, so that each of its tabs can say why
+/// it is no longer signed in, until a sign-in replaces it.
 pub(super) async fn sign_out(
     State(sources): State<Sources>,
     cross_site: Option<Extension<CrossSite>>,
@@ -541,7 +562,7 @@ pub(super) async fn sign_out(
         return refused;
     }
     if let Some(cookie) = session_cookie(&headers) {
-        match sessions(&sources).end(&cookie).await {
+        match sessions(&sources).end(&cookie, sources.clock.now()).await {
             Ok(Some(person)) => {
                 info!(person = %person.id, identity = person.logged(), "signed out");
             }
@@ -549,14 +570,11 @@ pub(super) async fn sign_out(
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")).into_response(),
         }
     }
-    (
-        [(header::SET_COOKIE, SessionCookie::removed())],
-        Redirect::to(&sign_in_path(
-            &ReturnPath::parse(None),
-            Some(Reason::SignedOut),
-        )),
-    )
-        .into_response()
+    Redirect::to(&sign_in_path(
+        &ReturnPath::parse(None),
+        Some(QueryReason::SignedOut),
+    ))
+    .into_response()
 }
 
 /// The refusal, which it logs, of `what`, such as "a sign-out", for a

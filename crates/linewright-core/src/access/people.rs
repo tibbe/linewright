@@ -591,10 +591,7 @@ impl People {
                 .execute(&mut *tx)
                 .await?;
             if let Change::Disable(now) = change {
-                sqlx::query("DELETE FROM browser_sessions WHERE person = ?")
-                    .bind(id.row())
-                    .execute(&mut *tx)
-                    .await?;
+                super::sessions::end_all_of(&mut tx, id, now).await?;
                 super::oauth::store::end_all_of(&mut tx, id, now).await?;
             }
             tx.commit().await?;
@@ -694,7 +691,7 @@ fn person_of(row: Row) -> anyhow::Result<Person> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::super::sessions::{Resolved, Sessions};
+    use super::super::sessions::{Reason, Resolved, Sessions};
     use super::*;
 
     /// Person `id`, of `role` and `state`, signed in with Google as
@@ -1202,7 +1199,7 @@ pub(crate) mod tests {
         for browser in &browsers {
             assert_eq!(
                 sessions.resolve(browser, now).await.unwrap(),
-                Resolved::NoOne
+                Resolved::Ended(Reason::Disabled("bob@example.com".into()))
             );
         }
         assert!(matches!(
@@ -1220,6 +1217,13 @@ pub(crate) mod tests {
             Resolved::NoOne,
             "a sign-in that finished while they were disabled"
         );
+        for browser in &browsers {
+            assert_eq!(
+                sessions.resolve(browser, now).await.unwrap(),
+                Resolved::NoOne,
+                "a sign-in that disabling ended"
+            );
+        }
         assert_eq!(
             (enabled.role, enabled.state),
             (Role::Manager, State::Enabled)

@@ -33,7 +33,7 @@ use linewright_core::transcript::{
 };
 
 use super::buttons::{ScreenButton, Verb};
-use super::caller::Reader;
+use super::caller::{Reader, Signed};
 use super::capture::{self, Offer};
 use super::html::{self, Html};
 use super::icons::{Icon, IconSize};
@@ -1484,6 +1484,7 @@ pub(super) async fn transcript_events(
         permit,
         sources,
         watch,
+        signed_out: false,
     };
     let events = futures_util::stream::unfold(stream, |mut stream| async move {
         let events = stream.next().await?.into_iter().map(Ok::<_, Infallible>);
@@ -1501,6 +1502,8 @@ struct RunStream {
     permit: Permit<Read>,
     sources: Sources,
     watch: super::caller::Watch,
+    /// Whether it said that the reader's browser no longer signs anyone in.
+    signed_out: bool,
 }
 
 /// What a stream woke for.
@@ -1511,8 +1514,12 @@ enum Wake {
 
 impl RunStream {
     /// The next events to send, once there are some; `None` once `serve`
-    /// stops.
+    /// stops, once it said that the reader's browser no longer signs anyone
+    /// in, or once that browser's sign-in does not read.
     async fn next(&mut self) -> Option<Vec<Event>> {
+        if self.signed_out {
+            return None;
+        }
         loop {
             let wake = tokio::select! {
                 () = self.watch.stopping().cancelled() => return None,
@@ -1531,8 +1538,13 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    if !self.watch.signs_someone_in().await {
-                        return None;
+                    match self.watch.signed().await {
+                        Signed::In => {}
+                        Signed::Out => {
+                            self.signed_out = true;
+                            return Some(vec![super::caller::signed_out()]);
+                        }
+                        Signed::Unread => return None,
                     }
                     let frame = Frame::of(&self.permit, &self.sources).await;
                     let regions = match (self.page)().await {
