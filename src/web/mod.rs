@@ -7,6 +7,7 @@ mod benchmark_run_page;
 mod benchmarks_page;
 mod board_page;
 mod buttons;
+mod caller;
 mod capture;
 mod cards;
 mod confirmation;
@@ -55,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::api::{Sources, Unanswered};
-use crate::benchmarks::{BenchmarkId, BenchmarkRunId, BenchmarkRuns, Benchmarks, TaskId};
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, TaskId};
 use crate::host::{HostName, UiHosts};
 use crate::listening::{Address, Listening};
 
@@ -191,6 +192,7 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         .route("/events/runs/{*id}", get(run_page::run_events))
         .route(Navigation::PATH, post(shell::remember_navigation))
         .route("/assets/{name}", get(asset))
+        .layer(middleware::from_fn(caller::cross_site))
         .layer(middleware::from_fn(confined))
         .fallback(no_such_page)
         .layer(middleware::from_fn_with_state(hosts, misdirected))
@@ -458,16 +460,6 @@ const NOT_IN_A_PATH: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'{')
     .add(b'|')
     .add(b'}');
-
-/// The benchmarks of `serve`'s work directory.
-fn benchmarks(sources: &Sources) -> Benchmarks {
-    Benchmarks::new(sources.runs.database().clone())
-}
-
-/// The benchmark runs of `serve`'s work directory.
-fn benchmark_runs(sources: &Sources) -> BenchmarkRuns {
-    BenchmarkRuns::new(sources.runs.database().clone())
-}
 
 /// The path of benchmark run `id`'s page.
 fn benchmark_run_path(id: BenchmarkRunId) -> String {

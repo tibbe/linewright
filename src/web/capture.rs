@@ -4,26 +4,27 @@
 
 use askama::Template;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::extract::Path;
+use axum::http::{StatusCode, Uri};
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::benchmark_page::BenchmarkTab;
+use super::caller::{Asking, Reader};
 use super::html::{self, Html};
 use super::making::{
     self, Answer, Field, FieldRefusals, Form, MadeShown, Making, REQUIRED, benchmark_taken, both,
     task_taken,
 };
 use super::write::Write;
-use super::{benchmark_tab_path, benchmarks, run_path};
-use crate::api::{Served, Sources};
-use crate::benchmarks::{Benchmark, Benchmarks};
+use super::{benchmark_tab_path, run_path};
+use crate::access::{Act, Permit, Read};
+use crate::actions::{self, Action, AddTaskError};
+use crate::api::Sources;
+use crate::benchmarks::Benchmark;
 use crate::name::Name;
 use crate::runs::RunId;
-use crate::task::{
-    self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskStage, capturable_stage,
-};
+use crate::task::{BenchmarkChoice, CaptureError, Criteria, Refusal, capturable_stage};
 
 /// The id of the capture's dialog, which "Add task" opens.
 pub(super) const DIALOG: &str = "capture";
@@ -38,8 +39,8 @@ pub(super) struct Offer {
 impl Offer {
     /// The offer for run `id`, if it can be captured. A run whose records
     /// do not read is logged and offers none.
-    pub(super) async fn of(sources: &Sources, id: &RunId) -> Option<Offer> {
-        let run = match task::capturable_run(&sources.runs, id).await {
+    pub(super) async fn of(permit: &Permit<Read>, sources: &Sources, id: &RunId) -> Option<Offer> {
+        let run = match actions::capturable_run(permit, sources, id).await {
             Ok(run) => run,
             Err(e) => {
                 if e.refusal() == Refusal::Failed {
@@ -48,7 +49,7 @@ impl Offer {
                 return None;
             }
         };
-        let benchmarks = match benchmarks_of(&benchmarks(sources), run.stage()).await {
+        let benchmarks = match actions::benchmarks_of_stage(permit, sources, run.stage()).await {
             Ok(benchmarks) => benchmarks,
             Err(e) => {
                 warn!(run = %id, error = format!("{e:#}"), "reading the benchmarks failed");
@@ -70,27 +71,17 @@ impl Offer {
     }
 }
 
-/// The benchmarks of `stage`, by name.
-async fn benchmarks_of(
-    benchmarks: &Benchmarks,
-    stage: TaskStage,
-) -> anyhow::Result<Vec<Benchmark>> {
-    Ok(benchmarks
-        .list()
-        .await?
-        .into_iter()
-        .filter(|listed| listed.benchmark.stage == stage)
-        .map(|listed| listed.benchmark)
-        .collect())
-}
-
 /// The benchmarks of `run`'s stage, by name, none for a run of no such stage
 /// or when they do not read, which is logged.
-async fn benchmarks_of_run(sources: &Sources, run: &RunId) -> Vec<Benchmark> {
+async fn benchmarks_of_run(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    run: &RunId,
+) -> Vec<Benchmark> {
     let Some((stage, _)) = capturable_stage(&run.of) else {
         return vec![];
     };
-    benchmarks_of(&benchmarks(sources), stage)
+    actions::benchmarks_of_stage(permit, sources, stage)
         .await
         .unwrap_or_else(|e| {
             warn!(run = %run, error = format!("{e:#}"), "reading the benchmarks failed");
@@ -315,20 +306,20 @@ pub(super) trait CapturingField: Field + From<TaskField> {
 /// with why it was refused. Refused, writing nothing, unless the browser
 /// shows the request came from the web UI's own pages.
 pub(super) async fn capture(
-    State(sources): State<Sources>,
+    Reader {
+        permit: reading,
+        sources,
+    }: Reader,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<CaptureForm> {
     const WRITE: Write = Write::Capture;
-    let origin = WRITE.same_origin(&headers, &uri);
-    let (sent, refused) = match WRITE.read_form::<CaptureFields>(&body) {
-        Ok(sent) => (sent, origin.err()),
-        Err(unread) => (
-            CaptureFields::default(),
-            Some(origin.err().unwrap_or(unread)),
-        ),
+    let permitted = WRITE.permit(Action::AddTask, &asking, &uri);
+    let (sent, permitted) = match WRITE.read_form::<CaptureFields>(&body) {
+        Ok(sent) => (sent, permitted),
+        Err(unread) => (CaptureFields::default(), permitted.and(Err(unread))),
     };
     let Ok(run) = id.parse::<RunId>() else {
         let form = CaptureForm {
@@ -338,11 +329,12 @@ pub(super) async fn capture(
         };
         return form.refused_whole(sent, (StatusCode::NOT_FOUND, no_such_run(&id)));
     };
-    let form = CaptureForm::blank(&run, benchmarks_of_run(&sources, &run).await);
-    if let Some(refused) = refused {
-        return form.refused_whole(sent, refused.into_parts());
-    }
-    match capture_sent(&sources, &run, &sent).await {
+    let form = CaptureForm::blank(&run, benchmarks_of_run(&reading, &sources, &run).await);
+    let permit = match permitted {
+        Ok(permit) => permit,
+        Err(refused) => return form.refused_whole(sent, refused.into_parts()),
+    };
+    match capture_sent(&permit, &sources, &run, &sent).await {
         Ok(captured) => Answer::Made {
             shown: MadeShown::Elsewhere(captured.said(&run)),
             blank: CaptureForm::blank(&run, with_made(form.benchmarks, &captured)),
@@ -365,6 +357,7 @@ fn with_made(mut benchmarks: Vec<Benchmark>, captured: &Captured) -> Vec<Benchma
 /// Captures `run` into the benchmark `sent` chooses, as the task it names;
 /// or else the status and the refusal.
 async fn capture_sent(
+    permit: &Permit<Act>,
     sources: &Sources,
     run: &RunId,
     sent: &CaptureFields,
@@ -375,8 +368,7 @@ async fn capture_sent(
             making::Refusal::Fields(refusals),
         )
     })?;
-    let served = polled(sources).map_err(|NotPolled| NotPolled::refusal())?;
-    capture_run(sources, &served, run, &choice, task)
+    capture_run(permit, sources, run, &choice, task)
         .await
         .map_err(|not| not.refusal(&choice))
 }
@@ -406,12 +398,8 @@ impl Captured {
     }
 }
 
-/// Why a capture did not happen: it was refused or failed, for `why`,
-/// redacted.
-pub(super) struct NotCaptured {
-    error: CaptureError,
-    why: String,
-}
+/// Why a capture did not happen.
+pub(super) struct NotCaptured(AddTaskError);
 
 impl NotCaptured {
     /// The status the capture into `choice` that did not happen is answered
@@ -424,8 +412,14 @@ impl NotCaptured {
         &self,
         choice: &BenchmarkChoice,
     ) -> (StatusCode, making::Refusal<F>) {
-        let reason = self.reason();
-        let field = match &self.error {
+        let AddTaskError::Capture { error, why } = &self.0 else {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                making::Refusal::Whole(self.0.to_string()),
+            );
+        };
+        let reason = reason(error, why);
+        let field = match error {
             CaptureError::Taken { .. } => Some(F::from(TaskField::Name)),
             CaptureError::BenchmarkTaken(_) | CaptureError::NoSuchBenchmark(_) => F::naming(choice),
             CaptureError::NoSuchRun(_)
@@ -440,45 +434,32 @@ impl NotCaptured {
                 StatusCode::UNPROCESSABLE_ENTITY,
                 making::Refusal::Fields(FieldRefusals::of(field, reason)),
             ),
-            None => (status_of(&self.error), making::Refusal::Whole(reason)),
-        }
-    }
-
-    /// What a screen says of it. A refusal the spec gives no message keeps
-    /// the capture's own wording.
-    fn reason(&self) -> String {
-        match &self.error {
-            CaptureError::Taken { task, benchmark } => task_taken(task, benchmark),
-            CaptureError::OtherStage {
-                run,
-                stage,
-                benchmark,
-            } => format!(
-                "Run {run} is of {stage}, and {} holds tasks of {}.",
-                benchmark.name, benchmark.stage
-            ),
-            CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
-            CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
-            CaptureError::NoSuchRun(run) => no_such_run(run),
-            CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
-            CaptureError::NotCapturable(_)
-            | CaptureError::NoSuchBenchmark(_)
-            | CaptureError::Failed(_) => self.why.clone(),
+            None => (status_of(error), making::Refusal::Whole(reason)),
         }
     }
 }
 
-/// A capture asked for before `serve` first polled, which it refuses
-/// (`docs/specs/benchmarks.md`, Capturing, Before the first poll).
-pub(super) struct NotPolled;
-
-impl NotPolled {
-    /// The status it is answered with, and its refusal, above the buttons.
-    pub(super) fn refusal<F: Field>() -> (StatusCode, making::Refusal<F>) {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            making::Refusal::Whole("Linewright can't capture a run before its first poll.".into()),
-        )
+/// What a screen says of a capture that did not happen for `error`, as `why`
+/// says of it, redacted. A refusal the spec gives no message keeps the
+/// capture's own wording.
+fn reason(error: &CaptureError, why: &str) -> String {
+    match error {
+        CaptureError::Taken { task, benchmark } => task_taken(task, benchmark),
+        CaptureError::OtherStage {
+            run,
+            stage,
+            benchmark,
+        } => format!(
+            "Run {run} is of {stage}, and {} holds tasks of {}.",
+            benchmark.name, benchmark.stage
+        ),
+        CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
+        CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
+        CaptureError::NoSuchRun(run) => no_such_run(run),
+        CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
+        CaptureError::NotCapturable(_)
+        | CaptureError::NoSuchBenchmark(_)
+        | CaptureError::Failed(_) => why.to_string(),
     }
 }
 
@@ -488,40 +469,22 @@ fn no_such_run(run: &impl std::fmt::Display) -> String {
     format!("No such run {run}.")
 }
 
-/// What `serve` serves once it has polled, so that a capture can run; or
-/// else why it cannot yet.
-pub(super) fn polled(sources: &Sources) -> Result<Served, NotPolled> {
-    sources.served.borrow().clone().ok_or(NotPolled)
-}
-
-/// Captures `run` as `task` into the benchmark `choice`, with the store
-/// `served` holds; or else says why it did not.
+/// Captures `run` as `task` into the benchmark `choice`; or else says why it
+/// did not (`docs/specs/benchmarks.md`, Capturing, Before the first poll).
 pub(super) async fn capture_run(
+    permit: &Permit<Act>,
     sources: &Sources,
-    served: &Served,
     run: &RunId,
     choice: &BenchmarkChoice,
     Task { name, criteria }: Task,
 ) -> Result<Captured, NotCaptured> {
-    let benchmarks = benchmarks(sources);
-    let captured = match task::capturable(&sources.runs, &benchmarks, run, &name, choice).await {
-        Ok(capturable) => task::capture(served.store(), capturable, &criteria, &benchmarks).await,
-        Err(e) => Err(e),
-    };
-    match captured {
-        Ok(kept) => {
-            info!(run = %run, task = %kept.id, benchmark = %kept.benchmark.id, "captured a run as a task");
-            Ok(Captured {
-                name,
-                benchmark: kept.benchmark,
-                made: matches!(choice, BenchmarkChoice::New(_)),
-            })
-        }
-        Err(error) => {
-            let why = served.redaction().apply(&error.why());
-            warn!(run = %run, task = %name, error = why, "a capture failed");
-            Err(NotCaptured { error, why })
-        }
+    match actions::add_task(permit, sources, run, choice, &name, &criteria).await {
+        Ok(kept) => Ok(Captured {
+            name,
+            benchmark: kept.benchmark,
+            made: matches!(choice, BenchmarkChoice::New(_)),
+        }),
+        Err(not) => Err(NotCaptured(not)),
     }
 }
 

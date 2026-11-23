@@ -4,10 +4,11 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
+use super::caller::Reader;
 use super::cards::{self, card_line, lane_head};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
@@ -16,16 +17,15 @@ use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::{ErrorPage, Page, events, nothing_there, render};
-use crate::api::{self, Sources, Unexplained};
-use crate::board;
+use crate::access::{Permit, Read};
+use crate::actions::{self, ItemInView};
+use crate::api::{Sources, Unexplained};
 use crate::domain::{Number, Snapshot};
-use crate::explain;
-use crate::item_facts::{self, ItemFacts, Related, StateFact};
+use crate::item_facts::{ItemFacts, Related, StateFact};
 use crate::lifecycle;
 use crate::managed::{LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
 use crate::phrase::{Phrase, Status};
 use crate::reconcile::NotSpecChange;
-use crate::runs;
 use crate::status;
 
 /// #N's facts, ready for the page.
@@ -235,17 +235,13 @@ const RUNS_SHOWN: usize = 10;
 
 /// #`number`'s latest runs, from their records, whether or not Linewright
 /// manages it.
-async fn item_runs(sources: &Sources, number: Number, names: &Names<'_>) -> RunsShown {
-    let query = runs::Query {
-        item: Some(number),
-        limit: Some(RUNS_SHOWN),
-        ..runs::Query::default()
-    };
-    let listed = runs::list(
-        api::recorded_or_none(sources).await,
-        &query,
-        sources.clock.now(),
-    );
+async fn item_runs(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    number: Number,
+    names: &Names<'_>,
+) -> RunsShown {
+    let listed = actions::item_runs(permit, sources, number, RUNS_SHOWN).await;
     RunsShown::of_item(listed, number, names)
 }
 
@@ -275,12 +271,12 @@ fn page(number: Number, thing: Thing, navigation: Navigation) -> Page {
 }
 
 pub(super) async fn item_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(number): Path<Number>,
     navigation: Navigation,
 ) -> Response {
-    let frame = Frame::of(&sources).await;
-    match api::item_facts(&sources, number).await {
+    let frame = Frame::of(&permit, &sources).await;
+    match actions::get_item(&permit, &sources, number).await {
         Ok((facts, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
@@ -290,7 +286,7 @@ pub(super) async fn item_page(
                     navigation,
                 ),
                 item: ItemShown::of(&facts, &names),
-                runs: item_runs(&sources, number, &names).await,
+                runs: item_runs(&permit, &sources, number, &names).await,
                 frame,
             }
             .into_response()
@@ -332,33 +328,20 @@ fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigat
 /// the item, with the view's board; and its runs from their records whether or not the view
 /// holds it.
 pub(super) async fn item_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(number): Path<Number>,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         async move {
-            let frame = Frame::of(&sources).await;
+            let frame = Frame::of(&permit, &sources).await;
             let mut regions = vec![];
-            let in_view = api::explaining(&sources).await.ok();
-            let names = names(
-                &sources,
-                in_view.as_ref().map(|in_view| &*in_view.view.snapshot),
-            );
-            if let Some(in_view) = &in_view
-                && let Some(answer) =
-                    explain::explain_in_view(&in_view.view, &in_view.recorded, number, in_view.now)
-            {
-                let board = board::board(&in_view.view, &in_view.recorded, in_view.now);
-                let facts = item_facts::item_facts(
-                    &answer,
-                    &in_view.view,
-                    &board,
-                    &in_view.recorded,
-                    in_view.now,
-                );
+            let ItemInView { snapshot, facts } =
+                actions::item_in_view(&permit, &sources, number).await;
+            let names = names(&sources, snapshot.as_deref());
+            if let Some(facts) = facts {
                 let item = ItemShown::of(&facts, &names);
                 let page = page(
                     number,
@@ -370,7 +353,7 @@ pub(super) async fn item_events(
             } else {
                 regions.push(shell::holds(&frame));
             }
-            let runs = item_runs(&sources, number, &names).await;
+            let runs = item_runs(&permit, &sources, number, &names).await;
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions
         }

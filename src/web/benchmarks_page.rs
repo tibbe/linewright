@@ -9,13 +9,14 @@ use askama_web::WebTemplate;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::buttons::ScreenButton;
+use super::caller::{Asking, Reader};
 use super::html::{self, Html};
 use super::making::{
     self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal, benchmark_taken,
@@ -24,10 +25,9 @@ use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
 use super::write::Write;
-use super::{
-    Page, benchmark_path, benchmark_run_path, benchmark_runs, benchmarks, events, given, render,
-    with_filters,
-};
+use super::{Page, benchmark_path, benchmark_run_path, events, given, render, with_filters};
+use crate::access::{Permit, Read};
+use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::{BenchmarkListed, BenchmarkRunId, MakeError};
 use crate::domain::Timestamp;
@@ -286,7 +286,11 @@ pub(super) struct NewBenchmarkForm {
 
 /// The benchmarks the narrowing keeps, by name, or why they are not listed, and
 /// the status the page answers with.
-async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, BenchmarksShown) {
+async fn listed(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    narrowing: &Narrowing,
+) -> (StatusCode, BenchmarksShown) {
     let narrowed = match &narrowing.narrowed {
         Ok(narrowed) => narrowed,
         Err(e) => {
@@ -296,12 +300,7 @@ async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, Benchm
             );
         }
     };
-    let read = async {
-        let listed = benchmarks(sources).list().await?;
-        let latest = benchmark_runs(sources).latest().await?;
-        anyhow::Ok((listed, latest))
-    };
-    match read.await {
+    match actions::list_benchmarks(permit, sources).await {
         Ok((listed, mut latest)) => {
             let kept: Vec<BenchmarkListed> = listed
                 .into_iter()
@@ -347,15 +346,15 @@ fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
 const NEW_BENCHMARK: &str = "new-benchmark";
 
 pub(super) async fn benchmarks_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Query(query): Query<BenchmarksQuery>,
     navigation: Navigation,
 ) -> Response {
     let narrowing = Narrowing::of(&query);
-    let (status, benchmarks) = listed(&sources, &narrowing).await;
+    let (status, benchmarks) = listed(&permit, &sources, &narrowing).await;
     let page = BenchmarksPage {
         page: page(&narrowing, navigation),
-        frame: Frame::of(&sources).await,
+        frame: Frame::of(&permit, &sources).await,
         filters: Filters::of(&narrowing.fields),
         benchmarks,
         new_benchmark: Making::blank(),
@@ -366,19 +365,19 @@ pub(super) async fn benchmarks_page(
 /// The benchmarks page's regions: the shell's, and the benchmarks the filters
 /// keep.
 pub(super) async fn benchmarks_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<BenchmarksQuery>,
     navigation: Navigation,
 ) -> Response {
     let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         let narrowing = narrowing.clone();
         async move {
-            let mut regions =
-                shell::regions(&Frame::of(&sources).await, &page(&narrowing, navigation));
-            let (_, benchmarks) = listed(&sources, &narrowing).await;
+            let frame = Frame::of(&permit, &sources).await;
+            let mut regions = shell::regions(&frame, &page(&narrowing, navigation));
+            let (_, benchmarks) = listed(&permit, &sources, &narrowing).await;
             regions.push((
                 "benchmarks",
                 render(&BenchmarksRegion {
@@ -423,8 +422,8 @@ impl MakeForm {
 /// the web UI's own pages.
 pub(super) async fn make_benchmark(
     State(sources): State<Sources>,
+    asking: Asking,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<NewBenchmarkForm> {
     const WRITE: Write = Write::MakeBenchmark;
@@ -445,8 +444,8 @@ pub(super) async fn make_benchmark(
             new_benchmark: Making::refused(fields, refusal),
         },
     };
-    let form = match WRITE.same_origin(&headers, &uri).and(sent) {
-        Ok(form) => form,
+    let (permit, form) = match WRITE.permit_with(Action::CreateBenchmark, &asking, &uri, sent) {
+        Ok(permitted) => permitted,
         Err(refused) => {
             let (status, why) = refused.into_parts();
             return refuse(status, Refusal::Whole(why));
@@ -458,16 +457,13 @@ pub(super) async fn make_benchmark(
             return refuse(StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals));
         }
     };
-    match benchmarks(&sources).make(&name, stage).await {
-        Ok(benchmark) => {
-            info!(benchmark = %benchmark.name, stage = %benchmark.stage, "made a benchmark");
-            Answer::Made {
-                blank: NewBenchmarkForm {
-                    new_benchmark: Making::blank(),
-                },
-                shown: MadeShown::OnScreen,
-            }
-        }
+    match actions::create_benchmark(&permit, &sources, &name, stage).await {
+        Ok(_) => Answer::Made {
+            blank: NewBenchmarkForm {
+                new_benchmark: Making::blank(),
+            },
+            shown: MadeShown::OnScreen,
+        },
         Err(e) => {
             let (status, refusal) = match &e {
                 MakeError::Taken(taken) => (
@@ -477,13 +473,10 @@ pub(super) async fn make_benchmark(
                         benchmark_taken(taken),
                     )),
                 ),
-                MakeError::Failed(e) => {
-                    warn!(benchmark = %name, error = format!("{e:#}"), "making a benchmark failed");
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Refusal::Whole(format!("{e:#}")),
-                    )
-                }
+                MakeError::Failed(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Refusal::Whole(format!("{e:#}")),
+                ),
             };
             refuse(status, refusal)
         }

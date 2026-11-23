@@ -13,9 +13,9 @@ pub use answers::{
 };
 pub use runs::{
     BENCHMARK_RUNS, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns,
-    CancelRefusal, Cancelled, ConfigurationId, LaunchRefusal, NoScore, RenameConfigurationError,
-    Repetitions, RunTask, ScoreFigures, TrialChange, TrialEnd, TrialFigures, TrialKey, TrialName,
-    TrialOf, TrialRef, TrialState, as_is_name,
+    CancelRefusal, Cancelled, ConfigurationId, LaunchRefusal, Launched, NoScore,
+    RenameConfigurationError, Repetitions, RunTask, ScoreFigures, TrialChange, TrialEnd,
+    TrialFigures, TrialKey, TrialName, TrialOf, TrialRef, TrialState, as_is_name,
 };
 pub use trial_shown::TrialShown;
 

@@ -6,16 +6,17 @@ use std::num::NonZeroU64;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 
+use super::caller::Reader;
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::names::Names;
 use super::run_page::{Row, command_row, command_text, entry_row, output_html, status_html};
-use super::shell::{self, Area, Frame, Hold, Navigation, Place, Read};
+use super::shell::{self, Area, Frame, Hold, Navigation, Place};
 use super::{Page, events, render};
+use crate::access::{Permit, Read};
 use crate::api::Sources;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown, EnvironmentState};
 use crate::phrase::{Phrase, Status};
@@ -200,8 +201,8 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 }
 
 /// The frame and the facts, from one answer of `status`.
-async fn shown(sources: &Sources) -> (Frame, Vec<Fact>) {
-    let read = Read::of(sources).await;
+async fn shown(permit: &Permit<Read>, sources: &Sources) -> (Frame, Vec<Fact>) {
+    let read = shell::Read::of(permit, sources).await;
     let names = read.names(&sources.work_dir.repo);
     let builds = read
         .builds
@@ -254,10 +255,10 @@ fn page(navigation: Navigation) -> Page {
 }
 
 pub(super) async fn server_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     navigation: Navigation,
 ) -> Response {
-    let (frame, facts) = shown(&sources).await;
+    let (frame, facts) = shown(&permit, &sources).await;
     ServerPage {
         page: page(navigation),
         frame,
@@ -268,14 +269,14 @@ pub(super) async fn server_page(
 
 /// The server page's regions: the shell's, and the facts.
 pub(super) async fn server_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         async move {
-            let (frame, facts) = shown(&sources).await;
+            let (frame, facts) = shown(&permit, &sources).await;
             let mut regions = shell::regions(&frame, &page(navigation));
             regions.push(("server", render(&ServerRegion { facts: &facts })));
             regions

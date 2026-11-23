@@ -17,9 +17,10 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
+use super::caller::{Asking, Reader};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
@@ -32,9 +33,11 @@ use super::stats::{ABSENT, Stat, absent};
 use super::table::{Align, Column, Fold};
 use super::write::{Refused, Write, alert};
 use super::{
-    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_runs, events, nothing_there,
-    render, with_filters, with_query,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, events, nothing_there, render,
+    with_filters, with_query,
 };
+use crate::access::{Permit, Read};
+use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
 use crate::benchmarks::{
@@ -510,6 +513,7 @@ impl BenchmarkRunView {
     /// leading to the stream of a page that draws the dialog "Cancel" opens
     /// where `cancels`.
     fn of(
+        permit: &Permit<Read>,
         sources: &Sources,
         record: &BenchmarkRunRecord,
         shown: &Shown,
@@ -561,6 +565,7 @@ impl BenchmarkRunView {
             ),
             chart: [Axis::Cost, Axis::Time].map(|axis| plot(axis, &ranked)),
             rows: rows(
+                permit,
                 sources,
                 record,
                 &ranked[configurations_page.range()],
@@ -811,6 +816,7 @@ fn figure_cells(figures: &Figures) -> [String; 6] {
 /// configurations, each followed by its tasks, each followed by its
 /// trials.
 fn rows(
+    permit: &Permit<Read>,
     sources: &Sources,
     record: &BenchmarkRunRecord,
     ranked: &[(usize, &ConfigurationResults)],
@@ -873,8 +879,8 @@ fn rows(
                     of: Of::Run,
                 };
                 rows.extend(trial_rows(
-                    sources,
                     &trial,
+                    &trial.output_dir(permit, sources),
                     trial_id(key),
                     id.clone(),
                     record.state,
@@ -891,8 +897,8 @@ fn rows(
 /// state `benchmark_run`, `id` under the row `of`, and the row it opens to, if
 /// it has anything to open to.
 fn trial_rows(
-    sources: &Sources,
     at: &TrialAt,
+    output: &std::path::Path,
     id: String,
     of: String,
     benchmark_run: BenchmarkRunState,
@@ -901,10 +907,9 @@ fn trial_rows(
 ) -> Vec<Row> {
     let shown = TrialShown::of(benchmark_run, state);
     let run = state.run();
-    let output = at.output_dir(sources);
-    let began = outputs.began(&output);
+    let began = outputs.began(output);
     let said = match (state.score(), shown.reason()) {
-        (Some(score), _) => Some(Said::score(score, outputs.reasoning(&output).as_deref())),
+        (Some(score), _) => Some(Said::score(score, outputs.reasoning(output).as_deref())),
         (None, reason) => reason.map(Said::Reason),
     };
     let scorer_began = state.scorer_began();
@@ -1116,9 +1121,13 @@ fn no_such(id: &str) -> String {
 }
 
 /// Benchmark run `id`, by its ID as a path gives it.
-async fn record_of(sources: &Sources, id: &str) -> Result<BenchmarkRunRecord, Unshown> {
+async fn record_of(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    id: &str,
+) -> Result<BenchmarkRunRecord, Unshown> {
     let parsed: BenchmarkRunId = id.parse().map_err(|_| Unshown::NoSuch)?;
-    match benchmark_runs(sources).show(parsed).await {
+    match actions::get_benchmark_run(permit, sources, parsed).await {
         Ok(Some(record)) => Ok(record),
         Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
@@ -1155,17 +1164,18 @@ fn benchmark_crumbs(record: &BenchmarkRunRecord) -> Within {
 }
 
 pub(super) async fn benchmark_run_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
 ) -> Response {
-    let frame = Frame::of(&sources).await;
-    match record_of(&sources, &id).await {
+    let frame = Frame::of(&permit, &sources).await;
+    match record_of(&permit, &sources, &id).await {
         Ok(record) => {
             let shown = shown_of(&sources, &record);
             let cancels = record.state == BenchmarkRunState::Open;
             let benchmark_run = BenchmarkRunView::of(
+                &permit,
                 &sources,
                 &record,
                 &shown,
@@ -1212,7 +1222,7 @@ pub(super) async fn benchmark_run_page(
 /// reads, the rest of the shell's, the benchmark run's and the values its
 /// Edit configuration dialogs start from.
 pub(super) async fn benchmark_run_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
     Query(query): Query<StreamQuery>,
@@ -1222,15 +1232,17 @@ pub(super) async fn benchmark_run_events(
     let paging = query.paging;
     let outputs = Outputs::default();
     let regions = move || {
-        let (sources, id, outputs) = (sources.clone(), id.clone(), outputs.clone());
+        let (permit, sources) = (permit.clone(), sources.clone());
+        let (id, outputs) = (id.clone(), outputs.clone());
         async move {
-            let frame = Frame::of(&sources).await;
-            let Ok(record) = record_of(&sources, &id).await else {
+            let frame = Frame::of(&permit, &sources).await;
+            let Ok(record) = record_of(&permit, &sources, &id).await else {
                 return vec![shell::holds(&frame)];
             };
             let shown = shown_of(&sources, &record);
-            let benchmark_run =
-                BenchmarkRunView::of(&sources, &record, &shown, &outputs, paging, cancels);
+            let benchmark_run = BenchmarkRunView::of(
+                &permit, &sources, &record, &shown, &outputs, paging, cancels,
+            );
             let mut regions = shell::regions(
                 &frame,
                 &benchmark_run.page(&record, cancels, paging, navigation),
@@ -1251,22 +1263,17 @@ pub(super) async fn benchmark_run_events(
 /// the request came from the web UI's own pages.
 pub(super) async fn cancel(
     State(sources): State<Sources>,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
 ) -> Result<Response, Refused> {
     const WRITE: Write = Write::Cancel;
-    WRITE.same_origin(&headers, &uri)?;
+    let permit = WRITE.permit(Action::CancelBenchmarkRun, &asking, &uri)?;
     let parsed: BenchmarkRunId = id
         .parse()
         .map_err(|_| WRITE.refused(StatusCode::NOT_FOUND, &no_such(&id)))?;
-    match benchmark_runs(&sources)
-        .cancel(parsed, sources.clock.now())
-        .await
-    {
+    match actions::cancel_benchmark_run(&permit, &sources, parsed).await {
         Ok(()) => {
-            sources.benchmark_runs.changed();
-            info!(benchmark_run = %parsed, "cancelled a benchmark run");
             let said = format!("Cancelled benchmark run {parsed}");
             Ok((StatusCode::OK, alert("alert-success", &said)).into_response())
         }
@@ -1277,9 +1284,7 @@ pub(super) async fn cancel(
             Err(WRITE.refused(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()))
         }
         Err(CancelRefusal::Failed(e)) => {
-            let why = format!("{e:#}");
-            warn!(benchmark_run = %parsed, error = why, "cancelling a benchmark run failed");
-            Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &why))
+            Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")))
         }
     }
 }
@@ -1339,8 +1344,10 @@ impl TrialAt {
     }
 
     /// Its output.
-    fn output_dir(&self, sources: &Sources) -> std::path::PathBuf {
-        benchmark_runs(sources).output_dir(
+    fn output_dir(&self, permit: &Permit<Read>, sources: &Sources) -> std::path::PathBuf {
+        actions::trial_output_dir(
+            permit,
+            sources,
             self.id,
             self.configuration,
             self.task.id,
@@ -1353,6 +1360,7 @@ impl TrialAt {
 /// transcript is read from; or else the status and what the page says of
 /// there being none.
 fn transcribed(
+    permit: &Permit<Read>,
     sources: &Sources,
     path: &TrialPath,
     record: &BenchmarkRunRecord,
@@ -1394,7 +1402,7 @@ fn transcribed(
         repetition,
         of,
     };
-    let output = at.output_dir(sources);
+    let output = at.output_dir(permit, sources);
     let unread = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"));
     let task_run: RunId = trial::task_run(&output).map_err(unread)?.ok_or_else(|| {
         (
@@ -1448,10 +1456,11 @@ const TRIAL: &str = "Trial";
 /// where the transcript is read from or why it cannot be; or else the
 /// benchmark run the path named that does not exist.
 async fn trial_transcript(
+    permit: &Permit<Read>,
     sources: &Sources,
     path: &TrialPath,
 ) -> Result<(Place, Result<Transcribed, (StatusCode, String)>), Missing> {
-    let record = match record_of(sources, &path.id).await {
+    let record = match record_of(permit, sources, &path.id).await {
         Err(Unshown::NoSuch) => return Err(Missing::BenchmarkRun(path.id.clone())),
         record => record.map_err(|unshown| unshown.answer(&path.id)),
     };
@@ -1460,7 +1469,7 @@ async fn trial_transcript(
             .under(benchmark_run_name(record.id), benchmark_run_path(record.id)),
         Err(_) => Place::within(Area::Benchmarks),
     };
-    let transcribed = record.and_then(|record| transcribed(sources, path, &record));
+    let transcribed = record.and_then(|record| transcribed(permit, sources, path, &record));
     let named = transcribed.as_ref().ok().map_or_else(
         || {
             format!(
@@ -1490,17 +1499,17 @@ fn missing_trial_page(thing: Thing, events: String, navigation: Navigation) -> P
 /// The page of a trial's run's or scorer's transcript, shown as the run
 /// page shows a run's.
 pub(super) async fn trial_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(path): Path<TrialPath>,
     Query(query): Query<RunQuery>,
     uri: Uri,
     navigation: Navigation,
 ) -> Response {
-    let (place, transcribed) = match trial_transcript(&sources, &path).await {
+    let (place, transcribed) = match trial_transcript(&permit, &sources, &path).await {
         Ok(shown) => shown,
         Err(missing) => {
             let events = format!("/events{}", uri.path());
-            let frame = Frame::of(&sources).await;
+            let frame = Frame::of(&permit, &sources).await;
             return nothing_there(
                 |thing| missing_trial_page(thing, events, navigation),
                 missing,
@@ -1510,7 +1519,7 @@ pub(super) async fn trial_page(
         }
     };
     transcript_page(
-        &sources,
+        Frame::of(&permit, &sources).await,
         uri.path(),
         place,
         transcribed,
@@ -1524,7 +1533,7 @@ pub(super) async fn trial_page(
 /// The regions of the page of a trial's transcript, whose place, read as
 /// the stream starts, stays as its page shows it.
 pub(super) async fn trial_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(path): Path<TrialPath>,
     Query(query): Query<RunQuery>,
@@ -1533,7 +1542,7 @@ pub(super) async fn trial_events(
     navigation: Navigation,
 ) -> Response {
     let events = uri.path().to_string();
-    let (place, transcribed) = match trial_transcript(&sources, &path).await {
+    let (place, transcribed) = match trial_transcript(&permit, &sources, &path).await {
         Ok((place, transcribed)) => (place, transcribed.ok()),
         Err(missing) => {
             let place = Place::within(Area::Benchmarks).screen(TRIAL, Thing::Missing(missing));
@@ -1545,6 +1554,7 @@ pub(super) async fn trial_events(
         Box::pin(async move { Some(page) })
     });
     transcript_events(
+        permit,
         sources,
         stopping,
         transcribed.as_ref(),
