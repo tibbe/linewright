@@ -16,7 +16,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use linewright_core::access::people::ManagerName;
-use linewright_core::access::{Caller, LevelMarker, Permit};
+use linewright_core::access::{Caller, LevelMarker, NeedsLevel, Permit};
 use linewright_core::actions::Action;
 use linewright_core::api::Sources;
 
@@ -79,16 +79,36 @@ async fn run<T: Tool>(
     caller: &Caller,
     context: &Context<'_>,
 ) -> Result<serde_json::Value, String> {
+    let (read, permit) = permitted::<T>(arguments, caller);
+    let permit = permit.map_err(|needs| needs.to_string())?;
+    let tool = read?;
+    let output = tool.run(&permit, context).await?;
+    Ok(serde_json::to_value(output).expect("what a tool returns serializes"))
+}
+
+/// The refusal of `T` with `arguments` for an access level that `caller`'s
+/// role does not reach, logged as [`Action::permit`] logs it, `None` where
+/// it reaches it.
+fn needs<T: Tool>(arguments: Option<JsonObject>, caller: &Caller) -> Option<NeedsLevel> {
+    if caller.can(T::ACTION.level()) {
+        return None;
+    }
+    permitted::<T>(arguments, caller).1.err()
+}
+
+/// `arguments` as [`read`] reads them as `T`, and `caller`'s permit of `T`,
+/// or else the refusal, logged as [`Action::permit`] logs it.
+#[expect(clippy::type_complexity, reason = "two results, each its own")]
+fn permitted<T: Tool>(
+    arguments: Option<JsonObject>,
+    caller: &Caller,
+) -> (Result<T, String>, Result<Permit<T::Level>, NeedsLevel>) {
     let read = read::<T>(serde_json::Value::Object(arguments.unwrap_or_default()));
     let changing = read
         .as_ref()
         .map_or_else(|_| UNREAD.to_string(), Tool::changing);
-    let permit = T::ACTION
-        .permit::<T::Level>(caller, &changing)
-        .map_err(|needs| needs.to_string())?;
-    let tool = read?;
-    let output = tool.run(&permit, context).await?;
-    Ok(serde_json::to_value(output).expect("what a tool returns serializes"))
+    let permit = T::ACTION.permit::<T::Level>(caller, &changing);
+    (read, permit)
 }
 
 /// `arguments` as `T`, or else the refusal of a wrong argument: the first
@@ -146,6 +166,23 @@ macro_rules! registry {
             $(
                 if name == <$tool as Tool>::ACTION.tool_name() {
                     return Some(run::<$tool>(arguments, caller, context).await);
+                }
+            )*
+            None
+        }
+
+        /// The refusal of the tool `name` with `arguments` for an access
+        /// level that `caller`'s role does not reach, logged as
+        /// [`Action::permit`] logs it, `None` where it reaches it or where
+        /// there is no such tool.
+        pub(super) fn needs_level(
+            name: &str,
+            arguments: Option<JsonObject>,
+            caller: &Caller,
+        ) -> Option<NeedsLevel> {
+            $(
+                if name == <$tool as Tool>::ACTION.tool_name() {
+                    return needs::<$tool>(arguments, caller);
                 }
             )*
             None

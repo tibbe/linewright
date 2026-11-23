@@ -135,6 +135,13 @@ impl PublicUrl {
         format!("{}://{host}:{port}", self.url.scheme())
     }
 
+    /// Whether the serialized origin `origin`, such as a request's `Origin`
+    /// header, is its origin.
+    /// <https://www.rfc-editor.org/rfc/rfc6454#section-6.2>
+    pub fn is_origin(&self, origin: &str) -> bool {
+        Url::parse(origin).is_ok_and(|given| given.origin() == self.url.origin())
+    }
+
     /// Whether the web UI answers a request whose `Host` is `host`: this
     /// URL's host.
     pub fn answers(&self, host: &HostName) -> bool {

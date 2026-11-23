@@ -16,9 +16,11 @@ anyhow = { workspace = true }
 askama = { workspace = true }
 askama_web = { workspace = true }
 axum = { workspace = true }
+chrono = { workspace = true }
 form_urlencoded = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
+http-body-util = { workspace = true }
 humantime = { workspace = true }
 jsonschema = { workspace = true }
 linewright-core = { workspace = true }
@@ -40,8 +42,6 @@ url = { workspace = true }
 [dev-dependencies]
 linewright-core = { workspace = true, features = ["test-utils"] }
 boa_engine = { workspace = true }
-chrono = { workspace = true }
-http-body-util = { workspace = true }
 hyper = { workspace = true }
 scraper = { workspace = true }
 sqlx = { workspace = true }

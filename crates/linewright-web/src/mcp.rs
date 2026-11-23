@@ -3,6 +3,7 @@
 //! as a person with an access token of the authorization server.
 //! <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http>
 
+mod gate;
 mod page;
 mod tools;
 
@@ -50,15 +51,21 @@ pub fn router<S: Clone + Send + Sync + 'static>(
         sources: sources.clone(),
         manager,
     };
+    let config = StreamableHttpServerConfig::default()
+        .with_legacy_session_mode(false)
+        .with_json_response(true)
+        .with_sse_keep_alive(None)
+        .disable_allowed_hosts()
+        .with_allowed_origins([public_url.origin()]);
+    let gate = gate::Gate::new(
+        sources.clock.clone(),
+        public_url.clone(),
+        config.max_request_body_bytes,
+    );
     let service = StreamableHttpService::new(
         move || Ok(handler.clone()),
         Arc::new(NeverSessionManager::default()),
-        StreamableHttpServerConfig::default()
-            .with_legacy_session_mode(false)
-            .with_json_response(true)
-            .with_sse_keep_alive(None)
-            .disable_allowed_hosts()
-            .with_allowed_origins([public_url.origin()]),
+        config,
     );
     let bearer = Bearer {
         sources,
@@ -66,6 +73,7 @@ pub fn router<S: Clone + Send + Sync + 'static>(
     };
     Router::new()
         .route_service(MCP_PATH, service)
+        .route_layer(middleware::from_fn_with_state(gate, gate::gate))
         .route_layer(middleware::from_fn(supported_version))
         .route_layer(middleware::from_fn_with_state(bearer, bearer_caller))
 }

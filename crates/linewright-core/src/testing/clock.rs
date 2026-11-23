@@ -74,3 +74,47 @@ impl Clock for FakeClock {
         }
     }
 }
+
+/// A clock that holds still at [`STARTED`] until it is advanced, unlike a
+/// [`FakeClock`], whose every reading moves it on a second.
+pub struct StillClock {
+    now: Mutex<Timestamp>,
+    advanced: tokio::sync::Notify,
+}
+
+impl Default for StillClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StillClock {
+    pub fn new() -> StillClock {
+        StillClock {
+            now: Mutex::new(at(STARTED)),
+            advanced: tokio::sync::Notify::new(),
+        }
+    }
+
+    pub fn advance(&self, by: TimeDelta) {
+        *self.now.lock().unwrap() += by;
+        self.advanced.notify_waiters();
+    }
+}
+
+#[async_trait]
+impl Clock for StillClock {
+    fn now(&self) -> Timestamp {
+        *self.now.lock().unwrap()
+    }
+
+    async fn sleep_until(&self, at: Timestamp) {
+        loop {
+            let advanced = self.advanced.notified();
+            if *self.now.lock().unwrap() >= at {
+                return;
+            }
+            advanced.await;
+        }
+    }
+}
