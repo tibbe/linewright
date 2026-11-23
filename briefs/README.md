@@ -62,7 +62,7 @@ know.
 | `fix-ci.md` | CI fixes, likewise |
 | `update.md` | an update's conflict, likewise |
 | `automation.md` | automation runs |
-| `scorer.md` | the judge of a replay |
+| `scorer.md` | the scorer of a trial |
 | `follow-ups/` | a session sent back to work, such as for a result that doesn't parse |
 
 When a placeholder alone on its line is filled with nothing, its line and the
