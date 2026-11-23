@@ -380,7 +380,7 @@ image the operator builds with those in it.
 `serve` serves the UI ([Shell](shell.md)) on `ui-address`, a host and port,
 while `public-url` is set. People reach the UI at `public-url`.
 
-- **The public URL.** It is HTTPS, or HTTP to a loopback address.
+- **The public URL.** It has no path.
 - **Access.** The people that Linewright signs in, each with what their role
   allows ([Access](access.md)).
 - **Requests answered.** Only those whose `Host` is the public URL's host,

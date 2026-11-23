@@ -26,6 +26,8 @@
 - **The page, the card and the heading** are as on Sign in.
 - **The facts** are [facts](components.md#facts) in the screen's card, with
   `mb-6` under them.
+- **The warning** is a daisyUI `alert` in the `alert-warning` style, with
+  `mb-6` under it.
 - **"Allow" and "Deny"** are in `grid grid-cols-2 gap-2`. "Allow" is a
   `btn-primary`, with the icon `check`. "Deny" has the icon `x-mark`.
 
