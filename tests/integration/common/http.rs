@@ -127,22 +127,20 @@ pub fn signed_in_as(
     role: linewright::access::Role,
     name: &str,
 ) -> impl Future<Output = String> + use<> {
-    use linewright::access::people::{Claims, Identity, People};
-    use linewright::access::providers::Provider;
+    use linewright::access::people::{Claims, People, Vouched};
     use linewright::access::sessions::{SESSION_COOKIE, Sessions};
     let caller = std::panic::Location::caller();
     let database = sources.runs.database().clone();
     let now = super::at(super::STARTED);
     let first = name.split(' ').next().unwrap().to_lowercase();
     let claims = Claims {
-        identity: Identity {
-            provider: Provider::Google,
-            subject: format!("subject-of-{first}"),
-        },
+        subject: format!("subject-of-{first}"),
         shown_as: format!("{first}@example.com"),
         name: Some(name.to_string()),
         avatar: None,
-        email_verified: true,
+        vouched: Vouched::Google {
+            email_verified: true,
+        },
     };
     let name = name.to_string();
     async move {

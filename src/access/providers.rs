@@ -3,6 +3,9 @@
 
 #[cfg(feature = "fake-claude")]
 pub mod fake;
+mod github;
+
+pub use github::{GitHub, GitHubEndpoints};
 
 use std::fmt;
 use std::time::Duration;
@@ -12,7 +15,7 @@ use base64::Engine as _;
 use serde::Deserialize;
 use url::Url;
 
-use super::people::{Claims, Identity};
+use super::people::{Claims, Vouched};
 use crate::domain::Timestamp;
 use crate::host::domain_name;
 
@@ -73,6 +76,10 @@ impl fmt::Display for Provider {
 
 /// The identity providers Linewright offers: at least one.
 #[derive(Clone, Debug)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "made once, at startup, and kept in place"
+)]
 pub enum Providers {
     Google(Google),
     GitHub(GitHub),
@@ -106,6 +113,20 @@ impl Providers {
     }
 
     pub fn github(&self) -> Option<&GitHub> {
+        match self {
+            Providers::GitHub(github) | Providers::Both(_, github) => Some(github),
+            Providers::Google(_) => None,
+        }
+    }
+
+    pub fn google_mut(&mut self) -> Option<&mut Google> {
+        match self {
+            Providers::Google(google) | Providers::Both(google, _) => Some(google),
+            Providers::GitHub(_) => None,
+        }
+    }
+
+    pub fn github_mut(&mut self) -> Option<&mut GitHub> {
         match self {
             Providers::GitHub(github) | Providers::Both(_, github) => Some(github),
             Providers::Google(_) => None,
@@ -268,19 +289,28 @@ impl Google {
         }
         let email = id.email.context("the ID token has no email")?;
         Ok(Claims {
-            identity: Identity {
-                provider: Provider::Google,
-                subject: id.sub,
-            },
+            subject: id.sub,
             shown_as: email,
-            name: id.name.filter(|name| !name.trim().is_empty()),
-            avatar: id
-                .picture
-                .and_then(|picture| Url::parse(&picture).ok())
-                .filter(|picture| picture.scheme() == "https"),
-            email_verified: id.email_verified.is_some_and(|verified| verified.is_true()),
+            name: given_name(id.name),
+            avatar: https_avatar(id.picture),
+            vouched: Vouched::Google {
+                email_verified: id.email_verified.is_some_and(|verified| verified.is_true()),
+            },
         })
     }
+}
+
+/// The name a provider gives, but a blank one, which is none.
+fn given_name(given: Option<String>) -> Option<String> {
+    given.filter(|name| !name.trim().is_empty())
+}
+
+/// The avatar a provider gives, where it is an HTTPS URL, as the web UI
+/// shows only those.
+fn https_avatar(given: Option<String>) -> Option<Url> {
+    given
+        .and_then(|avatar| Url::parse(&avatar).ok())
+        .filter(|avatar| avatar.scheme() == "https")
 }
 
 /// Google's answer to a token request.
@@ -341,14 +371,6 @@ impl Verified {
             Verified::Text(text) => text == "true",
         }
     }
-}
-
-/// GitHub, as Linewright's OAuth client of it.
-#[derive(Clone, Debug)]
-pub struct GitHub {
-    pub client_id: ClientId,
-    pub secret: ClientSecret,
-    pub signup: SignUpOrgs,
 }
 
 /// The client ID a provider gave Linewright: never empty.
@@ -435,7 +457,41 @@ pub struct Membership {
     team: Option<String>,
 }
 
+/// An organization, or a team of one, that GitHub says a person is a
+/// member of, lower-cased, as Linewright compares it ignoring case.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberOf {
+    organization: String,
+    team: Option<String>,
+}
+
+impl MemberOf {
+    /// The organization whose login is `login`.
+    pub fn organization(login: &str) -> MemberOf {
+        MemberOf {
+            organization: login.to_ascii_lowercase(),
+            team: None,
+        }
+    }
+
+    /// The team whose slug is `slug`, of the organization whose login is
+    /// `organization`.
+    pub fn team(organization: &str, slug: &str) -> MemberOf {
+        MemberOf {
+            organization: organization.to_ascii_lowercase(),
+            team: Some(slug.to_ascii_lowercase()),
+        }
+    }
+}
+
 impl Membership {
+    /// Whether it takes in a member of `member`: an organization takes in
+    /// the members of its teams too.
+    pub fn takes_in(&self, member: &MemberOf) -> bool {
+        self.organization == member.organization
+            && (self.team.is_none() || self.team == member.team)
+    }
+
     pub fn organization(&self) -> &str {
         &self.organization
     }
@@ -493,6 +549,16 @@ impl SignUpOrgs {
         self.0.is_empty()
     }
 
+    /// The rule of each of `names`, each as [`SignUpOrgs::of`] takes it.
+    #[cfg(test)]
+    #[track_caller]
+    pub(crate) fn of_all(names: &[&str]) -> SignUpOrgs {
+        names
+            .iter()
+            .map(|name| SignUpOrgs::of(name).unwrap())
+            .fold(SignUpOrgs::default(), |all, one| all.and(&one))
+    }
+
     pub fn memberships(&self) -> &[Membership] {
         &self.0
     }
@@ -502,15 +568,23 @@ impl SignUpOrgs {
 const LONGEST_LOGIN: usize = 39;
 
 /// `login` lower-cased, when it is a GitHub login: letters, digits and
-/// single hyphens, neither starting nor ending it.
+/// single hyphens, neither starting nor ending it; followed, for a managed
+/// user of an enterprise, by `_` and its enterprise's short code, such as
+/// `mona_acme`.
+/// <https://docs.github.com/en/enterprise-cloud@latest/admin/managing-iam/iam-configuration-reference/username-considerations-for-external-authentication#about-usernames-for-managed-user-accounts>
 pub(crate) fn github_login(login: &str) -> Option<String> {
-    let login_characters = !login.is_empty()
-        && login.len() <= LONGEST_LOGIN
-        && !login.starts_with('-')
-        && !login.ends_with('-')
-        && !login.contains("--")
-        && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-    login_characters.then(|| login.to_ascii_lowercase())
+    let part = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && !part.contains("--")
+            && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    };
+    let parts = match login.split_once('_') {
+        None => part(login),
+        Some((handle, short_code)) => part(handle) && part(short_code),
+    };
+    (parts && login.len() <= LONGEST_LOGIN).then(|| login.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -622,14 +696,13 @@ mod tests {
         assert_eq!(
             claims,
             Claims {
-                identity: Identity {
-                    provider: Provider::Google,
-                    subject: "10769150350006150715113082367".into(),
-                },
+                subject: "10769150350006150715113082367".into(),
                 shown_as: "jsmith@example.com".into(),
                 name: None,
                 avatar: None,
-                email_verified: true,
+                vouched: Vouched::Google {
+                    email_verified: true
+                },
             }
         );
         let form: Vec<(String, String)> =

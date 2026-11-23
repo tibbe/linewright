@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use linewright::access::Role;
-use linewright::access::people::{Claims, Identity, People};
-use linewright::access::providers::Provider;
+use linewright::access::people::{Claims, People, Vouched};
 use linewright::access::providers::fake::FakeAccount;
 use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
@@ -1072,16 +1071,15 @@ pub async fn people(database: &Database) -> Result<()> {
             .zip([Role::Manager, Role::Contributor, Role::Viewer])
     {
         let claims = Claims {
-            identity: Identity {
-                provider: Provider::Google,
-                subject: account.subject,
-            },
+            subject: account.subject,
             shown_as: account.email,
             name: account.name,
             avatar: None,
-            email_verified: account.email_verified,
+            vouched: Vouched::Google {
+                email_verified: account.email_verified,
+            },
         };
-        if people.find_by_identity(&claims.identity).await?.is_none() {
+        if people.find_by_identity(&claims.identity()).await?.is_none() {
             people.add(&claims, role, started_at()).await?;
         }
     }

@@ -341,7 +341,7 @@ async fn sign_in_as_decided(
 ) -> anyhow::Result<Result<SessionCookie, Refusal>> {
     let now = sources.clock.now();
     let people = People::new(sources.runs.database().clone());
-    let found = people.find_by_identity(&claims.identity).await?;
+    let found = people.find_by_identity(&claims.identity()).await?;
     let rule = SignUpRule::Google(&google.signup);
     let person = match decide_sign_in(claims, &rule, sign_in.manager.as_ref(), found.as_ref()) {
         SignInDecision::Refuse(refusal) => {

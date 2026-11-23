@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use url::Url;
 
 use super::Role;
-use super::providers::{Provider, Providers, SignUpDomains, github_login};
+use super::providers::{MemberOf, Provider, Providers, SignUpDomains, SignUpOrgs, github_login};
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
 use crate::host::domain_name;
@@ -194,19 +194,48 @@ fn logged(provider: Provider, shown_as: &str) -> String {
 /// What an identity provider says of the person it signed in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Claims {
-    pub identity: Identity,
+    /// The subject the provider gives them.
+    pub subject: String,
     /// The email for Google, the login for GitHub.
     pub shown_as: String,
     pub name: Option<String>,
     pub avatar: Option<Url>,
-    /// Whether the provider verified the email it shows them as.
-    pub email_verified: bool,
+    pub vouched: Vouched,
+}
+
+/// What only one provider says of the person, and which provider it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Vouched {
+    Google {
+        /// Whether Google verified the email it shows them as.
+        email_verified: bool,
+    },
+    GitHub {
+        /// The organizations and teams they are a member of, as far as
+        /// Linewright read them: none while GitHub's sign-up rule names
+        /// none.
+        memberships: Vec<MemberOf>,
+    },
 }
 
 impl Claims {
+    pub fn provider(&self) -> Provider {
+        match self.vouched {
+            Vouched::Google { .. } => Provider::Google,
+            Vouched::GitHub { .. } => Provider::GitHub,
+        }
+    }
+
+    pub fn identity(&self) -> Identity {
+        Identity {
+            provider: self.provider(),
+            subject: self.subject.clone(),
+        }
+    }
+
     /// The identity as the log gives it, as [`Person::logged`] does.
     pub fn logged(&self) -> String {
-        logged(self.identity.provider, &self.shown_as)
+        logged(self.provider(), &self.shown_as)
     }
 }
 
@@ -216,17 +245,28 @@ impl Claims {
 pub enum SignUpRule<'a> {
     /// The verified email's domain is one of these.
     Google(&'a SignUpDomains),
+    /// The person is a member of one of these organizations or teams.
+    GitHub(&'a SignUpOrgs),
 }
 
 impl SignUpRule<'_> {
-    /// Whether `claims` meet it.
+    /// Whether `claims` meet it: never those of another provider.
     pub fn meets(&self, claims: &Claims) -> bool {
-        match self {
-            SignUpRule::Google(domains) => claims
+        match (self, &claims.vouched) {
+            (SignUpRule::Google(domains), Vouched::Google { .. }) => claims
                 .shown_as
                 .rsplit_once('@')
                 .and_then(|(_, domain)| domain_name(domain))
                 .is_some_and(|domain| domains.domains().contains(&domain)),
+            (SignUpRule::GitHub(orgs), Vouched::GitHub { memberships }) => {
+                orgs.memberships().iter().any(|named| {
+                    memberships
+                        .iter()
+                        .any(|membership| named.takes_in(membership))
+                })
+            }
+            (SignUpRule::Google(_), Vouched::GitHub { .. })
+            | (SignUpRule::GitHub(_), Vouched::Google { .. }) => false,
         }
     }
 }
@@ -273,10 +313,13 @@ pub fn decide_sign_in(
     manager: Option<&ManagerName>,
     person: Option<&Person>,
 ) -> SignInDecision {
-    if !claims.email_verified {
+    if let Vouched::Google {
+        email_verified: false,
+    } = claims.vouched
+    {
         return SignInDecision::Refuse(Refusal::Unverified(claims.shown_as.clone()));
     }
-    if manager.is_some_and(|manager| manager.names(claims.identity.provider, &claims.shown_as)) {
+    if manager.is_some_and(|manager| manager.names(claims.provider(), &claims.shown_as)) {
         return match person {
             None => SignInDecision::Add {
                 role: Role::Manager,
@@ -430,8 +473,8 @@ impl People {
             people_columns!(),
             ""
         ))
-        .bind(claims.identity.provider.to_string())
-        .bind(&claims.identity.subject)
+        .bind(claims.provider().to_string())
+        .bind(&claims.subject)
         .bind(&claims.shown_as)
         .bind(&claims.name)
         .bind(claims.avatar.as_ref().map(Url::as_str))
@@ -670,14 +713,13 @@ pub(crate) mod tests {
 
     fn claims(email: &str, verified: bool) -> Claims {
         Claims {
-            identity: Identity {
-                provider: Provider::Google,
-                subject: "101".into(),
-            },
+            subject: "101".into(),
             shown_as: email.into(),
             name: Some("Ada Lovelace".into()),
             avatar: None,
-            email_verified: verified,
+            vouched: Vouched::Google {
+                email_verified: verified,
+            },
         }
     }
 
@@ -847,6 +889,151 @@ pub(crate) mod tests {
         );
     }
 
+    /// The person of GitHub's user ID 583231, `login`, a member of
+    /// `memberships`, each `org` or `org/team`.
+    fn on_github(login: &str, memberships: &[&str]) -> Claims {
+        Claims {
+            subject: "583231".into(),
+            shown_as: login.into(),
+            name: Some("The Octocat".into()),
+            avatar: None,
+            vouched: Vouched::GitHub {
+                memberships: memberships
+                    .iter()
+                    .map(|name| match name.split_once('/') {
+                        None => MemberOf::organization(name),
+                        Some((organization, team)) => MemberOf::team(organization, team),
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// GitHub's sign-up rule: an organization takes in its members, whatever
+    /// their teams, and a team only its own, each ignoring case.
+    #[test_log::test]
+    fn githubs_sign_up_rule_takes_in_the_members_of_the_organizations_and_teams_it_names() {
+        let meets = |rule: &[&str], memberships: &[&str]| {
+            SignUpRule::GitHub(&SignUpOrgs::of_all(rule)).meets(&on_github("octocat", memberships))
+        };
+
+        assert!(meets(&["acme"], &["acme"]));
+        assert!(meets(&["Acme"], &["ACME", "acme/Core"]));
+        assert!(meets(&["acme"], &["acme/core"]));
+        assert!(meets(&["other", "acme/core"], &["acme", "acme/core"]));
+        assert!(meets(&["acme/Core"], &["acme", "Acme/core"]));
+        assert!(!meets(&["acme/core"], &["acme", "acme/web"]));
+        assert!(!meets(&["acme/core"], &["acme", "other/core"]));
+        assert!(!meets(&["acme"], &["acme-labs", "other/acme"]));
+        assert!(!meets(&["acme"], &[]));
+        assert!(!meets(&[], &["acme"]));
+    }
+
+    /// A rule is its own provider's: GitHub's never takes in Google's
+    /// identities, nor Google's GitHub's.
+    #[test_log::test]
+    fn a_sign_up_rule_takes_in_no_identity_of_the_other_provider() {
+        let domains = domains("example.com");
+        let orgs = SignUpOrgs::of_all(&["example"]);
+
+        assert!(!SignUpRule::GitHub(&orgs).meets(&claims("ada@example.com", true)));
+        assert!(!SignUpRule::Google(&domains).meets(&on_github("ada@example.com", &[])));
+    }
+
+    /// 3b to 3e for GitHub, whose identity is its login: there is no 3a,
+    /// an email GitHub has not verified.
+    #[test_log::test]
+    fn a_github_identity_is_decided_by_its_login_and_memberships() {
+        let rule = SignUpOrgs::of_all(&["acme"]);
+        let github = Providers::GitHub(super::super::providers::GitHub::for_tests(rule.clone()));
+        let named = ManagerName::parse("github:OctoCat", &github).unwrap();
+        let decide = |claims: &Claims, manager: Option<&ManagerName>, person: Option<&Person>| {
+            decide_sign_in(claims, &SignUpRule::GitHub(&rule), manager, person)
+        };
+        let octocat = Person {
+            identity: Identity {
+                provider: Provider::GitHub,
+                subject: "583231".into(),
+            },
+            shown_as: "octocat".into(),
+            ..person(1, Role::Viewer, State::Disabled)
+        };
+
+        assert_eq!(
+            decide(&on_github("octocat", &[]), Some(&named), Some(&octocat)),
+            SignInDecision::SignIn {
+                person: PersonId(1),
+                make_manager: true
+            }
+        );
+        assert_eq!(
+            decide(&on_github("monalisa", &[]), Some(&named), None),
+            SignInDecision::Refuse(Refusal::NoAccess("monalisa".into()))
+        );
+        assert_eq!(
+            decide(&on_github("monalisa", &["acme/core"]), Some(&named), None),
+            SignInDecision::Add { role: Role::Viewer }
+        );
+        assert_eq!(
+            decide(&on_github("octocat", &["acme"]), None, Some(&octocat)),
+            SignInDecision::Refuse(Refusal::Disabled("octocat".into()))
+        );
+    }
+
+    /// `manager` names a GitHub identity by its login, a managed user's of
+    /// an enterprise too, such as `mona_acme`.
+    #[test_log::test]
+    fn the_manager_names_a_github_login() {
+        let github = Providers::GitHub(super::super::providers::GitHub::for_tests(
+            SignUpOrgs::default(),
+        ));
+        let parse = |name: &str| ManagerName::parse(name, &github).map(|named| named.to_string());
+
+        assert_eq!(parse("github:OctoCat"), Ok("github:octocat".into()));
+        assert_eq!(
+            parse("github:Mona-Lisa_ACME"),
+            Ok("github:mona-lisa_acme".into())
+        );
+        for malformed in [
+            "github:-octocat",
+            "github:octo--cat",
+            "github:mona_",
+            "github:_acme",
+            "github:mona_lisa_acme",
+            "github:octo cat",
+        ] {
+            assert!(
+                matches!(parse(malformed), Err(NotAManager::Malformed(_))),
+                "{malformed}"
+            );
+        }
+    }
+
+    /// `manager` names a GitHub identity by its login, never Google's of
+    /// the same text.
+    #[test_log::test]
+    fn the_manager_a_github_login_names_is_not_a_google_identity() {
+        let both = Providers::Both(
+            super::super::providers::Google::for_tests(domains("example.com")),
+            super::super::providers::GitHub::for_tests(SignUpOrgs::default()),
+        );
+        let named = ManagerName::parse("github:ada", &both).unwrap();
+        let google_ada = Claims {
+            shown_as: "ada".into(),
+            ..claims("ada", true)
+        };
+
+        assert_eq!(
+            decide_sign_in(
+                &google_ada,
+                &SignUpRule::Google(&SignUpDomains::default()),
+                Some(&named),
+                None
+            ),
+            SignInDecision::Refuse(Refusal::NoAccess("ada".into()))
+        );
+    }
+
     /// `docs/specs/access.md`, People, How a person is shown.
     #[test_log::test]
     fn a_person_is_shown_by_their_name_or_else_their_identity() {
@@ -915,10 +1102,7 @@ pub(crate) mod tests {
         let people = People::new(Database::open(dir.path()).await.unwrap());
         for (n, (email, name, role)) in added.iter().enumerate() {
             let claims = Claims {
-                identity: Identity {
-                    provider: Provider::Google,
-                    subject: format!("{n}"),
-                },
+                subject: format!("{n}"),
                 name: name.map(str::to_string),
                 ..claims(email, true)
             };
@@ -1053,10 +1237,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         let grace_claims = Claims {
-            identity: Identity {
-                provider: Provider::Google,
-                subject: "102".into(),
-            },
+            subject: "102".into(),
             ..claims("grace@example.com", true)
         };
         let grace = people.add(&grace_claims, Role::Viewer, now).await.unwrap();
