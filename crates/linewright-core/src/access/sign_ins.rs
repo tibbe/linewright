@@ -19,22 +19,51 @@ pub const SIGN_IN_COOKIE: &str = "__Host-linewright-sign-in";
 /// back.
 const PENDING_FOR: TimeDelta = TimeDelta::minutes(10);
 
+/// A sign-in taken: its verifier, nonce, return path, authorization request
+/// and when it stops waiting.
+type TakenRow = (String, String, Option<String>, Option<String>, String);
+
 /// The sign-ins begun, in the database.
 #[derive(Clone, Debug)]
 pub struct SignIns {
     db: Database,
 }
 
-/// A sign-in begun at a provider, with where the browser goes once it is
-/// back.
+/// What a sign-in is for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum After {
+    /// Returning to the screen of this path.
+    Screen(String),
+    /// The authorization request of this handle.
+    Authorization(String),
+}
+
+impl After {
+    /// The path of the screen it returns to, if it is for one.
+    fn screen(&self) -> Option<&str> {
+        match self {
+            After::Screen(path) => Some(path),
+            After::Authorization(_) => None,
+        }
+    }
+
+    /// The handle of the authorization request, if it is for one.
+    fn authorization(&self) -> Option<&str> {
+        match self {
+            After::Screen(_) => None,
+            After::Authorization(handle) => Some(handle),
+        }
+    }
+}
+
+/// A sign-in begun at a provider, with what it is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pending {
     pub provider: Provider,
     pub state: String,
     pub verifier: String,
     pub nonce: String,
-    /// The path the browser returns to once signed in.
-    pub return_to: String,
+    pub after: After,
     /// The value of [`SIGN_IN_COOKIE`] in the browser that began it.
     pub browser: String,
 }
@@ -59,14 +88,14 @@ impl SignIns {
         SignIns { db }
     }
 
-    /// Begins a sign-in at `provider` at `now`, for a browser to return to
-    /// `return_to`, forgetting those that waited too long. The browser's
-    /// [`SIGN_IN_COOKIE`], `browser`, ties it to the browser, so that its
-    /// other sign-ins begun still wait; or a new one, for a browser without.
+    /// Begins a sign-in at `provider` at `now`, for `after`, forgetting
+    /// those that waited too long. The browser's [`SIGN_IN_COOKIE`],
+    /// `browser`, ties it to the browser, so that its other sign-ins begun
+    /// still wait; or a new one, for a browser without.
     pub async fn begin(
         &self,
         provider: Provider,
-        return_to: &str,
+        after: &After,
         browser: Option<&str>,
         now: Timestamp,
     ) -> anyhow::Result<Pending> {
@@ -75,7 +104,7 @@ impl SignIns {
             state: random_token(),
             verifier: random_token(),
             nonce: random_token(),
-            return_to: return_to.to_string(),
+            after: after.clone(),
             browser: browser.map_or_else(random_token, ToString::to_string),
         };
         sqlx::query("DELETE FROM pending_sign_ins WHERE expires_at <= ?")
@@ -85,15 +114,17 @@ impl SignIns {
             .context("forgetting the sign-ins that waited too long")?;
         sqlx::query(
             "INSERT INTO pending_sign_ins
-                (state, browser, provider, verifier, nonce, return_to, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (state, browser, provider, verifier, nonce, return_to,
+                 authorization_request, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(hashed(&pending.state))
         .bind(hashed(&pending.browser))
         .bind(provider.to_string())
         .bind(&pending.verifier)
         .bind(&pending.nonce)
-        .bind(return_to)
+        .bind(after.screen())
+        .bind(after.authorization())
         .bind(time_text(now + PENDING_FOR))
         .execute(self.db.pool())
         .await
@@ -114,9 +145,9 @@ impl SignIns {
         let Some(browser) = browser else {
             return Ok(None);
         };
-        let row: Option<(String, String, String, String)> = sqlx::query_as(
+        let row: Option<TakenRow> = sqlx::query_as(
             "DELETE FROM pending_sign_ins WHERE state = ? AND browser = ? AND provider = ?
-             RETURNING verifier, nonce, return_to, expires_at",
+             RETURNING verifier, nonce, return_to, authorization_request, expires_at",
         )
         .bind(hashed(state))
         .bind(hashed(browser))
@@ -124,8 +155,15 @@ impl SignIns {
         .fetch_optional(self.db.pool())
         .await
         .context("taking the sign-in")?;
-        let Some((verifier, nonce, return_to, expires_at)) = row else {
+        let Some((verifier, nonce, return_to, request, expires_at)) = row else {
             return Ok(None);
+        };
+        let after = match (return_to, request) {
+            (Some(path), None) => After::Screen(path),
+            (None, Some(handle)) => After::Authorization(handle),
+            _ => anyhow::bail!(
+                "the sign-in is for both a screen and an authorization request, or for neither"
+            ),
         };
         if parse_time(&expires_at)? <= now {
             return Ok(None);
@@ -135,7 +173,7 @@ impl SignIns {
             state: state.to_string(),
             verifier,
             nonce,
-            return_to,
+            after,
             browser: browser.to_string(),
         }))
     }

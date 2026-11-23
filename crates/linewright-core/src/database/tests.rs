@@ -5,6 +5,9 @@ use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
+use crate::access::providers::Provider;
+use crate::access::sign_ins::{After, SignIns};
+use crate::access::tokens::hashed;
 use crate::automation::LastScheduledRuns;
 use crate::benchmarks::{
     BenchmarkRunId, BenchmarkRunState, Cancelled, NoScore, ScoreFigures, TrialEnd, TrialFigures,
@@ -1357,6 +1360,62 @@ async fn a_database_from_before_names_were_clean_opens_with_each_name_clean_or_n
             "short",
             "Configuration 4",
             "Configuration 5"
+        ]
+    );
+}
+
+static BEFORE_SIGN_IN_PURPOSES: &[Migration] = MIGRATIONS.split_at(21).0;
+
+#[test_log::test(tokio::test)]
+async fn a_sign_in_begun_before_sign_ins_had_purposes_is_for_its_screen_or_the_request_of_its_consent()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_SIGN_IN_PURPOSES, Absent::Make)
+        .await
+        .unwrap();
+    let begun = [
+        ("screen", "/runs"),
+        ("consent", "/oauth/authorize?waiting=handle"),
+        ("not consent", "/oauth/authorize?waiting=handle&more"),
+    ];
+    for (state, return_to) in begun {
+        sqlx::query(
+            "INSERT INTO pending_sign_ins
+                 (state, browser, provider, verifier, nonce, return_to, expires_at)
+                 VALUES (?, ?, 'github', 'verifier', 'nonce', ?, '2026-11-23T10:10:00Z')",
+        )
+        .bind(hashed(state))
+        .bind(hashed("browser"))
+        .bind(return_to)
+        .execute(before.pool())
+        .await
+        .unwrap();
+    }
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let sign_ins = SignIns::new(db);
+    let mut taken = Vec::new();
+    for (state, _) in begun {
+        let pending = sign_ins
+            .take(
+                Provider::GitHub,
+                state,
+                Some("browser"),
+                "2026-11-23T10:00:00Z".parse().unwrap(),
+            )
+            .await
+            .unwrap()
+            .expect("the sign-in begun before");
+        taken.push(pending.after);
+    }
+    assert_eq!(
+        taken,
+        [
+            After::Screen("/runs".into()),
+            After::Authorization("handle".into()),
+            After::Screen("/oauth/authorize?waiting=handle&more".into()),
         ]
     );
 }

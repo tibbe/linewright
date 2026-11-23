@@ -21,7 +21,7 @@ use linewright_core::access::people::{
 };
 use linewright_core::access::providers::{Begun, GitHub, Google, Provider, Providers};
 use linewright_core::access::sessions::SessionCookie;
-use linewright_core::access::sign_ins::{SIGN_IN_COOKIE, SignIns};
+use linewright_core::access::sign_ins::{After, SIGN_IN_COOKIE, SignIns};
 use linewright_core::api::Sources;
 use linewright_core::domain::Timestamp;
 use linewright_core::host::PublicUrl;
@@ -178,6 +178,25 @@ impl ReturnPath {
     pub(super) fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// What a sign-in that returns to it is for: the authorization request
+    /// whose Consent it is, if it is one's, and else the screen.
+    fn after(&self) -> After {
+        match super::authorization_server::consent_secret(self.as_str()) {
+            Some(secret) => After::Authorization(secret.to_string()),
+            None => After::Screen(self.0.clone()),
+        }
+    }
+
+    /// The path a sign-in for `after` returns to.
+    fn of(after: &After) -> ReturnPath {
+        match after {
+            After::Screen(path) => ReturnPath::parse(Some(path)),
+            After::Authorization(secret) => {
+                ReturnPath::parse(Some(&super::authorization_server::consent_path(secret)))
+            }
+        }
+    }
 }
 
 /// The path of Sign in, for a browser to come back to `return_to` once it
@@ -315,7 +334,7 @@ pub(super) async fn begin(
     let pending = SignIns::new(sources.runs.database().clone())
         .begin(
             provider,
-            return_to.as_str(),
+            &return_to.after(),
             browser.as_deref(),
             sources.clock.now(),
         )
@@ -383,7 +402,7 @@ pub(super) async fn callback(
             return failed(&sign_in, &sources, provider, ReturnPath::parse(None), &e);
         }
     };
-    let return_to = ReturnPath::parse(Some(&pending.return_to));
+    let return_to = ReturnPath::of(&pending.after);
     let finished = match (&callback.code, &callback.error) {
         (Some(code), None) => sign_in.finish(offered, code, &pending.begun(), now).await,
         (_, Some(error)) => Err(anyhow::anyhow!(
@@ -397,18 +416,20 @@ pub(super) async fn callback(
         Err(e) => Err(e),
     };
     let decided = match decided {
-        Ok(Ok((cookie, person))) => match signed_in_for(&sources, &return_to, person, now).await {
-            Ok(()) => Ok(Ok(cookie)),
-            Err(e) => {
-                if let Err(ending) = sessions(&sources).end(&cookie).await {
-                    warn!(
-                        error = format!("{ending:#}"),
-                        "ending a sign-in whose cookie the browser never got failed"
-                    );
+        Ok(Ok((cookie, person))) => {
+            match signed_in_for(&sources, &pending.after, person, now).await {
+                Ok(()) => Ok(Ok(cookie)),
+                Err(e) => {
+                    if let Err(ending) = sessions(&sources).end(&cookie).await {
+                        warn!(
+                            error = format!("{ending:#}"),
+                            "ending a sign-in whose cookie the browser never got failed"
+                        );
+                    }
+                    Err(e)
                 }
-                Err(e)
             }
-        },
+        }
         Ok(Err(refusal)) => Ok(Err(refusal)),
         Err(e) => Err(e),
     };
@@ -430,21 +451,23 @@ pub(super) async fn callback(
     }
 }
 
-/// Records that `person` signed in at `now` for the authorization request
-/// whose Consent `return_to` is, if it is one's: each authorization takes
-/// its own sign-in (`docs/specs/access.md`, The authorization server, 3).
+/// Records that `person` signed in at `now` for `after`, where it is an
+/// authorization request: each authorization takes its own sign-in
+/// (`docs/specs/access.md`, The authorization server, 3).
 async fn signed_in_for(
     sources: &Sources,
-    return_to: &ReturnPath,
+    after: &After,
     person: PersonId,
     now: Timestamp,
 ) -> anyhow::Result<()> {
-    let Some(secret) = super::authorization_server::waiting_request(return_to) else {
-        return Ok(());
-    };
-    AuthorizationRequests::new(sources.runs.database().clone())
-        .signed_in(secret, person, now)
-        .await
+    match after {
+        After::Screen(_) => Ok(()),
+        After::Authorization(secret) => {
+            AuthorizationRequests::new(sources.runs.database().clone())
+                .signed_in(secret, person, now)
+                .await
+        }
+    }
 }
 
 /// Signs a browser in as the person of `claims`, as Linewright decides

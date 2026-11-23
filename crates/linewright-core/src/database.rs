@@ -84,6 +84,7 @@ static MIGRATIONS: &[Migration] = &[
     clean_names::CLEAN_NAMES,
     Migration::Sql(SIGN_IN_TABLES),
     Migration::Sql(OAUTH_TABLES),
+    Migration::Sql(SIGN_IN_PURPOSES),
 ];
 
 /// The table of the release that made each schema version.
@@ -458,6 +459,38 @@ const OAUTH_TABLES: &str = "CREATE TABLE clients (
         state TEXT NOT NULL CHECK (state IN ('current', 'previous', 'retired'))
     ) STRICT;
     CREATE INDEX refresh_tokens_of_authorizations ON refresh_tokens (authorization);";
+
+/// What each sign-in begun is for: the path of the screen it returns to, or
+/// the handle of the authorization request it signs in for, which one begun
+/// before kept as the path of the request's Consent, `/oauth/authorize?waiting=`
+/// and the handle.
+const SIGN_IN_PURPOSES: &str = "CREATE TABLE pending_sign_ins_with_purposes (
+        state BLOB PRIMARY KEY,
+        browser BLOB NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('google', 'github')),
+        verifier TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        return_to TEXT,
+        authorization_request TEXT,
+        expires_at TEXT NOT NULL,
+        CHECK ((return_to IS NULL) != (authorization_request IS NULL))
+    ) STRICT;
+    INSERT INTO pending_sign_ins_with_purposes
+        (state, browser, provider, verifier, nonce, return_to, authorization_request,
+         expires_at)
+        SELECT state, browser, provider, verifier, nonce,
+            CASE WHEN request IS NULL THEN return_to END, request, expires_at
+        FROM (
+            SELECT *, CASE
+                WHEN substr(return_to, 1, 25) = '/oauth/authorize?waiting='
+                    AND instr(substr(return_to, 26), '&') = 0
+                    AND instr(substr(return_to, 26), '=') = 0
+                THEN substr(return_to, 26)
+            END AS request
+            FROM pending_sign_ins
+        );
+    DROP TABLE pending_sign_ins;
+    ALTER TABLE pending_sign_ins_with_purposes RENAME TO pending_sign_ins;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,
