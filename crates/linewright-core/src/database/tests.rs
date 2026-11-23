@@ -5,6 +5,9 @@ use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
+use crate::access::oauth::store::{Authorizations, Tokens};
+use crate::access::oauth::{ClientId, Grant, Server, TokenRequest};
+use crate::access::people::PersonId;
 use crate::access::providers::Provider;
 use crate::access::sign_ins::{After, SignIns};
 use crate::access::tokens::hashed;
@@ -15,6 +18,7 @@ use crate::benchmarks::{
 };
 use crate::cost::Usd;
 use crate::environment::kept::Builds;
+use crate::host::PublicUrl;
 use crate::name::Name;
 use crate::pull_records::PullRecords;
 use crate::results::Verdict;
@@ -1418,4 +1422,81 @@ async fn a_sign_in_begun_before_sign_ins_had_purposes_is_for_its_screen_or_the_r
             After::Screen("/oauth/authorize?waiting=handle&more".into()),
         ]
     );
+}
+
+static BEFORE_USED_REFRESH_TOKENS: &[Migration] = MIGRATIONS.split_at(22).0;
+
+/// `docs/specs/access.md`, The authorization server, A second use: each
+/// refresh token a release before kept as previous or retired is a used
+/// one, whose use ends its authorization, and a current one still works.
+#[test_log::test(tokio::test)]
+async fn a_database_from_before_refresh_tokens_were_current_or_used_opens_with_each_earlier_one_used()
+ {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_USED_REFRESH_TOKENS, Absent::Make)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO people (id, provider, subject, shown_as, role, state, signed_in_at)
+            VALUES (1, 'google', 's', 'vera@example.com', 'viewer', 'enabled',
+                '2026-11-20T12:00:00Z');
+        INSERT INTO clients (id, registration, redirect_uris, registered_at)
+            VALUES ('c-1', 'dynamic', '[\"http://127.0.0.1:5000/cb\"]', '2026-11-20T12:00:00Z');
+        INSERT INTO authorizations (id, person, client, redirect_uri, resource, allowed_at, ends_at)
+            VALUES (1, 1, 'c-1', 'http://127.0.0.1:5000/cb', 'https://lw.example.com/mcp',
+                '2026-11-20T12:00:00Z', '2026-12-20T12:00:00Z'),
+            (2, 1, 'c-1', 'http://127.0.0.1:5000/cb', 'https://lw.example.com/mcp',
+                '2026-11-20T12:00:00Z', '2026-12-20T12:00:00Z'),
+            (3, 1, 'c-1', 'http://127.0.0.1:5000/cb', 'https://lw.example.com/mcp',
+                '2026-11-20T12:00:00Z', '2026-12-20T12:00:00Z');",
+    )
+    .execute(before.pool())
+    .await
+    .unwrap();
+    for (token, authorization, state) in [
+        ("previous", 1, "previous"),
+        ("retired", 2, "retired"),
+        ("current", 3, "current"),
+    ] {
+        sqlx::query("INSERT INTO refresh_tokens (hash, authorization, state) VALUES (?, ?, ?)")
+            .bind(hashed(token))
+            .bind(authorization)
+            .bind(state)
+            .execute(before.pool())
+            .await
+            .unwrap();
+    }
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let server = Server::new(PublicUrl::parse("https://lw.example.com").unwrap());
+    let now = parse_time("2026-11-21T12:00:00Z").unwrap();
+    let tokens = Tokens::new(db.clone());
+    let refresh = |token: &str| TokenRequest {
+        grant: Grant::Refresh {
+            token: token.into(),
+        },
+        client_id: ClientId::of("c-1".into()),
+        resource: None,
+    };
+    let answer = async |token| tokens.answer(&refresh(token), &server, now).await.unwrap();
+
+    assert_eq!(
+        answer("previous").await.map_err(|e| e.error),
+        Err("invalid_grant")
+    );
+    assert_eq!(
+        answer("retired").await.map_err(|e| e.error),
+        Err("invalid_grant")
+    );
+    assert!(answer("current").await.is_ok());
+    let left: Vec<i64> = Authorizations::new(db)
+        .list_of(PersonId::of_row(1), now)
+        .await
+        .unwrap()
+        .iter()
+        .map(|listed| listed.id.row())
+        .collect();
+    assert_eq!(left, [3], "the used ones' authorizations ended");
 }

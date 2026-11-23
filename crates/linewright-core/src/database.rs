@@ -85,6 +85,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(SIGN_IN_TABLES),
     Migration::Sql(OAUTH_TABLES),
     Migration::Sql(SIGN_IN_PURPOSES),
+    Migration::Sql(USED_REFRESH_TOKENS),
 ];
 
 /// The table of the release that made each schema version.
@@ -491,6 +492,22 @@ const SIGN_IN_PURPOSES: &str = "CREATE TABLE pending_sign_ins_with_purposes (
         );
     DROP TABLE pending_sign_ins;
     ALTER TABLE pending_sign_ins_with_purposes RENAME TO pending_sign_ins;";
+
+/// Each refresh token as current or used (`docs/specs/access.md`, The
+/// authorization server, A second use): one that was previous or retired
+/// is used. SQLite changes a `CHECK` only by making the table again.
+/// <https://www.sqlite.org/lang_altertable.html#otheralter>
+const USED_REFRESH_TOKENS: &str = "CREATE TABLE refresh_tokens_used (
+        hash BLOB PRIMARY KEY,
+        authorization INTEGER NOT NULL REFERENCES authorizations (id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN ('current', 'used'))
+    ) STRICT;
+    INSERT INTO refresh_tokens_used (hash, authorization, state)
+        SELECT hash, authorization, CASE state WHEN 'current' THEN 'current' ELSE 'used' END
+        FROM refresh_tokens;
+    DROP TABLE refresh_tokens;
+    ALTER TABLE refresh_tokens_used RENAME TO refresh_tokens;
+    CREATE INDEX refresh_tokens_of_authorizations ON refresh_tokens (authorization);";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

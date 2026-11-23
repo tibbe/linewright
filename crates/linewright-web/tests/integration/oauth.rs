@@ -337,7 +337,6 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
     );
 
     let exchanged = browser.exchange_code(&client, &code).await;
-    let again = browser.exchange_code(&client, &code).await;
 
     assert_eq!(exchanged.status, 200, "{}", exchanged.html.html());
     assert_eq!(exchanged.headers["cache-control"], "no-store");
@@ -349,8 +348,14 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
         acting_as(&signing, &tokens.access).await.as_deref(),
         Some("google:nameless@example.com")
     );
+    let again = browser.exchange_code(&client, &code).await;
     assert_eq!(again.status, 400);
     assert_eq!(json(&again)["error"], "invalid_grant");
+    assert_eq!(
+        acting_as(&signing, &tokens.access).await,
+        None,
+        "a second use of the code ended the authorization"
+    );
 }
 
 /// `docs/specs/access.md`, The authorization server, Loopback: a request
@@ -563,34 +568,27 @@ async fn a_request_linewright_refuses_is_sent_back_to_its_client() {
     assert_eq!(query_value(&sent, "state").as_deref(), Some("s"));
 }
 
-/// `docs/specs/access.md`, Tokens: rotation, a lost response, and a refresh
-/// token that has stopped working ending its authorization.
+/// `docs/specs/access.md`, The authorization server, A second use and An
+/// ended authorization: each use of a refresh token gives a new one, and a
+/// second use of one ends its authorization.
 #[test_log::test(tokio::test)]
-async fn refresh_tokens_rotate_with_the_grace_of_a_lost_response() {
+async fn a_refresh_token_works_once_and_a_second_use_ends_its_authorization() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
     let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let mut client = Browsing::new(&signing);
-    let lost = client.refresh(&id, &first.refresh).await;
-    assert_eq!(lost.status, 200, "{}", lost.html.html());
-
-    let retried = client.refresh(&id, &first.refresh).await;
-
-    assert_eq!(retried.status, 200, "a lost response is retried");
-    let retried = tokens_of(&retried);
-    assert_ne!(retried.refresh, tokens_of(&lost).refresh);
-    let replaced = client.refresh(&id, &retried.refresh).await;
-    assert_eq!(replaced.status, 200, "{}", replaced.html.html());
-    let replaced = tokens_of(&replaced);
+    let second = client.refresh(&id, &first.refresh).await;
+    assert_eq!(second.status, 200, "{}", second.html.html());
+    let second = tokens_of(&second);
+    assert_ne!(second.refresh, first.refresh);
     let (log, _guard) = Log::capture();
-    let dead = client.refresh(&id, &first.refresh).await;
-    assert_eq!(
-        dead.status, 400,
-        "the first stopped working once its replacement was used"
-    );
-    assert_eq!(json(&dead)["error"], "invalid_grant");
-    assert_eq!(acting_as(&signing, &replaced.access).await, None);
-    assert_eq!(client.refresh(&id, &replaced.refresh).await.status, 400);
+
+    let again = client.refresh(&id, &first.refresh).await;
+
+    assert_eq!(again.status, 400);
+    assert_eq!(json(&again)["error"], "invalid_grant");
+    assert_eq!(acting_as(&signing, &second.access).await, None);
+    assert_eq!(client.refresh(&id, &second.refresh).await.status, 400);
     let logged = log.lines("INFO");
     assert!(
         logged
@@ -600,42 +598,7 @@ async fn refresh_tokens_rotate_with_the_grace_of_a_lost_response() {
     );
 }
 
-/// `docs/specs/access.md`, Tokens: the refresh token that a lost response
-/// held stopped working, and using it ends its authorization.
-#[test_log::test(tokio::test)]
-async fn the_refresh_token_of_a_lost_response_ends_its_authorization() {
-    let signing = signing(None).await;
-    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
-    let mut client = Browsing::new(&signing);
-    let lost = tokens_of(&client.refresh(&id, &first.refresh).await);
-    let retried = tokens_of(&client.refresh(&id, &first.refresh).await);
-
-    let dead = client.refresh(&id, &lost.refresh).await;
-
-    assert_eq!(dead.status, 400);
-    assert_eq!(acting_as(&signing, &retried.access).await, None);
-}
-
-/// `docs/specs/access.md`, Tokens: the previous refresh token stops working
-/// once the client first uses the one that replaced it.
-#[test_log::test(tokio::test)]
-async fn the_previous_refresh_token_stops_working_once_its_replacement_is_used() {
-    let signing = signing(None).await;
-    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
-    let mut client = Browsing::new(&signing);
-    let second = tokens_of(&client.refresh(&id, &first.refresh).await);
-    let third = tokens_of(&client.refresh(&id, &second.refresh).await);
-
-    let dead = client.refresh(&id, &first.refresh).await;
-
-    assert_eq!(dead.status, 400);
-    assert_eq!(acting_as(&signing, &third.access).await, None);
-}
-
-/// `docs/specs/access.md`, Tokens: an access token stops working one hour
-/// after Linewright issues it.
+/// `docs/specs/access.md`, The authorization server, An access token.
 #[test_log::test(tokio::test)]
 async fn an_access_token_lasts_an_hour() {
     let signing = signing(None).await;
