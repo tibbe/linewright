@@ -37,15 +37,17 @@ pub(super) enum Area {
     Automations,
     Benchmarks,
     Server,
+    People,
 }
 
 impl Area {
-    pub(super) const ALL: [Area; 5] = [
+    pub(super) const ALL: [Area; 6] = [
         Area::Board,
         Area::Runs,
         Area::Automations,
         Area::Benchmarks,
         Area::Server,
+        Area::People,
     ];
 
     /// Its screen's name in the navigation.
@@ -56,6 +58,7 @@ impl Area {
             Area::Automations => "Automations",
             Area::Benchmarks => "Benchmarks",
             Area::Server => "Server",
+            Area::People => "People",
         }
     }
 
@@ -68,6 +71,7 @@ impl Area {
             Area::Automations => "All automations",
             Area::Benchmarks => "All benchmarks",
             Area::Server => "Status",
+            Area::People => "All people",
         }
     }
 
@@ -80,6 +84,7 @@ impl Area {
             Area::Automations => Icon::Bolt,
             Area::Benchmarks => Icon::Beaker,
             Area::Server => Icon::Server,
+            Area::People => Icon::Users,
         }
     }
 
@@ -91,6 +96,7 @@ impl Area {
             Area::Automations => "/automations",
             Area::Benchmarks => "/benchmarks",
             Area::Server => "/server",
+            Area::People => "/people",
         }
     }
 }
@@ -278,6 +284,8 @@ pub(super) enum Missing {
     BenchmarkRun(String),
     /// A configuration of a benchmark run, which has no screen of its own.
     Configuration(String),
+    /// A person, who has no screen of their own.
+    Person(String),
 }
 
 impl Missing {
@@ -288,7 +296,8 @@ impl Missing {
             Missing::Run(id)
             | Missing::Benchmark(id)
             | Missing::Task(id)
-            | Missing::Configuration(id) => id.clone(),
+            | Missing::Configuration(id)
+            | Missing::Person(id) => id.clone(),
             Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
         }
     }
@@ -303,6 +312,7 @@ impl std::fmt::Display for Missing {
             Missing::Task(id) => write!(f, "No such task {id}"),
             Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
             Missing::Configuration(id) => write!(f, "No such configuration {id}"),
+            Missing::Person(id) => write!(f, "No such person {id}"),
         }
     }
 }
@@ -787,6 +797,12 @@ mod tests {
                 ("Server", "/server"),
                 "Status",
                 "Server · Linewright",
+            ),
+            (
+                Area::People,
+                ("People", "/people"),
+                "All people",
+                "People · Linewright",
             ),
         ];
 

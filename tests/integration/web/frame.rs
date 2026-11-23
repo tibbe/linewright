@@ -63,6 +63,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
                 ("Automations".to_string(), "/automations".to_string(), 1),
                 ("Benchmarks".to_string(), "/benchmarks".to_string(), 1),
                 ("Server".to_string(), "/server".to_string(), 1),
+                ("People".to_string(), "/people".to_string(), 1),
             ],
             "{path}"
         );
@@ -217,7 +218,7 @@ async fn in_the_rail_each_link_is_its_icon_with_its_name_in_a_tooltip_to_its_rig
     let nav = select_in(side, "nav")[0];
     assert!(in_the_rail(nav).contains(&"w-14"), "{}", nav.html());
     let items = select_in(nav, ".menu:not(.dropdown-content) > li");
-    assert_eq!(items.len(), 5, "{}", nav.html());
+    assert_eq!(items.len(), 6, "{}", nav.html());
     for item in items {
         let link = select_in(item, "a")[0];
         let names = select_in(link, "span");

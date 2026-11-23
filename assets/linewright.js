@@ -203,6 +203,16 @@
   );
 
   /**
+   * Keeps what the form of `dialog`, if it is a making dialog's, holds as it
+   * starts, for a dialog that a stream drew after the page loaded, such as
+   * Edit person on a row People gained (docs/specs/access.md, People).
+   */
+  function registerBlank(dialog) {
+    const form = dialog?.querySelector?.("form[data-new]");
+    if (form && !blanks.has(form)) blanks.set(form, form.innerHTML);
+  }
+
+  /**
    * Starts the form of `dialog`, if it is a making dialog's, as it starts,
    * but for the regions of the page's stream it holds, which stay as the
    * stream last sent them (docs/specs/benchmarks.md, New task): its run is
@@ -264,6 +274,7 @@
     const opening = event.target?.closest?.("button[command=show-modal]");
     if (!opening) return;
     const dialog = document.getElementById(opening.getAttribute("commandfor"));
+    registerBlank(dialog);
     startAfresh(dialog);
     const launch = dialog?.querySelector?.("form.launch");
     if (!launch) return;

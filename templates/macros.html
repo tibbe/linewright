@@ -334,6 +334,14 @@ card {% call card_surface(colour) %}{% endcall %}
 {{ colour }} shadow-xs
 {%- endmacro -%}
 
+{#- A person's avatar (`docs/specs/web/design_system.md`, Avatars): the
+    image at `avatar`, or else `letter` in its place. -#}
+{%- macro avatar(avatar, letter) -%}
+{%- if let Some(avatar) = avatar %}<div class="avatar"><div class="size-8 rounded-full"><img src="{{ avatar }}" width="32" height="32" alt="" referrerpolicy="no-referrer"></div></div>
+{%- else %}<div class="avatar avatar-placeholder"><div class="size-8 rounded-full bg-neutral text-neutral-content"><span>{{ letter }}</span></div></div>
+{%- endif %}
+{%- endmacro -%}
+
 {#- `icon` in `size`, a `crate::web::icons::IconSize`, with the classes
     `class` too. -#}
 {%- macro icon(icon, size, class = "") -%}

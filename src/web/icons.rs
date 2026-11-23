@@ -1,7 +1,9 @@
 //! Every icon the web UI draws (`docs/specs/web/design_system.md`, Icons):
-//! Heroicons 2's 20 solid icons and two of GitHub's Octicons, vendored
-//! beside this file with their licences, and which icon each part has.
+//! Heroicons 2's 20 solid icons, three of GitHub's Octicons and Google's
+//! logo, vendored beside this file with their licences, and which icon each
+//! part has.
 
+use crate::access::providers::Provider;
 use crate::phrase::Status;
 
 use super::html::{self, Html};
@@ -75,8 +77,13 @@ icons! {
     SignalSlash: "signal-slash", "icons/heroicons/signal-slash.svg";
     ArrowDown: "arrow-down", "icons/heroicons/arrow-down.svg";
     ArrowRightStartOnRectangle: "arrow-right-start-on-rectangle", "icons/heroicons/arrow-right-start-on-rectangle.svg";
+    Users: "users", "icons/heroicons/users.svg";
+    LockClosed: "lock-closed", "icons/heroicons/lock-closed.svg";
+    LockOpen: "lock-open", "icons/heroicons/lock-open.svg";
     IssueOpened: "issue-opened", "icons/octicons/issue-opened-16.svg";
     GitPullRequest: "git-pull-request", "icons/octicons/git-pull-request-16.svg";
+    GitHubMark: "github", "icons/octicons/mark-github-16.svg";
+    GoogleLogo: "google", "icons/google/g-logo.svg";
 }
 
 /// Where an icon sits, which sizes it.
@@ -271,6 +278,17 @@ impl ItemKind {
     }
 }
 
+/// The logo of an identity provider, its own
+/// (`docs/specs/web/design_system.md`, Icons), which a screen reader reads
+/// as the provider's name.
+pub(super) fn provider_logo(provider: Provider) -> Html {
+    let icon = match provider {
+        Provider::Google => Icon::GoogleLogo,
+        Provider::GitHub => Icon::GitHubMark,
+    };
+    icon.named(IconSize::Inline, provider.name())
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::buttons::Verb;
@@ -285,6 +303,7 @@ mod tests {
             (Area::Automations, Icon::Bolt),
             (Area::Benchmarks, Icon::Beaker),
             (Area::Server, Icon::Server),
+            (Area::People, Icon::Users),
         ];
         assert_eq!(areas.len(), Area::ALL.len());
         for (area, icon) in areas {
@@ -321,11 +340,23 @@ mod tests {
             (Verb::Save, "Save", Icon::Check),
             (Verb::CloseDialog, "Cancel", Icon::XMark),
             (Verb::SignOut, "Sign out", Icon::ArrowRightStartOnRectangle),
+            (Verb::Disable, "Disable", Icon::LockClosed),
+            (Verb::Enable, "Enable", Icon::LockOpen),
         ] {
             assert_eq!((verb.label(), verb.icon()), (label, icon), "{verb:?}");
         }
         assert_eq!(ItemKind::Issue.icon(), Icon::IssueOpened);
         assert_eq!(ItemKind::PullRequest.icon(), Icon::GitPullRequest);
+        assert!(
+            provider_logo(Provider::Google)
+                .to_string()
+                .contains(r#"data-icon="google""#)
+        );
+        assert!(
+            provider_logo(Provider::GitHub)
+                .to_string()
+                .contains(r#"data-icon="github""#)
+        );
     }
 
     /// `docs/specs/web/design_system.md`, Icons: an icon is `size-5` before
