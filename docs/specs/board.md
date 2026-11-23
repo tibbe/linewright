@@ -84,13 +84,18 @@ An item's state ([State](repository.md#state)) is shown in these words.
 
 ### Board
 
+- **Address.** `/`.
 - **Layout.** The board is
   six columns side by side. Lanes cross them, one under another, a lane per
   piece of work. Each card is in its lane and in the column of its item's state
   ([State](repository.md#state)). As the reader scrolls, the column heads stay
   at the top, with the head of the lane they are in under them.
 - **Filters.** Person ([Filtering by person](#filtering-by-person)).
-- **Columns.** The columns below, in this order.
+- **Columns.** The columns below, in this order. The columns share the
+  board's width, each at least 200px, and all six fit beside the navigation
+  rail from 1440px wide.
+- **The column heads** are a row in `bg-base-100`, `h-8` tall, with each
+  column's name in `font-semibold`.
 - **No cap.** A column is never cut.
 - **Needing a person.** The screen's title carries the count of cards in Needs a
   person on the whole board, however it is filtered.
@@ -119,13 +124,24 @@ An item's state ([State](repository.md#state)) is shown in these words.
   of the total. Its cards are its managed tickets. Otherwise, the head shows
   the item's number and title, and the item is its one card.
 - **Its look.** A lane stands apart from the screen around it, and each of
-  its cards stands apart from the lane.
+  its cards stands apart from the lane. A lane is drawn as a card is
+  ([Cards](ui_patterns.md#cards)), with `px-2` at its sides and `pb-2` at its
+  foot. In a lane, the columns are `gap-2` apart, and so are the cards in a
+  column.
+- **A lane's head** is its top row, in `bg-base-200`, at least `h-10` tall,
+  with `pt-2` above its text. Its text is in `font-semibold`, on one line, cut
+  to fit. It is not a `card-title`, so it has no icon before its text.
+- **On a lane or a card.** A lane or a card holds no daisyUI component that
+  draws in `base-100`, `base-200` or `base-300`, such as a button, an input
+  or an alert.
 - **Finished lanes.** A lane is finished once its cards are all in Done and,
   where it has a tracking issue, that issue is done. It shows as its head
   alone, with when it finished: when the last of its cards entered Done or
   its tracking issue became done. It opens on click. The finished
   lanes sit together under one fold that says how many there are, opens
-  on click and shows only while there is one.
+  on click and shows only while there is one. The finished lanes are under a
+  daisyUI `divider`. Their fold, and each finished lane, is a daisyUI
+  `collapse` with `collapse-arrow`.
   A finished lane leaves the board when it finished before the start of the
   Done window (`done-window`).
 - **Order of lanes.** The unfinished lanes come first, latest changed first,
@@ -142,17 +158,22 @@ says what its column does not: what sets the item apart from the rest of its
 column, what a person acts on, or since when it has sat. A card with nothing
 to add is the title alone.
 
+- **Its look.** A card is a daisyUI `card`, `card-sm`, drawn as a card is
+  ([Cards](ui_patterns.md#cards)), but in `bg-base-100`.
 - **The title.** A card's title is on at most two lines.
 - **Issue or pull request.** Beside its number, a card carries an icon that
-  says whether it is an issue or a pull request.
+  says whether it is an issue or a pull request: Octicons' `issue-opened` or
+  `git-pull-request`.
 - **The first that holds.** Where more than one row of a column holds, the
   line is the first.
 - **Card status.** A card whose line has a card status shows it. Card
   statuses, most pressing first: failed, waiting for a person, in flight,
   paused or queued. Each shows as a status
-  ([Status](design_system.md#status)): failed as failed, waiting for a person
-  as waiting, in flight as in flight, and paused or queued as paused.
-- **Done.** A card in Done is quieter than the rest.
+  ([Status](ui_patterns.md#status)): failed as failed, waiting for a person
+  as waiting, in flight as in flight, and paused or queued as paused. A card
+  that shows a card status has an edge `3px` wide at its start in its colour,
+  and its icon, in `base-content`, before its line.
+- **Done.** A card in Done is quieter than the rest, at `opacity-60`.
 - **How it ended.** An item in Done shows as done where it merged or a merged
   pull request closed it, and as cancelled where it closed otherwise.
 - **When.** In Triage, Needs a person, Ready and Done, the line ends with
@@ -203,7 +224,7 @@ What stops a pull request merging, in the order the line picks from:
 
 #### Filtering by person
 
-The board has one filter ([Filters](design_system.md#filters)), Person: it
+The board has one filter ([Filters](ui_patterns.md#filters)), Person: it
 narrows the board to the cards that match a person. A card matches whoever
 is party to its item, to a pull request on it or, for a ticket, to its
 tracking issue: a person who opened it, is assigned to it or reviews it.
@@ -223,13 +244,13 @@ tracking issue: a person who opened it, is assigned to it or reviews it.
   whole lane's.
 - **The people.** Person is a list of logins: each person some card on the
   whole board matches, however it is filtered, and whoever is chosen. It
-  has nothing to type in.
+  has nothing to type in. It is a `select`.
 
 ### Item
 
+- **Address.** `/items/N`.
 - **Layout.** #N's heading at the top, then its facts
-  ([Facts](design_system.md#facts)) in the order below, then its runs.
-- **Facts.** A list of labels, each with its value beside it.
+  ([Facts](components.md#facts)) in the order below, then its runs.
 - **Heading.** #N's number and title as on its card, and under them when
   `serve` last read #N, such as "as of 2 minutes ago".
 - **Runs.** #N's latest ten runs, as a list of runs ([Runs](runs.md#runs-1))

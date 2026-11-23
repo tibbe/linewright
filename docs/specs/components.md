@@ -1,24 +1,26 @@
-# Web components
+# Components
 
 Linewright's own components: the parts of the web UI that daisyUI has no
-component for ([Components](design_system.md#components)).
+component for ([Design system](design_system.md)).
 
 ## Content panel
 
 - **The panel** is in `bg-base-100`.
-- **From Tailwind's `lg` width,** it has `mt-2` above it and a
-  `border-base-300` border along its top and its start. Its top start corner
-  has `rounded-ss-4xl`, in the shape that CSS's
+- **In the expanded window size class** ([Layout](design_system.md#layout)),
+  it has `mt-2` above it and a `border-base-300` border along its top and its
+  start. Its top start corner has `rounded-ss-4xl`, in the shape that CSS's
   `corner-start-start-shape: squircle` gives it.
 
 ## Facts
 
-- **The card.** Facts are in a card ([Cards](design_system.md#cards)), in a
+- **The card.** Facts are in a card ([Cards](ui_patterns.md#cards)), in a
   `grid` of rows `gap-3` apart, in `text-sm`.
 - **A fact** is a row: its label at the start and its value at the end
   (`flex justify-between`).
-- **A status among facts** is a daisyUI `status` dot in its colour, then its
-  icon and the value's words. A paused dot is in `bg-base-content/60`.
+- **A label** is words alone, with no icon or colour.
+- **A status among facts** is in the value: a daisyUI `status` dot in its
+  colour, then its icon and the value's words. A paused dot is in
+  `bg-base-content/60`.
 
 ## Transcript
 
@@ -26,10 +28,11 @@ component for ([Components](design_system.md#components)).
   for the first session's.
 - **A session's settings** are in `text-sm`, in secondary text.
 - **Entries** are in `font-mono` and `text-sm`.
-- **Lines.** Each entry's line starts with a column for a chevron. An entry
-  that opens shows a chevron there: it points right while the entry is closed
-  and down while it is open. In other entries the column is empty. A
-  session's settings and brief files open with the same chevron.
+- **Lines.** Each entry's line starts with a column for a chevron. An entry that
+  opens shows a chevron there: it points right (`chevron-right`) while the entry
+  is closed and down (`chevron-down`) while it is open. In other entries the
+  column is empty. A session's settings and brief files open with the same
+  chevron.
 - **Indents.** The text of an entry starts at the same place on each of its
   lines. What the entry opens to starts there too.
 - **Durations.** An entry's duration is at the right edge of its line. A

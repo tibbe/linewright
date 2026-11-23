@@ -72,7 +72,7 @@ and an ID, which Linewright gives it
 - **No name.** A name that holds nothing once it is clean is no name.
   Linewright refuses a task, a benchmark or a configuration with no name, and
   a change to no name. On a screen, the field of such a name gets the message
-  of a required field that is empty ([Making](design_system.md#making)).
+  of a required field that is empty ([Making](ui_patterns.md#making)).
 - **One of each name.** No two benchmarks have the same name. No two tasks of
   a benchmark have the same name. No two configurations of a benchmark run have
   the same name. Two names are the same when they hold the same characters in
@@ -84,7 +84,7 @@ and an ID, which Linewright gives it
   `as-is` ([Benchmark runs](#benchmark-runs)).
 - **Where an ID shows.** In addresses, in paths under the work directory, on
   the command line, and in "No such" for a thing that does not exist
-  ([Screen states](design_system.md#screen-states)). Everywhere else, a screen
+  ([Screen states](ui_patterns.md#screen-states)). Everywhere else, a screen
   names a thing by its name.
 
 ## Tasks
@@ -146,7 +146,7 @@ task of it, whatever its outcome.
   first poll since `serve` started.
 - **Refusals on a screen.** [New task](#new-task) and [Run](runs.md#run) give
   these messages for a capture's refusals, other than for a required field that
-  is empty ([Making](design_system.md#making)). The refusals of a run, and of a
+  is empty ([Making](ui_patterns.md#making)). The refusals of a run, and of a
   capture before Linewright's first poll, show their reason above the buttons.
 
   | Refusal                                              | Message                                                       |
@@ -484,11 +484,12 @@ is not in BENCHMARK does not exist.
 
 ### Benchmarks
 
-- **Layout.** The table "Benchmarks" ([Tables](design_system.md#tables)), with
-  the filters and "New" ([Making](design_system.md#making)).
+- **Address.** `/benchmarks`.
+- **Layout.** The table "Benchmarks" ([Tables](ui_patterns.md#tables)), with
+  the filters and "New" ([Making](ui_patterns.md#making)).
 - **Filters.** Filters for the benchmark's name and its stage narrow the list.
   The filter for the name keeps each benchmark whose name holds the text typed,
-  whatever its letter case.
+  whatever its letter case. Name is an `input`, and Stage is a `select`.
 - **The table.** A row per benchmark, in the order of their names by the Unicode
   Collation Algorithm.
 
@@ -501,23 +502,25 @@ is not in BENCHMARK does not exist.
 ### New benchmark
 
 - **Layout.** A dialog titled "New benchmark"
-  ([Making](design_system.md#making)).
-- **Fields.** "Name" and "Stage" ([Benchmarks](#benchmarks-1)), then "Create".
-  "Stage" starts on the first stage, triage.
+  ([Making](ui_patterns.md#making)).
+- **Fields.** "Name" and "Stage" ([Benchmarks](#benchmarks-1)), then "Create",
+  with the icon `plus`. "Stage" starts on the first stage, triage.
 - **Refusals.** The message for a name that another benchmark has is "A
   benchmark named NAME already exists."
 
 ### Benchmark
 
+- **Address.** `/benchmarks/ID`.
 - **Layout.** The heading at the top, then the benchmark's benchmark runs and
   its tasks, each in a tab of its own.
 - **Heading.** The benchmark's name, with its stage under it.
 - **Tabs.** "Runs", then "Tasks". The screen opens on Runs,
-  or on Tasks while the benchmark has no benchmark runs.
+  or on Tasks while the benchmark has no benchmark runs. The tabs are daisyUI
+  `tabs` in the `tabs-border` style.
 - **Runs.** A table that fills the tab
-  ([Tables](design_system.md#tables)), with a row per benchmark run, latest
+  ([Tables](ui_patterns.md#tables)), with a row per benchmark run, latest
   first, and "New" on a benchmark with tasks
-  ([Making](design_system.md#making)).
+  ([Making](ui_patterns.md#making)).
 
   | Column         | Holds                                           |
   | -------------- | ----------------------------------------------- |
@@ -528,9 +531,9 @@ is not in BENCHMARK does not exist.
   | Duration       | its duration ([Benchmark run](#benchmark-run))        |
   | Cost           | its cost ([Benchmark run](#benchmark-run))            |
 
-- **Tasks.** A table that fills the tab ([Tables](design_system.md#tables)),
-  with a row per task in the benchmark's order ([Benchmarks](#benchmarks-1)),
-  and "New" ([Making](design_system.md#making)).
+- **Tasks.** A table that fills the tab ([Tables](ui_patterns.md#tables)), with
+  a row per task in the benchmark's order ([Benchmarks](#benchmarks-1)), and
+  "New" ([Making](ui_patterns.md#making)).
 
   | Column        | Holds                                                         |
   | ------------- | ------------------------------------------------------------- |
@@ -539,18 +542,19 @@ is not in BENCHMARK does not exist.
 
 ### Edit benchmark
 
-- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
 - **Fields.** "Name".
 - **Refusals.** As on [New benchmark](#new-benchmark).
 
 ### Task
 
+- **Address.** `/tasks/ID`.
 - **Layout.** The heading at the top, then the task's facts, then its criteria.
 - **Heading.** The task's name, with its stage under it. "Remove" is with the
   screen's buttons ([Shell](shell.md)), after "Edit"
-  ([Editing](design_system.md#editing)).
+  ([Editing](ui_patterns.md#editing)).
 - **Facts.** The task's facts are side by side in a row, each with its label
-  above its value.
+  above its value, drawn as on [Benchmark run](#benchmark-run).
 
   | Fact          | Holds                                                                 |
   | ------------- | --------------------------------------------------------------------- |
@@ -559,14 +563,14 @@ is not in BENCHMARK does not exist.
   | Started       | when Linewright decided to start the run ([Tasks](#tasks))            |
 
 - **Criteria.** A card titled "Criteria" that holds the whole of the task's
-  criteria.
+  criteria. Its icon is `clipboard-document-check`.
 - **After "Remove".** The message of what was removed
-  ([Confirming](design_system.md#confirming)) is "Removed the task NAME." on
+  ([Confirming](ui_patterns.md#confirming)) is "Removed the task NAME." on
   the benchmark's Tasks.
 
 ### Edit task
 
-- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
 - **Fields.** "Name", then "Criteria".
 - **Refusals.** The message for a name that another task of the benchmark has
   is as for a capture ([Capturing](#capturing)).
@@ -574,7 +578,7 @@ is not in BENCHMARK does not exist.
 ### New task
 
 - **Layout.** A dialog titled "New task in NAME"
-  ([Making](design_system.md#making)).
+  ([Making](ui_patterns.md#making)).
 - **Fields.** The fields below, then "Add task".
 
   | Field    | Holds                                                                                                      |
@@ -586,14 +590,15 @@ is not in BENCHMARK does not exist.
 ### New benchmark run
 
 - **Layout.** A dialog titled "New benchmark run on NAME"
-  ([Making](design_system.md#making)).
+  ([Making](ui_patterns.md#making)).
 - **Fields.** "Configurations", then "Repetitions"
   ([Benchmark runs](#benchmark-runs)), then how many trials they make, such as
-  "2 configurations × 4 tasks × 3 repetitions: 24 trials". Then "Run benchmark".
+  "2 configurations × 4 tasks × 3 repetitions: 24 trials". Then "Run
+  benchmark", with the icon `play`.
 - **Configurations.** Each configuration but `as-is` has "Name", and can set
   "model", "effort" and "session-timeout", and give the text of any file of the
-  brief. Each such configuration has "Remove". "Add a configuration" adds one at
-  the end.
+  brief. Each such configuration has "Remove". "Add a configuration", with the
+  icon `plus`, adds one at the end.
 - **Settings.** "effort" is a choice of its levels
   ([Configuration](operation.md#configuration)). Each setting starts as the one
   that a run of the stage uses when the dialog opens. A setting that the
@@ -605,7 +610,7 @@ is not in BENCHMARK does not exist.
   the text that a run of the stage uses when the dialog opens. A file whose text
   the maintainer does not change is not part of the configuration.
 - **Refusals.** The messages are as below, other than for a required field that
-  is empty ([Making](design_system.md#making)). A benchmark with no tasks shows
+  is empty ([Making](ui_patterns.md#making)). A benchmark with no tasks shows
   its reason above the buttons.
 
   | Refusal                                                               | Message                                        |
@@ -618,16 +623,20 @@ is not in BENCHMARK does not exist.
 
 ### Benchmark run
 
+- **Address.** `/benchmark-runs/ID`.
 - **Layout.** The heading at the top, then the benchmark run's facts, then its
   results ([Results](#results)): the chart, the table and the grid.
 - **Heading.** Benchmark run ID and its state. While the benchmark run is
   running or waiting, "Cancel" is with the screen's buttons
   ([Shell](shell.md)).
 - **State.** The state shows as a status
-  ([Status](design_system.md#status)): running as in flight, waiting as
+  ([Status](ui_patterns.md#status)): running as in flight, waiting as
   paused, ended as done and cancelled as cancelled.
 - **Facts.** The benchmark run's facts are side by side in a row, each with its
-  label above its value.
+  label above its value. They are a daisyUI `stats`, drawn as a card is
+  ([Cards](ui_patterns.md#cards)). Each fact is a `stat`, with its label as the
+  `stat-title` and its value as the `stat-value`, in `text-xl` and
+  `font-semibold`.
 
   | Fact        | Holds                                                                                   | Shown                          |
   | ----------- | --------------------------------------------------------------------------------------- | ------------------------------ |
@@ -642,17 +651,22 @@ is not in BENCHMARK does not exist.
 - **The chart.** A point for each configuration, labelled with its name. The
   vertical axis is the pass rate. The horizontal axis is the mean cost of a
   trial or its mean time. The reader chooses which above the chart, at its
-  left, after "Pass rate vs": "Mean cost" or "Mean time". It starts as "Mean
-  cost".
-- **A point.** On hover, a point shows its configuration's name, pass rate
-  and mean. A configuration with no pass rate, or no mean on the horizontal
-  axis, has no point. A chart with no points shows "No results".
-- **The table.** "Configurations": a row for each configuration, highest pass
-  rate first. Configurations with the same pass rate are in the order of the
-  benchmark run. Those with no pass rate are last, in the order of the benchmark
-  run. A configuration's row opens to a row for each task. A task's row opens to
-  a row for each of its trials. Tasks and trials are in the order in which the
-  benchmark run starts them ([Benchmark runs](#benchmark-runs)).
+  left, after "Pass rate vs": "Mean cost" or "Mean time", in a `select`. It
+  starts as "Mean cost".
+- **The chart's look.** The chart is a [chart](components.md#chart), in a
+  card whose title is "Pass rate vs" and the choice of the horizontal axis,
+  with the icon `chart-bar`. The chart runs to the left, right and bottom
+  edges of the card.
+- **A point.** On hover, a point shows its configuration's name, pass rate and
+  mean, in a daisyUI `tooltip`. A configuration with no pass rate, or no mean on
+  the horizontal axis, has no point. A chart with no points shows "No results".
+- **The table.** "Configurations", with the icon `adjustments-horizontal`: a row
+  for each configuration, highest pass rate first. Configurations with the same
+  pass rate are in the order of the benchmark run. Those with no pass rate are
+  last, in the order of the benchmark run. A configuration's row opens to a row
+  for each task. A task's row opens to a row for each of its trials. Tasks and
+  trials are in the order in which the benchmark run starts them
+  ([Benchmark runs](#benchmark-runs)).
 
   | Column     | For a configuration                         | For a task                                  | For a trial                                                                              |
   | ---------- | ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -666,8 +680,8 @@ is not in BENCHMARK does not exist.
   | Unscored   | its unscored trials                        | its unscored trials of the task            |                                                                                           |
 
 - **A trial's status.** A trial's Pass rate shows as a status
-  ([Status](design_system.md#status)). The first row that fits the trial gives
-  the name of its state and its status:
+  ([Status](ui_patterns.md#status)). The first row that fits the trial gives the
+  name of its state and its status:
 
   | The trial | Name | Shows as |
   | --- | --- | --- |
@@ -707,7 +721,8 @@ is not in BENCHMARK does not exist.
 - **A trial's transcripts.** A trial's row also opens to the transcripts of its
   run and of its scorer, as Run shows a run's, once each has started. Each is
   under its heading, "Run" or "Scorer".
-- **The grid.** "Passes by task": a row for each task, under the head "Task",
+- **The grid.** "Passes by task", with the icon `table-cells`, a daisyUI
+  `table`: a row for each task, under the head "Task",
   and a column for each configuration, in the order of the table. A cell shows
   the passes of the task under the configuration, such as "2 of 3". A cell also
   shows its leaks and its trials without a score, if it has any.
@@ -715,12 +730,12 @@ is not in BENCHMARK does not exist.
 ### Remove task
 
 - **Layout.** A confirmation
-  ([Confirming](design_system.md#confirming)): "Remove the task NAME and its
+  ([Confirming](ui_patterns.md#confirming)): "Remove the task NAME and its
   directory?"
 
 ### Edit configuration
 
-- **Layout.** A dialog ([Editing](design_system.md#editing)).
+- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
 - **Fields.** "Name".
 - **Refusals.** The message for a name that another configuration has is as
   on [New benchmark run](#new-benchmark-run).
@@ -728,7 +743,7 @@ is not in BENCHMARK does not exist.
 ### Cancel benchmark run
 
 - **Layout.** A confirmation
-  ([Confirming](design_system.md#confirming)): "Cancel benchmark run ID? This
+  ([Confirming](ui_patterns.md#confirming)): "Cancel benchmark run ID? This
   stops its running trials and scorers."
 
 ## Out of scope

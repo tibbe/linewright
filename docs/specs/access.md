@@ -288,11 +288,20 @@ For each authorization request:
 
 ### Sign in
 
+- **Address.** `/sign-in`.
 - **Layout.** A card in the middle of the page. The card holds the heading,
   then the message, where there is one, then the identity providers.
+- **The page** has the card in its middle:
+  `flex min-h-screen items-center justify-center p-4`.
+- **The card** is drawn as a card is ([Cards](ui_patterns.md#cards)), with
+  `w-full max-w-100 p-12`.
 - **Heading.** "Sign in to Linewright", and under it the repository's name.
+  The heading is in `text-3xl` and `font-bold`, centred, with `mb-2` under it.
+  The repository's name is in secondary text, centred, with `mb-6` under it.
 - **The message.** It says why the person is on the screen, where there is a
-  reason:
+  reason. It is a daisyUI `alert`, with `mb-6` under it. It is in the
+  `alert-error` style, but for "You signed out." and "Your sign-in ended.",
+  which get the plain `alert`.
 
   | Reason                                          | Message                                      |
   | ----------------------------------------------- | -------------------------------------------- |
@@ -305,16 +314,25 @@ For each authorization request:
 
 - **Identity providers.** A button for each identity provider that
   Linewright offers ([Signing in](#signing-in)), Google first: "Sign in with
-  Google" and "Sign in with GitHub", each with its provider's logo.
+  Google" and "Sign in with GitHub", each with its provider's logo. The
+  buttons are one under the other, in `flex flex-col items-center gap-2`.
+- **Google's button** is Google's own "Sign in with Google" button for the
+  web, as Google gives it: its light one in the light theme and its dark one
+  in the dark theme, at its own size.
+- **GitHub's button** is a daisyUI `btn`, not `btn-sm`, with GitHub's mark
+  before its label. The mark is GitHub's black one in the light theme and
+  its white one in the dark theme.
 
 ### Consent
 
-- **Layout.** A card in the middle of the page, as on Sign in. The card
-  holds the heading, then the facts, then the warning, where there is one,
-  then "Allow" and "Deny".
+- **Address.** `/oauth/authorize`.
+- **Layout.** A card in the middle of the page. The page, the card and the
+  heading look as on Sign in. The card holds the heading, then the facts, then
+  the warning, where there is one, then "Allow" and "Deny".
 - **Heading.** "Allow NAME to act as you?", with the client's name as the client
   gives it, or "an unnamed client" without one.
-- **Facts.**
+- **Facts.** [Facts](components.md#facts) in the screen's card, with `mb-6`
+  under them.
 
   | Fact              | Holds                                 | Shown                                    |
   | ----------------- | ------------------------------------- | ---------------------------------------- |
@@ -322,14 +340,18 @@ For each authorization request:
   | Sends you back to | the host of the client's redirect URI | always                                   |
 
 - **The warning.** For a loopback redirect URI: "This client is an app on
-  this computer. Linewright cannot check which app."
+  this computer. Linewright cannot check which app." It is a daisyUI `alert`
+  in the `alert-warning` style, with `mb-6` under it.
+- **"Allow" and "Deny"** are in `grid grid-cols-2 gap-2`. "Allow" is a
+  `btn-primary`, with the icon `check`. "Deny" has the icon `x-mark`.
 
 ### Authorization error
 
-- **Layout.** A card in the middle of the page, as on Sign in. The card
-  holds the heading "Linewright cannot authorize this client", then the
-  message.
-- **The message.**
+- **Address.** `/oauth/authorize`.
+- **Layout.** A card in the middle of the page. The page, the card and the
+  heading look as on Sign in. The card holds the heading "Linewright cannot
+  authorize this client", then the message.
+- **The message.** A daisyUI `alert` in the `alert-error` style.
 
   | Case                                                  | Message                                                 |
   | ----------------------------------------------------- | ------------------------------------------------------- |
@@ -340,7 +362,8 @@ For each authorization request:
 
 ### People
 
-- **Layout.** The table "People" ([Tables](design_system.md#tables)).
+- **Address.** `/people`.
+- **Layout.** The table "People" ([Tables](ui_patterns.md#tables)).
 - **The table.** A row per person ([People](#people)), in the order of their
   names by the Unicode Collation Algorithm.
 
@@ -351,18 +374,19 @@ For each authorization request:
   | State     | "enabled" or "disabled"                                                               |
   | Signed in | when they last signed in                                                              |
 
-- **A row's buttons.** "Edit" ([Editing](design_system.md#editing)), then
-  "Disable" on an enabled person and "Enable" on a disabled one.
+- **A row's buttons.** "Edit" ([Editing](ui_patterns.md#editing)), then
+  "Disable" on an enabled person and "Enable" on a disabled one. "Disable"
+  has the icon `lock-closed`, and "Enable" the icon `lock-open`.
 - **The named manager and the last manager.** "Edit" and "Disable" are
   disabled on their rows. On hover, each shows the message of
   [Edit person](#edit-person) for that person.
 - **State.** "enabled" shows as done, and "disabled" as cancelled
-  ([Status](design_system.md#status)).
+  ([Status](ui_patterns.md#status)).
 
 ### Edit person
 
-- **Layout.** A dialog ([Editing](design_system.md#editing)).
-- **Fields.** "Role", a choice of the roles ([Roles](#roles)).
+- **Layout.** A dialog ([Editing](ui_patterns.md#editing)).
+- **Fields.** "Role", a choice of the roles ([Roles](#roles)), in a `select`.
 - **Refusals.** The messages are as below, above the buttons. A tool that
   disables such a person gets the same message.
 
@@ -373,14 +397,16 @@ For each authorization request:
 
 ### Disable person
 
-- **Layout.** A confirmation ([Confirming](design_system.md#confirming)):
+- **Layout.** A confirmation ([Confirming](ui_patterns.md#confirming)):
   "Disable NAME? This signs them out and ends their authorizations."
 
 ### Authorizations
 
+- **Address.** `/authorizations`.
 - **Layout.** The table "Authorizations"
-  ([Tables](design_system.md#tables)). The screen has no breadcrumbs.
-- **The table.** A row per authorization of the reader, newest first.
+  ([Tables](ui_patterns.md#tables)). The screen has no breadcrumbs.
+- **The table.** A row per authorization of the reader, newest first. Its
+  card's icon is `key`.
 
   | Column        | Holds                                     |
   | ------------- | ----------------------------------------- |
@@ -389,11 +415,11 @@ For each authorization request:
   | Allowed       | when the authorization began              |
   | Ends          | when the authorization ends               |
 
-- **A row's buttons.** "End".
+- **A row's buttons.** "End", with the icon `link-slash`.
 
 ### End authorization
 
-- **Layout.** A confirmation ([Confirming](design_system.md#confirming)):
+- **Layout.** A confirmation ([Confirming](ui_patterns.md#confirming)):
   "End the authorization of NAME? NAME can no longer act as you."
 
 ## Out of scope
