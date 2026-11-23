@@ -17,14 +17,13 @@ opens or updates the pull request and posts what your result says.
    those parts.
 2. Before writing code, call the Skill tool with `linewright:tdd`, and work
    test-first as it says.
-3. Run typechecking regularly, single test files regularly, and the
-   repository's full checks (tests, linters, formatters, whatever its CI or
-   docs say it runs) when the code is written, and fix what fails.
+3. Run typechecking regularly and single test files regularly.
 4. Once done, call the Skill tool with `linewright:code-review` to review the
-   work. Apply its findings (see
-   _Review findings_), then run the repository's full checks again and fix
-   what fails. Don't review a second time.
-5. Commit your work to the current branch as a coherent series: each commit
+   work. Apply its findings (see _Review findings_). Don't review a second
+   time.
+5. Run the repository's full checks (tests, linters, formatters, whatever its
+   CI or docs say it runs) once, at the end, and fix what fails.
+6. Commit your work to the current branch as a coherent series: each commit
    makes one change, its message says what the change is and why, and none
    corrects another. Leave no uncommitted changes and no rebase or merge in
    progress.
