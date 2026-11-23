@@ -44,7 +44,8 @@ pub async fn lw_in(work_dir: &Path, args: &[&str]) -> Output {
 /// `message`, appends the GitHub tokens it was given to `dir/tokens.log`, its
 /// temporary directory to `dir/tmpdir.log`, the shell it was told to use to
 /// `dir/shell.log` and its arguments, one per line and followed by a blank
-/// line, to `dir/args.log`, and writes its environment over `dir/env.log`.
+/// line, to `dir/args.log`, and writes the environment it was spawned with
+/// over `dir/env.log`.
 /// Like Claude Code under its config directory
 /// (<https://code.claude.com/docs/en/sessions>), it keeps each session's
 /// transcript as `dir/projects/repo/<session>.jsonl`.
