@@ -10,14 +10,15 @@ use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{AppendHeaders, IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tracing::{info, warn};
 use url::Url;
 
-use linewright_core::access::oauth::store::AuthorizationRequests;
+use linewright_core::access::oauth::Server;
+use linewright_core::access::oauth::store::{AUTHORIZATION_COOKIE, Allowed, AuthorizationRequests};
 use linewright_core::access::people::{
-    Claims, ManagerName, People, PersonId, Refusal, SignInDecision, SignUpRule, decide_sign_in,
+    Claims, ManagerName, People, Person, Refusal, SignInDecision, SignUpRule, decide_sign_in,
 };
 use linewright_core::access::providers::{Begun, GitHub, Google, Provider, Providers};
 use linewright_core::access::sessions::{Reason, SessionCookie};
@@ -26,6 +27,7 @@ use linewright_core::api::Sources;
 use linewright_core::domain::Timestamp;
 use linewright_core::host::PublicUrl;
 
+use super::authorization_server::{ended, signed_in_for};
 use super::caller::{CrossSite, session_cookie, sessions};
 use super::card_page::CardPage;
 use super::html::Html;
@@ -189,25 +191,53 @@ impl ReturnPath {
     pub(super) fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// What a sign-in that returns to it is for: the authorization request
-    /// whose Consent it is, if it is one's, and else the screen.
-    fn after(&self) -> After {
-        match super::authorization_server::consent_secret(self.as_str()) {
-            Some(secret) => After::Authorization(secret.to_string()),
-            None => After::Screen(self.0.clone()),
-        }
-    }
+/// What a sign-in begun from Sign in is for: returning to a screen, or the
+/// authorization request whose handle the browser's
+/// [`AUTHORIZATION_COOKIE`] holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SignInFor {
+    Screen(ReturnPath),
+    Authorization,
+}
 
-    /// The path a sign-in for `after` returns to.
-    fn of(after: &After) -> ReturnPath {
+/// The value of Sign in's field, and of its path's query, `for` that marks
+/// it as for an authorization request.
+const FOR_AUTHORIZATION: &str = "authorization";
+
+impl SignInFor {
+    /// What a sign-in for `after` was begun for.
+    fn of(after: &After) -> SignInFor {
         match after {
-            After::Screen(path) => ReturnPath::parse(Some(path)),
-            After::Authorization(secret) => {
-                ReturnPath::parse(Some(&super::authorization_server::consent_path(secret)))
-            }
+            After::Screen(path) => SignInFor::Screen(ReturnPath::parse(Some(path))),
+            After::Authorization(_) => SignInFor::Authorization,
         }
     }
+
+    /// What Sign in's form, or its path's query, says it is for: `return`,
+    /// a path, or `for`, which marks it as for an authorization request.
+    fn read(return_to: Option<&str>, for_: Option<&str>) -> SignInFor {
+        if for_ == Some(FOR_AUTHORIZATION) {
+            SignInFor::Authorization
+        } else {
+            SignInFor::Screen(ReturnPath::parse(return_to))
+        }
+    }
+
+    /// The name and value of the field of Sign in's form that says it.
+    fn field(&self) -> (&'static str, &str) {
+        match self {
+            SignInFor::Screen(return_to) => ("return", return_to.as_str()),
+            SignInFor::Authorization => ("for", FOR_AUTHORIZATION),
+        }
+    }
+}
+
+/// The path of Sign in for the authorization request whose handle the
+/// browser's [`AUTHORIZATION_COOKIE`] holds.
+pub(super) fn sign_in_for_authorization_path() -> String {
+    format!("{SIGN_IN_PATH}?for={FOR_AUTHORIZATION}")
 }
 
 /// The path of Sign in, for a browser to come back to `return_to` once it
@@ -232,7 +262,7 @@ struct SignInPage {
     google: Option<GoogleButton>,
     /// GitHub's button, where Linewright offers GitHub.
     github: Option<GitHubButton>,
-    return_to: ReturnPath,
+    for_: SignInFor,
 }
 
 /// Google's own button, as Google gives it for each theme.
@@ -258,12 +288,7 @@ struct Message {
 }
 
 impl SignInPage {
-    fn new(
-        sign_in: &SignIn,
-        sources: &Sources,
-        return_to: ReturnPath,
-        message: Option<Message>,
-    ) -> Self {
+    fn new(sign_in: &SignIn, sources: &Sources, for_: SignInFor, message: Option<Message>) -> Self {
         let path = |name| HASHED.names[name].as_str();
         SignInPage {
             card: CardPage::new("Sign in", "sign-in", "Sign in to Linewright", sources),
@@ -284,14 +309,14 @@ impl SignInPage {
                     mark: Icon::GitHubMark
                         .svg_classed(&IconSize::Inline, "text-black dark:text-white"),
                 }),
-            return_to,
+            for_,
         }
     }
 }
 
 /// Sign in, saying why the browser is on it where its query gives a
-/// reason. Of each of the query's `return` and `reason`, the first counts,
-/// and a value that is no reason is none.
+/// reason. Of each of the query's `return`, `for` and `reason`, the first
+/// counts, and a value that is no reason is none.
 pub(super) async fn sign_in_page(
     Extension(sign_in): Extension<Arc<SignIn>>,
     State(sources): State<Sources>,
@@ -306,9 +331,10 @@ pub(super) async fn sign_in_page(
             .find(|(named, _)| named == name)
             .map(|(_, value)| value.as_str())
     };
-    let (return_to, reason) = (first("return"), first("reason").and_then(QueryReason::of));
+    let for_ = SignInFor::read(first("return"), first("for"));
+    let reason = first("reason").and_then(QueryReason::of);
     let message = reason.map(|reason| reason_message(&reason.reason()));
-    SignInPage::new(&sign_in, &sources, ReturnPath::parse(return_to), message).into_response()
+    SignInPage::new(&sign_in, &sources, for_, message).into_response()
 }
 
 /// Sign in, in place of the screen at `return_to` of a browser whose
@@ -320,18 +346,28 @@ pub(super) fn ended_page(
     return_to: ReturnPath,
     reason: &Reason,
 ) -> Response {
-    SignInPage::new(sign_in, sources, return_to, Some(reason_message(reason))).into_response()
+    SignInPage::new(
+        sign_in,
+        sources,
+        SignInFor::Screen(return_to),
+        Some(reason_message(reason)),
+    )
+    .into_response()
 }
 
 #[derive(Deserialize)]
 struct SignInForm {
     #[serde(rename = "return")]
     return_to: Option<String>,
+    #[serde(rename = "for")]
+    for_: Option<String>,
 }
 
 /// Begins a sign-in with the provider of the key `key`, for a request
 /// from Sign in: sends the browser to the provider, tied to it by
-/// [`SIGN_IN_COOKIE`].
+/// [`SIGN_IN_COOKIE`]. A sign-in for an authorization request is for the
+/// one whose handle the browser's [`AUTHORIZATION_COOKIE`] holds, and once
+/// that has ended shows Authorization error.
 pub(super) async fn begin(
     Extension(sign_in): Extension<Arc<SignIn>>,
     State(sources): State<Sources>,
@@ -347,21 +383,32 @@ pub(super) async fn begin(
         return super::no_such_page().await;
     };
     let provider = offered.provider();
-    let form: SignInForm =
-        serde_urlencoded::from_bytes(&body).unwrap_or(SignInForm { return_to: None });
-    let return_to = ReturnPath::parse(form.return_to.as_deref());
-    let browser = sign_in_cookie(&headers);
+    let form: SignInForm = serde_urlencoded::from_bytes(&body).unwrap_or(SignInForm {
+        return_to: None,
+        for_: None,
+    });
+    let for_ = SignInFor::read(form.return_to.as_deref(), form.for_.as_deref());
+    let after = match &for_ {
+        SignInFor::Screen(return_to) => After::Screen(return_to.as_str().to_string()),
+        SignInFor::Authorization => {
+            let handle = first_cookie(&headers, AUTHORIZATION_COOKIE).unwrap_or_default();
+            let allowed = AuthorizationRequests::new(sources.runs.database().clone())
+                .is_allowed(&handle, sources.clock.now())
+                .await;
+            match allowed {
+                Ok(true) => After::Authorization(handle),
+                Ok(false) => return ended(&sources, "a sign-in"),
+                Err(e) => return failed(&sign_in, &sources, provider, for_, &e),
+            }
+        }
+    };
+    let browser = first_cookie(&headers, SIGN_IN_COOKIE);
     let pending = SignIns::new(sources.runs.database().clone())
-        .begin(
-            provider,
-            &return_to.after(),
-            browser.as_deref(),
-            sources.clock.now(),
-        )
+        .begin(provider, &after, browser.as_deref(), sources.clock.now())
         .await;
     let pending = match pending {
         Ok(pending) => pending,
-        Err(e) => return failed(&sign_in, &sources, provider, return_to, &e),
+        Err(e) => return failed(&sign_in, &sources, provider, for_, &e),
     };
     let authorize = sign_in.authorize_url(offered, &pending.begun());
     (
@@ -371,9 +418,9 @@ pub(super) async fn begin(
         .into_response()
 }
 
-/// The browser's [`SIGN_IN_COOKIE`], if it sent one.
-fn sign_in_cookie(headers: &HeaderMap) -> Option<String> {
-    cookie_values(cookie_headers(headers), SIGN_IN_COOKIE)
+/// The browser's cookie `name`, if it sent one.
+fn first_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    cookie_values(cookie_headers(headers), name)
         .into_iter()
         .next()
 }
@@ -390,9 +437,12 @@ pub(super) struct Callback {
 
 /// Finishes the sign-in with the provider of the key `key` that the
 /// browser began: signs it in and sends it where it was going, or says on
-/// Sign in why not.
+/// Sign in why not. A sign-in for an authorization request then ends the
+/// request, whatever the browser was signed in to before
+/// (`docs/specs/access.md`, The authorization server, 2).
 pub(super) async fn callback(
     Extension(sign_in): Extension<Arc<SignIn>>,
+    Extension(server): Extension<Arc<Server>>,
     State(sources): State<Sources>,
     Path(key): Path<String>,
     Query(callback): Query<Callback>,
@@ -403,7 +453,7 @@ pub(super) async fn callback(
         return super::no_such_page().await;
     };
     let provider = offered.provider();
-    let browser = sign_in_cookie(&headers);
+    let browser = first_cookie(&headers, SIGN_IN_COOKIE);
     let pending = match &callback.state {
         Some(state) => {
             SignIns::new(sources.runs.database().clone())
@@ -416,13 +466,25 @@ pub(super) async fn callback(
         Ok(Some(pending)) => pending,
         Ok(None) => {
             let e = anyhow::anyhow!("its state names no sign-in this browser began that waits");
-            return failed(&sign_in, &sources, provider, ReturnPath::parse(None), &e);
+            return failed(
+                &sign_in,
+                &sources,
+                provider,
+                SignInFor::read(None, None),
+                &e,
+            );
         }
         Err(e) => {
-            return failed(&sign_in, &sources, provider, ReturnPath::parse(None), &e);
+            return failed(
+                &sign_in,
+                &sources,
+                provider,
+                SignInFor::read(None, None),
+                &e,
+            );
         }
     };
-    let return_to = ReturnPath::of(&pending.after);
+    let for_ = SignInFor::of(&pending.after);
     let finished = match (&callback.code, &callback.error) {
         (Some(code), None) => sign_in.finish(offered, code, &pending.begun(), now).await,
         (_, Some(error)) => Err(anyhow::anyhow!(
@@ -435,58 +497,33 @@ pub(super) async fn callback(
         Ok(claims) => sign_in_as_decided(&sign_in, &sources, &offered.rule(), &claims).await,
         Err(e) => Err(e),
     };
-    let decided = match decided {
+    match decided {
         Ok(Ok((cookie, person))) => {
-            match signed_in_for(&sources, &pending.after, person, now).await {
-                Ok(()) => Ok(Ok(cookie)),
-                Err(e) => {
-                    if let Err(ending) = sessions(&sources).end(&cookie, now).await {
-                        warn!(
-                            error = format!("{ending:#}"),
-                            "ending a sign-in whose cookie the browser never got failed"
-                        );
-                    }
-                    Err(e)
+            let session = (header::SET_COOKIE, cookie.set_cookie());
+            match &pending.after {
+                After::Screen(path) => {
+                    let return_to = ReturnPath::parse(Some(path));
+                    ([session], Redirect::to(return_to.as_str())).into_response()
+                }
+                After::Authorization(handle) => {
+                    let authorized = signed_in_for(&sources, &server, handle, &person).await;
+                    (
+                        AppendHeaders([session, (header::SET_COOKIE, Allowed::removed())]),
+                        authorized,
+                    )
+                        .into_response()
                 }
             }
         }
-        Ok(Err(refusal)) => Ok(Err(refusal)),
-        Err(e) => Err(e),
-    };
-    match decided {
-        Ok(Ok(cookie)) => (
-            [(header::SET_COOKIE, cookie.set_cookie())],
-            Redirect::to(return_to.as_str()),
-        )
-            .into_response(),
         Ok(Err(refusal)) => {
             let message = Message {
                 text: refusal.to_string(),
                 error: true,
             };
-            let page = SignInPage::new(&sign_in, &sources, return_to, Some(message));
+            let page = SignInPage::new(&sign_in, &sources, for_, Some(message));
             (StatusCode::FORBIDDEN, page).into_response()
         }
-        Err(e) => failed(&sign_in, &sources, provider, return_to, &e),
-    }
-}
-
-/// Records that `person` signed in at `now` for `after`, where it is an
-/// authorization request: each authorization takes its own sign-in
-/// (`docs/specs/access.md`, The authorization server, 3).
-async fn signed_in_for(
-    sources: &Sources,
-    after: &After,
-    person: PersonId,
-    now: Timestamp,
-) -> anyhow::Result<()> {
-    match after {
-        After::Screen(_) => Ok(()),
-        After::Authorization(secret) => {
-            AuthorizationRequests::new(sources.runs.database().clone())
-                .signed_in(secret, person, now)
-                .await
-        }
+        Err(e) => failed(&sign_in, &sources, provider, for_, &e),
     }
 }
 
@@ -498,7 +535,7 @@ async fn sign_in_as_decided(
     sources: &Sources,
     rule: &SignUpRule<'_>,
     claims: &Claims,
-) -> anyhow::Result<Result<(SessionCookie, PersonId), Refusal>> {
+) -> anyhow::Result<Result<(SessionCookie, Person), Refusal>> {
     let now = sources.clock.now();
     let people = People::new(sources.runs.database().clone());
     let found = people.find_by_identity(&claims.identity()).await?;
@@ -524,7 +561,7 @@ async fn sign_in_as_decided(
         role = person.role.name(),
         "signed in"
     );
-    Ok(Ok((cookie, person.id)))
+    Ok(Ok((cookie, person)))
 }
 
 /// Sign in, saying that signing in with `provider` failed for `e`, which it
@@ -533,7 +570,7 @@ fn failed(
     sign_in: &SignIn,
     sources: &Sources,
     provider: Provider,
-    return_to: ReturnPath,
+    for_: SignInFor,
     e: &anyhow::Error,
 ) -> Response {
     warn!(
@@ -545,7 +582,7 @@ fn failed(
         text: format!("Signing in with {} failed.", provider.name()),
         error: true,
     };
-    let page = SignInPage::new(sign_in, sources, return_to, Some(message));
+    let page = SignInPage::new(sign_in, sources, for_, Some(message));
     (StatusCode::BAD_GATEWAY, page).into_response()
 }
 

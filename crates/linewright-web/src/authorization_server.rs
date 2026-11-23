@@ -1,7 +1,7 @@
 //! Linewright as the OAuth authorization server of the MCP server
 //! (`docs/specs/access.md`, The authorization server, Tokens, Consent and
 //! Authorization error): its metadata, registration, the authorization
-//! request through Sign in to Consent, and the token endpoint.
+//! request through Consent to its sign-in, and the token endpoint.
 
 use std::sync::Arc;
 
@@ -10,58 +10,54 @@ use askama_web::WebTemplate;
 use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{RawQuery, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use tracing::{error, info};
 
-use linewright_core::access::Caller;
 use linewright_core::access::oauth::clients::{Clients, Found};
-use linewright_core::access::oauth::store::{
-    Answered, AuthorizationRequests, Decision, Tokens, Waiting,
-};
+use linewright_core::access::oauth::store::{Asked, AuthorizationRequests, SignedIn, Tokens};
 use linewright_core::access::oauth::{
     AUTHORIZE_PATH, AuthorizeError, AuthorizeRequest, CannotSendBack, OAuthError, RedirectUri,
     RegistrationRequest, SentBack, Server, TokenForm, TokenRequest, check_authorize, client_name,
     registration,
 };
+use linewright_core::access::people::Person;
 use linewright_core::api::Sources;
 
-use super::caller::{CrossSite, session_cookie, sessions};
+use super::caller::CrossSite;
 use super::card_page::CardPage;
-use super::sign_in::{ReturnPath, refused_from_another_site, sign_in_path};
+use super::sign_in::{refused_from_another_site, sign_in_for_authorization_path};
 
-/// The field of Consent's form, and of its path's query, that names the
-/// authorization request waiting for its person: none of the names an
-/// authorization request from a client takes, such as `request`.
+/// The field of Consent's form, and of its path's query, that holds the
+/// handle of its authorization request: none of the names an authorization
+/// request from a client takes, such as `request`.
 /// <https://www.rfc-editor.org/rfc/rfc9101#section-5>
 const REQUEST: &str = "waiting";
 
 /// The field of Consent's form that holds "allow" or "deny".
 const DECISION: &str = "decision";
 
+/// What a person decides on Consent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Decision {
+    Allow,
+    Deny,
+}
+
 /// Consent's form, as it posts it, its fields named [`REQUEST`] and
 /// [`DECISION`].
 #[derive(Deserialize)]
 struct ConsentForm {
     #[serde(rename = "waiting")]
-    secret: String,
+    handle: String,
     decision: Decision,
 }
 
-/// The path of Consent of the authorization request `secret` names.
-pub(super) fn consent_path(secret: &str) -> String {
-    format!("{AUTHORIZE_PATH}?{REQUEST}={secret}")
-}
-
-/// The secret of the authorization request whose Consent `path` is, if it
-/// is one's: the inverse of [`consent_path`].
-pub(super) fn consent_secret(path: &str) -> Option<&str> {
-    path.strip_prefix(AUTHORIZE_PATH)?
-        .strip_prefix('?')?
-        .strip_prefix(REQUEST)?
-        .strip_prefix('=')
-        .filter(|secret| !secret.contains(['&', '=']))
+/// The path of Consent of the authorization request `handle` finds.
+fn consent_path(handle: &str) -> String {
+    format!("{AUTHORIZE_PATH}?{REQUEST}={handle}")
 }
 
 /// The authorization server metadata (RFC 8414).
@@ -195,15 +191,16 @@ pub(super) async fn token(
 #[derive(Clone, Copy, Debug)]
 enum CannotAuthorize {
     CannotSendBack(CannotSendBack),
-    /// The authorization request waited too long, or was answered.
-    NoLongerWaits,
+    /// The authorization request ended: denied, signed in for, or 10
+    /// minutes after its client made it.
+    Ended,
 }
 
 impl std::fmt::Display for CannotAuthorize {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CannotAuthorize::CannotSendBack(why) => why.fmt(f),
-            CannotAuthorize::NoLongerWaits => {
+            CannotAuthorize::Ended => {
                 f.write_str("This authorization request has ended. Start again from the client.")
             }
         }
@@ -228,7 +225,7 @@ fn authorization_error(sources: &Sources, why: CannotAuthorize) -> Response {
         ),
         message: why.to_string(),
     };
-    (StatusCode::BAD_REQUEST, page).into_response()
+    without_referrer((StatusCode::BAD_REQUEST, page).into_response())
 }
 
 #[derive(Template, WebTemplate)]
@@ -236,46 +233,44 @@ fn authorization_error(sources: &Sources, why: CannotAuthorize) -> Response {
 struct ConsentPage {
     card: CardPage,
     facts: Vec<(&'static str, String)>,
+    /// The warning, where there is one.
+    warning: Option<&'static str>,
     request: String,
 }
 
-/// Consent of `waiting`, the request `secret` names, for `caller`, who
-/// signed in for it (`docs/specs/access.md`, Consent).
-fn consent(sources: &Sources, caller: &Caller, waiting: &Waiting, secret: &str) -> Response {
-    let person = caller.person();
+/// What Consent warns of a request whose redirect URI is a loopback one.
+const LOOPBACK_WARNING: &str =
+    "This client is an app on this computer. Linewright cannot check which app.";
+
+/// Consent of `asked`, the request `handle` finds (`docs/specs/access.md`,
+/// Consent).
+fn consent(sources: &Sources, asked: &Asked, handle: &str) -> Response {
+    let facts = asked
+        .client_host
+        .clone()
+        .map(|host| ("Client", host))
+        .into_iter()
+        .chain([("Sends you back to", asked.redirect_uri.host().to_string())])
+        .collect();
     ConsentPage {
         card: CardPage::new(
             "Consent",
             "consent",
             format!(
                 "Allow {} to act as you?",
-                client_name(waiting.client_name.as_deref())
+                client_name(asked.client_name.as_deref())
             ),
             sources,
         ),
-        facts: vec![
-            ("Signed in as", person.shown_as.clone()),
-            ("Sends you back to", waiting.redirect_uri.host().to_string()),
-            ("Access", caller.role().name().to_string()),
-        ],
-        request: secret.to_string(),
+        facts,
+        warning: asked.redirect_uri.is_loopback().then_some(LOOPBACK_WARNING),
+        request: handle.to_string(),
     }
     .into_response()
 }
 
-/// Who the browser of `headers` signs in now, if anyone.
-async fn browser_caller(sources: &Sources, headers: &HeaderMap) -> anyhow::Result<Option<Caller>> {
-    let Some(cookie) = session_cookie(headers) else {
-        return Ok(None);
-    };
-    Ok(sessions(sources)
-        .resolve(&cookie, sources.clock.now())
-        .await?
-        .caller())
-}
-
 /// Keeps the browser's address from the client: an authorization request's
-/// pages carry its secret.
+/// pages carry its handle.
 fn without_referrer(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::REFERRER_POLICY,
@@ -285,67 +280,53 @@ fn without_referrer(mut response: Response) -> Response {
 }
 
 /// An authorization request (`docs/specs/access.md`, The authorization
-/// server, 2): one from a client goes to Sign in, then Consent, unless
-/// Linewright refuses it; one that names a request waiting for its person
-/// is Consent, for the person who signed in for it in this browser.
+/// server): one from a client goes to Consent, unless Linewright refuses
+/// it; one that names a request is its Consent, until the request ends.
+/// Neither needs a sign-in.
 pub(super) async fn authorize(
     State(sources): State<Sources>,
     Extension(server): Extension<Arc<Server>>,
-    headers: HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Response {
     let query = query.unwrap_or_default();
     let answer = match consent_of(&query) {
-        Some(secret) => consent_or_sign_in(&sources, &headers, &secret).await,
+        Some(handle) => consent_of_request(&sources, &handle).await,
         None => from_client(&sources, &server, &query).await,
     };
     without_referrer(answer)
 }
 
-/// The secret of the authorization request whose Consent `query` asks
+/// The handle of the authorization request whose Consent `query` asks
 /// for, if it asks for one rather than being a client's request.
 fn consent_of(query: &str) -> Option<String> {
     let mut pairs = form_urlencoded::parse(query.as_bytes());
     match (pairs.next(), pairs.next()) {
-        (Some((name, secret)), None) if name == REQUEST => Some(secret.into_owned()),
+        (Some((name, handle)), None) if name == REQUEST => Some(handle.into_owned()),
         _ => None,
     }
 }
 
-/// Consent of the request `secret` names, for the person who signed in
-/// for it in the browser of `headers`, or else Sign in for it.
-async fn consent_or_sign_in(sources: &Sources, headers: &HeaderMap, secret: &str) -> Response {
-    let now = sources.clock.now();
+/// Consent of the request `handle` finds, or Authorization error once it
+/// has ended.
+async fn consent_of_request(sources: &Sources, handle: &str) -> Response {
     let requests = AuthorizationRequests::new(sources.runs.database().clone());
-    let waiting = match requests.get(secret, now).await {
-        Ok(Some(waiting)) => waiting,
-        Ok(None) => {
-            info!("refused an authorization request that no longer waits");
-            return authorization_error(sources, CannotAuthorize::NoLongerWaits);
-        }
-        Err(e) => return failed("reading an authorization request", &e),
-    };
-    let caller = match browser_caller(sources, headers).await {
-        Ok(caller) => caller,
-        Err(e) => return failed("reading a browser's sign-in", &e),
-    };
-    match caller {
-        Some(caller) if waiting.signed_in_by(caller.person().id) => {
-            consent(sources, &caller, &waiting, secret)
-        }
-        _ => to_sign_in(secret),
+    match requests.asked(handle, sources.clock.now()).await {
+        Ok(Some(asked)) => consent(sources, &asked, handle),
+        Ok(None) => ended(sources, "Consent"),
+        Err(e) => failed("reading an authorization request", &e),
     }
 }
 
-/// Sign in, for the request `secret` names.
-fn to_sign_in(secret: &str) -> Response {
-    let return_to = ReturnPath::parse(Some(&consent_path(secret)));
-    Redirect::to(&sign_in_path(&return_to, None)).into_response()
+/// Authorization error for `what`, such as "Consent", of a request that has
+/// ended, which it logs.
+pub(super) fn ended(sources: &Sources, what: &str) -> Response {
+    info!("refused {what} of an authorization request that has ended");
+    authorization_error(sources, CannotAuthorize::Ended)
 }
 
-/// The authorization request `query` makes, from a client: to Sign in for
-/// it once Linewright takes it, to the client with why not where it can
-/// send the browser back, and else Authorization error.
+/// The authorization request `query` makes, from a client: to Consent once
+/// Linewright takes it, to the client with why not where it can send the
+/// browser back, and else Authorization error.
 async fn from_client(sources: &Sources, server: &Server, query: &str) -> Response {
     let now = sources.clock.now();
     let request = AuthorizeRequest::from_query(query);
@@ -367,7 +348,7 @@ async fn from_client(sources: &Sources, server: &Server, query: &str) -> Respons
                 .begin(&checked, now)
                 .await
             {
-                Ok(secret) => to_sign_in(&secret),
+                Ok(handle) => Redirect::to(&consent_path(&handle)).into_response(),
                 Err(e) => failed("keeping an authorization request", &e),
             }
         }
@@ -397,77 +378,98 @@ async fn from_client(sources: &Sources, server: &Server, query: &str) -> Respons
 }
 
 /// Takes "Allow" or "Deny" on Consent (`docs/specs/access.md`, The
-/// authorization server, 4 and 4a), from the web UI's own pages alone, by
-/// the person who signed in for the request in this browser, and sends the
-/// browser back to the client: with a code, or with `access_denied`. Each
-/// is logged with the person and the client.
+/// authorization server, 1, and When a request ends), from the web UI's
+/// own pages alone, and logs it with the client. "Allow" gives the browser
+/// the request's new handle in `__Host-linewright-authorization` and sends it to
+/// Sign in for the authorization; "Deny" ends the request and sends the
+/// browser back to the client with `access_denied`.
 pub(super) async fn decide(
     State(sources): State<Sources>,
     Extension(server): Extension<Arc<Server>>,
     cross_site: Option<Extension<CrossSite>>,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     if let Some(refused) = refused_from_another_site(cross_site, "a consent") {
         return refused;
     }
-    let Ok(ConsentForm { secret, decision }) = serde_urlencoded::from_bytes(&body) else {
+    let Ok(ConsentForm { handle, decision }) = serde_urlencoded::from_bytes(&body) else {
         return (StatusCode::BAD_REQUEST, "the form does not read").into_response();
     };
-    let caller = match browser_caller(&sources, &headers).await {
-        Ok(Some(caller)) => caller,
-        Ok(None) => return without_referrer(to_sign_in(&secret)),
-        Err(e) => return failed("reading a browser's sign-in", &e),
+    let now = sources.clock.now();
+    let requests = AuthorizationRequests::new(sources.runs.database().clone());
+    let answer = match decision {
+        Decision::Allow => match requests.allow(&handle, now).await {
+            Ok(Some((asked, allowed))) => {
+                info!(
+                    client = %asked.client,
+                    name = client_name(asked.client_name.as_deref()),
+                    "allowed a client"
+                );
+                (
+                    [(header::SET_COOKIE, allowed.set_cookie())],
+                    Redirect::to(&sign_in_for_authorization_path()),
+                )
+                    .into_response()
+            }
+            Ok(None) => ended(&sources, "a decision on Consent"),
+            Err(e) => failed("allowing an authorization request", &e),
+        },
+        Decision::Deny => match requests.deny(&handle, now).await {
+            Ok(Some(asked)) => {
+                info!(
+                    client = %asked.client,
+                    name = client_name(asked.client_name.as_deref()),
+                    "denied a client"
+                );
+                let back = server.sent_back_error(
+                    &asked.redirect_uri,
+                    &OAuthError::access_denied(),
+                    asked.state.as_deref(),
+                );
+                Redirect::to(back.as_str()).into_response()
+            }
+            Ok(None) => ended(&sources, "a decision on Consent"),
+            Err(e) => failed("denying an authorization request", &e),
+        },
     };
-    let person = caller.person();
-    let answered = AuthorizationRequests::new(sources.runs.database().clone())
-        .answer(&secret, person.id, decision, &server, sources.clock.now())
+    without_referrer(answer)
+}
+
+/// Ends the request that `allowed`, the handle in the browser's
+/// `__Host-linewright-authorization`, finds, with `person` just signed in for it
+/// (`docs/specs/access.md`, The authorization server, 2): sends the
+/// browser back to the client with a code, and logs the authorization; or
+/// Authorization error once the request has ended.
+pub(super) async fn signed_in_for(
+    sources: &Sources,
+    server: &Server,
+    allowed: &str,
+    person: &Person,
+) -> Response {
+    let signed_in = AuthorizationRequests::new(sources.runs.database().clone())
+        .sign_in(allowed, person.id, server, sources.clock.now())
         .await;
-    let answered = match answered {
-        Ok(Some(answered)) => answered,
-        Ok(None) => {
-            info!(
-                person = %person.id,
-                "refused a consent to an authorization request that no longer waits"
-            );
-            return authorization_error(&sources, CannotAuthorize::NoLongerWaits);
-        }
-        Err(e) => return failed("answering an authorization request", &e),
+    let SignedIn {
+        asked,
+        authorization,
+        code,
+    } = match signed_in {
+        Ok(Some(signed_in)) => signed_in,
+        Ok(None) => return ended(sources, "a sign-in"),
+        Err(e) => return failed("authorizing a client", &e),
     };
-    let back = match &answered {
-        Answered::Allowed {
-            waiting,
-            authorization,
-            code,
-        } => {
-            info!(
-                person = %person.id,
-                identity = person.logged(),
-                client = %waiting.client,
-                name = client_name(waiting.client_name.as_deref()),
-                authorization = %authorization,
-                "allowed a client"
-            );
-            server.sent_back(
-                &waiting.redirect_uri,
-                &[("code", code)],
-                waiting.state.as_deref(),
-            )
-        }
-        Answered::Denied { waiting } => {
-            info!(
-                person = %person.id,
-                identity = person.logged(),
-                client = %waiting.client,
-                name = client_name(waiting.client_name.as_deref()),
-                "denied a client"
-            );
-            server.sent_back_error(
-                &waiting.redirect_uri,
-                &OAuthError::access_denied(),
-                waiting.state.as_deref(),
-            )
-        }
-    };
+    info!(
+        person = %person.id,
+        identity = person.logged(),
+        client = %asked.client,
+        name = client_name(asked.client_name.as_deref()),
+        authorization = %authorization,
+        "authorized a client"
+    );
+    let back = server.sent_back(
+        &asked.redirect_uri,
+        &[("code", &code)],
+        asked.state.as_deref(),
+    );
     without_referrer(Redirect::to(back.as_str()).into_response())
 }

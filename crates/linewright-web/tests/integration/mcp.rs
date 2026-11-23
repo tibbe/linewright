@@ -1123,8 +1123,7 @@ async fn tokens_issued_through_sign_in_and_consent_list_the_tools_of_each_role()
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
     let mut token_of = async |email: &str| {
-        let consent = browser.reach_consent(&client, "s", email).await;
-        let sent = browser.decide(&consent, "allow").await;
+        let sent = browser.authorize(&client, "s", email).await;
         let code = query_value(&sent, "code").expect("a code");
         tokens_of(&browser.exchange_code(&client, &code).await).access
     };

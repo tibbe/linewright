@@ -24,18 +24,25 @@ pub struct Clients {
 type ClientRow = (Option<String>, String, Option<String>);
 
 /// How Linewright came to know a client.
-#[derive(Clone, Copy)]
-enum Registration {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Registration {
     Dynamic,
     MetadataDocument,
 }
 
 impl Registration {
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Registration::Dynamic => "dynamic",
             Registration::MetadataDocument => "metadata-document",
         }
+    }
+
+    /// The registration whose name is `name`, if one's is.
+    pub(super) fn named(name: &str) -> Option<Registration> {
+        [Registration::Dynamic, Registration::MetadataDocument]
+            .into_iter()
+            .find(|registration| registration.name() == name)
     }
 }
 

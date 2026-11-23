@@ -382,6 +382,26 @@ fn a_redirect_uri_is_https_or_http_to_a_loopback_address() {
     }
 }
 
+/// `docs/specs/access.md`, The authorization server, Loopback, and
+/// Consent, The warning.
+#[test_log::test]
+fn a_redirect_uri_to_a_loopback_address_or_localhost_is_loopback() {
+    for (uri, loopback) in [
+        ("http://127.0.0.1:33418/", true),
+        ("http://[::1]:8080/cb", true),
+        ("http://localhost/callback", true),
+        ("https://LocalHost/callback", true),
+        ("https://agent.example/cb", false),
+        ("https://127.0.0.1.agent.example/cb", false),
+    ] {
+        assert_eq!(
+            RedirectUri::parse(uri).unwrap().is_loopback(),
+            loopback,
+            "{uri}"
+        );
+    }
+}
+
 /// `docs/specs/access.md`, The authorization server, Clients.
 #[test_log::test]
 fn a_registration_is_public_with_its_redirect_uris_and_refused_with_any_other() {
