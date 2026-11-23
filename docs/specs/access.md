@@ -237,6 +237,10 @@ agent. An authorization is a person's consent for one client to act as them.
   metadata document, or registers by dynamic client registration.
   Linewright registers a client that asks for a client secret as a public
   client, without a secret.
+- **Fetching a metadata document.** Where the host has a proxy for HTTPS
+  ([Environment variables](sessions.md#environment-variables)), Linewright
+  fetches a client's metadata document through it. The proxy, and not
+  Linewright, then refuses a private or loopback address.
 - **Loopback.** Linewright treats a redirect URI to `localhost` as one to a
   loopback IP address.
 - **Grants.** The authorization code grant, with only the `S256` method,
