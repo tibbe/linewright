@@ -253,7 +253,7 @@ async fn send(
 ) -> hyper::Response<hyper::body::Incoming> {
     let path = api::socket_path(&socket_dir_in(runtime_dir), REPO);
     let stream = tokio::net::UnixStream::connect(path).await.unwrap();
-    send_over(stream, method, Some(host), resource).await
+    send_over(stream, method, Some(host), resource, &[]).await
 }
 
 /// A world whose work dir is `REPO`'s.

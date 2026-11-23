@@ -25,6 +25,7 @@ mod runs_page;
 mod runs_table;
 mod server_page;
 mod shell;
+mod sign_in;
 mod stats;
 mod table;
 mod task_page;
@@ -55,7 +56,7 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::access::people::ManagerName;
+use crate::access::people::{ManagerName, People};
 use crate::access::providers::Providers;
 use crate::api::{Sources, Unanswered};
 use crate::benchmarks::{BenchmarkId, BenchmarkRunId, TaskId};
@@ -87,7 +88,19 @@ impl Listener {
         let socket = ui.address.bind("ui-address").await?;
         let address = socket.local_addr()?;
         let stopping = CancellationToken::new();
-        let router = router(sources, ui.public_url.clone(), stopping.clone());
+        if let Some(manager) = &ui.manager {
+            let made = People::new(sources.runs.database().clone())
+                .at_startup(manager)
+                .await?;
+            for person in made {
+                info!(
+                    person = %person.id,
+                    identity = person.logged(),
+                    "made the person `manager` names an enabled manager"
+                );
+            }
+        }
+        let router = router(sources, ui, stopping.clone());
         let listening = Listening::spawn(socket, router, "serving the web UI");
         info!(address = %address, "serving the web UI");
         Ok(Listener {
@@ -110,10 +123,11 @@ impl Listener {
 }
 
 /// The web UI: its pages, their event streams and their assets, answering
-/// only the requests whose `Host` is `public_url`'s host. `stopping` ends
-/// the event streams.
-pub fn router(sources: Sources, public_url: PublicUrl, stopping: CancellationToken) -> Router {
-    Router::new()
+/// only the requests whose `Host` is `ui`'s public URL's host, and signing
+/// people in as `ui` says. A screen opened without a sign-in goes to Sign
+/// in. `stopping` ends the event streams.
+pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router {
+    let signed = Router::new()
         .route("/", get(board_page::board_page))
         .route("/events/", get(board_page::board_events))
         .route("/items/{number}", get(item_page::item_page))
@@ -195,11 +209,37 @@ pub fn router(sources: Sources, public_url: PublicUrl, stopping: CancellationTok
         )
         .route("/events/runs/{*id}", get(run_page::run_events))
         .route(Navigation::PATH, post(shell::remember_navigation))
-        .route("/assets/{name}", get(asset))
+        .route_layer(middleware::from_fn_with_state(
+            sources.clone(),
+            caller::signed_in,
+        ));
+    let open = Router::new()
+        .route(sign_in::SIGN_IN_PATH, get(sign_in::sign_in_page))
+        .route(sign_in::SIGN_OUT_PATH, post(sign_in::sign_out))
+        .route(
+            sign_in::GOOGLE_PATH,
+            get(no_such_page).post(sign_in::begin_google),
+        )
+        .route(sign_in::GOOGLE_CALLBACK_PATH, get(sign_in::google_callback))
+        .route("/assets/{name}", get(asset));
+    let sign_in = sign_in::SignIn {
+        public_url: ui.public_url.clone(),
+        providers: ui.providers.clone(),
+        manager: ui.manager.clone(),
+        http: crate::store::github::client_builder_trusting_the_host_store_alone()
+            .build()
+            .expect("an HTTP client builds"),
+    };
+    signed
+        .merge(open)
         .layer(middleware::from_fn(caller::cross_site))
         .layer(middleware::from_fn(confined))
         .fallback(no_such_page)
-        .layer(middleware::from_fn_with_state(public_url, misdirected))
+        .layer(middleware::from_fn_with_state(
+            ui.public_url.clone(),
+            misdirected,
+        ))
+        .layer(Extension(std::sync::Arc::new(sign_in)))
         .layer(Extension(stopping))
         .with_state(sources)
 }
@@ -231,14 +271,16 @@ async fn misdirected(
 }
 
 /// Has the browser run only the scripts Linewright serves, and show only
-/// its own images, `data:` images and those from `github.com` and
-/// `avatars.githubusercontent.com`, such as the repository owner's avatar.
+/// its own images, `data:` images, those from `github.com` and
+/// `avatars.githubusercontent.com`, such as the repository owner's avatar,
+/// and Google's avatars, from `googleusercontent.com`; and draw no page
+/// of the web UI in another's frame.
 async fn confined(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     response.headers_mut().insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'self'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com",
+            "default-src 'self'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com https://*.googleusercontent.com; frame-ancestors 'none'",
         ),
     );
     response
@@ -248,6 +290,7 @@ async fn confined(request: Request, next: Next) -> Response {
 #[folder = "assets/"]
 #[include = "*.css"]
 #[include = "*.js"]
+#[include = "*.svg"]
 struct Assets;
 
 /// Each asset under a name holding a hash of its content, so that a
@@ -261,11 +304,14 @@ struct Hashed {
 
 const CSS: &str = "text/css; charset=utf-8";
 const JAVASCRIPT: &str = "text/javascript; charset=utf-8";
-const ASSETS: [(&str, &str); 4] = [
+const SVG: &str = "image/svg+xml";
+const ASSETS: [(&str, &str); 6] = [
     ("linewright.css", CSS),
     ("linewright.js", JAVASCRIPT),
     ("htmx.min.js", JAVASCRIPT),
     ("hx-sse.js", JAVASCRIPT),
+    ("google-sign-in-light.svg", SVG),
+    ("google-sign-in-dark.svg", SVG),
 ];
 
 static HASHED: LazyLock<Hashed> = LazyLock::new(|| {
@@ -585,24 +631,24 @@ impl Sent {
 
 /// Sends every region `regions` gives at once, then each time one of them
 /// changed, each as a partial that morphs into the page.
-fn events<Regions>(
-    regions: impl Fn() -> Regions + Send + 'static,
-    stopping: CancellationToken,
-) -> Response
+fn events<Regions>(regions: impl Fn() -> Regions + Send + 'static, watch: caller::Watch) -> Response
 where
     Regions: Future<Output = Vec<(&'static str, String)>> + Send,
 {
     let events = futures_util::stream::unfold(
-        (Sent::default(), samples(), regions, stopping),
-        |(mut sent, mut samples, regions, stopping)| async move {
+        (Sent::default(), samples(), regions, watch),
+        |(mut sent, mut samples, regions, watch)| async move {
             loop {
                 tokio::select! {
                     _ = samples.tick() => {}
-                    () = stopping.cancelled() => return None,
+                    () = watch.stopping().cancelled() => return None,
+                }
+                if !watch.signs_someone_in().await {
+                    return None;
                 }
                 if let Some(message) = sent.changed(regions().await) {
                     let event = Ok::<_, Infallible>(Event::default().data(message));
-                    return Some((event, (sent, samples, regions, stopping)));
+                    return Some((event, (sent, samples, regions, watch)));
                 }
             }
         },

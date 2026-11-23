@@ -4,11 +4,9 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
@@ -21,6 +19,7 @@ use super::stats::{Stat, absent};
 use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
 use crate::access::{Permit, Read};
 use crate::actions;
+use crate::actions::Action;
 use crate::api::Sources;
 use crate::benchmarks::{TaskId, TaskShown};
 
@@ -177,6 +176,7 @@ fn page(task: &TaskShown, navigation: Navigation) -> Page {
         ScreenButton::Act {
             verb: Verb::Remove,
             dialog: REMOVE.into(),
+            action: Action::RemoveTask,
         },
     ])
 }
@@ -244,7 +244,7 @@ pub(super) async fn task_page(
 /// values Edit task starts from.
 pub(super) async fn task_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(id): Path<String>,
     navigation: Navigation,
 ) -> Response {
@@ -265,5 +265,5 @@ pub(super) async fn task_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }

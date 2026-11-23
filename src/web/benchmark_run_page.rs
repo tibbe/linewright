@@ -12,11 +12,9 @@ use std::sync::{Arc, Mutex};
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
@@ -840,7 +838,8 @@ fn rows(
                     .map_or_else(|| ABSENT.into(), |rate| percent(Some(rate))),
             ),
             figures: figure_cells(&configuration.figures),
-            edit: editing::edit_configuration_id(configuration.id),
+            edit: editing::edit_configuration_id(configuration.id)
+                .filter(|_| permit.caller().can(Action::EditConfiguration.level())),
         }));
         for (k, task) in record.tasks.iter().enumerate() {
             let id = task_id(task);
@@ -1067,6 +1066,7 @@ impl BenchmarkRunView {
             .map(|cancel| ScreenButton::Act {
                 verb: Verb::CancelWork,
                 dialog: cancel.id.clone(),
+                action: Action::CancelBenchmarkRun,
             })
             .collect();
         Page::new(
@@ -1223,7 +1223,7 @@ pub(super) async fn benchmark_run_page(
 /// Edit configuration dialogs start from.
 pub(super) async fn benchmark_run_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(id): Path<String>,
     Query(query): Query<StreamQuery>,
     navigation: Navigation,
@@ -1255,7 +1255,7 @@ pub(super) async fn benchmark_run_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }
 
 /// Cancels benchmark run `id`, tells `serve` so, and answers with what the
@@ -1534,7 +1534,7 @@ pub(super) async fn trial_page(
 /// the stream starts, stays as its page shows it.
 pub(super) async fn trial_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(path): Path<TrialPath>,
     Query(query): Query<RunQuery>,
     uri: Uri,
@@ -1556,7 +1556,7 @@ pub(super) async fn trial_events(
     transcript_events(
         permit,
         sources,
-        stopping,
+        watch,
         transcribed.as_ref(),
         &query,
         &headers,

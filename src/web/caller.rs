@@ -1,13 +1,21 @@
-//! Who a request to the web UI is from. A request of an unsafe method that
-//! its browser does not show came from the web UI's own pages gets no permit
-//! for an action that changes something, so that none runs for it.
+//! Who a request to the web UI is from: the person its browser's session
+//! cookie signs in, as their record has them at the time of the request
+//! (`docs/specs/access.md`, Roles, At each request). A request of an unsafe
+//! method that its browser does not show came from the web UI's own pages
+//! gets no permit for an action that changes something, so that none runs
+//! for it.
 
-use axum::extract::{FromRequestParts, Request};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
+use tokio_util::sync::CancellationToken;
+use tracing::error;
 
+use super::sign_in::{Reason, ReturnPath, sign_in_path};
+use super::{cookie_headers, cookie_values};
+use crate::access::sessions::{Resolved, SESSION_COOKIE, SessionCookie, Sessions};
 use crate::access::{Caller, LevelMarker, NeedsLevel, Permit, Read};
 use crate::actions::Action;
 use crate::api::Sources;
@@ -15,8 +23,96 @@ use crate::api::Sources;
 /// A request of an unsafe method that its browser does not show came from
 /// the web UI's own pages, and why.
 #[derive(Clone, Copy, Debug)]
-struct CrossSite {
-    reason: &'static str,
+pub(super) struct CrossSite {
+    pub(super) reason: &'static str,
+}
+
+impl CrossSite {
+    /// Whether the request of `parts` is one, and why.
+    pub(super) fn of(parts: &Parts) -> Option<CrossSite> {
+        parts.extensions.get::<CrossSite>().copied()
+    }
+}
+
+/// The browser's session cookie, as a request sent it, if it sent one.
+pub(super) fn session_cookie(headers: &HeaderMap) -> Option<SessionCookie> {
+    cookie_values(cookie_headers(headers), SESSION_COOKIE)
+        .into_iter()
+        .next()
+        .map(SessionCookie::of)
+}
+
+/// Resolves who each request is from by its browser's session cookie, for
+/// [`Asking`] and [`Watch`]. A request from no one is sent to Sign in, to
+/// come back once signed in, when it asks for a screen, and is answered
+/// with 401 otherwise.
+pub(super) async fn signed_in(
+    State(sources): State<Sources>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let cookie = session_cookie(request.headers());
+    let resolved = match &cookie {
+        Some(cookie) => sessions(&sources)
+            .resolve(cookie, sources.clock.now())
+            .await
+            .map_err(|e| unread(&e)),
+        None => Ok(Resolved::NoOne),
+    };
+    match (resolved, cookie) {
+        (Ok(Resolved::Caller(caller)), Some(cookie)) => {
+            request.extensions_mut().insert(caller);
+            request.extensions_mut().insert(cookie);
+            next.run(request).await
+        }
+        (Ok(Resolved::Ended), _) => not_signed_in(&request, Some(Reason::Ended)),
+        (Ok(Resolved::Caller(_) | Resolved::NoOne), _) => not_signed_in(&request, None),
+        (Err(failed), _) => failed,
+    }
+}
+
+/// The answer to a request whose browser's sign-in did not read, which it
+/// logs: 500, with why.
+fn unread(e: &anyhow::Error) -> Response {
+    let error = format!("{e:#}");
+    error!(error, "reading a browser's sign-in failed");
+    (StatusCode::INTERNAL_SERVER_ERROR, error).into_response()
+}
+
+/// The answer to `request` from a browser signed in as no one: to Sign in
+/// for a screen, saying `reason` where there is one, and 401 otherwise.
+fn not_signed_in(request: &Request, reason: Option<Reason>) -> Response {
+    let screen = matches!(*request.method(), Method::GET | Method::HEAD)
+        && !request.uri().path().starts_with("/events/");
+    if !screen {
+        return sign_in_first();
+    }
+    let return_to = ReturnPath::parse(
+        request
+            .uri()
+            .path_and_query()
+            .map(axum::http::uri::PathAndQuery::as_str),
+    );
+    let mut response = Redirect::to(&sign_in_path(&return_to, reason)).into_response();
+    if reason.is_some() {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            SessionCookie::removed()
+                .parse()
+                .expect("the cookie is a header value"),
+        );
+    }
+    response
+}
+
+/// The answer to a request that needs a sign-in its browser does not have.
+fn sign_in_first() -> Response {
+    (StatusCode::UNAUTHORIZED, "Sign in to Linewright.").into_response()
+}
+
+/// The browsers' sign-ins in `sources`' database.
+pub(super) fn sessions(sources: &Sources) -> Sessions {
+    Sessions::new(sources.runs.database().clone())
 }
 
 /// Marks each request of an unsafe method whose headers do not show it came
@@ -65,18 +161,73 @@ impl Asking {
     }
 }
 
-/// Whoever reaches the web UI's port, while it signs no one in.
+/// The person [`signed_in`] found, or else 401.
 impl<S: Sync> FromRequestParts<S> for Asking {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Response;
 
     fn from_request_parts(
         parts: &mut Parts,
         _: &S,
-    ) -> impl Future<Output = Result<Asking, Self::Rejection>> {
-        std::future::ready(Ok(Asking {
-            caller: Caller::anyone(),
-            cross_site: parts.extensions.get::<CrossSite>().copied(),
-        }))
+    ) -> impl Future<Output = Result<Asking, Response>> {
+        let caller = parts.extensions.get::<Caller>().cloned();
+        let cross_site = CrossSite::of(parts);
+        std::future::ready(match caller {
+            Some(caller) => Ok(Asking { caller, cross_site }),
+            None => Err(sign_in_first()),
+        })
+    }
+}
+
+/// What ends an event stream: `serve` stopping, or its reader's browser no
+/// longer signing anyone in (`docs/specs/access.md`, Roles, At each
+/// request).
+#[derive(Clone)]
+pub(super) struct Watch {
+    stopping: CancellationToken,
+    sessions: Sessions,
+    clock: std::sync::Arc<dyn crate::clock::Clock>,
+    cookie: SessionCookie,
+}
+
+impl Watch {
+    /// Ends once `serve` stops.
+    pub(super) fn stopping(&self) -> &CancellationToken {
+        &self.stopping
+    }
+
+    /// Whether the browser still signs someone in, as its record has them
+    /// now. A sign-in that does not read, which it logs, signs no one in.
+    pub(super) async fn signs_someone_in(&self) -> bool {
+        match self.sessions.resolve(&self.cookie, self.clock.now()).await {
+            Ok(Resolved::Caller(_)) => true,
+            Ok(Resolved::Ended | Resolved::NoOne) => false,
+            Err(e) => {
+                unread(&e);
+                false
+            }
+        }
+    }
+}
+
+/// The watch of a request [`signed_in`] let through, or else 401.
+impl FromRequestParts<Sources> for Watch {
+    type Rejection = Response;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        sources: &Sources,
+    ) -> impl Future<Output = Result<Watch, Response>> {
+        let stopping = parts.extensions.get::<CancellationToken>().cloned();
+        let cookie = parts.extensions.get::<SessionCookie>().cloned();
+        std::future::ready(match (stopping, cookie) {
+            (Some(stopping), Some(cookie)) => Ok(Watch {
+                stopping,
+                sessions: sessions(sources),
+                clock: sources.clock.clone(),
+                cookie,
+            }),
+            _ => Err(sign_in_first()),
+        })
     }
 }
 
@@ -103,7 +254,7 @@ impl<S: Sync> FromRequestParts<S> for Permit<Read> {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Permit<Read>, Response> {
-        let Ok(asking) = Asking::from_request_parts(parts, state).await;
+        let asking = Asking::from_request_parts(parts, state).await?;
         asking
             .caller
             .permit::<Read>()

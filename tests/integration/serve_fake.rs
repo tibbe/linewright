@@ -9,12 +9,14 @@ use scraper::{Html, Selector};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
-/// A running `serve-fake`, the address it said it serves the web UI on, and
-/// the command it said gives the browser its time.
+/// A running `serve-fake`, the address it said it serves the web UI on, the
+/// command it said gives the browser its time, and the `Cookie` of a
+/// browser it signed in.
 struct Served {
     child: Child,
     url: String,
     browser_clock: String,
+    cookie: String,
 }
 
 impl Served {
@@ -39,12 +41,23 @@ impl Served {
             let (url, browser_clock) = said
                 .unwrap_or_else(|_| panic!("serve-fake said nothing in time at {caller}"))
                 .unwrap_or_else(|| panic!("serve-fake said too little at {caller}"));
+            let cookie = signed_in(&url)
+                .await
+                .unwrap_or_else(|e| panic!("signing in to serve-fake at {caller}: {e:#}"));
             Served {
                 child,
                 url,
                 browser_clock,
+                cookie,
             }
         }
+    }
+
+    /// A GET of `url` from the signed-in browser.
+    fn get(&self, url: &str) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .get(url)
+            .header("Cookie", &self.cookie)
     }
 
     fn url(&self, path: &str) -> String {
@@ -57,7 +70,9 @@ impl Served {
         let caller = Location::caller();
         let url = self.url(path);
         async move {
-            let response = reqwest::get(&url)
+            let response = self
+                .get(&url)
+                .send()
                 .await
                 .unwrap_or_else(|e| panic!("reading {url} at {caller}: {e}"));
             assert_eq!(response.status(), 200, "{url} at {caller}");
@@ -104,7 +119,9 @@ impl Served {
         let caller = Location::caller();
         let url = self.url(path);
         async move {
-            let mut response = reqwest::get(&url)
+            let mut response = self
+                .get(&url)
+                .send()
                 .await
                 .unwrap_or_else(|e| panic!("following {url} at {caller}: {e}"));
             assert_eq!(response.status(), 200, "{url} at {caller}");
@@ -147,6 +164,55 @@ impl Served {
             assert!(status.success(), "{status} at {caller}");
         }
     }
+}
+
+/// Signs a browser in to the web UI at `url` as the first account of
+/// `serve-fake`'s fake Google, as a browser does, following each redirect
+/// by hand: the `Cookie` it then sends.
+async fn signed_in(url: &str) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let location = |response: &reqwest::Response| -> anyhow::Result<String> {
+        Ok(response
+            .headers()
+            .get("location")
+            .context("no Location")?
+            .to_str()?
+            .to_string())
+    };
+    let cookie = |response: &reqwest::Response| -> anyhow::Result<String> {
+        let set = response
+            .headers()
+            .get("set-cookie")
+            .context("no Set-Cookie")?
+            .to_str()?;
+        Ok(set.split(';').next().unwrap_or_default().to_string())
+    };
+    let origin = url.trim_end_matches('/');
+    let begun = client
+        .post(format!("{origin}/auth/google"))
+        .header("Origin", origin)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body("return=%2F")
+        .send()
+        .await?;
+    let sign_in = cookie(&begun)?;
+    let authorize = reqwest::Url::parse(&location(&begun)?)?;
+    let choosing = Html::parse_document(&client.get(authorize.clone()).send().await?.text().await?);
+    let first = attributes(&choosing, "li a", "href")
+        .into_iter()
+        .next()
+        .context("the fake Google offers no account")?;
+    let chosen = client.get(authorize.join(&first)?).send().await?;
+    let back = client
+        .get(location(&chosen)?)
+        .header("Cookie", sign_in)
+        .send()
+        .await?;
+    anyhow::ensure!(back.status() == 303, "signing in: {}", back.status());
+    cookie(&back)
 }
 
 #[track_caller]

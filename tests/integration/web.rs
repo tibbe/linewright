@@ -14,6 +14,7 @@ mod runs;
 mod script;
 mod serving;
 mod shell;
+mod sign_in;
 mod task;
 mod theme;
 
@@ -23,6 +24,7 @@ use axum::Router;
 use axum::body::Body;
 use common::*;
 use http_body_util::BodyExt as _;
+use linewright::access::Role;
 use linewright::api::Sources;
 use linewright::clock::Clock;
 use linewright::web;
@@ -35,6 +37,8 @@ use tower::ServiceExt as _;
 /// its router driven in-process.
 struct Web {
     serving: Serving,
+    /// A manager's browser.
+    cookie: String,
     listener: Listener,
     router: Router,
     stopping: CancellationToken,
@@ -122,9 +126,11 @@ impl Web {
             )
             .await
         };
-        let router = web::router(sources, public_url(), stopping.clone());
+        let cookie = signed_in_as(&sources, Role::Manager, MANAGER).await;
+        let router = web::router(sources, &ui(), stopping.clone());
         Web {
             serving,
+            cookie,
             listener,
             router,
             stopping,
@@ -184,12 +190,19 @@ impl Routed for Web {
     fn router(&self) -> &Router {
         &self.router
     }
+
+    fn cookie(&self) -> &str {
+        &self.cookie
+    }
 }
 
 /// The web UI's router driven in-process over a view built by hand over a
 /// local store, with no factory and no poll.
 struct Pages {
     router: Router,
+    clock: std::sync::Arc<FakeClock>,
+    /// A manager's browser.
+    cookie: String,
     sources: Sources,
     served: tokio::sync::watch::Sender<Option<linewright::api::Served>>,
     /// Set by [`Pages::with_deliveries`].
@@ -268,9 +281,12 @@ impl Pages {
             ..sources(&dir, &clock, since, served_receiver, polling).await
         };
         let stopping = CancellationToken::new();
-        let router = web::router(sources.clone(), public_url(), stopping.clone());
+        let router = web::router(sources.clone(), &ui(), stopping.clone());
+        let cookie = signed_in_as(&sources, Role::Manager, MANAGER).await;
         Pages {
             router,
+            clock,
+            cookie,
             sources,
             served,
             listener,
@@ -317,8 +333,11 @@ impl Pages {
     /// The pages' router, at the public URL `url`.
     #[track_caller]
     fn at(&self, url: &str) -> Router {
-        let url = linewright::host::PublicUrl::parse(url).unwrap();
-        web::router(self.sources.clone(), url, self.stopping.clone())
+        let ui = web::Ui {
+            public_url: linewright::host::PublicUrl::parse(url).unwrap(),
+            ..ui()
+        };
+        web::router(self.sources.clone(), &ui, self.stopping.clone())
     }
 
     /// Keeps the run `record`, in the form of a run's record file, as its
@@ -360,6 +379,55 @@ impl Routed for Pages {
     fn router(&self) -> &Router {
         &self.router
     }
+
+    fn cookie(&self) -> &str {
+        &self.cookie
+    }
+}
+
+impl Pages {
+    /// The pages as a browser signed in as a viewer sees them.
+    #[track_caller]
+    fn as_viewer(&self) -> impl Future<Output = AsRole<'_>> {
+        self.as_role(Role::Viewer, "Vera Viewer")
+    }
+
+    /// The pages as a browser signed in as a contributor sees them.
+    #[track_caller]
+    fn as_contributor(&self) -> impl Future<Output = AsRole<'_>> {
+        self.as_role(Role::Contributor, "Carl Contributor")
+    }
+
+    #[track_caller]
+    fn as_role(&self, role: Role, name: &str) -> impl Future<Output = AsRole<'_>> {
+        let cookie = signed_in_as(&self.sources, role, name);
+        async move {
+            AsRole {
+                router: &self.router,
+                cookie: cookie.await,
+            }
+        }
+    }
+}
+
+/// The name of the manager whose browser the tests ask from, but where they
+/// say otherwise.
+const MANAGER: &str = "Ada Lovelace";
+
+/// A router asked by a browser of its own.
+struct AsRole<'a> {
+    router: &'a Router,
+    cookie: String,
+}
+
+impl Routed for AsRole<'_> {
+    fn router(&self) -> &Router {
+        self.router
+    }
+
+    fn cookie(&self) -> &str {
+        &self.cookie
+    }
 }
 
 impl Drop for Pages {
@@ -373,8 +441,18 @@ impl Drop for Pages {
 trait Routed {
     fn router(&self) -> &Router;
 
+    /// The `Cookie` of the browser that asks: signed in.
+    fn cookie(&self) -> &str;
+
     async fn response(&self, path: &str) -> axum::response::Response {
-        routed(self.router(), hyper::Method::GET, Some(UI_HOST), path).await
+        routed_with_cookie(
+            self.router(),
+            hyper::Method::GET,
+            Some(UI_HOST),
+            path,
+            self.cookie(),
+        )
+        .await
     }
 
     async fn get(&self, path: &str) -> (u16, String) {
@@ -412,7 +490,7 @@ fn answer_with_cookie<W: Routed>(
     let request = axum::http::Request::builder()
         .uri(path)
         .header("Host", UI_HOST)
-        .header("Cookie", cookie.as_bytes())
+        .header("Cookie", format!("{}; {cookie}", web.cookie()))
         .body(Body::empty())
         .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
     let router = web.router().clone();
@@ -463,6 +541,7 @@ fn post_answer<W: Routed>(
         .method(hyper::Method::POST)
         .uri(path)
         .header("Host", format!("{UI_HOST}:8080"))
+        .header("Cookie", web.cookie())
         .header("Content-Type", "application/x-www-form-urlencoded");
     for (header, value) in headers {
         request = request.header(*header, *value);

@@ -5,6 +5,7 @@
 
 use super::html::{self, Html};
 use super::icons::{Icon, IconSize};
+use crate::actions::Action;
 
 /// A verb a button acts by, with its label and its icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub(super) enum Verb {
     Save,
     /// "Cancel" that closes a dialog.
     CloseDialog,
+    SignOut,
 }
 
 impl Verb {
@@ -35,6 +37,7 @@ impl Verb {
             Verb::KeepRunning => "Keep running",
             Verb::Edit => "Edit",
             Verb::Save => "Save",
+            Verb::SignOut => "Sign out",
         }
     }
 
@@ -48,6 +51,7 @@ impl Verb {
             Verb::Edit => Icon::PencilSquare,
             Verb::Save => Icon::Check,
             Verb::CloseDialog => Icon::XMark,
+            Verb::SignOut => Icon::ArrowRightStartOnRectangle,
         }
     }
 
@@ -63,8 +67,25 @@ impl Verb {
 /// which the page draws outside every region a stream sends, so that an
 /// update leaves the dialog and what the reader typed in it as they were.
 pub(super) enum ScreenButton {
-    /// "New", a `btn-primary`, with no icon.
-    New { dialog: &'static str },
-    /// A verb's label after its icon.
-    Act { verb: Verb, dialog: String },
+    /// "New", a `btn-primary`, with no icon, for `action`.
+    New {
+        dialog: &'static str,
+        action: Action,
+    },
+    /// A verb's label after its icon, for `action`.
+    Act {
+        verb: Verb,
+        dialog: String,
+        action: Action,
+    },
+}
+
+impl ScreenButton {
+    /// The action it is for, which a reader's role must allow for the
+    /// screen to show it (`docs/specs/access.md`, Actions).
+    pub(super) fn action(&self) -> Action {
+        match self {
+            ScreenButton::New { action, .. } | ScreenButton::Act { action, .. } => *action,
+        }
+    }
 }

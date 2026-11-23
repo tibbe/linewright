@@ -248,15 +248,19 @@ trait Ending: Display {
 /// Logs that `caller` did `action`, which changed or would have changed
 /// `changed`, and how it ended: a failure with all its causes.
 fn logged(caller: &Caller, action: Action, changed: &str, ended: Ended) {
-    let (person, tool, title) = (caller.who(), action.tool_name(), action.title());
+    let person = caller.person();
+    let (id, identity) = (person.id, person.logged());
+    let (tool, title) = (action.tool_name(), action.title());
     match ended {
-        Ended::Done => info!(person = %person, action = tool, changed, "{title}: done"),
+        Ended::Done => {
+            info!(person = %id, identity, action = tool, changed, "{title}: done");
+        }
         Ended::Refused(why) => {
-            info!(person = %person, action = tool, changed, reason = %why, "{title}: refused");
+            info!(person = %id, identity, action = tool, changed, reason = %why, "{title}: refused");
         }
         Ended::Failed(why) => {
             let error = format!("{why:#}");
-            warn!(person = %person, action = tool, changed, error, "{title}: failed");
+            warn!(person = %id, identity, action = tool, changed, error, "{title}: failed");
         }
     }
 }

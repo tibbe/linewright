@@ -68,11 +68,13 @@ struct EditValues {
     values: Vec<(&'static str, String)>,
 }
 
-/// "Edit" among a screen's buttons, which opens the dialog `dialog`.
-fn edit_button(dialog: &str) -> ScreenButton {
+/// "Edit" among a screen's buttons, which opens the dialog `dialog`, for
+/// `action`.
+fn edit_button(dialog: &str, action: Action) -> ScreenButton {
     ScreenButton::Act {
         verb: Verb::Edit,
         dialog: dialog.into(),
+        action,
     }
 }
 
@@ -207,7 +209,7 @@ pub(super) fn benchmark_values(benchmark: &Benchmark) -> String {
 
 /// "Edit" among Benchmark's buttons, which opens [`edit_benchmark`].
 pub(super) fn edit_benchmark_button() -> ScreenButton {
-    edit_button(EDIT_BENCHMARK)
+    edit_button(EDIT_BENCHMARK, Action::EditBenchmark)
 }
 
 /// Renames benchmark `id`, as the path gives it, to the name the form in
@@ -312,7 +314,7 @@ pub(super) fn task_values(task: &TaskShown) -> String {
 
 /// "Edit" among Task's buttons, which opens [`edit_task`].
 pub(super) fn edit_task_button() -> ScreenButton {
-    edit_button(EDIT_TASK)
+    edit_button(EDIT_TASK, Action::EditTask)
 }
 
 /// Changes task `id`, as the path gives it, to the name and criteria the

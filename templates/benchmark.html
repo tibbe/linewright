@@ -21,7 +21,7 @@
 {%- call(part) ui::table_card("Tasks", crate::web::icons::CardIcon::Area(crate::web::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
 {%- match part %}
 {%- when crate::web::table::Part::Buttons %}
-{%- call ui::new_button(NEW_TASK) %}{% endcall %}
+{%- if frame.allows(crate::actions::Action::AddTask) %}{% call ui::new_button(NEW_TASK) %}{% endcall %}{% endif %}
 {%- when crate::web::table::Part::Table %}
 {%- include "benchmark_tasks.html" %}
 {%- when crate::web::table::Part::Filters %}

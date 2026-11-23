@@ -74,6 +74,7 @@ icons! {
     ArrowTopRightOnSquare: "arrow-top-right-on-square", "icons/heroicons/arrow-top-right-on-square.svg";
     SignalSlash: "signal-slash", "icons/heroicons/signal-slash.svg";
     ArrowDown: "arrow-down", "icons/heroicons/arrow-down.svg";
+    ArrowRightStartOnRectangle: "arrow-right-start-on-rectangle", "icons/heroicons/arrow-right-start-on-rectangle.svg";
     IssueOpened: "issue-opened", "icons/octicons/issue-opened-16.svg";
     GitPullRequest: "git-pull-request", "icons/octicons/git-pull-request-16.svg";
 }
@@ -319,6 +320,7 @@ mod tests {
             (Verb::Edit, "Edit", Icon::PencilSquare),
             (Verb::Save, "Save", Icon::Check),
             (Verb::CloseDialog, "Cancel", Icon::XMark),
+            (Verb::SignOut, "Sign out", Icon::ArrowRightStartOnRectangle),
         ] {
             assert_eq!((verb.label(), verb.icon()), (label, icon), "{verb:?}");
         }

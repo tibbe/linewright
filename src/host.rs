@@ -114,6 +114,15 @@ impl PublicUrl {
         Ok(PublicUrl { url, host })
     }
 
+    /// The URL of `path` under it, such as `/auth/google/callback`.
+    ///
+    /// # Panics
+    ///
+    /// When `path` is no path a URL joins.
+    pub fn join(&self, path: &str) -> Url {
+        self.url.join(path).expect("a path joins a URL")
+    }
+
     /// Whether the web UI answers a request whose `Host` is `host`: this
     /// URL's host.
     pub fn answers(&self, host: &HostName) -> bool {

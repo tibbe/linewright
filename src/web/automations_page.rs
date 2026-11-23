@@ -3,11 +3,9 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 
 use super::caller::Reader;
 use super::html::{self, Html};
@@ -243,7 +241,7 @@ async fn shown(
     let automations = read.automations.as_ref().map(|automations| {
         AutomationsShown::of(automations, &read.names(&sources.work_dir.repo), requested)
     });
-    (Frame::of_read(sources, &read), automations)
+    (Frame::of_read(permit, sources, &read), automations)
 }
 
 /// The automations page, its stream's on the `requested` page.
@@ -286,7 +284,7 @@ pub(super) async fn automations_page(
 /// poll has seen them.
 pub(super) async fn automations_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Query(query): Query<AutomationsQuery>,
     navigation: Navigation,
 ) -> Response {
@@ -307,5 +305,5 @@ pub(super) async fn automations_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }

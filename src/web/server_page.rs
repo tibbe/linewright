@@ -5,9 +5,7 @@ use std::num::NonZeroU64;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::response::{IntoResponse, Response};
-use tokio_util::sync::CancellationToken;
 
 use super::caller::Reader;
 use super::facts::{Fact, Piece};
@@ -213,7 +211,7 @@ async fn shown(permit: &Permit<Read>, sources: &Sources) -> (Frame, Vec<Fact>) {
         .into_iter()
         .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
         .collect();
-    (Frame::of_read(sources, &read), facts)
+    (Frame::of_read(permit, sources, &read), facts)
 }
 
 /// A build as a transcript's maintenance command shows, on the same line
@@ -270,7 +268,7 @@ pub(super) async fn server_page(
 /// The server page's regions: the shell's, and the facts.
 pub(super) async fn server_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
@@ -282,7 +280,7 @@ pub(super) async fn server_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }
 
 #[cfg(test)]

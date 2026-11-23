@@ -4,11 +4,14 @@
 
 pub mod people;
 pub mod providers;
+pub mod sessions;
 pub mod sign_ins;
 mod tokens;
 
 use std::fmt;
 use std::marker::PhantomData;
+
+use people::{Person, State};
 
 /// An access level (`docs/specs/access.md`, Roles), each including the
 /// ones before it.
@@ -71,53 +74,31 @@ impl Role {
     }
 }
 
-/// Who a caller is.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Who {
-    /// Whoever reaches the web UI's port, while the UI signs no one in.
-    Anyone,
-}
-
-impl fmt::Display for Who {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Who::Anyone => f.write_str("anyone"),
-        }
-    }
-}
-
-/// Who a request is from, with the role they have at the time of the
-/// request.
+/// Who a request is from: an enabled person, with the role they have at
+/// the time of the request (`docs/specs/access.md`, Roles, At each request).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caller {
-    who: Who,
-    role: Role,
+    person: Person,
 }
 
 impl Caller {
-    pub(crate) fn new(who: Who, role: Role) -> Caller {
-        Caller { who, role }
+    /// `person` asking, `None` while they are disabled.
+    pub fn of(person: Person) -> Option<Caller> {
+        (person.state == State::Enabled).then_some(Caller { person })
     }
 
-    /// Whoever reaches the web UI's port, who may do everything
-    /// (`docs/specs/operation.md`, Serving the UI, Access), while the UI
-    /// signs no one in.
-    pub fn anyone() -> Caller {
-        Caller::new(Who::Anyone, Role::Manager)
-    }
-
-    pub fn who(&self) -> &Who {
-        &self.who
+    pub fn person(&self) -> &Person {
+        &self.person
     }
 
     pub fn role(&self) -> Role {
-        self.role
+        self.person.role
     }
 
     /// Whether its role reaches `level`, such as for whether a screen shows
     /// a button (`docs/specs/access.md`, Actions).
     pub fn can(&self, level: Level) -> bool {
-        self.role.level() >= level
+        self.role().level() >= level
     }
 
     /// The permit of the level `L`, or else the refusal saying the level it
@@ -220,8 +201,9 @@ impl From<Permit<Manage>> for Permit<Read> {
 mod tests {
     use super::*;
 
+    #[track_caller]
     fn caller(role: Role) -> Caller {
-        Caller::new(Who::Anyone, role)
+        Caller::of(people::tests::person(1, role, State::Enabled)).unwrap()
     }
 
     /// `docs/specs/access.md`, Roles: each level includes the ones above it
@@ -278,10 +260,12 @@ mod tests {
         assert_eq!(read_directly.caller(), &manager);
     }
 
-    /// While the UI signs no one in, whoever reaches its port may do
-    /// everything (`docs/specs/operation.md`, Serving the UI, Access).
+    /// `docs/specs/access.md`, People, State: a disabled person asks
+    /// nothing.
     #[test_log::test]
-    fn anyone_may_do_everything_while_the_ui_signs_no_one_in() {
-        assert!(Caller::anyone().permit::<Manage>().is_ok());
+    fn a_disabled_person_is_no_caller() {
+        let disabled = people::tests::person(1, Role::Manager, State::Disabled);
+
+        assert_eq!(Caller::of(disabled), None);
     }
 }
