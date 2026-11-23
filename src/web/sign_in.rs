@@ -20,8 +20,9 @@ use super::card_page::CardPage;
 use super::html::Html;
 use super::icons::{Icon, IconSize};
 use super::{HASHED, cookie_headers, cookie_values};
+use crate::access::oauth::store::AuthorizationRequests;
 use crate::access::people::{
-    Claims, ManagerName, People, Refusal, SignInDecision, SignUpRule, decide_sign_in,
+    Claims, ManagerName, People, PersonId, Refusal, SignInDecision, SignUpRule, decide_sign_in,
 };
 use crate::access::providers::{Begun, GitHub, Google, Provider, Providers};
 use crate::access::sessions::SessionCookie;
@@ -394,6 +395,22 @@ pub(super) async fn callback(
         Ok(claims) => sign_in_as_decided(&sign_in, &sources, &offered.rule(), &claims).await,
         Err(e) => Err(e),
     };
+    let decided = match decided {
+        Ok(Ok((cookie, person))) => match signed_in_for(&sources, &return_to, person, now).await {
+            Ok(()) => Ok(Ok(cookie)),
+            Err(e) => {
+                if let Err(ending) = sessions(&sources).end(&cookie).await {
+                    warn!(
+                        error = format!("{ending:#}"),
+                        "ending a sign-in whose cookie the browser never got failed"
+                    );
+                }
+                Err(e)
+            }
+        },
+        Ok(Err(refusal)) => Ok(Err(refusal)),
+        Err(e) => Err(e),
+    };
     match decided {
         Ok(Ok(cookie)) => (
             [(header::SET_COOKIE, cookie.set_cookie())],
@@ -412,15 +429,32 @@ pub(super) async fn callback(
     }
 }
 
+/// Records that `person` signed in at `now` for the authorization request
+/// whose Consent `return_to` is, if it is one's: each authorization takes
+/// its own sign-in (`docs/specs/access.md`, The authorization server, 3).
+async fn signed_in_for(
+    sources: &Sources,
+    return_to: &ReturnPath,
+    person: PersonId,
+    now: Timestamp,
+) -> anyhow::Result<()> {
+    let Some(secret) = super::authorization_server::waiting_request(return_to) else {
+        return Ok(());
+    };
+    AuthorizationRequests::new(sources.runs.database().clone())
+        .signed_in(secret, person, now)
+        .await
+}
+
 /// Signs a browser in as the person of `claims`, as Linewright decides
-/// (`docs/specs/access.md`, Signing in, 3a to 3e), giving its cookie, or
-/// else why Linewright refuses, which it logs.
+/// (`docs/specs/access.md`, Signing in, 3a to 3e), giving its cookie and
+/// the person, or else why Linewright refuses, which it logs.
 async fn sign_in_as_decided(
     sign_in: &SignIn,
     sources: &Sources,
     rule: &SignUpRule<'_>,
     claims: &Claims,
-) -> anyhow::Result<Result<SessionCookie, Refusal>> {
+) -> anyhow::Result<Result<(SessionCookie, PersonId), Refusal>> {
     let now = sources.clock.now();
     let people = People::new(sources.runs.database().clone());
     let found = people.find_by_identity(&claims.identity()).await?;
@@ -446,7 +480,7 @@ async fn sign_in_as_decided(
         role = person.role.name(),
         "signed in"
     );
-    Ok(Ok(cookie))
+    Ok(Ok((cookie, person.id)))
 }
 
 /// Sign in, saying that signing in with `provider` failed for `e`, which it
@@ -503,7 +537,7 @@ pub(super) async fn sign_out(
 
 /// The refusal, which it logs, of `what`, such as "a sign-out", for a
 /// request that did not come from the web UI's own pages, if it is one.
-fn refused_from_another_site(
+pub(super) fn refused_from_another_site(
     cross_site: Option<Extension<CrossSite>>,
     what: &str,
 ) -> Option<Response> {

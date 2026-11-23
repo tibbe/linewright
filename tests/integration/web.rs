@@ -9,6 +9,7 @@ mod environment;
 mod frame;
 mod item;
 mod look;
+mod oauth;
 mod people;
 mod run;
 mod runs;

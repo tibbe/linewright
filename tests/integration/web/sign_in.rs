@@ -69,15 +69,15 @@ enum Offering {
 /// The pages, signing people in with the fake Google, whose sign-up rule is
 /// `example.com`, and the fake GitHub, whose sign-up rule is `acme`, as
 /// `offering` offers them, with `manager` as the `manager` setting.
-struct Signing {
-    pages: Pages,
+pub(super) struct Signing {
+    pub(super) pages: Pages,
     router: Router,
     _google: FakeGoogle,
     github: FakeGitHub,
 }
 
 #[track_caller]
-fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
+pub(super) fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
     signing_offering(Offering::Both, manager)
 }
 
@@ -131,15 +131,15 @@ fn signing_offering(
 }
 
 /// What a browser was answered: the status, the headers and the body.
-struct Answer {
-    status: u16,
-    headers: axum::http::HeaderMap,
-    html: Html,
+pub(super) struct Answer {
+    pub(super) status: u16,
+    pub(super) headers: axum::http::HeaderMap,
+    pub(super) html: Html,
 }
 
 impl Answer {
     #[track_caller]
-    fn location(&self) -> &str {
+    pub(super) fn location(&self) -> &str {
         self.headers["location"].to_str().unwrap()
     }
 
@@ -155,13 +155,13 @@ impl Answer {
 }
 
 /// A browser on the web UI, keeping the cookies it is given.
-struct Browsing<'a> {
+pub(super) struct Browsing<'a> {
     router: &'a Router,
     cookies: BTreeMap<String, String>,
 }
 
 impl<'a> Browsing<'a> {
-    fn new(signing: &'a Signing) -> Browsing<'a> {
+    pub(super) fn new(signing: &'a Signing) -> Browsing<'a> {
         Browsing {
             router: &signing.router,
             cookies: BTreeMap::new(),
@@ -169,7 +169,7 @@ impl<'a> Browsing<'a> {
     }
 
     /// A browser that sends `cookie`, a `Cookie` header's value.
-    fn with_cookie(signing: &'a Signing, cookie: &str) -> Browsing<'a> {
+    pub(super) fn with_cookie(signing: &'a Signing, cookie: &str) -> Browsing<'a> {
         let cookies = cookie
             .split("; ")
             .filter_map(|pair| pair.split_once('='))
@@ -189,7 +189,11 @@ impl<'a> Browsing<'a> {
             .join("; ")
     }
 
-    async fn send(&mut self, request: axum::http::request::Builder, body: String) -> Answer {
+    pub(super) async fn send(
+        &mut self,
+        request: axum::http::request::Builder,
+        body: String,
+    ) -> Answer {
         let request = request
             .header("Host", UI_HOST)
             .header("Cookie", self.cookie())
@@ -218,13 +222,13 @@ impl<'a> Browsing<'a> {
         }
     }
 
-    async fn get(&mut self, path: &str) -> Answer {
+    pub(super) async fn get(&mut self, path: &str) -> Answer {
         self.send(axum::http::Request::get(path), String::new())
             .await
     }
 
     /// Posts the form `fields` to `path` from a page of the web UI.
-    async fn post(&mut self, path: &str, fields: &[(&str, &str)]) -> Answer {
+    pub(super) async fn post(&mut self, path: &str, fields: &[(&str, &str)]) -> Answer {
         let mut form = form_urlencoded::Serializer::new(String::new());
         form.extend_pairs(fields);
         let request = axum::http::Request::post(path)
@@ -237,7 +241,7 @@ impl<'a> Browsing<'a> {
     /// choosing the account of `email`, or turning the sign-in down with
     /// none: what the browser is answered as it is sent back.
     #[track_caller]
-    fn sign_in<'b>(
+    pub(super) fn sign_in<'b>(
         &'b mut self,
         path: &'b str,
         email: Option<&'b str>,
