@@ -243,6 +243,10 @@ agent. An authorization is a person's consent for one client to act as them.
   and the refresh token grant.
 - **Scopes.** Linewright has no scopes. It ignores a scope that a client
   asks for.
+- **When a request ends.** An authorization request ends when its person
+  denies the client, when Linewright signs them in, or 10 minutes after the
+  client makes it. A browser that comes back to a request that has ended
+  gets [Authorization error](#authorization-error).
 - **When an authorization begins.** It begins at its sign-in.
 - **Tokens.** A token is an opaque string.
 - **A code.** A code works for 10 minutes.
@@ -271,7 +275,7 @@ For each authorization request:
 | ------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------- |
 | Sign in             | a screen opened or open without a sign-in, "Allow" on Consent, and "Sign out"               | choose an identity provider to sign in with  |
 | Consent             | a client's authorization request                                                    | allow or deny the client                     |
-| Authorization error | an authorization request that Linewright cannot send back to its client                   | see why Linewright stopped                   |
+| Authorization error | an authorization request that Linewright cannot send back to its client, or that has ended                   | see why Linewright stopped                   |
 | People              | the navigation ([Shell](shell.md))                                                  | see the people, and as a manager change them |
 | Edit person         | "Edit" on a person, on People                                                       | change the person's role                     |
 | Disable person      | "Disable" on a person, on People                                                    | confirm disabling the person                 |
@@ -328,6 +332,7 @@ For each authorization request:
   | an unknown client                                     | "Linewright does not know this client."                 |
   | a metadata document that Linewright cannot fetch or use | "Linewright cannot use this client's metadata document." |
   | a redirect URI that is not one of the client's        | "This is not a redirect URI of this client."            |
+  | a request that has ended                              | "This authorization request has ended. Start again from the client." |
 
 ### People
 
