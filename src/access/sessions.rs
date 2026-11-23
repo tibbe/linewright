@@ -73,6 +73,8 @@ impl Sessions {
 
     /// Signs a browser in as `person` from `now` for [`SIGNED_IN_FOR`],
     /// forgetting the sign-ins that ended over [`KNOWN_ENDED_FOR`] before.
+    /// A person disabled by then is signed in nowhere: the cookie signs no
+    /// one in, even once they are enabled again.
     pub async fn start(&self, person: PersonId, now: Timestamp) -> anyhow::Result<SessionCookie> {
         let cookie = SessionCookie(random_token());
         sqlx::query("DELETE FROM browser_sessions WHERE expires_at < ?")
@@ -80,13 +82,16 @@ impl Sessions {
             .execute(self.db.pool())
             .await
             .context("forgetting the ended sign-ins")?;
-        sqlx::query("INSERT INTO browser_sessions (hash, person, expires_at) VALUES (?, ?, ?)")
-            .bind(hashed(&cookie.0))
-            .bind(person.row())
-            .bind(time_text(now + SIGNED_IN_FOR))
-            .execute(self.db.pool())
-            .await
-            .with_context(|| format!("signing person {person} in"))?;
+        sqlx::query(
+            "INSERT INTO browser_sessions (hash, person, expires_at)
+             SELECT ?, id, ? FROM people WHERE id = ? AND state = 'enabled'",
+        )
+        .bind(hashed(&cookie.0))
+        .bind(time_text(now + SIGNED_IN_FOR))
+        .bind(person.row())
+        .execute(self.db.pool())
+        .await
+        .with_context(|| format!("signing person {person} in"))?;
         Ok(cookie)
     }
 

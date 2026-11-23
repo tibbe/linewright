@@ -48,6 +48,9 @@ pub enum Role {
 }
 
 impl Role {
+    /// Every role, in the order of the spec's table.
+    pub const ALL: [Role; 3] = [Role::Viewer, Role::Contributor, Role::Manager];
+
     /// Its name, as the spec gives it.
     pub fn name(self) -> &'static str {
         match self {
@@ -59,9 +62,7 @@ impl Role {
 
     /// The role named `name`, as [`Role::name`] gives it.
     pub fn named(name: &str) -> Option<Role> {
-        [Role::Viewer, Role::Contributor, Role::Manager]
-            .into_iter()
-            .find(|role| role.name() == name)
+        Role::ALL.into_iter().find(|role| role.name() == name)
     }
 
     /// The access level it gives.

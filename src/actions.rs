@@ -6,10 +6,12 @@
 
 mod benchmarks;
 mod capture;
+mod people;
 mod work;
 
 pub use benchmarks::*;
 pub use capture::*;
+pub use people::*;
 pub use work::*;
 
 use std::fmt::Display;
