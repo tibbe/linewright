@@ -185,29 +185,54 @@ impl fmt::Display for ClientId {
 }
 
 /// A redirect URI a client may register: HTTPS, or HTTP to a loopback
-/// address, without a fragment (`docs/specs/access.md`, The authorization
-/// server, Redirect URIs), kept as the client gave it, which a request's
-/// must be exactly.
+/// address, `localhost` included, without a fragment, kept as the client
+/// gave it (`docs/specs/access.md`, The authorization server, Loopback).
 /// <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13#section-2.3.1>
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RedirectUri {
     given: String,
     url: Url,
+    /// What it is but for its port, for an HTTP one to a loopback address
+    /// without user information.
+    portless: Option<Portless>,
+}
+
+/// A loopback redirect URI but for its port: its host, and what follows its
+/// authority as the client gave it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Portless {
+    host: Host,
+    after_authority: String,
+}
+
+impl Portless {
+    /// What `given`, which parses to `url`, is but for its port, if it is
+    /// an HTTP redirect URI to a loopback address without user information.
+    fn of(given: &str, url: &Url) -> Option<Portless> {
+        const SCHEME: &str = "http://";
+        let user = !url.username().is_empty() || url.password().is_some();
+        if url.scheme() != "http" || !to_loopback(url) || user {
+            return None;
+        }
+        let rest = given
+            .get(..SCHEME.len())
+            .filter(|scheme| scheme.eq_ignore_ascii_case(SCHEME))
+            .map(|_| &given[SCHEME.len()..])?;
+        let authority_ends = rest.find(['/', '\\', '?', '#']).unwrap_or(rest.len());
+        Some(Portless {
+            host: url.host()?.to_owned(),
+            after_authority: rest[authority_ends..].to_string(),
+        })
+    }
 }
 
 impl RedirectUri {
     /// The redirect URI `given` is, or else why not.
     pub fn parse(given: &str) -> Result<RedirectUri, String> {
         let url = Url::parse(given).map_err(|e| format!("{given:?} is not a URL: {e}"))?;
-        let loopback = match url.host() {
-            Some(Host::Ipv4(address)) => address.is_loopback(),
-            Some(Host::Ipv6(address)) => address.is_loopback(),
-            Some(Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-            None => false,
-        };
         let secure = match url.scheme() {
             "https" => url.host().is_some(),
-            "http" => loopback,
+            "http" => to_loopback(&url),
             _ => false,
         };
         if !secure {
@@ -220,6 +245,7 @@ impl RedirectUri {
         }
         Ok(RedirectUri {
             given: given.to_string(),
+            portless: Portless::of(given, &url),
             url,
         })
     }
@@ -229,9 +255,30 @@ impl RedirectUri {
         &self.given
     }
 
+    /// The redirect URI `requested` is, if a request may give it for this
+    /// registered one: exactly this one, but that an HTTP one to a loopback
+    /// address may have any port, or none, on the same host.
+    /// <https://www.rfc-editor.org/rfc/rfc8252#section-7.3>
+    pub fn admits(&self, requested: &str) -> Option<RedirectUri> {
+        let requested = RedirectUri::parse(requested).ok()?;
+        let admitted = requested.given == self.given
+            || (self.portless.is_some() && requested.portless == self.portless);
+        admitted.then_some(requested)
+    }
+
     /// Its host.
     pub fn host(&self) -> &str {
         self.url.host_str().unwrap_or_default()
+    }
+}
+
+/// Whether `url` is to a loopback address, `localhost` included.
+fn to_loopback(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Ipv4(address)) => address.is_loopback(),
+        Some(Host::Ipv6(address)) => address.is_loopback(),
+        Some(Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        None => false,
     }
 }
 
@@ -418,10 +465,10 @@ pub enum CannotSendBack {
 }
 
 /// Whether Linewright takes `request` from `client`, what Linewright found
-/// for its `client_id`, for the resource that
-/// `server` guards: a redirect URI the client registered, exactly, the
-/// code grant, an `S256` PKCE challenge, and no resource but the MCP
-/// server's (`docs/specs/access.md`, The authorization server).
+/// for its `client_id`, for the resource that `server` guards: a redirect
+/// URI that one the client registered admits, which the request keeps as it
+/// gave it, the code grant, an `S256` PKCE challenge, and no resource but
+/// the MCP server's (`docs/specs/access.md`, The authorization server).
 pub fn check_authorize(
     request: &AuthorizeRequest,
     client: &Found,
@@ -443,11 +490,11 @@ pub fn check_authorize(
     let redirect_uri = request
         .redirect_uri
         .as_deref()
-        .and_then(|given| {
+        .and_then(|requested| {
             client
                 .redirect_uris
                 .iter()
-                .find(|registered| registered.as_str() == given)
+                .find_map(|registered| registered.admits(requested))
         })
         .ok_or(AuthorizeError::CannotSendBack(
             CannotSendBack::NotARedirectUri,
@@ -490,7 +537,7 @@ pub fn check_authorize(
         .map_err(send_back)?;
     Ok(Checked {
         client: client.id.clone(),
-        redirect_uri: redirect_uri.clone(),
+        redirect_uri,
         challenge,
         state: request.state.clone(),
     })
@@ -844,7 +891,7 @@ const MOST_REDIRECT_URIS: usize = 20;
 /// The name and redirect URIs `request` registers, or else why Linewright
 /// refuses it: a redirect URI that is not HTTPS or HTTP to a loopback
 /// address, or none (`docs/specs/access.md`, The authorization server,
-/// Redirect URIs). What else it asks for, such as a client secret, it does
+/// Loopback). What else it asks for, such as a client secret, it does
 /// not get: every client is public.
 pub fn registration(
     request: &RegistrationRequest,

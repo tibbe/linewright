@@ -86,27 +86,113 @@ fn a_request_with_a_registered_redirect_uri_s256_and_the_mcp_server_is_taken() {
     assert!(check_authorize(&without_resource, &Found::Client(client()), &server()).is_ok());
 }
 
-/// `docs/specs/access.md`, The authorization server, Redirect URIs: a
-/// redirect URI matches as the client registered it, not as a URL means
-/// the same.
+/// A redirect URI that is not a loopback one matches as the client
+/// registered it, not as a URL means the same.
+/// <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13#section-2.3.1>
 #[test_log::test]
 fn a_redirect_uri_matches_exactly_as_registered() {
-    let client = Found::Client(Client {
-        redirect_uris: vec![RedirectUri::parse("http://127.0.0.1:5000").unwrap()],
-        ..client()
-    });
-    let request = |redirect_uri: &str| AuthorizeRequest {
-        redirect_uri: Some(redirect_uri.into()),
+    let registered = RedirectUri::parse("https://agent.example:8443/cb?app=1").unwrap();
+
+    assert_eq!(
+        registered.admits("https://agent.example:8443/cb?app=1"),
+        Some(registered.clone())
+    );
+    for other in [
+        "https://agent.example:8444/cb?app=1",
+        "https://agent.example/cb?app=1",
+        "https://agent.example:8443/cb?app=1&x=2",
+        "https://agent.example:8443/cb/?app=1",
+        "https://AGENT.example:8443/cb?app=1",
+        "http://agent.example:8443/cb?app=1",
+    ] {
+        assert_eq!(registered.admits(other), None, "{other}");
+    }
+}
+
+/// `docs/specs/access.md`, The authorization server, Loopback: a loopback
+/// redirect URI matches with any port, `localhost` included, and the rest
+/// as the client registered it.
+/// <https://www.rfc-editor.org/rfc/rfc8252#section-7.3>
+#[test_log::test]
+fn a_loopback_redirect_uri_matches_with_any_port() {
+    for (registered, requested) in [
+        ("http://127.0.0.1:5000", "http://127.0.0.1:5000"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.1:61234/cb"),
+        ("http://127.0.0.1/cb", "http://127.0.0.1:61234/cb"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.1/cb"),
+        ("http://127.1.2.3:5000/cb?a=1", "http://127.1.2.3:80/cb?a=1"),
+        ("http://[::1]:5000/cb", "http://[::1]:61234/cb"),
+        ("http://[::1]/cb", "http://[::1]:61234/cb"),
+        (
+            "http://localhost/callback",
+            "http://localhost:61234/callback",
+        ),
+        (
+            "http://localhost/callback",
+            "http://LOCALHOST:61234/callback",
+        ),
+        (
+            "HTTP://localhost/callback",
+            "http://localhost:61234/callback",
+        ),
+    ] {
+        let admitted = RedirectUri::parse(registered).unwrap().admits(requested);
+        assert_eq!(
+            admitted.as_ref().map(RedirectUri::as_str),
+            Some(requested),
+            "{registered} admits {requested}"
+        );
+    }
+    for (registered, requested) in [
+        ("http://127.0.0.1:5000", "http://127.0.0.1:5000/"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.1:61234/cb/"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.1:61234/cb?x=1"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.2:5000/cb"),
+        ("http://127.0.0.1:5000/cb", "http://localhost:5000/cb"),
+        ("http://localhost:5000/cb", "http://127.0.0.1:5000/cb"),
+        ("http://[::1]:5000/cb", "http://127.0.0.1:5000/cb"),
+        ("http://127.0.0.1:5000/cb", "https://127.0.0.1:5000/cb"),
+        ("http://127.0.0.1:5000/cb", "http://user@127.0.0.1:5000/cb"),
+        ("http://127.0.0.1:5000/cb", "http://127.0.0.1:5000/cb#f"),
+        ("https://localhost:5000/cb", "https://localhost:6000/cb"),
+        ("http://localhost\\cb", "http://localhost\\cb:9"),
+        ("http://localhost/cb", "http://localhost:5000/./cb"),
+        ("http://u@127.0.0.1:5000/cb", "http://u@127.0.0.1:6000/cb"),
+    ] {
+        assert_eq!(
+            RedirectUri::parse(registered).unwrap().admits(requested),
+            None,
+            "{registered} does not admit {requested}"
+        );
+    }
+}
+
+/// `docs/specs/access.md`, The authorization server, Loopback: the request
+/// keeps the redirect URI it gave, with its port.
+#[test_log::test]
+fn a_request_keeps_the_loopback_redirect_uri_it_gave() {
+    let request = AuthorizeRequest {
+        redirect_uri: Some("http://127.0.0.1:61234/callback".into()),
         ..request()
     };
 
-    assert!(check_authorize(&request("http://127.0.0.1:5000"), &client, &server()).is_ok());
+    let checked = check_authorize(&request, &Found::Client(client()), &server()).unwrap();
+
     assert_eq!(
-        check_authorize(&request("http://127.0.0.1:5000/"), &client, &server()),
-        Err(AuthorizeError::CannotSendBack(
-            CannotSendBack::NotARedirectUri
-        ))
+        checked.redirect_uri.as_str(),
+        "http://127.0.0.1:61234/callback"
     );
+    let refused = AuthorizeRequest {
+        code_challenge_method: Some("plain".into()),
+        ..request
+    };
+    match check_authorize(&refused, &Found::Client(client()), &server()) {
+        Err(AuthorizeError::SendBack(sent)) => assert_eq!(
+            sent.redirect_uri.as_str(),
+            "http://127.0.0.1:61234/callback"
+        ),
+        other => panic!("sent back, not {other:?}"),
+    }
 }
 
 /// `docs/specs/access.md`, Authorization error, The message.
@@ -133,7 +219,7 @@ fn an_unknown_client_an_unusable_metadata_document_or_an_unregistered_redirect_u
     );
     for redirect_uri in [
         None,
-        Some("http://127.0.0.1:33419/callback"),
+        Some("http://127.0.0.2:33418/callback"),
         Some("http://127.0.0.1:33418/callback/"),
         Some("http://127.0.0.1:33418/callback?x=1"),
         Some("https://evil.example/redirect"),
@@ -270,7 +356,8 @@ fn sending_back_adds_the_state_and_the_issuer_to_the_redirect_uri() {
     );
 }
 
-/// `docs/specs/access.md`, The authorization server, Redirect URIs.
+/// `docs/specs/access.md`, The authorization server, Loopback.
+/// <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13#section-2.3.1>
 #[test_log::test]
 fn a_redirect_uri_is_https_or_http_to_a_loopback_address() {
     for good in [
