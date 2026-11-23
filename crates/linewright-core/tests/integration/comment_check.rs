@@ -1,12 +1,12 @@
 //! `scripts/check comments`: every comment is one of the four kinds
-//! `CODING_STANDARDS.md` allows.
+//! `CODING_STANDARDS.md` allows, and cites no spec file that is not tracked.
 
 use std::path::Path;
 use std::process::Command;
 
 /// What `scripts/check comments` reports on a repository that tracks
 /// `files`, each a path and its content: one line per comment block or file
-/// it fails.
+/// it fails, and per spec file that a comment cites and that is not tracked.
 #[track_caller]
 fn reports(files: &[(&str, &str)]) -> Vec<String> {
     let tree = tempfile::tempdir().unwrap();
@@ -208,4 +208,43 @@ fn the_model_vendored_files_and_files_without_comments_are_not_checked() {
         ]),
         Vec::<String>::new()
     );
+}
+
+#[test_log::test]
+fn a_comment_that_cites_a_spec_file_that_is_not_tracked_fails_at_the_citation() {
+    let rust = "/// Draws it (`docs/specs/gone.md`, Cards).\n\
+                fn f() {}\n\
+                /// Lists it ([Runs](docs/specs/runs.md#runs-1)), as\n\
+                /// [Tables](docs/specs/old/ui.md#tables) says.\n\
+                fn g() {}\n";
+    let template = "{# Cites `docs/specs/gone.md`, Cards. #}\n{% macro m() %}{% endmacro %}\n";
+    let script = "#!/bin/sh\nx=$'a\nb'\n# Cites docs/specs/gone.md and docs/specs/gone.md.\n";
+    let js = "/* One,\n * then docs/specs/gone.md. */\nf(); // docs/specs/runs.md\n";
+
+    assert_eq!(
+        reports(&[
+            ("docs/specs/runs.md", "# Runs\n"),
+            ("src/lib.rs", rust),
+            ("templates/m.html", template),
+            ("run", script),
+            ("assets/app.js", js),
+        ]),
+        [
+            format!("assets/app.js:1: {NOT_ALLOWED}"),
+            "assets/app.js:2: cites docs/specs/gone.md, which does not exist".to_string(),
+            format!("assets/app.js:3: {NOT_ALLOWED}"),
+            format!("run:4: {NOT_ALLOWED}"),
+            "run:4: cites docs/specs/gone.md, which does not exist".to_string(),
+            "src/lib.rs:1: cites docs/specs/gone.md, which does not exist".to_string(),
+            "src/lib.rs:4: cites docs/specs/old/ui.md, which does not exist".to_string(),
+            "templates/m.html:1: cites docs/specs/gone.md, which does not exist".to_string(),
+        ]
+    );
+}
+
+#[test_log::test]
+fn a_string_that_names_a_spec_file_that_is_not_tracked_passes() {
+    let rust = "fn f() -> &'static str {\n    \"docs/specs/invoices.md\"\n}\n";
+
+    assert_eq!(reports(&[("src/f.rs", rust)]), Vec::<String>::new());
 }
