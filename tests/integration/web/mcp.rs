@@ -10,6 +10,7 @@ use super::oauth::{Tokens, authorized_by_back_door, query_value};
 use super::sign_in::{Browsing, signing};
 use super::*;
 
+mod benchmark_reads;
 mod reads;
 
 /// The protocol version these tests' client asks for.
@@ -236,12 +237,16 @@ async fn a_client_initializes_at_2025_06_18_and_later() {
 }
 
 /// The tools a viewer is listed.
-const VIEWERS: [&str; 9] = [
+const VIEWERS: [&str; 13] = [
     "get_board",
     "get_item",
     "list_runs",
     "get_run",
     "list_automations",
+    "list_benchmarks",
+    "get_benchmark",
+    "get_task",
+    "get_benchmark_run",
     "get_server",
     "list_people",
     "list_authorizations",
@@ -358,6 +363,13 @@ async fn each_tool_has_the_action_as_its_title_and_its_screens_arguments() {
     );
     assert_eq!(arguments(&tool("list_automations")), ["after", "limit"]);
     assert_eq!(
+        arguments(&tool("list_benchmarks")),
+        ["after", "limit", "name", "stage"]
+    );
+    assert_eq!(arguments(&tool("get_benchmark")), ["benchmark_id"]);
+    assert_eq!(arguments(&tool("get_task")), ["task_id"]);
+    assert_eq!(arguments(&tool("get_benchmark_run")), ["benchmark_run_id"]);
+    assert_eq!(
         tool("get_server")["inputSchema"],
         json!({
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -384,6 +396,21 @@ fn done(result: &Value) -> Value {
         .unwrap_or_else(|e| panic!("{e}: {result}"));
     assert_eq!(text, result["structuredContent"], "{result}");
     result["structuredContent"].clone()
+}
+
+/// The keys `shown` and `answered`, both objects, have in common, each
+/// checked to hold the same value in both.
+#[track_caller]
+fn shared(shown: &Value, answered: &Value) -> Vec<String> {
+    let (shown, answered) = (shown.as_object().unwrap(), answered.as_object().unwrap());
+    shown
+        .iter()
+        .filter_map(|(key, value)| {
+            let other = answered.get(key)?;
+            assert_eq!(value, other, "{key}: {shown:?} against {answered:?}");
+            Some(key.clone())
+        })
+        .collect()
 }
 
 /// The message of a refused call.

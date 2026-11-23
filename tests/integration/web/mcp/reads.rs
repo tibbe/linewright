@@ -343,21 +343,6 @@ fn answered(pages: &Pages, path: &str) -> impl Future<Output = Value> + use<> {
     }
 }
 
-/// The keys `shown` and `answered`, both objects, have in common, each
-/// checked to hold the same value in both.
-#[track_caller]
-fn shared(shown: &Value, answered: &Value) -> Vec<String> {
-    let (shown, answered) = (shown.as_object().unwrap(), answered.as_object().unwrap());
-    shown
-        .iter()
-        .filter_map(|(key, value)| {
-            let other = answered.get(key)?;
-            assert_eq!(value, other, "{key}: {shown:?} against {answered:?}");
-            Some(key.clone())
-        })
-        .collect()
-}
-
 /// `docs/specs/access.md`, The MCP server, What a tool shows: a fact that
 /// `status`, `runs`, `explain` and `logs` also give in `--json` has the
 /// name it has there, here with the same value on the same world.

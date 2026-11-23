@@ -14,7 +14,7 @@ const ISSUE_1130: &str = include_str!("../../../src/store/fixtures/rest-issue-11
 /// captured from #1130's run `1130/implement-1`, which started at 2026-10-13
 /// 10:00 UTC with the issue as GitHub gave it.
 #[track_caller]
-fn with_a_task() -> impl Future<Output = Pages> {
+pub(super) fn with_a_task() -> impl Future<Output = Pages> {
     let caller = Location::caller();
     let pages = Box::pin(with_benchmarks());
     async move {
