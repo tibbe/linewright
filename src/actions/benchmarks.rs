@@ -1,7 +1,6 @@
 //! The actions on benchmarks, their tasks and their benchmark runs
 //! (`docs/specs/benchmarks.md`).
 
-use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
@@ -11,12 +10,11 @@ use super::{Action, Ended, Ending, logged};
 use crate::access::{Act, Permit, Read};
 use crate::api::Sources;
 use crate::benchmarks::{
-    Benchmark, BenchmarkId, BenchmarkListed, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRuns,
-    BenchmarkShown, Benchmarks, CancelRefusal, ConfigurationId, EditTaskError, LaunchRefusal,
-    Launched, MakeError, RemoveError, RemovedTask, RenameConfigurationError, RenameError,
-    Repetitions, TaskChange, TaskId, TaskShown,
+    Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRuns, BenchmarkShown,
+    Benchmarks, CancelRefusal, ConfigurationId, EditTaskError, LaunchRefusal, Launched, MakeError,
+    RemoveError, RemovedTask, RenameConfigurationError, RenameError, Repetitions, TaskChange,
+    TaskId, TaskShown,
 };
-use crate::domain::Timestamp;
 use crate::name::Name;
 use crate::task::TaskStage;
 use crate::trial::Configuration;
@@ -54,22 +52,8 @@ pub(super) fn benchmarks(sources: &Sources) -> Benchmarks {
 }
 
 /// The benchmark runs of `serve`'s work directory.
-fn benchmark_runs(sources: &Sources) -> BenchmarkRuns {
+pub(super) fn benchmark_runs(sources: &Sources) -> BenchmarkRuns {
     BenchmarkRuns::new(sources.runs.database().clone())
-}
-
-/// The benchmarks, and the latest benchmark run of each that has one, with
-/// when it was launched (`docs/specs/benchmarks.md`, Benchmarks).
-pub async fn list_benchmarks(
-    _: &Permit<Read>,
-    sources: &Sources,
-) -> Result<(
-    Vec<BenchmarkListed>,
-    BTreeMap<BenchmarkId, (BenchmarkRunId, Timestamp)>,
-)> {
-    let listed = benchmarks(sources).list().await?;
-    let latest = benchmark_runs(sources).latest().await?;
-    Ok((listed, latest))
 }
 
 /// The benchmarks of `stage`, by name.
@@ -88,8 +72,8 @@ pub async fn benchmarks_of_stage(
 }
 
 /// Benchmark `id`, with its tasks and its benchmark runs, `None` where
-/// there is no such benchmark (`docs/specs/benchmarks.md`, Benchmark).
-pub async fn get_benchmark(
+/// there is no such benchmark.
+pub async fn benchmark_shown(
     _: &Permit<Read>,
     sources: &Sources,
     id: BenchmarkId,
@@ -108,9 +92,9 @@ pub async fn removed_task(
     benchmarks(sources).removed_task(id).await
 }
 
-/// Task `id`, `None` where there is no such task
-/// (`docs/specs/benchmarks.md`, Task).
-pub async fn get_task(
+/// Task `id`, with its benchmark and what its directory gives of it,
+/// `None` where there is no such task.
+pub async fn task_shown(
     _: &Permit<Read>,
     sources: &Sources,
     id: TaskId,
@@ -118,9 +102,9 @@ pub async fn get_task(
     benchmarks(sources).task(id).await
 }
 
-/// Benchmark run `id`, `None` where there is no such benchmark run
-/// (`docs/specs/benchmarks.md`, Benchmark run).
-pub async fn get_benchmark_run(
+/// Benchmark run `id` as it is kept, `None` where there is no such
+/// benchmark run.
+pub async fn benchmark_run_record(
     _: &Permit<Read>,
     sources: &Sources,
     id: BenchmarkRunId,

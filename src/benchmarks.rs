@@ -8,8 +8,9 @@ mod runs;
 mod trial_shown;
 
 pub use answers::{
-    BenchmarkRunAnswer, BenchmarkRunSummary, Shown, WaitingFor, dollars, duration, mean, percent,
-    render_benchmark_run, without,
+    BenchmarkOfRun, BenchmarkRunAnswer, BenchmarkRunSummary, ConfigurationAnswer, KeyedTrialAnswer,
+    Shown, TrialAnswer, TrialFiguresAnswer, WaitingFor, WhyUnscored, dollars, duration,
+    keyed_trials, mean, percent, render_benchmark_run, without,
 };
 pub use runs::{
     BENCHMARK_RUNS, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns,
@@ -25,6 +26,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
+use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::SqliteConnection;
 
@@ -38,7 +40,9 @@ use crate::task::{self, CaptureError, Criteria, TaskFacts, TaskRefusal, TaskStag
 macro_rules! given_id {
     ($(#[$doc:meta])* $id:ident, $whose:literal) => {
         $(#[$doc])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+        #[derive(
+            Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, JsonSchema,
+        )]
         #[serde(transparent)]
         pub struct $id(i64);
 
@@ -99,7 +103,7 @@ given_id!(
 );
 
 /// A named set of tasks of one stage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Benchmark {
     pub id: BenchmarkId,
     pub name: Name,
@@ -131,7 +135,7 @@ impl ChosenBenchmark {
 }
 
 /// A benchmark, with how many tasks it holds.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct BenchmarkListed {
     #[serde(flatten)]
     pub benchmark: Benchmark,
@@ -810,7 +814,7 @@ pub struct BenchmarkAnswer {
 
 /// A task as `benchmark show BENCHMARK` answers it: its criteria, or why they
 /// do not read.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct TaskAnswer {
     pub id: TaskId,
     pub name: Name,
@@ -819,12 +823,33 @@ pub struct TaskAnswer {
     pub criteria: CriteriaAnswer,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CriteriaAnswer {
     Criteria(String),
     /// Why they do not read.
     Unreadable(String),
+}
+
+impl CriteriaAnswer {
+    /// `criteria`, or why they do not read.
+    pub fn of(criteria: &Result<Criteria, TaskRefusal>) -> CriteriaAnswer {
+        match criteria {
+            Ok(criteria) => CriteriaAnswer::Criteria(criteria.as_str().to_string()),
+            Err(refused) => CriteriaAnswer::Unreadable(refused.why.clone()),
+        }
+    }
+}
+
+impl From<&TaskEntry> for TaskAnswer {
+    fn from(task: &TaskEntry) -> TaskAnswer {
+        TaskAnswer {
+            id: task.id,
+            name: task.name.clone(),
+            run: task.run.clone(),
+            criteria: CriteriaAnswer::of(&task.criteria),
+        }
+    }
 }
 
 impl BenchmarkAnswer {
@@ -833,19 +858,7 @@ impl BenchmarkAnswer {
     pub fn new(shown: &BenchmarkShown, states: Vec<Shown>) -> BenchmarkAnswer {
         BenchmarkAnswer {
             benchmark: shown.benchmark.clone(),
-            tasks: shown
-                .tasks
-                .iter()
-                .map(|task| TaskAnswer {
-                    id: task.id,
-                    name: task.name.clone(),
-                    run: task.run.clone(),
-                    criteria: match &task.criteria {
-                        Ok(criteria) => CriteriaAnswer::Criteria(criteria.as_str().to_string()),
-                        Err(refused) => CriteriaAnswer::Unreadable(refused.why.clone()),
-                    },
-                })
-                .collect(),
+            tasks: shown.tasks.iter().map(TaskAnswer::from).collect(),
             benchmark_runs: shown
                 .benchmark_runs
                 .iter()

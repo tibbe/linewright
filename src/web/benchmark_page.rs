@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::convert::Infallible;
 use tracing::warn;
 
-use super::benchmark_run_page::{shown_of, state_status};
+use super::benchmark_run_page::state_status;
 use super::caller::{Asking, Reader};
 use super::capture::{CapturingField, Task, TaskField, TaskFields, capture_run};
 use super::editing::{self, EditDialog};
@@ -38,14 +38,12 @@ use super::{
     cookie_values, events, no_such_page, nothing_there, render, run_path, task_path, with_filters,
 };
 use crate::access::{Permit, Read};
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, BenchmarkScreen};
 use crate::api::Sources;
-use crate::benchmarks::results;
 use crate::benchmarks::{
-    Benchmark, BenchmarkId, BenchmarkRunRecord, BenchmarkRunState, BenchmarkShown, RemoveError,
-    TaskEntry, TaskId, dollars, without,
+    Benchmark, BenchmarkId, BenchmarkShown, CriteriaAnswer, RemoveError, TaskAnswer, TaskId,
+    dollars, without,
 };
-use crate::domain::Timestamp;
 use crate::name::Name;
 use crate::phrase::Status;
 use crate::runs::RunId;
@@ -70,7 +68,7 @@ enum CriteriaShown {
 }
 
 impl TaskRow {
-    fn of(task: TaskEntry) -> TaskRow {
+    fn of(task: TaskAnswer) -> TaskRow {
         TaskRow {
             view: View {
                 href: task_path(task.id),
@@ -80,15 +78,14 @@ impl TaskRow {
             name: task.name,
             run: task.run,
             criteria: match task.criteria {
-                Ok(criteria) => CriteriaShown::Read(
+                CriteriaAnswer::Criteria(criteria) => CriteriaShown::Read(
                     criteria
-                        .as_str()
                         .lines()
                         .find(|line| !line.trim().is_empty())
                         .unwrap_or_default()
                         .to_string(),
                 ),
-                Err(refused) => CriteriaShown::Unreadable(refused.why),
+                CriteriaAnswer::Unreadable(why) => CriteriaShown::Unreadable(why),
             },
         }
     }
@@ -111,26 +108,25 @@ struct BenchmarkRunRow {
 }
 
 impl BenchmarkRunRow {
-    fn of(sources: &Sources, record: &BenchmarkRunRecord, now: Timestamp) -> BenchmarkRunRow {
-        let (status, state) = state_status(&shown_of(sources, record));
-        let running = (record.state == BenchmarkRunState::Open).then_some(record.launched_at);
-        let cost = results::results(record).cost;
-        let mut cost_text = dollars(cost.total);
-        without(&mut cost_text, cost.none, "a cost");
+    fn of(row: &actions::BenchmarkRunRow) -> BenchmarkRunRow {
+        let (status, state) = state_status(&row.shown);
+        let running = row.open.then_some(row.launched_at);
+        let mut cost = dollars(row.cost.total);
+        without(&mut cost, row.cost.none, "a cost");
         BenchmarkRunRow {
             view: View {
-                href: benchmark_run_path(record.id),
-                name: format!("benchmark run {}", record.id),
+                href: benchmark_run_path(row.id),
+                name: format!("benchmark run {}", row.id),
             },
-            launched: html::time(record.launched_at),
+            launched: html::time(row.launched_at),
             status,
             state,
-            tasks: record.tasks.len(),
-            configurations: record.configurations.len(),
-            duration: record
-                .duration(now)
-                .map(|duration| html::duration(None, duration.as_secs(), running)),
-            cost: cost_text,
+            tasks: row.tasks,
+            configurations: row.configurations,
+            duration: row
+                .duration_seconds
+                .map(|seconds| html::duration(None, seconds, running)),
+            cost,
         }
     }
 }
@@ -607,14 +603,13 @@ async fn shown(
 ) -> Result<Shown, Unshown> {
     let parsed: BenchmarkId = id.parse().map_err(|_| Unshown::NoSuch)?;
     match actions::get_benchmark(permit, sources, parsed).await {
-        Ok(Some(BenchmarkShown {
+        Ok(Some(BenchmarkScreen {
             benchmark,
             tasks,
             benchmark_runs,
         })) => {
             let tasks_page = Pages::of(tasks.len(), paging.tasks);
             let benchmark_runs_page = Pages::of(benchmark_runs.len(), paging.benchmark_runs);
-            let now = sources.clock.now();
             Ok(Shown {
                 task_count: tasks.len(),
                 tasks: tasks_page
@@ -632,7 +627,7 @@ async fn shown(
                 benchmark_runs: benchmark_runs_page
                     .shows(benchmark_runs)
                     .iter()
-                    .map(|record| BenchmarkRunRow::of(sources, record, now))
+                    .map(BenchmarkRunRow::of)
                     .collect(),
                 benchmark_runs_nav: benchmark_runs_page.shown("benchmark runs", |page| {
                     Paging {
@@ -988,7 +983,7 @@ pub(super) async fn benchmark_for_making(
     let benchmark: BenchmarkId = id
         .parse()
         .map_err(|_| (StatusCode::NOT_FOUND, no_such(id)))?;
-    match actions::get_benchmark(permit, sources, benchmark).await {
+    match actions::benchmark_shown(permit, sources, benchmark).await {
         Ok(Some(shown)) => Ok(shown),
         Ok(None) => Err((StatusCode::NOT_FOUND, no_such(id))),
         Err(e) => {

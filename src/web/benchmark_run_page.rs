@@ -3,12 +3,9 @@
 //! whose trials open to the transcripts of their runs and their scorers; and
 //! the cancelling of an open benchmark run.
 
-use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
 use std::ops::Range;
-use std::path::{Path as FilePath, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -35,22 +32,19 @@ use super::{
     with_filters, with_query,
 };
 use crate::access::{Permit, Read};
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, BenchmarkRunScreen, Outputs, TrialSaid, TrialScreen};
 use crate::api::Sources;
-use crate::benchmarks::results::{self, ConfigurationResults, Figures, Passes, Results};
+use crate::benchmarks::results::{ConfigurationResults, Figures, Passes};
 use crate::benchmarks::{
-    BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, CancelRefusal, ConfigurationId, RunTask,
-    ScoreFigures, Shown, TaskId, TrialKey, TrialName, TrialShown, TrialState, dollars, duration,
-    percent, without,
+    BenchmarkOfRun, BenchmarkRunId, BenchmarkRunRecord, CancelRefusal, ConfigurationId, RunTask,
+    Shown, TaskId, TrialAnswer, TrialName, dollars, duration, percent, without,
 };
-use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, Which};
 use crate::name::Name;
 use crate::phrase::Status;
-use crate::results::Leak;
 use crate::runs::RunId;
 use crate::runs::files::RunFiles;
-use crate::trial::{self, scorer};
+use crate::trial;
 
 /// The status and the word a benchmark run's state shows with: that of the
 /// status with the same meaning (`docs/specs/benchmarks.md`, Benchmark run,
@@ -61,87 +55,6 @@ pub(super) fn state_status(shown: &Shown) -> (Status, &'static str) {
         Shown::Waiting(_) => (Status::Paused, "waiting"),
         Shown::Ended => (Status::Done, "ended"),
         Shown::Cancelled => (Status::Cancelled, "cancelled"),
-    }
-}
-
-/// How benchmark run `record` shows: an open one as `serve` last showed it.
-pub(super) fn shown_of(sources: &Sources, record: &BenchmarkRunRecord) -> Shown {
-    let served = sources
-        .benchmark_runs
-        .shown()
-        .benchmark_runs
-        .get(&record.id)
-        .cloned();
-    Shown::of(record.state, served)
-}
-
-/// What the trials' outputs hold that the page shows, by output, as read
-/// once it holds it: that an output has begun, and the scorers' reasoning
-/// of a scored trial, whose score is never replaced.
-#[derive(Clone, Default)]
-struct Outputs(Arc<Mutex<HashMap<PathBuf, OutputRead>>>);
-
-#[derive(Clone, Default)]
-struct OutputRead {
-    began: bool,
-    score: Score,
-}
-
-/// What an output's score gave the page.
-#[derive(Clone, Default)]
-enum Score {
-    #[default]
-    Unread,
-    /// The scorers' reasoning, or none where the output holds no score
-    /// that reads.
-    Read(Option<Arc<Reasoning>>),
-}
-
-/// What a scorer said of a trial: its reasoning on its correctness, and
-/// on a leak, with the tool calls that show one it found.
-struct Reasoning {
-    correctness: String,
-    leak: Leak,
-}
-
-impl Outputs {
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, OutputRead>> {
-        self.0.lock().expect("the outputs' lock is not poisoned")
-    }
-
-    /// Whether the output in `dir` has begun.
-    fn began(&self, dir: &FilePath) -> bool {
-        let mut read = self.lock();
-        let output = read.entry(dir.to_path_buf()).or_default();
-        if !output.began {
-            output.began = trial::began(dir);
-        }
-        output.began
-    }
-
-    /// The reasoning of the score the output in `dir` of a scored
-    /// trial holds, if it holds one that reads; one that does not read is
-    /// logged.
-    fn reasoning(&self, dir: &FilePath) -> Option<Arc<Reasoning>> {
-        let mut read = self.lock();
-        let output = read.entry(dir.to_path_buf()).or_default();
-        if let Score::Read(reasoning) = &output.score {
-            return reasoning.clone();
-        }
-        let reasoning = match scorer::read(dir) {
-            Ok(kept) => kept.map(|kept| {
-                Arc::new(Reasoning {
-                    correctness: kept.correctness.reasoning,
-                    leak: kept.leak,
-                })
-            }),
-            Err(e) => {
-                warn!(output = %dir.display(), error = format!("{e:#}"), "reading a score failed");
-                None
-            }
-        };
-        output.score = Score::Read(reasoning.clone());
-        reasoning
     }
 }
 
@@ -398,28 +311,44 @@ struct ScoreLine {
 }
 
 impl Said {
-    /// The lines of `score`, with what the scorer said of it, `reasoning`.
-    fn score(score: &ScoreFigures, reasoning: Option<&Reasoning>) -> Said {
-        let (leak, calls) = match reasoning.map(|reasoning| &reasoning.leak) {
-            None => (None, vec![]),
-            Some(Leak::None { reasoning }) => (Some(reasoning.clone()), vec![]),
-            Some(Leak::Found { reasoning, calls }) => (
-                Some(reasoning.clone()),
-                calls.iter().map(str::to_string).collect(),
-            ),
-        };
-        Said::Score {
-            correctness: ScoreLine {
-                label: "Correctness",
-                value: score.correctness.name(),
-                reasoning: reasoning.map(|reasoning| reasoning.correctness.clone()),
-            },
-            leak: ScoreLine {
-                label: "Leak",
-                value: if score.leak { "yes" } else { "no" },
-                reasoning: leak,
-            },
-            calls,
+    /// What `trial`'s details say of its score: its lines, with what the
+    /// scorer said of it, or its reason for none.
+    fn of(trial: &TrialScreen) -> Option<Said> {
+        match (&trial.trial.state, &trial.said) {
+            (
+                TrialAnswer::Scored {
+                    correctness, leak, ..
+                },
+                said,
+            ) => {
+                let (correctness_reasoning, leak_reasoning, calls) = match said {
+                    Some(TrialSaid::Reasoning {
+                        correctness_reasoning,
+                        leak_reasoning,
+                        leak_calls,
+                    }) => (
+                        Some(correctness_reasoning.clone()),
+                        Some(leak_reasoning.clone()),
+                        leak_calls.clone(),
+                    ),
+                    None | Some(TrialSaid::NoScore { .. }) => (None, None, vec![]),
+                };
+                Some(Said::Score {
+                    correctness: ScoreLine {
+                        label: "Correctness",
+                        value: correctness.name(),
+                        reasoning: correctness_reasoning,
+                    },
+                    leak: ScoreLine {
+                        label: "Leak",
+                        value: if *leak { "yes" } else { "no" },
+                        reasoning: leak_reasoning,
+                    },
+                    calls,
+                })
+            }
+            (_, Some(TrialSaid::NoScore { no_score })) => Some(Said::Reason(no_score.clone())),
+            (_, None | Some(TrialSaid::Reasoning { .. })) => None,
         }
     }
 }
@@ -507,35 +436,32 @@ fn transcript_path(
 }
 
 impl BenchmarkRunView {
-    /// Of `record`, on the pages `paging` asks for, its links to other pages
-    /// leading to the stream of a page that draws the dialog "Cancel" opens
-    /// where `cancels`.
+    /// Of `benchmark_run`, on the pages `paging` asks for, its links to
+    /// other pages leading to the stream of a page that draws the dialog
+    /// "Cancel" opens where `cancels`.
     fn of(
         permit: &Permit<Read>,
         sources: &Sources,
-        record: &BenchmarkRunRecord,
-        shown: &Shown,
-        outputs: &Outputs,
+        benchmark_run: &BenchmarkRunScreen,
         paging: Paging,
         cancels: bool,
     ) -> BenchmarkRunView {
-        let results = results::results(record);
-        let ranked = ranked(&results.configurations);
-        let (status, state) = state_status(shown);
-        let path = benchmark_run_path(record.id);
+        let ranked = ranked(&benchmark_run.results.configurations);
+        let (status, state) = state_status(&benchmark_run.shown);
+        let path = benchmark_run_path(benchmark_run.id);
         let configurations_page = Pages::of(ranked.len(), paging.configurations);
-        let grid_page = Pages::of(record.tasks.len(), paging.tasks);
+        let grid_page = Pages::of(benchmark_run.tasks.len(), paging.tasks);
         let href = |asked: Paging| asked.href(&path, cancels);
         BenchmarkRunView {
-            id: record.id,
+            id: benchmark_run.id,
             status,
             state,
-            cancel: (record.state == BenchmarkRunState::Open).then(|| Confirmation {
+            cancel: benchmark_run.open.then(|| Confirmation {
                 id: "cancel-benchmark-run".into(),
                 verb: Verb::CancelWork,
                 question: format!(
                     "Cancel benchmark run {}? This stops its running trials and scorers.",
-                    record.id
+                    benchmark_run.id
                 ),
                 turn_down: TurnDown::KeepRunning,
                 action: format!("{path}/cancel"),
@@ -554,51 +480,35 @@ impl BenchmarkRunView {
                     ..paging
                 })
             }),
-            facts: facts(
-                record,
-                shown,
-                &results,
-                sources.clock.now(),
-                &Names::of(&sources.work_dir.repo, None),
-            ),
+            facts: facts(benchmark_run, &Names::of(&sources.work_dir.repo, None)),
             chart: [Axis::Cost, Axis::Time].map(|axis| plot(axis, &ranked)),
-            rows: rows(
-                permit,
-                sources,
-                record,
-                &ranked[configurations_page.range()],
-                outputs,
-            ),
-            grid: grid(record, &ranked, grid_page.range()),
+            rows: rows(permit, benchmark_run, &ranked[configurations_page.range()]),
+            grid: grid(benchmark_run, &ranked, grid_page.range()),
         }
     }
 }
 
-/// The facts of `record` (`docs/specs/benchmarks.md`, Benchmark run, Facts) as
-/// of `now`, each where the spec's table shows it.
-fn facts(
-    record: &BenchmarkRunRecord,
-    shown: &Shown,
-    results: &Results,
-    now: Timestamp,
-    names: &Names,
-) -> Vec<Stat> {
+/// The facts of `benchmark_run` (`docs/specs/benchmarks.md`, Benchmark
+/// run, Facts), each where the spec's table shows it.
+fn facts(benchmark_run: &BenchmarkRunScreen, names: &Names) -> Vec<Stat> {
+    let results = &benchmark_run.results;
     let mut facts = vec![Stat {
         label: "Launched",
-        value: html::time(record.launched_at),
+        value: html::time(benchmark_run.launched_at),
     }];
-    if record.state != BenchmarkRunState::Open {
+    let open = benchmark_run.open;
+    if !open {
         facts.push(Stat {
             label: "Ended",
-            value: record.state.ended_at().map_or_else(absent, html::time),
+            value: benchmark_run.ended_at.map_or_else(absent, html::time),
         });
     }
-    let running = (record.state == BenchmarkRunState::Open).then_some(record.launched_at);
+    let running = open.then_some(benchmark_run.launched_at);
     facts.push(Stat {
         label: "Duration",
-        value: record.duration(now).map_or_else(absent, |duration| {
-            html::duration(None, duration.as_secs(), running)
-        }),
+        value: benchmark_run
+            .duration_seconds
+            .map_or_else(absent, |seconds| html::duration(None, seconds, running)),
     });
     facts.push(Stat {
         label: "Trials",
@@ -614,7 +524,7 @@ fn facts(
         label: "Scorers",
         value: html::escape(&dollars(results.scorers.total)),
     });
-    if let Shown::Waiting(waiting_for) = shown {
+    if let Shown::Waiting(waiting_for) = &benchmark_run.shown {
         facts.push(Stat {
             label: "Waiting for",
             value: html::phrase(&waiting_for.phrase(), names),
@@ -739,10 +649,10 @@ fn plot(axis: Axis, ranked: &[(usize, &ConfigurationResults)]) -> Plot {
     }
 }
 
-/// The grid of `record`: a row for each of its tasks in `tasks`, by index, a
-/// cell for each of the `ranked` configurations.
+/// The grid of `benchmark_run`: a row for each of its tasks in `tasks`, by
+/// index, a cell for each of the `ranked` configurations.
 fn grid(
-    record: &BenchmarkRunRecord,
+    benchmark_run: &BenchmarkRunScreen,
     ranked: &[(usize, &ConfigurationResults)],
     tasks: Range<usize>,
 ) -> Grid {
@@ -751,7 +661,7 @@ fn grid(
             .iter()
             .map(|(_, configuration)| configuration.name.clone())
             .collect(),
-        rows: record.tasks[tasks.clone()]
+        rows: benchmark_run.tasks[tasks.clone()]
             .iter()
             .zip(tasks)
             .map(|(task, k)| GridRow {
@@ -810,25 +720,23 @@ fn figure_cells(figures: &Figures) -> [String; 6] {
     ]
 }
 
-/// The configurations table's rows of `record`: each of the `ranked`
-/// configurations, each followed by its tasks, each followed by its
-/// trials.
+/// The configurations table's rows of `benchmark_run`: each of the
+/// `ranked` configurations, each followed by its tasks, each followed by
+/// its trials.
 fn rows(
     permit: &Permit<Read>,
-    sources: &Sources,
-    record: &BenchmarkRunRecord,
+    benchmark_run: &BenchmarkRunScreen,
     ranked: &[(usize, &ConfigurationResults)],
-    outputs: &Outputs,
 ) -> Vec<Row> {
     let mut rows = vec![];
-    for &(c, configuration) in ranked {
+    for &(_, configuration) in ranked {
         let configuration_id = format!("configuration-{}", configuration.id);
         let task_id = |task: &RunTask| format!("{configuration_id}_task-{}", task.id);
         rows.push(Row::Figures(FiguresRow {
             id: configuration_id.clone(),
             level: Level::Configuration,
             fold: Fold::of(
-                record.tasks.iter().map(task_id).collect(),
+                benchmark_run.tasks.iter().map(task_id).collect(),
                 format!("Show the tasks of {}", configuration.name),
             ),
             name: configuration.name.to_string(),
@@ -841,14 +749,10 @@ fn rows(
             edit: editing::edit_configuration_id(configuration.id)
                 .filter(|_| permit.caller().can(Action::EditConfiguration.level())),
         }));
-        for (k, task) in record.tasks.iter().enumerate() {
+        for (k, task) in benchmark_run.tasks.iter().enumerate() {
             let id = task_id(task);
-            let trials: Vec<_> = record
-                .trials
-                .iter()
-                .filter(|(key, _)| key.task == k && key.configuration == c)
-                .collect();
-            let trial_id = |key: &TrialKey| format!("{id}_trial-{}", key.repetition);
+            let trials = benchmark_run.trials_of(task.id, configuration.id);
+            let trial_id = |trial: &TrialScreen| format!("{id}_trial-{}", trial.trial.repetition);
             let of_task = configuration.tasks.get(k);
             rows.push(Row::Figures(FiguresRow {
                 id: id.clone(),
@@ -856,7 +760,7 @@ fn rows(
                     of: configuration_id.clone(),
                 },
                 fold: Fold::of(
-                    trials.iter().map(|(key, _)| trial_id(key)).collect(),
+                    trials.iter().map(|trial| trial_id(trial)).collect(),
                     format!(
                         "Show the trials of {} under {}",
                         task.name, configuration.name
@@ -868,59 +772,35 @@ fn rows(
                     .map_or_else(Default::default, |of_task| figure_cells(&of_task.figures)),
                 edit: None,
             }));
-            for (key, state) in trials {
-                let trial = TrialAt {
-                    id: record.id,
+            for trial in trials {
+                let at = TrialAt {
+                    id: benchmark_run.id,
                     configuration: configuration.id,
                     configuration_name: configuration.name.clone(),
                     task: task.clone(),
-                    repetition: key.repetition,
+                    repetition: trial.trial.repetition,
                     of: Of::Run,
                 };
-                rows.extend(trial_rows(
-                    &trial,
-                    &trial.output_dir(permit, sources),
-                    trial_id(key),
-                    id.clone(),
-                    record.state,
-                    state,
-                    outputs,
-                ));
+                rows.extend(trial_rows(&at, trial_id(trial), id.clone(), trial));
             }
         }
     }
     rows
 }
 
-/// The row of the trial `at` in the state `state`, of a benchmark run in the
-/// state `benchmark_run`, `id` under the row `of`, and the row it opens to, if
-/// it has anything to open to.
-fn trial_rows(
-    at: &TrialAt,
-    output: &std::path::Path,
-    id: String,
-    of: String,
-    benchmark_run: BenchmarkRunState,
-    state: &TrialState,
-    outputs: &Outputs,
-) -> Vec<Row> {
-    let shown = TrialShown::of(benchmark_run, state);
-    let run = state.run();
-    let began = outputs.began(output);
-    let said = match (state.score(), shown.reason()) {
-        (Some(score), _) => Some(Said::score(score, outputs.reasoning(output).as_deref())),
-        (None, reason) => reason.map(Said::Reason),
-    };
-    let scorer_began = state.scorer_began();
+/// The row of `trial`, at `at`, `id` under the row `of`, and the row it
+/// opens to, if it has anything to open to.
+fn trial_rows(at: &TrialAt, id: String, of: String, trial: &TrialScreen) -> Vec<Row> {
     let details = TrialDetails {
         id: format!("{id}_details"),
         of: id.clone(),
-        said,
-        run_href: (began && !state.run_never_started()).then(|| at.path(Of::Run)),
-        scorer_href: (began && scorer_began).then(|| at.path(Of::Scorer)),
+        said: Said::of(trial),
+        run_href: trial.run_began.then(|| at.path(Of::Run)),
+        scorer_href: trial.scorer_began.then(|| at.path(Of::Scorer)),
     };
     let opens = !details.is_empty();
     let absent = || String::from(ABSENT);
+    let state = &trial.trial.state;
     let mut rows = vec![Row::Figures(FiguresRow {
         id,
         level: Level::Trial { of },
@@ -930,16 +810,16 @@ fn trial_rows(
         ),
         name: format!("Trial {}", at.repetition),
         pass_rate: PassRate::Status {
-            status: shown.status(),
-            words: shown.name(),
+            status: trial.shows_as,
+            words: trial.status,
         },
         figures: [
-            run.and_then(|run| run.money)
-                .map_or_else(absent, |money| dollars(money.into())),
-            String::new(),
             state
-                .time()
-                .map_or_else(absent, |time| duration(time.as_secs_f64())),
+                .run()
+                .and_then(|run| run.cost)
+                .map_or_else(absent, |cost| dollars(cost.into())),
+            String::new(),
+            state.seconds().map_or_else(absent, duration),
             String::new(),
             String::new(),
             String::new(),
@@ -1050,7 +930,7 @@ impl BenchmarkRunView {
     /// `paging` asks for.
     fn page(
         &self,
-        record: &BenchmarkRunRecord,
+        benchmark: &BenchmarkOfRun,
         cancels: bool,
         paging: Paging,
         navigation: Navigation,
@@ -1070,7 +950,7 @@ impl BenchmarkRunView {
             })
             .collect();
         Page::new(
-            benchmark_crumbs(record).screen(BENCHMARK_RUN, Thing::Found(heading)),
+            benchmark_crumbs(benchmark).screen(BENCHMARK_RUN, Thing::Found(heading)),
             paging.href(&benchmark_run_path(self.id), cancels).stream,
             navigation,
         )
@@ -1127,8 +1007,24 @@ async fn record_of(
     id: &str,
 ) -> Result<BenchmarkRunRecord, Unshown> {
     let parsed: BenchmarkRunId = id.parse().map_err(|_| Unshown::NoSuch)?;
-    match actions::get_benchmark_run(permit, sources, parsed).await {
+    match actions::benchmark_run_record(permit, sources, parsed).await {
         Ok(Some(record)) => Ok(record),
+        Ok(None) => Err(Unshown::NoSuch),
+        Err(e) => Err(Unshown::Failed(e)),
+    }
+}
+
+/// Benchmark run `id`, by its ID as a path gives it, as its screen shows
+/// it, what the trials' outputs hold read through `outputs`.
+async fn screen_of(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    id: &str,
+    outputs: &Outputs,
+) -> Result<BenchmarkRunScreen, Unshown> {
+    let parsed: BenchmarkRunId = id.parse().map_err(|_| Unshown::NoSuch)?;
+    match actions::get_benchmark_run(permit, sources, parsed, outputs).await {
+        Ok(Some(benchmark_run)) => Ok(benchmark_run),
         Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
     }
@@ -1154,13 +1050,10 @@ fn benchmark_run_name(id: impl std::fmt::Display) -> String {
     format!("Benchmark run {id}")
 }
 
-/// The crumbs of the screens of benchmark run `record`: Benchmarks, then its
-/// benchmark (`docs/specs/shell.md`, Breadcrumbs).
-fn benchmark_crumbs(record: &BenchmarkRunRecord) -> Within {
-    Place::within(Area::Benchmarks).under(
-        record.benchmark.name.to_string(),
-        benchmark_path(record.benchmark.id),
-    )
+/// The crumbs of the screens of a benchmark run of `benchmark`:
+/// Benchmarks, then its benchmark (`docs/specs/shell.md`, Breadcrumbs).
+fn benchmark_crumbs(benchmark: &BenchmarkOfRun) -> Within {
+    Place::within(Area::Benchmarks).under(benchmark.name.to_string(), benchmark_path(benchmark.id))
 }
 
 pub(super) async fn benchmark_run_page(
@@ -1170,26 +1063,16 @@ pub(super) async fn benchmark_run_page(
     navigation: Navigation,
 ) -> Response {
     let frame = Frame::of(&permit, &sources).await;
-    match record_of(&permit, &sources, &id).await {
-        Ok(record) => {
-            let shown = shown_of(&sources, &record);
-            let cancels = record.state == BenchmarkRunState::Open;
-            let benchmark_run = BenchmarkRunView::of(
-                &permit,
-                &sources,
-                &record,
-                &shown,
-                &Outputs::default(),
-                paging,
-                cancels,
-            );
-            let edits = editing::edit_configurations(&record);
+    match screen_of(&permit, &sources, &id, &Outputs::default()).await {
+        Ok(screen) => {
+            let cancels = screen.open;
+            let benchmark_run = BenchmarkRunView::of(&permit, &sources, &screen, paging, cancels);
             BenchmarkRunPage {
-                page: benchmark_run.page(&record, cancels, paging, navigation),
+                page: benchmark_run.page(&screen.benchmark, cancels, paging, navigation),
                 frame,
                 benchmark_run,
-                edits,
-                edit_values: html::built(editing::configuration_values(&record)),
+                edits: editing::edit_configurations(&screen),
+                edit_values: html::built(editing::configuration_values(&screen)),
             }
             .into_response()
         }
@@ -1236,21 +1119,18 @@ pub(super) async fn benchmark_run_events(
         let (id, outputs) = (id.clone(), outputs.clone());
         async move {
             let frame = Frame::of(&permit, &sources).await;
-            let Ok(record) = record_of(&permit, &sources, &id).await else {
+            let Ok(screen) = screen_of(&permit, &sources, &id, &outputs).await else {
                 return vec![shell::holds(&frame)];
             };
-            let shown = shown_of(&sources, &record);
-            let benchmark_run = BenchmarkRunView::of(
-                &permit, &sources, &record, &shown, &outputs, paging, cancels,
-            );
+            let benchmark_run = BenchmarkRunView::of(&permit, &sources, &screen, paging, cancels);
             let mut regions = shell::regions(
                 &frame,
-                &benchmark_run.page(&record, cancels, paging, navigation),
+                &benchmark_run.page(&screen.benchmark, cancels, paging, navigation),
             );
             regions.extend(benchmark_run.regions());
             regions.push((
                 editing::EDIT_CONFIGURATIONS_VALUES,
-                editing::configuration_values(&record),
+                editing::configuration_values(&screen),
             ));
             regions
         }
@@ -1465,7 +1345,7 @@ async fn trial_transcript(
         record => record.map_err(|unshown| unshown.answer(&path.id)),
     };
     let within = match &record {
-        Ok(record) => benchmark_crumbs(record)
+        Ok(record) => benchmark_crumbs(&(&record.benchmark).into())
             .under(benchmark_run_name(record.id), benchmark_run_path(record.id)),
         Err(_) => Place::within(Area::Benchmarks),
     };
@@ -1568,6 +1448,7 @@ pub(super) async fn trial_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::benchmarks::results;
 
     /// A configuration `name` at a pass rate of 50%, with `mean` both its
     /// mean cost and its mean time.

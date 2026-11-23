@@ -23,10 +23,11 @@ use super::table::{Align, Column, View};
 use super::write::Write;
 use super::{Page, benchmark_path, benchmark_run_path, events, given, render, with_filters};
 use crate::access::{Permit, Read};
-use crate::actions::{self, Action, benchmark_taken};
+use crate::actions::{
+    self, Action, BenchmarkRow, BenchmarksFilters, BenchmarksScreen, benchmark_taken,
+};
 use crate::api::Sources;
-use crate::benchmarks::{BenchmarkListed, BenchmarkRunId, MakeError};
-use crate::domain::Timestamp;
+use crate::benchmarks::MakeError;
 use crate::name::Name;
 use crate::task::TaskStage;
 
@@ -53,14 +54,9 @@ struct FilterQuery {
 struct Narrowing {
     /// Trimmed, to fill the filters in again.
     fields: FilterQuery,
-    narrowed: Result<Narrowed, String>,
+    narrowed: Result<BenchmarksFilters, String>,
     /// The page of the table the address asks for.
     page: Requested,
-}
-
-struct Narrowed {
-    name: Option<String>,
-    stage: Option<TaskStage>,
 }
 
 impl Narrowing {
@@ -73,10 +69,7 @@ impl Narrowing {
         let narrowed = given(&fields.stage)
             .map(str::parse::<TaskStage>)
             .transpose()
-            .map(|stage| Narrowed {
-                name: given(&fields.name).map(str::to_string),
-                stage,
-            });
+            .map(|stage| BenchmarksFilters::new(Some(&fields.name), stage));
         Narrowing {
             fields,
             narrowed,
@@ -96,24 +89,6 @@ impl Narrowing {
     /// Where the link to page `page` of the table leads.
     fn href(&self, page: Requested) -> PageHref {
         PageHref::at(self.path("/benchmarks", page))
-    }
-}
-
-impl Narrowed {
-    /// Whether it keeps `listed` (`docs/specs/benchmarks.md`, Benchmarks,
-    /// Filters): its name holds the text, whatever its letter case, and it
-    /// is of the stage.
-    fn keeps(&self, listed: &BenchmarkListed) -> bool {
-        self.name.as_ref().is_none_or(|name| {
-            listed
-                .benchmark
-                .name
-                .as_str()
-                .to_lowercase()
-                .contains(&name.to_lowercase())
-        }) && self
-            .stage
-            .is_none_or(|stage| listed.benchmark.stage == stage)
     }
 }
 
@@ -152,17 +127,18 @@ struct LastBenchmarkRun {
 }
 
 impl Row {
-    fn of(listed: BenchmarkListed, last: Option<(BenchmarkRunId, Timestamp)>) -> Row {
+    fn of(row: BenchmarkRow) -> Row {
+        let benchmark = row.listed.benchmark;
         Row {
             view: View {
-                href: benchmark_path(listed.benchmark.id),
-                name: format!("benchmark {}", listed.benchmark.name),
+                href: benchmark_path(benchmark.id),
+                name: format!("benchmark {}", benchmark.name),
             },
-            name: listed.benchmark.name,
-            stage: listed.benchmark.stage,
-            last: last.map(|(id, at)| LastBenchmarkRun {
-                href: benchmark_run_path(id),
-                launched: html::time(at),
+            name: benchmark.name,
+            stage: benchmark.stage,
+            last: row.last_benchmark_run.map(|last| LastBenchmarkRun {
+                href: benchmark_run_path(last.id),
+                launched: html::time(last.launched_at),
             }),
         }
     }
@@ -296,21 +272,10 @@ async fn listed(
             );
         }
     };
-    match actions::list_benchmarks(permit, sources).await {
-        Ok((listed, mut latest)) => {
-            let kept: Vec<BenchmarkListed> = listed
-                .into_iter()
-                .filter(|listed| narrowed.keeps(listed))
-                .collect();
-            let pages = Pages::of(kept.len(), narrowing.page);
-            let rows = pages
-                .shows(kept)
-                .into_iter()
-                .map(|kept| {
-                    let last = latest.remove(&kept.benchmark.id);
-                    Row::of(kept, last)
-                })
-                .collect();
+    match actions::list_benchmarks(permit, sources, narrowed).await {
+        Ok(BenchmarksScreen { benchmarks }) => {
+            let pages = Pages::of(benchmarks.len(), narrowing.page);
+            let rows = pages.shows(benchmarks).into_iter().map(Row::of).collect();
             let pages = pages.shown("benchmarks", |page| narrowing.href(page));
             (StatusCode::OK, BenchmarksShown::Table { rows, pages })
         }
@@ -477,64 +442,5 @@ pub(super) async fn make_benchmark(
             };
             refuse(status, refusal)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::benchmarks::Benchmark;
-
-    #[track_caller]
-    fn listed(name: &str, stage: TaskStage) -> BenchmarkListed {
-        BenchmarkListed {
-            benchmark: Benchmark {
-                id: "1".parse().unwrap(),
-                name: name.parse().unwrap(),
-                stage,
-            },
-            tasks: 0,
-        }
-    }
-
-    /// The names of the benchmarks the filters `name` and `stage` keep, of
-    /// `board` (implement), `triage-boards` (triage) and `lanes` (triage).
-    #[track_caller]
-    fn kept(name: &str, stage: &str) -> Vec<&'static str> {
-        let narrowing = Narrowing::of(&BenchmarksQuery {
-            filters: FilterQuery {
-                name: name.into(),
-                stage: stage.into(),
-            },
-            page: Requested::default(),
-        });
-        let narrowed = narrowing.narrowed.unwrap();
-        [
-            ("board", TaskStage::Implement),
-            ("triage-boards", TaskStage::Triage),
-            ("lanes", TaskStage::Triage),
-        ]
-        .into_iter()
-        .filter(|(benchmark, of)| narrowed.keeps(&listed(benchmark, *of)))
-        .map(|(benchmark, _)| benchmark)
-        .collect()
-    }
-
-    /// `docs/specs/benchmarks.md`, Benchmarks, Filters.
-    #[test_log::test]
-    fn the_name_filter_keeps_each_benchmark_whose_name_holds_the_text_whatever_its_case() {
-        assert_eq!(kept("boa", ""), ["board", "triage-boards"]);
-        assert_eq!(kept("BOA", ""), ["board", "triage-boards"]);
-        assert_eq!(kept(" Ane ", ""), ["lanes"]);
-        assert_eq!(kept("", ""), ["board", "triage-boards", "lanes"]);
-        assert_eq!(kept("nothing", ""), Vec::<&str>::new());
-    }
-
-    /// `docs/specs/benchmarks.md`, Benchmarks, Filters.
-    #[test_log::test]
-    fn the_stage_filter_keeps_the_benchmarks_of_the_stage_and_narrows_with_the_name() {
-        assert_eq!(kept("", "triage"), ["triage-boards", "lanes"]);
-        assert_eq!(kept("boa", "triage"), ["triage-boards"]);
-        assert_eq!(kept("", "design"), Vec::<&str>::new());
     }
 }

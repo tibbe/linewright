@@ -11,7 +11,7 @@ mod freeform;
 /// allows, with no run of spaces in it, no space at its start or its end,
 /// and something in it. Two names are the same only when they hold the same
 /// characters, letter case included.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
 pub struct Name(String);
 
 /// A name that holds nothing once it is clean.

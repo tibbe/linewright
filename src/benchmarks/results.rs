@@ -4,6 +4,7 @@
 use std::num::NonZeroUsize;
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::cost::Usd;
@@ -16,7 +17,7 @@ use super::{
 };
 
 /// A benchmark run's results.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Results {
     /// Each configuration's figures, in the benchmark run's order.
     pub configurations: Vec<ConfigurationResults>,
@@ -34,7 +35,7 @@ pub struct Results {
 }
 
 /// A configuration's figures.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ConfigurationResults {
     pub id: ConfigurationId,
     pub name: Name,
@@ -48,7 +49,7 @@ pub struct ConfigurationResults {
 }
 
 /// The figures of a configuration's trials, or of its trials of a task.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Figures {
     /// In US dollars, of the trials that have a cost.
     pub cost: Mean,
@@ -62,7 +63,7 @@ pub struct Figures {
 }
 
 /// A configuration's figures of its trials of a task.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TaskResults {
     pub id: TaskId,
     pub name: Name,
@@ -73,7 +74,7 @@ pub struct TaskResults {
 }
 
 /// How many trials pass, of those with a score and no leak.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Passes {
     pub pass: usize,
     pub of: NonZeroUsize,
@@ -88,7 +89,7 @@ impl std::fmt::Display for Passes {
 
 /// A figure's mean and total over the trials that have it, and how many
 /// have none.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Mean {
     /// `None` when no trial has the figure.
     pub mean: Option<f64>,
@@ -97,7 +98,7 @@ pub struct Mean {
 }
 
 /// A figure's total over what has it, and how many have none.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct Total {
     pub total: f64,
     pub none: usize,
