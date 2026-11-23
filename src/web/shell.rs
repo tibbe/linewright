@@ -4,7 +4,6 @@
 //! (`docs/specs/design_system.md`, Titles and Headings).
 
 use std::convert::Infallible;
-use std::sync::Arc;
 
 use askama::Template;
 use axum::body::Bytes;
@@ -14,20 +13,19 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
-use super::automations_page::{Automations, LastRun};
 use super::html::{self, Html};
 use super::icons::{CardIcon, Icon};
 use super::names::Names;
 use super::{Page, cookie_headers, cookie_values, render, run_path};
 use crate::access::{self, Permit};
 pub(super) use crate::actions::Missing;
-use crate::actions::{self, Action, ServerAnswer};
+use crate::actions::{self, Action, AutomationsScreen, LastRunScreen, Overview};
 use crate::api::Sources;
-use crate::domain::{Repo, Snapshot, Timestamp};
-use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
+use crate::domain::{Repo, Timestamp};
+use crate::environment::shown::{Attention, EnvironmentShown};
 use crate::phrase::{Phrase, Status};
 use crate::repo_files::FileError;
-use crate::runs::{Outcome, RunId};
+use crate::runs::{OutcomeName, RunId};
 use crate::status::{self, DrainShown, FailedPolls, Linewright, UnparsedAutomation};
 
 /// The screen of the navigation that an area starts from.
@@ -473,12 +471,15 @@ pub(super) enum Hold {
     AutomationFailed {
         name: String,
         run: RunId,
-        outcome: Outcome,
+        outcome: OutcomeName,
     },
 }
 
 impl Hold {
-    pub(super) fn of(linewright: &Linewright, automations: Option<&Automations>) -> Vec<Hold> {
+    pub(super) fn of(
+        linewright: &Linewright,
+        automations: Option<&AutomationsScreen>,
+    ) -> Vec<Hold> {
         let failed_polls = linewright.failed_polls.clone().map(Hold::PollsFailed);
         let usage_limit = linewright
             .usage_limit_resets_at
@@ -490,7 +491,7 @@ impl Hold {
             .map(|last_refused| Hold::WebhooksRefused { last_refused });
         let unparsed = automations
             .into_iter()
-            .flat_map(|automations| &automations.unparsed)
+            .flat_map(|automations| &automations.unparsed_automations)
             .map(|file| Hold::UnparsedAutomation(file.clone()));
         let unusable = linewright
             .unusable_files
@@ -503,14 +504,17 @@ impl Hold {
             .map(Hold::Environment);
         let failed = automations
             .into_iter()
-            .flat_map(|automations| &automations.rows)
-            .filter_map(|row| match &row.last_run {
-                LastRun::Run(run) if run.outcome.failed() => Some(Hold::AutomationFailed {
-                    name: row.name.clone(),
+            .flat_map(|automations| &automations.automations)
+            .filter_map(|automation| match &automation.last_run {
+                LastRunScreen::Run {
+                    run,
+                    last_run_outcome,
+                } if last_run_outcome.failed() => Some(Hold::AutomationFailed {
+                    name: automation.name.clone(),
                     run: run.id.clone(),
-                    outcome: run.outcome,
+                    outcome: *last_run_outcome,
                 }),
-                LastRun::Run(_) | LastRun::NoneYet { .. } => None,
+                LastRunScreen::Run { .. } | LastRunScreen::NoneYet { .. } => None,
             });
         [usage_limit, drain, refused, failed_polls]
             .into_iter()
@@ -581,53 +585,24 @@ pub(super) struct HoldShown {
     pub(super) href: String,
 }
 
-/// What the frame shows, from one read of `serve`'s view and the runs.
-pub(super) struct Read {
-    /// What `status` says of Linewright.
-    pub(super) linewright: Linewright,
-    /// `None` before the first poll.
-    pub(super) automations: Option<Automations>,
-    /// The view's, `None` before the first poll.
-    pub(super) snapshot: Option<Arc<Snapshot>>,
-    /// The environment's builds, from the same read as what `status` says
-    /// of it.
-    pub(super) builds: Vec<BuildShown>,
-}
-
-impl Read {
-    pub(super) async fn of(permit: &Permit<access::Read>, sources: &Sources) -> Read {
-        let ServerAnswer {
-            status,
-            view,
-            recorded,
-            builds,
-            now,
-        } = actions::get_server(permit, sources).await;
-        Read {
-            builds,
-            automations: view
-                .as_ref()
-                .map(|view| Automations::of(&status, view, &recorded, now)),
-            linewright: status.linewright,
-            snapshot: view.map(|view| view.snapshot),
-        }
-    }
-
-    /// How the page names items: with the titles of the view it read.
-    pub(super) fn names<'a>(&'a self, repo: &'a str) -> Names<'a> {
-        Names::of(repo, self.snapshot.as_deref())
-    }
+/// How a page names items: with the titles of the view `overview` read.
+pub(super) fn names<'a>(overview: &'a Overview, repo: &'a str) -> Names<'a> {
+    Names::of(repo, overview.snapshot.as_deref())
 }
 
 impl Frame {
     pub(super) async fn of(permit: &Permit<access::Read>, sources: &Sources) -> Frame {
-        Frame::of_read(permit, sources, &Read::of(permit, sources).await)
+        Frame::of_read(permit, sources, &actions::overview(permit, sources).await)
     }
 
-    pub(super) fn of_read(permit: &Permit<access::Read>, sources: &Sources, read: &Read) -> Frame {
-        let linewright = &read.linewright;
+    pub(super) fn of_read(
+        permit: &Permit<access::Read>,
+        sources: &Sources,
+        read: &Overview,
+    ) -> Frame {
+        let linewright = &read.server.linewright;
         let repo = sources.work_dir.repo.clone();
-        let names = read.names(&repo);
+        let names = names(read, &repo);
         let holds = Hold::of(linewright, read.automations.as_ref())
             .iter()
             .map(|hold| HoldShown {

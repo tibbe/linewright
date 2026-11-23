@@ -6,7 +6,19 @@ use serde::{Deserialize, Serialize};
 
 /// The sources a setting or a brief file can come from, first the one that
 /// wins.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Layer {
     /// A trial's configuration (`docs/specs/benchmarks.md`,

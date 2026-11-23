@@ -8,14 +8,14 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use super::caller::Reader;
-use super::cards::{self, card_line, lane_head};
+use super::cards::{self, lane_head, line_html};
 use super::html::{self, Html};
 use super::icons::ItemKind;
 use super::names::Names;
 use super::shell::{self, Area, Frame, Navigation, Place};
-use super::{Page, events, given, render, with_filters};
-use crate::actions;
-use crate::board::{Board, Card, Column, Lane};
+use super::{Page, events, render, with_filters};
+use crate::actions::{self, BoardScreen, CardScreen, LaneScreen};
+use crate::board::Column;
 use crate::domain::Login;
 use crate::phrase::Status;
 
@@ -30,35 +30,7 @@ pub(super) struct FilterQuery {
 impl FilterQuery {
     /// The person the board is narrowed to, if any.
     fn person(&self) -> Option<Login> {
-        given(self.person.trim()).map(Login::new)
-    }
-}
-
-/// The board as the page shows it: the whole board's count of cards in Needs
-/// a person, its lanes narrowed to `person`, if set, and the people to choose
-/// from, the whole board's and `person`, each once, by login
-/// (`docs/specs/board.md`, Filtering by person, The people).
-struct BoardPageShown {
-    needing_a_person: usize,
-    board: BoardShown,
-    people: Vec<Login>,
-}
-
-impl BoardPageShown {
-    fn of(board: &Board, person: Option<&Login>, repo: &str) -> BoardPageShown {
-        let narrowed = person.map(|person| board.narrowed(person));
-        let mut people = board.people();
-        if let Some(person) = person
-            && !people.contains(person)
-        {
-            people.push(person.clone());
-            people.sort();
-        }
-        BoardPageShown {
-            needing_a_person: board.needing_a_person,
-            board: BoardShown::of(narrowed.as_ref().unwrap_or(board), repo),
-            people,
-        }
+        actions::chosen_person(&self.person)
     }
 }
 
@@ -97,13 +69,13 @@ struct CardShown {
 }
 
 impl BoardShown {
-    fn of(board: &Board, repo: &str) -> BoardShown {
+    fn of(board: &BoardScreen, repo: &str) -> BoardShown {
         let names = Names::of(repo, None);
-        let (finished, unfinished): (Vec<&Lane>, Vec<&Lane>) = board
+        let (finished, unfinished): (Vec<&LaneScreen>, Vec<&LaneScreen>) = board
             .lanes
             .iter()
-            .partition(|lane| lane.finished().is_some());
-        let shown = |lanes: Vec<&Lane>| {
+            .partition(|lane| lane.head.finished.is_some());
+        let shown = |lanes: Vec<&LaneScreen>| {
             lanes
                 .into_iter()
                 .map(|lane| LaneShown::of(lane, &names))
@@ -123,18 +95,19 @@ impl BoardShown {
 }
 
 impl LaneShown {
-    fn of(lane: &Lane, names: &Names) -> LaneShown {
+    fn of(lane: &LaneScreen, names: &Names) -> LaneShown {
         LaneShown {
-            id: format!("lane-{}", lane.head.number().0),
-            head: lane_head(&lane.heading(), names.repo()),
+            id: format!("lane-{}", lane.head.number.0),
+            head: lane_head(&lane.head, names.repo()),
             cells: Column::ALL
                 .into_iter()
                 .map(|column| CellShown {
                     column: column.name(),
                     cards: lane
-                        .cards(column)
+                        .cards
                         .iter()
-                        .map(|card| CardShown::of(card, column, names))
+                        .filter(|card| card.column == column)
+                        .map(|card| CardShown::of(card, names))
                         .collect(),
                 })
                 .collect(),
@@ -151,13 +124,13 @@ fn counted(n: usize, thing: &str) -> String {
 }
 
 impl CardShown {
-    fn of(card: &Card, column: Column, names: &Names) -> CardShown {
+    fn of(card: &CardScreen, names: &Names) -> CardShown {
         CardShown {
             heading: html::titled(card.number, &card.title, names.repo()),
             kind: ItemKind::of(card.pull_request),
-            status: card.status().map(cards::status),
-            line: card_line(card).map(|line| line.html(names)),
-            quiet: column == Column::Done,
+            status: card.status.map(cards::status),
+            line: card.line.as_ref().map(|line| line_html(line, names)),
+            quiet: card.column == Column::Done,
         }
     }
 }
@@ -219,16 +192,14 @@ pub(super) async fn board_page(
     Query(filters): Query<FilterQuery>,
     navigation: Navigation,
 ) -> Response {
-    let repo = &sources.work_dir.repo;
     let person = filters.person();
-    let board = actions::get_board(&permit, &sources).await;
-    let shown = BoardPageShown::of(&board, person.as_ref(), repo);
-    let person_options = person_options(&shown.people, person.as_ref());
+    let board = actions::get_board(&permit, &sources, person.as_ref()).await;
+    let person_options = person_options(&board.people, person.as_ref());
     BoardPage {
-        page: page(person.as_ref(), shown.needing_a_person, navigation),
+        page: page(person.as_ref(), board.needing_a_person, navigation),
         frame: Frame::of(&permit, &sources).await,
-        board: shown.board,
-        people: shown.people,
+        board: BoardShown::of(&board, &sources.work_dir.repo),
+        people: board.people,
         person_options,
     }
     .into_response()
@@ -247,24 +218,22 @@ pub(super) async fn board_events(
         let (permit, sources) = (permit.clone(), sources.clone());
         let person = person.clone();
         async move {
-            let repo = &sources.work_dir.repo;
             let frame = Frame::of(&permit, &sources).await;
-            let board = actions::get_board(&permit, &sources).await;
-            let shown = BoardPageShown::of(&board, person.as_ref(), repo);
+            let board = actions::get_board(&permit, &sources, person.as_ref()).await;
             let mut regions = shell::regions(
                 &frame,
-                &page(person.as_ref(), shown.needing_a_person, navigation),
+                &page(person.as_ref(), board.needing_a_person, navigation),
             );
             regions.push((
                 "board",
                 render(&BoardRegion {
-                    board: &shown.board,
+                    board: &BoardShown::of(&board, &sources.work_dir.repo),
                 }),
             ));
             regions.push((
                 "people",
                 render(&PeopleRegion {
-                    people: &shown.people,
+                    people: &board.people,
                 }),
             ));
             regions

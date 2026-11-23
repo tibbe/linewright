@@ -22,7 +22,7 @@ use crate::child;
 use crate::redaction::Redaction;
 
 /// How a command ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
     /// It exited with this status.

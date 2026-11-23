@@ -97,7 +97,7 @@ pub enum Detail {
 }
 
 /// A tracking issue's tickets, closed of total.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Tickets {
     pub tickets_closed: usize,
     pub tickets: usize,

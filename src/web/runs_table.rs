@@ -7,9 +7,10 @@ use super::names::Names;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::run_path;
 use super::table::{Align, Column, View};
+use crate::actions::ItemRuns;
 use crate::domain::Number;
 use crate::phrase::Status;
-use crate::runs::{self, Listing, NoRuns, Run, RunOf};
+use crate::runs::{self, Listing, Run, RunOf};
 
 /// A list of runs, ready for a page, or why there is none.
 pub(super) enum RunsShown {
@@ -151,40 +152,33 @@ impl RunsShown {
                 .map(|run| (ItemCell::of(&run.id.of, names), RunRow::of(run, names)))
                 .collect(),
         );
-        RunsShown::of(listing, rows, None, pages.shown("runs", href))
+        RunsShown::of(&listing.runs, rows, None, pages.shown("runs", href))
     }
 
     /// #`item`'s runs, as `runs` listed them narrowed to it, without the
     /// Item column; the earlier runs it left out listed on the runs page.
-    pub(super) fn of_item(
-        listed: Result<Listing, NoRuns>,
-        item: Number,
-        names: &Names,
-    ) -> RunsShown {
-        let Ok(listing) = listed else {
-            return RunsShown::NoRuns;
-        };
+    pub(super) fn of_item(listed: &ItemRuns, item: Number, names: &Names) -> RunsShown {
         let rows = Rows::WithoutItems(
-            listing
+            listed
                 .runs
                 .iter()
                 .map(|run| RunRow::of(run, names))
                 .collect(),
         );
-        let left_out = (listing.left_out > 0).then(|| LeftOut {
-            earlier: runs::earlier_runs(listing.left_out),
+        let left_out = (listed.left_out > 0).then(|| LeftOut {
+            earlier: runs::earlier_runs(listed.left_out),
             href: format!("/runs?item={}", item.0),
         });
-        RunsShown::of(&listing, rows, left_out, None)
+        RunsShown::of(&listed.runs, rows, left_out, None)
     }
 
     fn of(
-        listing: &Listing,
+        runs: &[Run],
         rows: Rows,
         left_out: Option<LeftOut>,
         pages: Option<PagesShown>,
     ) -> RunsShown {
-        if listing.runs.is_empty() {
+        if runs.is_empty() {
             return RunsShown::NoRuns;
         }
         RunsShown::Table(Box::new(RunsTable {

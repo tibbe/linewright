@@ -160,7 +160,8 @@ pub enum StageSetting {
 
 /// The settings a run's sessions run with: those a stage can set, and
 /// `maintenance`, which only the whole pipeline sets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub enum Setting {
     Stage(StageSetting),
     Maintenance,

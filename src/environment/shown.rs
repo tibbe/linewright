@@ -19,7 +19,7 @@ use crate::transcript::{self, Course, Lasted, MaintenanceEnded};
 
 /// The environment as `status` shows it (`docs/specs/operation.md`, `lw
 /// status`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EnvironmentShown {
     /// `None` while there is no environment yet.
     pub built: Option<BuiltShown>,
@@ -30,7 +30,7 @@ pub struct EnvironmentShown {
 }
 
 /// What the environment was built from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BuiltShown {
     /// The commit of the default branch.
     pub commit: String,
@@ -105,7 +105,7 @@ pub struct EnvironmentBuilds {
 
 /// A build, as the maintenance command's object is in `logs --json`, with
 /// the commit it built from (`docs/specs/sessions.md`, `lw environment`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BuildShown {
     pub build: BuildId,
     #[serde(flatten)]
@@ -116,7 +116,7 @@ pub struct BuildShown {
 }
 
 /// A build's output in whole lines so far, which then ends `to` bytes in.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SoFar {
     pub output: String,
     pub to: u64,

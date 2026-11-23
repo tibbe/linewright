@@ -194,6 +194,11 @@ async fn pick_from(kept: &KeptRuns, which: &Which) -> Result<Recorded, LogsError
 pub async fn answer(runs: Option<&Runs>, which: &Which) -> Result<Transcript, LogsError> {
     let runs = runs.ok_or_else(|| no_run_among_none(which))?;
     let run = pick_from(&KeptRuns::Database(runs.clone()), which).await?;
+    Ok(transcript_of(&run)?)
+}
+
+/// The transcript of `run`, as its sessions' records hold it now.
+pub fn transcript_of(run: &Recorded) -> anyhow::Result<Transcript> {
     let mut records = run
         .sessions
         .iter()

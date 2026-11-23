@@ -15,6 +15,7 @@ use super::run_page::{Row, command_row, command_text, entry_row, output_html, st
 use super::shell::{self, Area, Frame, Hold, Navigation, Place};
 use super::{Page, events, render};
 use crate::access::{Permit, Read};
+use crate::actions;
 use crate::api::Sources;
 use crate::environment::shown::{self, Account, BuildShown, EnvironmentShown, EnvironmentState};
 use crate::phrase::{Phrase, Status};
@@ -200,14 +201,15 @@ fn failed_polls(failed: &FailedPolls) -> Phrase {
 
 /// The frame and the facts, from one answer of `status`.
 async fn shown(permit: &Permit<Read>, sources: &Sources) -> (Frame, Vec<Fact>) {
-    let read = shell::Read::of(permit, sources).await;
-    let names = read.names(&sources.work_dir.repo);
+    let read = actions::overview(permit, sources).await;
+    let names = shell::names(&read, &sources.work_dir.repo);
     let builds = read
+        .server
         .builds
         .iter()
         .map(|build| build_html(build, &names))
         .collect();
-    let facts = facts(&read.linewright, builds)
+    let facts = facts(&read.server.linewright, builds)
         .into_iter()
         .map(|fact| fact.map(|phrase| html::phrase(&phrase, &names)))
         .collect();

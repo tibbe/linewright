@@ -118,7 +118,7 @@ impl Status {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Linewright {
     pub serving_since: Timestamp,
     /// `None` until the first poll ends; it is due at once.
@@ -150,7 +150,9 @@ pub struct Linewright {
 }
 
 /// The trials and scorers of benchmark runs in flight, out of `max-trials`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct TrialsInFlight {
     pub in_flight: usize,
     pub max_trials: usize,
@@ -164,7 +166,7 @@ pub struct Polls {
 
 /// The last poll that succeeded, `None` before the first, and the next
 /// poll.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PollsShown {
     pub last: Option<Timestamp>,
     pub next: Timestamp,
@@ -181,7 +183,7 @@ pub struct Polling {
 
 /// The polls failed since the last that succeeded
 /// (`docs/specs/operation.md`, `lw status`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FailedPolls {
     pub count: NonZeroU64,
     /// When the first of them failed.
@@ -264,7 +266,7 @@ pub struct AutomationRuns {
 
 /// Where an automation's trigger stands, by its kind. A schedule's is told by
 /// its `schedule` key, and another kind's by its `trigger` key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum Trigger {
     Schedule(Schedule),
@@ -273,7 +275,7 @@ pub enum Trigger {
 
 /// The trigger of an automation on workflow runs, which has no next run to
 /// show.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "trigger", rename_all = "kebab-case")]
 pub enum OnWorkflowRuns {
     WorkflowRun,
@@ -281,7 +283,7 @@ pub enum OnWorkflowRuns {
 
 /// Where an automation's schedule stands, counted from its last scheduled
 /// run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "schedule", rename_all = "kebab-case")]
 pub enum Schedule {
     /// No poll has seen the automation yet.
@@ -294,7 +296,7 @@ pub enum Schedule {
 }
 
 /// An automation's last run: its newest, by its trigger or by hand.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LastRun {
     #[serde(rename = "last_run")]
     pub started_at: Timestamp,
@@ -305,6 +307,11 @@ pub struct LastRun {
 }
 
 impl LastRun {
+    /// Whether it was by hand.
+    pub fn by_hand(&self) -> bool {
+        self.started_by == StartedBy::Hand
+    }
+
     fn of((run, started_by): (&Recorded, StartedBy)) -> LastRun {
         LastRun {
             started_at: run.started_at,
@@ -314,7 +321,7 @@ impl LastRun {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UnparsedAutomation {
     pub path: String,
     pub reason: String,
@@ -332,7 +339,7 @@ impl UnparsedAutomation {
 }
 
 /// A drain under way, as shown.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DrainShown {
     pub since: Timestamp,
     /// When the drain becomes a stop, if it has a deadline.

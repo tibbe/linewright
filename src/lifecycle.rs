@@ -13,7 +13,7 @@ use crate::domain::{
 use crate::reconcile::{Discard, NotSpecChange, Policy, WorkKind};
 
 /// An item's state: ten of an issue, three of a pull request.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum State {
     Done,

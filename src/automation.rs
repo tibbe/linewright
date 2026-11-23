@@ -83,7 +83,9 @@ impl Schedule {
 
 /// An automation's name: its path under [`DIR`], such as `team/weekly.md`
 /// (`docs/specs/automations.md`, The automation file).
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(try_from = "String", into = "String")]
 pub struct AutomationName(String);
 

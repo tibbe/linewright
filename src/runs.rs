@@ -31,7 +31,7 @@ use crate::workflow_run::{AttemptId, TriggeredRun};
 use files::{End, Record, RecordedSession, RunFiles};
 use rows::{Change, RunRow};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum RunOf {
     Work {
@@ -58,7 +58,7 @@ impl RunOf {
 /// How an automation's run started: on its schedule, by hand, or by the
 /// attempt of a workflow run. Not part of which run it is, so kept off
 /// [`RunOf`] and [`RunId`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum StartedBy {
     Schedule,
@@ -156,7 +156,8 @@ impl TryFrom<StartedFields> for Started {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct RunId {
     pub of: RunOf,
     pub n: u32,
@@ -207,7 +208,7 @@ impl fmt::Display for RunId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Ending {
     Done,
@@ -336,7 +337,7 @@ impl SessionReports {
 /// What a session ran with: its model and effort as Linewright set them,
 /// the model as the harness reported it ran, and where each of its settings
 /// and brief files came from.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(from = "KeptRan")]
 pub struct Ran {
     /// `None` only in a record kept before every session had a model.
@@ -350,7 +351,7 @@ pub struct Ran {
 }
 
 /// A [`Ran`] as a record holds it.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 struct KeptRan {
     model: Option<String>,
     #[serde(default)]
@@ -382,7 +383,7 @@ impl From<KeptRan> for Ran {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(from = "KeptLayers")]
 pub struct Layers {
     pub settings: BTreeMap<Setting, Layer>,
@@ -393,7 +394,7 @@ pub struct Layers {
 
 /// [`Layers`] as a record holds it: its brief files under `briefs`, or
 /// under `prompts` by their paths under `briefs/prompts/`.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 struct KeptLayers {
     settings: BTreeMap<Setting, KeptSource>,
     briefs: Option<BTreeMap<String, Layer>>,
@@ -427,7 +428,7 @@ impl From<KeptLayers> for Layers {
 /// Where a setting came from, as a record holds it: a layer, or, in a
 /// record kept before every session had a model and effort, `harness`,
 /// for a model or effort none set.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "String")]
 enum KeptSource {
     Layer(Layer),
@@ -987,14 +988,14 @@ pub struct Query {
     pub limit: Option<usize>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Listing {
     /// Newest first.
     pub runs: Vec<Run>,
     pub left_out: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(into = "RunAnswer", try_from = "RunAnswer")]
 pub struct Run {
     pub id: RunId,
@@ -1023,7 +1024,7 @@ pub enum Outcome {
     Interrupted,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 struct RunAnswer {
     id: String,
     #[serde(flatten)]
@@ -1038,14 +1039,14 @@ struct RunAnswer {
 }
 
 /// A run's outcome by its name in JSON (`docs/specs/runs.md`, Ending).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum OutcomeName {
     Ended(Ending),
     Unended(Unended),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Unended {
     InFlight,
@@ -1053,6 +1054,14 @@ pub enum Unended {
 }
 
 impl OutcomeName {
+    /// Whether the run failed at its work, as opposed to being stopped.
+    pub(crate) fn failed(self) -> bool {
+        matches!(
+            self,
+            OutcomeName::Ended(Ending::Failed | Ending::HandedBack)
+        )
+    }
+
     /// Its words (`docs/specs/runs.md`, Ending, the Outcome column).
     pub(crate) fn word(self) -> &'static str {
         match self {
@@ -1085,10 +1094,7 @@ impl OutcomeName {
 
 impl From<Run> for RunAnswer {
     fn from(run: Run) -> RunAnswer {
-        let duration_seconds = match run.outcome {
-            Outcome::Ended { seconds, .. } | Outcome::InFlight { seconds } => Some(seconds),
-            Outcome::Interrupted => None,
-        };
+        let duration_seconds = run.outcome.duration_seconds();
         RunAnswer {
             id: run.id.to_string(),
             of: run.id.of,
@@ -1325,23 +1331,21 @@ pub(crate) fn earlier_runs(left_out: usize) -> String {
 }
 
 impl Outcome {
+    /// How long the run ran, or has run so far; `None` for an interrupted
+    /// run, which ran for no known time.
+    pub(crate) fn duration_seconds(self) -> Option<i64> {
+        match self {
+            Outcome::Ended { seconds, .. } | Outcome::InFlight { seconds } => Some(seconds),
+            Outcome::Interrupted => None,
+        }
+    }
+
     pub(crate) fn word(self) -> &'static str {
         self.name().word()
     }
 
-    /// Whether the run failed at its work, as opposed to being stopped.
-    pub(crate) fn failed(self) -> bool {
-        matches!(
-            self,
-            Outcome::Ended {
-                ending: Ending::Failed | Ending::HandedBack,
-                ..
-            }
-        )
-    }
-
     /// Its name in JSON.
-    fn name(self) -> OutcomeName {
+    pub(crate) fn name(self) -> OutcomeName {
         match self {
             Outcome::Ended { ending, .. } => OutcomeName::Ended(ending),
             Outcome::InFlight { .. } => OutcomeName::Unended(Unended::InFlight),

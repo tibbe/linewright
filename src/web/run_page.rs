@@ -30,15 +30,15 @@ use super::{
 };
 use crate::access::{Permit, Read};
 use crate::actions;
-use crate::actions::Action;
+use crate::actions::{Action, RunHeading};
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
 use crate::phrase::Status;
-use crate::runs::{self, Ran, Recorded, RunId};
+use crate::runs::{self, Ran, RunId};
 use crate::transcript::lines::{THOUGHT, WORKED_FOR, cut_short};
 use crate::transcript::{
-    self, After, Call, Change, Changed, CloneEnded, Course, End, Entry, EntryAt, Feed, INTERRUPTED,
+    self, After, Call, Change, Changed, CloneEnded, Course, End, EntryAt, Feed, INTERRUPTED,
     Lasted, Layout, Made, Maintenance, MaintenanceEnded, Numbering, Place, Prompt, RUNNING,
     Session, Thought, What, whole_seconds,
 };
@@ -388,7 +388,7 @@ impl SessionView {
 /// says "working" and how long the turn has gone on so far
 /// (`docs/specs/runs.md`, Run, Working).
 fn working_html(n: usize, model: &Session) -> String {
-    let step = (model.end == End::Going && !runs_an_entry(model))
+    let step = (model.end == End::Going && !model.runs_an_entry())
         .then(|| {
             let (text, lasted) = match model.waiting() {
                 Some(wait) => (
@@ -418,29 +418,6 @@ fn working_html(n: usize, model: &Session) -> String {
         r#"<ol class="entries font-mono text-sm" id="s{n}-working">{}</ol>"#,
         step.unwrap_or_default()
     )
-}
-
-/// Whether any of a session's entries that run runs still.
-fn runs_an_entry(model: &Session) -> bool {
-    fn running(entries: &[Entry]) -> bool {
-        entries.iter().any(|entry| match &entry.what {
-            What::Tool(call) => call.end == Course::Running || running(&call.entries),
-            What::Message(_)
-            | What::Thought(_)
-            | What::Context(_)
-            | What::Event(_)
-            | What::Other(_) => false,
-        })
-    }
-    let clone = model
-        .clone
-        .as_ref()
-        .is_some_and(|clone| clone.course == Course::Running);
-    let maintenance = model
-        .maintenance
-        .as_ref()
-        .is_some_and(|maintenance| matches!(maintenance.course(), Course::Running));
-    clone || maintenance || model.turns.iter().any(|turn| running(&turn.entries))
 }
 
 fn maintenance(model: &Session) -> &Maintenance {
@@ -1190,18 +1167,14 @@ fn events(run: &RunId, made: Vec<(Made, Vec<Patch>)>) -> Vec<Event> {
         .collect()
 }
 
-/// Run `recorded`'s heading (`docs/specs/runs.md`, Run, Heading): its ID,
+/// A run's heading (`docs/specs/runs.md`, Run, Heading), as `heading` says: its ID,
 /// then ", by hand" for an automation's run by hand, and "(it started no
 /// session)" for a run that ended without a session, with its item under
 /// them.
-fn run_heading(permit: &Permit<Read>, sources: &Sources, recorded: &Recorded) -> Heading {
-    let id = recorded.id.to_string();
-    let by_hand = if recorded.started().by_hand() {
-        ", by hand"
-    } else {
-        ""
-    };
-    let none = if recorded.state != runs::State::InFlight && recorded.sessions.is_empty() {
+fn run_heading(permit: &Permit<Read>, sources: &Sources, heading: &RunHeading) -> Heading {
+    let id = heading.id.to_string();
+    let by_hand = if heading.by_hand() { ", by hand" } else { "" };
+    let none = if heading.started_no_session {
         " (it started no session)"
     } else {
         ""
@@ -1210,15 +1183,15 @@ fn run_heading(permit: &Permit<Read>, sources: &Sources, recorded: &Recorded) ->
         name: html::escape(&format!("{id}{by_hand}{none}")),
         title: id,
         state: None,
-        line: Some(item_line(permit, sources, &recorded.id)),
+        line: Some(item_line(permit, sources, &heading.id)),
     }
 }
 
 /// What run `run`'s page shows of it: its heading, or that there is no
 /// such run; `None` where its record does not read.
 async fn run_thing(permit: &Permit<Read>, sources: &Sources, run: &RunId) -> Option<Thing> {
-    match actions::get_run(permit, sources, run).await {
-        Ok(Some(recorded)) => Some(Thing::Found(run_heading(permit, sources, &recorded))),
+    match actions::run_heading(permit, sources, run).await {
+        Ok(Some(heading)) => Some(Thing::Found(run_heading(permit, sources, &heading))),
         Ok(None) => Some(Thing::Missing(Missing::Run(run.to_string()))),
         Err(_) => None,
     }

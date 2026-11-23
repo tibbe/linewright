@@ -7,7 +7,8 @@ use crate::domain::{Number, Timestamp};
 /// Wording the monitoring commands show, with the items, times, durations
 /// and labels it names kept apart from its text, so that each can be shown as
 /// suits where it is shown. `Display` gives it as the commands print it.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(with = "String")]
 pub struct Phrase(Vec<Segment>);
 
 /// What an outcome or a state shows as (`docs/specs/design_system.md`,
@@ -195,6 +196,13 @@ impl From<String> for Phrase {
 impl From<Number> for Phrase {
     fn from(number: Number) -> Phrase {
         Phrase::default().item(number)
+    }
+}
+
+/// As the commands print it, so that what a tool returns reads as they do.
+impl serde::Serialize for Phrase {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
     }
 }
 

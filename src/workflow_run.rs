@@ -15,7 +15,19 @@ use crate::domain::Timestamp;
 use crate::runs::State;
 
 /// GitHub's id of a workflow run, which its re-runs keep.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct WorkflowRunId(pub u64);
 
 impl std::fmt::Display for WorkflowRunId {
@@ -25,7 +37,19 @@ impl std::fmt::Display for WorkflowRunId {
 }
 
 /// One attempt of a workflow run: its first run, or a re-run of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct AttemptId {
     pub run: WorkflowRunId,
     pub attempt: NonZeroU32,
