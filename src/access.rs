@@ -40,8 +40,12 @@ impl fmt::Display for Level {
     }
 }
 
-/// A person's role (`docs/specs/access.md`, Roles).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A person's role (`docs/specs/access.md`, Roles), by its name.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[schemars(inline)]
+#[serde(rename_all = "lowercase")]
 pub enum Role {
     Viewer,
     Contributor,

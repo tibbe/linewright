@@ -25,8 +25,9 @@ pub const SETUP_MAX_AGE: Duration = Duration::from_hours(24);
 pub const SETUP_TIMEOUT: Duration = Duration::from_mins(60);
 
 /// How hard the harness thinks: the `effort` setting's levels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[schemars(inline)]
 pub enum Effort {
     Low,
     Medium,

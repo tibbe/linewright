@@ -100,9 +100,11 @@ rayon = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
 reflink-copy = "0.1"
 remove_dir_all = { version = "1", features = ["parallel"], optional = true }
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 rust-embed = { version = "8", features = ["include-exclude"] }
 rustix = { version = "1", features = ["fs", "process"] }
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
