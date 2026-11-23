@@ -68,7 +68,7 @@ fn the_metadata_give_the_issuer_and_every_url_under_the_public_url() {
 
 #[test_log::test]
 fn a_request_with_a_registered_redirect_uri_s256_and_the_mcp_server_is_taken() {
-    let checked = check_authorize(&request(), Some(&client()), &server()).unwrap();
+    let checked = check_authorize(&request(), &Found::Client(client()), &server()).unwrap();
 
     assert_eq!(
         checked,
@@ -83,7 +83,7 @@ fn a_request_with_a_registered_redirect_uri_s256_and_the_mcp_server_is_taken() {
         resource: None,
         ..request()
     };
-    assert!(check_authorize(&without_resource, Some(&client()), &server()).is_ok());
+    assert!(check_authorize(&without_resource, &Found::Client(client()), &server()).is_ok());
 }
 
 /// `docs/specs/access.md`, The authorization server, Redirect URIs: a
@@ -91,39 +91,44 @@ fn a_request_with_a_registered_redirect_uri_s256_and_the_mcp_server_is_taken() {
 /// the same.
 #[test_log::test]
 fn a_redirect_uri_matches_exactly_as_registered() {
-    let client = Client {
+    let client = Found::Client(Client {
         redirect_uris: vec![RedirectUri::parse("http://127.0.0.1:5000").unwrap()],
         ..client()
-    };
+    });
     let request = |redirect_uri: &str| AuthorizeRequest {
         redirect_uri: Some(redirect_uri.into()),
         ..request()
     };
 
-    assert!(check_authorize(&request("http://127.0.0.1:5000"), Some(&client), &server()).is_ok());
+    assert!(check_authorize(&request("http://127.0.0.1:5000"), &client, &server()).is_ok());
     assert_eq!(
-        check_authorize(&request("http://127.0.0.1:5000/"), Some(&client), &server()),
+        check_authorize(&request("http://127.0.0.1:5000/"), &client, &server()),
         Err(AuthorizeError::CannotSendBack(
             CannotSendBack::NotARedirectUri
         ))
     );
 }
 
-/// `docs/specs/access.md`, The authorization server, 2a.
+/// `docs/specs/access.md`, Authorization error, The message.
 #[test_log::test]
-fn an_unknown_client_or_an_unregistered_redirect_uri_is_not_sent_back() {
+fn an_unknown_client_an_unusable_metadata_document_or_an_unregistered_redirect_uri_is_not_sent_back()
+ {
     let cannot = |why| Err(AuthorizeError::CannotSendBack(why));
 
     assert_eq!(
-        check_authorize(&request(), None, &server()),
+        check_authorize(&request(), &Found::Unknown, &server()),
         cannot(CannotSendBack::UnknownClient)
+    );
+    assert_eq!(
+        check_authorize(&request(), &Found::UnusableDocument, &server()),
+        cannot(CannotSendBack::UnusableMetadataDocument)
     );
     let another_client = AuthorizeRequest {
         client_id: Some("c-2".into()),
         ..request()
     };
     assert_eq!(
-        check_authorize(&another_client, Some(&client()), &server()),
+        check_authorize(&another_client, &Found::Client(client()), &server()),
         cannot(CannotSendBack::UnknownClient)
     );
     for redirect_uri in [
@@ -138,7 +143,7 @@ fn an_unknown_client_or_an_unregistered_redirect_uri_is_not_sent_back() {
             ..request()
         };
         assert_eq!(
-            check_authorize(&request, Some(&client()), &server()),
+            check_authorize(&request, &Found::Client(client()), &server()),
             cannot(CannotSendBack::NotARedirectUri),
             "{redirect_uri:?}"
         );
@@ -146,6 +151,10 @@ fn an_unknown_client_or_an_unregistered_redirect_uri_is_not_sent_back() {
     assert_eq!(
         CannotSendBack::UnknownClient.to_string(),
         "Linewright does not know this client."
+    );
+    assert_eq!(
+        CannotSendBack::UnusableMetadataDocument.to_string(),
+        "Linewright cannot use this client's metadata document."
     );
     assert_eq!(
         CannotSendBack::NotARedirectUri.to_string(),
@@ -156,7 +165,7 @@ fn an_unknown_client_or_an_unregistered_redirect_uri_is_not_sent_back() {
 /// The error a request is sent back with, as its code.
 #[track_caller]
 fn sent_back(request: &AuthorizeRequest) -> &'static str {
-    match check_authorize(request, Some(&client()), &server()) {
+    match check_authorize(request, &Found::Client(client()), &server()) {
         Err(AuthorizeError::SendBack(sent)) => {
             let SentBack {
                 redirect_uri,
@@ -219,13 +228,13 @@ fn a_request_reads_from_its_query_and_a_repeated_parameter_is_refused() {
     assert_eq!(sent_back(&twice("state")), "invalid_request");
     assert_eq!(sent_back(&twice("resource")), "invalid_request");
     assert_eq!(
-        check_authorize(&twice("client_id"), Some(&client()), &server()),
+        check_authorize(&twice("client_id"), &Found::Client(client()), &server()),
         Err(AuthorizeError::CannotSendBack(
             CannotSendBack::UnknownClient
         ))
     );
     assert_eq!(
-        check_authorize(&twice("redirect_uri"), Some(&client()), &server()),
+        check_authorize(&twice("redirect_uri"), &Found::Client(client()), &server()),
         Err(AuthorizeError::CannotSendBack(
             CannotSendBack::NotARedirectUri
         ))

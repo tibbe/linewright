@@ -39,6 +39,19 @@ impl Registration {
     }
 }
 
+/// What a client ID names (`docs/specs/access.md`, Authorization error,
+/// The message).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    /// The client Linewright knows by it.
+    Client(Client),
+    /// No client Linewright knows, nor a metadata document's URL.
+    Unknown,
+    /// The URL of a metadata document that Linewright cannot fetch, or that
+    /// describes no client.
+    UnusableDocument,
+}
+
 /// Whether a client whose metadata document is fresh until `fresh_until`,
 /// or that has none, needs no fetch at `now`.
 fn fresh(fresh_until: Option<Timestamp>, now: Timestamp) -> bool {
@@ -74,11 +87,11 @@ impl Clients {
         Ok(client)
     }
 
-    /// The client `id` names at `now`, if Linewright knows it: one it
-    /// registered, or the one whose metadata document `id` is the URL of,
-    /// fetched again once it is no longer fresh. A fetch that fails, which
-    /// it logs, names no client.
-    pub async fn find(&self, id: &str, now: Timestamp) -> anyhow::Result<Option<Client>> {
+    /// What `id` names at `now`: a client Linewright registered, or the one
+    /// whose metadata document `id` is the URL of, fetched again once it is
+    /// no longer fresh. A fetch that fails, or a document that describes no
+    /// client, which it logs, is an unusable document.
+    pub async fn find(&self, id: &str, now: Timestamp) -> anyhow::Result<Found> {
         let row: Option<ClientRow> =
             sqlx::query_as("SELECT name, redirect_uris, fresh_until FROM clients WHERE id = ?")
                 .bind(id)
@@ -89,7 +102,7 @@ impl Clients {
         if let Some((name, uris, fresh_until)) = row {
             let fresh_until = fresh_until.as_deref().map(parse_time).transpose()?;
             if fresh(fresh_until, now) {
-                return Ok(Some(Client {
+                return Ok(Found::Client(Client {
                     id: ClientId::of(id.to_string()),
                     name,
                     redirect_uris: uris_of(&uris)?,
@@ -97,7 +110,7 @@ impl Clients {
             }
         }
         let Some(url) = DocumentUrl::parse(id) else {
-            return Ok(None);
+            return Ok(Found::Unknown);
         };
         let (client, fresh_for) = match metadata_document::fetch(&url, &Matcher::from_env()).await {
             Ok(fetched) => fetched,
@@ -107,7 +120,7 @@ impl Clients {
                     error = format!("{e:#}"),
                     "fetching a client's metadata document failed"
                 );
-                return Ok(None);
+                return Ok(Found::UnusableDocument);
             }
         };
         self.keep(
@@ -125,7 +138,7 @@ impl Clients {
                 "registered a client by its metadata document"
             );
         }
-        Ok(Some(client))
+        Ok(Found::Client(client))
     }
 
     /// Keeps `client`, known by `registration` at `now`, and fresh until

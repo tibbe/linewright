@@ -15,6 +15,7 @@ use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
+use self::clients::Found;
 use super::tokens::s256;
 use crate::domain::Timestamp;
 use crate::host::PublicUrl;
@@ -410,25 +411,35 @@ pub struct SentBack {
 pub enum CannotSendBack {
     #[error("Linewright does not know this client.")]
     UnknownClient,
+    #[error("Linewright cannot use this client's metadata document.")]
+    UnusableMetadataDocument,
     #[error("This is not a redirect URI of this client.")]
     NotARedirectUri,
 }
 
-/// Whether Linewright takes `request` from `client`, the client its
-/// `client_id` names if Linewright knows it, for the resource that
+/// Whether Linewright takes `request` from `client`, what Linewright found
+/// for its `client_id`, for the resource that
 /// `server` guards: a redirect URI the client registered, exactly, the
 /// code grant, an `S256` PKCE challenge, and no resource but the MCP
 /// server's (`docs/specs/access.md`, The authorization server).
 pub fn check_authorize(
     request: &AuthorizeRequest,
-    client: Option<&Client>,
+    client: &Found,
     server: &Server,
 ) -> Result<Checked, AuthorizeError> {
-    let client = client
-        .filter(|client| request.client_id.as_deref() == Some(client.id.as_str()))
-        .ok_or(AuthorizeError::CannotSendBack(
-            CannotSendBack::UnknownClient,
-        ))?;
+    let client = match client {
+        Found::Client(client) if request.client_id.as_deref() == Some(client.id.as_str()) => client,
+        Found::UnusableDocument => {
+            return Err(AuthorizeError::CannotSendBack(
+                CannotSendBack::UnusableMetadataDocument,
+            ));
+        }
+        Found::Client(_) | Found::Unknown => {
+            return Err(AuthorizeError::CannotSendBack(
+                CannotSendBack::UnknownClient,
+            ));
+        }
+    };
     let redirect_uri = request
         .redirect_uri
         .as_deref()
