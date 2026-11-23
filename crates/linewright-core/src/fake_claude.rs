@@ -211,7 +211,14 @@ fn log(dir: &Path, args: &[OsString]) -> anyhow::Result<()> {
         &dir.join("shell.log"),
         &line(&[var("CLAUDE_CODE_SHELL").as_bytes()]),
     )?;
+    // On macOS, CoreFoundation, which the fake links, sets this variable in
+    // the fake's own process before `main`, and `lw contain` never passes it
+    // there:
+    // https://github.com/apple-oss-distributions/CF/blob/dc54c6bb1c1e5e0b9486c1d26dd5bef110b20bf3/CFStringEncodings.c#L940
     let env: Vec<u8> = std::env::vars_os()
+        .filter(|(name, _)| {
+            !(cfg!(target_os = "macos") && name == crate::contain::CF_TEXT_ENCODING)
+        })
         .flat_map(|(name, value)| line(&[name.as_bytes(), b"=", value.as_bytes()]))
         .collect();
     std::fs::write(dir.join("env.log"), env)?;

@@ -27,7 +27,7 @@ const GRACE: Duration = Duration::from_secs(2);
 
 /// The variable macOS's CoreFoundation adds to the environment of the
 /// process it loads into when it is missing.
-const CF_TEXT_ENCODING: &str = "__CF_USER_TEXT_ENCODING";
+pub(crate) const CF_TEXT_ENCODING: &str = "__CF_USER_TEXT_ENCODING";
 
 /// What the wrapper exits with when it cannot run the program, as `env`
 /// does when it fails itself.

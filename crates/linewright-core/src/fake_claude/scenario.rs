@@ -53,8 +53,8 @@ pub enum Step {
     /// Appends its arguments, one per line and then a blank line, to
     /// `dir/args.log`, `GH_TOKEN=… GITHUB_TOKEN=…` to `dir/tokens.log`,
     /// `TMPDIR=…` to `dir/tmpdir.log` and `$CLAUDE_CODE_SHELL` to
-    /// `dir/shell.log`, and writes its environment as `NAME=value` lines over
-    /// `dir/env.log`.
+    /// `dir/shell.log`, and writes the environment it was spawned with as
+    /// `NAME=value` lines over `dir/env.log`.
     Log { dir: PathBuf },
     /// Appends `entry` as a line to `projects/<session>.jsonl`, the session
     /// being the argument after `--session-id` or `--resume`.
