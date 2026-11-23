@@ -35,8 +35,13 @@ struct Answered {
 
 impl<'a> Mcp<'a> {
     fn new(pages: &'a Pages, token: &str) -> Mcp<'a> {
+        Mcp::on(&pages.router, token)
+    }
+
+    /// An MCP client of `router`.
+    fn on(router: &'a Router, token: &str) -> Mcp<'a> {
         Mcp {
-            router: &pages.router,
+            router,
             scheme: "Bearer",
             token: token.to_string(),
         }
@@ -289,6 +294,26 @@ async fn a_request_at_another_version_gets_400() {
     }
 }
 
+/// A body longer than rmcp reads, 4 MiB, gets 413 as rmcp answers it.
+/// <https://docs.rs/rmcp/3.11.0/rmcp/transport/streamable_http_server/struct.StreamableHttpServerConfig.html#structfield.max_request_body_bytes>
+#[test_log::test(tokio::test)]
+async fn a_body_longer_than_4_mib_gets_413() {
+    let pages = Pages::of(a_ticket()).await;
+    let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
+    let long = "x".repeat(4 * 1024 * 1024);
+
+    let answered = Mcp::new(&pages, &token)
+        .post(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": "list_people", "arguments": { "after": long } },
+        }))
+        .await;
+
+    assert_eq!(answered.status, 413, "{}", answered.body);
+}
+
 /// `docs/specs/access.md`, The MCP server, Origin.
 #[test_log::test(tokio::test)]
 async fn a_request_is_taken_without_an_origin_or_from_the_public_urls_alone() {
@@ -514,37 +539,158 @@ async fn a_contributor_makes_a_benchmark_and_gets_it_back_which_is_logged() {
     );
 }
 
-/// `docs/specs/access.md`, Actions, An access level that is too low; The
-/// MCP server, A refused call.
+/// `docs/specs/access.md`, Actions, An access level that is too low, and
+/// Logged; The MCP server, An access level that is too low: a tool that
+/// does not exist is the protocol's error still.
 #[test_log::test(tokio::test)]
-async fn a_call_above_the_persons_access_level_is_refused_with_the_level_it_needs() {
+async fn a_call_above_the_persons_access_level_gets_403_with_the_level_it_needs() {
     let pages = super::benchmarks::with_benchmarks().await;
     let viewer = token_of(&pages, Role::Viewer, "Vera Viewer").await;
     let contributor = token_of(&pages, Role::Contributor, "Cody Contributor").await;
     let (log, _guard) = Log::capture();
 
-    let made = Mcp::new(&pages, &viewer)
-        .call(
+    for (token, id, name, arguments, level) in [
+        (
+            &viewer,
+            json!(7),
             "create_benchmark",
             json!({ "name": "gadgets", "stage": "design" }),
+            "act",
+        ),
+        (
+            &contributor,
+            json!("edit"),
+            "edit_person",
+            json!({ "person_id": 1, "role": "viewer" }),
+            "manage",
+        ),
+        (
+            &viewer,
+            json!(8),
+            "create_benchmark",
+            json!({ "nme": "gadgets" }),
+            "act",
+        ),
+    ] {
+        let answered = Mcp::new(&pages, token)
+            .post(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "tools/call",
+                "params": { "name": name, "arguments": arguments },
+            }))
+            .await;
+
+        assert_eq!(answered.status, 403, "{name}: {}", answered.body);
+        assert!(
+            !answered.headers.contains_key("www-authenticate"),
+            "{name}: {:?}",
+            answered.headers
+        );
+        let message: Value = serde_json::from_str(&answered.body)
+            .unwrap_or_else(|e| panic!("{name}: {e}: {}", answered.body));
+        assert_eq!(message["jsonrpc"], "2.0", "{message}");
+        assert_eq!(message["id"], id, "{message}");
+        assert_eq!(
+            message["error"]["message"],
+            format!("This needs the {level} access level."),
+            "{message}"
+        );
+    }
+    let unknown = Mcp::new(&pages, &viewer)
+        .request(
+            "tools/call",
+            json!({ "name": "make_coffee", "arguments": {} }),
         )
         .await;
-    let edited = Mcp::new(&pages, &contributor)
-        .call("edit_person", json!({ "person_id": 1, "role": "viewer" }))
-        .await;
-
-    assert_eq!(refusal(&made), "This needs the act access level.");
-    assert_eq!(refusal(&edited), "This needs the manage access level.");
+    assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
     let logged = log.lines("INFO");
     assert!(
         logged
             .iter()
             .any(|line| line.contains("Make a benchmark: refused")
-                && line.contains(r#"identity="google:vera@example.com""#)),
+                && line.contains(r#"identity="google:vera@example.com""#)
+                && line.contains("a benchmark named gadgets")),
         "{logged:?}"
     );
     let html = pages.page("/benchmarks").await;
     assert!(!html.html().contains("gadgets"));
+}
+
+/// `docs/specs/access.md`, The MCP server, Too many calls: a person's
+/// clients call tools 120 times in a minute, and each further call in that
+/// minute gets 429 until the minute is over, whoever else calls; one from
+/// another origin is refused for its origin alone.
+#[test_log::test(tokio::test)]
+async fn a_persons_121st_call_in_a_minute_gets_429_until_the_minute_is_over() {
+    let pages = Pages::of(a_ticket()).await;
+    let cookie = signed_in_as(&pages.sources, Role::Viewer, "Vera Viewer").await;
+    let (_, vera) = authorized_by_back_door(&pages.sources, &cookie, "My agent").await;
+    let (_, other_client) = authorized_by_back_door(&pages.sources, &cookie, "Other").await;
+    let (vera, other_client) = (vera.access, other_client.access);
+    let cody = token_of(&pages, Role::Contributor, "Cody Contributor").await;
+    let clock = std::sync::Arc::new(StillClock::new());
+    let sources = Sources {
+        clock: clock.clone(),
+        ..pages.sources.clone()
+    };
+    let router = linewright_web::router(sources, &ui(), CancellationToken::new());
+    let call = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": "list_people", "arguments": {} },
+    });
+    let (vera, other_client, cody) = (
+        Mcp::on(&router, &vera),
+        Mcp::on(&router, &other_client),
+        Mcp::on(&router, &cody),
+    );
+
+    for n in 1..=120 {
+        let mcp = if n % 2 == 0 { &vera } else { &other_client };
+        let answered = mcp.post(&call).await;
+        assert_eq!(answered.status, 200, "call {n}: {}", answered.body);
+        clock.advance(chrono::TimeDelta::milliseconds(100));
+    }
+    let listed = vera
+        .post(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .await;
+    let mut retries = vec![];
+    for wait in [
+        chrono::TimeDelta::zero(),
+        chrono::TimeDelta::milliseconds(500),
+        chrono::TimeDelta::seconds(30),
+    ] {
+        clock.advance(wait);
+        let answered = other_client.post(&call).await;
+        assert_eq!(answered.status, 429, "{}", answered.body);
+        retries.push(
+            answered.headers["retry-after"]
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    let elsewhere = other_client
+        .post_with(
+            &call,
+            &[
+                ("MCP-Protocol-Version", PROTOCOL),
+                ("Origin", "https://evil.example"),
+            ],
+        )
+        .await;
+    let others = cody.post(&call).await;
+    clock.advance(chrono::TimeDelta::milliseconds(17_500));
+    let past = vera.post(&call).await;
+
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    assert_eq!(retries, ["48", "48", "18"]);
+    assert_eq!(elsewhere.status, 403, "{}", elsewhere.body);
+    assert!(!elsewhere.body.contains("jsonrpc"), "{}", elsewhere.body);
+    assert_eq!(others.status, 200, "{}", others.body);
+    assert_eq!(past.status, 200, "{}", past.body);
 }
 
 /// `docs/specs/access.md`, The MCP server, A refused call:
