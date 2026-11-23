@@ -23,12 +23,13 @@ use super::write::{Refused, Write};
 use super::{benchmark_path, benchmark_run_path, render, task_path};
 use crate::access::{Act, LevelMarker, Permit};
 use crate::actions::{
-    self, AS_IS_KEEPS_ITS_NAME, Action, another_named, benchmark_taken, task_taken,
+    self, AS_IS_KEEPS_ITS_NAME, Action, BenchmarkRunScreen, another_named, benchmark_taken,
+    task_taken,
 };
 use crate::api::Sources;
 use crate::benchmarks::{
-    Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, ConfigurationId, EditTaskError,
-    RenameConfigurationError, RenameError, TaskChange, TaskId, TaskShown,
+    Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, ConfigurationId, CriteriaAnswer,
+    EditTaskError, RenameConfigurationError, RenameError, TaskAnswer, TaskChange, TaskId,
 };
 use crate::name::Name;
 
@@ -251,7 +252,7 @@ pub(super) async fn save_benchmark(
         Err(refused) => {
             let reading = permit.into();
             return refuse(
-                match actions::get_benchmark(&reading, &sources, benchmark).await {
+                match actions::benchmark_shown(&reading, &sources, benchmark).await {
                     Ok(None) => no_such(),
                     Ok(Some(_)) | Err(_) => refused,
                 },
@@ -289,14 +290,13 @@ pub(super) struct EditTaskForm {
 
 /// The Edit task dialog of `task` (`docs/specs/benchmarks.md`, Edit task),
 /// holding its name and its criteria, or no criteria where they do not read.
-pub(super) fn edit_task(task: &TaskShown) -> EditDialog {
+pub(super) fn edit_task(task: &TaskAnswer) -> EditDialog {
     let fields = TaskFields {
         name: task.name.to_string(),
-        criteria: task
-            .criteria
-            .as_ref()
-            .map(|criteria| criteria.as_str().to_string())
-            .unwrap_or_default(),
+        criteria: match &task.criteria {
+            CriteriaAnswer::Criteria(criteria) => criteria.clone(),
+            CriteriaAnswer::Unreadable(_) => String::new(),
+        },
     };
     EditDialog {
         id: EDIT_TASK.into(),
@@ -309,10 +309,10 @@ pub(super) fn edit_task(task: &TaskShown) -> EditDialog {
 
 /// The values the Edit task dialog of `task` starts from: its name and its
 /// criteria as they are now, but criteria that do not read.
-pub(super) fn task_values(task: &TaskShown) -> String {
+pub(super) fn task_values(task: &TaskAnswer) -> String {
     let mut values = vec![("name", task.name.to_string())];
-    if let Ok(criteria) = &task.criteria {
-        values.push(("criteria", criteria.as_str().to_string()));
+    if let CriteriaAnswer::Criteria(criteria) = &task.criteria {
+        values.push(("criteria", criteria.clone()));
     }
     render(&EditValues {
         id: values_id(EDIT_TASK),
@@ -355,7 +355,7 @@ pub(super) async fn save_task(
         return refuse(no_such());
     };
     let reading = permit.clone().into();
-    let benchmark = match actions::get_task(&reading, &sources, task).await {
+    let benchmark = match actions::task_shown(&reading, &sources, task).await {
         Ok(Some(shown)) => shown.benchmark.id,
         Ok(None) => return refuse(no_such()),
         Err(e) => {
@@ -420,28 +420,29 @@ fn configuration_form(id: String, making: Making<NameFields>) -> EditNameForm {
     }
 }
 
-/// Each configuration of `record` but `as-is`: its ID, the id of its Edit
-/// configuration dialog and its name.
-fn editable(record: &BenchmarkRunRecord) -> impl Iterator<Item = (ConfigurationId, String, &Name)> {
-    record
+/// Each configuration of `benchmark_run` but `as-is`: its ID, the id of
+/// its Edit configuration dialog and its name.
+fn editable(
+    benchmark_run: &BenchmarkRunScreen,
+) -> impl Iterator<Item = (ConfigurationId, String, &Name)> {
+    benchmark_run
         .configurations
         .iter()
-        .enumerate()
-        .filter_map(|(place, name)| {
-            let configuration = ConfigurationId::of_place(place);
-            edit_configuration_id(configuration).map(|dialog| (configuration, dialog, name))
+        .filter_map(|configuration| {
+            edit_configuration_id(configuration.id)
+                .map(|dialog| (configuration.id, dialog, &configuration.name))
         })
 }
 
-/// The Edit configuration dialog of each configuration of `record` but
-/// `as-is` (`docs/specs/benchmarks.md`, Edit configuration), holding its
+/// The Edit configuration dialog of each configuration of `benchmark_run`
+/// but `as-is` (`docs/specs/benchmarks.md`, Edit configuration), holding its
 /// name.
-pub(super) fn edit_configurations(record: &BenchmarkRunRecord) -> Vec<EditDialog> {
-    editable(record)
+pub(super) fn edit_configurations(benchmark_run: &BenchmarkRunScreen) -> Vec<EditDialog> {
+    editable(benchmark_run)
         .map(|(configuration, dialog, name)| EditDialog {
             action: format!(
                 "{}/configurations/{configuration}",
-                benchmark_run_path(record.id)
+                benchmark_run_path(benchmark_run.id)
             ),
             form: html::rendered(&configuration_form(
                 dialog.clone(),
@@ -454,11 +455,11 @@ pub(super) fn edit_configurations(record: &BenchmarkRunRecord) -> Vec<EditDialog
         .collect()
 }
 
-/// The values each Edit configuration dialog of `record` starts from, the
-/// name of its configuration as it is now, in the region
+/// The values each Edit configuration dialog of `benchmark_run` starts
+/// from, the name of its configuration as it is now, in the region
 /// [`EDIT_CONFIGURATIONS_VALUES`].
-pub(super) fn configuration_values(record: &BenchmarkRunRecord) -> String {
-    let values: String = editable(record)
+pub(super) fn configuration_values(benchmark_run: &BenchmarkRunScreen) -> String {
+    let values: String = editable(benchmark_run)
         .map(|(_, dialog, name)| {
             render(&EditValues {
                 id: values_id(&dialog),
@@ -532,7 +533,7 @@ pub(super) async fn save_configuration(
         Err(refused) => {
             let reading = permit.into();
             return refuse(
-                match actions::get_benchmark_run(&reading, &sources, benchmark_run).await {
+                match actions::benchmark_run_record(&reading, &sources, benchmark_run).await {
                     Ok(record) => unrenamable(record.as_ref(), &id, parsed).unwrap_or(refused),
                     Err(_) => refused,
                 },

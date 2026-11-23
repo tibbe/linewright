@@ -28,7 +28,7 @@ impl Tokens {
 }
 
 /// A finite, non-negative amount in US dollars, as the harness estimates it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(into = "f64", try_from = "f64")]
 pub struct Usd(f64);
 

@@ -25,7 +25,9 @@ use crate::tree;
 use crate::trial::{self, Configuration};
 
 /// A benchmark run's ID: a positive number, given at its launch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+)]
 pub struct BenchmarkRunId(i64);
 
 impl std::str::FromStr for BenchmarkRunId {
@@ -65,7 +67,9 @@ pub fn as_is_name() -> Name {
 
 /// A configuration's ID: its place in its benchmark run, from 1 for `as-is`
 /// (`docs/specs/benchmarks.md`, Names and IDs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct ConfigurationId(NonZeroUsize);
 
@@ -103,7 +107,7 @@ impl fmt::Display for ConfigurationId {
 
 /// A task of a benchmark run: its ID, and its name as it is now, or as it
 /// was when it was removed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct RunTask {
     pub id: TaskId,
     pub name: Name,

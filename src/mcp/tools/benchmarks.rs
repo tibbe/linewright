@@ -61,17 +61,17 @@ pub(super) struct TaskOut {
 }
 
 /// The ID of a benchmark a tool is given.
-fn benchmark_id(given: i64) -> Result<BenchmarkId, String> {
+pub(super) fn benchmark_id(given: i64) -> Result<BenchmarkId, String> {
     id(given, str::parse, Missing::Benchmark)
 }
 
 /// The ID of a task a tool is given.
-fn task_id(given: i64) -> Result<TaskId, String> {
+pub(super) fn task_id(given: i64) -> Result<TaskId, String> {
     id(given, str::parse, Missing::Task)
 }
 
 /// The ID of a benchmark run a tool is given.
-fn benchmark_run_id(given: i64) -> Result<BenchmarkRunId, String> {
+pub(super) fn benchmark_run_id(given: i64) -> Result<BenchmarkRunId, String> {
     id(given, str::parse, Missing::BenchmarkRun)
 }
 
@@ -89,7 +89,7 @@ async fn shown_task(
     task: TaskId,
 ) -> Result<TaskShown, String> {
     let reading: Permit<Read> = permit.clone().into();
-    match actions::get_task(&reading, context.sources, task).await {
+    match actions::task_shown(&reading, context.sources, task).await {
         Ok(Some(shown)) => Ok(shown),
         Ok(None) => Err(Missing::Task(task.to_string()).to_string()),
         Err(e) => Err(format!("{e:#}")),
@@ -214,7 +214,7 @@ impl Tool for EditBenchmark {
             Err(RenameError::Failed(e)) => return Err(format!("{e:#}")),
         }
         let reading: Permit<Read> = permit.clone().into();
-        match actions::get_benchmark(&reading, context.sources, id).await {
+        match actions::benchmark_shown(&reading, context.sources, id).await {
             Ok(Some(shown)) => Ok(shown.benchmark.into()),
             Ok(None) => Err(no_such()),
             Err(e) => Err(format!("{e:#}")),
@@ -368,7 +368,7 @@ impl Tool for RunBenchmark {
     async fn run(self, permit: &Permit<Act>, context: &Context<'_>) -> Result<LaunchedOut, String> {
         let benchmark = benchmark_id(self.benchmark_id)?;
         let reading: Permit<Read> = permit.clone().into();
-        let stage = match actions::get_benchmark(&reading, context.sources, benchmark).await {
+        let stage = match actions::benchmark_shown(&reading, context.sources, benchmark).await {
             Ok(Some(shown)) => shown.benchmark.stage,
             Ok(None) => return Err(Missing::Benchmark(benchmark.to_string()).to_string()),
             Err(e) => return Err(format!("{e:#}")),
@@ -566,7 +566,7 @@ impl Tool for CancelBenchmarkRun {
             Err(CancelRefusal::Failed(e)) => return Err(format!("{e:#}")),
         }
         let reading: Permit<Read> = permit.clone().into();
-        match actions::get_benchmark_run(&reading, context.sources, id).await {
+        match actions::benchmark_run_record(&reading, context.sources, id).await {
             Ok(Some(record)) => Ok(CancelledOut::of(record)),
             Ok(None) => Err(no_such()),
             Err(e) => Err(format!("{e:#}")),

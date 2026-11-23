@@ -73,7 +73,7 @@ impl From<Hold> for Wait {
 /// A hold over the trials and the scorers of a benchmark run: a drain and the
 /// usage limit, which hold them as they hold runs, while the other holds do
 /// not (`docs/specs/benchmarks.md`, Benchmark runs: Under `serve`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum BenchmarkRunHold {
     Drain,

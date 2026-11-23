@@ -19,9 +19,9 @@ use super::stats::{Stat, absent};
 use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
 use crate::access::{Permit, Read};
 use crate::actions;
-use crate::actions::Action;
+use crate::actions::{Action, TaskFactsScreen, TaskScreen};
 use crate::api::Sources;
-use crate::benchmarks::{TaskId, TaskShown};
+use crate::benchmarks::{CriteriaAnswer, TaskId};
 
 /// The name of Task's screen, its last crumb.
 const TASK: &str = "Task";
@@ -61,30 +61,37 @@ struct TaskView {
 
 impl TaskView {
     /// Of `task`, of the repo `repo`.
-    fn of(task: &TaskShown, repo: &str) -> TaskView {
+    fn of(shown: &TaskScreen, repo: &str) -> TaskView {
+        let task = &shown.task;
         TaskView {
             captured_from: html::built(format!(
                 r#"<a class="link link-hover" href="{}">{}</a>"#,
                 html::escape(&run_path(&task.run)),
                 html::escape(&task.run.to_string()),
             )),
-            item_and_start: match &task.facts {
-                Ok(facts) => ItemAndStart::Read {
-                    item: html::titled(facts.item, &facts.title, repo),
-                    started: html::time(facts.start),
+            item_and_start: match &shown.facts {
+                TaskFactsScreen::Read {
+                    item,
+                    title,
+                    started_at,
+                } => ItemAndStart::Read {
+                    item: html::titled(*item, title, repo),
+                    started: html::time(*started_at),
                 },
-                Err(refused) => ItemAndStart::Unreadable(refused.to_string()),
+                TaskFactsScreen::Unreadable { facts_unreadable } => {
+                    ItemAndStart::Unreadable(facts_unreadable.clone())
+                }
             },
             criteria: match &task.criteria {
-                Ok(criteria) => CriteriaShown::Read(criteria.as_str().to_string()),
-                Err(refused) => CriteriaShown::Unreadable(refused.why.clone()),
+                CriteriaAnswer::Criteria(criteria) => CriteriaShown::Read(criteria.clone()),
+                CriteriaAnswer::Unreadable(why) => CriteriaShown::Unreadable(why.clone()),
             },
             remove: Confirmation {
                 id: REMOVE.into(),
                 verb: Verb::Remove,
                 question: format!("Remove the task {} and its directory?", task.name),
                 turn_down: TurnDown::Cancel,
-                action: format!("{}/remove-task", benchmark_path(task.benchmark.id)),
+                action: format!("{}/remove-task", benchmark_path(shown.benchmark.id)),
                 fields: vec![("task", task.id.to_string())],
                 said: "task-said",
             },
@@ -156,10 +163,10 @@ struct QuestionRegion<'a> {
 /// The page of `task`: under its benchmark, its heading its name with its
 /// stage under it, and "Edit" then "Remove" among the screen's buttons
 /// (`docs/specs/benchmarks.md`, Task, Heading).
-fn page(task: &TaskShown, navigation: Navigation) -> Page {
+fn page(task: &TaskScreen, navigation: Navigation) -> Page {
     let heading = Heading {
         line: Some(html::escape(&task.benchmark.stage.to_string())),
-        ..Heading::named(task.name.as_str())
+        ..Heading::named(task.task.name.as_str())
     };
     Page::new(
         Place::within(Area::Benchmarks)
@@ -168,7 +175,7 @@ fn page(task: &TaskShown, navigation: Navigation) -> Page {
                 benchmark_path(task.benchmark.id),
             )
             .screen(TASK, Thing::Found(heading)),
-        stream(task.id),
+        stream(task.task.id),
         navigation,
     )
     .buttons(vec![
@@ -188,7 +195,11 @@ enum Unshown {
 }
 
 /// Task `id`, by its ID as a path gives it.
-async fn task_of(permit: &Permit<Read>, sources: &Sources, id: &str) -> Result<TaskShown, Unshown> {
+async fn task_of(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    id: &str,
+) -> Result<TaskScreen, Unshown> {
     let parsed: TaskId = id.parse().map_err(|_: String| Unshown::NoSuch)?;
     match actions::get_task(permit, sources, parsed).await {
         Ok(Some(task)) => Ok(task),
@@ -208,8 +219,8 @@ pub(super) async fn task_page(
             page: page(&task, navigation),
             frame,
             task: TaskView::of(&task, &sources.work_dir.repo),
-            edit: editing::edit_task(&task),
-            edit_values: html::built(editing::task_values(&task)),
+            edit: editing::edit_task(&task.task),
+            edit_values: html::built(editing::task_values(&task.task)),
         }
         .into_response(),
         Err(unshown) => {
@@ -261,7 +272,7 @@ pub(super) async fn task_events(
             regions.push(("task", render(&FactsRegion { task: &view })));
             regions.push(("criteria", render(&CriteriaRegion { task: &view })));
             regions.push((REMOVE_QUESTION, render(&QuestionRegion { task: &view })));
-            regions.push((editing::EDIT_TASK_VALUES, editing::task_values(&task)));
+            regions.push((editing::EDIT_TASK_VALUES, editing::task_values(&task.task)));
             regions
         }
     };

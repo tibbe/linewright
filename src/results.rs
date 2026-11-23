@@ -528,7 +528,7 @@ pub struct Correctness {
     pub verdict: Verdict,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {
     /// The output meets every criterion.

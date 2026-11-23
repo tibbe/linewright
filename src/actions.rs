@@ -6,6 +6,8 @@
 
 mod authorizations;
 mod automations;
+mod benchmark_run;
+mod benchmark_screens;
 mod benchmarks;
 mod board;
 mod capture;
@@ -16,6 +18,8 @@ mod work;
 
 pub use authorizations::*;
 pub use automations::*;
+pub use benchmark_run::*;
+pub use benchmark_screens::*;
 pub use benchmarks::*;
 pub use board::*;
 pub use capture::*;

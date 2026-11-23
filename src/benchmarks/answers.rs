@@ -4,6 +4,7 @@
 use std::fmt::Write as _;
 use std::num::NonZeroU32;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::cost::Usd;
@@ -20,13 +21,13 @@ use crate::task::TaskStage;
 use super::results::{self, Figures, Mean, Results};
 use super::runs::outcome_name;
 use super::{
-    BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ConfigurationId, NoScore,
-    Repetitions, RunTask, TaskId, TrialEnd, TrialFigures, TrialName, TrialState,
+    Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRunState, ConfigurationId,
+    NoScore, Repetitions, RunTask, TaskId, TrialEnd, TrialFigures, TrialName, TrialState,
 };
 
 /// A benchmark run's state as it is shown: an open benchmark run runs or waits,
 /// as `serve` alone knows, and waits for `serve` where it does not answer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase", tag = "state", content = "waiting_for")]
 pub enum Shown {
     Running,
@@ -36,7 +37,7 @@ pub enum Shown {
 }
 
 /// What a waiting benchmark run waits for.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WaitingFor {
     /// No `serve` runs it.
@@ -100,21 +101,21 @@ impl Shown {
 }
 
 /// A benchmark as a benchmark run's answer names it.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct BenchmarkOfRun {
     pub id: BenchmarkId,
     pub name: Name,
 }
 
 /// A configuration of a benchmark run, by its ID.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct ConfigurationAnswer {
     pub id: ConfigurationId,
     pub name: Name,
 }
 
 /// What `benchmark-run show ID` answers.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct BenchmarkRunAnswer {
     pub id: BenchmarkRunId,
     pub benchmark: BenchmarkOfRun,
@@ -135,7 +136,7 @@ pub struct BenchmarkRunAnswer {
 
 /// A trial of a benchmark run, by the IDs of its configuration and its task,
 /// with its score.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct KeyedTrialAnswer {
     pub repetition: NonZeroU32,
     pub task: TaskId,
@@ -147,7 +148,7 @@ pub struct KeyedTrialAnswer {
 }
 
 /// Where a trial and its scorer stand.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum TrialAnswer {
     Pending,
@@ -179,7 +180,7 @@ pub enum TrialAnswer {
 }
 
 /// Why a trial has no score.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "unscored", rename_all = "lowercase")]
 pub enum WhyUnscored {
     /// The build of its environment failed: it has no run, only its time.
@@ -195,12 +196,42 @@ pub enum WhyUnscored {
     Cancelled,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct TrialFiguresAnswer {
     pub outcome: OutcomeName,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost: Option<Usd>,
     pub seconds: f64,
+}
+
+impl TrialAnswer {
+    /// The figures of its run, once its run has ended.
+    pub fn run(&self) -> Option<&TrialFiguresAnswer> {
+        match self {
+            TrialAnswer::Pending | TrialAnswer::Running => None,
+            TrialAnswer::Ran { run }
+            | TrialAnswer::Scoring { run }
+            | TrialAnswer::Scored { run, .. } => Some(run),
+            TrialAnswer::Unscored { run, .. } => run.as_ref(),
+        }
+    }
+
+    /// Its time in seconds, once it has one: its run's, or the time to a
+    /// build that failed.
+    pub fn seconds(&self) -> Option<f64> {
+        match self {
+            TrialAnswer::Unscored {
+                why: WhyUnscored::Build { seconds },
+                ..
+            } => Some(*seconds),
+            TrialAnswer::Pending
+            | TrialAnswer::Running
+            | TrialAnswer::Ran { .. }
+            | TrialAnswer::Scoring { .. }
+            | TrialAnswer::Scored { .. }
+            | TrialAnswer::Unscored { .. } => self.run().map(|run| run.seconds),
+        }
+    }
 }
 
 impl From<&TrialFigures> for TrialFiguresAnswer {
@@ -249,28 +280,47 @@ impl From<&TrialState> for TrialAnswer {
     }
 }
 
-impl BenchmarkRunAnswer {
-    pub fn new(record: &BenchmarkRunRecord, shown: Shown) -> BenchmarkRunAnswer {
-        let trials = record
-            .trials
-            .iter()
-            .filter_map(|(key, state)| {
-                let of = record.trial_of(key)?;
-                Some(KeyedTrialAnswer {
+impl From<&Benchmark> for BenchmarkOfRun {
+    fn from(benchmark: &Benchmark) -> BenchmarkOfRun {
+        BenchmarkOfRun {
+            id: benchmark.id,
+            name: benchmark.name.clone(),
+        }
+    }
+}
+
+/// Each trial of `record` whose task and configuration it holds, in the
+/// order they start: its state as kept, and as `benchmark-run show` answers
+/// it.
+pub fn keyed_trials(record: &BenchmarkRunRecord) -> Vec<(&TrialState, KeyedTrialAnswer)> {
+    record
+        .trials
+        .iter()
+        .filter_map(|(key, state)| {
+            let of = record.trial_of(key)?;
+            Some((
+                state,
+                KeyedTrialAnswer {
                     repetition: key.repetition,
                     task: of.task.id,
                     configuration: of.configuration,
                     name: TrialName::new(key.repetition, &of.task.name, of.configuration_name),
                     state: state.into(),
-                })
-            })
+                },
+            ))
+        })
+        .collect()
+}
+
+impl BenchmarkRunAnswer {
+    pub fn new(record: &BenchmarkRunRecord, shown: Shown) -> BenchmarkRunAnswer {
+        let trials = keyed_trials(record)
+            .into_iter()
+            .map(|(_, trial)| trial)
             .collect();
         BenchmarkRunAnswer {
             id: record.id,
-            benchmark: BenchmarkOfRun {
-                id: record.benchmark.id,
-                name: record.benchmark.name.clone(),
-            },
+            benchmark: (&record.benchmark).into(),
             stage: record.benchmark.stage,
             launched_at: record.launched_at,
             ended_at: record.state.ended_at(),
@@ -458,7 +508,7 @@ pub fn duration(seconds: f64) -> String {
 }
 
 /// A benchmark run as `benchmark show BENCHMARK` lists it.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct BenchmarkRunSummary {
     pub id: BenchmarkRunId,
     pub launched_at: Timestamp,
@@ -467,7 +517,7 @@ pub struct BenchmarkRunSummary {
     pub pass_rates: Vec<PassRate>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, JsonSchema)]
 pub struct PassRate {
     pub configuration: ConfigurationAnswer,
     pub pass_rate: Option<f64>,
