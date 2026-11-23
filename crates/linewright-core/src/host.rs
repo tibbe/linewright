@@ -123,6 +123,18 @@ impl PublicUrl {
         self.url.join(path).expect("a path joins a URL")
     }
 
+    /// Its origin, with its port written out even where it is the scheme's
+    /// default, such as `https://linewright.example:443`.
+    /// <https://www.rfc-editor.org/rfc/rfc6454#section-4>
+    pub fn origin(&self) -> String {
+        let port = self
+            .url
+            .port_or_known_default()
+            .expect("an HTTP or HTTPS URL has a port");
+        let host = self.url.host_str().expect("a public URL has a host");
+        format!("{}://{host}:{port}", self.url.scheme())
+    }
+
     /// Whether the web UI answers a request whose `Host` is `host`: this
     /// URL's host.
     pub fn answers(&self, host: &HostName) -> bool {

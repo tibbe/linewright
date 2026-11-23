@@ -212,7 +212,7 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
             .expect("an HTTP client builds"),
     };
     let server = oauth::Server::new(ui.public_url.clone());
-    let mcp = crate::mcp::router(sources.clone(), &server, ui.manager.clone());
+    let mcp = crate::mcp::router(sources.clone(), &server, ui.manager.clone(), &ui.public_url);
     signed
         .merge(open)
         .layer(middleware::from_fn(caller::cross_site))

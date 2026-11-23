@@ -29,22 +29,22 @@ use linewright_core::access::oauth::store::AccessTokens;
 use linewright_core::access::oauth::{self, MCP_PATH};
 use linewright_core::access::people::ManagerName;
 use linewright_core::api::Sources;
+use linewright_core::host::PublicUrl;
 
-/// The versions of the protocol it serves: those from 2025-06-18 on.
-const PROTOCOL_VERSIONS: [ProtocolVersion; 3] = [
-    ProtocolVersion::V_2025_06_18,
-    ProtocolVersion::V_2025_11_25,
-    ProtocolVersion::V_2026_07_28,
-];
+/// The versions of the protocol it serves.
+const PROTOCOL_VERSIONS: [ProtocolVersion; 2] =
+    [ProtocolVersion::V_2025_06_18, ProtocolVersion::V_2025_11_25];
 
 /// The MCP server at [`MCP_PATH`], acting as the person whose access token
 /// each request bears, under the `manager` setting `manager`. A request
 /// without a valid access token gets 401, pointing to `server`'s protected
-/// resource metadata. It answers whatever `Host` a request names.
+/// resource metadata. It answers whatever `Host` a request names, and
+/// refuses with 403 a request whose `Origin` is not `public_url`'s.
 pub fn router<S: Clone + Send + Sync + 'static>(
     sources: Sources,
     server: &oauth::Server,
     manager: Option<ManagerName>,
+    public_url: &PublicUrl,
 ) -> Router<S> {
     let handler = Handler {
         sources: sources.clone(),
@@ -57,7 +57,8 @@ pub fn router<S: Clone + Send + Sync + 'static>(
             .with_legacy_session_mode(false)
             .with_json_response(true)
             .with_sse_keep_alive(None)
-            .disable_allowed_hosts(),
+            .disable_allowed_hosts()
+            .with_allowed_origins([public_url.origin()]),
     );
     let bearer = Bearer {
         sources,
@@ -65,6 +66,7 @@ pub fn router<S: Clone + Send + Sync + 'static>(
     };
     Router::new()
         .route_service(MCP_PATH, service)
+        .route_layer(middleware::from_fn(supported_version))
         .route_layer(middleware::from_fn_with_state(bearer, bearer_caller))
 }
 
@@ -127,6 +129,32 @@ async fn bearer_caller(State(bearer): State<Bearer>, mut request: Request, next:
         )],
     )
         .into_response()
+}
+
+/// Answers 400 to a request whose `MCP-Protocol-Version` names a version
+/// other than [`PROTOCOL_VERSIONS`], which rmcp takes where it knows the
+/// version, and passes on every other request.
+/// <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header>,
+/// <https://docs.rs/rmcp/3.11.0/src/rmcp/transport/streamable_http_server/tower.rs.html>
+async fn supported_version(request: Request, next: Next) -> Response {
+    let named = request.headers().get("mcp-protocol-version");
+    if let Some(named) = named
+        && !PROTOCOL_VERSIONS
+            .iter()
+            .any(|version| named.as_bytes() == version.as_str().as_bytes())
+    {
+        let named = String::from_utf8_lossy(named.as_bytes()).into_owned();
+        info!(
+            version = named,
+            "refused a request at another version of MCP"
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("Bad Request: Unsupported MCP-Protocol-Version: {named}"),
+        )
+            .into_response();
+    }
+    next.run(request).await
 }
 
 /// The server each request is answered by.

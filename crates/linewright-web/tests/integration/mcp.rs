@@ -47,14 +47,30 @@ impl<'a> Mcp<'a> {
     /// <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header>
     #[track_caller]
     fn post(&self, message: &Value) -> impl Future<Output = Answered> + use<> {
+        let version = if message["method"] == "initialize" {
+            vec![]
+        } else {
+            vec![("MCP-Protocol-Version", PROTOCOL)]
+        };
+        self.post_with(message, &version)
+    }
+
+    /// Posts the JSON-RPC message `message` to `/mcp`, with the headers
+    /// `added` besides those of every request.
+    #[track_caller]
+    fn post_with(
+        &self,
+        message: &Value,
+        added: &[(&str, &str)],
+    ) -> impl Future<Output = Answered> + use<> {
         let caller = Location::caller();
         let mut request = axum::http::Request::post("/mcp")
             .header("Host", UI_HOST)
             .header("Authorization", format!("{} {}", self.scheme, self.token))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream");
-        if message["method"] != "initialize" {
-            request = request.header("MCP-Protocol-Version", PROTOCOL);
+        for (name, value) in added {
+            request = request.header(*name, *value);
         }
         let request = request
             .body(Body::from(message.to_string()))
@@ -236,6 +252,65 @@ async fn a_client_initializes_at_2025_06_18_and_later() {
         )
         .await;
     assert_ne!(older["protocolVersion"], "2025-03-26", "{older}");
+}
+
+/// `docs/specs/access.md`, The MCP server: versions 2025-06-18 and
+/// 2025-11-25 alone, so a request at another gets 400.
+/// <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header>
+#[test_log::test(tokio::test)]
+async fn a_request_at_another_version_gets_400() {
+    let pages = Pages::of(a_ticket()).await;
+    let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
+    let mcp = Mcp::new(&pages, &token);
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let mut at_2026 = list.clone();
+    at_2026["params"] = json!({ "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    } });
+
+    for (message, version, status) in [
+        (&at_2026, "2026-07-28", 400),
+        (&list, "2026-07-28", 400),
+        (&list, "2025-03-26", 400),
+        (&list, "2025-11-25", 200),
+    ] {
+        let answered = mcp
+            .post_with(
+                message,
+                &[
+                    ("MCP-Protocol-Version", version),
+                    ("Mcp-Method", "tools/list"),
+                ],
+            )
+            .await;
+
+        assert_eq!(answered.status, status, "{version}: {}", answered.body);
+    }
+}
+
+/// `docs/specs/access.md`, The MCP server, Origin.
+#[test_log::test(tokio::test)]
+async fn a_request_is_taken_without_an_origin_or_from_the_public_urls_alone() {
+    let pages = Pages::of(a_ticket()).await;
+    let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
+    let mcp = Mcp::new(&pages, &token);
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+
+    for (origin, status) in [
+        (None, 200),
+        (Some("http://127.0.0.1:8081"), 200),
+        (Some("http://127.0.0.1:8082"), 403),
+        (Some("https://127.0.0.1:8081"), 403),
+        (Some("https://evil.example"), 403),
+        (Some("null"), 403),
+    ] {
+        let mut headers = vec![("MCP-Protocol-Version", PROTOCOL)];
+        headers.extend(origin.map(|origin| ("Origin", origin)));
+        let answered = mcp.post_with(&list, &headers).await;
+
+        assert_eq!(answered.status, status, "{origin:?}: {}", answered.body);
+    }
 }
 
 /// The tools a viewer is listed.
