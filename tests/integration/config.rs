@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use crate::common::model;
 use clap::{CommandFactory, Parser};
+use linewright::access::providers::Providers;
 use linewright::automation;
 use linewright::config::{Cli, Config, LogFormat, ResolveError};
 use linewright::domain::MergeMethod;
-use linewright::host::HostName;
 use linewright::layer::{Layer, Sourced};
 use linewright::reconcile::WorkKind;
 use linewright::session_env::{PassEnv, SessionEnv, SetEnv};
@@ -1392,6 +1392,8 @@ fn session_pass_env_naming_a_credential_of_linewrights_is_an_error_saying_why() 
         "GITHUB_TOKEN",
         "LINEWRIGHT_SESSION_GITHUB_TOKEN",
         "LINEWRIGHT_WEBHOOK_SECRET",
+        "LINEWRIGHT_GOOGLE_CLIENT_SECRET",
+        "LINEWRIGHT_GITHUB_CLIENT_SECRET",
     ] {
         let error = resolve(
             &["--session-pass-env", &format!("CARGO_HOME,{name}")],
@@ -1547,34 +1549,445 @@ fn only_the_list_settings_are_lists_in_the_file() {
     assert!(error.contains("`repo`"), "{error}");
 }
 
+/// The variables of a web UI at `https://lw.example.com`, and of its
+/// providers' client IDs and secrets.
+const PUBLIC_URL: (&str, &str) = ("LINEWRIGHT_PUBLIC_URL", "https://lw.example.com");
+const GOOGLE_ID: (&str, &str) = ("LINEWRIGHT_GOOGLE_CLIENT_ID", "google-id");
+const GOOGLE_SECRET: (&str, &str) = ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", "google-s3cret");
+const GITHUB_ID: (&str, &str) = ("LINEWRIGHT_GITHUB_CLIENT_ID", "github-id");
+const GITHUB_SECRET: (&str, &str) = ("LINEWRIGHT_GITHUB_CLIENT_SECRET", "github-s3cret");
+
+/// The variables of a web UI signing people in with Google.
+const GOOGLE_UI: [(&str, &str); 3] = [PUBLIC_URL, GOOGLE_ID, GOOGLE_SECRET];
+
+/// GitHub's client ID and secret, as variables.
+const GITHUB: [(&str, &str); 2] = [GITHUB_ID, GITHUB_SECRET];
+
+/// `GOOGLE_UI` with `more` after it.
+fn google_ui_and<'a>(more: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    GOOGLE_UI.iter().chain(more).copied().collect()
+}
+
 #[test_log::test]
-fn the_web_ui_is_served_on_127_0_0_1_8081_answering_only_local_names_by_default() {
+fn without_public_url_serve_serves_no_web_ui() {
     let config = resolve(&[], &[], None).unwrap();
+    let at_its_default = resolve(&["--ui-address", "127.0.0.1:8081"], &[], None).unwrap();
+
+    assert!(config.ui.is_none());
+    assert!(at_its_default.ui.is_none());
+}
+
+#[test_log::test]
+fn the_web_ui_is_served_on_127_0_0_1_8081_at_public_url_by_default() {
+    let config = resolve(&[], &GOOGLE_UI, None).unwrap();
 
     let ui = config.ui.unwrap();
     assert_eq!(ui.address.to_string(), "127.0.0.1:8081");
-    assert!(ui.hosts.answers(&HostName::parse("localhost").unwrap()));
-    assert!(
-        !ui.hosts
-            .answers(&HostName::parse("linewright.example.com").unwrap())
+    assert_eq!(ui.public_url.to_string(), "https://lw.example.com/");
+    let google = ui.providers.google().unwrap();
+    assert_eq!(google.client_id.as_str(), "google-id");
+    assert_eq!(google.secret.expose(), "google-s3cret");
+    assert!(ui.providers.github().is_none());
+    assert!(ui.manager.is_none());
+}
+
+#[test_log::test]
+fn the_ui_settings_are_keys_in_the_file_or_flags_that_add_to_its_lists() {
+    let file = "public-url = \"https://lw.example.com\"\n\
+                google-client-id = \"google-id\"\n\
+                google-signup-domains = [\"example.com\", \"Example.ORG.\"]\n\
+                github-client-id = \"github-id\"\n\
+                github-signup-orgs = [\"acme\", \"Widgets/Core-Team\"]\n\
+                manager = \"github:Octo-Cat\"\n";
+    let secrets = [GOOGLE_SECRET, GITHUB_SECRET];
+
+    let from_file = resolve(&[], &secrets, Some(file)).unwrap();
+    let from_flags = resolve(
+        &[
+            "--public-url",
+            "http://127.0.0.1:9000",
+            "--google-client-id",
+            "flag-id",
+            "--google-signup-domains",
+            "flag.example",
+        ],
+        &secrets,
+        Some(file),
+    )
+    .unwrap();
+
+    let in_file = from_file.ui.unwrap();
+    let Providers::Both(google, github) = &in_file.providers else {
+        panic!("{:?}", in_file.providers);
+    };
+    assert_eq!(google.client_id.as_str(), "google-id");
+    assert_eq!(google.signup.domains(), ["example.com", "example.org"]);
+    assert_eq!(github.client_id.as_str(), "github-id");
+    assert_eq!(github.secret.expose(), "github-s3cret");
+    let memberships: Vec<(&str, Option<&str>)> = github
+        .signup
+        .memberships()
+        .iter()
+        .map(|membership| (membership.organization(), membership.team()))
+        .collect();
+    assert_eq!(
+        memberships,
+        [("acme", None), ("widgets", Some("core-team"))]
+    );
+    assert_eq!(in_file.manager.unwrap().to_string(), "github:octo-cat");
+    let by_flags = from_flags.ui.unwrap();
+    assert_eq!(by_flags.public_url.to_string(), "http://127.0.0.1:9000/");
+    let flagged = by_flags.providers.google().unwrap();
+    assert_eq!(flagged.client_id.as_str(), "flag-id");
+    assert_eq!(
+        flagged.signup.domains(),
+        ["flag.example", "example.com", "example.org"]
     );
 }
 
 #[test_log::test]
-fn an_empty_ui_address_serves_no_web_ui() {
-    let from_flag = resolve(&["--ui-address", ""], &[], None).unwrap();
-    let from_env = resolve(&[], &[("LINEWRIGHT_UI_ADDRESS", "")], None).unwrap();
-    let from_file = resolve(&[], &[], Some("ui-address = \"\"\n")).unwrap();
+fn public_url_is_https_or_http_to_a_loopback_address() {
+    for (given, url) in [
+        ("https://lw.example.com", "https://lw.example.com/"),
+        (
+            "HTTPS://LW.Example.com:8443/",
+            "https://lw.example.com:8443/",
+        ),
+        ("https://192.0.2.7", "https://192.0.2.7/"),
+        ("http://127.0.0.1:8081", "http://127.0.0.1:8081/"),
+        ("http://127.1.2.3", "http://127.1.2.3/"),
+        ("http://[::1]:8081", "http://[::1]:8081/"),
+    ] {
+        let env = [("LINEWRIGHT_PUBLIC_URL", given), GOOGLE_ID, GOOGLE_SECRET];
 
-    assert!(from_flag.ui.is_none());
-    assert!(from_env.ui.is_none());
-    assert!(from_file.ui.is_none());
+        let ui = resolve(&[], &env, None).unwrap().ui.unwrap();
+
+        assert_eq!(ui.public_url.to_string(), url, "{given}");
+    }
+}
+
+#[test_log::test]
+fn a_public_url_that_is_not_https_or_http_to_a_loopback_address_is_an_error_naming_it() {
+    for bad in [
+        "http://lw.example.com",
+        "http://localhost:8081",
+        "http://192.0.2.7",
+        "ftp://lw.example.com",
+        "lw.example.com",
+        "https://lw.example.com/linewright",
+        "https://lw.example.com/?a=b",
+        "https://lw.example.com/#top",
+        "https://someone@lw.example.com",
+        "https://.",
+        "https://lw_example.com",
+    ] {
+        let error = resolve(&["--public-url", bad], &[GOOGLE_ID, GOOGLE_SECRET], None).unwrap_err();
+
+        assert!(
+            error.starts_with("the setting `public-url` is "),
+            "{bad}: {error}"
+        );
+        assert!(error.contains(bad), "{bad}: {error}");
+    }
+}
+
+#[test_log::test]
+fn ui_address_away_from_its_default_without_public_url_is_an_error_naming_both() {
+    for ui_address in ["0.0.0.0:9000", ""] {
+        let error = resolve(&["--ui-address", ui_address], &[], None).unwrap_err();
+
+        assert_eq!(
+            error,
+            "the setting `ui-address` is set, but `public-url` is not: \
+             set `public-url` to serve the web UI, or unset `ui-address`",
+            "{ui_address:?}"
+        );
+    }
+}
+
+#[test_log::test]
+fn a_ui_setting_without_public_url_is_an_error_naming_it() {
+    for (setting, variable, value) in [
+        (
+            "google-client-id",
+            "LINEWRIGHT_GOOGLE_CLIENT_ID",
+            "google-id",
+        ),
+        (
+            "google-signup-domains",
+            "LINEWRIGHT_GOOGLE_SIGNUP_DOMAINS",
+            "example.com",
+        ),
+        (
+            "github-client-id",
+            "LINEWRIGHT_GITHUB_CLIENT_ID",
+            "github-id",
+        ),
+        (
+            "github-signup-orgs",
+            "LINEWRIGHT_GITHUB_SIGNUP_ORGS",
+            "acme",
+        ),
+        ("manager", "LINEWRIGHT_MANAGER", "google:alice@example.com"),
+    ] {
+        let error = resolve(&[], &[(variable, value)], None).unwrap_err();
+
+        assert_eq!(
+            error,
+            format!(
+                "the setting `{setting}` is set, but `public-url` is not: \
+                 set `public-url` to serve the web UI, or unset `{setting}`"
+            )
+        );
+    }
+}
+
+#[test_log::test]
+fn a_sign_up_rule_without_its_providers_client_id_is_an_error_naming_both() {
+    let google = resolve(
+        &[],
+        &[
+            PUBLIC_URL,
+            GITHUB_ID,
+            GITHUB_SECRET,
+            ("LINEWRIGHT_GOOGLE_SIGNUP_DOMAINS", "example.com"),
+        ],
+        None,
+    )
+    .unwrap_err();
+    let github = resolve(
+        &[],
+        &google_ui_and(&[("LINEWRIGHT_GITHUB_SIGNUP_ORGS", "acme")]),
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        google,
+        "the setting `google-signup-domains` is set, but `google-client-id` is not: \
+         set `google-client-id` to sign people in with Google, or unset `google-signup-domains`"
+    );
+    assert_eq!(
+        github,
+        "the setting `github-signup-orgs` is set, but `github-client-id` is not: \
+         set `github-client-id` to sign people in with GitHub, or unset `github-signup-orgs`"
+    );
+}
+
+#[test_log::test]
+fn a_client_secret_without_its_providers_client_id_is_an_error_naming_both() {
+    let google = resolve(
+        &[],
+        &[PUBLIC_URL, GITHUB_ID, GITHUB_SECRET, GOOGLE_SECRET],
+        None,
+    )
+    .unwrap_err();
+    let github = resolve(&[], &google_ui_and(&[GITHUB_SECRET]), None).unwrap_err();
+    let without_public_url = resolve(&[], &[GITHUB_SECRET], None).unwrap_err();
+
+    assert_eq!(
+        google,
+        "`LINEWRIGHT_GOOGLE_CLIENT_SECRET` is set, but the setting `google-client-id` is not: \
+         set `google-client-id` to sign people in with Google, or unset \
+         `LINEWRIGHT_GOOGLE_CLIENT_SECRET`"
+    );
+    for error in [github, without_public_url] {
+        assert_eq!(
+            error,
+            "`LINEWRIGHT_GITHUB_CLIENT_SECRET` is set, but the setting `github-client-id` is \
+             not: set `github-client-id` to sign people in with GitHub, or unset \
+             `LINEWRIGHT_GITHUB_CLIENT_SECRET`"
+        );
+    }
+}
+
+#[test_log::test]
+fn manager_naming_a_provider_without_a_client_id_is_an_error_naming_both() {
+    let github = resolve(&["--manager", "github:octocat"], &GOOGLE_UI, None).unwrap_err();
+    let google = resolve(
+        &["--manager", "google:alice@example.com"],
+        &[PUBLIC_URL, GITHUB_ID, GITHUB_SECRET],
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        github,
+        "the setting `manager` names a GitHub identity, but `github-client-id` is not set: \
+         set `github-client-id` to sign people in with GitHub, or name a Google identity"
+    );
+    assert_eq!(
+        google,
+        "the setting `manager` names a Google identity, but `google-client-id` is not set: \
+         set `google-client-id` to sign people in with Google, or name a GitHub identity"
+    );
+}
+
+#[test_log::test]
+fn manager_names_a_google_email_or_a_github_login_ignoring_case() {
+    let env = google_ui_and(&GITHUB);
+    let manager = |name: &str| {
+        resolve(&["--manager", name], &env, None)
+            .unwrap()
+            .ui
+            .unwrap()
+            .manager
+            .unwrap()
+            .to_string()
+    };
+
+    assert_eq!(
+        manager("google:Alice@Example.com"),
+        "google:alice@example.com"
+    );
+    assert_eq!(manager("GitHub:Octo-Cat"), "github:octo-cat");
+}
+
+#[test_log::test]
+fn a_manager_that_names_no_identity_is_an_error_naming_it() {
+    let env = google_ui_and(&GITHUB);
+    for bad in [
+        "alice@example.com",
+        "google:alice",
+        "google:@example.com",
+        "google:alice@",
+        "github:",
+        "github:octo cat",
+        "github:octo@cat",
+        "github:-octocat",
+        "github:octo--cat",
+        "github:a123456789a123456789a123456789a123456789",
+        "google:alice@bob@example.com",
+        "gitlab:octocat",
+    ] {
+        let error = resolve(&["--manager", bad], &env, None).unwrap_err();
+
+        assert!(
+            error.starts_with(&format!("the setting `manager` is {bad:?}: ")),
+            "{bad}: {error}"
+        );
+    }
+}
+
+#[test_log::test]
+fn a_sign_up_rule_entry_that_names_no_domain_or_organization_is_an_error_naming_it() {
+    let env = google_ui_and(&GITHUB);
+    for (flag, bad) in [
+        ("--google-signup-domains", "@example.com"),
+        ("--google-signup-domains", "example.com/x"),
+        ("--google-signup-domains", "*.example.com"),
+        ("--google-signup-domains", "example.com:443"),
+        ("--github-signup-orgs", "acme/core/x"),
+        ("--github-signup-orgs", "/core"),
+        ("--github-signup-orgs", "acme/"),
+        ("--github-signup-orgs", "ac me"),
+        ("--google-signup-domains", "example-.com"),
+    ] {
+        let error = resolve(&[flag, bad], &env, None).unwrap_err();
+
+        assert!(
+            error.contains(&format!("the setting `{}` names {bad:?}", &flag[2..])),
+            "{bad}: {error}"
+        );
+    }
+}
+
+#[test_log::test]
+fn public_url_with_an_empty_ui_address_is_an_error_naming_both() {
+    let error = resolve(&["--ui-address", ""], &GOOGLE_UI, None).unwrap_err();
+
+    assert_eq!(
+        error,
+        "the setting `public-url` is set, but `ui-address` is empty: \
+         set `ui-address` to serve the web UI on it, or unset `public-url`"
+    );
+}
+
+#[test_log::test]
+fn public_url_without_a_client_id_is_an_error_naming_the_providers() {
+    let error = resolve(&[], &[PUBLIC_URL], None).unwrap_err();
+
+    assert_eq!(
+        error,
+        "the setting `public-url` is set, but no identity provider is: \
+         set `google-client-id`, `github-client-id` or both"
+    );
+}
+
+#[test_log::test]
+fn a_client_id_without_its_secret_is_an_error_naming_both() {
+    let google = resolve(&[], &[PUBLIC_URL, GOOGLE_ID], None).unwrap_err();
+    let github = resolve(&[], &google_ui_and(&[GITHUB_ID]), None).unwrap_err();
+
+    assert_eq!(
+        google,
+        "the setting `google-client-id` is set, but `LINEWRIGHT_GOOGLE_CLIENT_SECRET` is not: \
+         set it to the client secret Google gave"
+    );
+    assert_eq!(
+        github,
+        "the setting `github-client-id` is set, but `LINEWRIGHT_GITHUB_CLIENT_SECRET` is not: \
+         set it to the client secret GitHub gave"
+    );
+}
+
+#[test_log::test]
+fn an_empty_client_secret_is_no_client_secret() {
+    let env = [
+        PUBLIC_URL,
+        GOOGLE_ID,
+        ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", ""),
+    ];
+
+    let error = resolve(&[], &env, None).unwrap_err();
+
+    assert!(
+        error.contains("`LINEWRIGHT_GOOGLE_CLIENT_SECRET` is not"),
+        "{error}"
+    );
+}
+
+#[test_log::test]
+fn a_ui_setting_is_blamed_on_the_command_line_only_when_a_flag_is_at_fault() {
+    assert!(blames_the_command_line(
+        &["--manager", "github:octocat"],
+        &GOOGLE_UI,
+        None
+    ));
+    assert!(!blames_the_command_line(
+        &[],
+        &google_ui_and(&[("LINEWRIGHT_MANAGER", "github:octocat")]),
+        None
+    ));
+    assert!(blames_the_command_line(
+        &["--ui-address", ""],
+        &GOOGLE_UI,
+        None
+    ));
+    assert!(blames_the_command_line(
+        &["--google-client-id", "google-id"],
+        &[],
+        None
+    ));
+    assert!(!blames_the_command_line(
+        &[],
+        &[PUBLIC_URL, GOOGLE_ID],
+        None
+    ));
+}
+
+#[test_log::test]
+fn ui_hosts_is_an_unknown_setting() {
+    let error = resolve(&[], &GOOGLE_UI, Some("ui-hosts = [\"a.example\"]\n")).unwrap_err();
+
+    assert!(error.contains("unknown setting `ui-hosts`"), "{error}");
+    assert!(Cli::try_parse_from(["lw", "--ui-hosts", "a.example", "status"]).is_err());
 }
 
 #[test_log::test]
 fn the_ui_address_is_a_flag_the_environment_or_the_file() {
     let address = |args: &[&str], env: &[(&str, &str)], file| {
-        resolve(args, env, file)
+        resolve(args, &[&GOOGLE_UI[..], env].concat(), file)
             .unwrap()
             .ui
             .unwrap()
@@ -1601,153 +2014,10 @@ fn a_ui_address_that_is_not_a_host_and_port_is_an_error_naming_the_setting() {
         "localhost:http",
         "localhost:99999",
     ] {
-        let error = resolve(&["--ui-address", bad], &[], None).unwrap_err();
+        let error = resolve(&["--ui-address", bad], &GOOGLE_UI, None).unwrap_err();
 
         assert!(error.contains("ui-address"), "{bad}: {error}");
     }
-}
-
-/// Whether the web UI `config` sets up answers a request whose `Host` is
-/// `host`.
-fn answers(config: &Config, host: &str) -> bool {
-    let host = HostName::parse(host).unwrap();
-    config.ui.as_ref().unwrap().hosts.answers(&host)
-}
-
-#[test_log::test]
-fn ui_hosts_is_a_comma_separated_flag_or_variable_or_a_list_or_string_in_the_file() {
-    let list = Some("ui-hosts = [\"a.example\", \"B.example.\"]\n");
-    let string = Some("ui-hosts = \"c.example\"\n");
-    let env = [("LINEWRIGHT_UI_HOSTS", "d.example,e.example")];
-
-    let from_list = resolve(&[], &[], list).unwrap();
-    let from_string = resolve(&[], &[], string).unwrap();
-    let from_env = resolve(&[], &env, None).unwrap();
-    let from_flag = resolve(&["--ui-hosts", "f.example,g.example"], &[], None).unwrap();
-
-    assert!(answers(&from_list, "a.example"));
-    assert!(answers(&from_list, "b.example"));
-    assert!(!answers(&from_list, "c.example"));
-    assert!(answers(&from_string, "c.example"));
-    assert!(answers(&from_env, "d.example"));
-    assert!(answers(&from_env, "e.example"));
-    assert!(!answers(&from_env, "a.example"));
-    assert!(answers(&from_flag, "f.example"));
-    assert!(answers(&from_flag, "g.example"));
-    assert!(!answers(&from_flag, "d.example"));
-}
-
-#[test_log::test]
-fn ui_hosts_joins_the_hosts_of_the_flag_the_environment_and_the_file() {
-    let file = Some("ui-hosts = [\"a.example\", \"b.example\"]\n");
-    let env = [("LINEWRIGHT_UI_HOSTS", "b.example,c.example")];
-
-    let from_env_and_file = resolve(&[], &env, file).unwrap();
-    let joined = resolve(&["--ui-hosts", "d.example"], &env, file).unwrap();
-
-    for host in ["a.example", "b.example", "c.example"] {
-        assert!(answers(&from_env_and_file, host), "{host}");
-    }
-    assert!(!answers(&from_env_and_file, "d.example"));
-    for host in ["a.example", "b.example", "c.example", "d.example"] {
-        assert!(answers(&joined, host), "{host}");
-    }
-}
-
-#[test_log::test]
-fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_layer_that_gave_it() {
-    let file = Some("ui-hosts = [\"a.example:8081\"]\n");
-
-    let error = resolve(&["--ui-hosts", "b.example"], &[], file).unwrap_err();
-
-    assert!(error.contains("ui-hosts"), "{error}");
-    assert!(error.contains("linewright.toml"), "{error}");
-}
-
-#[test_log::test]
-fn a_ui_hosts_entry_that_is_not_a_host_name_is_an_error_naming_the_setting() {
-    for bad in [
-        "a.example:8081",
-        "https://a.example",
-        "*.example",
-        "a example",
-        ".",
-    ] {
-        let error = resolve(&["--ui-hosts", bad], &[], None).unwrap_err();
-
-        assert!(error.contains("ui-hosts"), "{bad:?}: {error}");
-    }
-    for bad in ["[\"a.example\", 7]", "[\"\"]", "[\"a.example,b.example\"]"] {
-        let file = format!("ui-hosts = {bad}\n");
-        let error = resolve(&[], &[], Some(&file)).unwrap_err();
-
-        assert!(error.contains("ui-hosts"), "{bad}: {error}");
-    }
-}
-
-#[test_log::test]
-fn ui_hosts_empty_names_no_host() {
-    let from_flag = resolve(&["--ui-hosts", ""], &[], None).unwrap();
-    let from_file = resolve(&[], &[], Some("ui-hosts = []\n")).unwrap();
-
-    assert!(!answers(&from_flag, "a.example"));
-    assert!(!answers(&from_file, "a.example"));
-    assert!(answers(&from_file, "localhost"));
-}
-
-#[test_log::test]
-fn ui_hosts_with_no_web_ui_is_an_error_naming_both() {
-    let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
-    let flag = resolve(&["--ui-address", "", "--ui-hosts", "a.example"], &[], None).unwrap_err();
-    let env = resolve(&[], &[no_ui[0], ("LINEWRIGHT_UI_HOSTS", "a.example")], None).unwrap_err();
-    let file = resolve(&[], &no_ui, Some("ui-hosts = [\"a.example\"]\n")).unwrap_err();
-
-    for error in [flag, env, file] {
-        assert_eq!(
-            error,
-            "the setting `ui-hosts` is set, but `ui-address` is empty: \
-             set `ui-address` to serve the web UI, or unset `ui-hosts`"
-        );
-    }
-}
-
-#[test_log::test]
-fn ui_hosts_in_the_file_with_no_web_ui_is_an_error_though_the_flag_names_no_host() {
-    let error = resolve(
-        &["--ui-address", "", "--ui-hosts", ""],
-        &[],
-        Some("ui-hosts = [\"a.example\"]\n"),
-    )
-    .unwrap_err();
-
-    assert!(
-        error.contains("the setting `ui-hosts` is set, but `ui-address` is empty"),
-        "{error}"
-    );
-}
-
-#[test_log::test]
-fn ui_hosts_naming_no_host_is_at_its_default_so_allowed_with_no_web_ui() {
-    let no_ui = [("LINEWRIGHT_UI_ADDRESS", "")];
-    let flag = resolve(&["--ui-hosts", ""], &no_ui, None);
-    let env = resolve(&[], &[no_ui[0], ("LINEWRIGHT_UI_HOSTS", "")], None);
-    let file = resolve(&[], &[], Some("ui-address = \"\"\nui-hosts = []\n"));
-
-    for config in [flag, env, file] {
-        assert!(config.unwrap().ui.is_none());
-    }
-}
-
-#[test_log::test]
-fn a_malformed_ui_hosts_with_no_web_ui_is_an_error_naming_what_is_wrong() {
-    let error = resolve(
-        &["--ui-hosts", "a/b"],
-        &[("LINEWRIGHT_UI_ADDRESS", "")],
-        None,
-    )
-    .unwrap_err();
-
-    assert!(error.contains("names \"a/b\""), "{error}");
 }
 
 #[test_log::test]
@@ -1757,18 +2027,6 @@ fn a_malformed_merge_method_or_a_webhook_address_with_webhooks_off_is_an_error_n
 
     assert!(merge_method.contains("\"fast-forward\""), "{merge_method}");
     assert!(webhook_address.contains("\"8080\""), "{webhook_address}");
-}
-
-#[test_log::test]
-fn ui_hosts_with_no_web_ui_is_blamed_on_the_command_line_only_when_a_flag_emptied_ui_address() {
-    let hosts = [("LINEWRIGHT_UI_HOSTS", "a.example")];
-
-    assert!(blames_the_command_line(&["--ui-address", ""], &hosts, None));
-    assert!(!blames_the_command_line(
-        &["--ui-hosts", "a.example"],
-        &[("LINEWRIGHT_UI_ADDRESS", "")],
-        None
-    ));
 }
 
 #[test_log::test]

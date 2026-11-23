@@ -175,6 +175,10 @@
 //! - `routed`: a router's answer, in-process, to a request with a `Host` or
 //!   none.
 //! - `status_and_body`: an answer's status and its whole body.
+//! - `UI_HOST`: the host of `public_url`.
+//! - `public_url`: the web UI's public URL in tests.
+//! - `ui_on`: the web UI on an address, at `public_url`, signing people in
+//!   with Google.
 //!
 //! # `files`: git and files
 //!

@@ -6,11 +6,15 @@ use anyhow::{Context, Result, anyhow, bail};
 use chrono::TimeDelta;
 use clap::{ArgAction, Args, Parser, Subcommand};
 
+use crate::access::people::{ManagerName, NotAManager};
+use crate::access::providers::{
+    self, ClientId, ClientSecret, GitHub, Google, Provider, Providers, SignUpDomains, SignUpOrgs,
+};
 use crate::automation::AutomationName;
 use crate::benchmarks::{BenchmarkId, BenchmarkRunId, ConfigurationId, Repetitions, TaskId};
 use crate::domain::{MergeMethod, Number, Repo, Timestamp};
 use crate::drain::Timeout;
-use crate::host::UiHosts;
+use crate::host::PublicUrl;
 use crate::layer::{self, Layer};
 use crate::logs::Which;
 use crate::name::Name;
@@ -448,15 +452,38 @@ pub struct Settings {
     /// without it]
     #[arg(long, global = true)]
     pub webhook_address: Option<String>,
-    /// The host and port `serve` serves the web UI on; empty for none
-    /// [default: 127.0.0.1:8081]
+    /// The host and port `serve` serves the web UI on, while `public-url`
+    /// is set [default: 127.0.0.1:8081]
     #[arg(long, global = true)]
     pub ui_address: Option<String>,
-    /// The host names the web UI answers besides the local ones and IP
-    /// addresses, comma-separated, and added to those the environment and the
-    /// config file give [default: none]
-    #[arg(long, global = true, value_name = "NAMES")]
-    pub ui_hosts: Option<String>,
+    /// The URL people reach the web UI at: HTTPS, or HTTP to a loopback
+    /// address [default: none: no web UI]
+    #[arg(long, global = true, value_name = "URL")]
+    pub public_url: Option<String>,
+    /// The client ID Google gave Linewright, its secret in
+    /// `LINEWRIGHT_GOOGLE_CLIENT_SECRET` [default: none: no sign-in with
+    /// Google]
+    #[arg(long, global = true)]
+    pub google_client_id: Option<String>,
+    /// The domains whose verified Google emails may sign in,
+    /// comma-separated, and added to those the environment and the config
+    /// file give [default: none]
+    #[arg(long, global = true, value_name = "DOMAINS")]
+    pub google_signup_domains: Option<String>,
+    /// The client ID GitHub gave Linewright, its secret in
+    /// `LINEWRIGHT_GITHUB_CLIENT_SECRET` [default: none: no sign-in with
+    /// GitHub]
+    #[arg(long, global = true)]
+    pub github_client_id: Option<String>,
+    /// The GitHub organizations, and `org/team` for a team, whose members
+    /// may sign in, comma-separated, and added to those the
+    /// environment and the config file give [default: none]
+    #[arg(long, global = true, value_name = "ORGS")]
+    pub github_signup_orgs: Option<String>,
+    /// The identity that is always a manager: `google:EMAIL` or
+    /// `github:LOGIN` [default: none]
+    #[arg(long, global = true, value_name = "IDENTITY")]
+    pub manager: Option<String>,
     /// The tracked Markdown files that are the spec [default: docs/**/*.md]
     #[arg(long, global = true)]
     pub spec_glob: Option<String>,
@@ -570,7 +597,7 @@ pub struct Config {
     pub repo: Option<String>,
     pub poll_interval: Duration,
     pub webhooks: Option<Webhooks>,
-    /// `None` when `ui-address` is empty.
+    /// `None` when `public-url` is not set.
     pub ui: Option<web::Ui>,
     pub spec_glob: SpecGlob,
     pub spec_lookback: TimeDelta,
@@ -602,7 +629,12 @@ impl Settings {
             ("poll-interval", &self.poll_interval),
             ("webhook-address", &self.webhook_address),
             ("ui-address", &self.ui_address),
-            ("ui-hosts", &self.ui_hosts),
+            (PUBLIC_URL, &self.public_url),
+            (GOOGLE_CLIENT_ID, &self.google_client_id),
+            (GOOGLE_SIGNUP_DOMAINS, &self.google_signup_domains),
+            (GITHUB_CLIENT_ID, &self.github_client_id),
+            (GITHUB_SIGNUP_ORGS, &self.github_signup_orgs),
+            (MANAGER, &self.manager),
             ("spec-glob", &self.spec_glob),
             ("spec-lookback", &self.spec_lookback),
             ("done-window", &self.done_window),
@@ -692,6 +724,17 @@ const fn stage_entry(setting: StageSetting) -> (&'static str, Form) {
     (setting.name(), stage_form(setting))
 }
 
+const UI_ADDRESS: &str = "ui-address";
+const PUBLIC_URL: &str = "public-url";
+const GOOGLE_CLIENT_ID: &str = "google-client-id";
+const GOOGLE_SIGNUP_DOMAINS: &str = "google-signup-domains";
+const GITHUB_CLIENT_ID: &str = "github-client-id";
+const GITHUB_SIGNUP_ORGS: &str = "github-signup-orgs";
+const MANAGER: &str = "manager";
+
+/// `ui-address`'s default.
+const UI_ADDRESS_DEFAULT: &str = "127.0.0.1:8081";
+
 /// The `setup` table's settings.
 const SETUP_COMMAND: &str = "setup.command";
 const SETUP_MAX_AGE: &str = "setup.max-age";
@@ -700,12 +743,17 @@ const SETUP_TIMEOUT: &str = "setup.timeout";
 /// The operator's settings, each with its form. A setting whose name holds
 /// a dot is a key of the table named before the dot
 /// (`docs/specs/operation.md`, Configuration, A table of settings).
-const SETTINGS: [(&str, Form); 30] = [
+const SETTINGS: [(&str, Form); 35] = [
     ("repo", VALUE),
     ("poll-interval", VALUE),
     ("webhook-address", VALUE),
-    ("ui-address", VALUE),
-    ("ui-hosts", list("a host name")),
+    (UI_ADDRESS, VALUE),
+    (PUBLIC_URL, VALUE),
+    (GOOGLE_CLIENT_ID, VALUE),
+    (GOOGLE_SIGNUP_DOMAINS, list("a domain")),
+    (GITHUB_CLIENT_ID, VALUE),
+    (GITHUB_SIGNUP_ORGS, list("an organization or a team")),
+    (MANAGER, VALUE),
     ("spec-glob", VALUE),
     ("spec-lookback", VALUE),
     ("done-window", VALUE),
@@ -907,29 +955,14 @@ struct Feature {
     when_off: fn() -> String,
 }
 
-struct Features {
-    webhooks: Feature,
-    ui: Feature,
-}
-
-const FEATURES: Features = Features {
-    webhooks: Feature {
-        setting: "webhook-address",
-        switches: &[],
-        when_off: || {
-            format!(
-                "`{}` is not: set it to the webhook's secret to turn webhooks on",
-                webhook::SECRET_VARIABLE
-            )
-        },
-    },
-    ui: Feature {
-        setting: "ui-hosts",
-        switches: &["ui-address"],
-        when_off: || {
-            "`ui-address` is empty: set `ui-address` to serve the web UI, or unset `ui-hosts`"
-                .into()
-        },
+const WEBHOOKS: Feature = Feature {
+    setting: "webhook-address",
+    switches: &[],
+    when_off: || {
+        format!(
+            "`{}` is not: set it to the webhook's secret to turn webhooks on",
+            webhook::SECRET_VARIABLE
+        )
     },
 };
 
@@ -951,6 +984,47 @@ fn refuse_while_off<T>(
             ),
         )),
         setting => Ok(setting),
+    }
+}
+
+/// An identity provider's settings and the variable of its client secret
+/// (`docs/specs/operation.md`, Configuration).
+struct ProviderSettings {
+    provider: Provider,
+    client_id: &'static str,
+    signup: &'static str,
+    secret_variable: &'static str,
+}
+
+const GOOGLE: ProviderSettings = ProviderSettings {
+    provider: Provider::Google,
+    client_id: GOOGLE_CLIENT_ID,
+    signup: GOOGLE_SIGNUP_DOMAINS,
+    secret_variable: providers::GOOGLE_SECRET_VARIABLE,
+};
+
+const GITHUB: ProviderSettings = ProviderSettings {
+    provider: Provider::GitHub,
+    client_id: GITHUB_CLIENT_ID,
+    signup: GITHUB_SIGNUP_ORGS,
+    secret_variable: providers::GITHUB_SECRET_VARIABLE,
+};
+
+impl ProviderSettings {
+    fn of(provider: Provider) -> &'static ProviderSettings {
+        match provider {
+            Provider::Google => &GOOGLE,
+            Provider::GitHub => &GITHUB,
+        }
+    }
+
+    /// How to turn the provider on, as an error says it.
+    fn turn_on(&self) -> String {
+        format!(
+            "set `{}` to sign people in with {}",
+            self.client_id,
+            self.provider.name()
+        )
     }
 }
 
@@ -1148,7 +1222,7 @@ impl Config {
                 .map_err(|e| not_one("webhook-address", address, e))
         };
         let webhook_address = refuse_while_off(
-            &FEATURES.webhooks,
+            &WEBHOOKS,
             secret.is_some(),
             get("webhook-address")
                 .map(|address| parse_webhook_address(&address))
@@ -1165,27 +1239,155 @@ impl Config {
             }),
             None => None,
         };
-        let ui_address = value("ui-address", "127.0.0.1:8081");
-        let hosts = joined(
-            list_of("ui-hosts"),
+        let given = |key: &str| get(key).filter(|text| !text.is_empty());
+        let public_url = given(PUBLIC_URL)
+            .map(|url| PublicUrl::parse(&url).map_err(|e| not_one(PUBLIC_URL, &url, anyhow!(e))))
+            .transpose()?;
+        let ui_address = value(UI_ADDRESS, UI_ADDRESS_DEFAULT);
+        let google_id = given(GOOGLE_CLIENT_ID).and_then(ClientId::new);
+        let github_id = given(GITHUB_CLIENT_ID).and_then(ClientId::new);
+        let google_signup = joined(
+            list_of(GOOGLE_SIGNUP_DOMAINS),
             &blame_on,
-            |host| UiHosts::new([host.as_str()]).map_err(|e| format!("the setting `ui-hosts` {e}")),
-            UiHosts::and,
+            |domain| {
+                SignUpDomains::of(&domain)
+                    .map_err(|e| format!("the setting `{GOOGLE_SIGNUP_DOMAINS}` {e}"))
+            },
+            SignUpDomains::and,
         )?;
-        let ui_hosts = refuse_while_off(
-            &FEATURES.ui,
-            !ui_address.is_empty(),
-            (hosts != UiHosts::default()).then_some(hosts),
-            blame,
+        let github_signup = joined(
+            list_of(GITHUB_SIGNUP_ORGS),
+            &blame_on,
+            |name| {
+                SignUpOrgs::of(&name).map_err(|e| format!("the setting `{GITHUB_SIGNUP_ORGS}` {e}"))
+            },
+            SignUpOrgs::and,
         )?;
-        let ui = match ui_address.as_str() {
-            "" => None,
-            address => Some(web::Ui {
-                address: address
-                    .parse()
-                    .map_err(|e| not_one("ui-address", address, e))?,
-                hosts: ui_hosts.unwrap_or_default(),
-            }),
+        let google_signup_set = !google_signup.is_empty();
+        let github_signup_set = !github_signup.is_empty();
+        let manager = given(MANAGER);
+        if public_url.is_none() {
+            let ui_settings = [
+                (UI_ADDRESS, ui_address != UI_ADDRESS_DEFAULT),
+                (GOOGLE_CLIENT_ID, google_id.is_some()),
+                (GOOGLE_SIGNUP_DOMAINS, google_signup_set),
+                (GITHUB_CLIENT_ID, github_id.is_some()),
+                (GITHUB_SIGNUP_ORGS, github_signup_set),
+                (MANAGER, manager.is_some()),
+            ];
+            if let Some((key, _)) = ui_settings.into_iter().find(|&(_, set)| set) {
+                return Err(blame(
+                    &[key, PUBLIC_URL],
+                    anyhow!(
+                        "the setting `{key}` is set, but `{PUBLIC_URL}` is not: set \
+                         `{PUBLIC_URL}` to serve the web UI, or unset `{key}`"
+                    ),
+                ));
+            }
+        }
+        let client = |keys: &ProviderSettings, id: Option<ClientId>, signup_set: bool| {
+            let ProviderSettings {
+                provider,
+                client_id: id_key,
+                signup: signup_key,
+                secret_variable,
+            } = *keys;
+            match (id, env(secret_variable).and_then(ClientSecret::new)) {
+                (None, _) if signup_set => Err(blame(
+                    &[signup_key, id_key],
+                    anyhow!(
+                        "the setting `{signup_key}` is set, but `{id_key}` is not: {}, or unset \
+                         `{signup_key}`",
+                        keys.turn_on()
+                    ),
+                )),
+                (None, Some(_)) => Err(blame(
+                    &[id_key],
+                    anyhow!(
+                        "`{secret_variable}` is set, but the setting `{id_key}` is not: {}, or \
+                         unset `{secret_variable}`",
+                        keys.turn_on()
+                    ),
+                )),
+                (None, None) => Ok(None),
+                (Some(_), None) => Err(blame(
+                    &[id_key],
+                    anyhow!(
+                        "the setting `{id_key}` is set, but `{secret_variable}` is not: set it \
+                         to the client secret {} gave",
+                        provider.name()
+                    ),
+                )),
+                (Some(id), Some(client_secret)) => Ok(Some((id, client_secret))),
+            }
+        };
+        let google =
+            client(&GOOGLE, google_id, google_signup_set)?.map(|(client_id, client_secret)| {
+                Google {
+                    client_id,
+                    secret: client_secret,
+                    signup: google_signup,
+                }
+            });
+        let github =
+            client(&GITHUB, github_id, github_signup_set)?.map(|(client_id, client_secret)| {
+                GitHub {
+                    client_id,
+                    secret: client_secret,
+                    signup: github_signup,
+                }
+            });
+        let ui = match public_url {
+            None => None,
+            Some(public_url) => {
+                if ui_address.is_empty() {
+                    return Err(blame(
+                        &[PUBLIC_URL, UI_ADDRESS],
+                        anyhow!(
+                            "the setting `{PUBLIC_URL}` is set, but `{UI_ADDRESS}` is empty: \
+                             set `{UI_ADDRESS}` to serve the web UI on it, or unset `{PUBLIC_URL}`"
+                        ),
+                    ));
+                }
+                let providers = Providers::of(google, github).ok_or_else(|| {
+                    blame(
+                        &[PUBLIC_URL],
+                        anyhow!(
+                            "the setting `{PUBLIC_URL}` is set, but no identity provider is: \
+                             set `{GOOGLE_CLIENT_ID}`, `{GITHUB_CLIENT_ID}` or both"
+                        ),
+                    )
+                })?;
+                let manager = manager
+                    .map(|name| {
+                        ManagerName::parse(&name, &providers).map_err(|e| match e {
+                            NotAManager::Malformed(why) => not_one(MANAGER, &name, anyhow!(why)),
+                            NotAManager::NotOffered(provider) => {
+                                let keys = ProviderSettings::of(provider);
+                                blame(
+                                    &[MANAGER, keys.client_id],
+                                    anyhow!(
+                                        "the setting `{MANAGER}` names a {} identity, but `{}` \
+                                         is not set: {}, or name a {} identity",
+                                        provider.name(),
+                                        keys.client_id,
+                                        keys.turn_on(),
+                                        provider.other().name()
+                                    ),
+                                )
+                            }
+                        })
+                    })
+                    .transpose()?;
+                Some(web::Ui {
+                    address: ui_address
+                        .parse()
+                        .map_err(|e| not_one(UI_ADDRESS, &ui_address, e))?,
+                    public_url,
+                    providers,
+                    manager,
+                })
+            }
         };
         let pass = joined(
             list_of(PASS_ENV),

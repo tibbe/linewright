@@ -226,16 +226,16 @@ the branch to have it start over. Closing the issue deletes it.
 
 ## Following Linewright in a browser
 
-`serve` serves a web UI on a port of its own, `http://localhost:8081` on the
-machine it runs on unless whoever runs Linewright set it otherwise. Open the
-address they give you: the UI's own, or the address of the proxy they put in
-front of it. Without either, forward a port to it from your machine over SSH:
+`serve` serves a web UI at the URL whoever runs Linewright set for it, its
+public URL. Open the address they give you. When it is
+`http://127.0.0.1:8081` on another machine, forward a port to it from yours
+over SSH:
 
 ```sh
-ssh -N -L 8081:localhost:8081 linewright-host
+ssh -N -L 8081:127.0.0.1:8081 linewright-host
 ```
 
-Then open `http://localhost:8081`.
+Then open `http://127.0.0.1:8081`.
 
 ## Recurring work
 

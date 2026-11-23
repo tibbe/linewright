@@ -313,7 +313,7 @@ fn showing(pages: &Pages, shown: linewright::benchmarks::Shown) -> Showing {
         ..pages.sources.clone()
     };
     Showing {
-        router: web::router(sources, UiHosts::default(), pages.stopping.clone()),
+        router: web::router(sources, public_url(), pages.stopping.clone()),
     }
 }
 

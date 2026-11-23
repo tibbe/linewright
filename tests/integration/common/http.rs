@@ -64,3 +64,29 @@ pub fn assert_passes_through_a_proxy(headers: &axum::http::HeaderMap) {
     assert_eq!(all("cache-control"), ["no-store, no-transform"]);
     assert_eq!(all("x-accel-buffering"), ["no"]);
 }
+
+/// The host of [`public_url`].
+pub const UI_HOST: &str = "127.0.0.1";
+
+/// The web UI's public URL in tests, `http://UI_HOST:8081`.
+pub fn public_url() -> linewright::host::PublicUrl {
+    linewright::host::PublicUrl::parse(&format!("http://{UI_HOST}:8081"))
+        .expect("a loopback address is a public URL")
+}
+
+/// The web UI on `address`, at [`public_url`], signing people in with
+/// Google.
+#[track_caller]
+pub fn ui_on(address: &str) -> linewright::web::Ui {
+    use linewright::access::providers::{ClientId, ClientSecret, Google, Providers, SignUpDomains};
+    linewright::web::Ui {
+        address: address.parse().unwrap(),
+        public_url: public_url(),
+        providers: Providers::Google(Google {
+            client_id: ClientId::new("google-id".into()).unwrap(),
+            secret: ClientSecret::new("google-s3cret".into()).unwrap(),
+            signup: SignUpDomains::default(),
+        }),
+        manager: None,
+    }
+}

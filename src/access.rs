@@ -2,6 +2,9 @@
 //! access levels and roles, the caller a request resolves to, and the permit
 //! that every action needs.
 
+pub mod people;
+pub mod providers;
+
 use std::fmt;
 use std::marker::PhantomData;
 

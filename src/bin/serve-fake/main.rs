@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use linewright::access::providers::GOOGLE_SECRET_VARIABLE;
 use linewright::clock::{Clock, RunningFrom};
 use linewright::config::{Config, Settings};
 use linewright::factory::{Factory, SessionToken};
@@ -141,6 +142,7 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
     let work = std::env::var_os(WORK_DIR).map_or_else(|| dir.join("work"), PathBuf::from);
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
+         public-url = \"http://127.0.0.1:{port}\"\ngoogle-client-id = \"serve-fake\"\n\
          poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",
         repo = seed::REPO,
         work = work.display(),
@@ -162,7 +164,8 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
         config: Some(path),
         ..Settings::default()
     };
-    Config::resolve(&settings, dir, &|_| None, false).map_err(|e| anyhow::anyhow!("{e}"))
+    let env = |name: &str| (name == GOOGLE_SECRET_VARIABLE).then(|| "serve-fake".to_string());
+    Config::resolve(&settings, dir, &env, false).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// A port of `127.0.0.1` nothing listens on.

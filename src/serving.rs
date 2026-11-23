@@ -84,7 +84,10 @@ where
     };
     let ui = match &config.ui {
         Some(ui) => Some(web::Listener::bind(ui, sources.clone()).await?),
-        None => None,
+        None => {
+            info!(reason = "`public-url` is not set", "serving no web UI");
+            None
+        }
     };
     let listeners = Listeners {
         webhooks: listener,

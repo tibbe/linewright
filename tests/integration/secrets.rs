@@ -48,6 +48,22 @@ fn the_harness_s_credentials_are_secrets_without_being_named() {
 }
 
 #[test_log::test]
+fn the_identity_providers_client_secrets_are_secrets_without_being_named() {
+    for name in [
+        "LINEWRIGHT_GOOGLE_CLIENT_SECRET",
+        "LINEWRIGHT_GITHUB_CLIENT_SECRET",
+    ] {
+        let env = [(name, "client-s3cr3t")];
+        assert_eq!(
+            redacted(&env, "secret: client-s3cr3t"),
+            "secret: [redacted]",
+            "{name}"
+        );
+        assert_eq!(held_in(&env, "client-s3cr3t").as_deref(), Some(name));
+    }
+}
+
+#[test_log::test]
 fn the_harness_s_other_variables_are_not_secrets() {
     let env = [
         ("ANTHROPIC_BASE_URL", "https://gateway.example.com"),

@@ -333,11 +333,11 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let (_unended, polling) = tokio::sync::watch::channel(None);
     let router = web::router(
         sources(&dir, &clock, clock.now(), served, polling).await,
-        UiHosts::default(),
+        public_url(),
         CancellationToken::new(),
     );
     let request = axum::http::Request::get("/automations")
-        .header("Host", "localhost")
+        .header("Host", UI_HOST)
         .body(Body::empty())
         .unwrap();
 

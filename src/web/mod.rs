@@ -55,17 +55,21 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::access::people::ManagerName;
+use crate::access::providers::Providers;
 use crate::api::{Sources, Unanswered};
 use crate::benchmarks::{BenchmarkId, BenchmarkRunId, TaskId};
-use crate::host::{HostName, UiHosts};
+use crate::host::{HostName, PublicUrl};
 use crate::listening::{Address, Listening};
 
-/// Where the web UI is served and the names it answers besides the local
-/// ones and IP addresses (`docs/specs/operation.md`, Serving the UI).
+/// Where the web UI is served, where people reach it, and how it signs
+/// them in (`docs/specs/operation.md`, Serving the UI).
 #[derive(Clone, Debug)]
 pub struct Ui {
     pub address: Address,
-    pub hosts: UiHosts,
+    pub public_url: PublicUrl,
+    pub providers: Providers,
+    pub manager: Option<ManagerName>,
 }
 
 /// The web UI listening on its port, until [`Listener::stop`].
@@ -83,7 +87,7 @@ impl Listener {
         let socket = ui.address.bind("ui-address").await?;
         let address = socket.local_addr()?;
         let stopping = CancellationToken::new();
-        let router = router(sources, ui.hosts.clone(), stopping.clone());
+        let router = router(sources, ui.public_url.clone(), stopping.clone());
         let listening = Listening::spawn(socket, router, "serving the web UI");
         info!(address = %address, "serving the web UI");
         Ok(Listener {
@@ -106,9 +110,9 @@ impl Listener {
 }
 
 /// The web UI: its pages, their event streams and their assets, answering
-/// only the requests whose `Host` `hosts` answers. `stopping` ends the event
-/// streams.
-pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> Router {
+/// only the requests whose `Host` is `public_url`'s host. `stopping` ends
+/// the event streams.
+pub fn router(sources: Sources, public_url: PublicUrl, stopping: CancellationToken) -> Router {
     Router::new()
         .route("/", get(board_page::board_page))
         .route("/events/", get(board_page::board_events))
@@ -195,18 +199,21 @@ pub fn router(sources: Sources, hosts: UiHosts, stopping: CancellationToken) -> 
         .layer(middleware::from_fn(caller::cross_site))
         .layer(middleware::from_fn(confined))
         .fallback(no_such_page)
-        .layer(middleware::from_fn_with_state(hosts, misdirected))
+        .layer(middleware::from_fn_with_state(public_url, misdirected))
         .layer(Extension(stopping))
         .with_state(sources)
 }
 
-/// Refuses a request whose `Host` is not local, an IP address or one of
-/// `ui-hosts`.
-async fn misdirected(State(hosts): State<UiHosts>, request: Request, next: Next) -> Response {
+/// Refuses a request whose `Host` is not the public URL's host.
+async fn misdirected(
+    State(public_url): State<PublicUrl>,
+    request: Request,
+    next: Next,
+) -> Response {
     let headers = request.headers();
     let reason = match HostName::of(headers) {
-        Some(host) if hosts.answers(&host) => return next.run(request).await,
-        Some(_) => "its Host is not local, an IP address or one of `ui-hosts`",
+        Some(host) if public_url.answers(&host) => return next.run(request).await,
+        Some(_) => "its Host is not the host of `public-url`",
         None if headers.contains_key(header::HOST) => "its Host cannot be read",
         None => "it has no Host",
     };

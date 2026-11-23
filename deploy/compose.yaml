@@ -16,7 +16,6 @@ services:
     env_file: .env
     environment:
       LINEWRIGHT_WORK_DIR: /data
-      LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
       CLAUDE_CONFIG_DIR: /home/linewright/.claude
       XDG_CACHE_HOME: /tmp/cache
       http_proxy: http://proxy:4750

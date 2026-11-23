@@ -8,7 +8,6 @@ use linewright::api::{self, Api, ClaimError, Listeners, Sources};
 use linewright::clock::Clock;
 use linewright::ending::{Ends, Event, Signal};
 use linewright::factory::ServeEnd;
-use linewright::host::UiHosts;
 use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use linewright::winding_up::{Remaining, WindingUp};
@@ -116,10 +115,7 @@ impl Answering {
             benchmark_runs: serving.benchmark_runs.clone(),
             exiting: winding_up.exiting(),
         };
-        let ui = web::Ui {
-            address: "127.0.0.1:0".parse().unwrap(),
-            hosts: UiHosts::default(),
-        };
+        let ui = ui_on("127.0.0.1:0");
         let ui = web::Listener::bind(&ui, sources.clone()).await.unwrap();
         let api = Api::serve(claimed, sources);
         Answering {
@@ -209,7 +205,15 @@ async fn lw_with(runtime_dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Out
         .args(args)
         .current_dir(cwd.path())
         .env("XDG_RUNTIME_DIR", runtime_dir)
-        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
+        .env_remove("LINEWRIGHT_UI_ADDRESS")
+        .env_remove("LINEWRIGHT_PUBLIC_URL")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GOOGLE_SIGNUP_DOMAINS")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GITHUB_SIGNUP_ORGS")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_MANAGER")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .envs(env.iter().copied())
         .kill_on_drop(true)

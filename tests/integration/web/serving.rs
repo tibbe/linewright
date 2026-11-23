@@ -52,13 +52,10 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
     assert_eq!(stale.status(), 404);
 }
 
-/// The status of the answer to a GET of `path` on `listener` with `host`
-/// as its `Host`, or none.
-async fn status_on(listener: &web::Listener, host: Option<&str>, path: &str) -> u16 {
-    let stream = tokio::net::TcpStream::connect(listener.local_address())
-        .await
-        .unwrap();
-    send_over(stream, hyper::Method::GET, host, path)
+/// The status of `router`'s answer to a GET of `path` with `host` as its
+/// `Host`, or none.
+async fn status_at(router: &Router, host: Option<&str>, path: &str) -> u16 {
+    routed(router, hyper::Method::GET, host, path)
         .await
         .status()
         .as_u16()
@@ -75,47 +72,46 @@ async fn a_page_its_stream_and_an_asset(pages: &Pages) -> [String; 3] {
 }
 
 #[test_log::test(tokio::test)]
-async fn the_ui_answers_a_local_name_an_ip_address_or_one_of_ui_hosts() {
+async fn the_ui_answers_the_public_urls_host_ignoring_case_port_and_a_trailing_dot() {
     let pages = pages().await;
-    let ui = pages.listen(&["Linewright.Example.com"]).await;
+    let named = pages.at("https://Linewright.Example.com");
+    let loopback = pages.at("http://[::1]:8081");
+    let mapped = pages.at("https://[::ffff:127.0.0.1]");
 
     for path in a_page_its_stream_and_an_asset(&pages).await {
-        for host in [
-            "localhost",
-            "LOCALHOST.:8081",
-            "127.0.0.1",
-            "[::1]:8081",
-            "192.0.2.7",
-            "[2001:db8::7]",
-            "LINEWRIGHT.example.COM.",
-            "linewright.example.com:443",
+        for (ui, host) in [
+            (&named, "linewright.example.com"),
+            (&named, "LINEWRIGHT.example.COM."),
+            (&named, "linewright.example.com:443"),
+            (&named, "linewright.example.com:8081"),
+            (&loopback, "[::1]"),
+            (&loopback, "[::1]:9000"),
+            (&loopback, "[0:0:0:0:0:0:0:1]"),
+            (&mapped, "[::ffff:7f00:1]"),
         ] {
-            assert_eq!(
-                status_on(&ui, Some(host), &path).await,
-                200,
-                "{host} {path}"
-            );
+            assert_eq!(status_at(ui, Some(host), &path).await, 200, "{host} {path}");
         }
     }
-    ui.stop().await;
 }
 
 #[test_log::test(tokio::test)]
 async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
     let pages = pages().await;
-    let ui = pages.listen(&["linewright.example.com"]).await;
+    let ui = pages.at("https://linewright.example.com");
     let paths = a_page_its_stream_and_an_asset(&pages).await;
 
     for path in paths {
         for (host, reason) in [
-            (Some("evil.example"), "ui-hosts"),
-            (Some("localhost.evil.example"), "ui-hosts"),
-            (Some("www.linewright.example.com"), "ui-hosts"),
+            (Some("evil.example"), "public-url"),
+            (Some("www.linewright.example.com"), "public-url"),
+            (Some("localhost"), "public-url"),
+            (Some("127.0.0.1"), "public-url"),
+            (Some("[::1]:8081"), "public-url"),
             (None, "no Host"),
         ] {
             let (log, _guard) = Log::capture();
 
-            let status = status_on(&ui, host, &path).await;
+            let status = status_at(&ui, host, &path).await;
 
             assert_eq!(status, 421, "{host:?} {path}");
             let refused = log.lines("WARN");
@@ -128,7 +124,6 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
             assert!(refused[0].contains(reason), "{}", refused[0]);
         }
     }
-    ui.stop().await;
 }
 
 #[test_log::test(tokio::test)]
@@ -189,16 +184,10 @@ async fn a_quiet_pages_stream_sends_a_comment_15_seconds_after_its_last_event_an
 #[test_log::test(tokio::test)]
 async fn a_web_ui_stopped_with_a_stream_open_frees_its_address() {
     let pages = pages().await;
-    let ui = pages.listen(&[]).await;
+    let ui = pages.listen().await;
     let address = ui.local_address();
     let connection = tokio::net::TcpStream::connect(address).await.unwrap();
-    let stream = send_over(
-        connection,
-        hyper::Method::GET,
-        Some("localhost"),
-        "/events/",
-    )
-    .await;
+    let stream = send_over(connection, hyper::Method::GET, Some(UI_HOST), "/events/").await;
     assert_eq!(stream.status(), 200);
 
     tokio::time::timeout(Duration::from_secs(10), ui.stop())
