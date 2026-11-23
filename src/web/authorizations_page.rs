@@ -22,7 +22,7 @@ use super::{ErrorPage, Page, events, render, with_filters};
 use crate::access::oauth::store::{AuthorizationListed, EndRefusal};
 use crate::access::oauth::{AuthorizationId, client_name};
 use crate::access::{Permit, Read};
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, Missing};
 use crate::api::Sources;
 
 /// The path of Authorizations (`docs/specs/web/design_system.md`,
@@ -245,7 +245,7 @@ pub(super) async fn end(
     let no_such = || {
         WRITE.refused(
             StatusCode::NOT_FOUND,
-            &format!("No such authorization {id}"),
+            &Missing::Authorization(id.clone()).to_string(),
         )
     };
     let authorization = id.parse::<AuthorizationId>().map_err(|_| no_such())?;

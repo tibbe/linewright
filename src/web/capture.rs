@@ -12,14 +12,11 @@ use tracing::warn;
 use super::benchmark_page::BenchmarkTab;
 use super::caller::{Asking, Reader};
 use super::html::{self, Html};
-use super::making::{
-    self, Answer, Field, FieldRefusals, Form, MadeShown, Making, REQUIRED, benchmark_taken, both,
-    task_taken,
-};
+use super::making::{self, Answer, Field, FieldRefusals, Form, MadeShown, Making, REQUIRED, both};
 use super::write::Write;
 use super::{benchmark_tab_path, run_path};
 use crate::access::{Act, Permit, Read};
-use crate::actions::{self, Action, AddTaskError};
+use crate::actions::{self, Action, AddTaskError, no_such_run};
 use crate::api::Sources;
 use crate::benchmarks::Benchmark;
 use crate::name::Name;
@@ -412,13 +409,13 @@ impl NotCaptured {
         &self,
         choice: &BenchmarkChoice,
     ) -> (StatusCode, making::Refusal<F>) {
-        let AddTaskError::Capture { error, why } = &self.0 else {
+        let AddTaskError::Capture { error, .. } = &self.0 else {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                making::Refusal::Whole(self.0.to_string()),
+                making::Refusal::Whole(self.0.said()),
             );
         };
-        let reason = reason(error, why);
+        let reason = self.0.said();
         let field = match error {
             CaptureError::Taken { .. } => Some(F::from(TaskField::Name)),
             CaptureError::BenchmarkTaken(_) | CaptureError::NoSuchBenchmark(_) => F::naming(choice),
@@ -437,36 +434,6 @@ impl NotCaptured {
             None => (status_of(error), making::Refusal::Whole(reason)),
         }
     }
-}
-
-/// What a screen says of a capture that did not happen for `error`, as `why`
-/// says of it, redacted. A refusal the spec gives no message keeps the
-/// capture's own wording.
-fn reason(error: &CaptureError, why: &str) -> String {
-    match error {
-        CaptureError::Taken { task, benchmark } => task_taken(task, benchmark),
-        CaptureError::OtherStage {
-            run,
-            stage,
-            benchmark,
-        } => format!(
-            "Run {run} is of {stage}, and {} holds tasks of {}.",
-            benchmark.name, benchmark.stage
-        ),
-        CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
-        CaptureError::Lacks { run, part } => format!("The record of run {run} lacks {part}."),
-        CaptureError::NoSuchRun(run) => no_such_run(run),
-        CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
-        CaptureError::NotCapturable(_)
-        | CaptureError::NoSuchBenchmark(_)
-        | CaptureError::Failed(_) => why.to_string(),
-    }
-}
-
-/// The refusal of a capture of run `run`, which does not exist
-/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
-fn no_such_run(run: &impl std::fmt::Display) -> String {
-    format!("No such run {run}.")
 }
 
 /// Captures `run` as `task` into the benchmark `choice`; or else says why it

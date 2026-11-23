@@ -21,6 +21,33 @@ use crate::name::Name;
 use crate::task::TaskStage;
 use crate::trial::Configuration;
 
+/// The refusal of a benchmark named as one that exists
+/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
+pub fn benchmark_taken(name: &Name) -> String {
+    format!("A benchmark named {name} already exists.")
+}
+
+/// The refusal of a task named as another task of its benchmark
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
+pub fn task_taken(task: &Name, benchmark: &Name) -> String {
+    format!("A task named {task} already exists in {benchmark}.")
+}
+
+/// The refusal of the name `name` that another configuration has
+/// (`docs/specs/benchmarks.md`, New benchmark run, Refusals).
+pub fn another_named(name: &Name) -> String {
+    format!("Another configuration is named {name}.")
+}
+
+/// The refusal of a benchmark run on the benchmark `name`, which has no
+/// tasks (`docs/specs/benchmarks.md`, New benchmark run, Refusals).
+pub fn no_tasks(name: &Name) -> String {
+    format!("The benchmark {name} has no tasks.")
+}
+
+/// The refusal of a change to the name of `as-is`, which keeps it.
+pub const AS_IS_KEEPS_ITS_NAME: &str = "The configuration as-is keeps its name.";
+
 /// The benchmarks of `serve`'s work directory.
 pub(super) fn benchmarks(sources: &Sources) -> Benchmarks {
     Benchmarks::new(sources.runs.database().clone())

@@ -16,16 +16,14 @@ use tracing::warn;
 use super::buttons::ScreenButton;
 use super::caller::{Asking, Reader};
 use super::html::{self, Html};
-use super::making::{
-    self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal, benchmark_taken,
-};
+use super::making::{self, Answer, Field, FieldRefusals, Form, MadeShown, Making, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column, View};
 use super::write::Write;
 use super::{Page, benchmark_path, benchmark_run_path, events, given, render, with_filters};
 use crate::access::{Permit, Read};
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, benchmark_taken};
 use crate::api::Sources;
 use crate::benchmarks::{BenchmarkListed, BenchmarkRunId, MakeError};
 use crate::domain::Timestamp;
