@@ -7,18 +7,21 @@ use std::sync::Arc;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Query, State};
+use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::caller::Reader;
 use super::names::Names;
 use super::pages::{PageHref, Requested};
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, given, render, unanswered, with_filters};
-use crate::api::{self, Sources};
+use crate::access::{Permit, Read};
+use crate::actions;
+use crate::api::Sources;
 use crate::config::{self, Since};
 use crate::domain::{Number, Timestamp};
 use crate::reconcile::WorkKind;
@@ -146,19 +149,20 @@ impl Filters {
 /// The runs as the narrowing lists them, all of them, or why they are not
 /// listed, and the status the page answers with. An item without runs is
 /// "No runs", not a page that is not there.
-async fn listed(sources: &Sources, narrowing: &Narrowing) -> (StatusCode, RunsShown) {
+async fn listed(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    narrowing: &Narrowing,
+) -> (StatusCode, RunsShown) {
     let now = sources.clock.now();
     let query = match &narrowing.narrowed {
         Ok(narrowed) => narrowed.query(now),
         Err(e) => return (StatusCode::BAD_REQUEST, RunsShown::Unlisted(e.clone())),
     };
-    match runs::answer(Some(&sources.runs), &query, now).await {
+    match actions::list_runs(permit, sources, &query, now).await {
         Ok(listing) => {
-            let view = api::view(sources);
-            let names = Names::of(
-                &sources.work_dir.repo,
-                view.as_ref().map(|view| &*view.snapshot),
-            );
+            let snapshot = actions::view_snapshot(permit, sources);
+            let names = Names::of(&sources.work_dir.repo, snapshot.as_deref());
             let runs = RunsShown::all(&listing, &names, narrowing.page, |page| {
                 narrowing.href(page)
             });
@@ -192,15 +196,15 @@ fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
 }
 
 pub(super) async fn runs_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Query(query): Query<RunsQuery>,
     navigation: Navigation,
 ) -> Response {
     let narrowing = Narrowing::of(&query);
-    let (status, runs) = listed(&sources, &narrowing).await;
+    let (status, runs) = listed(&permit, &sources, &narrowing).await;
     let page = RunsPage {
         page: page(&narrowing, navigation),
-        frame: Frame::of(&sources).await,
+        frame: Frame::of(&permit, &sources).await,
         filters: Filters::of(&narrowing.fields),
         runs,
     };
@@ -210,19 +214,19 @@ pub(super) async fn runs_page(
 /// The runs page's regions: the shell's and the list, listed again as runs
 /// start and end.
 pub(super) async fn runs_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<RunsQuery>,
     navigation: Navigation,
 ) -> Response {
     let narrowing = Arc::new(Narrowing::of(&query));
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         let narrowing = narrowing.clone();
         async move {
-            let mut regions =
-                shell::regions(&Frame::of(&sources).await, &page(&narrowing, navigation));
-            let (_, runs) = listed(&sources, &narrowing).await;
+            let frame = Frame::of(&permit, &sources).await;
+            let mut regions = shell::regions(&frame, &page(&narrowing, navigation));
+            let (_, runs) = listed(&permit, &sources, &narrowing).await;
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions
         }

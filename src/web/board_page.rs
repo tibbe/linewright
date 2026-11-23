@@ -4,18 +4,19 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Query, State};
+use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::caller::Reader;
 use super::cards::{self, card_line, lane_head};
 use super::html::{self, Html};
 use super::icons::ItemKind;
 use super::names::Names;
 use super::shell::{self, Area, Frame, Navigation, Place};
 use super::{Page, events, given, render, with_filters};
-use crate::api::{self, Sources};
+use crate::actions;
 use crate::board::{Board, Card, Column, Lane};
 use crate::domain::Login;
 use crate::phrase::Status;
@@ -216,17 +217,18 @@ fn events_path(person: Option<&Login>) -> String {
 }
 
 pub(super) async fn board_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Query(filters): Query<FilterQuery>,
     navigation: Navigation,
 ) -> Response {
     let repo = &sources.work_dir.repo;
     let person = filters.person();
-    let shown = BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
+    let board = actions::get_board(&permit, &sources).await;
+    let shown = BoardPageShown::of(&board, person.as_ref(), repo);
     let person_options = person_options(&shown.people, person.as_ref());
     BoardPage {
         page: page(person.as_ref(), shown.needing_a_person, navigation),
-        frame: Frame::of(&sources).await,
+        frame: Frame::of(&permit, &sources).await,
         board: shown.board,
         people: shown.people,
         person_options,
@@ -237,20 +239,20 @@ pub(super) async fn board_page(
 /// The board's regions: the shell's, the board narrowed
 /// to its person, if set, and the people Person is chosen from.
 pub(super) async fn board_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Query(filters): Query<FilterQuery>,
     navigation: Navigation,
 ) -> Response {
     let person = filters.person();
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         let person = person.clone();
         async move {
             let repo = &sources.work_dir.repo;
-            let frame = Frame::of(&sources).await;
-            let shown =
-                BoardPageShown::of(&api::board_answer(&sources).await, person.as_ref(), repo);
+            let frame = Frame::of(&permit, &sources).await;
+            let board = actions::get_board(&permit, &sources).await;
+            let shown = BoardPageShown::of(&board, person.as_ref(), repo);
             let mut regions = shell::regions(
                 &frame,
                 &page(person.as_ref(), shown.needing_a_person, navigation),

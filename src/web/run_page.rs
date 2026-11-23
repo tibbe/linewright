@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::buttons::{ScreenButton, Verb};
+use super::caller::Reader;
 use super::capture::{self, Offer};
 use super::html::{self, Html};
 use super::icons::{Icon, IconSize};
@@ -29,7 +30,9 @@ use super::shell::{self, Frame, Heading, Missing, Navigation, Thing};
 use super::{
     ErrorPage, Page, Sent, nothing_there, render, run_path, samples, unanswered, with_query,
 };
-use crate::api::{self, EventId, Sources};
+use crate::access::{Permit, Read};
+use crate::actions;
+use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
 use crate::phrase::Status;
@@ -1036,9 +1039,9 @@ pub(super) struct Transcribed {
 
 impl Transcribed {
     /// Run `id` of `serve`'s runs.
-    fn run(sources: &Sources, id: &RunId) -> Transcribed {
+    fn run(permit: &Permit<Read>, sources: &Sources, id: &RunId) -> Transcribed {
         Transcribed {
-            kept: KeptRuns::Database(sources.runs.clone()),
+            kept: actions::run_transcripts(permit, sources),
             which: Which::Run {
                 id: id.clone(),
                 item: None,
@@ -1192,7 +1195,7 @@ fn events(run: &RunId, made: Vec<(Made, Vec<Patch>)>) -> Vec<Event> {
 /// then ", by hand" for an automation's run by hand, and "(it started no
 /// session)" for a run that ended without a session, with its item under
 /// them.
-fn run_heading(sources: &Sources, recorded: &Recorded) -> Heading {
+fn run_heading(permit: &Permit<Read>, sources: &Sources, recorded: &Recorded) -> Heading {
     let id = recorded.id.to_string();
     let by_hand = if recorded.started().by_hand() {
         ", by hand"
@@ -1208,15 +1211,15 @@ fn run_heading(sources: &Sources, recorded: &Recorded) -> Heading {
         name: html::escape(&format!("{id}{by_hand}{none}")),
         title: id,
         state: None,
-        line: Some(item_line(sources, &recorded.id)),
+        line: Some(item_line(permit, sources, &recorded.id)),
     }
 }
 
 /// What run `run`'s page shows of it: its heading, or that there is no
 /// such run; `None` where its record does not read.
-async fn run_thing(sources: &Sources, run: &RunId) -> Option<Thing> {
-    match sources.runs.try_read_run(run).await {
-        Ok(Some(recorded)) => Some(Thing::Found(run_heading(sources, &recorded))),
+async fn run_thing(permit: &Permit<Read>, sources: &Sources, run: &RunId) -> Option<Thing> {
+    match actions::get_run(permit, sources, run).await {
+        Ok(Some(recorded)) => Some(Thing::Found(run_heading(permit, sources, &recorded))),
         Ok(None) => Some(Thing::Missing(Missing::Run(run.to_string()))),
         Err(_) => None,
     }
@@ -1244,12 +1247,9 @@ fn transcript_page_at(
 /// What `id` is of, as the Item column of a list of runs names it, its item
 /// as Linewright holds it now (`docs/specs/runs.md`, Run,
 /// Heading).
-fn item_line(sources: &Sources, id: &RunId) -> Html {
-    let view = api::view(sources);
-    let names = Names::of(
-        &sources.work_dir.repo,
-        view.as_ref().map(|view| &*view.snapshot),
-    );
+fn item_line(permit: &Permit<Read>, sources: &Sources, id: &RunId) -> Html {
+    let snapshot = actions::view_snapshot(permit, sources);
+    let names = Names::of(&sources.work_dir.repo, snapshot.as_deref());
     ItemCell::of(&id.of, &names).html()
 }
 
@@ -1299,10 +1299,10 @@ fn page_path(
 }
 
 /// The page of the transcript `transcribed` names, at `path` and `place`,
-/// with `capture` the dialog its "Add task" opens, if it offers one; or,
-/// where it cannot be shown, why, standing in for it.
+/// in the shell's `frame`, with `capture` the dialog its "Add task" opens,
+/// if it offers one; or, where it cannot be shown, why, standing in for it.
 pub(super) async fn transcript_page(
-    sources: &Sources,
+    frame: Frame,
     path: &str,
     place: shell::Place,
     transcribed: Result<Transcribed, (StatusCode, String)>,
@@ -1310,7 +1310,6 @@ pub(super) async fn transcript_page(
     capture: Option<Html>,
     navigation: Navigation,
 ) -> Response {
-    let frame = Frame::of(sources).await;
     let shown = match transcribed {
         Ok(transcribed) => match (read(&transcribed, verbose).await, transcribed.missing) {
             (Err(RunError::NoSuchRun(_)), Some(missing)) => {
@@ -1359,32 +1358,32 @@ fn run_place(thing: Thing) -> shell::Place {
 }
 
 pub(super) async fn run_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
     navigation: Navigation,
 ) -> Response {
     let events = format!("/events{}", super::run_path(&id));
     let Ok(run) = id.parse::<RunId>() else {
-        let frame = Frame::of(&sources).await;
+        let frame = Frame::of(&permit, &sources).await;
         let page = |thing| Page::new(run_place(thing), events, navigation);
         return nothing_there(page, Missing::Run(id), frame, "transcript");
     };
-    let thing = match run_thing(&sources, &run).await {
+    let thing = match run_thing(&permit, &sources, &run).await {
         Some(Thing::Missing(missing)) => {
-            let frame = Frame::of(&sources).await;
+            let frame = Frame::of(&permit, &sources).await;
             let page = |thing| Page::new(run_place(thing), events, navigation);
             return nothing_there(page, missing, frame, "transcript");
         }
         Some(found) => found,
         None => Thing::Found(Heading::named(id)),
     };
-    let capture = Offer::of(&sources, &run).await.map(Offer::html);
+    let capture = Offer::of(&permit, &sources, &run).await.map(Offer::html);
     transcript_page(
-        &sources,
+        Frame::of(&permit, &sources).await,
         &run_path(&run),
         run_place(thing),
-        Ok(Transcribed::run(&sources, &run)),
+        Ok(Transcribed::run(&permit, &sources, &run)),
         query.verbose(),
         capture,
         navigation,
@@ -1400,7 +1399,7 @@ const LAST_EVENT_ID: &str = "last-event-id";
 /// `Last-Event-ID` a reconnecting reader gives. A run missing as the stream
 /// starts stays so, as its page shows it.
 pub(super) async fn run_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
@@ -1408,20 +1407,26 @@ pub(super) async fn run_events(
     navigation: Navigation,
 ) -> Response {
     let run = id.parse::<RunId>().ok();
-    let transcribed = run.as_ref().map(|run| Transcribed::run(&sources, run));
+    let transcribed = run
+        .as_ref()
+        .map(|run| Transcribed::run(&permit, &sources, run));
     let found = match &run {
-        Some(run) => !matches!(run_thing(&sources, run).await, Some(Thing::Missing(_))),
+        Some(run) => !matches!(
+            run_thing(&permit, &sources, run).await,
+            Some(Thing::Missing(_))
+        ),
         None => false,
     };
     let captures = query.captures();
     let page: PageOf = {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         Box::new(move || {
-            let (sources, run, id) = (sources.clone(), run.clone(), id.clone());
+            let (permit, sources) = (permit.clone(), sources.clone());
+            let (run, id) = (run.clone(), id.clone());
             let events = format!("/events{}", super::run_path(&id));
             Box::pin(async move {
                 let thing = match &run {
-                    Some(run) if found => run_thing(&sources, run).await?,
+                    Some(run) if found => run_thing(&permit, &sources, run).await?,
                     _ => Thing::Missing(Missing::Run(id)),
                 };
                 Some(transcript_page_at(
@@ -1434,6 +1439,7 @@ pub(super) async fn run_events(
         })
     };
     transcript_events(
+        permit,
         sources,
         stopping,
         transcribed.as_ref(),
@@ -1454,6 +1460,7 @@ pub(super) type PageOf = Box<dyn Fn() -> BoxFuture<'static, Option<Page>> + Send
 /// transcript's lines after those the page showed, or after the
 /// `Last-Event-ID` a reconnecting reader gives.
 pub(super) async fn transcript_events(
+    permit: Permit<Read>,
     sources: Sources,
     stopping: CancellationToken,
     transcribed: Option<&Transcribed>,
@@ -1500,6 +1507,7 @@ pub(super) async fn transcript_events(
         samples: samples(),
         transcript,
         page,
+        permit,
         sources,
         stopping,
     };
@@ -1516,6 +1524,7 @@ struct RunStream {
     /// `None` once the run has ended, or with the page not following it.
     transcript: Option<FollowedRun>,
     page: PageOf,
+    permit: Permit<Read>,
     sources: Sources,
     stopping: CancellationToken,
 }
@@ -1548,7 +1557,7 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
-                    let frame = Frame::of(&self.sources).await;
+                    let frame = Frame::of(&self.permit, &self.sources).await;
                     let regions = match (self.page)().await {
                         Some(page) => shell::regions(&frame, &page),
                         None => vec![shell::holds(&frame)],

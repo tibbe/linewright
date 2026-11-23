@@ -9,19 +9,19 @@ use std::num::NonZeroU32;
 
 use askama::Template;
 use axum::body::Bytes;
-use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::extract::Path;
+use axum::http::{StatusCode, Uri};
 use serde::Serialize;
-use tracing::{info, warn};
 
 use super::benchmark_page::{InBenchmark, benchmark_for_making};
-use super::benchmark_runs;
+use super::caller::{Asking, Reader};
 use super::html::{self, Html};
 use super::making::{
     Answer, Field, FieldRefusals, FieldShown, Form, MadeShown, Making, REQUIRED, Refusal,
     parse_name,
 };
 use super::write::Write;
+use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::{Benchmark, LaunchRefusal, as_is_name};
 use crate::config;
@@ -761,10 +761,13 @@ impl StageSettings {
 /// refused. Refused, launching nothing, unless the browser shows the request
 /// came from the web UI's own pages.
 pub(super) async fn launch(
-    State(sources): State<Sources>,
+    Reader {
+        permit: reading,
+        sources,
+    }: Reader,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<NewBenchmarkRunForm> {
     const WRITE: Write = Write::Launch;
@@ -773,7 +776,7 @@ pub(super) async fn launch(
         Ok(sent) => LaunchFields::read(sent.clone()),
         Err(_) => (LaunchFields::default(), None),
     };
-    let found = benchmark_for_making(&sources, &id).await;
+    let found = benchmark_for_making(&reading, &sources, &id).await;
     let mut form = NewBenchmarkRunForm {
         benchmark: InBenchmark::of(&found, id),
         tasks: found.as_ref().map_or(0, |shown| shown.tasks.len()),
@@ -786,10 +789,13 @@ pub(super) async fn launch(
             texts: starting_texts(&sources),
         },
     };
-    if let Err(refused) = WRITE.same_origin(&headers, &uri).and(sent) {
-        let (status, why) = refused.into_parts();
-        return form.refused((status, Refusal::Whole(why)));
-    }
+    let permit = match WRITE.permit_with(Action::RunBenchmark, &asking, &uri, sent) {
+        Ok((permit, _)) => permit,
+        Err(refused) => {
+            let (status, why) = refused.into_parts();
+            return form.refused((status, Refusal::Whole(why)));
+        }
+    };
     if let Some(why) = unread {
         return form.refused((StatusCode::BAD_REQUEST, Refusal::Whole(why)));
     }
@@ -803,18 +809,9 @@ pub(super) async fn launch(
             return form.refused((StatusCode::UNPROCESSABLE_ENTITY, Refusal::Fields(refusals)));
         }
     };
-    match benchmark_runs(&sources)
-        .launch(
-            benchmark.id,
-            configurations,
-            repetitions,
-            sources.clock.now(),
-        )
-        .await
+    match actions::run_benchmark(&permit, &sources, benchmark.id, configurations, repetitions).await
     {
-        Ok(launched) => {
-            sources.benchmark_runs.changed();
-            info!(benchmark_run = %launched.id, benchmark = %benchmark.id, trials = launched.trials, "launched a benchmark run");
+        Ok(_) => {
             form.making = Making::blank();
             Answer::Made {
                 blank: form,
@@ -822,9 +819,6 @@ pub(super) async fn launch(
             }
         }
         Err(refusal) => {
-            if let LaunchRefusal::Failed(e) = &refusal {
-                warn!(benchmark = %benchmark.id, error = format!("{e:#}"), "launching a benchmark run failed");
-            }
             let refused = launch_refused(&form.making.fields, &refusal);
             form.refused(refused)
         }

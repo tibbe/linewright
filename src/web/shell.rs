@@ -19,7 +19,9 @@ use super::html::{self, Html};
 use super::icons::{CardIcon, Icon};
 use super::names::Names;
 use super::{Page, cookie_headers, cookie_values, render, run_path};
-use crate::api::{self, Sources};
+use crate::access::{self, Permit};
+use crate::actions::{self, ServerAnswer};
+use crate::api::Sources;
 use crate::domain::{Number, Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::phrase::{Phrase, Status};
@@ -577,17 +579,14 @@ pub(super) struct Read {
 }
 
 impl Read {
-    pub(super) async fn of(sources: &Sources) -> Read {
-        let view = api::view(sources);
-        let recorded = api::recorded_or_none(sources).await;
-        let now = sources.clock.now();
-        let (environment, builds) = api::environment_or_none(sources)
-            .await
-            .and_then(|answer| answer.environment)
-            .map_or((None, Vec::new()), |environment| {
-                (Some(environment.shown), environment.builds)
-            });
-        let status = api::status_of(sources, view.as_ref(), &recorded, environment);
+    pub(super) async fn of(permit: &Permit<access::Read>, sources: &Sources) -> Read {
+        let ServerAnswer {
+            status,
+            view,
+            recorded,
+            builds,
+            now,
+        } = actions::get_server(permit, sources).await;
         Read {
             builds,
             automations: view
@@ -605,8 +604,8 @@ impl Read {
 }
 
 impl Frame {
-    pub(super) async fn of(sources: &Sources) -> Frame {
-        Frame::of_read(sources, &Read::of(sources).await)
+    pub(super) async fn of(permit: &Permit<access::Read>, sources: &Sources) -> Frame {
+        Frame::of_read(sources, &Read::of(permit, sources).await)
     }
 
     pub(super) fn of_read(sources: &Sources, read: &Read) -> Frame {

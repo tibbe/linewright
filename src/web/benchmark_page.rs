@@ -16,10 +16,11 @@ use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use std::convert::Infallible;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::benchmark_run_page::{shown_of, state_status};
-use super::capture::{CapturingField, NotPolled, Task, TaskField, TaskFields, capture_run, polled};
+use super::caller::{Asking, Reader};
+use super::capture::{CapturingField, Task, TaskField, TaskFields, capture_run};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::launch::{
@@ -35,10 +36,11 @@ use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing
 use super::table::{Align, Column, View};
 use super::write::{Refused, Write};
 use super::{
-    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, benchmarks,
-    cookie_headers, cookie_values, events, no_such_page, nothing_there, render, run_path,
-    task_path, with_filters,
+    ErrorPage, Page, benchmark_path, benchmark_run_path, benchmark_tab_path, cookie_headers,
+    cookie_values, events, no_such_page, nothing_there, render, run_path, task_path, with_filters,
 };
+use crate::access::{Permit, Read};
+use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::results;
 use crate::benchmarks::{
@@ -48,8 +50,8 @@ use crate::benchmarks::{
 use crate::domain::Timestamp;
 use crate::name::Name;
 use crate::phrase::Status;
-use crate::runs::{Recorded, RunId};
-use crate::task::{self, BenchmarkChoice, Refusal, TaskStage};
+use crate::runs::RunId;
+use crate::task::BenchmarkChoice;
 
 /// A task's row.
 struct TaskRow {
@@ -501,8 +503,8 @@ pub(super) struct NewTaskForm {
 
 impl NewTaskForm {
     /// The form as it starts, for benchmark `benchmark` of `stage`.
-    async fn blank(sources: &Sources, benchmark: &Benchmark) -> NewTaskForm {
-        let runs = runs_of(sources, benchmark.stage).await;
+    async fn blank(permit: &Permit<Read>, sources: &Sources, benchmark: &Benchmark) -> NewTaskForm {
+        let runs = actions::capturable_runs(permit, sources, benchmark.stage).await;
         NewTaskForm {
             benchmark: InBenchmark::Found(benchmark.name.clone()),
             making: Making::of(NewTaskFields::default()),
@@ -597,9 +599,14 @@ fn no_such(id: &str) -> String {
 
 /// Benchmark `id` with the pages `paging` asks for of its tasks, in its
 /// order, and of its benchmark runs, latest first.
-async fn shown(sources: &Sources, id: &str, paging: Paging) -> Result<Shown, Unshown> {
+async fn shown(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    id: &str,
+    paging: Paging,
+) -> Result<Shown, Unshown> {
     let parsed: BenchmarkId = id.parse().map_err(|_| Unshown::NoSuch)?;
-    match benchmarks(sources).show(parsed).await {
+    match actions::get_benchmark(permit, sources, parsed).await {
         Ok(Some(BenchmarkShown {
             benchmark,
             tasks,
@@ -640,39 +647,6 @@ async fn shown(sources: &Sources, id: &str, paging: Paging) -> Result<Shown, Uns
         Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
     }
-}
-
-/// Of `recorded`, the runs of `stage`, latest first.
-fn of_stage(recorded: Vec<Recorded>, stage: TaskStage) -> Vec<RunId> {
-    let mut runs: Vec<Recorded> = recorded
-        .into_iter()
-        .filter(|run| task::capturable_stage(&run.id.of).is_some_and(|(of, _)| of == stage))
-        .collect();
-    runs.sort_by_key(|run| std::cmp::Reverse(run.started_at));
-    runs.into_iter().map(|run| run.id).collect()
-}
-
-/// The runs of `stage` that can be captured, latest first. Runs that do not
-/// read are logged and left out.
-async fn runs_of(sources: &Sources, stage: TaskStage) -> Vec<RunId> {
-    let recorded = match sources.runs.read().await {
-        Ok(recorded) => recorded,
-        Err(e) => {
-            warn!(error = format!("{e:#}"), "reading the runs failed");
-            return vec![];
-        }
-    };
-    let mut runs = vec![];
-    for id in of_stage(recorded, stage) {
-        match task::capturable_run(&sources.runs, &id).await {
-            Ok(_) => runs.push(id),
-            Err(e) if e.refusal() == Refusal::Failed => {
-                warn!(run = %id, error = e.why(), "reading whether a run can be captured failed");
-            }
-            Err(_) => {}
-        }
-    }
-    runs
 }
 
 /// The page of `benchmark`: its heading, its name with its stage under it
@@ -740,8 +714,13 @@ impl<S: Sync> FromRequestParts<S> for Removed {
 /// What benchmark `benchmark`'s screen says of the task `task`, by its ID,
 /// removed from it: "Removed the task NAME." (`docs/specs/benchmarks.md`,
 /// Task, After "Remove"); nothing of a task that was not removed from it.
-async fn removed_said(sources: &Sources, benchmark: BenchmarkId, task: TaskId) -> Option<Html> {
-    match benchmarks(sources).removed_task(task).await {
+async fn removed_said(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    benchmark: BenchmarkId,
+    task: TaskId,
+) -> Option<Html> {
+    match actions::removed_task(permit, sources, task).await {
         Ok(Some(removed)) if removed.benchmark == benchmark => {
             Some(html::escape(&format!("Removed the task {}.", removed.name)))
         }
@@ -754,18 +733,18 @@ async fn removed_said(sources: &Sources, benchmark: BenchmarkId, task: TaskId) -
 }
 
 pub(super) async fn benchmark_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
     removed: Removed,
 ) -> Response {
-    benchmark_page_on(sources, id, None, paging, removed, navigation).await
+    benchmark_page_on(permit, sources, id, None, paging, removed, navigation).await
 }
 
 /// The benchmark page at tab `tab`'s address, or else no page.
 pub(super) async fn benchmark_tab_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path((id, tab)): Path<(String, String)>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
@@ -774,7 +753,7 @@ pub(super) async fn benchmark_tab_page(
     let Ok(tab) = tab.parse() else {
         return no_such_page().await;
     };
-    benchmark_page_on(sources, id, Some(tab), paging, removed, navigation).await
+    benchmark_page_on(permit, sources, id, Some(tab), paging, removed, navigation).await
 }
 
 /// The benchmark page of benchmark `id` on tab `tab`, or without one, on the
@@ -782,6 +761,7 @@ pub(super) async fn benchmark_tab_page(
 /// runs; saying under its heading that the task `removed` was removed from it,
 /// and clearing it.
 async fn benchmark_page_on(
+    permit: Permit<Read>,
     sources: Sources,
     id: String,
     tab: Option<BenchmarkTab>,
@@ -789,8 +769,8 @@ async fn benchmark_page_on(
     removed: Removed,
     navigation: Navigation,
 ) -> Response {
-    let frame = Frame::of(&sources).await;
-    match shown(&sources, &id, paging).await {
+    let frame = Frame::of(&permit, &sources).await;
+    match shown(&permit, &sources, &id, paging).await {
         Ok(Shown {
             benchmark,
             task_count,
@@ -808,12 +788,12 @@ async fn benchmark_page_on(
                     href: paging.tab_path(benchmark.id, link),
                 })
                 .collect();
-            let new_task = NewTaskForm::blank(&sources, &benchmark).await;
+            let new_task = NewTaskForm::blank(&permit, &sources, &benchmark).await;
             let new_benchmark_run = NewBenchmarkRunForm::blank(&sources, &benchmark, task_count);
             let mut page = page(&benchmark, paging, navigation);
             let Removed(removed) = removed;
             if let Some(task) = removed
-                && let Some(said) = removed_said(&sources, benchmark.id, task).await
+                && let Some(said) = removed_said(&permit, &sources, benchmark.id, task).await
             {
                 page = page.saying(&said);
             }
@@ -876,17 +856,17 @@ async fn benchmark_page_on(
 /// New task offers, whether it can add one and its title, New benchmark
 /// run's title, and the values Edit benchmark starts from.
 pub(super) async fn benchmark_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         let id = id.clone();
         async move {
-            let frame = Frame::of(&sources).await;
+            let frame = Frame::of(&permit, &sources).await;
             let Ok(Shown {
                 benchmark,
                 task_count,
@@ -894,7 +874,7 @@ pub(super) async fn benchmark_events(
                 tasks_nav,
                 benchmark_runs,
                 benchmark_runs_nav,
-            }) = shown(&sources, &id, paging).await
+            }) = shown(&permit, &sources, &id, paging).await
             else {
                 return vec![shell::holds(&frame)];
             };
@@ -922,7 +902,7 @@ pub(super) async fn benchmark_events(
                 "stage-settings",
                 render(&StageSettings::of(&sources, benchmark.stage)),
             ));
-            let runs = runs_of(&sources, benchmark.stage).await;
+            let runs = actions::capturable_runs(&permit, &sources, benchmark.stage).await;
             let unrefused =
                 FieldShown::unrefused(&NewTaskField::Run).attributes(NEW_TASK_RUN, Control::Select);
             regions.push((
@@ -997,13 +977,14 @@ impl AddForm {
 /// or else the status and why there is no benchmark for a making dialog to
 /// make a thing in.
 pub(super) async fn benchmark_for_making(
+    permit: &Permit<Read>,
     sources: &Sources,
     id: &str,
 ) -> Result<BenchmarkShown, (StatusCode, String)> {
     let benchmark: BenchmarkId = id
         .parse()
         .map_err(|_| (StatusCode::NOT_FOUND, no_such(id)))?;
-    match benchmarks(sources).show(benchmark).await {
+    match actions::get_benchmark(permit, sources, benchmark).await {
         Ok(Some(shown)) => Ok(shown),
         Ok(None) => Err((StatusCode::NOT_FOUND, no_such(id))),
         Err(e) => {
@@ -1019,10 +1000,13 @@ pub(super) async fn benchmark_for_making(
 /// sent with why it was refused. Refused, writing nothing, unless the browser
 /// shows the request came from the web UI's own pages.
 pub(super) async fn add_task(
-    State(sources): State<Sources>,
+    Reader {
+        permit: reading,
+        sources,
+    }: Reader,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<NewTaskForm> {
     const WRITE: Write = Write::Capture;
@@ -1035,31 +1019,27 @@ pub(super) async fn add_task(
             criteria: sent.task.criteria.clone(),
         })
         .unwrap_or_default();
-    let found = benchmark_for_making(&sources, &id).await;
+    let found = benchmark_for_making(&reading, &sources, &id).await;
     let mut form = NewTaskForm {
         benchmark: InBenchmark::of(&found, id),
         making: Making::of(fields),
         runs: vec![],
     };
-    let sent = match WRITE.same_origin(&headers, &uri).and(sent) {
-        Ok(sent) => sent,
+    let (permit, sent) = match WRITE.permit_with(Action::AddTask, &asking, &uri, sent) {
+        Ok(permitted) => permitted,
         Err(refused) => return form.refused_whole(refused.into_parts()),
     };
     let benchmark = match found {
         Ok(shown) => shown.benchmark,
         Err(refused) => return form.refused_whole(refused),
     };
-    form.runs = runs_of(&sources, benchmark.stage).await;
+    form.runs = actions::capturable_runs(&reading, &sources, benchmark.stage).await;
     let (run, task) = match sent.checked() {
         Ok(checked) => checked,
         Err(refusal) => return form.refused((StatusCode::UNPROCESSABLE_ENTITY, refusal)),
     };
-    let served = match polled(&sources) {
-        Ok(served) => served,
-        Err(NotPolled) => return form.refused(NotPolled::refusal()),
-    };
     let choice = BenchmarkChoice::Existing(benchmark.id);
-    match capture_run(&sources, &served, &run, &choice, task).await {
+    match capture_run(&permit, &sources, &run, &choice, task).await {
         Ok(_) => {
             form.making = Making::of(NewTaskFields::default());
             Answer::Made {
@@ -1093,22 +1073,22 @@ struct RemoveForm {
 /// of it.
 pub(super) async fn remove_task(
     State(sources): State<Sources>,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, Refused> {
     const WRITE: Write = Write::RemoveTask;
-    WRITE.same_origin(&headers, &uri)?;
+    let permit = WRITE.permit(Action::RemoveTask, &asking, &uri)?;
     let benchmark = benchmark_of_path(WRITE, &id)?;
     let form: RemoveForm = WRITE.read_form(&body)?;
     let task: TaskId = form
         .task
         .parse()
         .map_err(|error: String| WRITE.refused(StatusCode::UNPROCESSABLE_ENTITY, &error))?;
-    match benchmarks(&sources).remove_task(benchmark, task).await {
-        Ok(name) => {
-            info!(benchmark = %benchmark, task = %task, name = %name, "removed a task");
+    match actions::remove_task(&permit, &sources, benchmark, task).await {
+        Ok(_) => {
             let opened = benchmark_tab_path(benchmark, BenchmarkTab::Tasks);
             let removed = [(header::SET_COOKIE, Removed::set_cookie(benchmark, task))];
             if headers.contains_key(HX_REQUEST) {
@@ -1121,9 +1101,7 @@ pub(super) async fn remove_task(
             Err(WRITE.refused(StatusCode::NOT_FOUND, &e.to_string()))
         }
         Err(RemoveError::Failed(e)) => {
-            let why = format!("{e:#}");
-            warn!(benchmark = %benchmark, task = %task, error = why, "removing a task failed");
-            Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &why))
+            Err(WRITE.refused(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}")))
         }
     }
 }

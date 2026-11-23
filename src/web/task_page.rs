@@ -5,19 +5,22 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Path, State};
+use axum::extract::Path;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
+use super::caller::Reader;
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{self, EditDialog};
 use super::html::{self, Html};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::stats::{Stat, absent};
-use super::{ErrorPage, Page, benchmark_path, benchmarks, events, nothing_there, render, run_path};
+use super::{ErrorPage, Page, benchmark_path, events, nothing_there, render, run_path};
+use crate::access::{Permit, Read};
+use crate::actions;
 use crate::api::Sources;
 use crate::benchmarks::{TaskId, TaskShown};
 
@@ -185,9 +188,9 @@ enum Unshown {
 }
 
 /// Task `id`, by its ID as a path gives it.
-async fn task_of(sources: &Sources, id: &str) -> Result<TaskShown, Unshown> {
+async fn task_of(permit: &Permit<Read>, sources: &Sources, id: &str) -> Result<TaskShown, Unshown> {
     let parsed: TaskId = id.parse().map_err(|_: String| Unshown::NoSuch)?;
-    match benchmarks(sources).task(parsed).await {
+    match actions::get_task(permit, sources, parsed).await {
         Ok(Some(task)) => Ok(task),
         Ok(None) => Err(Unshown::NoSuch),
         Err(e) => Err(Unshown::Failed(e)),
@@ -195,12 +198,12 @@ async fn task_of(sources: &Sources, id: &str) -> Result<TaskShown, Unshown> {
 }
 
 pub(super) async fn task_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Path(id): Path<String>,
     navigation: Navigation,
 ) -> Response {
-    let frame = Frame::of(&sources).await;
-    match task_of(&sources, &id).await {
+    let frame = Frame::of(&permit, &sources).await;
+    match task_of(&permit, &sources, &id).await {
         Ok(task) => TaskPage {
             page: page(&task, navigation),
             frame,
@@ -240,17 +243,17 @@ pub(super) async fn task_page(
 /// shell's, its facts, its criteria, the question of its removal and the
 /// values Edit task starts from.
 pub(super) async fn task_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Path(id): Path<String>,
     navigation: Navigation,
 ) -> Response {
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         let id = id.clone();
         async move {
-            let frame = Frame::of(&sources).await;
-            let Ok(task) = task_of(&sources, &id).await else {
+            let frame = Frame::of(&permit, &sources).await;
+            let Ok(task) = task_of(&permit, &sources, &id).await else {
                 return vec![shell::holds(&frame)];
             };
             let view = TaskView::of(&task, &sources.work_dir.repo);

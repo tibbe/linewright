@@ -4,17 +4,19 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
-use axum::extract::{Query, State};
+use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
+use super::caller::Reader;
 use super::html::{self, Html};
 use super::names::Names;
 use super::pages::{PageHref, Pages, PagesShown, Requested};
-use super::shell::{self, Area, Frame, Navigation, Place, Read};
+use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
+use crate::access::{Permit, Read};
 use crate::api::{Sources, Unexplained};
 use crate::automation;
 use crate::domain::Timestamp;
@@ -232,8 +234,12 @@ fn path(path: &str, page: Requested) -> String {
 /// The frame and the `requested` page of the automations, from one read of
 /// `serve`'s view and the runs; `None` for the automations before the first
 /// poll.
-async fn shown(sources: &Sources, requested: Requested) -> (Frame, Option<AutomationsShown>) {
-    let read = Read::of(sources).await;
+async fn shown(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    requested: Requested,
+) -> (Frame, Option<AutomationsShown>) {
+    let read = shell::Read::of(permit, sources).await;
     let automations = read.automations.as_ref().map(|automations| {
         AutomationsShown::of(automations, &read.names(&sources.work_dir.repo), requested)
     });
@@ -251,13 +257,13 @@ fn page(requested: Requested, navigation: Navigation) -> Page {
 }
 
 pub(super) async fn automations_page(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Query(query): Query<AutomationsQuery>,
     navigation: Navigation,
 ) -> Response {
     let requested = query.page;
     let page = page(requested, navigation);
-    match shown(&sources, requested).await {
+    match shown(&permit, &sources, requested).await {
         (frame, Some(automations)) => AutomationsPage {
             page,
             frame,
@@ -279,16 +285,16 @@ pub(super) async fn automations_page(
 /// The automations page's regions: the shell's, and the automations once a
 /// poll has seen them.
 pub(super) async fn automations_events(
-    State(sources): State<Sources>,
+    Reader { permit, sources }: Reader,
     Extension(stopping): Extension<CancellationToken>,
     Query(query): Query<AutomationsQuery>,
     navigation: Navigation,
 ) -> Response {
     let requested = query.page;
     let regions = move || {
-        let sources = sources.clone();
+        let (permit, sources) = (permit.clone(), sources.clone());
         async move {
-            let (frame, automations) = shown(&sources, requested).await;
+            let (frame, automations) = shown(&permit, &sources, requested).await;
             let mut regions = shell::regions(&frame, &page(requested, navigation));
             if let Some(automations) = automations {
                 regions.push((

@@ -8,12 +8,13 @@
 use askama::Template;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{StatusCode, Uri};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::buttons::{ScreenButton, Verb};
+use super::caller::Asking;
 use super::capture::{Task, TaskField, TaskFields};
 use super::html::{self, Html};
 use super::launch::another_named;
@@ -22,7 +23,9 @@ use super::making::{
 };
 use super::shell::Missing;
 use super::write::{Refused, Write};
-use super::{benchmark_path, benchmark_run_path, benchmark_runs, benchmarks, render, task_path};
+use super::{benchmark_path, benchmark_run_path, render, task_path};
+use crate::access::{Act, Permit};
+use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::{
     Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, ConfigurationId, EditTaskError,
@@ -74,29 +77,35 @@ fn edit_button(dialog: &str) -> ScreenButton {
 }
 
 /// The form a dialog that "Edit" opens sends in `body`, as the dialog keeps
-/// it, which is as it starts where it does not read; and the form, or else
-/// the status and why it is refused: unless the browser shows the request
-/// came from the web UI's own pages, or where it does not read.
+/// it, which is as it starts where it does not read; and the permit to take
+/// it as `action` with the form, or else the status and why it is refused:
+/// without a permit, such as for a request that did not come from the web
+/// UI's own pages, or where it does not read.
 fn read_sent<T: DeserializeOwned + Clone + Default>(
-    headers: &HeaderMap,
+    action: Action,
+    asking: &Asking,
     uri: &Uri,
     body: &[u8],
-) -> (T, Result<T, (StatusCode, String)>) {
+) -> (T, Permitted<T>) {
     const WRITE: Write = Write::Edit;
     let sent = WRITE.read_form::<T>(body);
     let kept = sent.as_ref().ok().cloned().unwrap_or_default();
     let checked = WRITE
-        .same_origin(headers, uri)
-        .and(sent)
+        .permit_with(action, asking, uri, sent)
         .map_err(Refused::into_parts);
     (kept, checked)
 }
 
-/// The refusal of a change that failed for `e`, logged as `changing` failed.
-fn failed<F: Field>(changing: &str, e: &anyhow::Error) -> (StatusCode, Refusal<F>) {
-    let why = format!("{e:#}");
-    warn!(error = why, "{changing} failed");
-    (StatusCode::INTERNAL_SERVER_ERROR, Refusal::Whole(why))
+/// The permit to take a change with the form that sends it, or else the
+/// status and why it is refused.
+type Permitted<T> = Result<(Permit<Act>, T), (StatusCode, String)>;
+
+/// The refusal of a change that failed for `e`.
+fn failed<F: Field>(e: &anyhow::Error) -> (StatusCode, Refusal<F>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Refusal::Whole(format!("{e:#}")),
+    )
 }
 
 /// The refusal of a thing that does not exist, which the dialog shows
@@ -209,50 +218,48 @@ pub(super) fn edit_benchmark_button() -> ScreenButton {
 /// browser shows the request came from the web UI's own pages.
 pub(super) async fn save_benchmark(
     State(sources): State<Sources>,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<EditNameForm> {
-    let (fields, sent) = read_sent::<NameFields>(&headers, &uri, &body);
+    let (fields, sent) = read_sent::<NameFields>(Action::EditBenchmark, &asking, &uri, &body);
     let refuse = |(status, refusal)| Answer::Refused {
         status,
         form: benchmark_form(Making::refused(fields, refusal)),
     };
-    let sent = match sent {
-        Ok(sent) => sent,
+    let (permit, sent) = match sent {
+        Ok(permitted) => permitted,
         Err((status, why)) => return refuse((status, Refusal::Whole(why))),
     };
     let no_such = || gone(&Missing::Benchmark(id.clone()));
     let Ok(benchmark) = id.parse::<BenchmarkId>() else {
         return refuse(no_such());
     };
-    let changing = format!("renaming the benchmark {benchmark}");
-    let benchmarks = benchmarks(&sources);
     let name = match sent_name(&sent) {
         Ok(name) => name,
         Err(refused) => {
-            return refuse(match benchmarks.find(benchmark).await {
-                Ok(None) => no_such(),
-                Ok(Some(_)) | Err(_) => refused,
-            });
+            let reading = permit.into();
+            return refuse(
+                match actions::get_benchmark(&reading, &sources, benchmark).await {
+                    Ok(None) => no_such(),
+                    Ok(Some(_)) | Err(_) => refused,
+                },
+            );
         }
     };
-    match benchmarks.rename(benchmark, &name).await {
-        Ok(()) => {
-            info!(benchmark = %benchmark, name = %name, "renamed a benchmark");
-            Answer::Saved {
-                form: benchmark_form(Making::of(NameFields {
-                    name: name.to_string(),
-                })),
-            }
-        }
+    match actions::edit_benchmark(&permit, &sources, benchmark, &name).await {
+        Ok(()) => Answer::Saved {
+            form: benchmark_form(Making::of(NameFields {
+                name: name.to_string(),
+            })),
+        },
         Err(RenameError::NoSuchBenchmark(_)) => refuse(no_such()),
         Err(RenameError::Taken(taken)) => refuse((
             StatusCode::UNPROCESSABLE_ENTITY,
             Refusal::Fields(FieldRefusals::of(NameField::Name, benchmark_taken(&taken))),
         )),
-        Err(RenameError::Failed(e)) => refuse(failed(&changing, &e)),
+        Err(RenameError::Failed(e)) => refuse(failed(&e)),
     }
 }
 
@@ -317,32 +324,34 @@ pub(super) fn edit_task_button() -> ScreenButton {
 /// the web UI's own pages.
 pub(super) async fn save_task(
     State(sources): State<Sources>,
+    asking: Asking,
     Path(id): Path<String>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<EditTaskForm> {
-    let (fields, sent) = read_sent::<TaskFields>(&headers, &uri, &body);
+    let (fields, sent) = read_sent::<TaskFields>(Action::EditTask, &asking, &uri, &body);
     let refuse = |(status, refusal)| Answer::Refused {
         status,
         form: EditTaskForm {
             making: Making::refused(fields, refusal),
         },
     };
-    let sent = match sent {
-        Ok(sent) => sent,
+    let (permit, sent) = match sent {
+        Ok(permitted) => permitted,
         Err((status, why)) => return refuse((status, Refusal::Whole(why))),
     };
     let no_such = || gone(&Missing::Task(id.clone()));
     let Ok(task) = id.parse::<TaskId>() else {
         return refuse(no_such());
     };
-    let changing = format!("changing the task {task}");
-    let benchmarks = benchmarks(&sources);
-    let benchmark = match benchmarks.task(task).await {
+    let reading = permit.clone().into();
+    let benchmark = match actions::get_task(&reading, &sources, task).await {
         Ok(Some(shown)) => shown.benchmark.id,
         Ok(None) => return refuse(no_such()),
-        Err(e) => return refuse(failed(&changing, &e)),
+        Err(e) => {
+            warn!(error = format!("{e:#}"), "changing the task {task} failed");
+            return refuse(failed(&e));
+        }
     };
     let Task { name, criteria } = match sent.checked() {
         Ok(checked) => checked,
@@ -354,18 +363,13 @@ pub(super) async fn save_task(
         name: name.to_string(),
         criteria: criteria.as_str().to_string(),
     };
-    match benchmarks
-        .edit_task(benchmark, task, &TaskChange::Both(name, criteria))
-        .await
-    {
-        Ok(()) => {
-            info!(benchmark = %benchmark, task = %task, "changed a task");
-            Answer::Saved {
-                form: EditTaskForm {
-                    making: Making::of(saved),
-                },
-            }
-        }
+    let change = TaskChange::Both(name, criteria);
+    match actions::edit_task(&permit, &sources, benchmark, task, &change).await {
+        Ok(()) => Answer::Saved {
+            form: EditTaskForm {
+                making: Making::of(saved),
+            },
+        },
         Err(EditTaskError::NoSuchBenchmark(_) | EditTaskError::NoSuchTask { .. }) => {
             refuse(no_such())
         }
@@ -376,7 +380,7 @@ pub(super) async fn save_task(
                 task_taken(&task, &benchmark),
             )),
         )),
-        Err(EditTaskError::Failed(e)) => refuse(failed(&changing, &e)),
+        Err(EditTaskError::Failed(e)) => refuse(failed(&e)),
     }
 }
 
@@ -489,12 +493,12 @@ fn unrenamable(
 /// browser shows the request came from the web UI's own pages.
 pub(super) async fn save_configuration(
     State(sources): State<Sources>,
+    asking: Asking,
     Path((id, configuration)): Path<(String, String)>,
     uri: Uri,
-    headers: HeaderMap,
     body: Bytes,
 ) -> Answer<EditNameForm> {
-    let (fields, sent) = read_sent::<NameFields>(&headers, &uri, &body);
+    let (fields, sent) = read_sent::<NameFields>(Action::EditConfiguration, &asking, &uri, &body);
     let parsed = configuration.parse::<ConfigurationId>();
     let dialog = parsed.as_ref().map_or_else(
         |_| configuration_dialog(&configuration),
@@ -505,8 +509,8 @@ pub(super) async fn save_configuration(
         status,
         form: form(Making::refused(fields, refusal)),
     };
-    let sent = match sent {
-        Ok(sent) => sent,
+    let (permit, sent) = match sent {
+        Ok(permitted) => permitted,
         Err((status, why)) => return refuse((status, Refusal::Whole(why))),
     };
     let Ok(benchmark_run) = id.parse::<BenchmarkRunId>() else {
@@ -515,34 +519,24 @@ pub(super) async fn save_configuration(
     let Ok(parsed) = parsed else {
         return refuse(gone(&Missing::Configuration(configuration)));
     };
-    let changing = format!("renaming the configuration {parsed} of benchmark run {benchmark_run}");
-    let benchmark_runs = benchmark_runs(&sources);
     let name = match sent_name(&sent) {
         Ok(name) => name,
         Err(refused) => {
-            return refuse(match benchmark_runs.show(benchmark_run).await {
-                Ok(record) => unrenamable(record.as_ref(), &id, parsed).unwrap_or(refused),
-                Err(_) => refused,
-            });
+            let reading = permit.into();
+            return refuse(
+                match actions::get_benchmark_run(&reading, &sources, benchmark_run).await {
+                    Ok(record) => unrenamable(record.as_ref(), &id, parsed).unwrap_or(refused),
+                    Err(_) => refused,
+                },
+            );
         }
     };
-    match benchmark_runs
-        .rename_configuration(benchmark_run, parsed, &name)
-        .await
-    {
-        Ok(()) => {
-            info!(
-                benchmark_run = %benchmark_run,
-                configuration = %parsed,
-                name = %name,
-                "renamed a configuration"
-            );
-            Answer::Saved {
-                form: form(Making::of(NameFields {
-                    name: name.to_string(),
-                })),
-            }
-        }
+    match actions::edit_configuration(&permit, &sources, benchmark_run, parsed, &name).await {
+        Ok(()) => Answer::Saved {
+            form: form(Making::of(NameFields {
+                name: name.to_string(),
+            })),
+        },
         Err(RenameConfigurationError::NoSuchBenchmarkRun(_)) => {
             refuse(gone(&Missing::BenchmarkRun(id)))
         }
@@ -557,6 +551,6 @@ pub(super) async fn save_configuration(
             StatusCode::UNPROCESSABLE_ENTITY,
             Refusal::Fields(FieldRefusals::of(NameField::Name, another_named(&taken))),
         )),
-        Err(RenameConfigurationError::Failed(e)) => refuse(failed(&changing, &e)),
+        Err(RenameConfigurationError::Failed(e)) => refuse(failed(&e)),
     }
 }
