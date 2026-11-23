@@ -1,6 +1,7 @@
 """`scripts/check comments`: prints `path:line: <why>` for every comment block
 in the tracked files that is not one of the four kinds CODING_STANDARDS.md
-allows, and exits with 1 if it printed anything."""
+allows, and for every comment that cites a spec file that is not tracked, and
+exits with 1 if it printed anything."""
 
 import os, re, subprocess, sys
 from collections import namedtuple
@@ -13,6 +14,7 @@ LICENSE = re.compile(r"@license|SPDX-License-Identifier")
 SHELLCHECK = re.compile(r"shellcheck disable=")
 SHELLCHECK_DIRECTIVE = re.compile(r"^\s*shellcheck (shell|source|source-path)=\S+\s*$")
 SHELLCHECK_REASON = re.compile(r"shellcheck disable=\S+\s+#\s*\S")
+SPEC_FILE = re.compile(r"(?<![\w/.-])docs/specs/[\w/.-]+?\.md\b")
 NOT_ALLOWED = "not a contract, a linked outside constraint, a directive or a license notice"
 
 
@@ -270,7 +272,9 @@ def lex_shell(src):
             comments.append(Comment(line, line, src[i + 1 : j], False, after_code(src, i)))
             i = j
         elif src.startswith("$'", i):
-            i = skip_quoted(src, i + 1, "'")
+            j = skip_quoted(src, i + 1, "'")
+            line += src.count("\n", i, j)
+            i = j
         elif c == "'":
             j = skip_quoted(src, i, "'", escapes=False)
             line += src.count("\n", i, j)
@@ -379,7 +383,9 @@ def directive(lang, comment):
     )
 
 
-def violations(path, lang, src, comments):
+def violations(lang, src, comments):
+    """The line and the reason of each comment block in `src` that is not one
+    of the four kinds, and of each `# shellcheck disable=` without a reason."""
     lines = src.split("\n")
     found, block = [], []
 
@@ -390,7 +396,7 @@ def violations(path, lang, src, comments):
         after = lines[block[-1].end] if block[-1].end < len(lines) else ""
         documents = lang.documents and not block[0].trailing and lang.documents.match(after)
         if not (LINK.search(text) or LICENSE.search(text) or documents):
-            found.append(f"{path}:{block[0].line}: {NOT_ALLOWED}")
+            found.append((block[0].line, NOT_ALLOWED))
         block.clear()
 
     for comment in comments:
@@ -399,7 +405,7 @@ def violations(path, lang, src, comments):
             continue
         if lang is SHELL and SHELLCHECK.search(comment.text):
             close()
-            found.append(f"{path}:{comment.line}: a `# shellcheck disable=` needs a `# reason` after it")
+            found.append((comment.line, "a `# shellcheck disable=` needs a `# reason` after it"))
             continue
         if comment.trailing or not block or block[-1].trailing or comment.line != block[-1].end + 1:
             close()
@@ -410,21 +416,41 @@ def violations(path, lang, src, comments):
     return found
 
 
-def outcome(path, src):
-    """What the check reports for the file at `path` holding `src`."""
+def missing_citations(comments, tracked):
+    """The line and the reason of each spec file that a comment in `comments`
+    cites and that is not in `tracked`, once per comment."""
+    found = []
+    for comment in comments:
+        cited = set()
+        for m in SPEC_FILE.finditer(comment.text):
+            spec = m.group()
+            if spec in tracked or spec in cited:
+                continue
+            cited.add(spec)
+            line = comment.line + comment.text.count("\n", 0, m.start())
+            found.append((line, f"cites {spec}, which does not exist"))
+    return found
+
+
+def outcome(path, src, tracked):
+    """What the check reports for the file at `path` holding `src`, in a
+    repository that tracks the paths in `tracked`."""
     lang = language(path, src)
     if VENDORED_OR_MODEL.search(path) or lang is None:
         return []
-    return violations(path, lang, src, lang.lex(src))
+    comments = lang.lex(src)
+    found = violations(lang, src, comments) + missing_citations(comments, tracked)
+    return [f"{path}:{line}: {why}" for line, why in sorted(found, key=lambda report: report[0])]
 
 
 def main():
     files = subprocess.run(["git", "ls-files", "-z"], capture_output=True, text=True, check=True).stdout
+    tracked = {p for p in files.split("\0") if p}
     reports = []
-    for path in sorted(p for p in files.split("\0") if p):
+    for path in sorted(tracked):
         if not os.path.islink(path) and os.path.isfile(path):
             with open(path, encoding="utf-8", errors="replace") as file:
-                reports += outcome(path, file.read())
+                reports += outcome(path, file.read(), tracked)
     print("\n".join(reports), end="\n" if reports else "")
     sys.exit(1 if reports else 0)
 

@@ -185,8 +185,9 @@ check_model-coverage() {
 }
 
 # Fails on every comment that is not one of the four kinds CODING_STANDARDS.md
-# allows, in every tracked file but Markdown, the spec's model, vendored files
-# and files without comments.
+# allows, and on every comment that cites a spec file that is not tracked, in
+# every tracked file but Markdown, the spec's model, vendored files and files
+# without comments.
 check_comments() {
   python3 -I scripts/check_comments.py
 }
