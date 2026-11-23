@@ -298,10 +298,12 @@ fn a_method_other_than_s256_or_no_pkce_is_refused() {
     assert_eq!(sent_back(&token), "unsupported_response_type");
 }
 
-/// A parameter given more than once is refused.
+/// A parameter given more than once is refused, and one Linewright does not
+/// take, such as a scope, is ignored (`docs/specs/access.md`, The
+/// authorization server, Scopes).
 /// <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13#section-3.1>
 #[test_log::test]
-fn a_request_reads_from_its_query_and_a_repeated_parameter_is_refused() {
+fn a_request_reads_from_its_query_ignoring_a_scope_and_refusing_a_repeated_parameter() {
     let query = "response_type=code&client_id=c-1\
         &redirect_uri=http%3A%2F%2F127.0.0.1%3A33418%2Fcallback\
         &code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\
@@ -312,6 +314,7 @@ fn a_request_reads_from_its_query_and_a_repeated_parameter_is_refused() {
     let twice = |name: &str| AuthorizeRequest::from_query(&format!("{query}&{name}=again"));
     assert_eq!(sent_back(&twice("state")), "invalid_request");
     assert_eq!(sent_back(&twice("resource")), "invalid_request");
+    assert_eq!(twice("scope"), request());
     assert_eq!(
         check_authorize(&twice("client_id"), &Found::Client(client()), &server()),
         Err(AuthorizeError::CannotSendBack(
@@ -409,6 +412,15 @@ fn a_registration_is_public_with_its_redirect_uris_and_refused_with_any_other() 
             "{refused:?}"
         );
     }
+    let with_scope: RegistrationRequest = serde_json::from_value(serde_json::json!({
+        "redirect_uris": ["https://agent.example/cb"],
+        "scope": "mcp:tools",
+    }))
+    .unwrap();
+    assert!(
+        registration(&with_scope).is_ok(),
+        "a scope is ignored (`docs/specs/access.md`, The authorization server, Scopes)"
+    );
     let unnamed = RegistrationRequest {
         client_name: Some(String::new()),
         ..request(&["https://agent.example/cb"])
@@ -732,6 +744,7 @@ fn an_access_token_lasts_an_hour_and_an_authorization_30_days_from_its_sign_in()
     );
 }
 
+/// `docs/specs/access.md`, The authorization server, Grants and Scopes.
 #[test_log::test]
 fn a_token_request_names_its_client_and_a_grant_linewright_takes() {
     let form = |pairs: &[(&str, &str)]| -> TokenForm {
@@ -743,6 +756,7 @@ fn a_token_request_names_its_client_and_a_grant_linewright_takes() {
             ("grant_type", "refresh_token"),
             ("refresh_token", "r"),
             ("client_id", "c-1"),
+            ("scope", "mcp:tools"),
         ])),
         Ok(TokenRequest {
             grant: Grant::Refresh { token: "r".into() },
