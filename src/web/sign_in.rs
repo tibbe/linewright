@@ -16,6 +16,7 @@ use tracing::{info, warn};
 use url::Url;
 
 use super::caller::{CrossSite, session_cookie, sessions};
+use super::card_page::CardPage;
 use super::html::Html;
 use super::icons::{Icon, IconSize};
 use super::{HASHED, cookie_headers, cookie_values};
@@ -26,7 +27,7 @@ use crate::access::providers::{Begun, GitHub, Google, Provider, Providers};
 use crate::access::sessions::SessionCookie;
 use crate::access::sign_ins::{SIGN_IN_COOKIE, SignIns};
 use crate::api::Sources;
-use crate::domain::{Repo, Timestamp};
+use crate::domain::Timestamp;
 use crate::host::PublicUrl;
 
 /// The path of Sign in.
@@ -193,8 +194,7 @@ pub(super) fn sign_in_path(return_to: &ReturnPath, reason: Option<Reason>) -> St
 #[derive(Template, WebTemplate)]
 #[template(path = "sign_in.html")]
 struct SignInPage {
-    css: &'static str,
-    repo: Repo,
+    card: CardPage,
     message: Option<Message>,
     /// Google's button, where Linewright offers Google.
     google: Option<GoogleButton>,
@@ -234,8 +234,7 @@ impl SignInPage {
     ) -> Self {
         let path = |name| HASHED.names[name].as_str();
         SignInPage {
-            css: path("linewright.css"),
-            repo: sources.work_dir.repo.clone(),
+            card: CardPage::new("Sign in", "sign-in", "Sign in to Linewright", sources),
             message,
             google: sign_in
                 .providers
