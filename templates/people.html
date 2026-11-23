@@ -1,0 +1,70 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{#- A row's button `verb` on `name`'s row, disabled, showing `why` on hover
+    and on keyboard focus. -#}
+{%- macro protected_button(verb, why, name) -%}
+<span class="inline-flex" data-tip="{{ why }}" tabindex="0"><button class="btn btn-ghost btn-xs" type="button" disabled aria-label="{{ verb.label() }} {{ name }}">{{ verb.labelled() }}</button></span>
+{%- endmacro -%}
+{%- block main -%}
+<div id="{{ SAID }}" class="max-w-xl shrink-0 empty:hidden" role="status"></div>
+{% block people -%}
+<section id="people" class="flex min-h-0 flex-1 flex-col">
+{%- call(part) ui::table_card("People", crate::web::icons::CardIcon::Area(crate::web::shell::Area::People), shows_name = false) %}
+{%- if part == crate::web::table::Part::Table %}
+<div class="scroll-box overflow-x-auto">
+<table class="table table-pin-rows">
+<thead><tr>{% for column in people.columns %}<th class="text-left">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in people.rows %}
+<tr>
+{%- for column in people.columns %}
+{%- match column %}
+{%- when PeopleColumn::Person %}
+<th class="text-left"><div class="flex items-center gap-3">{% call ui::avatar(row.avatar, row.letter) %}{% endcall %}<div class="flex min-w-0 flex-col"><span class="whitespace-nowrap">{{ row.name }}</span><span class="flex items-center gap-1 text-sm font-normal text-base-content/60">{{ row.logo }}<span>{{ row.identity }}</span></span></div></div></th>
+{%- when PeopleColumn::Role %}
+<td class="text-left">{{ row.role }}</td>
+{%- when PeopleColumn::State %}
+<td class="text-left">{% call ui::status(row.status, row.state) %}{% endcall %}</td>
+{%- when PeopleColumn::SignedIn %}
+<td class="text-left whitespace-nowrap">{{ row.signed_in|safe }}</td>
+{%- when PeopleColumn::Buttons %}
+<td class="text-left">
+{%- if let Some(buttons) = row.buttons %}
+<div class="flex items-center justify-end gap-1">
+{%- match buttons.protected %}
+{%- when Some(why) %}
+{%- call protected_button(crate::web::buttons::Verb::Edit, why, row.name) %}{% endcall %}
+{%- when None %}
+{%- call ui::row_button(crate::web::buttons::Verb::Edit, buttons.edit, row.name) %}{% endcall %}
+{%- endmatch %}
+{%- match buttons.state %}
+{%- when StateButton::Disable(dialog) %}
+{%- match buttons.protected %}
+{%- when Some(why) %}
+{%- call protected_button(crate::web::buttons::Verb::Disable, why, row.name) %}{% endcall %}
+{%- when None %}
+{%- call ui::row_button(crate::web::buttons::Verb::Disable, dialog, row.name) %}{% endcall %}
+{%- endmatch %}
+{%- when StateButton::Enable(action) %}
+<form method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="#{{ SAID }}" hx-swap="innerHTML"><button class="btn btn-ghost btn-xs" type="submit" aria-label="{{ crate::web::buttons::Verb::Enable.label() }} {{ row.name }}">{{ crate::web::buttons::Verb::Enable.labelled() }}</button></form>
+{%- endmatch %}
+</div>
+{%- endif -%}
+</td>
+{%- endmatch %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+</div>
+{%- if let Some(pages) = people.pages %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
+{%- endif %}
+{%- endcall %}
+</section>
+{%- endblock %}
+{{ dialogs|safe }}
+{{ values|safe }}
+{%- endblock -%}

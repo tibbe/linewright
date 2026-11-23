@@ -1,0 +1,10 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_form(id, "Edit person", crate::web::buttons::Verb::Save, making.whole()) %}
+{%- call(attributes) ui::field(self.field_id(), "Role", making.field(&PersonField::Role), crate::web::making::Control::Select) %}
+<select id="{{ self.field_id() }}" class="select validator w-full" name="role"{{ attributes }}>
+{%- for role in crate::access::Role::ALL %}
+<option value="{{ role.name() }}"{% if self.chosen(role) %} selected{% endif %}>{{ role.name() }}</option>
+{%- endfor %}
+</select>
+{%- endcall %}
+{%- endcall %}

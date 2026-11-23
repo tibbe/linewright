@@ -369,7 +369,14 @@ async fn the_shells_parts_have_their_icons() {
             .into_iter()
             .map(icon_name)
             .collect::<Vec<_>>(),
-        ["view-columns", "command-line", "bolt", "beaker", "server"]
+        [
+            "view-columns",
+            "command-line",
+            "bolt",
+            "beaker",
+            "server",
+            "users"
+        ]
     );
 }
 
@@ -501,7 +508,7 @@ async fn the_sidebar_is_in_base_200_with_the_specs_spacing_and_daisyuis_menu() {
     let menu = select_in(nav, "ul.menu")[0];
     assert_eq!(spacing(menu, 'p'), Vec::<&str>::new(), "{}", menu.html());
     let icons = select_in(menu, "a > svg");
-    assert_eq!(icons.len(), 5, "{}", menu.html());
+    assert_eq!(icons.len(), 6, "{}", menu.html());
     for icon in icons {
         assert!(has_classes(icon, &["size-4"]), "{}", icon.html());
     }

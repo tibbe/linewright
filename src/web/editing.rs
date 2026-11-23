@@ -24,7 +24,7 @@ use super::making::{
 use super::shell::Missing;
 use super::write::{Refused, Write};
 use super::{benchmark_path, benchmark_run_path, render, task_path};
-use crate::access::{Act, Permit};
+use crate::access::{Act, LevelMarker, Permit};
 use crate::actions::{self, Action};
 use crate::api::Sources;
 use crate::benchmarks::{
@@ -68,6 +68,15 @@ struct EditValues {
     values: Vec<(&'static str, String)>,
 }
 
+/// The [`EditValues`] of the dialog `dialog`: `values`, by the name of the
+/// field that holds each.
+pub(super) fn edit_values(dialog: &str, values: Vec<(&'static str, String)>) -> String {
+    render(&EditValues {
+        id: values_id(dialog),
+        values,
+    })
+}
+
 /// "Edit" among a screen's buttons, which opens the dialog `dialog`, for
 /// `action`.
 fn edit_button(dialog: &str, action: Action) -> ScreenButton {
@@ -83,12 +92,12 @@ fn edit_button(dialog: &str, action: Action) -> ScreenButton {
 /// it as `action` with the form, or else the status and why it is refused:
 /// without a permit, such as for a request that did not come from the web
 /// UI's own pages, or where it does not read.
-fn read_sent<T: DeserializeOwned + Clone + Default>(
+pub(super) fn read_sent<L: LevelMarker, T: DeserializeOwned + Clone + Default>(
     action: Action,
     asking: &Asking,
     uri: &Uri,
     body: &[u8],
-) -> (T, Permitted<T>) {
+) -> (T, Permitted<L, T>) {
     const WRITE: Write = Write::Edit;
     let sent = WRITE.read_form::<T>(body);
     let kept = sent.as_ref().ok().cloned().unwrap_or_default();
@@ -100,7 +109,7 @@ fn read_sent<T: DeserializeOwned + Clone + Default>(
 
 /// The permit to take a change with the form that sends it, or else the
 /// status and why it is refused.
-type Permitted<T> = Result<(Permit<Act>, T), (StatusCode, String)>;
+pub(super) type Permitted<L, T> = Result<(Permit<L>, T), (StatusCode, String)>;
 
 /// The refusal of a change that failed for `e`.
 fn failed<F: Field>(e: &anyhow::Error) -> (StatusCode, Refusal<F>) {
@@ -113,7 +122,7 @@ fn failed<F: Field>(e: &anyhow::Error) -> (StatusCode, Refusal<F>) {
 /// The refusal of a thing that does not exist, which the dialog shows
 /// above its buttons (`docs/specs/design_system.md`, Editing, A thing that
 /// is gone).
-fn gone<F: Field>(missing: &Missing) -> (StatusCode, Refusal<F>) {
+pub(super) fn gone<F: Field>(missing: &Missing) -> (StatusCode, Refusal<F>) {
     (StatusCode::NOT_FOUND, Refusal::Whole(missing.to_string()))
 }
 
@@ -225,7 +234,7 @@ pub(super) async fn save_benchmark(
     uri: Uri,
     body: Bytes,
 ) -> Answer<EditNameForm> {
-    let (fields, sent) = read_sent::<NameFields>(Action::EditBenchmark, &asking, &uri, &body);
+    let (fields, sent) = read_sent::<Act, NameFields>(Action::EditBenchmark, &asking, &uri, &body);
     let refuse = |(status, refusal)| Answer::Refused {
         status,
         form: benchmark_form(Making::refused(fields, refusal)),
@@ -331,7 +340,7 @@ pub(super) async fn save_task(
     uri: Uri,
     body: Bytes,
 ) -> Answer<EditTaskForm> {
-    let (fields, sent) = read_sent::<TaskFields>(Action::EditTask, &asking, &uri, &body);
+    let (fields, sent) = read_sent::<Act, TaskFields>(Action::EditTask, &asking, &uri, &body);
     let refuse = |(status, refusal)| Answer::Refused {
         status,
         form: EditTaskForm {
@@ -500,7 +509,8 @@ pub(super) async fn save_configuration(
     uri: Uri,
     body: Bytes,
 ) -> Answer<EditNameForm> {
-    let (fields, sent) = read_sent::<NameFields>(Action::EditConfiguration, &asking, &uri, &body);
+    let (fields, sent) =
+        read_sent::<Act, NameFields>(Action::EditConfiguration, &asking, &uri, &body);
     let parsed = configuration.parse::<ConfigurationId>();
     let dialog = parsed.as_ref().map_or_else(
         |_| configuration_dialog(&configuration),

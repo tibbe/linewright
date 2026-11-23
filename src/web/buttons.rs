@@ -23,6 +23,8 @@ pub(super) enum Verb {
     /// "Cancel" that closes a dialog.
     CloseDialog,
     SignOut,
+    Disable,
+    Enable,
 }
 
 impl Verb {
@@ -38,6 +40,8 @@ impl Verb {
             Verb::Edit => "Edit",
             Verb::Save => "Save",
             Verb::SignOut => "Sign out",
+            Verb::Disable => "Disable",
+            Verb::Enable => "Enable",
         }
     }
 
@@ -52,6 +56,8 @@ impl Verb {
             Verb::Save => Icon::Check,
             Verb::CloseDialog => Icon::XMark,
             Verb::SignOut => Icon::ArrowRightStartOnRectangle,
+            Verb::Disable => Icon::LockClosed,
+            Verb::Enable => Icon::LockOpen,
         }
     }
 

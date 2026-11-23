@@ -9,6 +9,7 @@ mod environment;
 mod frame;
 mod item;
 mod look;
+mod people;
 mod run;
 mod runs;
 mod script;
@@ -340,6 +341,23 @@ impl Pages {
         web::router(self.sources.clone(), &ui, self.stopping.clone())
     }
 
+    /// The pages' router where the `manager` setting names `manager`, asked
+    /// from the manager's browser.
+    #[track_caller]
+    fn with_manager(&self, manager: &str) -> Asked {
+        let ui = ui();
+        let manager = linewright::access::people::ManagerName::parse(manager, &ui.providers)
+            .unwrap_or_else(|e| panic!("{manager}: {e:?}"));
+        let ui = web::Ui {
+            manager: Some(manager),
+            ..ui
+        };
+        Asked {
+            router: web::router(self.sources.clone(), &ui, self.stopping.clone()),
+            cookie: self.cookie.clone(),
+        }
+    }
+
     /// Keeps the run `record`, in the form of a run's record file, as its
     /// run would have kept it.
     #[track_caller]
@@ -423,6 +441,22 @@ struct AsRole<'a> {
 impl Routed for AsRole<'_> {
     fn router(&self) -> &Router {
         self.router
+    }
+
+    fn cookie(&self) -> &str {
+        &self.cookie
+    }
+}
+
+/// A router of its own, asked by a browser.
+struct Asked {
+    router: Router,
+    cookie: String,
+}
+
+impl Routed for Asked {
+    fn router(&self) -> &Router {
+        &self.router
     }
 
     fn cookie(&self) -> &str {

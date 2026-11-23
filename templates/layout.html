@@ -66,9 +66,7 @@
 </ul>
 <div class="account dropdown dropdown-top mt-auto mb-4 lg:mb-0">
 <div class="lg:rail:tooltip lg:rail:tooltip-right">{% call rail_tip(frame.account.name) %}{% endcall %}<div class="btn btn-ghost btn-sm h-auto justify-start gap-2 px-3 py-1 text-start font-normal" tabindex="0" role="button" aria-label="{{ frame.account.name }}, {{ frame.account.role }}">
-{%- if let Some(avatar) = frame.account.avatar %}<div class="avatar"><div class="size-8 rounded-full"><img src="{{ avatar }}" width="32" height="32" alt="" referrerpolicy="no-referrer"></div></div>
-{%- else %}<div class="avatar avatar-placeholder"><div class="size-8 rounded-full bg-neutral text-neutral-content"><span>{{ frame.account.letter }}</span></div></div>
-{%- endif %}<span class="flex min-w-0 flex-col lg:rail:hidden"><span class="account-name truncate font-semibold">{{ frame.account.name }}</span><span class="account-role text-xs text-base-content/60">{{ frame.account.role }}</span></span></div></div>
+{%- call ui::avatar(frame.account.avatar, frame.account.letter) %}{% endcall %}<span class="flex min-w-0 flex-col lg:rail:hidden"><span class="account-name truncate font-semibold">{{ frame.account.name }}</span><span class="account-role text-xs text-base-content/60">{{ frame.account.role }}</span></span></div></div>
 <ul class="dropdown-content menu z-10 w-52 rounded-box bg-base-100 p-2 shadow-sm" tabindex="0">
 <li><button type="submit" form="sign-out">{{ crate::web::buttons::Verb::SignOut.labelled() }}</button></li>
 </ul>

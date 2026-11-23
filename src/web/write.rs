@@ -1,6 +1,7 @@
 //! The web UI's writes: capturing a run, making a benchmark, changing a
-//! benchmark, a task or a configuration, removing a task from its benchmark,
-//! and launching and cancelling a benchmark run. Each is refused
+//! benchmark, a task, a configuration or a person's role, removing a task
+//! from its benchmark, launching and cancelling a benchmark run, and
+//! disabling and enabling a person. Each is refused
 //! without a permit of its action, such as for a request that did not come
 //! from the web UI's own pages, and answered with what the page says of it.
 
@@ -10,7 +11,7 @@ use tracing::warn;
 
 use super::caller::{Asking, NotPermitted};
 use super::html;
-use crate::access::{Act, Permit};
+use crate::access::{LevelMarker, Permit};
 use crate::actions::Action;
 
 /// A write the web UI takes.
@@ -23,6 +24,8 @@ pub(super) enum Write {
     RemoveTask,
     Launch,
     Cancel,
+    Disable,
+    Enable,
 }
 
 impl Write {
@@ -35,6 +38,8 @@ impl Write {
             Write::RemoveTask => "Not removed",
             Write::Launch => "Not launched",
             Write::Cancel => "Not cancelled",
+            Write::Disable => "Not disabled",
+            Write::Enable => "Not enabled",
         }
     }
 
@@ -47,6 +52,8 @@ impl Write {
             Write::RemoveTask => "a task's removal",
             Write::Launch => "a launch",
             Write::Cancel => "a cancel",
+            Write::Disable => "disabling a person",
+            Write::Enable => "enabling a person",
         }
     }
 
@@ -63,12 +70,12 @@ impl Write {
     /// else it refused: for a request that did not come from the web UI's
     /// own pages, logged with the path, and for a caller whose role does not
     /// reach the action's level.
-    pub(super) fn permit(
+    pub(super) fn permit<L: LevelMarker>(
         self,
         action: Action,
         asking: &Asking,
         uri: &Uri,
-    ) -> Result<Permit<Act>, Refused> {
+    ) -> Result<Permit<L>, Refused> {
         asking.permit(action, uri.path()).map_err(|not| match not {
             NotPermitted::CrossSite(reason) => {
                 warn!(path = %uri.path(), reason, "refused {}", self.noun());
@@ -85,13 +92,13 @@ impl Write {
 
     /// As [`Write::permit`], with what `sent` holds, or else its refusal when
     /// the permit is given.
-    pub(super) fn permit_with<T>(
+    pub(super) fn permit_with<L: LevelMarker, T>(
         self,
         action: Action,
         asking: &Asking,
         uri: &Uri,
         sent: Result<T, Refused>,
-    ) -> Result<(Permit<Act>, T), Refused> {
+    ) -> Result<(Permit<L>, T), Refused> {
         let permit = self.permit(action, asking, uri)?;
         Ok((permit, sent?))
     }

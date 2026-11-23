@@ -198,12 +198,18 @@ impl Watch {
     /// Whether the browser still signs someone in, as its record has them
     /// now. A sign-in that does not read, which it logs, signs no one in.
     pub(super) async fn signs_someone_in(&self) -> bool {
+        self.caller().await.is_some()
+    }
+
+    /// Who the browser signs in, as their record has them now, if anyone.
+    /// A sign-in that does not read, which it logs, signs no one in.
+    pub(super) async fn caller(&self) -> Option<Caller> {
         match self.sessions.resolve(&self.cookie, self.clock.now()).await {
-            Ok(Resolved::Caller(_)) => true,
-            Ok(Resolved::Ended | Resolved::NoOne) => false,
+            Ok(Resolved::Caller(caller)) => Some(caller),
+            Ok(Resolved::Ended | Resolved::NoOne) => None,
             Err(e) => {
                 unread(&e);
-                false
+                None
             }
         }
     }

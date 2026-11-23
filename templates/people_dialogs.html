@@ -1,0 +1,9 @@
+{%- import "macros.html" as ui -%}
+<div id="{{ DIALOGS }}">
+{%- for edit in edits %}
+{%- call ui::edit_dialog(edit) %}{% endcall %}
+{%- endfor %}
+{%- for disable in disables %}
+{%- call ui::confirm_dialog(disable) %}{% endcall %}
+{%- endfor %}
+</div>

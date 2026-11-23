@@ -20,6 +20,7 @@ mod launch;
 mod making;
 mod names;
 mod pages;
+mod people_page;
 mod run_page;
 mod runs_page;
 mod runs_table;
@@ -201,6 +202,20 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
             "/events/benchmark-runs/{id}/{configuration}/{task}/{repetition}/{of}",
             get(benchmark_run_page::trial_events),
         )
+        .route("/people", get(people_page::people_page))
+        .route("/events/people", get(people_page::people_events))
+        .route(
+            "/people/{id}/edit",
+            get(no_such_page).post(people_page::save_person),
+        )
+        .route(
+            "/people/{id}/disable",
+            get(no_such_page).post(people_page::disable),
+        )
+        .route(
+            "/people/{id}/enable",
+            get(no_such_page).post(people_page::enable),
+        )
         .route("/server", get(server_page::server_page))
         .route("/events/server", get(server_page::server_events))
         .route(
@@ -239,6 +254,7 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
             ui.public_url.clone(),
             misdirected,
         ))
+        .layer(Extension(people_page::Named(ui.manager.clone())))
         .layer(Extension(std::sync::Arc::new(sign_in)))
         .layer(Extension(stopping))
         .with_state(sources)
