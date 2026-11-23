@@ -40,7 +40,7 @@ pub(crate) fn rendered(template: &impl askama::Template) -> Html {
 }
 
 /// `phrase` as HTML (`docs/specs/board.md`, Naming items, and
-/// `docs/specs/design_system.md`, Time): an item is named as `names` names it,
+/// `docs/specs/ui_patterns.md`, Time): an item is named as `names` names it,
 /// a time and a duration are `<time>` elements holding the text the commands
 /// print, and a label or a command is code.
 pub(crate) fn phrase(phrase: &Phrase, names: &Names) -> Html {
@@ -86,7 +86,7 @@ pub(crate) fn item(number: Number, repo: &str) -> Html {
 
 /// #`number` and its title, linking to its page, and a link to it on
 /// GitHub. The number and the title are each a `span` of its own, of class
-/// `number` and `title` (`docs/specs/design_system.md`, Layout).
+/// `number` and `title` (`docs/specs/ui_patterns.md`, Layout).
 pub(crate) fn titled(number: Number, title: &str, repo: &str) -> Html {
     Html(format!(
         "{}{}",
@@ -126,7 +126,7 @@ fn github(number: Number, repo: &str) -> String {
     )
 }
 
-/// `at` as a focusable `<time>` (`docs/specs/design_system.md`, Layout).
+/// `at` as a focusable `<time>` (`docs/specs/ui_patterns.md`, Layout).
 pub(crate) fn time(at: Timestamp) -> Html {
     Html(format!(
         r#"<time datetime="{}" tabindex="0">{}</time>"#,

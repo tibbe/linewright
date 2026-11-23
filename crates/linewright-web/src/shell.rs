@@ -1,7 +1,7 @@
 //! What every screen has around it (`docs/specs/shell.md`): the navigation,
 //! the notices, the breadcrumbs, the heading card with what a dialog made
 //! under it, and the screen's buttons, and each screen's title
-//! (`docs/specs/design_system.md`, Titles and Headings).
+//! (`docs/specs/ui_patterns.md`, Titles and Headings).
 
 use std::convert::Infallible;
 
@@ -76,7 +76,7 @@ impl Area {
     }
 
     /// Its icon, in the navigation and before the title of a card of what
-    /// it holds (`docs/specs/web/design_system.md`, Icons).
+    /// it holds (`docs/specs/shell.md`, Navigation).
     pub(super) fn icon(self) -> Icon {
         match self {
             Area::Board => Icon::ViewColumns,
@@ -102,11 +102,11 @@ impl Area {
 }
 
 /// The navigation a page draws from Tailwind's `lg` width, as the reader
-/// last chose (`docs/specs/web/shell.md`, Remembered): the `navigation`
+/// last chose (`docs/specs/shell.md`, Navigation, Remembered): the `navigation`
 /// cookie says `rail` for the rail, and anything else, or none, is the
 /// sidebar. The reader's choice is posted as the form value `sidebar` or
-/// `rail` (`docs/specs/web/architecture.md`, The reader's choice of
-/// navigation).
+/// `rail` (`docs/specs/architecture.md`, The web UI, The reader's choice
+/// of navigation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum Navigation {
@@ -133,10 +133,11 @@ impl Navigation {
         }
     }
 
-    /// The `Set-Cookie` that remembers it for a year (`docs/specs/web/shell.md`,
-    /// Remembered). The server sets it, as Safari deletes a cookie written from
-    /// script after 7 days without the reader using the site
-    /// (<https://webkit.org/tracking-prevention/>), and only the server reads it.
+    /// The `Set-Cookie` that remembers it for a year (`docs/specs/shell.md`,
+    /// Navigation, Remembered). The server sets it, as Safari deletes a cookie
+    /// written from script after 7 days without the reader using the site
+    /// (<https://webkit.org/tracking-prevention/>), and only the server reads
+    /// it.
     fn set_cookie(self) -> String {
         format!(
             "{}={}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly",
@@ -159,7 +160,7 @@ impl Navigation {
     }
 
     /// The name of the button that switches to the other navigation
-    /// (`docs/specs/web/shell.md`, Expanding and collapsing).
+    /// (`docs/specs/shell.md`, Navigation, Expanding and collapsing).
     pub(super) fn toggle_name(self) -> &'static str {
         match self {
             Navigation::Sidebar => "Collapse navigation",
@@ -186,8 +187,8 @@ struct NavigationForm {
 }
 
 /// Remembers the reader's choice of navigation in its cookie
-/// (`docs/specs/web/shell.md`, Remembered), for a request from any page: a
-/// 204, or a 400 with no cookie for a form that does not read.
+/// (`docs/specs/shell.md`, Navigation, Remembered), for a request from any
+/// page: a 204, or a 400 with no cookie for a form that does not read.
 pub(super) async fn remember_navigation(body: Bytes) -> Response {
     match serde_urlencoded::from_bytes::<NavigationForm>(&body) {
         Ok(form) => (
@@ -204,7 +205,7 @@ pub(super) async fn remember_navigation(body: Bytes) -> Response {
 }
 
 /// Which of the spec's kinds of screen a page is (`docs/specs/shell.md`,
-/// Breadcrumbs; `docs/specs/design_system.md`, Headings), which decides its
+/// Breadcrumbs; `docs/specs/ui_patterns.md`, Headings), which decides its
 /// breadcrumbs, its heading card and its title.
 #[derive(Clone)]
 pub(super) enum Place {
@@ -249,7 +250,7 @@ impl Thing {
     }
 }
 
-/// A heading card (`docs/specs/design_system.md`, Headings).
+/// A heading card (`docs/specs/ui_patterns.md`, Headings).
 #[derive(Clone)]
 pub(super) struct Heading {
     /// Plain text, for the screen's title and for the crumb of a screen
@@ -384,7 +385,7 @@ impl Place {
     }
 
     /// The screen's title, such as "Benchmark run 14 · Linewright"
-    /// (`docs/specs/design_system.md`, Titles).
+    /// (`docs/specs/ui_patterns.md`, Titles).
     pub(super) fn title(&self) -> String {
         let name = match self {
             Place::Navigation(area) => area.name().to_string(),
@@ -664,7 +665,7 @@ struct ButtonsRegion<'a> {
 /// screen's buttons. Each that `page` lacks is sent empty, so that its id is
 /// always there to morph. The `#made` under the heading card is none of them,
 /// so that what a dialog made stays there until the reader leaves
-/// (`docs/specs/design_system.md`, Making, What was made).
+/// (`docs/specs/ui_patterns.md`, Making, What was made).
 pub(super) fn regions(frame: &Frame, page: &Page) -> Vec<(&'static str, String)> {
     vec![
         holds(frame),
@@ -688,7 +689,7 @@ mod tests {
     use linewright_core::domain::Number;
     use linewright_core::environment::shown::BuiltShown;
 
-    /// `docs/specs/web/shell.md`, Remembered: the cookie the server
+    /// `docs/specs/shell.md`, Navigation, Remembered: the cookie the server
     /// sets, among the browser's others, chooses the rail; anything else is
     /// the sidebar.
     #[test_log::test]
@@ -720,7 +721,7 @@ mod tests {
         CrumbShown { name, href: None }
     }
 
-    /// `docs/specs/shell.md`, Breadcrumbs, Names; `docs/specs/design_system.md`,
+    /// `docs/specs/shell.md`, Breadcrumbs, Names; `docs/specs/ui_patterns.md`,
     /// Titles.
     #[test_log::test]
     fn a_screen_of_the_navigation_ends_its_crumbs_in_what_it_lists_and_is_titled_by_its_area() {

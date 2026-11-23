@@ -177,8 +177,7 @@ fn board_shown(html: &Html) -> Vec<Vec<String>> {
 }
 
 /// The icon beside a card's number (`docs/specs/board.md`, Cards, Issue or
-/// pull request; `docs/specs/web/design_system.md`, Icons), and what a
-/// screen reader reads of it.
+/// pull request), and what a screen reader reads of it.
 #[derive(Debug, PartialEq, Eq)]
 enum Kind {
     Issue,
@@ -708,7 +707,7 @@ async fn the_board_shows_what_a_hover_shows_in_the_pages_tooltip_never_in_a_titl
     }
 }
 
-/// `docs/specs/web/board.md`, Board: the column heads are a row in
+/// `docs/specs/board.md`, Board: the column heads are a row in
 /// `bg-base-100`, `h-8` tall, each name in `font-semibold`.
 #[test_log::test(tokio::test)]
 async fn the_column_heads_are_a_row_in_the_page_colour_with_each_name_in_semibold() {
@@ -730,7 +729,7 @@ async fn the_column_heads_are_a_row_in_the_page_colour_with_each_name_in_semibol
     }
 }
 
-/// `docs/specs/web/board.md`, Board: a lane is drawn as a card is, with
+/// `docs/specs/board.md`, Board, Lanes: a lane is drawn as a card is, with
 /// `px-2` at its sides and `pb-2` at its foot, its columns and the cards in a
 /// column `gap-2` apart; its head is its top row in `bg-base-200`, at least
 /// `h-10` tall, with `pt-2` above its text in `font-semibold`, and no
@@ -791,13 +790,13 @@ fn icons(element: ElementRef) -> Vec<String> {
 const OFF_THE_BOARD: u64 = 9;
 
 /// `docs/specs/board.md`, Cards, Card status, and
-/// `docs/specs/web/design_system.md`, Status: waiting for a person shows as
+/// `docs/specs/ui_patterns.md`, Status: waiting for a person shows as
 /// waiting, which is `warning`.
 const WAITING_FOR_A_PERSON: &str = "[--tone:var(--color-warning)]";
 
 /// `docs/specs/board.md`, Lanes: a lane's head is its number and title, with
 /// its tickets closed of total and when it finished, and no status of its own
-/// (Out of scope); `docs/specs/web/board.md`, Board: a bar in `bg-base-200`.
+/// (Out of scope); `docs/specs/board.md`, Board, Lanes: a bar in `bg-base-200`.
 #[test_log::test(tokio::test)]
 async fn a_lane_head_shows_no_status_of_its_own() {
     let pages = Pages::of(a_board_with_a_finished_lane()).await;
@@ -820,7 +819,7 @@ async fn a_lane_head_shows_no_status_of_its_own() {
 }
 
 /// `docs/specs/board.md`, Cards, Card status, and
-/// `docs/specs/web/design_system.md`, Status: paused or queued shows as
+/// `docs/specs/ui_patterns.md`, Status: paused or queued shows as
 /// paused, which is `base-content/60`.
 const PAUSED_OR_QUEUED: &str =
     "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]";
@@ -899,7 +898,7 @@ async fn a_held_card_says_what_ends_its_hold() {
     );
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// `docs/specs/design_system.md`, Type: secondary text is in
 /// `text-base-content/60`.
 #[test_log::test(tokio::test)]
 async fn a_cards_line_under_its_title_is_in_secondary_text() {

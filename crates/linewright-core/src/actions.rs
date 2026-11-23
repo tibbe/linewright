@@ -283,11 +283,11 @@ fn logged(caller: &Caller, action: Action, changed: &str, ended: Ended) {
 }
 
 /// The refusal of a required field, or argument, that is empty or holds
-/// only white space (`docs/specs/design_system.md`, Making, Required).
+/// only white space (`docs/specs/ui_patterns.md`, Making, Required).
 pub const REQUIRED: &str = "Required.";
 
 /// What an action or a link named that does not exist, and the refusal
-/// that names it (`docs/specs/design_system.md`, Screen states, Nothing
+/// that names it (`docs/specs/ui_patterns.md`, Screen states, Nothing
 /// there). A thing is named as it was given, whether or not it parses.
 #[derive(Clone, Debug)]
 pub enum Missing {

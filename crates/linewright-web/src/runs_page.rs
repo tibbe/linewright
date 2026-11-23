@@ -1,5 +1,5 @@
 //! The runs page (`docs/specs/runs.md`, Runs): every run,
-//! narrowed by its filters (`docs/specs/design_system.md`, Filters): the
+//! narrowed by its filters (`docs/specs/ui_patterns.md`, Filters): the
 //! item, the stage and the time since which runs started.
 
 use std::sync::Arc;

@@ -1,5 +1,5 @@
 //! Signing in to the web UI with Google and GitHub (`docs/specs/access.md`,
-//! Signing in and Sign in; `docs/specs/web/access.md`, Sign in), and what
+//! Signing in and Sign in; `docs/specs/access.md`, Sign in), and what
 //! each role is shown and allowed (`docs/specs/access.md`, Roles and
 //! Actions), through the router, against fakes of Google and GitHub served
 //! over HTTP.
@@ -480,7 +480,7 @@ async fn a_screen_opened_without_a_sign_in_goes_to_sign_in_and_back_to_it_after(
 }
 
 /// `docs/specs/access.md`, Sign in, Identity providers;
-/// `docs/specs/web/access.md`, Sign in, GitHub's button.
+/// `docs/specs/access.md`, Sign in, GitHub's button.
 #[test_log::test(tokio::test)]
 async fn sign_in_offers_google_then_github_with_githubs_mark_in_each_theme() {
     let both = signing(None).await;

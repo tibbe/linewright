@@ -216,7 +216,7 @@ fn a_list_cut_to_its_limit_ends_saying_how_many_it_left_out_and_how_to_show_them
     );
 }
 
-/// `docs/specs/design_system.md`, Time, Durations.
+/// `docs/specs/ui_patterns.md`, Time, Durations.
 #[test_log::test]
 fn a_run_shows_how_long_it_ran_to_its_two_largest_units() {
     let mut run = work(1, WorkKind::Implement, 1, "2026-10-14T09:00:00Z");

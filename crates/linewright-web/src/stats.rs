@@ -1,5 +1,5 @@
 //! A screen's facts side by side, as a daisyUI `stats`
-//! (`docs/specs/web/benchmarks.md`, Benchmark run and Task).
+//! (`docs/specs/benchmarks.md`, Benchmark run and Task).
 
 use super::html::{self, Html};
 
@@ -10,7 +10,7 @@ pub(super) struct Stat {
 }
 
 /// What a screen shows of a figure that is absent
-/// (`docs/specs/design_system.md`, Screen states, Absent).
+/// (`docs/specs/ui_patterns.md`, Screen states, Absent).
 pub(super) const ABSENT: &str = "–";
 
 /// [`ABSENT`], as a value.

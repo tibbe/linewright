@@ -1,5 +1,4 @@
-//! Task (`docs/specs/benchmarks.md`, Task and Remove task;
-//! `docs/specs/web/benchmarks.md`, Task).
+//! Task (`docs/specs/benchmarks.md`, Task and Remove task).
 
 use std::panic::Location;
 
@@ -124,7 +123,7 @@ async fn a_task_shows_its_name_and_stage_its_facts_and_the_whole_of_its_criteria
 
 /// `docs/specs/benchmarks.md`, Task: a task whose directory lacks its facts
 /// still shows what its row gives, and why the rest does not read;
-/// `docs/specs/design_system.md`, Screen states, Absent.
+/// `docs/specs/ui_patterns.md`, Screen states, Absent.
 #[test_log::test(tokio::test)]
 async fn a_task_whose_facts_do_not_read_shows_them_absent_and_says_why() {
     let pages = with_benchmarks().await;
@@ -151,7 +150,7 @@ async fn a_task_whose_facts_do_not_read_shows_them_absent_and_says_why() {
 }
 
 /// `docs/specs/benchmarks.md`, Task, Heading, Edit task and Remove task;
-/// `docs/specs/design_system.md`, Confirming.
+/// `docs/specs/ui_patterns.md`, Confirming.
 #[test_log::test(tokio::test)]
 async fn remove_is_with_the_screens_buttons_and_asks_first_naming_the_task() {
     let pages = with_benchmarks().await;
@@ -187,9 +186,9 @@ fn removed_cookie(id: &str) -> String {
     format!("removed={id}; Path=/benchmarks/1; SameSite=Lax; HttpOnly")
 }
 
-/// `docs/specs/design_system.md`, Confirming, What was removed;
+/// `docs/specs/ui_patterns.md`, Confirming, What was removed;
 /// `docs/specs/benchmarks.md`, Task, After "Remove";
-/// `docs/specs/web/design_system.md`, Making.
+/// `docs/specs/ui_patterns.md`, Making.
 #[test_log::test(tokio::test)]
 async fn removing_a_task_opens_its_benchmarks_tasks_saying_so_until_the_reader_leaves() {
     let pages = with_benchmarks().await;
@@ -290,7 +289,7 @@ async fn tasks_says_only_that_a_task_removed_from_its_own_benchmark_was_removed(
     }
 }
 
-/// `docs/specs/design_system.md`, Screen states, Nothing there;
+/// `docs/specs/ui_patterns.md`, Screen states, Nothing there;
 /// `docs/specs/shell.md`, Breadcrumbs, No such thing.
 #[test_log::test(tokio::test)]
 async fn a_task_that_does_not_exist_or_was_removed_says_there_is_none() {
@@ -347,7 +346,7 @@ async fn tasks_stream_sends_the_shells_regions_and_its_own() {
     }
 }
 
-/// `docs/specs/benchmarks.md`, Edit task; `docs/specs/design_system.md`,
+/// `docs/specs/benchmarks.md`, Edit task; `docs/specs/ui_patterns.md`,
 /// Editing, The dialog.
 #[test_log::test(tokio::test)]
 async fn edit_opens_the_edit_task_dialog_holding_its_name_and_criteria() {
@@ -374,7 +373,7 @@ async fn edit_opens_the_edit_task_dialog_holding_its_name_and_criteria() {
     );
 }
 
-/// `docs/specs/design_system.md`, Editing, Saving: the dialog closes holding
+/// `docs/specs/ui_patterns.md`, Editing, Saving: the dialog closes holding
 /// what was saved, the criteria with the line breaks the browser sends as
 /// they were typed, and Task shows the new name and criteria, and opens
 /// Edit task holding them.
@@ -436,7 +435,7 @@ async fn saving_a_tasks_name_and_criteria_closes_the_dialog_and_task_shows_them(
 }
 
 /// `docs/specs/benchmarks.md`, Edit task, Refusals;
-/// `docs/specs/design_system.md`, Editing, Required and refused, and A thing
+/// `docs/specs/ui_patterns.md`, Editing, Required and refused, and A thing
 /// that is gone.
 #[test_log::test(tokio::test)]
 async fn a_refused_task_change_keeps_what_the_reader_typed_with_its_reason() {

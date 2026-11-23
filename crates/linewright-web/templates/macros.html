@@ -4,14 +4,14 @@
 <span class="tone badge badge-sm {{ status.badge() }}">{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
 {%- endmacro -%}
 
-{#- A status among a page's facts (`docs/specs/web/components.md`, Facts):
+{#- A status among a page's facts (`docs/specs/components.md`, Facts):
     a daisyUI `status` dot in its colour, then its icon, named by the status,
     and its words. -#}
 {%- macro status_text(status, words) -%}
 <span class="status-text"><span class="{{ status.dot() }}" aria-hidden="true"></span>{{ crate::icons::named_status_icon(status) }}<span>{{ words|safe }}</span></span>
 {%- endmacro -%}
 
-{#- A page's facts (`docs/specs/web/components.md`, Facts), in a card, each a
+{#- A page's facts (`docs/specs/components.md`, Facts), in a card, each a
     row of its label at the start, in secondary text, and its value at the
     end, each line of the value a block of its own, its text read from
     the start. An item among them is
@@ -46,10 +46,9 @@
 </dl>
 {%- endmacro -%}
 
-{#- A page's filters (`docs/specs/design_system.md`, Filters;
-    `docs/specs/web/design_system.md`, Filters), the fields its caller
-    draws, outside every region a stream sends. The script applies them
-    as each is chosen, to the page's address and to its stream at
+{#- A page's filters (`docs/specs/ui_patterns.md`, Filters), the fields its
+    caller draws, outside every region a stream sends. The script applies
+    them as each is chosen, to the page's address and to its stream at
     `stream_path`. -#}
 {%- macro filters(stream_path) -%}
 <form class="flex flex-wrap items-center gap-2" data-filters="{{ stream_path }}">
@@ -57,9 +56,8 @@
 </form>
 {%- endmacro -%}
 
-{#- A table in its card (`docs/specs/design_system.md`, Tables;
-    `docs/specs/web/design_system.md`, Tables), named `name`. The card's top
-    holds `name` after `icon` as its title at its left, if `shows_name`, and
+{#- A table in its card (`docs/specs/ui_patterns.md`, Tables), named `name`.
+    The card's top holds `name` after `icon` as its title at its left, if `shows_name`, and
     the buttons at its right, if `buttons`. A card that shows no name is named
     `name` for screen readers alone. The filters are in a row of their own
     under the top, unless `filters_stream` is empty, applied as the page's
@@ -90,8 +88,7 @@
 </section>
 {%- endmacro -%}
 
-{#- The pages under a table (`docs/specs/design_system.md`, Tables, Pages;
-    `docs/specs/web/design_system.md`, Tables), of a
+{#- The pages under a table (`docs/specs/ui_patterns.md`, Tables, Pages), of a
     `crate::pages::PagesShown`: which rows show at the left, then
     "Previous", the numbers and "Next" at the right in a `join`. Each link
     leads to its page's address, and the script applies it to the page's
@@ -132,7 +129,7 @@
 <label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
 {%- endmacro -%}
 
-{#- A filter that searches (`docs/specs/web/design_system.md`, Filters): a
+{#- A filter that searches (`docs/specs/ui_patterns.md`, Filters): a
     search `input` with its icon at its start, named `label` for screen
     readers and taking the spare width of its row, `value` empty while it is
     unset. -#}
@@ -153,7 +150,7 @@
 </select></label>
 {%- endmacro -%}
 
-{#- A confirmation's daisyUI `modal` (`docs/specs/design_system.md`,
+{#- A confirmation's daisyUI `modal` (`docs/specs/ui_patterns.md`,
     Confirming). Focus starts on turning it down, the least destructive
     answer. -#}
 {%- macro confirm_dialog(confirmation) -%}
@@ -170,15 +167,14 @@
 </dialog>
 {%- endmacro -%}
 
-{#- The button "New" in a table's bar (`docs/specs/design_system.md`,
+{#- The button "New" in a table's bar (`docs/specs/ui_patterns.md`,
     Making), which opens the dialog `id` with no request. -#}
 {%- macro new_button(id) -%}
 <button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ id }}">New</button>
 {%- endmacro -%}
 
 {#- A dialog in which the reader makes a thing, such as the one "New" opens
-    (`docs/specs/design_system.md`, Dialogs and Making;
-    `docs/specs/web/design_system.md`, Navigation and Making): a daisyUI
+    (`docs/specs/ui_patterns.md`, Dialogs and Making): a daisyUI
     `modal` with no `modal-backdrop`, so that a click outside it leaves it
     open. It is drawn outside every region a stream sends, so that an update
     leaves it and what the reader typed in it as they were. Its form posts
@@ -197,8 +193,7 @@
 </dialog>
 {%- endmacro -%}
 
-{#- A dialog that "Edit" opens (`docs/specs/design_system.md`, Editing;
-    `docs/specs/web/design_system.md`, Editing), a
+{#- A dialog that "Edit" opens (`docs/specs/ui_patterns.md`, Editing), a
     `crate::editing::EditDialog`: the dialog that makes a thing, its
     form holding the thing's values, and starting from those of its
     `crate::editing::EditValues` as it opens. -#}
@@ -234,8 +229,8 @@
 </div>
 {%- endmacro -%}
 
-{#- A making dialog's field (`docs/specs/design_system.md`, Making, Required
-    and A refusal; `docs/specs/web/design_system.md`, Making), in a wrapper of
+{#- A making dialog's field (`docs/specs/ui_patterns.md`, Making, Required,
+    A field and A refusal), in a wrapper of
     its own so that daisyUI's `.validator ~ .validator-hint` reaches its hint
     alone (https://daisyui.com/components/validator/): its `label`, then the control of the `crate::making::Control`
     `control` with the id `id`, which its caller draws with the class
@@ -274,7 +269,7 @@
 </tr>
 {%- endmacro -%}
 
-{#- A row's leading cell (`docs/specs/design_system.md`, Tables, Opening in
+{#- A row's leading cell (`docs/specs/ui_patterns.md`, Tables, Opening in
     place): the button that opens and closes the rows its
     `crate::table::Fold` opens, with a chevron pointing right while they
     are closed and down while they are open, or nothing where it opens
@@ -294,9 +289,9 @@
 <a class="row-view btn btn-ghost btn-xs" href="{{ view.href }}" aria-label="View {{ view.name }}">View</a>
 {%- endmacro -%}
 
-{#- A button on a table's row named `name` (`docs/specs/design_system.md`,
+{#- A button on a table's row named `name` (`docs/specs/ui_patterns.md`,
     Tables, A row's buttons, and Editing, Edit;
-    `docs/specs/web/design_system.md`, Buttons): its verb's label after its
+    `docs/specs/ui_patterns.md`, Buttons): its verb's label after its
     icon, which a screen reader reads with the row's name after it, opening
     the dialog `dialog` with no request. -#}
 {%- macro row_button(verb, dialog, name) -%}
@@ -304,7 +299,7 @@
 {%- endmacro -%}
 
 {#- A screen's facts side by side, each a `crate::stats::Stat`, in a
-    daisyUI `stats` drawn as a card is (`docs/specs/web/benchmarks.md`,
+    daisyUI `stats` drawn as a card is (`docs/specs/benchmarks.md`,
     Benchmark run and Task). -#}
 {%- macro stats(stats) -%}
 <div class="stats max-w-full {% call card_look() %}{% endcall %}">
@@ -323,7 +318,7 @@
 <div class="text-base-content/60 flex items-center gap-1{% if !class.is_empty() %} {{ class }}{% endif %}">{% call icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Inline) %}{% endcall %}<span>{{ said }}</span></div>
 {%- endmacro -%}
 
-{#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
+{#- The classes of a card (`docs/specs/ui_patterns.md`, Cards), in
     `bg-base-200`, or in `colour`. -#}
 {%- macro card_look(colour = "bg-base-200") -%}
 card {% call card_surface(colour) %}{% endcall %}
@@ -335,7 +330,7 @@ card {% call card_surface(colour) %}{% endcall %}
 {{ colour }} shadow-xs
 {%- endmacro -%}
 
-{#- A person's avatar (`docs/specs/web/design_system.md`, Avatars): the
+{#- A person's avatar (`docs/specs/ui_patterns.md`, Avatars): the
     image at `avatar`, or else `letter` in its place. -#}
 {%- macro avatar(avatar, letter) -%}
 {%- if let Some(avatar) = avatar %}<div class="avatar"><div class="size-8 rounded-full"><img src="{{ avatar }}" width="32" height="32" alt="" referrerpolicy="no-referrer"></div></div>
@@ -364,7 +359,7 @@ card {% call card_surface(colour) %}{% endcall %}
 {#- A list of runs (`docs/specs/runs.md`, Runs), the region `runs`, in the
     page's scroll box,
     its heads pinned, each column aligned as its kind is
-    (`docs/specs/design_system.md`, Tables). A title is on one line, cut as
+    (`docs/specs/ui_patterns.md`, Tables). A title is on one line, cut as
     a name is, and whole in the page's tooltip while it is cut, as a board
     card's is. A cut list's last row spans the table. -#}
 {%- macro runs(shown) -%}

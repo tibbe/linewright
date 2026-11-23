@@ -145,7 +145,7 @@ fn above_buttons<'a>(reason: &str) -> (Vec<(&'a str, String)>, Option<String>) {
     (vec![], Some(reason.to_string()))
 }
 
-/// `docs/specs/runs.md`, Run, Capturing; `docs/specs/design_system.md`,
+/// `docs/specs/runs.md`, Run, Capturing; `docs/specs/ui_patterns.md`,
 /// Making, The dialog.
 #[test_log::test(tokio::test)]
 async fn add_task_opens_a_dialog_titled_add_task_to_a_benchmark_each_field_under_its_label() {
@@ -405,7 +405,7 @@ fn made(
 }
 
 /// `docs/specs/runs.md`, Run, Capturing, What was made;
-/// `docs/specs/design_system.md`, Making.
+/// `docs/specs/ui_patterns.md`, Making.
 #[test_log::test(tokio::test)]
 async fn a_capture_closes_the_dialog_and_says_under_the_heading_what_it_made_linking_to_the_benchmarks_tasks()
  {
@@ -485,7 +485,7 @@ async fn a_name_that_is_no_name_once_clean_is_required_under_the_name() {
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
-/// `docs/specs/design_system.md`, Making, Required: every empty required
+/// `docs/specs/ui_patterns.md`, Making, Required: every empty required
 /// field is refused at once, each under it.
 #[test_log::test(tokio::test)]
 async fn empty_fields_are_each_refused_as_required_at_once() {
@@ -626,7 +626,7 @@ async fn a_capture_into_a_new_benchmark_makes_it_says_so_and_offers_it_next_time
     assert_eq!(offered(&page_form), ["fresh", IMPLEMENTS, "New benchmark"]);
 }
 
-/// `docs/specs/design_system.md`, Making, A refusal: the dialog stays open,
+/// `docs/specs/ui_patterns.md`, Making, A refusal: the dialog stays open,
 /// the reason of a refusal of no field above its buttons, and the fields
 /// keep what was typed and chosen.
 #[test_log::test(tokio::test)]

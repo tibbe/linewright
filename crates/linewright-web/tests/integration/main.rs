@@ -647,7 +647,7 @@ fn select_in<'a>(element: ElementRef<'a>, selector: &str) -> Vec<ElementRef<'a>>
         .collect()
 }
 
-/// A confirmation (`docs/specs/design_system.md`, Confirming) as a reader
+/// A confirmation (`docs/specs/ui_patterns.md`, Confirming) as a reader
 /// meets it: the label of the button that asks, the question, the label of
 /// the button that turns it down, and where going ahead posts and what.
 #[derive(Debug, PartialEq, Eq)]
@@ -711,7 +711,7 @@ fn confirmations(html: &Html) -> Vec<Confirmation> {
 }
 
 /// The facts in the `stats` of `section` on `html`
-/// (`docs/specs/web/benchmarks.md`, Benchmark run), each its `stat-title` and
+/// (`docs/specs/benchmarks.md`, Benchmark run), each its `stat-title` and
 /// its `stat-value`.
 #[track_caller]
 fn stats(html: &Html, section: &str) -> Vec<(String, String)> {
@@ -746,7 +746,7 @@ fn has_classes(element: ElementRef, classes: &[&str]) -> bool {
 
 /// Asserts that `selector` selects something in `html`, all of it in
 /// secondary text and in no other translucent text colour:
-/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// `docs/specs/design_system.md`, Type: secondary text is in
 /// `text-base-content/60`.
 fn assert_in_secondary_text(html: &Html, selector: &str) {
     let selected = select(html, selector);
@@ -778,7 +778,7 @@ fn classes_starting_with<'a>(element: ElementRef<'a>, prefixes: &[&str]) -> Vec<
 }
 
 /// Asserts that every part of the transcript on `html` that it shows is
-/// drawn in the classes of `docs/specs/web/components.md`, Transcript: a
+/// drawn in the classes of `docs/specs/components.md`, Transcript: a
 /// session's heading, its settings, its entries and their lines, what an
 /// entry opens to, a sub-agent's work and its count, and thinking.
 #[track_caller]
@@ -877,7 +877,7 @@ fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
 /// stylesheet's cut-name rule cuts it: by its class, with the page's tooltip,
 /// and with only its title cut, its number and its link to GitHub outside
 /// the title, and nothing in it but elements, each of which the rule sizes
-/// (`docs/specs/design_system.md`, Layout).
+/// (`docs/specs/ui_patterns.md`, Layout).
 #[track_caller]
 fn assert_cuts_only_the_title(holder: ElementRef, lines: u8) {
     let html = holder.html();
@@ -966,7 +966,7 @@ async fn with_ticket() -> World {
     world
 }
 
-/// An icon of a status (`docs/specs/web/design_system.md`, Icons).
+/// An icon of a status (`docs/specs/ui_patterns.md`, Status).
 const STATUS_ICON: &str = "svg:is([data-icon=check-circle], [data-icon=x-circle], [data-icon=hand-raised], [data-icon=arrow-path], [data-icon=pause-circle], [data-icon=no-symbol])";
 
 /// Each status's icon beside the words it stands for, in its parent.
@@ -981,7 +981,7 @@ fn assert_no_status_by_colour_alone(html: &Html) {
     }
 }
 
-/// `docs/specs/design_system.md`, Status, A badge's words: a badge within
+/// `docs/specs/ui_patterns.md`, Status, A badge's words: a badge within
 /// `within` holds no reason or detail, here no words at all.
 #[track_caller]
 fn assert_badges_hold_no_words(html: &Html, within: &str) {
@@ -1095,8 +1095,8 @@ fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
         .collect()
 }
 
-/// A making dialog's form (`docs/specs/design_system.md`, Making;
-/// `docs/specs/web/design_system.md`, Making) as a reader meets it.
+/// A making dialog's form (`docs/specs/ui_patterns.md`, Making) as a reader
+/// meets it.
 #[derive(Debug, PartialEq, Eq)]
 struct MakingShown<'a> {
     /// The name and value of each field, as [`field_values`] gives them.
@@ -1180,7 +1180,7 @@ fn placed(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
     (shown.refused, shown.whole)
 }
 
-/// A table card (`docs/specs/design_system.md`, Tables) as a reader reads
+/// A table card (`docs/specs/ui_patterns.md`, Tables) as a reader reads
 /// it: the name at the left of its top, if it shows one, the labels of the
 /// buttons at the right of its top, and the names of the filters in the row
 /// under the top, each in order.
@@ -1256,7 +1256,7 @@ fn unnamed_card(buttons: &[&str], filters: &[&str]) -> TableCard {
 }
 
 /// The links at the ends of the rows of the table `table` on `html`
-/// (`docs/specs/design_system.md`, Tables, A row's screen), each as a reader
+/// (`docs/specs/ui_patterns.md`, Tables, A row's screen), each as a reader
 /// meets it: its text, its accessible name and where it goes.
 #[track_caller]
 fn views(html: &Html, table: &str) -> Vec<(String, String, String)> {
@@ -1340,7 +1340,7 @@ fn record_interrupted(
     pages.record(&record)
 }
 
-/// The pages under a table (`docs/specs/design_system.md`, Tables, Pages), as
+/// The pages under a table (`docs/specs/ui_patterns.md`, Tables, Pages), as
 /// a reader meets them.
 #[derive(Debug, PartialEq)]
 struct PagesNav {

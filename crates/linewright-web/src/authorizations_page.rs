@@ -1,5 +1,5 @@
 //! Authorizations (`docs/specs/access.md`, Authorizations and End
-//! authorization; `docs/specs/web/access.md`, Authorizations): a row per
+//! authorization): a row per
 //! authorization of the reader, newest first, each with "End", which asks
 //! first in End authorization.
 
@@ -26,8 +26,8 @@ use super::shell::{self, Frame, Navigation, Place};
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
-/// The path of Authorizations (`docs/specs/web/design_system.md`,
-/// Navigation).
+/// The path of Authorizations (`docs/specs/access.md`, Authorizations,
+/// Address).
 pub(crate) const PATH: &str = "/authorizations";
 
 /// The id of where Authorizations says why an end was refused.

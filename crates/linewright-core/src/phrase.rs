@@ -11,9 +11,9 @@ use crate::domain::{Number, Timestamp};
 #[schemars(with = "String")]
 pub struct Phrase(Vec<Segment>);
 
-/// What an outcome or a state shows as (`docs/specs/design_system.md`,
+/// What an outcome or a state shows as (`docs/specs/ui_patterns.md`,
 /// Status), each with its own icon and colour
-/// (`docs/specs/web/design_system.md`, Status).
+/// (`docs/specs/ui_patterns.md`, Status).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Done,
@@ -44,7 +44,7 @@ impl Status {
     }
 
     /// The classes of a daisyUI `status` dot in its colour, for a status
-    /// among facts (`docs/specs/web/components.md`, Facts): a dot is a fill
+    /// among facts (`docs/specs/components.md`, Facts): a dot is a fill
     /// with nothing on it, so `base-content/60` is its background. Written
     /// whole, as `badge` says why.
     pub fn dot(self) -> &'static str {
@@ -222,7 +222,7 @@ impl fmt::Display for Phrase {
 }
 
 /// `seconds` to its two largest units that are not zero, in narrow units, and
-/// `0s` for none (`docs/specs/design_system.md`, Time, Durations): the twin of
+/// `0s` for none (`docs/specs/ui_patterns.md`, Time, Durations): the twin of
 /// `duration()` in `assets/linewright.js`.
 fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
     if seconds == 0 {
@@ -248,7 +248,7 @@ fn write_duration(f: &mut fmt::Formatter<'_>, seconds: u64) -> fmt::Result {
 mod tests {
     use super::*;
 
-    /// `docs/specs/web/design_system.md`, Status: paused is `base-content/60`,
+    /// `docs/specs/ui_patterns.md`, Status: paused is `base-content/60`,
     /// cancelled `neutral`.
     #[test_log::test]
     fn each_status_has_the_colour_of_the_states_it_shows() {

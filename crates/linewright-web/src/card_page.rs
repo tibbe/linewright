@@ -1,5 +1,5 @@
 //! A page of one card in its middle, outside the shell
-//! (`docs/specs/web/access.md`, Sign in), drawn by `card_page.html`.
+//! (`docs/specs/access.md`, Sign in), drawn by `card_page.html`.
 
 use linewright_core::api::Sources;
 use linewright_core::domain::Repo;

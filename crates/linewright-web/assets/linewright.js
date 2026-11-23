@@ -1,5 +1,5 @@
 /**
- * The web UI's script (docs/specs/design_system.md): it says since when the
+ * The web UI's script (docs/specs/ui_patterns.md): it says since when the
  * page lost `serve`, loads the page again once its browser no longer signs
  * anyone in (docs/specs/access.md, Signing in, An open screen), shows times
  * and durations in the page's language and the reader's time zone, keeping
@@ -15,7 +15,7 @@
  * reader edits,
  * keeps the options of the page's filters up and
  * applies the filters as they are chosen and a table's page links
- * (docs/specs/design_system.md, Tables, Pages) as a filter, but for a link the
+ * (docs/specs/ui_patterns.md, Tables, Pages) as a filter, but for a link the
  * reader opens elsewhere, opens a tab in place at its address, fills in a
  * capture's name for the
  * run chosen and keeps that run chosen through updates, enables a capture's
@@ -170,7 +170,7 @@
 
   /**
    * Closes a confirmation as the reader goes ahead
-   * (docs/specs/design_system.md, Confirming), so that it sends its request
+   * (docs/specs/ui_patterns.md, Confirming), so that it sends its request
    * once.
    */
   document.addEventListener("submit", (event) => {
@@ -181,7 +181,7 @@
 
   /**
    * Keeps the run a capture sent chosen, as the reader chose it, through the
-   * updates after a refusal (docs/specs/design_system.md, Making).
+   * updates after a refusal (docs/specs/ui_patterns.md, Making).
    */
   document.addEventListener("submit", (event) => {
     for (const select of event.target?.querySelectorAll?.("select[name=run]") ?? []) {
@@ -191,7 +191,7 @@
 
   /**
    * Whether `form` is a dialog's that makes a thing
-   * (docs/specs/design_system.md, Making), which answers into itself and
+   * (docs/specs/ui_patterns.md, Making), which answers into itself and
    * stays open on a refusal.
    */
   const isNewForm = (form) => form.hasAttribute?.("data-new") ?? false;
@@ -235,7 +235,7 @@
   }
 
   /**
-   * The values of a dialog that changes a thing (docs/specs/design_system.md,
+   * The values of a dialog that changes a thing (docs/specs/ui_patterns.md,
    * Editing), the element of the page's stream its form's `data-values`
    * names, which holds each field's value as `data-` and the field's name.
    */
@@ -287,7 +287,7 @@
 
   /**
    * The hint of `field`, if it is a making dialog's field
-   * (docs/specs/web/design_system.md, Making), drawn by the `field` macro:
+   * (docs/specs/ui_patterns.md, Making), drawn by the `field` macro:
    * its `validator-hint`, whose `data-unrefused-hint` is what it says while
    * Linewright has not refused the field.
    */
@@ -299,7 +299,7 @@
   /**
    * Gives a making dialog's field that the browser finds empty or of white
    * space alone the message "Required.", as its hint says
-   * (docs/specs/design_system.md, Making, Required). `invalid` does not
+   * (docs/specs/ui_patterns.md, Making, Required). `invalid` does not
    * bubble:
    * https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#statically-validate-the-constraints
    */
@@ -331,7 +331,7 @@
 
   /**
    * Drops Linewright's refusal of a making dialog's field once the reader
-   * edits it (docs/specs/design_system.md, Making, A refusal), its hint
+   * edits it (docs/specs/ui_patterns.md, Making, A refusal), its hint
    * saying again what it says of a field not refused.
    */
   document.addEventListener("input", (event) => {
@@ -369,7 +369,7 @@
 
   /**
    * Opens or closes a fold row on a click on its button, the one part of the
-   * row that opens it (docs/specs/design_system.md, Tables, Opening in place).
+   * row that opens it (docs/specs/ui_patterns.md, Tables, Opening in place).
    */
   document.addEventListener("click", (event) => {
     const clicked = event.target?.closest?.(foldButtonSelector);
@@ -536,7 +536,7 @@
   }
 
   /**
-   * Applies `form`'s filters (docs/specs/design_system.md, Filters): the
+   * Applies `form`'s filters (docs/specs/ui_patterns.md, Filters): the
    * page's address and its stream, at the form's `data-filters`, take their
    * query, and so drop the table's pages.
    */
@@ -555,7 +555,7 @@
   });
 
   /**
-   * Opens `tab`, a link to a tab's address (docs/specs/design_system.md,
+   * Opens `tab`, a link to a tab's address (docs/specs/ui_patterns.md,
    * Tabs): its panel shows in place of the others and the page's address
    * becomes its, with no reload, so the stream and what the reader opened
    * stay.
@@ -818,12 +818,12 @@
   });
 
   /**
-   * Collapses the sidebar to the rail, or expands the rail to the sidebar,
-   * on a click on the navigation's foot button, which then names what it does
-   * next, and posts the choice to the URL its `data-navigation-toggle` holds,
-   * without waiting, for the server to remember it in a cookie for a year
-   * (docs/specs/web/shell.md, Expanding and collapsing, Remembered). A cookie
-   * written here would last only 7 days in Safari
+   * Collapses the sidebar to the rail, or expands the rail to the sidebar, on a
+   * click on the navigation's foot button, which then names what it does next,
+   * and posts the choice to the URL its `data-navigation-toggle` holds, without
+   * waiting, for the server to remember it in a cookie for a year
+   * (docs/specs/shell.md, Navigation, Expanding and collapsing and Remembered).
+   * A cookie written here would last only 7 days in Safari
    * (https://webkit.org/tracking-prevention/). Each choice is posted once the
    * one before it is answered, so the cookie set last is the last choice.
    */
@@ -853,7 +853,7 @@
    * shows its `data-tip`, or else its text, only while it or an element in it
    * is cut. It shows on hover and on keyboard focus, over the page, until the
    * pointer leaves it or focus moves, and Escape hides it
-   * (`docs/specs/design_system.md`, Layout; WCAG 1.4.13,
+   * (`docs/specs/ui_patterns.md`, Layout; WCAG 1.4.13,
    * https://www.w3.org/WAI/WCAG22/Understanding/content-on-hover-or-focus).
    */
   const tip = document.getElementById("tip");

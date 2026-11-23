@@ -26,7 +26,7 @@
     its lane, and its text sticky at the left as the board scrolls
     sideways, cut to the board's visible width less the lane's padding on
     each side so that it can stay there inside its lane, and whole in the
-    page's tooltip while it is cut (`docs/specs/design_system.md`, Layout). -#}
+    page's tooltip while it is cut (`docs/specs/ui_patterns.md`, Layout). -#}
 {%- macro lane_head(lane) -%}
 <span class="name-cut-1 sticky left-2 max-w-[calc(100cqw-2*--spacing(2))] align-top" data-tip-cut>{{ lane.head|safe }}</span>
 {%- endmacro -%}

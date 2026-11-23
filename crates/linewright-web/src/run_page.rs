@@ -472,7 +472,7 @@ fn settings_html(ran: Option<&Ran>, verbose: bool) -> String {
 }
 
 /// An entry's line, and what it opens to, if anything
-/// (`docs/specs/web/components.md`, Transcript).
+/// (`docs/specs/components.md`, Transcript).
 pub(super) struct Row<'a> {
     /// The start of the IDs of its line, `{id}-line`, of what holds it and
     /// what it opens to, `{id}-fold`, and of what it opens to,
@@ -516,9 +516,9 @@ pub(super) fn entry_row(row: &Row) -> String {
 
 /// A row's line: the summary of its fold, if it opens, in
 /// `bg-base-content/10` on hover and on keyboard focus
-/// (`docs/specs/web/components.md`, Transcript, Hover).
+/// (`docs/specs/components.md`, Transcript, Hover).
 /// The chevron of a fold points right while it is closed and down while it
-/// is open (`docs/specs/web/components.md`, Transcript, Lines).
+/// is open (`docs/specs/components.md`, Transcript, Lines).
 fn line_html(row: &Row) -> String {
     let (tag, chevron) = if row.fold.is_some() {
         (
@@ -541,11 +541,11 @@ fn line_html(row: &Row) -> String {
 }
 
 /// The class of a block an entry opens to
-/// (`docs/specs/web/components.md`, Transcript, What an entry opens to).
+/// (`docs/specs/components.md`, Transcript, What an entry opens to).
 const OPENS_TO: &str = "max-h-[30rem] overflow-auto rounded-box bg-base-200 px-3 py-2 whitespace-pre-wrap wrap-anywhere";
 
 /// The text of the working step while a turn goes on
-/// (`docs/specs/web/components.md`, Transcript, "working").
+/// (`docs/specs/components.md`, Transcript, "working").
 const WORKING: &str = r#"<span class="text-base-content/60"><span class="loading loading-dots loading-xs mr-1 align-middle"></span>working</span>"#;
 
 /// The class of a duration at the right of its line.

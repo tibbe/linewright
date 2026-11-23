@@ -1,5 +1,4 @@
-//! A page's facts about one thing (`docs/specs/design_system.md`, Facts, and
-//! `docs/specs/web/components.md`, Facts).
+//! A page's facts about one thing (`docs/specs/components.md`, Facts).
 
 use linewright_core::phrase::Status;
 
