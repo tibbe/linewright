@@ -23,7 +23,9 @@
 
 - **A screen's title** is the name in its heading, then "Linewright", such as
   "Benchmark run 14 · Linewright". For a screen of the navigation, the name is
-  the screen's name in the navigation.
+  the screen's name in the navigation. For a screen that shows without the
+  shell, the name is the screen's name in its area's table of screens, such as
+  "Sign in · Linewright".
 
 ## Headings
 

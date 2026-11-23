@@ -142,9 +142,15 @@ sign-in.
 - **Matching an identity.** `manager` names an identity as `google:` and an
   email, or `github:` and a login. Linewright compares each ignoring case.
 - **Signed in.** After a sign-in, the browser stays signed in for 30 days,
-  or until the person signs out. A request for a screen from a browser that
+  or until the person signs out.
+- **Screens that need no sign-in.** Sign in, Consent and Authorization
+  error.
+- **Without a sign-in.** A request for any other screen from a browser that
   is not signed in goes to Sign in, and back to the screen after the
   sign-in.
+- **An open screen.** A browser that is no longer signed in shows Sign in
+  in place of each open screen that needs a sign-in, with the message for
+  the reason ([Sign in](#sign-in)).
 - **Logged.** Linewright's log records each sign-in, each sign-in that it
   refuses and why, and each sign-out, with the identity.
 
@@ -171,19 +177,25 @@ Where more than one of 3a to 3e applies, the first does.
 ## The MCP server
 
 `serve` serves the MCP server at `/mcp`, over Streamable HTTP, while it
-serves the UI ([Serving the UI](operation.md#serving-the-ui)). It serves the
-versions of the protocol from 2025-06-18 on.
+serves the UI ([Serving the UI](operation.md#serving-the-ui)). It follows
+versions 2025-06-18 and 2025-11-25 of the Model Context Protocol. This topic
+gives what the protocol leaves to Linewright.
 
+- **No sessions and no stream.** Linewright gives no session ID, and offers
+  no stream to a GET.
+- **Origin.** Linewright accepts a request that has no `Origin`. The only
+  `Origin` that it accepts is the public URL's.
 - **Tools.** One tool per action ([Actions](#actions)), with the action as
-  its title. A tool that only shows something is marked read-only.
+  its title, in the order of the table of actions. A tool that only shows
+  something is marked read-only.
 - **Arguments.** A tool takes the ID of the thing that it shows or acts on,
   such as `run_id` or `person_id`. It also takes the filters of its screen
   and the fields of its dialog. Each argument has its name on the screen, in
   snake case.
 - **What a tool shows.** A tool that shows something returns what its screen
-  shows at the time of the call. The result is structured content with an
-  output schema, and the same JSON as text. A fact that a command's `--json`
-  also gives has the name it has there ([Output](operation.md#output)).
+  shows at the time of the call, as structured content with an output
+  schema. A fact that a command's `--json` also gives has the name it has
+  there ([Output](operation.md#output)).
 - **What a tool changes.** A tool that changes something returns the thing
   that it made, changed, removed or ended.
 - **Lists.** A tool that lists returns the first 100 of what it lists, in
@@ -195,96 +207,71 @@ versions of the protocol from 2025-06-18 on.
   that returns the ones before them.
 - **Listed tools.** When a client asks for the list of tools, the list holds
   the tools that the person's role allows.
-- **A refused call.** It returns a tool error with the message that the UI
-  shows for the refusal.
+- **An access level that is too low.** A call to a tool that the person's
+  role does not allow gets 403, with the message of the refusal
+  ([Actions](#actions)).
+- **A wrong argument.** A call with an argument that the tool's input
+  schema does not allow returns a tool error with "The argument NAME is not
+  valid."
+- **A refused call.** A call that Linewright refuses for any other reason
+  returns a tool error with the message that the UI shows for the refusal.
+- **Too many calls.** A person's clients can call tools 120 times in a
+  minute. Each further call in that minute gets 429, with a `Retry-After`
+  header.
 
 ## The authorization server
 
-Linewright is its own OAuth 2.1 authorization server, and the MCP server is
-the one resource it guards. A client is an app that acts as a person over
-MCP, such as their coding agent. An authorization is a person's consent for
-one client to act as them.
+Linewright is the authorization server and the resource server of the Model
+Context Protocol's authorization rules. The MCP server is the one resource that
+it guards. Linewright follows those rules, their security best practices and the
+standards that they name. It also follows RFC 9207. This topic gives what they
+leave to Linewright.
 
-- **Issuer.** The public URL (`public-url`) is the issuer. Linewright builds
-  every URL it gives out from it.
+A client is an app that acts as a person over MCP, such as their coding
+agent. An authorization is a person's consent for one client to act as them.
+
+- **Issuer.** The public URL (`public-url`) is the issuer.
 - **Endpoints.** Under the public URL: `/oauth/authorize` to authorize,
   `/oauth/token` for tokens and `/oauth/register` to register.
-- **Resource metadata.** Linewright serves protected resource metadata (RFC
-  9728) for the MCP server at `/.well-known/oauth-protected-resource/mcp`.
-  It names Linewright as the authorization server.
-- **Server metadata.** Linewright serves authorization server metadata (RFC
-  8414) at `/.well-known/oauth-authorization-server`.
-- **No token.** A request to the MCP server without a valid access token
-  gets 401. Its `WWW-Authenticate` header points to the protected resource
-  metadata.
-- **Clients.** Every client is a public client. A client registers with an
-  OAuth client ID metadata document
-  (`draft-ietf-oauth-client-id-metadata-document`), whose URL is its client
-  ID, or by dynamic client registration (RFC 7591). Linewright registers a
-  client that asks for a client secret as a public client, without a secret.
-- **Redirect URIs.** Each is HTTPS, or HTTP to a loopback address, and
-  Linewright refuses a registration with any other. An authorization
-  request's redirect URI must be one that its client registered, exactly.
-- **Grants.** The authorization code grant, with PKCE and the `S256` method,
-  and the refresh token grant. Linewright refuses every other grant and
-  method.
-- **Resource.** Linewright issues each token for the MCP server's URI,
-  `/mcp` under the public URL (RFC 8707). It refuses a request for a token
-  for another resource.
-- **An authorization's ID.** A number that Linewright gives in the order
-  that people allow clients, from 1.
-- **How long it lasts.** An authorization lasts 30 days from its sign-in. It
-  ends earlier when its person ends it ([Actions](#actions)), or when a
-  client uses a refresh token that has stopped working ([Tokens](#tokens)).
-  Signing out in the browser leaves it in place.
-- **Logged.** Linewright's log records each client that registers, and each
-  consent that a person gives or denies, with the person and the client.
-
-1. The client registers.
-2. The client sends the person to Linewright to authorize it.
-3. The person signs in through an identity provider
-   ([Signing in](#signing-in)).
-4. The person allows the client on [Consent](#consent).
-5. Linewright sends the person back to the client with a code.
-6. The client exchanges the code, with its PKCE verifier, for an access
-   token and a refresh token.
-
-Each authorization takes steps 3 and 4, whatever the browser is signed in
-to.
-
-- **2a. Linewright cannot send the person back.** The request's client is
-  unknown, or its redirect URI is not one that the client registered.
-  Linewright does not redirect, and shows
-  [Authorization error](#authorization-error).
-- **3a. Linewright refuses the sign-in.** Sign in says why. The client gets
-  no code.
-- **4a. The person denies the client.** Linewright sends the person back to
-  the client with the `access_denied` error.
-
-## Tokens
-
-A client's tokens act as the person who authorized it.
-
-| Token         | Stops working                                                                       |
-| ------------- | ----------------------------------------------------------------------------------- |
-| access token  | one hour after Linewright issues it, or when its authorization ends                 |
-| refresh token | when the client first uses a token that replaced it, or when its authorization ends |
-
-- **Form.** A token is an opaque string.
-- **Rotation.** Each use of a refresh token issues a new access token and a
-  new refresh token, in the same authorization.
-- **A lost response.** A client that did not get its new tokens uses the
-  refresh token again, and gets new tokens again.
-- **A refresh token that has stopped working.** Using one ends its
+- **Clients.** Every client is a public client. A client has a client ID
+  metadata document, or registers by dynamic client registration.
+  Linewright registers a client that asks for a client secret as a public
+  client, without a secret.
+- **Loopback.** Linewright treats a redirect URI to `localhost` as one to a
+  loopback IP address.
+- **Grants.** The authorization code grant, with only the `S256` method,
+  and the refresh token grant.
+- **Scopes.** Linewright has no scopes. It ignores a scope that a client
+  asks for.
+- **When an authorization begins.** It begins at its sign-in.
+- **Tokens.** A token is an opaque string.
+- **A code.** A code works for 10 minutes.
+- **An access token.** An access token works for one hour.
+- **An ended authorization.** When an authorization ends, its code and its
+  tokens stop working.
+- **A second use.** A second use of a code or of a refresh token ends its
   authorization.
+- **An authorization's ID.** A number that Linewright gives in the order
+  that authorizations begin, from 1.
+- **How long it lasts.** An authorization lasts 30 days from its sign-in,
+  unless it ends earlier. Signing out in the browser leaves it in place.
+- **Logged.** Linewright's log records each client that registers, each
+  consent that a person gives or denies, with the client, and each
+  authorization, with the person and the client.
+
+For each authorization request:
+
+1. The person allows the client on [Consent](#consent).
+2. The person signs in through an identity provider
+   ([Signing in](#signing-in)), whatever the browser is signed in to.
 
 ## Screens
 
 | Screen              | Reached from                                                                        | Purpose                                      |
 | ------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------- |
-| Sign in             | a screen opened without a sign-in, a client's authorization request, and "Sign out" | choose an identity provider to sign in with  |
-| Consent             | Sign in, in a client's authorization request                                        | allow or deny the client                     |
-| Authorization error | a client's authorization request that Linewright cannot send back                   | see why Linewright stopped                   |
+| Sign in             | a screen opened or open without a sign-in, "Allow" on Consent, and "Sign out"               | choose an identity provider to sign in with  |
+| Consent             | a client's authorization request                                                    | allow or deny the client                     |
+| Authorization error | an authorization request that Linewright cannot send back to its client                   | see why Linewright stopped                   |
 | People              | the navigation ([Shell](shell.md))                                                  | see the people, and as a manager change them |
 | Edit person         | "Edit" on a person, on People                                                       | change the person's role                     |
 | Disable person      | "Disable" on a person, on People                                                    | confirm disabling the person                 |
@@ -315,25 +302,32 @@ A client's tokens act as the person who authorized it.
 ### Consent
 
 - **Layout.** A card in the middle of the page, as on Sign in. The card
-  holds the heading, then the facts, then "Allow" and "Deny".
-- **Heading.** "Allow NAME to act as you?", with the client's name as it
-  registered it, or "an unnamed client" without one.
+  holds the heading, then the facts, then the warning, where there is one,
+  then "Allow" and "Deny".
+- **Heading.** "Allow NAME to act as you?", with the client's name as the client
+  gives it, or "an unnamed client" without one.
 - **Facts.**
 
-  | Fact              | Holds                                 |
-  | ----------------- | ------------------------------------- |
-  | Signed in as      | the person's identity                 |
-  | Sends you back to | the host of the client's redirect URI |
-  | Access            | the person's role                     |
+  | Fact              | Holds                                 | Shown                                    |
+  | ----------------- | ------------------------------------- | ---------------------------------------- |
+  | Client            | the host of the client ID             | for a client with a metadata document    |
+  | Sends you back to | the host of the client's redirect URI | always                                   |
+
+- **The warning.** For a loopback redirect URI: "This client is an app on
+  this computer. Linewright cannot check which app."
 
 ### Authorization error
 
 - **Layout.** A card in the middle of the page, as on Sign in. The card
   holds the heading "Linewright cannot authorize this client", then the
   message.
-- **The message.** "Linewright does not know this client." for an unknown
-  client, and "This is not a redirect URI of this client." for a redirect
-  URI that the client did not register.
+- **The message.**
+
+  | Case                                                  | Message                                                 |
+  | ----------------------------------------------------- | ------------------------------------------------------- |
+  | an unknown client                                     | "Linewright does not know this client."                 |
+  | a metadata document that Linewright cannot fetch or use | "Linewright cannot use this client's metadata document." |
+  | a redirect URI that is not one of the client's        | "This is not a redirect URI of this client."            |
 
 ### People
 
@@ -383,7 +377,7 @@ A client's tokens act as the person who authorized it.
   | ------------- | ----------------------------------------- |
   | Client        | the client's name, or "an unnamed client" |
   | Sends back to | the host of the client's redirect URI     |
-  | Allowed       | when the reader allowed the client        |
+  | Allowed       | when the authorization began              |
   | Ends          | when the authorization ends               |
 
 - **A row's buttons.** "End".
@@ -402,8 +396,8 @@ A client's tokens act as the person who authorized it.
 - Commands that change people or end authorizations.
 - Signing in for the commands; who can open the socket can use them
   ([Monitoring commands](operation.md#monitoring-commands)).
-- A token with less access than its person's role.
 - Seeing or ending another person's authorizations; disabling the person
   ends them all.
 - Direction, not the first version: identity providers other than Google
   and GitHub.
+- Direction, not the first version: version 2026-07-28 of the protocol.
