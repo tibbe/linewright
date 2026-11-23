@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "A judge's result",
+  "title": "A scorer session's result",
   "oneOf": [
     {
-      "description": "The replay's output is judged.",
+      "description": "The trial's output is scored.",
       "type": "object",
       "properties": {
         "outcome": {
           "const": "judged"
         },
         "correctness": {
-          "description": "Whether the output meets the case's criteria.",
+          "description": "Whether the output meets the task's criteria.",
           "type": "object",
           "properties": {
             "reasoning": {
@@ -32,16 +32,16 @@
           ]
         },
         "leak": {
-          "description": "Whether a session of the replay learned how the work turned out.",
+          "description": "Whether a session of the trial learned how the work turned out.",
           "type": "object",
           "properties": {
             "reasoning": {
-              "description": "Where the judge looked and what it found, in Markdown.",
+              "description": "Where the scorer looked and what it found, in Markdown.",
               "type": "string",
               "pattern": "\\S"
             },
             "found": {
-              "description": "Whether the judge found a leak.",
+              "description": "Whether the scorer found a leak.",
               "type": "boolean"
             },
             "calls": {
