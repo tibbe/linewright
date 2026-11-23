@@ -88,10 +88,10 @@ pub fn assert_passes_through_a_proxy(headers: &axum::http::HeaderMap) {
 /// The host of [`public_url`].
 pub const UI_HOST: &str = "127.0.0.1";
 
-/// The web UI's public URL in tests, `http://UI_HOST:8081`.
+/// The web UI's public URL in tests, `https://UI_HOST:8081`.
 pub fn public_url() -> crate::host::PublicUrl {
-    crate::host::PublicUrl::parse(&format!("http://{UI_HOST}:8081"))
-        .expect("a loopback address is a public URL")
+    crate::host::PublicUrl::parse(&format!("https://{UI_HOST}:8081"))
+        .expect("an HTTPS URL with no path is a public URL")
 }
 
 /// The web UI on `address`, at [`public_url`], signing people in with
