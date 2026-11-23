@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use linewright::access::Role;
 use linewright::access::people::{Claims, People, Vouched};
-use linewright::access::providers::fake::FakeAccount;
+use linewright::access::providers::fake::{FakeAccount, FakeGitHubAccount};
 use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
     BenchmarkId, BenchmarkRuns, Benchmarks, RunTask, ScoreFigures, TrialChange, TrialFigures,
@@ -1057,6 +1057,31 @@ pub fn google_accounts() -> Vec<FakeAccount> {
             false,
             Some("Una Verified"),
         ),
+    ]
+}
+
+/// The organization whose members meet GitHub's sign-up rule.
+pub const SIGNUP_ORGANIZATION: &str = "acme";
+
+/// The accounts the fake GitHub signs in: a member of a team of the sign-up
+/// rule's organization, whom a first sign-in adds as a viewer, and someone
+/// Linewright refuses.
+pub fn github_accounts() -> Vec<FakeGitHubAccount> {
+    vec![
+        FakeGitHubAccount {
+            id: 583_231,
+            login: "octocat".into(),
+            name: Some("The Octocat".into()),
+            avatar_url: None,
+            memberships: vec![format!("{SIGNUP_ORGANIZATION}/core")],
+        },
+        FakeGitHubAccount {
+            id: 1_000_001,
+            login: "outsider".into(),
+            name: None,
+            avatar_url: None,
+            memberships: vec!["elsewhere".into()],
+        },
     ]
 }
 

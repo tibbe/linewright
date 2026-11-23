@@ -1,13 +1,16 @@
-//! Signing in to the web UI with Google (`docs/specs/access.md`, Signing in
-//! and Sign in; `docs/specs/web/access.md`, Sign in), and what each role
-//! is shown and allowed (`docs/specs/access.md`, Roles and Actions),
-//! through the router, against a fake of Google served over HTTP.
+//! Signing in to the web UI with Google and GitHub (`docs/specs/access.md`,
+//! Signing in and Sign in; `docs/specs/web/access.md`, Sign in), and what
+//! each role is shown and allowed (`docs/specs/access.md`, Roles and
+//! Actions), through the router, against fakes of Google and GitHub served
+//! over HTTP.
 
 use std::collections::BTreeMap;
 use std::panic::Location;
 
-use linewright::access::providers::fake::{FakeAccount, FakeGoogle};
-use linewright::access::providers::{Google, Providers, SignUpDomains};
+use linewright::access::providers::fake::{FakeAccount, FakeGitHub, FakeGitHubAccount, FakeGoogle};
+use linewright::access::providers::{
+    ClientId, ClientSecret, GitHub, Google, Provider, Providers, SignUpDomains, SignUpOrgs,
+};
 
 use super::*;
 
@@ -33,16 +36,56 @@ fn accounts() -> Vec<FakeAccount> {
     ]
 }
 
+/// The avatar GitHub gives The Octocat.
+const OCTOCAT_AVATAR: &str = "https://avatars.githubusercontent.com/u/583231?v=4";
+
+/// The accounts the fake GitHub signs in.
+fn github_accounts() -> Vec<FakeGitHubAccount> {
+    vec![
+        FakeGitHubAccount {
+            id: 583_231,
+            login: "OctoCat".into(),
+            name: Some("The Octocat".into()),
+            avatar_url: Some(OCTOCAT_AVATAR.into()),
+            memberships: vec!["acme/core".into()],
+        },
+        FakeGitHubAccount {
+            id: 1_000_001,
+            login: "outsider".into(),
+            name: None,
+            avatar_url: None,
+            memberships: vec!["elsewhere".into()],
+        },
+    ]
+}
+
+/// The identity providers a [`Signing`] offers.
+#[derive(Clone, Copy)]
+enum Offering {
+    Both,
+    GitHubAlone,
+}
+
 /// The pages, signing people in with the fake Google, whose sign-up rule is
-/// `example.com`, with `manager` as the `manager` setting.
+/// `example.com`, and the fake GitHub, whose sign-up rule is `acme`, as
+/// `offering` offers them, with `manager` as the `manager` setting.
 struct Signing {
     pages: Pages,
     router: Router,
     _google: FakeGoogle,
+    github: FakeGitHub,
 }
 
 #[track_caller]
 fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
+    signing_offering(Offering::Both, manager)
+}
+
+#[track_caller]
+fn signing_offering(
+    offering: Offering,
+    manager: Option<&str>,
+) -> impl Future<Output = Signing> + use<> {
     let caller = Location::caller();
     let manager = manager.map(ToString::to_string);
     async move {
@@ -50,11 +93,24 @@ fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
         let google = FakeGoogle::serve(accounts(), pages.sources.clock.clone())
             .await
             .unwrap_or_else(|e| panic!("serving the fake Google at {caller}: {e:#}"));
-        let providers = Providers::Google(Google {
+        let github = FakeGitHub::serve(github_accounts())
+            .await
+            .unwrap_or_else(|e| panic!("serving the fake GitHub at {caller}: {e:#}"));
+        let github_settings = GitHub {
+            client_id: ClientId::new("github-id".into()).unwrap(),
+            secret: ClientSecret::new("github-s3cret".into()).unwrap(),
+            signup: SignUpOrgs::of("acme").unwrap(),
+            endpoints: github.endpoints(),
+        };
+        let google_settings = Google {
             signup: SignUpDomains::of("example.com").unwrap(),
             endpoints: google.endpoints(),
             ..ui().providers.google().unwrap().clone()
-        });
+        };
+        let providers = match offering {
+            Offering::Both => Providers::Both(google_settings, github_settings),
+            Offering::GitHubAlone => Providers::GitHub(github_settings),
+        };
         let manager = manager.map(|name| {
             linewright::access::people::ManagerName::parse(&name, &providers)
                 .unwrap_or_else(|e| panic!("{name} at {caller}: {e:?}"))
@@ -69,6 +125,7 @@ fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
             pages,
             router,
             _google: google,
+            github,
         }
     }
 }
@@ -187,38 +244,88 @@ impl<'a> Browsing<'a> {
     ) -> impl Future<Output = Answer> + 'b {
         let caller = Location::caller();
         async move {
-            let sent = self.get(path).await;
-            assert_eq!(sent.status, 303, "{path} at {caller}");
-            let sign_in = self.get(sent.location()).await;
-            assert_eq!(sign_in.status, 200, "at {caller}");
-            let form = select(&sign_in.html, "form[action='/auth/google']");
-            assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
-            let return_to = select_in(form[0], "input[name=return]")[0]
-                .attr("value")
-                .expect("the path to return to")
-                .to_string();
-            let begun = self.post("/auth/google", &[("return", &return_to)]).await;
-            assert_eq!(begun.status, 303, "at {caller}");
-            let authorize = url::Url::parse(begun.location()).expect("Google's URL");
-            let chosen = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("an HTTP client")
-                .get(FakeGoogle::choosing(&authorize, email))
-                .send()
-                .await
-                .unwrap_or_else(|e| panic!("choosing at the fake Google at {caller}: {e}"));
-            assert_eq!(chosen.status(), 303, "at {caller}");
-            let back = url::Url::parse(chosen.headers()["location"].to_str().unwrap())
-                .expect("the callback's URL");
-            assert_eq!(back.path(), "/auth/google/callback", "at {caller}");
-            self.get(&format!(
-                "{}?{}",
-                back.path(),
-                back.query().unwrap_or_default()
-            ))
+            let authorize = self.begin(path, Provider::Google, caller).await;
+            self.choose(
+                FakeGoogle::choosing(&authorize, email),
+                Provider::Google,
+                caller,
+            )
             .await
         }
+    }
+
+    /// Opens `path`, is sent to Sign in, and signs in there with GitHub,
+    /// choosing the account of `login`, or turning the sign-in down with
+    /// none: what the browser is answered as it is sent back.
+    #[track_caller]
+    fn sign_in_with_github<'b>(
+        &'b mut self,
+        path: &'b str,
+        login: Option<&'b str>,
+    ) -> impl Future<Output = Answer> + 'b {
+        let caller = Location::caller();
+        async move {
+            let authorize = self.begin(path, Provider::GitHub, caller).await;
+            self.choose(
+                FakeGitHub::choosing(&authorize, login),
+                Provider::GitHub,
+                caller,
+            )
+            .await
+        }
+    }
+
+    /// Opens `path`, is sent to Sign in, and begins a sign-in there with
+    /// `provider`: the provider's URL it is sent to.
+    async fn begin(&mut self, path: &str, provider: Provider, caller: &Location<'_>) -> url::Url {
+        let sent = self.get(path).await;
+        assert_eq!(sent.status, 303, "{path} at {caller}");
+        let sign_in = self.get(sent.location()).await;
+        assert_eq!(sign_in.status, 200, "at {caller}");
+        let action = format!("/auth/{provider}");
+        let form = select(&sign_in.html, &format!("form[action='{action}']"));
+        assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
+        let return_to = select_in(form[0], "input[name=return]")[0]
+            .attr("value")
+            .expect("the path to return to")
+            .to_string();
+        let begun = self.post(&action, &[("return", &return_to)]).await;
+        assert_eq!(begun.status, 303, "at {caller}");
+        url::Url::parse(begun.location()).expect("the provider's URL")
+    }
+
+    /// Goes to `chosen`, where `provider` sends the browser back to its
+    /// callback, and follows it there.
+    async fn choose(
+        &mut self,
+        chosen: url::Url,
+        provider: Provider,
+        caller: &Location<'_>,
+    ) -> Answer {
+        let chosen = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("an HTTP client")
+            .get(chosen)
+            .send()
+            .await
+            .unwrap_or_else(|e| {
+                panic!("choosing at the fake {} at {caller}: {e}", provider.name())
+            });
+        assert_eq!(chosen.status(), 303, "at {caller}");
+        let back = url::Url::parse(chosen.headers()["location"].to_str().unwrap())
+            .expect("the callback's URL");
+        assert_eq!(
+            back.path(),
+            format!("/auth/{provider}/callback"),
+            "at {caller}"
+        );
+        self.get(&format!(
+            "{}?{}",
+            back.path(),
+            back.query().unwrap_or_default()
+        ))
+        .await
     }
 }
 
@@ -302,6 +409,118 @@ async fn a_screen_opened_without_a_sign_in_goes_to_sign_in_and_back_to_it_after(
             && line.contains(r#"identity="google:nameless@example.com""#)
             && line.contains(r#"role="viewer""#)),
         "{signed_in:?}"
+    );
+}
+
+/// `docs/specs/access.md`, Sign in, Identity providers;
+/// `docs/specs/web/access.md`, Sign in, GitHub's button.
+#[test_log::test(tokio::test)]
+async fn sign_in_offers_google_then_github_with_githubs_mark_in_each_theme() {
+    let both = signing(None).await;
+    let github_alone = signing_offering(Offering::GitHubAlone, None).await;
+
+    let offered = |html: &Html| {
+        select(html, ".sign-in form")
+            .into_iter()
+            .map(|form| form.attr("action").unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    let sign_in = Browsing::new(&both).get("/sign-in").await;
+    assert_eq!(offered(&sign_in.html), ["/auth/google", "/auth/github"]);
+    let button = select(&sign_in.html, "form[action='/auth/github'] button")[0];
+    assert!(has_classes(button, &["btn"]), "{}", button.html());
+    assert!(!has_classes(button, &["btn-sm"]), "{}", button.html());
+    assert_eq!(text(button), "Sign in with GitHub");
+    let mark = select_in(button, "svg:first-child")[0];
+    assert_eq!(mark.attr("data-icon"), Some("github"));
+    assert!(
+        has_classes(mark, &["text-black", "dark:text-white"]),
+        "{}",
+        mark.html()
+    );
+    let alone = Browsing::new(&github_alone).get("/sign-in").await;
+    assert_eq!(offered(&alone.html), ["/auth/github"]);
+    let mut not_offered = Browsing::new(&github_alone);
+    assert_eq!(
+        not_offered
+            .post("/auth/google", &[("return", "/")])
+            .await
+            .status,
+        404
+    );
+}
+
+/// `docs/specs/access.md`, Signing in: GitHub's identity shown as its login,
+/// a member of a team of an organization its sign-up rule names, and its
+/// token revoked once read.
+#[test_log::test(tokio::test)]
+async fn a_member_signs_in_with_github_by_their_login_and_its_token_is_revoked() {
+    let signing = signing(None).await;
+    let mut browser = Browsing::new(&signing);
+    let (log, _guard) = Log::capture();
+
+    let back = browser
+        .sign_in_with_github("/runs?state=failed", Some("OctoCat"))
+        .await;
+
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    assert_eq!(back.location(), "/runs?state=failed");
+    let runs = browser.get("/runs?state=failed").await;
+    assert_eq!(
+        account(&runs.html),
+        ("The Octocat".into(), "viewer".into(), OCTOCAT_AVATAR.into())
+    );
+    assert_eq!(signing.github.tokens_not_revoked(), 0);
+    let signed_in = log.lines("INFO");
+    assert!(
+        signed_in.iter().any(|line| line.contains("signed in")
+            && line.contains(r#"identity="github:OctoCat""#)
+            && line.contains(r#"role="viewer""#)),
+        "{signed_in:?}"
+    );
+    let mut outsider = Browsing::new(&signing);
+    let refused = outsider
+        .sign_in_with_github("/runs", Some("outsider"))
+        .await;
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        message(&refused.html),
+        Some(("outsider has no access to this Linewright.".into(), true))
+    );
+    assert_eq!(signing.github.tokens_not_revoked(), 0);
+}
+
+/// `docs/specs/access.md`, Signing in, 2a, at GitHub.
+#[test_log::test(tokio::test)]
+async fn a_sign_in_github_turns_down_fails() {
+    let signing = signing(None).await;
+    let mut turned_down = Browsing::new(&signing);
+
+    let failed = turned_down.sign_in_with_github("/runs", None).await;
+
+    assert_eq!(
+        message(&failed.html),
+        Some(("Signing in with GitHub failed.".into(), true))
+    );
+}
+
+/// `docs/specs/access.md`, Signing in, 3b: the `manager` setting naming a
+/// GitHub login, ignoring case.
+#[test_log::test(tokio::test)]
+async fn the_login_manager_names_signs_in_with_github_as_a_manager() {
+    let signing = signing(Some("github:octocat")).await;
+    let mut browser = Browsing::new(&signing);
+
+    browser.sign_in_with_github("/", Some("OctoCat")).await;
+
+    let board = browser.get("/").await;
+    assert_eq!(
+        account(&board.html),
+        (
+            "The Octocat".into(),
+            "manager".into(),
+            OCTOCAT_AVATAR.into()
+        )
     );
 }
 

@@ -231,11 +231,8 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
     let open = Router::new()
         .route(sign_in::SIGN_IN_PATH, get(sign_in::sign_in_page))
         .route(sign_in::SIGN_OUT_PATH, post(sign_in::sign_out))
-        .route(
-            sign_in::GOOGLE_PATH,
-            get(no_such_page).post(sign_in::begin_google),
-        )
-        .route(sign_in::GOOGLE_CALLBACK_PATH, get(sign_in::google_callback))
+        .route(sign_in::BEGIN_PATH, get(no_such_page).post(sign_in::begin))
+        .route(sign_in::CALLBACK_PATH, get(sign_in::callback))
         .route("/assets/{name}", get(asset));
     let sign_in = sign_in::SignIn {
         public_url: ui.public_url.clone(),

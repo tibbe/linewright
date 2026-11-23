@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use linewright::access::providers::fake::FakeGoogle;
-use linewright::access::providers::{GOOGLE_SECRET_VARIABLE, Providers};
+use linewright::access::providers::fake::{FakeGitHub, FakeGoogle};
+use linewright::access::providers::{GITHUB_SECRET_VARIABLE, GOOGLE_SECRET_VARIABLE};
 use linewright::clock::{Clock, RunningFrom};
 use linewright::config::{Config, Settings};
 use linewright::factory::{Factory, SessionToken};
@@ -61,12 +61,17 @@ async fn serve() -> Result<()> {
     let agent = fake_agent(dir, &beside.join("fake-claude"), clock.as_ref())?;
     let port = free_port()?;
     let google = FakeGoogle::serve(seed::google_accounts(), clock.clone()).await?;
+    let github = FakeGitHub::serve(seed::github_accounts()).await?;
     let mut config = config(dir, port)?;
-    if let Some(ui) = &mut config.ui
-        && let Providers::Google(settings) = &mut ui.providers
-    {
-        settings.endpoints = google.endpoints();
-    }
+    let ui = config.ui.as_mut().context("serve-fake serves the web UI")?;
+    ui.providers
+        .google_mut()
+        .context("serve-fake signs people in with Google")?
+        .endpoints = google.endpoints();
+    ui.providers
+        .github_mut()
+        .context("serve-fake signs people in with GitHub")?
+        .endpoints = github.endpoints();
     let store =
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
@@ -157,11 +162,13 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
          public-url = \"http://127.0.0.1:{port}\"\ngoogle-client-id = \"serve-fake\"\n\
-         google-signup-domains = [\"{domain}\"]\n\
+         google-signup-domains = [\"{domain}\"]\ngithub-client-id = \"serve-fake\"\n\
+         github-signup-orgs = [\"{organization}\"]\n\
          poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",
         repo = seed::REPO,
         work = work.display(),
         domain = seed::SIGNUP_DOMAIN,
+        organization = seed::SIGNUP_ORGANIZATION,
     );
     if std::env::var_os(UNNAMED).is_none() {
         writeln!(text, "manager = \"google:{}\"", seed::MANAGER)?;
@@ -183,7 +190,11 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
         config: Some(path),
         ..Settings::default()
     };
-    let env = |name: &str| (name == GOOGLE_SECRET_VARIABLE).then(|| "serve-fake".to_string());
+    let env = |name: &str| {
+        [GOOGLE_SECRET_VARIABLE, GITHUB_SECRET_VARIABLE]
+            .contains(&name)
+            .then(|| "serve-fake".to_string())
+    };
     Config::resolve(&settings, dir, &env, false).map_err(|e| anyhow::anyhow!("{e}"))
 }
 

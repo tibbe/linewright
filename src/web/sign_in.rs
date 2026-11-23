@@ -1,6 +1,6 @@
 //! Signing in and out of the web UI (`docs/specs/access.md`, Signing in and
-//! Sign in): Sign in, the sign-in with Google from it to Google's callback,
-//! and "Sign out".
+//! Sign in): Sign in, the sign-in with each identity provider from it to
+//! the provider's callback, and "Sign out".
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::Extension;
 use axum::body::Bytes;
-use axum::extract::{Query, RawQuery, State};
+use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
@@ -16,26 +16,34 @@ use tracing::{info, warn};
 use url::Url;
 
 use super::caller::{CrossSite, session_cookie, sessions};
+use super::html::Html;
+use super::icons::{Icon, IconSize};
 use super::{HASHED, cookie_headers, cookie_values};
 use crate::access::people::{
     Claims, ManagerName, People, Refusal, SignInDecision, SignUpRule, decide_sign_in,
 };
-use crate::access::providers::{Google, Provider, Providers};
+use crate::access::providers::{Begun, GitHub, Google, Provider, Providers};
 use crate::access::sessions::SessionCookie;
 use crate::access::sign_ins::{SIGN_IN_COOKIE, SignIns};
 use crate::api::Sources;
-use crate::domain::Repo;
+use crate::domain::{Repo, Timestamp};
 use crate::host::PublicUrl;
 
 /// The path of Sign in.
 pub(super) const SIGN_IN_PATH: &str = "/sign-in";
 
-/// The path Sign in posts to, to sign in with Google.
-pub(super) const GOOGLE_PATH: &str = "/auth/google";
+/// The path Sign in posts to, to sign in with the provider of the key
+/// `{provider}`, such as `google`.
+pub(super) const BEGIN_PATH: &str = "/auth/{provider}";
 
-/// The path Google sends the browser back to (`docs/specs/access.md`,
+/// The path a provider sends the browser back to (`docs/specs/access.md`,
 /// Signing in, Callbacks).
-pub(super) const GOOGLE_CALLBACK_PATH: &str = "/auth/google/callback";
+pub(super) const CALLBACK_PATH: &str = "/auth/{provider}/callback";
+
+/// The path Sign in posts to, to sign in with `provider`.
+pub(super) fn begin_path(provider: Provider) -> String {
+    format!("/auth/{provider}")
+}
 
 /// The path "Sign out" posts to.
 pub(super) const SIGN_OUT_PATH: &str = "/sign-out";
@@ -49,9 +57,68 @@ pub(super) struct SignIn {
 }
 
 impl SignIn {
-    /// The URL under the public URL of `path`.
-    fn url(&self, path: &str) -> Url {
-        self.public_url.join(path)
+    /// The provider whose key is `key`, such as `google`, when Linewright
+    /// offers it.
+    fn offered(&self, key: &str) -> Option<Offered<'_>> {
+        match Provider::named(key)? {
+            Provider::Google => self.providers.google().map(Offered::Google),
+            Provider::GitHub => self.providers.github().map(Offered::GitHub),
+        }
+    }
+
+    /// The URL `provider` sends the browser back to.
+    fn callback(&self, provider: Provider) -> Url {
+        self.public_url
+            .join(&format!("{}/callback", begin_path(provider)))
+    }
+
+    /// Where to send the browser to sign in at `offered` for the sign-in
+    /// `begun`.
+    fn authorize_url(&self, offered: Offered<'_>, begun: &Begun) -> Url {
+        let callback = self.callback(offered.provider());
+        match offered {
+            Offered::Google(google) => google.authorize_url(&callback, begun),
+            Offered::GitHub(github) => github.authorize_url(&callback, begun),
+        }
+    }
+
+    /// What `offered` says of the person it signed in, for the `code` it
+    /// sent the browser back with for the sign-in `begun`.
+    async fn finish(
+        &self,
+        offered: Offered<'_>,
+        code: &str,
+        begun: &Begun<'_>,
+        now: Timestamp,
+    ) -> anyhow::Result<Claims> {
+        let callback = self.callback(offered.provider());
+        match offered {
+            Offered::Google(google) => google.finish(&self.http, code, &callback, begun, now).await,
+            Offered::GitHub(github) => github.finish(&self.http, code, &callback, begun).await,
+        }
+    }
+}
+
+/// An identity provider Linewright offers, with its settings.
+#[derive(Clone, Copy)]
+enum Offered<'a> {
+    Google(&'a Google),
+    GitHub(&'a GitHub),
+}
+
+impl<'a> Offered<'a> {
+    fn provider(self) -> Provider {
+        match self {
+            Offered::Google(_) => Provider::Google,
+            Offered::GitHub(_) => Provider::GitHub,
+        }
+    }
+
+    fn rule(self) -> SignUpRule<'a> {
+        match self {
+            Offered::Google(google) => SignUpRule::Google(&google.signup),
+            Offered::GitHub(github) => SignUpRule::GitHub(&github.signup),
+        }
     }
 }
 
@@ -127,12 +194,27 @@ pub(super) fn sign_in_path(return_to: &ReturnPath, reason: Option<Reason>) -> St
 #[template(path = "sign_in.html")]
 struct SignInPage {
     css: &'static str,
-    google_light: &'static str,
-    google_dark: &'static str,
     repo: Repo,
     message: Option<Message>,
-    google: bool,
+    /// Google's button, where Linewright offers Google.
+    google: Option<GoogleButton>,
+    /// GitHub's button, where Linewright offers GitHub.
+    github: Option<GitHubButton>,
     return_to: ReturnPath,
+}
+
+/// Google's own button, as Google gives it for each theme.
+struct GoogleButton {
+    action: String,
+    light: &'static str,
+    dark: &'static str,
+}
+
+/// GitHub's button, with its mark.
+struct GitHubButton {
+    action: String,
+    /// Black in the light theme and white in the dark one.
+    mark: Html,
 }
 
 /// What Sign in says of why the person is on it.
@@ -153,11 +235,24 @@ impl SignInPage {
         let path = |name| HASHED.names[name].as_str();
         SignInPage {
             css: path("linewright.css"),
-            google_light: path("google-sign-in-light.svg"),
-            google_dark: path("google-sign-in-dark.svg"),
             repo: sources.work_dir.repo.clone(),
             message,
-            google: sign_in.providers.google().is_some(),
+            google: sign_in
+                .providers
+                .offer(Provider::Google)
+                .then(|| GoogleButton {
+                    action: begin_path(Provider::Google),
+                    light: path("google-sign-in-light.svg"),
+                    dark: path("google-sign-in-dark.svg"),
+                }),
+            github: sign_in
+                .providers
+                .offer(Provider::GitHub)
+                .then(|| GitHubButton {
+                    action: begin_path(Provider::GitHub),
+                    mark: Icon::GitHubMark
+                        .svg_classed(&IconSize::Inline, "text-black dark:text-white"),
+                }),
             return_to,
         }
     }
@@ -194,28 +289,31 @@ struct SignInForm {
     return_to: Option<String>,
 }
 
-/// Begins a sign-in with Google, for a request from Sign in: sends the
-/// browser to Google, tied to it by [`SIGN_IN_COOKIE`].
-pub(super) async fn begin_google(
+/// Begins a sign-in with the provider of the key `key`, for a request
+/// from Sign in: sends the browser to the provider, tied to it by
+/// [`SIGN_IN_COOKIE`].
+pub(super) async fn begin(
     Extension(sign_in): Extension<Arc<SignIn>>,
     State(sources): State<Sources>,
+    Path(key): Path<String>,
     cross_site: Option<Extension<CrossSite>>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(google) = sign_in.providers.google() else {
-        return super::no_such_page().await;
-    };
     if let Some(refused) = refused_from_another_site(cross_site, "a sign-in") {
         return refused;
     }
+    let Some(offered) = sign_in.offered(&key) else {
+        return super::no_such_page().await;
+    };
+    let provider = offered.provider();
     let form: SignInForm =
         serde_urlencoded::from_bytes(&body).unwrap_or(SignInForm { return_to: None });
     let return_to = ReturnPath::parse(form.return_to.as_deref());
     let browser = sign_in_cookie(&headers);
     let pending = SignIns::new(sources.runs.database().clone())
         .begin(
-            Provider::Google,
+            provider,
             return_to.as_str(),
             browser.as_deref(),
             sources.clock.now(),
@@ -223,9 +321,9 @@ pub(super) async fn begin_google(
         .await;
     let pending = match pending {
         Ok(pending) => pending,
-        Err(e) => return failed(&sign_in, &sources, Provider::Google, return_to, &e),
+        Err(e) => return failed(&sign_in, &sources, provider, return_to, &e),
     };
-    let authorize = google.authorize_url(&sign_in.url(GOOGLE_CALLBACK_PATH), &pending.begun());
+    let authorize = sign_in.authorize_url(offered, &pending.begun());
     (
         [(header::SET_COOKIE, pending.set_cookie())],
         Redirect::to(authorize.as_str()),
@@ -240,8 +338,9 @@ fn sign_in_cookie(headers: &HeaderMap) -> Option<String> {
         .next()
 }
 
-/// What Google sends the browser back with.
+/// What a provider sends the browser back with.
 /// <https://developers.google.com/identity/openid-connect/openid-connect#confirmxsrftoken>
+/// <https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#2-users-are-redirected-back-to-your-site-by-github>
 #[derive(Deserialize)]
 pub(super) struct Callback {
     state: Option<String>,
@@ -249,23 +348,26 @@ pub(super) struct Callback {
     error: Option<String>,
 }
 
-/// Finishes the sign-in with Google that the browser began: signs it in
-/// and sends it where it was going, or says on Sign in why not.
-pub(super) async fn google_callback(
+/// Finishes the sign-in with the provider of the key `key` that the
+/// browser began: signs it in and sends it where it was going, or says on
+/// Sign in why not.
+pub(super) async fn callback(
     Extension(sign_in): Extension<Arc<SignIn>>,
     State(sources): State<Sources>,
+    Path(key): Path<String>,
     Query(callback): Query<Callback>,
     headers: HeaderMap,
 ) -> Response {
     let now = sources.clock.now();
-    let Some(google) = sign_in.providers.google() else {
+    let Some(offered) = sign_in.offered(&key) else {
         return super::no_such_page().await;
     };
+    let provider = offered.provider();
     let browser = sign_in_cookie(&headers);
     let pending = match &callback.state {
         Some(state) => {
             SignIns::new(sources.runs.database().clone())
-                .take(Provider::Google, state, browser.as_deref(), now)
+                .take(provider, state, browser.as_deref(), now)
                 .await
         }
         None => Ok(None),
@@ -274,42 +376,23 @@ pub(super) async fn google_callback(
         Ok(Some(pending)) => pending,
         Ok(None) => {
             let e = anyhow::anyhow!("its state names no sign-in this browser began that waits");
-            return failed(
-                &sign_in,
-                &sources,
-                Provider::Google,
-                ReturnPath::parse(None),
-                &e,
-            );
+            return failed(&sign_in, &sources, provider, ReturnPath::parse(None), &e);
         }
         Err(e) => {
-            return failed(
-                &sign_in,
-                &sources,
-                Provider::Google,
-                ReturnPath::parse(None),
-                &e,
-            );
+            return failed(&sign_in, &sources, provider, ReturnPath::parse(None), &e);
         }
     };
     let return_to = ReturnPath::parse(Some(&pending.return_to));
     let finished = match (&callback.code, &callback.error) {
-        (Some(code), None) => {
-            google
-                .finish(
-                    &sign_in.http,
-                    code,
-                    &sign_in.url(GOOGLE_CALLBACK_PATH),
-                    &pending.begun(),
-                    now,
-                )
-                .await
-        }
-        (_, Some(error)) => Err(anyhow::anyhow!("Google sent back the error {error:?}")),
-        (None, None) => Err(anyhow::anyhow!("Google sent back no code")),
+        (Some(code), None) => sign_in.finish(offered, code, &pending.begun(), now).await,
+        (_, Some(error)) => Err(anyhow::anyhow!(
+            "{} sent back the error {error:?}",
+            provider.name()
+        )),
+        (None, None) => Err(anyhow::anyhow!("{} sent back no code", provider.name())),
     };
     let decided = match finished {
-        Ok(claims) => sign_in_as_decided(&sign_in, &sources, google, &claims).await,
+        Ok(claims) => sign_in_as_decided(&sign_in, &sources, &offered.rule(), &claims).await,
         Err(e) => Err(e),
     };
     match decided {
@@ -326,7 +409,7 @@ pub(super) async fn google_callback(
             let page = SignInPage::new(&sign_in, &sources, return_to, Some(message));
             (StatusCode::FORBIDDEN, page).into_response()
         }
-        Err(e) => failed(&sign_in, &sources, Provider::Google, return_to, &e),
+        Err(e) => failed(&sign_in, &sources, provider, return_to, &e),
     }
 }
 
@@ -336,14 +419,13 @@ pub(super) async fn google_callback(
 async fn sign_in_as_decided(
     sign_in: &SignIn,
     sources: &Sources,
-    google: &Google,
+    rule: &SignUpRule<'_>,
     claims: &Claims,
 ) -> anyhow::Result<Result<SessionCookie, Refusal>> {
     let now = sources.clock.now();
     let people = People::new(sources.runs.database().clone());
     let found = people.find_by_identity(&claims.identity()).await?;
-    let rule = SignUpRule::Google(&google.signup);
-    let person = match decide_sign_in(claims, &rule, sign_in.manager.as_ref(), found.as_ref()) {
+    let person = match decide_sign_in(claims, rule, sign_in.manager.as_ref(), found.as_ref()) {
         SignInDecision::Refuse(refusal) => {
             info!(identity = claims.logged(), reason = %refusal, "refused a sign-in");
             return Ok(Err(refusal));
