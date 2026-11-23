@@ -1,0 +1,684 @@
+#[cfg(feature = "test-utils")]
+pub mod attempts_read;
+#[cfg(feature = "test-utils")]
+pub mod fixtures;
+pub mod local;
+pub mod properties;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+use anyhow::{Result, bail};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
+use crate::domain::{
+    CheckFailure, Issue, IssueCloseReason, IssueClosing, Item, Login, Marking, MergeMethod,
+    MergeMethods, MergedPull, Number, Opening, Pull, Repo, Scope, Snapshot, TicketBranchName,
+    Timestamp, Windows, label,
+};
+pub use crate::domain::{IssueRead, PeoplesPullRead};
+use crate::git::CommitId;
+use crate::redaction::Redaction;
+use crate::workflow_run::{AttemptId, CompletedAttempt};
+pub use properties::{Properties, Property, RecordedProperties};
+
+/// In `gh`'s order (<https://cli.github.com/manual/gh_help_environment>).
+pub const TOKEN_VARIABLES: [&str; 2] = ["GH_TOKEN", "GITHUB_TOKEN"];
+
+/// The token agent sessions are given in place of Linewright's.
+pub const SESSION_TOKEN_VARIABLE: &str = "LINEWRIGHT_SESSION_GITHUB_TOKEN";
+
+/// `time` rounded down to the hour, which a bound on the runs listed is,
+/// so that the polls of the hour list them at the same URL.
+pub fn hour_of(time: Timestamp) -> Timestamp {
+    use chrono::{DurationRound as _, TimeDelta};
+    time.duration_trunc(TimeDelta::hours(1))
+        .expect("an hour divides a time")
+}
+
+/// Reads into `snapshot` the openings it lacks
+/// ([`Snapshot::unread_openings`]) with `read`, asking for each number once,
+/// until it lacks none `read` finds.
+pub async fn read_openings<Read, Fut>(
+    snapshot: &mut Snapshot,
+    linewright: &Login,
+    mut read: Read,
+) -> Result<()>
+where
+    Read: FnMut(BTreeSet<Number>) -> Fut,
+    Fut: Future<Output = Result<Vec<Opening>>>,
+{
+    let mut asked = BTreeSet::new();
+    loop {
+        let unread: BTreeSet<Number> = snapshot
+            .unread_openings(linewright)
+            .difference(&asked)
+            .copied()
+            .collect();
+        if unread.is_empty() {
+            return Ok(());
+        }
+        asked.extend(unread.iter().copied());
+        snapshot.openings.extend(read(unread).await?);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub login: Login,
+    pub name: String,
+    pub email: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Categories {
+    IssueTypes(Vec<String>),
+    Labels,
+}
+
+impl Categories {
+    pub fn names(&self) -> Vec<String> {
+        match self {
+            Categories::IssueTypes(types) => types.clone(),
+            Categories::Labels => vec![
+                crate::domain::label::BUG.into(),
+                crate::domain::label::ENHANCEMENT.into(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepoSettings {
+    pub repo: Repo,
+    pub default_branch: String,
+    /// The `merge-method` setting, or its default.
+    pub merge_method: MergeMethod,
+    pub allowed_merge_methods: MergeMethods,
+    /// The default branch requires linear history, which refuses merge
+    /// commits.
+    pub linear_history: bool,
+    pub categories: Categories,
+}
+
+impl RepoSettings {
+    /// The settings GitHub gives, with the default merge method
+    /// (`docs/specs/pull_requests.md`, "Merging").
+    pub fn new(
+        repo: Repo,
+        default_branch: String,
+        linear_history: bool,
+        allowed_merge_methods: MergeMethods,
+        categories: Categories,
+    ) -> Self {
+        let mut settings = RepoSettings {
+            repo,
+            default_branch,
+            merge_method: MergeMethod::Merge,
+            allowed_merge_methods,
+            linear_history,
+            categories,
+        };
+        if let Some(&first) = settings.usable_merge_methods().first() {
+            settings.merge_method = first;
+        }
+        settings
+    }
+
+    /// The settings with the `merge-method` setting applied over the
+    /// default, refused where the repository cannot merge by it
+    /// (`docs/specs/repository.md`, "Startup").
+    pub fn configured(mut self, merge_method: Option<MergeMethod>) -> Result<RepoSettings> {
+        let usable = self.usable_merge_methods();
+        if usable.is_empty() {
+            if self.linear_history && self.allowed_merge_methods.contains(MergeMethod::Merge) {
+                bail!(
+                    "the repository requires linear history and allows only merge commits, so \
+                     it allows no merge method: allow rebase or squash merging in its settings"
+                );
+            }
+            bail!(
+                "the repository allows no merge method: allow merge, rebase or squash merging \
+                 in its settings"
+            );
+        }
+        if let Some(method) = merge_method {
+            self.merge_method = method;
+        }
+        let method = self.merge_method;
+        if !usable.contains(&method) {
+            let allows: MergeMethods = usable.into_iter().collect();
+            if self.allowed_merge_methods.contains(method) {
+                bail!(
+                    "the repository requires linear history, so it doesn't allow the merge \
+                     method `{method}`: it allows {allows}; set `merge-method` to a method it \
+                     allows"
+                );
+            }
+            bail!(
+                "the repository doesn't allow the merge method `{method}`: it allows {allows}; \
+                 set `merge-method` to a method it allows"
+            );
+        }
+        Ok(self)
+    }
+
+    /// The merge methods the repository can merge by, in the order of the
+    /// default: those it allows, a merge commit only without linear history.
+    fn usable_merge_methods(&self) -> Vec<MergeMethod> {
+        MergeMethod::ALL
+            .into_iter()
+            .filter(|&method| self.allowed_merge_methods.contains(method))
+            .filter(|&method| !(self.linear_history && method == MergeMethod::Merge))
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PushMode {
+    Replace,
+    Lease { expected: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PushError {
+    #[error("GitHub refused the push for a missing permission: {reason}")]
+    MissingPermission { reason: String },
+    #[error("GitHub's push protection refused the push over a secret: {secrets}")]
+    PushProtection { secrets: FoundSecrets },
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
+impl PushError {
+    pub fn from_git(error: anyhow::Error) -> PushError {
+        let output = format!("{error:#}");
+        if let Some(reason) = missing_permission(&output) {
+            return PushError::MissingPermission { reason };
+        }
+        match found_secrets(&output) {
+            Some(secrets) => PushError::PushProtection { secrets },
+            None => PushError::Failed(error),
+        }
+    }
+}
+
+/// Why the store did not attach a file.
+#[derive(Debug, thiserror::Error)]
+pub enum AttachError {
+    /// GitHub refuses the file itself, such as for its size or type.
+    #[error("GitHub refused the file: {reason}")]
+    RefusedFile { reason: String },
+    /// GitHub refuses Linewright's token.
+    #[error("GitHub refused Linewright's token: {reason}")]
+    RefusedToken { reason: String },
+    #[error(transparent)]
+    Failed(#[from] anyhow::Error),
+}
+
+/// A secret GitHub's push protection found in a commit pushed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundSecret {
+    /// The secret's type, as GitHub names it, such as `GitHub Personal
+    /// Access Token`.
+    pub kind: String,
+    /// The commit's full name.
+    pub commit: String,
+    /// The file, followed by `:` and the line, as GitHub gives it.
+    pub path: String,
+}
+
+/// The secrets GitHub's push protection found in a push, at least one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FoundSecrets(Vec<FoundSecret>);
+
+impl FoundSecrets {
+    /// The secrets `found`, unless there are none.
+    pub fn new(found: Vec<FoundSecret>) -> Option<FoundSecrets> {
+        (!found.is_empty()).then_some(FoundSecrets(found))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &FoundSecret> {
+        self.0.iter()
+    }
+
+    /// The secrets, with `redaction` applied to what GitHub says of them.
+    #[must_use]
+    pub fn redacted(&self, redaction: &Redaction) -> FoundSecrets {
+        FoundSecrets(
+            self.iter()
+                .map(|secret| FoundSecret {
+                    kind: redaction.apply(&secret.kind),
+                    commit: redaction.apply(&secret.commit),
+                    path: redaction.apply(&secret.path),
+                })
+                .collect(),
+        )
+    }
+}
+
+impl std::fmt::Display for FoundSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let found: Vec<String> = self
+            .iter()
+            .map(|s| format!("{} in the commit `{}`, at `{}`", s.kind, s.commit, s.path))
+            .collect();
+        write!(f, "{}", found.join("; "))
+    }
+}
+
+/// The secrets named in the output of a `git push` GitHub's push protection
+/// refused, each under a `—— <type> ——` heading with its `- commit:` and
+/// `path:` locations
+/// (<https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line>).
+/// A refusal that names none is not recognized.
+fn found_secrets(output: &str) -> Option<FoundSecrets> {
+    let mut lines = output
+        .lines()
+        .map(str::trim)
+        .map(|line| line.strip_prefix("remote:").unwrap_or(line).trim());
+    lines.find(|line| line.ends_with("GITHUB PUSH PROTECTION"))?;
+    let mut found = vec![];
+    let mut kind = "";
+    let mut commit = None;
+    for line in lines {
+        if let Some(heading) = line.strip_prefix("——") {
+            kind = heading.trim_matches(|c: char| c == '—' || c.is_whitespace());
+        } else if let Some(name) = line.strip_prefix("- commit:") {
+            commit = Some(name.trim());
+        } else if let Some(path) = line.strip_prefix("path:")
+            && let Some(commit) = commit.take()
+            && !kind.is_empty()
+        {
+            found.push(FoundSecret {
+                kind: kind.to_string(),
+                commit: commit.to_string(),
+                path: path.trim().to_string(),
+            });
+        }
+    }
+    FoundSecrets::new(found)
+}
+
+/// GitHub's reason in the output of a `git push` it refused because the
+/// token lacks a permission: a protected file such as a workflow, reported as
+/// ` ! [remote rejected] <ref> -> <branch> (refusing to allow … without …)`,
+/// or no write access to the repository, reported as `remote: Permission to
+/// <repo> denied to <user>.`. Refusals that do not name a missing permission
+/// are not recognized.
+pub fn missing_permission(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        if let Some(at) = line.find("[remote rejected] ") {
+            let (_, reason) = line[at..].split_once(" (")?;
+            let reason = reason.trim_end().strip_suffix(')').unwrap_or(reason);
+            return (reason.starts_with("refusing to allow ") && reason.contains(" without "))
+                .then(|| reason.to_string());
+        }
+        let at = line.find("remote: Permission to ")?;
+        let reason = line[at..].strip_prefix("remote: ")?.trim_end();
+        reason.contains(" denied to ").then(|| reason.to_string())
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnyItem {
+    HeldIssue(Box<Issue>),
+    LeftOutIssue(Box<Issue>),
+    /// A closed issue, with its closing.
+    ClosedIssue {
+        issue: Box<Issue>,
+        closing: IssueClosing,
+    },
+    /// A pull request open, or closed without merging.
+    Pull(Box<Pull>),
+    Merged {
+        pull: Box<MergedPull>,
+        /// The issues Linewright opened for it, if it is a spec change.
+        spec_change_issues: Vec<Number>,
+    },
+}
+
+/// Whether a snapshot holds open `issue`: whether `linewright` may manage it
+/// ([`Issue::candidate`]) as an issue marked for Linewright, whatever its
+/// labels, with the pull requests GitHub says close it.
+pub fn holds(issue: &Issue, linewright: &Login) -> bool {
+    issue.open && issue.candidate(linewright, &issue.closed_by, Marking::Marked)
+}
+
+impl AnyItem {
+    /// `issue`, held or left out as [`holds`] tells.
+    pub fn issue(issue: Issue, linewright: &Login) -> AnyItem {
+        if holds(&issue, linewright) {
+            AnyItem::HeldIssue(Box::new(issue))
+        } else {
+            AnyItem::LeftOutIssue(Box::new(issue))
+        }
+    }
+
+    pub fn number(&self) -> Number {
+        match self {
+            AnyItem::HeldIssue(issue)
+            | AnyItem::LeftOutIssue(issue)
+            | AnyItem::ClosedIssue { issue, .. } => issue.number,
+            AnyItem::Pull(pull) => pull.number,
+            AnyItem::Merged { pull, .. } => pull.number,
+        }
+    }
+
+    pub fn item(&self) -> Item {
+        match self {
+            AnyItem::HeldIssue(_) | AnyItem::LeftOutIssue(_) | AnyItem::ClosedIssue { .. } => {
+                Item::Issue(self.number())
+            }
+            AnyItem::Pull(_) | AnyItem::Merged { .. } => Item::Pull(self.number()),
+        }
+    }
+
+    /// As [`Issue::is_stalled`].
+    pub fn is_stalled(&self) -> bool {
+        match self {
+            AnyItem::HeldIssue(issue)
+            | AnyItem::LeftOutIssue(issue)
+            | AnyItem::ClosedIssue { issue, .. } => issue.is_stalled(),
+            AnyItem::Pull(pull) => pull.is_stalled(),
+            AnyItem::Merged { pull, .. } => pull.is_stalled(),
+        }
+    }
+}
+
+/// A file's contents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Blob {
+    Text(String),
+    /// Not text, such as an image.
+    Binary,
+    /// Too large for the store to give.
+    TooLarge,
+}
+
+impl Blob {
+    /// The file holding `bytes`, read as text only when it is UTF-8.
+    pub fn from_bytes(bytes: Vec<u8>) -> Blob {
+        String::from_utf8(bytes).map_or(Blob::Binary, Blob::Text)
+    }
+
+    /// The file holding `bytes`, as GitHub reads it from a repository:
+    /// binary when it holds a NUL byte, as git judges it
+    /// (<https://git-scm.com/docs/gitattributes#_marking_files_as_binary>),
+    /// and otherwise text, decoded as Latin-1 where it is not UTF-8.
+    pub fn as_github_reads(bytes: Vec<u8>) -> Blob {
+        if bytes.contains(&0) {
+            return Blob::Binary;
+        }
+        match String::from_utf8(bytes) {
+            Ok(text) => Blob::Text(text),
+            Err(error) => Blob::Text(error.into_bytes().into_iter().map(char::from).collect()),
+        }
+    }
+
+    /// The file's text, or why it cannot be read as text.
+    pub fn text(self) -> Result<String, &'static str> {
+        match self {
+            Blob::Text(text) => Ok(text),
+            Blob::Binary => Err("it is not text"),
+            Blob::TooLarge => Err("it is too large to read"),
+        }
+    }
+}
+
+/// The `X-GitHub-Api-Version` GitHub's REST resources are read with
+/// (<https://docs.github.com/en/rest/about-the-rest-api/api-versions>).
+pub const API_VERSION: &str = "2022-11-28";
+
+/// An issue or pull request as GitHub's REST API gives it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordedItem {
+    pub number: Number,
+    /// GitHub's answer for each [`Resource`] the item has, by its path,
+    /// unchanged.
+    pub resources: BTreeMap<String, serde_json::Value>,
+}
+
+/// One of an item's REST resources a [`RecordedItem`] holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resource {
+    /// <https://docs.github.com/en/rest/issues/issues#get-an-issue>
+    Issue,
+    /// Every page joined into one array
+    /// (<https://docs.github.com/en/rest/issues/comments#list-issue-comments>).
+    Comments,
+    /// Only where it has a parent
+    /// (<https://docs.github.com/en/rest/issues/sub-issues#get-parent-issue>).
+    Parent,
+    /// Every page joined into one array
+    /// (<https://docs.github.com/en/rest/issues/issue-dependencies#list-dependencies-an-issue-is-blocked-by>).
+    BlockedBy,
+    /// Only for a pull request
+    /// (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
+    Pull,
+}
+
+impl Resource {
+    /// Its REST path under the repository for item #`number`, such as
+    /// `issues/7/comments`.
+    pub fn path(self, number: Number) -> String {
+        let n = number.0;
+        match self {
+            Resource::Issue => format!("issues/{n}"),
+            Resource::Comments => format!("issues/{n}/comments"),
+            Resource::Parent => format!("issues/{n}/parent"),
+            Resource::BlockedBy => format!("issues/{n}/dependencies/blocked_by"),
+            Resource::Pull => format!("pulls/{n}"),
+        }
+    }
+}
+
+impl RecordedItem {
+    /// The item's `resource`, if it has it.
+    pub fn resource(&self, resource: Resource) -> Option<&serde_json::Value> {
+        self.resources.get(&resource.path(self.number))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewIssue {
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewPull {
+    pub head: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// Where the repository is kept, such as GitHub.
+///
+/// Each method but `clone_repo`, `push`, `attach` and `merge` makes each of
+/// its requests once more when it fails as a retry could end differently,
+/// such as an answer lost to a closed connection (runs.md, Ending,
+/// **Retries**). `create_issue`, `comment`, `open_pull`, `reply_in_thread`,
+/// `add_sub_issue` and `add_blocked_by` make what they make at most once,
+/// even when an answer is lost: what the lost answer's request made stands in
+/// for the retry.
+#[async_trait]
+pub trait Store: Send + Sync {
+    /// Who Linewright acts as, as [`Properties::pushing_identity`] reads
+    /// the recorded properties.
+    async fn identity(&self) -> Result<Identity> {
+        properties::read(&self.record_properties().await?)?.pushing_identity()
+    }
+    /// Fails, saying what it lacks, when `token` cannot read the repository.
+    async fn check_reads(&self, token: &str) -> Result<()>;
+    /// The settings the recorded properties read into.
+    async fn settings(&self) -> Result<RepoSettings> {
+        Ok(properties::read(&self.record_properties().await?)?.settings)
+    }
+    /// GitHub's answers about the repository and Linewright's account, as
+    /// its API gives them, which [`properties::read`] reads.
+    async fn record_properties(&self) -> Result<RecordedProperties>;
+    /// Every label in the repository.
+    async fn labels(&self) -> Result<Vec<label::RepoLabel>>;
+    async fn create_label(&self, label: &label::Label) -> Result<()>;
+    /// Sets the description of the label the repository spells `name`.
+    async fn describe_label(&self, name: &str, description: &str) -> Result<()>;
+    /// Whether the repository has the label `name`.
+    async fn label_exists(&self, name: &str) -> Result<bool>;
+
+    /// The facts one poll reconciles, with the merged pull requests and
+    /// closed items `windows` holds, every closed ticket of a tracking issue
+    /// it holds ([`Snapshot::unheld_closed_tickets`]), Linewright's pull
+    /// requests closed without merging that close one
+    /// ([`Snapshot::unheld_closing_pulls`]) and those of `scope`'s branches
+    /// that the repository has and Linewright pushed for a ticket. The items
+    /// it holds are found among those `scope` names too.
+    async fn snapshot(&self, windows: Windows, scope: &Scope) -> Result<Snapshot>;
+    /// Every branch of the repository Linewright pushed for a ticket, found
+    /// by listing them all.
+    async fn ticket_branches_pushed(&self) -> Result<Vec<TicketBranchName>>;
+    /// The issue as a snapshot taken now sees it, but a closed one whenever
+    /// it closed: whether a snapshot holds it closed depends on the rest it
+    /// holds ([`Snapshot::keeps_closed`]).
+    async fn issue(&self, number: Number) -> Result<IssueRead>;
+    async fn pull(&self, number: Number) -> Result<Pull>;
+    /// The issue or pull request #`number`, open or not, whoever opened it:
+    /// `None` when the store has neither.
+    async fn any_item(&self, number: Number) -> Result<Option<AnyItem>>;
+    /// The pull request as a snapshot taken now holds it among Linewright's pull
+    /// requests: `None` when the snapshot leaves it out, as it does anyone else's
+    /// and one the store does not have.
+    async fn linewright_pull(&self, number: Number) -> Result<Option<Pull>>;
+    /// The pull request #`number` as a snapshot taken now holds it among the
+    /// people's pull requests, read in full only then, with the issues it
+    /// closes while it is open, whoever opened it.
+    async fn peoples_pull(&self, number: Number) -> Result<PeoplesPullRead>;
+    /// The pull request as a snapshot taken now, over `windows`, holds it
+    /// among the merged ones: `None` when the snapshot leaves it out of them,
+    /// as it does one the store does not have.
+    async fn merged_pull(&self, number: Number, windows: Windows) -> Result<Option<MergedPull>>;
+    /// The pull request's changes to `paths`, as a unified diff.
+    async fn diff(&self, pr: Number, paths: &[String]) -> Result<String>;
+    async fn check_failures(&self, pr: Number, checks: &[String]) -> Result<Vec<CheckFailure>>;
+    /// Every completed attempt of every workflow run GitHub created at or
+    /// after `created_since`, and perhaps of some created earlier, in no
+    /// order. It never fetches an attempt of `known`, and need not give one.
+    /// Fails when the runs or an attempt cannot be read.
+    async fn completed_attempts(
+        &self,
+        created_since: Timestamp,
+        known: &BTreeSet<AttemptId>,
+    ) -> Result<Vec<CompletedAttempt>>;
+
+    /// The contents of `path` at the head of `branch`, or `None` when it has
+    /// no such file.
+    async fn read_file(&self, branch: &str, path: &str) -> Result<Option<String>>;
+    /// At the head of `branch`, each file of `paths` by its path, leaving out
+    /// the paths at which it has no file.
+    async fn read_files(&self, branch: &str, paths: &[String]) -> Result<BTreeMap<String, Blob>>;
+    /// The path, relative to `dir`, of every file in the directory `dir` and
+    /// its subdirectories at the head of `branch`, such as
+    /// `prompts/follow-ups/result-error.md`: none when it has no such directory.
+    async fn list_files(&self, branch: &str, dir: &str) -> Result<Vec<String>>;
+    /// Clones the repository into `dir` at `branch`, with each `config`
+    /// setting, such as `user.name`, written to the clone's config.
+    async fn clone_repo(&self, dir: &Path, branch: &str, config: &[(&str, &str)]) -> Result<()>;
+    /// Brings the remote-tracking refs of the clone in `dir` up to date
+    /// with the repository's branches, dropping those of branches it no
+    /// longer has.
+    async fn fetch(&self, dir: &Path) -> Result<()>;
+    /// Pushes `commit`, such as `HEAD`, of the clone in `dir` to `branch`.
+    async fn push(
+        &self,
+        dir: &Path,
+        commit: &crate::git::CommitId,
+        branch: &str,
+        mode: PushMode,
+    ) -> Result<(), PushError>;
+    /// Uploads `file` as an attachment of the repository's Markdown, named
+    /// `name`, and returns the URL to put in place of its path
+    /// (`docs/specs/runs.md`, "Attachments").
+    async fn attach(
+        &self,
+        file: &Path,
+        name: &str,
+        content_type: &str,
+    ) -> Result<String, AttachError>;
+    /// The branches of `branches` the repository has, with their heads.
+    async fn heads(&self, branches: &[String]) -> Result<BTreeMap<String, CommitId>>;
+    /// Deletes `branch`, if the repository has it.
+    async fn delete_branch(&self, branch: &str) -> Result<()>;
+
+    async fn add_label(&self, number: Number, label: &str) -> Result<()>;
+    /// Removes the label if the issue or pull request has it.
+    async fn remove_label(&self, number: Number, label: &str) -> Result<()>;
+    /// Adds Linewright as an assignee of the issue or pull request.
+    async fn assign(&self, number: Number) -> Result<()>;
+    async fn unassign(&self, number: Number) -> Result<()>;
+    /// Assigns `people` to the issue, as Linewright, and returns those of
+    /// them GitHub refused to assign.
+    async fn assign_people(&self, issue: Number, people: &[Login]) -> Result<Vec<Login>>;
+    /// Unassigns `people` from the issue, as Linewright.
+    async fn unassign_people(&self, issue: Number, people: &[Login]) -> Result<()>;
+    async fn comment(&self, number: Number, body: &str) -> Result<()>;
+    async fn create_issue(&self, issue: NewIssue) -> Result<Number>;
+    async fn edit_body(&self, number: Number, body: &str) -> Result<()>;
+    async fn close_issue(&self, issue: Number, reason: IssueCloseReason) -> Result<()>;
+    async fn set_issue_type(&self, issue: Number, issue_type: &str) -> Result<()>;
+    async fn add_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
+    /// Removes issue #`child` from #`parent`'s sub-issues.
+    async fn remove_sub_issue(&self, parent: Number, child: Number) -> Result<()>;
+    async fn add_blocked_by(&self, issue: Number, blocker: Number) -> Result<()>;
+
+    /// Opens a draft pull request into the default branch.
+    async fn open_pull(&self, pull: NewPull) -> Result<Number>;
+    async fn mark_ready(&self, pr: Number) -> Result<()>;
+    /// Closes the pull request unmerged.
+    async fn close_pull(&self, pr: Number) -> Result<()>;
+    /// Requests a review of the pull request from `reviewers`, and succeeds
+    /// without requesting any when GitHub refuses the request, as it does for
+    /// a reviewer who is not a collaborator.
+    async fn request_review(&self, pr: Number, reviewers: &[Login]) -> Result<()>;
+    /// Merges the pull request into the default branch with `method`, as
+    /// Linewright, if its head is still the commit `head`.
+    async fn merge(&self, pr: Number, head: &str, method: MergeMethod) -> Result<()>;
+    async fn reply_in_thread(&self, pr: Number, thread: &str, body: &str) -> Result<()>;
+    async fn resolve_thread(&self, pr: Number, thread: &str) -> Result<()>;
+
+    /// Each issue or pull request of `numbers` as GitHub's REST API gives it,
+    /// read with [`API_VERSION`]; fails when the store lacks one.
+    async fn record_items(&self, numbers: &BTreeSet<Number>) -> Result<Vec<RecordedItem>>;
+    /// Creates at `bare` a bare repository whose branches are `heads`, each
+    /// set to its commit with that commit's history and nothing else. Fails,
+    /// naming the commit, when the repository lacks one, having set no
+    /// branch.
+    async fn fetch_commits(&self, bare: &Path, heads: &BTreeMap<String, CommitId>) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_log::test]
+    fn a_push_githubs_push_protection_refuses_names_each_secret_by_its_type_commit_and_path() {
+        let output = include_str!("fixtures/push-protection.txt");
+        let error = PushError::from_git(anyhow::anyhow!(
+            "git push --quiet origin HEAD:refs/heads/344-send-the-result-back-to-the-session-when \
+             --force failed: {output}"
+        ));
+
+        let PushError::PushProtection { secrets } = error else {
+            panic!("not recognized as push protection: {error:?}");
+        };
+        assert_eq!(
+            secrets.iter().collect::<Vec<_>>(),
+            [&FoundSecret {
+                kind: "GitHub Personal Access Token".to_string(),
+                commit: "8479b4565e1a22d92de1bb6edb317cdc4dc64212".to_string(),
+                path: "tests/integration/push_protection.rs:22".to_string(),
+            }]
+        );
+    }
+}

@@ -1,46 +1,17 @@
-[package]
-name = "linewright"
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.25.0"
 edition = "2024"
-description = "A spec-driven software factory: a server that turns spec changes and issues into reviewed, green pull requests."
 license = "MIT"
 publish = false
 
-[lib]
-doctest = false
-
-[[bin]]
-name = "lw"
-path = "src/main.rs"
-
-[[bin]]
-name = "fake-claude"
-path = "src/bin/fake-claude/main.rs"
-required-features = ["fake-claude"]
-
-[[bin]]
-name = "serve-fake"
-path = "src/bin/serve-fake/main.rs"
-required-features = ["fake-claude"]
-
-[[bin]]
-name = "tree-bench"
-path = "src/bin/tree-bench/main.rs"
-required-features = ["bench"]
-
-[[test]]
-name = "contract"
-path = "tests/contract/main.rs"
-harness = false
-
-[features]
-fake-claude = []
-bench = ["dep:remove_dir_all"]
-
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "forbid"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 allow_attributes_without_reason = "warn"
 dbg_macro = "warn"
@@ -69,7 +40,12 @@ unimplemented = "warn"
 used_underscore_binding = "allow"
 wildcard_enum_match_arm = "warn"
 
-[dependencies]
+[workspace.dependencies]
+linewright-claude = { path = "crates/linewright-claude" }
+linewright-core = { path = "crates/linewright-core" }
+linewright-github = { path = "crates/linewright-github" }
+linewright-web = { path = "crates/linewright-web" }
+
 aho-corasick = "1"
 anyhow = "1"
 askama = "0.16"
@@ -77,8 +53,9 @@ askama_web = { version = "0.16", features = ["axum-0.8"] }
 async-trait = "0.1"
 axum = { version = "0.8", default-features = false, features = ["http1", "query", "tokio"] }
 base64 = "0.23"
+boa_engine = { version = "0.22", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "string"] }
 croner = "4"
 dirs = "7"
 form_urlencoded = "1"
@@ -95,16 +72,20 @@ icu_collator = "2.3"
 icu_normalizer = "2.3"
 icu_properties = "2.3"
 jsonschema = { version = "0.61.0", default-features = false }
+libtest-mimic = "0.8"
 percent-encoding = "2.3"
-rayon = "1"
+proptest = "1"
 pulldown-cmark = { version = "0.13", default-features = false }
+rayon = "1"
 reflink-copy = "0.1"
-remove_dir_all = { version = "1", features = ["parallel"], optional = true }
-rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
+remove_dir_all = { version = "1", features = ["parallel"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rstest = { version = "0.28", default-features = false }
 rust-embed = { version = "8", features = ["include-exclude"] }
 rustix = { version = "1", features = ["fs", "process"] }
 schemars = { version = "1", features = ["chrono04"] }
+scraper = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
@@ -112,27 +93,16 @@ serde_yaml_ng = "0.10"
 sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tempfile = "3"
+test-log = { version = "0.2.21", default-features = false, features = ["trace"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 toml = "1"
+tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 url = "2.5"
 uuid = { version = "1", features = ["v4"] }
-
-[dev-dependencies]
-boa_engine = { version = "0.22", default-features = false }
-libtest-mimic = "0.8"
-# Cargo has no test-only binaries:
-# https://github.com/rust-lang/cargo/issues/4356
-linewright = { path = ".", features = ["bench", "fake-claude"] }
-proptest = "1"
-rstest = { version = "0.28", default-features = false }
-scraper = "0.29"
-test-log = { version = "0.2.21", default-features = false, features = ["trace"] }
-tokio = { version = "1", features = ["test-util"] }
-tower = { version = "0.5", features = ["util"] }
 
 [profile.dev]
 debug = "line-tables-only"

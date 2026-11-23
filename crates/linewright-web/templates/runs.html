@@ -1,0 +1,15 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+{%- call(part) ui::table_card("Runs", crate::icons::CardIcon::Area(crate::shell::Area::Runs), shows_name = false, filters_stream = "/events/runs") %}
+{%- match part %}
+{%- when crate::table::Part::Filters %}
+{%- call ui::filter_input("Item", "item", filters.item, width = "w-16", inputmode = "numeric") %}{% endcall %}
+{%- call ui::filter_select("Stage", "stage", "All stages", filters.stages) %}{% endcall %}
+{%- call ui::filter_input("Since", "since", filters.since, width = "w-72", placeholder = "2h, 2026-10-14 or 2026-10-14T12:00:00Z") %}{% endcall %}
+{%- when crate::table::Part::Buttons %}
+{%- when crate::table::Part::Table %}
+{%- call ui::runs(runs) %}{% endcall %}
+{%- endmatch %}
+{%- endcall %}
+{%- endblock -%}

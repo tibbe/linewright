@@ -1,0 +1,475 @@
+//! What Linewright fills into each first-message prompt's placeholders, byte
+//! for byte, against the text in `fixtures/prompts/`. The briefs are the
+//! markers, so the fixtures hold which file Linewright picks for the prompt
+//! and each of its parts, and the data it fills in, and no brief's wording
+//! (docs/specs/runs.md, "Contract").
+
+use std::borrow::Cow;
+
+use chrono::{DateTime, Utc};
+use linewright_core::domain::*;
+use linewright_core::git::{BranchStart, Conflict, UnfinishedCommits};
+use linewright_core::prompts::{self, PullTask, Repo, SpecChangeAndDiff, Ticket};
+use linewright_core::task::Task;
+use linewright_core::testing;
+use linewright_core::trial::scorer::{ScoreableTrial, TrialCopy};
+use linewright_core::working_pull::Feedback;
+
+fn created() -> Timestamp {
+    DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc)
+}
+
+fn issue(number: u64, title: &str, body: &str) -> Issue {
+    Issue {
+        body: body.into(),
+        author: Login::new("reporter"),
+        labels: vec!["bug".into()],
+        comments: vec![Comment {
+            author: Login::new("maintainer"),
+            body: "Seen it too.".into(),
+            created_at: created(),
+        }],
+        ..testing::ticket(number, title)
+    }
+}
+
+fn pull() -> Pull {
+    Pull {
+        number: Number(8),
+        title: "Count the widgets".into(),
+        body: "Closes #7".into(),
+        author: Login::new("factory"),
+        created_at: created(),
+        updated_at: created(),
+        base_ref: "main".into(),
+        head_ref: "7-count-the-widgets".into(),
+        head_sha: "abc123".into(),
+        state: PullState::Open { draft: true },
+        closes: vec![Number(7)],
+        pushes: vec![],
+        mergeability: Mergeability::Clean,
+        rebaseability: Rebaseability::Rebaseable,
+        checks: vec![],
+        comments: vec![Comment {
+            author: Login::new("maintainer"),
+            body: "Please name the count.".into(),
+            created_at: created(),
+        }],
+        reviews: vec![],
+        threads: vec![],
+        labels: vec![],
+        assignees: vec![Login::new("factory")],
+        labelings: vec![],
+        assignments: vec![],
+        review_decision: None,
+        review_requests: vec![],
+    }
+}
+
+/// The session's attachments directory each prompt names.
+const ATTACHMENTS: &str = "/work/sessions/issue-7/20261001T120000Z-implement/attachments";
+
+fn repo_name() -> linewright_core::domain::Repo {
+    "owner/widgets".parse().unwrap()
+}
+
+fn repo(name: &linewright_core::domain::Repo) -> Repo<'_> {
+    Repo {
+        name,
+        default_branch: "main",
+        spec_glob: "docs/specs/**/*.md",
+    }
+}
+
+/// The file at `path` from the repository root.
+#[track_caller]
+fn read(path: &str) -> String {
+    let full = linewright_core::testing::repository().join(path);
+    std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// Fails unless `prompt` is the fixture `name` byte for byte.
+#[track_caller]
+fn assert_filled_as(prompt: &str, name: &str) {
+    let expected = read(&format!(
+        "crates/linewright-core/tests/integration/fixtures/prompts/{name}"
+    ));
+    if prompt != expected {
+        let got: Vec<_> = prompt.split('\n').collect();
+        let want: Vec<_> = expected.split('\n').collect();
+        let line = (0..got.len().max(want.len()))
+            .find(|&i| got.get(i) != want.get(i))
+            .unwrap();
+        let (got, want) = (got.get(line), want.get(line));
+        panic!(
+            "the prompt differs from {name} first on line {}:\n  \
+             prompt:  {got:?}\n  fixture: {want:?}\n\n\
+             the prompt:\n{prompt}",
+            line + 1,
+        );
+    }
+}
+
+#[test_log::test]
+fn design_of_an_issue_is_filled_as_before() {
+    let name = repo_name();
+    let prompt = prompts::design_issue(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &issue(7, "Count the widgets", "They are not counted."),
+        None,
+        &[],
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "design-issue.txt");
+}
+
+#[test_log::test]
+fn design_of_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
+    let name = repo_name();
+    let spec_change = MergedPull {
+        number: Number(5),
+        title: "Spec the widget count".into(),
+        body: "Widgets are counted.".into(),
+        author: Login::new("maintainer"),
+        merged_at: created(),
+        updated_at: created(),
+        base_ref: "main".into(),
+        labels: vec![],
+        closes: vec![],
+        files: vec!["docs/specs/widgets.md".into()],
+        assignees: vec![],
+        events: vec![],
+        review_requests: vec![],
+        reviewers: vec![],
+    };
+    let its_issue = Issue {
+        author: Login::new("factory"),
+        labels: vec!["ready-for-agent".into()],
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(5),
+        }),
+        ..issue(
+            7,
+            "Spec change: Spec the widget count",
+            "Opened for the spec change in #5.",
+        )
+    };
+    let gap = issue(9, "Which widgets count?", "Say which.");
+    let prompt = prompts::design_issue(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &its_issue,
+        Some(&SpecChangeAndDiff {
+            spec_change,
+            diff: "+Widgets are counted.\n".into(),
+        }),
+        &[&gap],
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "design-spec-change-issue.txt");
+}
+
+#[test_log::test]
+fn fix_ci_is_filled_as_before() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let ticket = testing::ready(Ticket::read(&ticket_issue, None, vec![]));
+    let failures = [CheckFailure {
+        name: "test".into(),
+        summary: "1 test failed".into(),
+        log: None,
+    }];
+    let prompt = prompts::pull_work(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &ticket,
+        &pull(),
+        &PullTask::FixCi {
+            failures: &failures,
+            conflict: None,
+            history: prompts::History::Series,
+        },
+        None,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "fix-ci.txt");
+}
+
+#[test_log::test]
+fn update_is_filled_as_before() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let ticket = testing::ready(Ticket::read(&ticket_issue, None, vec![]));
+    let conflict = Conflict {
+        method: UpdateMethod::Merge,
+        files: vec!["src/count.rs".into(), "Cargo.lock".into()],
+    };
+    let prompt = prompts::pull_work(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &ticket,
+        &pull(),
+        &PullTask::Update(&conflict),
+        Some(&UnfinishedCommits {
+            first: "abc1234".into(),
+            rest: vec!["def5678".into()],
+        }),
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "update.txt");
+}
+
+#[test_log::test]
+fn automation_is_filled_as_before() {
+    let name = repo_name();
+    let automation = linewright_core::automation::parse(
+        &"weekly-bugs.md".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\nmax-issues: 2\n---\nLook at the bugs fixed in the past week.\n",
+    )
+    .unwrap();
+    let prompt = prompts::automation(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &automation,
+        None,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "automation.txt");
+}
+
+#[test_log::test]
+fn an_automation_a_workflow_run_started_is_given_the_attempt() {
+    let name = repo_name();
+    let automation = linewright_core::automation::parse(
+        &"main-ci.md".parse().unwrap(),
+        "---\non:\n  schedule: \"0 9 * * 1\"\n---\nFile an issue to fix what failed.\n",
+    )
+    .unwrap();
+    let prompt = |branch| {
+        prompts::automation(
+            &testing::marker_briefs().templates,
+            &repo(&name),
+            &automation,
+            Some(prompts::WorkflowRunAttempt {
+                workflow: "CI",
+                attempt: 2,
+                conclusion: "failure",
+                branch,
+                commit: "9f2c1e7",
+                link: "https://github.com/owner/widgets/actions/runs/7/attempts/2",
+            }),
+            std::path::Path::new(ATTACHMENTS),
+        )
+    };
+
+    assert_filled_as(&prompt(Some("main")), "automation-workflow-run.txt");
+    assert_eq!(testing::filled_in(&prompt(None), "branch"), "none");
+}
+
+#[test_log::test]
+fn implement_of_a_ticket_cut_from_a_spec_changes_issue_reads_the_spec_change_and_its_diff() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let tracking = Issue {
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(5),
+        }),
+        ..issue(
+            4,
+            "Spec change: Count widgets",
+            "Opened for the spec change in #5.",
+        )
+    };
+    let ticket = testing::with_spec_diff(
+        Ticket::read(&ticket_issue, Some(Cow::Borrowed(&tracking)), vec![]),
+        "+Widgets are counted.\n",
+    );
+    let prompt = prompts::implement(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &ticket,
+        "7-count-the-widgets",
+        &BranchStart::New,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "implement-spec-change-ticket.txt");
+}
+
+#[test_log::test]
+fn implement_of_a_spec_changes_issue_built_as_it_is_reads_the_spec_change_and_its_diff() {
+    let name = repo_name();
+    let its_issue = Issue {
+        filed: Some(Filed::SpecChange {
+            spec_change: Number(5),
+        }),
+        ..issue(
+            7,
+            "Spec change: Count widgets",
+            "Opened for the spec change in #5.",
+        )
+    };
+    let ticket = testing::with_spec_diff(
+        Ticket::read(&its_issue, None, vec![]),
+        "+Widgets are counted.\n",
+    );
+    let prompt = prompts::implement(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &ticket,
+        "7-spec-change-count-widgets",
+        &BranchStart::New,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "implement-spec-change-issue.txt");
+}
+
+#[test_log::test]
+fn rework_of_a_ticket_with_a_parent_is_filled_as_before() {
+    let name = repo_name();
+    let ticket_issue = issue(7, "Count the widgets", "Count them.");
+    let parent = Issue {
+        comments: vec![Comment {
+            author: Login::new("designer"),
+            body: "Store them in one table.".into(),
+            created_at: created(),
+        }],
+        ..issue(4, "Widgets", "All of them.")
+    };
+    let ticket = testing::ready(Ticket::read(
+        &ticket_issue,
+        Some(Cow::Borrowed(&parent)),
+        vec![],
+    ));
+    let comment = Comment {
+        author: Login::new("maintainer"),
+        body: "Name it `count`.".into(),
+        created_at: created(),
+    };
+    let prompt = prompts::pull_work(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        &ticket,
+        &pull(),
+        &PullTask::Rework {
+            feedback: Feedback {
+                comments: vec![&comment],
+                reviews: vec![],
+                threads: vec![],
+            },
+            conflict: None,
+            history: prompts::History::OnTop,
+        },
+        None,
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert_filled_as(&prompt, "rework-of-a-ticket-with-a-parent.txt");
+}
+
+#[test_log::test]
+fn the_history_is_a_series_for_merge_and_rebase_and_on_top_for_squash() {
+    for (method, history) in [
+        (MergeMethod::Merge, prompts::History::Series),
+        (MergeMethod::Rebase, prompts::History::Series),
+        (MergeMethod::Squash, prompts::History::OnTop),
+    ] {
+        assert_eq!(prompts::History::for_method(method), history, "{method}");
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn the_scorer_is_sent_its_prompt_filled_with_no_attachments_contract() {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = testing::triage_output(under.path(), "done").await;
+    let task = Task::open(&task).await.unwrap();
+    let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
+    let into = under.path().join("trial");
+    std::fs::create_dir(&into).unwrap();
+    let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
+    let name = repo_name();
+    let criteria = linewright_core::task::Criteria::parse("It counts the widgets.\n").unwrap();
+    let prompt = prompts::scorer(
+        &testing::marker_briefs().templates,
+        &repo(&name),
+        linewright_core::reconcile::WorkKind::Implement,
+        &criteria,
+        &copy,
+    )
+    .replace(into.to_str().unwrap(), "/work/trial");
+
+    assert_filled_as(&prompt, "scorer.txt");
+}
+
+#[test_log::test(tokio::test)]
+async fn an_operators_scorer_prompt_is_the_one_the_scorer_is_sent() {
+    let under = tempfile::tempdir().unwrap();
+    let (task, out) = testing::triage_output(under.path(), "done").await;
+    let task = Task::open(&task).await.unwrap();
+    let scoreable = ScoreableTrial::open(&out, &task).await.unwrap();
+    let into = under.path().join("trial");
+    std::fs::create_dir(&into).unwrap();
+    let copy = TrialCopy::make(&scoreable, &into).await.unwrap();
+    let operators = tempfile::tempdir().unwrap();
+    std::fs::create_dir(operators.path().join("prompts")).unwrap();
+    std::fs::write(
+        operators.path().join("prompts/scorer.md"),
+        "Our scorer.\n\n{{facts}} {{stage}} {{criteria}} {{trial}} {{output}}\n",
+    )
+    .unwrap();
+    let briefs = linewright_core::briefs::OperatorBriefs::read_over(
+        testing::markers(),
+        Some(operators.path()),
+    )
+    .unwrap()
+    .briefs();
+    let name = repo_name();
+    let criteria = linewright_core::task::Criteria::parse("It counts the widgets.\n").unwrap();
+
+    let prompt = prompts::scorer(
+        &briefs.templates,
+        &repo(&name),
+        linewright_core::reconcile::WorkKind::Implement,
+        &criteria,
+        &copy,
+    );
+
+    assert!(
+        prompt.starts_with("Our scorer.\n\n[parts/facts.md repo=«owner/widgets» "),
+        "{prompt}"
+    );
+    assert_eq!(
+        briefs.layers()["prompts/scorer.md"],
+        linewright_core::layer::Layer::Operator
+    );
+}
+
+#[test_log::test]
+fn triage_lists_its_categories_as_code_and_as_they_are_in_its_result_contract() {
+    let name = repo_name();
+    let prompt = prompts::triage(
+        &linewright_core::briefs::Briefs::shipped().templates,
+        &repo(&name),
+        &issue(7, "Count the widgets", "They are not counted."),
+        &["bug".into(), "feature".into()],
+        std::path::Path::new(ATTACHMENTS),
+    );
+
+    assert!(
+        prompt.contains("Categories to choose from: `bug`, `feature`\n"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains(r#""category": "<one of bug, feature>","#),
+        "{prompt}"
+    );
+}

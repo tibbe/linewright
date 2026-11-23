@@ -6,13 +6,13 @@
 
 @import "tailwindcss" source(none);
 
-@source "../templates";
-@source "../src/web";
-@source "../src/phrase.rs";
-@source "../assets/linewright.js";
+@source "../crates/linewright-web/templates";
+@source "../crates/linewright-web/src";
+@source "../crates/linewright-core/src/phrase.rs";
+@source "../crates/linewright-web/assets/linewright.js";
 @source not "./daisyui.mjs";
 @source not "./daisyui-theme.mjs";
-@source not "../src/web/icons";
+@source not "../crates/linewright-web/src/icons";
 
 /* daisyUI's components without its themes, which the two blocks below give
    in full: each is daisyUI's built-in theme of that name, with which the

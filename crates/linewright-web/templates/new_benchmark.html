@@ -1,0 +1,13 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_form("new-benchmark", "New benchmark", crate::buttons::Verb::Create, new_benchmark.whole()) %}
+{%- call(attributes) ui::field("new-benchmark-name", "Name", new_benchmark.field(&crate::benchmarks_page::NewBenchmarkField::Name), crate::making::Control::Input) %}
+<input id="new-benchmark-name" class="input validator w-full" name="name" value="{{ new_benchmark.fields.name }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field("new-benchmark-stage", "Stage", new_benchmark.field(&crate::benchmarks_page::NewBenchmarkField::Stage), crate::making::Control::Select) %}
+<select id="new-benchmark-stage" class="select validator w-full" name="stage"{{ attributes }}>
+{%- for stage in linewright_core::task::TaskStage::ALL %}
+<option value="{{ stage }}"{% if stage == new_benchmark.fields.stage %} selected{% endif %}>{{ stage }}</option>
+{%- endfor %}
+</select>
+{%- endcall %}
+{%- endcall %}

@@ -1,0 +1,13 @@
+{%- extends "card_page.html" -%}
+{%- block content %}
+<dl class="mb-6 grid gap-3 text-sm">
+{%- for (label, value) in facts %}
+<div class="flex justify-between gap-6"><dt class="shrink-0 text-base-content/60">{{ label }}</dt><dd class="min-w-0 text-end">{{ value }}</dd></div>
+{%- endfor %}
+</dl>
+<form method="post" action="{{ linewright_core::access::oauth::AUTHORIZE_PATH }}" class="grid grid-cols-2 gap-2">
+<input type="hidden" name="{{ REQUEST }}" value="{{ request }}">
+<button class="btn btn-sm btn-primary" type="submit" name="{{ DECISION }}" value="allow">{{ crate::buttons::Verb::Allow.labelled() }}</button>
+<button class="btn btn-sm" type="submit" name="{{ DECISION }}" value="deny">{{ crate::buttons::Verb::Deny.labelled() }}</button>
+</form>
+{%- endblock %}

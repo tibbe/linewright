@@ -79,5 +79,5 @@ A layer may hold them too; a result contract it rewords still has to describe
 the result that the schema in `results/` accepts. Like the prompts, they are
 not wrapped.
 
-[`src/prompts.rs`](../src/prompts.rs) declares, beside the templates
-(`readers`), which runs read each file. Every run gets the plugin.
+[`prompts.rs`](../crates/linewright-core/src/prompts.rs) declares, beside the
+templates (`readers`), which runs read each file. Every run gets the plugin.

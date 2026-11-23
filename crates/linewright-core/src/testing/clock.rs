@@ -1,0 +1,76 @@
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use chrono::{DateTime, TimeDelta, Utc};
+
+use crate::clock::Clock;
+use crate::domain::Timestamp;
+
+/// The time the functional core is asked at.
+pub const NOW: &str = "2026-10-01T12:00:30Z";
+
+/// The time a [`FakeClock`] starts at.
+pub const STARTED: &str = "2026-10-01T12:00:00Z";
+
+/// The `Timestamp` the RFC 3339 `time` names.
+pub fn at(time: &str) -> Timestamp {
+    DateTime::parse_from_rfc3339(time)
+        .unwrap()
+        .with_timezone(&Utc)
+}
+
+pub struct FakeClock {
+    now: Mutex<Timestamp>,
+    advanced: tokio::sync::Notify,
+    sleeps: tokio::sync::mpsc::UnboundedSender<Timestamp>,
+    slept: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<Timestamp>>,
+}
+
+impl FakeClock {
+    pub fn new() -> FakeClock {
+        let (sleeps, slept) = tokio::sync::mpsc::unbounded_channel();
+        FakeClock {
+            now: Mutex::new(at(STARTED)),
+            advanced: tokio::sync::Notify::new(),
+            sleeps,
+            slept: tokio::sync::Mutex::new(slept),
+        }
+    }
+
+    pub fn advance(&self, by: TimeDelta) {
+        *self.now.lock().unwrap() += by;
+        self.advanced.notify_waiters();
+    }
+
+    pub async fn next_sleep(&self) -> Timestamp {
+        // A timeout here would fire while git runs: paused time auto-advances
+        // (<https://docs.rs/tokio/latest/tokio/time/fn.pause.html>).
+        self.slept.lock().await.recv().await.unwrap()
+    }
+}
+
+impl Default for FakeClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Clock for FakeClock {
+    fn now(&self) -> Timestamp {
+        let mut now = self.now.lock().unwrap();
+        *now += TimeDelta::seconds(1);
+        *now
+    }
+
+    async fn sleep_until(&self, at: Timestamp) {
+        let _ = self.sleeps.send(at);
+        loop {
+            let advanced = self.advanced.notified();
+            if *self.now.lock().unwrap() >= at {
+                return;
+            }
+            advanced.await;
+        }
+    }
+}

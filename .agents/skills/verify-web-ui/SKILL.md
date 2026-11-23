@@ -16,8 +16,8 @@ scripts/serve-fake   # in the background; prints the web UI's URL, then a comman
 
 `serve-fake` serves the web UI as `lw serve` does, over a local store standing
 in for GitHub and `fake-claude` standing in for Claude Code, both set up by its
-seed, `src/bin/serve-fake/seed.rs`. Serve the web UI with it alone: `lw serve`
-works the real repository. Its clock starts at 2026-03-02 09:00 UTC on every
+seed, `crates/linewright/src/bin/serve-fake/seed.rs`. Serve the web UI with it
+alone: `lw serve` works the real repository. Its clock starts at 2026-03-02 09:00 UTC on every
 run. The seed's runs move on as real ones do: its implement session is in
 flight for about a minute and a half. Capture a state once the page shows it.
 

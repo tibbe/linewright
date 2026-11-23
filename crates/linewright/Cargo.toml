@@ -1,0 +1,63 @@
+[package]
+name = "linewright"
+description = "A spec-driven software factory: a server that turns spec changes and issues into reviewed, green pull requests."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "lw"
+path = "src/main.rs"
+
+[[bin]]
+name = "fake-claude"
+path = "src/bin/fake-claude.rs"
+required-features = ["fake-claude"]
+
+[[bin]]
+name = "serve-fake"
+path = "src/bin/serve-fake/main.rs"
+required-features = ["fake-claude"]
+
+[features]
+fake-claude = ["linewright-core/test-utils"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+linewright-claude = { workspace = true }
+linewright-core = { workspace = true }
+linewright-github = { workspace = true }
+linewright-web = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+# Cargo has no test-only binaries:
+# https://github.com/rust-lang/cargo/issues/4356
+linewright = { path = ".", features = ["fake-claude"] }
+linewright-core = { workspace = true, features = ["test-utils"] }
+axum = { workspace = true }
+globset = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+reqwest = { workspace = true }
+rstest = { workspace = true }
+rustix = { workspace = true }
+scraper = { workspace = true }
+serde_yaml_ng = { workspace = true }
+test-log = { workspace = true }
+tokio-util = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }

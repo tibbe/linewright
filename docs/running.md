@@ -14,7 +14,7 @@ Linewright with write access to the repository. Agents' commands run in
 Download `lw` from a [release](https://github.com/tibbe/linewright/releases):
 Linux on x86_64 and aarch64, `gnu` or static `musl` (for Alpine and older
 distributions), and macOS on Apple silicon. Or build it from source with
-`cargo install --path .`.
+`cargo install --path crates/linewright`.
 
 ```sh
 export GH_TOKEN=...            # Linewright's account's token (or GITHUB_TOKEN)

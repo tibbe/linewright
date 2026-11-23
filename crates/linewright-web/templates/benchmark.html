@@ -1,0 +1,43 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<div role="tablist" class="tabs tabs-border">
+{%- for link in tab_links %}
+<a role="tab" class="tab{% if self.opens(link.tab.clone()) %} tab-active{% endif %}" id="{{ link.tab.link_id() }}" href="{{ link.href }}" aria-selected="{{ self.opens(link.tab.clone()) }}" aria-controls="{{ link.tab.panel() }}">{{ link.tab.label() }}</a>
+{%- endfor %}
+</div>
+<div role="tabpanel" id="{{ BenchmarkTab::Runs.panel() }}" aria-labelledby="{{ BenchmarkTab::Runs.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Runs) %} hidden{% endif %}>
+{%- call(part) ui::table_card("Runs", crate::icons::CardIcon::Area(crate::shell::Area::Runs), shows_name = false, buttons = true) %}
+{%- match part %}
+{%- when crate::table::Part::Buttons %}
+{{ new_benchmark_run_offer }}
+{%- when crate::table::Part::Table %}
+{%- include "benchmark_benchmark_runs.html" %}
+{%- when crate::table::Part::Filters %}
+{%- endmatch %}
+{%- endcall %}
+</div>
+<div role="tabpanel" id="{{ BenchmarkTab::Tasks.panel() }}" aria-labelledby="{{ BenchmarkTab::Tasks.link_id() }}" class="pt-4"{% if !self.opens(BenchmarkTab::Tasks) %} hidden{% endif %}>
+{%- call(part) ui::table_card("Tasks", crate::icons::CardIcon::Area(crate::shell::Area::Benchmarks), shows_name = false, buttons = true) %}
+{%- match part %}
+{%- when crate::table::Part::Buttons %}
+{%- if frame.allows(linewright_core::actions::Action::AddTask) %}{% call ui::new_button(NEW_TASK) %}{% endcall %}{% endif %}
+{%- when crate::table::Part::Table %}
+{%- include "benchmark_tasks.html" %}
+{%- when crate::table::Part::Filters %}
+{%- endmatch %}
+{%- endcall %}
+</div>
+{%- call ui::new_dialog(NEW_TASK, path) %}
+{{ new_task }}
+{%- endcall %}
+{%- call ui::new_dialog(NEW_BENCHMARK_RUN, self.launch_path(), wide = true, form_class = "launch") %}
+{{ new_benchmark_run }}
+{%- endcall %}
+{%- call ui::edit_dialog(edit_benchmark) %}{% endcall %}
+{{ edit_benchmark_values }}
+<template id="configuration-template">{{ added_configuration }}</template>
+<template id="brief-file-template">{{ added_file }}</template>
+{{ brief_texts }}
+{{ stage_settings }}
+{%- endblock -%}

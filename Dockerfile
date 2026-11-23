@@ -15,11 +15,8 @@ RUN rustup toolchain install
 ARG LINEWRIGHT_COMMIT
 RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
     --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
-    --mount=type=bind,source=build.rs,target=build.rs \
-    --mount=type=bind,source=src,target=src \
+    --mount=type=bind,source=crates,target=crates \
     --mount=type=bind,source=briefs,target=briefs \
-    --mount=type=bind,source=templates,target=templates \
-    --mount=type=bind,source=assets,target=assets \
     --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked \

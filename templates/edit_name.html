@@ -1,6 +1,0 @@
-{%- import "macros.html" as ui -%}
-{%- call ui::new_form(id, title, crate::web::buttons::Verb::Save, making.whole()) %}
-{%- call(attributes) ui::field(self.field_id(), "Name", making.field(&NameField::Name), crate::web::making::Control::Input) %}
-<input id="{{ self.field_id() }}" class="input validator w-full" name="name" value="{{ making.fields.name }}" autocomplete="off"{{ attributes }}>
-{%- endcall %}
-{%- endcall %}

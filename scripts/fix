@@ -11,17 +11,18 @@ fix_markdown() {
   rumdl check --fix .
 }
 
-# Builds assets/linewright.css from styles/linewright.css.
+# Builds the web UI's stylesheet from styles/linewright.css.
 fix_css() {
   need tailwindcss || return 1
-  tailwindcss --input styles/linewright.css --output assets/linewright.css --minify
+  tailwindcss --input styles/linewright.css \
+    --output crates/linewright-web/assets/linewright.css --minify
 }
 
 # Makes every test `#[test_log::test]`, around `#[tokio::test]` where it is
 # async.
 fix_test() {
   local bare
-  if bare="$(grep -rlE --include='*.rs' "$test_attribute" src tests)"; then
+  if bare="$(grep -rlE --include='*.rs' "$test_attribute" crates)"; then
     # shellcheck disable=SC2086 # one path per line, none with spaces
     perl -pi -e 's/^([ \t]*)#\[test\][ \t]*$/$1#[test_log::test]/;
       s/^([ \t]*)#\[tokio::test(\(.*\))?\][ \t]*$/$1#[test_log::test(tokio::test$2)]/' $bare
