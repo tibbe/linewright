@@ -3,7 +3,7 @@ use super::*;
 use serde_json::json;
 
 /// #1 and #2, each triaged in a run of its own, #2's the later.
-async fn two_issues_triaged() -> Pages {
+pub(super) async fn two_issues_triaged() -> Pages {
     let pages = Pages::of(view(
         vec![ticket(1, "Export fails"), ticket(2, "Import fails")],
         vec![],

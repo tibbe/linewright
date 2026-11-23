@@ -5,6 +5,7 @@
 mod authorizations;
 mod benchmarks;
 mod people;
+mod work;
 
 use rmcp::ErrorData;
 use rmcp::handler::server::common::{schema_for_input, schema_for_output};
@@ -118,6 +119,12 @@ macro_rules! registry {
 }
 
 registry!(
+    work::GetBoard,
+    work::GetItem,
+    work::ListRuns,
+    work::GetRun,
+    work::ListAutomations,
+    work::GetServer,
     people::ListPeople,
     authorizations::ListAuthorizations,
     authorizations::EndAuthorization,

@@ -10,6 +10,8 @@ use super::oauth::{Tokens, authorized_by_back_door, query_value};
 use super::sign_in::{Browsing, signing};
 use super::*;
 
+mod reads;
+
 /// The protocol version these tests' client asks for.
 const PROTOCOL: &str = "2025-06-18";
 
@@ -103,12 +105,47 @@ impl<'a> Mcp<'a> {
         }
     }
 
-    /// What calling the tool `name` with `arguments` returned.
+    /// What calling the tool `name` with `arguments` returned, its
+    /// structured content, where it is not an error, once checked against
+    /// the output schema `tools/list` gives the tool.
     #[track_caller]
     fn call(&self, name: &str, arguments: Value) -> impl Future<Output = Value> + use<> {
+        let caller = Location::caller();
         let mut params = json!({ "name": name });
         params["arguments"] = arguments;
-        self.request("tools/call", params)
+        let listed = self.request("tools/list", json!({}));
+        let called = self.request("tools/call", params);
+        let name = name.to_string();
+        async move {
+            let listed = listed.await;
+            let result = called.await;
+            if result["isError"] != false {
+                return result;
+            }
+            let schema = &listed["tools"]
+                .as_array()
+                .and_then(|tools| tools.iter().find(|tool| tool["name"] == name))
+                .unwrap_or_else(|| panic!("{name} listed at {caller}: {listed}"))["outputSchema"];
+            let validator = jsonschema::validator_for(schema)
+                .unwrap_or_else(|e| panic!("{name}'s output schema at {caller}: {e}: {schema}"));
+            let errors: Vec<String> = validator
+                .iter_errors(&result["structuredContent"])
+                .map(|e| format!("{}: {e}", e.instance_path()))
+                .collect();
+            assert!(
+                errors.is_empty(),
+                "{name} at {caller} does not match its output schema: {errors:?}: {result}"
+            );
+            result
+        }
+    }
+
+    /// What calling the tool `name` with `arguments` showed, as [`done`]
+    /// gives it.
+    #[track_caller]
+    fn shown(&self, name: &str, arguments: Value) -> impl Future<Output = Value> + use<> {
+        let called = self.call(name, arguments);
+        async move { done(&called.await) }
     }
 }
 
@@ -199,7 +236,17 @@ async fn a_client_initializes_at_2025_06_18_and_later() {
 }
 
 /// The tools a viewer is listed.
-const VIEWERS: [&str; 3] = ["list_people", "list_authorizations", "end_authorization"];
+const VIEWERS: [&str; 9] = [
+    "get_board",
+    "get_item",
+    "list_runs",
+    "get_run",
+    "list_automations",
+    "get_server",
+    "list_people",
+    "list_authorizations",
+    "end_authorization",
+];
 
 /// The tools a contributor is listed besides a viewer's.
 const CONTRIBUTORS: [&str; 8] = [
@@ -299,6 +346,33 @@ async fn each_tool_has_the_action_as_its_title_and_its_screens_arguments() {
         json!(["viewer", "contributor", "manager"])
     );
     assert_eq!(arguments(&tool("end_authorization")), ["authorization_id"]);
+    assert_eq!(arguments(&tool("get_board")), ["person"]);
+    assert_eq!(arguments(&tool("get_item")), ["number"]);
+    assert_eq!(
+        arguments(&tool("list_runs")),
+        ["after", "item", "limit", "since", "stage"]
+    );
+    assert_eq!(
+        arguments(&tool("get_run")),
+        ["before", "limit", "run_id", "verbose"]
+    );
+    assert_eq!(arguments(&tool("list_automations")), ["after", "limit"]);
+    assert_eq!(
+        tool("get_server")["inputSchema"],
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": false,
+        })
+    );
+    for read in VIEWERS
+        .iter()
+        .filter(|name| name.starts_with("get_") || name.starts_with("list_"))
+    {
+        let read = tool(read);
+        assert_eq!(read["annotations"]["readOnlyHint"], true, "{read}");
+        assert_eq!(read["outputSchema"]["type"], "object", "{read}");
+    }
 }
 
 /// What a call that changed something returned, as structured content,
