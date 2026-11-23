@@ -3,6 +3,7 @@
 //! (`docs/specs/access.md`, The MCP server, Tools and Arguments).
 
 mod authorizations;
+mod benchmark_screens;
 mod benchmarks;
 mod people;
 mod work;
@@ -124,6 +125,10 @@ registry!(
     work::ListRuns,
     work::GetRun,
     work::ListAutomations,
+    benchmark_screens::ListBenchmarks,
+    benchmark_screens::GetBenchmark,
+    benchmark_screens::GetTask,
+    benchmark_screens::GetBenchmarkRun,
     work::GetServer,
     people::ListPeople,
     authorizations::ListAuthorizations,
