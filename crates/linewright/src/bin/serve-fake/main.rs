@@ -1,21 +1,22 @@
 //! `serve-fake`: `lw serve` over fakes, for an agent to drive Linewright's
 //! web UI in a browser. A local store the seed sets up stands in for GitHub,
 //! and `fake-claude`, playing the seed's scenario, for Claude Code, so
-//! nothing it does reaches either. It serves the web UI on a free port of
-//! `127.0.0.1`, and once the factory has started prints its URL and then the
-//! `playwright-cli` command that sets the browser's clock to its own. It keeps
-//! all it writes in a temporary directory it removes once a signal stops it,
-//! but for the work directory when `SERVE_FAKE_WORK_DIR` names one: so that
-//! one release can serve the work directory another left. With
-//! `SERVE_FAKE_UNPOLLED` set, each poll fails, so that the web UI stays as it
-//! is before Linewright's first poll. With `SERVE_FAKE_UNNAMED` set, the
-//! `manager` setting names no one, so that the seed's manager is only the
-//! last manager.
+//! nothing it does reaches either. It serves the web UI over HTTPS, with a
+//! self-signed certificate, on a free port of `127.0.0.1`, and once the
+//! factory has started prints its URL and then the `playwright-cli` command
+//! that sets the browser's clock to its own. It keeps all it writes in a
+//! temporary directory it removes once a signal stops it, but for the work
+//! directory when `SERVE_FAKE_WORK_DIR` names one: so that one release can
+//! serve the work directory another left. With `SERVE_FAKE_UNPOLLED` set, each
+//! poll fails, so that the web UI stays as it is before Linewright's first
+//! poll. With `SERVE_FAKE_UNNAMED` set, the `manager` setting names no one, so
+//! that the seed's manager is only the last manager.
 //!
 //! It runs `lw` and `fake-claude` from beside itself, as
 //! `cargo build --package linewright --features fake-claude` leaves them.
 
 mod seed;
+mod tls;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -59,10 +60,12 @@ async fn serve() -> Result<()> {
         .to_path_buf();
     let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(seed::started_at()));
     let agent = fake_agent(dir, &beside.join("fake-claude"), clock.as_ref())?;
-    let port = free_port()?;
+    let front = tls::Front::bind().await?;
+    let url = front.url()?;
+    let ui_port = free_port()?;
     let google = FakeGoogle::serve(seed::google_accounts(), clock.clone()).await?;
     let github = FakeGitHub::serve(seed::github_accounts()).await?;
-    let mut config = config(dir, port)?;
+    let mut config = config(dir, &url, ui_port)?;
     let ui = config.ui.as_mut().context("serve-fake serves the web UI")?;
     ui.providers
         .google_mut()
@@ -83,7 +86,7 @@ async fn serve() -> Result<()> {
         store.fail_reads("serve-fake was started with SERVE_FAKE_UNPOLLED");
     }
     let winding_up = WindingUp::default();
-    let url = format!("http://127.0.0.1:{port}/");
+    tokio::spawn(front.forward(([127, 0, 0, 1], ui_port).into()));
     serving::serve(
         &config,
         clock.clone(),
@@ -154,15 +157,16 @@ const UNPOLLED: &str = "SERVE_FAKE_UNPOLLED";
 /// The variable that, set, leaves the `manager` setting out.
 const UNNAMED: &str = "SERVE_FAKE_UNNAMED";
 
-/// Serving the seed's repository from `dir` on `port`, with the work
-/// directory [`WORK_DIR`] names or one in `dir`, each stage's sessions told
-/// their stage, as `fake-claude` takes its steps by it, and the `manager`
-/// setting naming the seed's manager unless [`UNNAMED`] is set.
-fn config(dir: &Path, port: u16) -> Result<Config> {
+/// Serving the seed's repository from `dir` on `ui_port`, at the public URL
+/// `url`, with the work directory [`WORK_DIR`] names or one in `dir`, each
+/// stage's sessions told their stage, as `fake-claude` takes its steps by it,
+/// and the `manager` setting naming the seed's manager unless [`UNNAMED`] is
+/// set.
+fn config(dir: &Path, url: &str, ui_port: u16) -> Result<Config> {
     let work = std::env::var_os(WORK_DIR).map_or_else(|| dir.join("work"), PathBuf::from);
     let mut text = format!(
-        "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
-         public-url = \"http://127.0.0.1:{port}\"\ngoogle-client-id = \"serve-fake\"\n\
+        "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{ui_port}\"\n\
+         public-url = \"{url}\"\ngoogle-client-id = \"serve-fake\"\n\
          google-signup-domains = [\"{domain}\"]\ngithub-client-id = \"serve-fake\"\n\
          github-signup-orgs = [\"{organization}\"]\n\
          poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",

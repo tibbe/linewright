@@ -55,7 +55,9 @@ impl Served {
 
     /// A GET of `url` from the signed-in browser.
     fn get(&self, url: &str) -> reqwest::RequestBuilder {
-        reqwest::Client::new()
+        browser()
+            .build()
+            .expect("a browser")
             .get(url)
             .header("Cookie", &self.cookie)
     }
@@ -166,12 +168,18 @@ impl Served {
     }
 }
 
+/// A browser as the `verify-web-ui` skill opens it: one that takes
+/// `serve-fake`'s self-signed certificate.
+fn browser() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().tls_danger_accept_invalid_certs(true)
+}
+
 /// Signs a browser in to the web UI at `url` as the first account of
 /// `serve-fake`'s fake Google, as a browser does, following each redirect
 /// by hand: the `Cookie` it then sends.
 async fn signed_in(url: &str) -> anyhow::Result<String> {
     use anyhow::Context as _;
-    let client = reqwest::Client::builder()
+    let client = browser()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let location = |response: &reqwest::Response| -> anyhow::Result<String> {
@@ -269,8 +277,13 @@ fn times(html: &Html) -> Vec<String> {
 }
 
 #[test_log::test(tokio::test)]
-async fn serve_fake_serves_the_seeds_board_and_its_runs_in_flight_go_on_live() {
+async fn serve_fake_serves_the_seeds_board_and_its_runs_in_flight_go_on_live_over_https() {
     let served = Served::start().await;
+    assert!(
+        served.url.starts_with("https://127.0.0.1:") && served.url.ends_with('/'),
+        "{}",
+        served.url
+    );
 
     served
         .eventually_page("/", |html| {

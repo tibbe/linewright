@@ -398,7 +398,7 @@ fn serve_with_status(args: &[&str], env: &[(&str, &str)]) -> (std::process::Exit
 /// The settings of a web UI at a loopback address signing people in with
 /// Google, as variables.
 const UI: [(&str, &str); 3] = [
-    ("LINEWRIGHT_PUBLIC_URL", "http://127.0.0.1:8081"),
+    ("LINEWRIGHT_PUBLIC_URL", "https://127.0.0.1:8081"),
     ("LINEWRIGHT_GOOGLE_CLIENT_ID", "google-id"),
     ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", "google-s3cret"),
 ];
