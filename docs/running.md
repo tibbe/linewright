@@ -408,7 +408,7 @@ starts. It exits 4 when the run ID names nothing.
 ## The web UI
 
 `serve` serves a web UI while `public-url` is set: the URL people reach it
-at, HTTPS, or HTTP to a loopback address such as `http://127.0.0.1:8081`. It
+at, an HTTPS URL with no path, such as `https://linewright.example.com`. It
 listens on `ui-address`, a host and port, `127.0.0.1:8081` unless set
 otherwise, and logs that address as it starts. It exits at startup if it
 cannot listen there. Without `public-url`, it serves no web UI, and logs
@@ -452,18 +452,23 @@ case, port and a trailing dot, so that a web page elsewhere cannot read it
 under a name it controls. Every other request gets `421 Misdirected
 Request`, and `serve` logs each with the `Host` it named.
 
-- **On the same machine**, set `public-url` to `http://127.0.0.1:8081` and
-  open it as written: `http://localhost:8081` names another host, and gets
-  421.
-- **From another machine**, set `public-url` the same, forward a port to it
-  over SSH, `ssh -N -L 8081:127.0.0.1:8081 HOST`, and open
-  `http://127.0.0.1:8081`.
-- **Behind a reverse proxy** that terminates TLS, set `public-url` to the URL
-  the proxy serves it at, such as `https://linewright.example.com`.
+`serve` serves the UI over plain HTTP, so put a reverse proxy in front that
+terminates TLS, such as Caddy, nginx or Nginx Proxy Manager, forwarding to
+`ui-address`. Set `public-url` to the URL the proxy serves it at, such as
+`https://linewright.example.com`, and open that URL as written: another name
+for the same host gets 421.
+
+For a UI reached only over a [Tailscale](https://tailscale.com) network,
+[Tailscale Serve](https://tailscale.com/kb/1312/serve) gives the host's
+`*.ts.net` name a trusted certificate, once the tailnet has HTTPS certificates
+turned on: run `tailscale serve --bg 8081` on the host and set `public-url` to
+`https://HOST.TAILNET.ts.net`. claude.ai cannot reach the MCP server there, but
+Claude Code on a machine on the tailnet can.
 
 In a container, set `ui-address` to `0.0.0.0:8081`, so the UI answers outside
-the container, and publish the port on the host's loopback, such as
-`127.0.0.1:8081:8081`. [`deploy/`](../deploy/README.md#the-web-ui) shows how.
+the container. For a proxy on the host, publish the port on the host's
+loopback, such as `127.0.0.1:8081:8081`; a proxy in a container reaches it
+over a Docker network, as [`deploy/`](../deploy/README.md#the-web-ui) shows.
 
 ## Webhooks
 
