@@ -82,6 +82,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(AUTOMATION_PATHS),
     Migration::Sql(WORKFLOW_RUN_TRIGGERS),
     clean_names::CLEAN_NAMES,
+    Migration::Sql(SIGN_IN_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -366,6 +367,38 @@ const WORKFLOW_RUN_TRIGGERS: &str = "CREATE TABLE workflow_attempts (
     ALTER TABLE runs_triggered RENAME TO runs;
     CREATE UNIQUE INDEX runs_of_items ON runs (item, stage, n) WHERE kind = 'item';
     CREATE UNIQUE INDEX runs_of_automations ON runs (automation, n) WHERE kind = 'automation';";
+
+/// The people Linewright signs in (`docs/specs/access.md`, People), each
+/// browser's sign-in as the SHA-256 of its cookie, and each sign-in begun
+/// at an identity provider and not yet back, by the SHA-256 of its `state`
+/// and of the cookie of the browser that began it.
+const SIGN_IN_TABLES: &str = "CREATE TABLE people (
+        id INTEGER PRIMARY KEY CHECK (id > 0),
+        provider TEXT NOT NULL CHECK (provider IN ('google', 'github')),
+        subject TEXT NOT NULL,
+        shown_as TEXT NOT NULL,
+        name TEXT,
+        avatar TEXT,
+        role TEXT NOT NULL CHECK (role IN ('viewer', 'contributor', 'manager')),
+        state TEXT NOT NULL CHECK (state IN ('enabled', 'disabled')),
+        signed_in_at TEXT NOT NULL,
+        UNIQUE (provider, subject)
+    ) STRICT;
+    CREATE TABLE browser_sessions (
+        hash BLOB PRIMARY KEY,
+        person INTEGER NOT NULL REFERENCES people (id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX browser_sessions_of_people ON browser_sessions (person);
+    CREATE TABLE pending_sign_ins (
+        state BLOB PRIMARY KEY,
+        browser BLOB NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('google', 'github')),
+        verifier TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        return_to TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    ) STRICT;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,
