@@ -16,6 +16,27 @@ observes.
   the harness and the clock sit behind interfaces with a real and a fake
   implementation.
 
+## Crates
+
+Linewright is a Cargo workspace.
+
+- **Root.** The root manifest is a virtual manifest.
+- **Directories.** Each crate is in the directory under `crates/` that has
+  its name.
+- **Crates.** The table lists every crate of the workspace.
+- **Dependencies.** Of the other crates, a crate depends only on the ones in
+  its "Depends on" cell. Its tests do too.
+- **Doubt.** A row holds only what its cell names. A part that could be in a
+  row or not is in `linewright-core`.
+
+| Crate | What it holds | Depends on |
+| --- | --- | --- |
+| `linewright-core` | what the other crates do not hold | none |
+| `linewright-web` | what `serve` serves at the public URL | `linewright-core` |
+| `linewright-github` | the implementation of the store interface for GitHub | `linewright-core` |
+| `linewright-claude` | the implementation of the harness interface for Claude Code | `linewright-core` |
+| `linewright` | the code that joins the other crates into `lw`, and the programs its tests run | every other crate |
+
 ## State
 
 State that people read or change (labels, assignees, pull requests, comments)
