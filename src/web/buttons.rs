@@ -27,6 +27,8 @@ pub(super) enum Verb {
     Enable,
     Allow,
     Deny,
+    /// "End" that ends an authorization.
+    End,
 }
 
 impl Verb {
@@ -46,6 +48,7 @@ impl Verb {
             Verb::Enable => "Enable",
             Verb::Allow => "Allow",
             Verb::Deny => "Deny",
+            Verb::End => "End",
         }
     }
 
@@ -62,6 +65,7 @@ impl Verb {
             Verb::SignOut => Icon::ArrowRightStartOnRectangle,
             Verb::Disable => Icon::LockClosed,
             Verb::Enable => Icon::LockOpen,
+            Verb::End => Icon::LinkSlash,
         }
     }
 

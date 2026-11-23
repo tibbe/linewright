@@ -4,11 +4,13 @@
 //! made of. Each takes a [`Permit`] of its level, and each that changes
 //! something logs who did it, what it changed and how it ended.
 
+mod authorizations;
 mod benchmarks;
 mod capture;
 mod people;
 mod work;
 
+pub use authorizations::*;
 pub use benchmarks::*;
 pub use capture::*;
 pub use people::*;

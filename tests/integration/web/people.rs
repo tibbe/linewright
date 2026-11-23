@@ -59,7 +59,7 @@ async fn people_lists_everyone_in_the_order_of_their_names() {
     let html = pages.page("/people").await;
 
     assert_eq!(
-        hrefs(select(&html, "nav[aria-label=Linewright] ul.menu a")),
+        hrefs(select(&html, "nav[aria-label=Linewright] > ul.menu a")),
         [
             "/",
             "/runs",

@@ -1,0 +1,39 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+<div id="{{ SAID }}" class="max-w-xl shrink-0 empty:hidden" role="status"></div>
+{% block authorizations -%}
+<section id="authorizations" class="flex min-h-0 flex-1 flex-col">
+{%- call(part) ui::table_card("Authorizations", crate::web::icons::CardIcon::Authorizations, shows_name = true, heading = "h1") %}
+{%- if part == crate::web::table::Part::Table %}
+<div class="scroll-box overflow-x-auto">
+<table class="table table-pin-rows">
+<thead><tr>{% for head in HEADS %}<th class="text-left">{{ head }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in authorizations.rows %}
+<tr>
+<th class="text-left whitespace-nowrap">{{ row.client }}</th>
+<td class="text-left">{{ row.sends_back_to }}</td>
+<td class="text-left whitespace-nowrap">{{ row.allowed|safe }}</td>
+<td class="text-left whitespace-nowrap">{{ row.ends|safe }}</td>
+<td class="text-left"><div class="flex items-center justify-end gap-1">{%- call ui::row_button(crate::web::buttons::Verb::End, row.end, row.client) %}{% endcall %}</div></td>
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+</div>
+{%- if let Some(pages) = authorizations.pages %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
+{%- endif %}
+{%- endcall %}
+</section>
+{%- endblock %}
+{% block dialogs -%}
+<div id="{{ DIALOGS }}">
+{%- for end in ends %}
+{%- call ui::confirm_dialog(end) %}{% endcall %}
+{%- endfor %}
+</div>
+{%- endblock %}
+{%- endblock -%}
