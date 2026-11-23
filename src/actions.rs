@@ -5,15 +5,23 @@
 //! something logs who did it, what it changed and how it ended.
 
 mod authorizations;
+mod automations;
 mod benchmarks;
+mod board;
 mod capture;
+mod item;
 mod people;
+mod run;
 mod work;
 
 pub use authorizations::*;
+pub use automations::*;
 pub use benchmarks::*;
+pub use board::*;
 pub use capture::*;
+pub use item::*;
 pub use people::*;
+pub use run::*;
 pub use work::*;
 
 use std::fmt::Display;

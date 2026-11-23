@@ -2,13 +2,16 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use chrono::{DateTime, TimeDelta, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::phrase::Phrase;
 
 pub type Timestamp = DateTime<Utc>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(transparent)]
 pub struct Number(pub u64);
 
@@ -71,7 +74,7 @@ impl fmt::Display for Repo {
 /// A GitHub login, which GitHub matches regardless of case
 /// (<https://docs.github.com/en/get-started/learning-about-github/types-of-github-accounts>):
 /// two logins differing only in case are equal.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Login(pub String);
 
@@ -300,7 +303,7 @@ impl DesignedLabel {
 }
 
 /// What an issue needs next, as its status label says.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum StatusLabel {
     NeedsTriage,
@@ -1007,7 +1010,7 @@ pub enum Rebaseability {
 }
 
 /// <https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Requirement {
     Approval,

@@ -174,6 +174,20 @@ pub enum WorkKind {
     Update,
 }
 
+/// A stage by its name.
+impl schemars::JsonSchema for WorkKind {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "WorkKind".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "enum": WorkKind::ALL.map(WorkKind::name),
+        })
+    }
+}
+
 impl WorkKind {
     pub const ALL: [WorkKind; 6] = [
         WorkKind::Triage,
@@ -618,7 +632,7 @@ fn discarded_from_issue(tickets: &[Number], pulls: &[Number]) -> String {
     )
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "wait", rename_all = "kebab-case")]
 pub enum Wait {
     Run {
@@ -701,7 +715,7 @@ impl Wait {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum Relabel {
     /// Applying `required_label`, when set, counts as applying the label again.

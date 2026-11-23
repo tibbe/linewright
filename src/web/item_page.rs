@@ -7,7 +7,7 @@ use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
 
 use super::caller::Reader;
-use super::cards::{self, card_line, lane_head};
+use super::cards::{self, lane_head, line_html};
 use super::facts::{Fact, Piece};
 use super::html::{self, Html};
 use super::icons::ItemKind;
@@ -15,15 +15,10 @@ use super::names::Names;
 use super::runs_table::{RunsRegion, RunsShown};
 use super::shell::{self, Area, Frame, Heading, Missing, Navigation, Place, Thing};
 use super::{ErrorPage, Page, events, nothing_there, render};
-use crate::access::{Permit, Read};
-use crate::actions::{self, ItemInView};
+use crate::actions::{self, ItemFactsScreen, ItemInView, RelatedScreen, Standing};
 use crate::api::{Sources, Unexplained};
 use crate::domain::{Number, Snapshot};
-use crate::item_facts::{ItemFacts, Related, StateFact};
-use crate::lifecycle;
-use crate::managed::{LeftAloneIssue, LeftAloneItem, LeftAlonePull, PullExclusion};
 use crate::phrase::{Phrase, Status};
-use crate::reconcile::NotSpecChange;
 use crate::status;
 
 /// #N's facts, ready for the page.
@@ -32,7 +27,7 @@ struct ItemShown {
 }
 
 impl ItemShown {
-    fn of(facts: &ItemFacts, names: &Names) -> ItemShown {
+    fn of(facts: &ItemFactsScreen, names: &Names) -> ItemShown {
         ItemShown {
             facts: shown_facts(facts, names),
         }
@@ -54,11 +49,11 @@ struct ItemName {
 }
 
 /// #N's heading: its name, and under it when `serve` last read it.
-fn heading(facts: &ItemFacts, repo: &str) -> Heading {
+fn heading(facts: &ItemFactsScreen, repo: &str) -> Heading {
     Heading {
         title: format!("{} {}", facts.number, facts.title),
         name: html::rendered(&ItemName {
-            kind: (!matches!(facts.state, StateFact::Tracking { .. }))
+            kind: (!matches!(facts.standing, Standing::Tracking { .. }))
                 .then(|| ItemKind::of(facts.pull_request)),
             titled: html::titled(facts.number, &facts.title, repo),
         }),
@@ -70,17 +65,18 @@ fn heading(facts: &ItemFacts, repo: &str) -> Heading {
 /// `facts` in the order the item page's table gives them, each while it is
 /// shown (`docs/specs/board.md`, Item), with the items its
 /// phrases name as `names` names them.
-fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
+fn shown_facts(facts: &ItemFactsScreen, names: &Names) -> Vec<Fact> {
     let repo = names.repo();
     let text = |phrase: &Phrase| Piece::Text(html::phrase(phrase, names));
     let fact = |label, lines: Vec<Vec<Piece>>| (!lines.is_empty()).then_some(Fact { label, lines });
-    let items = |items: &[Related]| items.iter().map(|item| vec![related(item, repo)]).collect();
-    let tickets = facts.tickets.as_ref().map(|tickets| {
-        let closed = format!("{} of {} closed", tickets.closed, tickets.tickets.len());
+    let items =
+        |items: &[RelatedScreen]| items.iter().map(|item| vec![related(item, repo)]).collect();
+    let tickets = facts.tickets.map(|tickets| {
+        let closed = format!("{} of {} closed", tickets.tickets_closed, tickets.tickets);
         vec![
             vec![text(&closed.into())],
-            tickets
-                .tickets
+            facts
+                .ticket_items
                 .iter()
                 .map(|ticket| related(ticket, repo))
                 .collect(),
@@ -89,7 +85,7 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
     [
         Some(Fact {
             label: "State",
-            lines: vec![state(&facts.state, names)],
+            lines: vec![state(facts, names)],
         }),
         fact(
             "Waiting for",
@@ -115,60 +111,52 @@ fn shown_facts(facts: &ItemFacts, names: &Names) -> Vec<Fact> {
 /// card status; for a tracking issue, its state, then when its lane
 /// finished, if it did; for an item Linewright leaves, its state, where it
 /// has one, then "Left alone" and why.
-fn state(state: &StateFact, names: &Names) -> Vec<Piece> {
-    let then = |first: Option<lifecycle::State>, lines: Vec<(Html, Option<Status>)>| {
-        let first = first.map(|item_state| (html::escape(item_state.shown()), None));
-        let mut pieces = vec![];
-        for (line, status) in first.into_iter().chain(lines) {
-            if !pieces.is_empty() {
-                pieces.push(Piece::Text(html::escape(" · ")));
-            }
-            pieces.push(match status {
-                Some(status) => Piece::Status {
-                    status,
-                    words: line,
-                },
-                None => Piece::Text(line),
-            });
-        }
-        pieces
+fn state(facts: &ItemFactsScreen, names: &Names) -> Vec<Piece> {
+    let mut pieces = vec![];
+    let first = facts
+        .state
+        .map(|item_state| (html::escape(item_state.shown()), None));
+    let lines: Vec<(Html, Option<Status>)> = match &facts.standing {
+        Standing::Card { line, status, .. } => line
+            .as_ref()
+            .map(|line| (line_html(line, names), status.map(cards::status)))
+            .into_iter()
+            .collect(),
+        Standing::Tracking { finished } => finished
+            .map(|at| {
+                (
+                    html::phrase(&Phrase::from("finished ").time(at), names),
+                    None,
+                )
+            })
+            .into_iter()
+            .collect(),
+        Standing::LeftAlone { kept_out_by } => vec![
+            (html::escape("Left alone"), None),
+            (html::phrase(kept_out_by, names), None),
+        ],
     };
-    match state {
-        StateFact::Card { state, card, .. } => then(
-            Some(*state),
-            card_line(card)
-                .map(|line| (line.html(names), card.status().map(cards::status)))
-                .into_iter()
-                .collect(),
-        ),
-        StateFact::Tracking { state, finished } => then(
-            *state,
-            finished
-                .map(|at| {
-                    (
-                        html::phrase(&Phrase::from("finished ").time(at), names),
-                        None,
-                    )
-                })
-                .into_iter()
-                .collect(),
-        ),
-        StateFact::LeftAlone { state, why } => then(
-            *state,
-            vec![
-                (html::escape("Left alone"), None),
-                (html::phrase(&left_alone_worded(why), names), None),
-            ],
-        ),
+    for (line, status) in first.into_iter().chain(lines) {
+        if !pieces.is_empty() {
+            pieces.push(Piece::Text(html::escape(" · ")));
+        }
+        pieces.push(match status {
+            Some(status) => Piece::Status {
+                status,
+                words: line,
+            },
+            None => Piece::Text(line),
+        });
     }
+    pieces
 }
 
 /// An item a fact lists, as its card is: its heading as a card's is, or its
 /// number alone where its title is not known; or a tracking issue as its
 /// lane's head is, with no card status.
-fn related(item: &Related, repo: &str) -> Piece {
+fn related(item: &RelatedScreen, repo: &str) -> Piece {
     match item {
-        Related::Card {
+        RelatedScreen::Card {
             number,
             title,
             pull_request,
@@ -181,66 +169,8 @@ fn related(item: &Related, repo: &str) -> Piece {
                 None => html::item(*number, repo),
             },
         },
-        Related::LaneHead(lane) => Piece::LaneHead(lane_head(lane, repo)),
+        RelatedScreen::LaneHead(lane) => Piece::LaneHead(lane_head(lane, repo)),
     }
-}
-
-/// What keeps `item` out of Linewright's work, in the UI's own words.
-fn left_alone_worded(item: &LeftAloneItem) -> Phrase {
-    match item {
-        LeftAloneItem::Issue(LeftAloneIssue::Closed)
-        | LeftAloneItem::PullRequest(LeftAlonePull::Closed) => "closed".into(),
-        LeftAloneItem::Issue(LeftAloneIssue::Open { left_alone }) => left_alone.worded(),
-        LeftAloneItem::PullRequest(LeftAlonePull::Open { left_alone }) => match left_alone {
-            PullExclusion::NotWorked { author } => {
-                format!("opened by {author}, and Linewright has not worked it").into()
-            }
-        },
-        LeftAloneItem::PullRequest(LeftAlonePull::Merged { left_alone }) => match left_alone {
-            NotSpecChange::Linewrights => "opened by Linewright".into(),
-            NotSpecChange::OtherBranch { base } => Phrase::from("merged into ")
-                .code(base.clone())
-                .text(", not the default branch"),
-            NotSpecChange::NoSpecFile { spec_glob } => Phrase::from("touches no file matching ")
-                .code(spec_glob.clone())
-                .text(", the spec-glob"),
-            NotSpecChange::TakenUp { issue } => {
-                Phrase::from("a spec change taken up in ").item(*issue)
-            }
-            NotSpecChange::Designed { label } => Phrase::from("a spec change labeled ")
-                .code(label.name())
-                .text(", taken up already"),
-            NotSpecChange::BeforeLookback {
-                merged_at,
-                window_opened,
-            } => Phrase::from("merged ")
-                .time(*merged_at)
-                .text(", before the spec-lookback window opened ")
-                .time(*window_opened),
-            NotSpecChange::RequiredLabel { label } => Phrase::from("not labeled ")
-                .code(label.clone())
-                .text(", the required label"),
-        },
-        LeftAloneItem::PullRequest(LeftAlonePull::TakingUp) => {
-            "a spec change Linewright takes up at its next poll".into()
-        }
-    }
-}
-
-/// How many of an item's runs its page lists, the latest
-/// (`docs/specs/board.md`, Item, Runs).
-const RUNS_SHOWN: usize = 10;
-
-/// #`number`'s latest runs, from their records, whether or not Linewright
-/// manages it.
-async fn item_runs(
-    permit: &Permit<Read>,
-    sources: &Sources,
-    number: Number,
-    names: &Names<'_>,
-) -> RunsShown {
-    let listed = actions::item_runs(permit, sources, number, RUNS_SHOWN).await;
-    RunsShown::of_item(listed, number, names)
 }
 
 #[derive(Template, WebTemplate)]
@@ -275,16 +205,16 @@ pub(super) async fn item_page(
 ) -> Response {
     let frame = Frame::of(&permit, &sources).await;
     match actions::get_item(&permit, &sources, number).await {
-        Ok((facts, snapshot)) => {
+        Ok((item, snapshot)) => {
             let names = names(&sources, Some(&snapshot));
             ItemPage {
                 page: page(
                     number,
-                    Thing::Found(heading(&facts, names.repo())),
+                    Thing::Found(heading(&item.facts, names.repo())),
                     navigation,
                 ),
-                item: ItemShown::of(&facts, &names),
-                runs: item_runs(&permit, &sources, number, &names).await,
+                item: ItemShown::of(&item.facts, &names),
+                runs: RunsShown::of_item(&item.runs, number, &names),
                 frame,
             }
             .into_response()
@@ -351,7 +281,8 @@ pub(super) async fn item_events(
             } else {
                 regions.push(shell::holds(&frame));
             }
-            let runs = item_runs(&permit, &sources, number, &names).await;
+            let runs = actions::item_runs(&permit, &sources, number).await;
+            let runs = RunsShown::of_item(&runs, number, &names);
             regions.push(("runs", render(&RunsRegion { runs: &runs })));
             regions
         }

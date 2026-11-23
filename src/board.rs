@@ -2,8 +2,15 @@
 //! item as a card in a column, in a lane per piece of work, from a view and
 //! the time alone.
 
+mod words;
+
+pub use words::card_line;
+
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
+
+use schemars::JsonSchema;
+use serde::Serialize;
 
 use crate::domain::{
     CheckState, ClosedKind, Issue, Login, Marking, Mergeability, Number, Pull, PullState,
@@ -19,7 +26,8 @@ use crate::runs::{Ending, Recorded, RunOf, State};
 use crate::status::View;
 
 /// In the board's order, left to right.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum Column {
     Triage,
     NeedsAPerson,
@@ -378,7 +386,8 @@ impl Held {
 /// How pressing what a card's line reports is (`GLOSSARY.md`, **Card
 /// status**; `docs/specs/board.md`, Cards), most pressing first, so
 /// that the least is the most pressing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum CardStatus {
     Failed,
     WaitingForAPerson,

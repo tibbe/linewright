@@ -15,85 +15,11 @@ use super::shell::{self, Area, Frame, Navigation, Place};
 use super::table::{Align, Column};
 use super::{ErrorPage, Page, events, render, run_path, with_filters};
 use crate::access::{Permit, Read};
+use crate::actions::{self, AutomationsScreen, LastRunScreen};
 use crate::api::{Sources, Unexplained};
-use crate::automation;
-use crate::domain::Timestamp;
 use crate::phrase::{Phrase, Status};
-use crate::runs::{self, Recorded, Run};
-use crate::status::{self, Trigger, UnparsedAutomation, View};
-
-/// The automations as `status` answers for them, with what the page shows
-/// beside: each trigger in words, and each last run's outcome.
-pub(super) struct Automations {
-    /// By path.
-    pub(super) unparsed: Vec<UnparsedAutomation>,
-    /// By name, as `status` has them.
-    pub(super) rows: Vec<Row>,
-}
-
-pub(super) struct Row {
-    pub(super) name: String,
-    /// When it runs, in words.
-    trigger: String,
-    pub(super) last_run: LastRun,
-    next_run: Trigger,
-}
-
-pub(super) enum LastRun {
-    Run(Run),
-    /// Before its first run, with when Linewright first saw it, which is
-    /// unknown until a poll has, and for an automation not on a schedule.
-    NoneYet {
-        first_seen: Option<Timestamp>,
-    },
-}
-
-impl Automations {
-    /// From `status`'s answer over `view` and `recorded`.
-    pub(super) fn of(
-        status: &status::Status,
-        view: &View,
-        recorded: &[Recorded],
-        now: Timestamp,
-    ) -> Automations {
-        let rows = status
-            .automations
-            .iter()
-            .filter_map(|answered| {
-                let automation = view
-                    .automations
-                    .parsed
-                    .iter()
-                    .find(|automation| automation.name.to_string() == answered.name)?;
-                let last_run = answered
-                    .last_run
-                    .as_ref()
-                    .and_then(|last| recorded.iter().find(|run| run.id == last.id));
-                let last_run = match last_run {
-                    Some(run) => LastRun::Run(run.clone().at(now)),
-                    None => LastRun::NoneYet {
-                        first_seen: match automation.trigger {
-                            automation::Trigger::Schedule(_) => {
-                                view.last_scheduled_runs.get(&automation.name)
-                            }
-                            automation::Trigger::WorkflowRun(_) => None,
-                        },
-                    },
-                };
-                Some(Row {
-                    name: answered.name.clone(),
-                    trigger: automation.trigger.describe(),
-                    last_run,
-                    next_run: answered.trigger,
-                })
-            })
-            .collect();
-        Automations {
-            unparsed: status.unparsed_automations.clone(),
-            rows,
-        }
-    }
-}
+use crate::runs;
+use crate::status;
 
 /// The automations, ready for the page: a page of their rows, with the pages
 /// under them.
@@ -161,39 +87,43 @@ enum LastRunShown {
 }
 
 impl AutomationsShown {
-    fn of(automations: &Automations, names: &Names, requested: Requested) -> AutomationsShown {
+    fn of(
+        automations: &AutomationsScreen,
+        names: &Names,
+        requested: Requested,
+    ) -> AutomationsShown {
         let html = |phrase: &Phrase| html::phrase(phrase, names);
-        let pages = Pages::of(automations.rows.len(), requested);
+        let pages = Pages::of(automations.automations.len(), requested);
         AutomationsShown {
             unparsed: automations
-                .unparsed
+                .unparsed_automations
                 .iter()
                 .map(|file| html(&status::does_not_parse(file)))
                 .collect(),
-            rows: automations.rows[pages.range()]
+            rows: automations.automations[pages.range()]
                 .iter()
                 .map(|row| RowShown {
                     name: row.name.clone(),
-                    trigger: row.trigger.clone(),
+                    trigger: row.when.clone(),
                     last_run: match &row.last_run {
-                        LastRun::Run(run) => LastRunShown::Run {
+                        LastRunScreen::Run {
+                            run,
+                            last_run_outcome,
+                        } => LastRunShown::Run {
                             id: html::escape(&run.id.to_string()),
                             href: run_path(&run.id),
-                            about: html(&runs::describe_start(
-                                run.started().by_hand(),
-                                run.started_at,
-                            )),
-                            status: run.outcome.status(),
-                            word: run.outcome.word(),
+                            about: html(&runs::describe_start(run.by_hand(), run.started_at)),
+                            status: last_run_outcome.status(),
+                            word: last_run_outcome.word(),
                         },
-                        LastRun::NoneYet { first_seen } => {
+                        LastRunScreen::NoneYet { first_seen } => {
                             LastRunShown::NoneYet(html(&match first_seen {
                                 Some(at) => Phrase::from("none yet, first seen ").time(*at),
                                 None => "none yet".into(),
                             }))
                         }
                     },
-                    next_run: status::describe_next_run(row.next_run).map(|next| html(&next)),
+                    next_run: status::describe_next_run(row.trigger).map(|next| html(&next)),
                 })
                 .collect(),
             pages: pages.shown("automations", |page| {
@@ -237,9 +167,13 @@ async fn shown(
     sources: &Sources,
     requested: Requested,
 ) -> (Frame, Option<AutomationsShown>) {
-    let read = shell::Read::of(permit, sources).await;
+    let read = actions::overview(permit, sources).await;
     let automations = read.automations.as_ref().map(|automations| {
-        AutomationsShown::of(automations, &read.names(&sources.work_dir.repo), requested)
+        AutomationsShown::of(
+            automations,
+            &shell::names(&read, &sources.work_dir.repo),
+            requested,
+        )
     });
     (Frame::of_read(permit, sources, &read), automations)
 }

@@ -38,7 +38,9 @@ pub struct Builds {
 }
 
 /// A build's number, counting up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct BuildId(pub(super) u64);
 
 impl std::fmt::Display for BuildId {
@@ -77,7 +79,7 @@ impl Built {
 
 /// A build's record: as a transcript's maintenance command is in
 /// `logs --json`, with the commit it built from.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BuildRecord {
     #[serde(flatten)]
     pub line: BuildMaintenanceLine,

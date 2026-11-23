@@ -55,7 +55,7 @@ pub enum Header {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Stamped {
     #[serde(flatten)]
     pub(crate) stamp: Stamp,
@@ -63,7 +63,7 @@ pub struct Stamped {
     pub(crate) what: EntryLine,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(crate) struct Stamp {
     /// The session's number in the run, from 1.
     pub(crate) session: usize,
@@ -74,7 +74,7 @@ pub(crate) struct Stamp {
     pub(crate) under: Under,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "UnderFields", into = "UnderFields")]
 pub(crate) enum Under {
     Session,
@@ -97,7 +97,7 @@ impl Under {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 struct UnderFields {
     depth: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,11 +129,15 @@ impl TryFrom<UnderFields> for Under {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub(crate) enum EntryLine {
+    /// The brief: its first line, and the whole of it in full.
     Brief {
-        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     FollowUp {
         summary: String,
@@ -161,16 +165,18 @@ pub(crate) enum EntryLine {
 
 /// A thought's line: how long it went on and, in full, what its record
 /// holds of it, if anything.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(crate) struct ThoughtLine {
     #[serde(flatten)]
     pub(crate) span: Span,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Its thinking's text, or the agent's block that holds it encrypted,
+    /// by the names `logs --json` gives them.
+    #[serde(flatten)]
     pub(crate) in_full: Option<ThoughtInFull>,
 }
 
 /// What a thought's line in full shows of it.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum ThoughtInFull {
     Text(String),
@@ -181,7 +187,7 @@ pub(crate) enum ThoughtInFull {
 /// How long a thought or a turn went on, where that is known, and whether
 /// what it is of was cut short (`docs/specs/runs.md`, Transcripts,
 /// Cut short).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub(crate) struct Span {
     pub(crate) duration_seconds: Option<f64>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -259,7 +265,7 @@ fn course_of<T>(ended: Option<T>, account: Option<String>) -> Result<Course<T>, 
 }
 
 /// The line of the making of a session's clone: how it ended, once it has.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "CloneFields", into = "CloneFields")]
 pub(crate) struct CloneLine {
     pub(crate) course: Course<CloneEnded>,
@@ -268,7 +274,7 @@ pub(crate) struct CloneLine {
 /// A clone line as JSON: both null while the clone is being made or once it
 /// was interrupted, and the error null when it was made
 /// (`docs/specs/runs.md`, `lw logs`, The clone).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 struct CloneFields {
     duration_seconds: Option<f64>,
     error: Option<String>,
@@ -314,7 +320,7 @@ impl TryFrom<CloneFields> for CloneLine {
 
 /// A build's line, as a maintenance command's: the command, and how it
 /// ended once it has.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
 pub(crate) struct BuildMaintenanceLine {
     pub(crate) command: String,
@@ -322,7 +328,7 @@ pub(crate) struct BuildMaintenanceLine {
 }
 
 /// A session's maintenance command's line: the command, and how far it ran.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "MaintenanceFields", into = "MaintenanceFields")]
 pub(crate) struct SessionMaintenanceLine {
     pub(crate) command: String,
@@ -332,7 +338,7 @@ pub(crate) struct SessionMaintenanceLine {
 /// A maintenance line as JSON: what it holds once the command has ended is null
 /// until then, and once it was interrupted (`docs/specs/runs.md`, `lw logs`,
 /// Running in JSON).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 struct MaintenanceFields {
     command: String,
     status: Option<MaintenanceStatus>,
@@ -416,7 +422,7 @@ impl TryFrom<MaintenanceFields> for SessionMaintenanceLine {
 }
 
 /// A tool call's line.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "ToolFields", into = "ToolFields")]
 pub(crate) struct ToolLine {
     pub(crate) tool_use_id: String,
@@ -467,7 +473,7 @@ impl ToolLine {
 /// `details`, are null while the call runs, and `content` and `details`
 /// also when it returned none (`docs/specs/runs.md`, `lw logs`, Running in
 /// JSON). A compact line has none of the keys only a line in full has.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 struct ToolFields {
     tool_use_id: String,
     tool: String,
@@ -520,6 +526,21 @@ impl<T: Serialize> Serialize for InFull<T> {
             InFull::Is(value) => value.serialize(serializer),
             InFull::Absent | InFull::Null => serializer.serialize_none(),
         }
+    }
+}
+
+/// Null where it is, as an `Option` is.
+impl<T: schemars::JsonSchema> schemars::JsonSchema for InFull<T> {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        Option::<T>::schema_name()
+    }
+
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        Option::<T>::json_schema(generator)
     }
 }
 
@@ -623,39 +644,99 @@ impl TryFrom<ToolFields> for ToolLine {
     }
 }
 
+/// Whose view of a transcript its lines are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reader {
+    /// `logs` (`docs/specs/runs.md`, `lw logs`).
+    Logs,
+    /// Run, which shows the brief as its first line, and nothing that the
+    /// agent was told besides its prompts (`docs/specs/runs.md`, Run, Views
+    /// and Prompts).
+    Run,
+}
+
+/// The entries of `transcript` as Run shows them, in order, each with its
+/// ID, by the names `logs --json` gives their facts. An entry's ID names
+/// its place in its session, so it stays its own as the transcript grows.
+pub fn entries(transcript: &Transcript, verbosity: Verbosity) -> Vec<(String, Stamped)> {
+    keyed_lines(transcript, verbosity, Reader::Run)
+        .into_iter()
+        .filter_map(|(id, line)| match line {
+            Line::Header(_) => None,
+            Line::Entry(stamped) => Some((id, *stamped)),
+        })
+        .collect()
+}
+
+/// Whether `transcript` shows its `n`th session, from 1: each but the
+/// session of a run in flight of which nothing has been read yet.
+pub fn shows_session(transcript: &Transcript, n: usize) -> bool {
+    let Some(session) = transcript.sessions.get(n - 1) else {
+        return false;
+    };
+    let current = transcript.in_flight.is_some() && n == transcript.sessions.len();
+    let nothing_read =
+        session.clone.is_none() && session.maintenance.is_none() && session.turns.is_empty();
+    !(current && nothing_read)
+}
+
 fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
-    let mut lines = vec![Line::Header(Header::Run {
-        run: transcript.run.clone(),
-        sessions: transcript.sessions.len(),
-    })];
+    keyed_lines(transcript, verbosity, Reader::Logs)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect()
+}
+
+/// The lines of `transcript` as `reader` shows them, each with its ID.
+fn keyed_lines(
+    transcript: &Transcript,
+    verbosity: Verbosity,
+    reader: Reader,
+) -> Vec<(String, Line)> {
+    let mut lines = vec![(
+        "run".to_string(),
+        Line::Header(Header::Run {
+            run: transcript.run.clone(),
+            sessions: transcript.sessions.len(),
+        }),
+    )];
     for (i, session) in transcript.sessions.iter().enumerate() {
-        let current = transcript.in_flight.is_some() && i + 1 == transcript.sessions.len();
-        let nothing_read =
-            session.clone.is_none() && session.maintenance.is_none() && session.turns.is_empty();
-        if current && nothing_read {
+        if !shows_session(transcript, i + 1) {
             continue;
         }
+        let id = (i + 1).to_string();
         let mut stamper = Stamper::new(i + 1, session.started_at);
-        lines.push(stamper.header());
+        lines.push((id.clone(), stamper.header()));
         if let Some(clone) = &session.clone {
-            lines.push(stamper.clone_line(clone, clone.at));
+            lines.push((format!("{id}/clone"), stamper.clone_line(clone, clone.at)));
         }
         if let Some(maintenance) = &session.maintenance {
-            lines.push(stamper.maintenance(maintenance, maintenance.at()));
+            lines.push((
+                format!("{id}/maintenance"),
+                stamper.maintenance(maintenance, maintenance.at()),
+            ));
         }
         for (n, turn) in session.turns.iter().enumerate() {
-            if let Some(what) = prompt_line(turn, verbosity) {
-                lines.push(stamper.line(turn.started_at, Under::Session, what));
+            let turn_id = format!("{id}/{}", n + 1);
+            if let Some(what) = prompt_line(turn, verbosity, reader) {
+                lines.push((
+                    turn_id.clone(),
+                    stamper.line(turn.started_at, Under::Session, what),
+                ));
             }
             entry_lines(
                 &turn.entries,
+                &turn_id,
                 &Under::Session,
                 session,
-                verbosity,
+                (verbosity, reader),
                 &mut stamper,
                 &mut lines,
             );
-            lines.extend(worked_for_line(session, n, &mut stamper));
+            lines.extend(
+                worked_for_line(session, n, &mut stamper)
+                    .map(|line| (format!("{turn_id}/worked-for"), line)),
+            );
         }
     }
     lines
@@ -663,23 +744,29 @@ fn lines(transcript: &Transcript, verbosity: Verbosity) -> Vec<Line> {
 
 fn entry_lines(
     entries: &[Entry],
+    parent: &str,
     under: &Under,
     session: &Session,
-    verbosity: Verbosity,
+    (verbosity, reader): (Verbosity, Reader),
     stamper: &mut Stamper,
-    lines: &mut Vec<Line>,
+    lines: &mut Vec<(String, Line)>,
 ) {
-    for entry in entries {
-        if let Some(what) = entry_line(entry, session, verbosity) {
-            lines.push(stamper.line(shown_at(entry), under.clone(), what));
+    for (i, entry) in entries.iter().enumerate() {
+        let id = format!("{parent}/{}", i + 1);
+        if let Some(what) = entry_line(entry, session, verbosity, reader) {
+            lines.push((
+                id.clone(),
+                stamper.line(shown_at(entry), under.clone(), what),
+            ));
         }
         if let What::Tool(call) = &entry.what {
             let sub_agent = under.sub_agent(&call.id);
             entry_lines(
                 &call.entries,
+                &id,
                 &sub_agent,
                 session,
-                verbosity,
+                (verbosity, reader),
                 stamper,
                 lines,
             );
@@ -749,10 +836,17 @@ impl Stamper {
     }
 }
 
-fn prompt_line(turn: &Turn, verbosity: Verbosity) -> Option<EntryLine> {
+fn prompt_line(turn: &Turn, verbosity: Verbosity, reader: Reader) -> Option<EntryLine> {
     let full = verbosity == Verbosity::Full;
     match &turn.prompt {
-        Prompt::Brief(Some(text)) if full => Some(EntryLine::Brief { text: text.clone() }),
+        Prompt::Brief(Some(text)) if reader == Reader::Run => Some(EntryLine::Brief {
+            summary: Some(summary(text)),
+            text: full.then(|| text.clone()),
+        }),
+        Prompt::Brief(Some(text)) if full => Some(EntryLine::Brief {
+            summary: None,
+            text: Some(text.clone()),
+        }),
         Prompt::Brief(_) => None,
         Prompt::FollowUp(prompt) => Some(EntryLine::FollowUp {
             summary: prompt.as_deref().map_or(String::new(), summary),
@@ -780,8 +874,14 @@ fn shown_at(entry: &Entry) -> Option<Timestamp> {
     }
 }
 
-fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<EntryLine> {
+fn entry_line(
+    entry: &Entry,
+    session: &Session,
+    verbosity: Verbosity,
+    reader: Reader,
+) -> Option<EntryLine> {
     let full = verbosity == Verbosity::Full;
+    let told = full && reader == Reader::Logs;
     Some(match &entry.what {
         What::Message(text) => EntryLine::Message { text: text.clone() },
         What::Thought(thought) => EntryLine::Thought(ThoughtLine {
@@ -793,11 +893,11 @@ fn entry_line(entry: &Entry, session: &Session, verbosity: Verbosity) -> Option<
                 Held::Redacted(block) => Some(ThoughtInFull::Other(block.clone())),
             },
         }),
-        What::Context(text) if full => EntryLine::Context { text: text.clone() },
-        What::Event(event) if full => EntryLine::Event {
+        What::Context(text) if told => EntryLine::Context { text: text.clone() },
+        What::Event(event) if told => EntryLine::Event {
             event: event.clone(),
         },
-        What::Other(other) if full => EntryLine::Other {
+        What::Other(other) if told => EntryLine::Other {
             other: other.clone(),
         },
         What::Context(_) | What::Event(_) | What::Other(_) => return None,
@@ -920,7 +1020,7 @@ fn changed_line(
         Change::Opened => return Some(stamper.header()),
         Change::Turn(turn) => {
             let turn = &session.turns[turn];
-            let what = prompt_line(turn, verbosity)?;
+            let what = prompt_line(turn, verbosity, Reader::Logs)?;
             return Some(stamper.line(turn.started_at, Under::Session, what));
         }
         Change::TurnEnded(turn) => return worked_for_line(session, turn, stamper),
@@ -943,7 +1043,7 @@ fn changed_line(
         Place::Entry(at) => at,
     };
     let entry = session.entry(&at);
-    let what = entry_line(entry, session, verbosity)?;
+    let what = entry_line(entry, session, verbosity, Reader::Logs)?;
     Some(stamper.line(
         ended_at.unwrap_or(shown_at(entry)),
         under(session, &at),
@@ -1016,7 +1116,13 @@ pub fn render_line(line: &Line, verbosity: Verbosity, colour: bool) -> String {
         EntryLine::Context { text } => block("context: ", text),
         EntryLine::Event { event } => (format!("event: {event}"), vec![]),
         EntryLine::Other { other } => (format!("other: {other}"), vec![]),
-        EntryLine::Brief { text } => block("brief: ", text),
+        EntryLine::Brief {
+            text: Some(text), ..
+        } => block("brief: ", text),
+        EntryLine::Brief { summary, .. } => (
+            format!("brief: {}", summary.as_deref().unwrap_or_default()),
+            vec![],
+        ),
         EntryLine::FollowUp {
             text: Some(text), ..
         } => block("follow-up: ", text),

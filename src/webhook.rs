@@ -331,7 +331,9 @@ impl Pending {
 }
 
 /// Ignored deliveries count as accepted.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct Received {
     pub last_accepted: Option<Timestamp>,
     pub refused: u64,

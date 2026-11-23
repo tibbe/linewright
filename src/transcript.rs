@@ -701,6 +701,29 @@ impl Session {
         }
     }
 
+    /// Whether any of its entries that run runs still.
+    pub fn runs_an_entry(&self) -> bool {
+        fn running(entries: &[Entry]) -> bool {
+            entries.iter().any(|entry| match &entry.what {
+                What::Tool(call) => call.end == Course::Running || running(&call.entries),
+                What::Message(_)
+                | What::Thought(_)
+                | What::Context(_)
+                | What::Event(_)
+                | What::Other(_) => false,
+            })
+        }
+        let clone = self
+            .clone
+            .as_ref()
+            .is_some_and(|clone| clone.course == Course::Running);
+        let maintenance = self
+            .maintenance
+            .as_ref()
+            .is_some_and(|maintenance| matches!(maintenance.course(), Course::Running));
+        clone || maintenance || self.turns.iter().any(|turn| running(&turn.entries))
+    }
+
     /// Its wait for the usage limit under way, if any.
     pub fn waiting(&self) -> Option<&Wait> {
         self.waits.last().filter(|wait| wait.end == End::Going)

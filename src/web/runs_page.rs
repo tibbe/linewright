@@ -166,9 +166,8 @@ async fn listed(
             });
             (StatusCode::OK, runs)
         }
-        Err(runs::ListError::NoRuns(_)) => (StatusCode::OK, RunsShown::NoRuns),
         Err(e) => {
-            let (status, error) = unanswered(e);
+            let (status, error) = unanswered(runs::ListError::Other(e));
             (status, RunsShown::Unlisted(error))
         }
     }

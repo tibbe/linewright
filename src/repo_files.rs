@@ -33,7 +33,9 @@ pub const CONFIG: &str = linewright_path!("/config.toml");
 pub const BRIEFS: &str = linewright_path!("/briefs");
 
 /// A file of the repository's Linewright cannot use, and why.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct FileError {
     /// Its path in the repository.
     pub path: String,
