@@ -9,6 +9,7 @@ mod board_page;
 mod buttons;
 mod caller;
 mod capture;
+mod card_page;
 mod cards;
 mod confirmation;
 mod editing;

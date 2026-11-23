@@ -1,0 +1,20 @@
+{%- import "macros.html" as ui -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ card.title }} · Linewright</title>
+<link rel="stylesheet" href="{{ card.css }}">
+</head>
+<body class="bg-base-100 text-base-content">
+<main class="flex min-h-screen items-center justify-center p-4">
+<section class="{{ card.kind }} {% call ui::card_look() %}{% endcall %} w-full max-w-100 p-12">
+<h1 class="mb-2 text-center text-3xl font-bold">{{ card.heading }}</h1>
+<p class="repo-name mb-6 text-center text-base-content/60">{{ card.repo }}</p>
+{%- block content %}{% endblock %}
+</section>
+</main>
+</body>
+</html>
