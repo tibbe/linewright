@@ -1,6 +1,7 @@
 //! The web UI (`docs/specs/web/architecture.md`, Rendering): pages rendered
 //! on the server, each kept up by one event stream of the regions that changed.
 
+mod authorization_server;
 mod automations_page;
 mod benchmark_page;
 mod benchmark_run_page;
@@ -58,6 +59,7 @@ use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use crate::access::oauth;
 use crate::access::people::{ManagerName, People};
 use crate::access::providers::Providers;
 use crate::api::{Sources, Unanswered};
@@ -234,6 +236,20 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         .route(sign_in::SIGN_OUT_PATH, post(sign_in::sign_out))
         .route(sign_in::BEGIN_PATH, get(no_such_page).post(sign_in::begin))
         .route(sign_in::CALLBACK_PATH, get(sign_in::callback))
+        .route(
+            oauth::SERVER_METADATA_PATH,
+            get(authorization_server::server_metadata),
+        )
+        .route(
+            oauth::RESOURCE_METADATA_PATH,
+            get(authorization_server::resource_metadata),
+        )
+        .route(oauth::REGISTER_PATH, post(authorization_server::register))
+        .route(
+            oauth::AUTHORIZE_PATH,
+            get(authorization_server::authorize).post(authorization_server::decide),
+        )
+        .route(oauth::TOKEN_PATH, post(authorization_server::token))
         .route("/assets/{name}", get(asset));
     let sign_in = sign_in::SignIn {
         public_url: ui.public_url.clone(),
@@ -254,6 +270,9 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         ))
         .layer(Extension(people_page::Named(ui.manager.clone())))
         .layer(Extension(std::sync::Arc::new(sign_in)))
+        .layer(Extension(std::sync::Arc::new(oauth::Server::new(
+            ui.public_url.clone(),
+        ))))
         .layer(Extension(stopping))
         .with_state(sources)
 }

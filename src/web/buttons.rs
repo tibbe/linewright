@@ -25,6 +25,8 @@ pub(super) enum Verb {
     SignOut,
     Disable,
     Enable,
+    Allow,
+    Deny,
 }
 
 impl Verb {
@@ -42,6 +44,8 @@ impl Verb {
             Verb::SignOut => "Sign out",
             Verb::Disable => "Disable",
             Verb::Enable => "Enable",
+            Verb::Allow => "Allow",
+            Verb::Deny => "Deny",
         }
     }
 
@@ -53,8 +57,8 @@ impl Verb {
             Verb::Remove => Icon::Trash,
             Verb::RunBenchmark | Verb::KeepRunning => Icon::Play,
             Verb::Edit => Icon::PencilSquare,
-            Verb::Save => Icon::Check,
-            Verb::CloseDialog => Icon::XMark,
+            Verb::Save | Verb::Allow => Icon::Check,
+            Verb::CloseDialog | Verb::Deny => Icon::XMark,
             Verb::SignOut => Icon::ArrowRightStartOnRectangle,
             Verb::Disable => Icon::LockClosed,
             Verb::Enable => Icon::LockOpen,
