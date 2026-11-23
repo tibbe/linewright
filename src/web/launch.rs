@@ -415,7 +415,82 @@ impl LaunchFields {
 
 /// What a launch that passes the form's checks launches: its repetitions, and
 /// each configuration but `as-is`, by its name.
-type Launch = (NonZeroU32, Vec<(Name, Configuration)>);
+pub(crate) type Launch = (NonZeroU32, Vec<(Name, Configuration)>);
+
+/// A configuration but `as-is` given as arguments (`docs/specs/access.md`,
+/// The MCP server, Arguments): its name, each setting, empty where it
+/// gives none, and each file of the brief by its path under `briefs/`,
+/// with its text.
+pub(crate) struct GivenConfiguration {
+    pub(crate) name: String,
+    pub(crate) model: String,
+    pub(crate) effort: String,
+    pub(crate) session_timeout: String,
+    pub(crate) files: Vec<(String, String)>,
+}
+
+/// The launch on a benchmark of `stage` with `repetitions` and `given`,
+/// checked as the New benchmark run dialog checks what it
+/// sends, from the settings and the files of the brief that a run of the
+/// stage uses now; or else each refusal, by the argument it is of, such as
+/// `configurations[0].name`.
+pub(crate) fn given_launch(
+    sources: &Sources,
+    stage: TaskStage,
+    repetitions: &str,
+    given: Vec<GivenConfiguration>,
+) -> Result<Launch, Vec<(String, String)>> {
+    let fields = LaunchFields {
+        repetitions: repetitions.to_string(),
+        configurations: (0..)
+            .zip(given)
+            .map(|(n, given)| ConfigurationFields {
+                n,
+                name: given.name,
+                settings: SettingTexts {
+                    model: given.model,
+                    effort: given.effort,
+                    session_timeout: given.session_timeout,
+                },
+                briefs: given
+                    .files
+                    .into_iter()
+                    .map(|(path, text)| (path, text.replace("\r\n", "\n")))
+                    .collect(),
+                ..ConfigurationFields::default()
+            })
+            .collect(),
+    };
+    let starting = Starting {
+        settings: starting_settings(sources, stage),
+        texts: starting_texts(sources),
+    };
+    fields.check(&starting).map_err(|refusals| {
+        refusals
+            .into_reasons()
+            .map(|(field, reason)| (field.argument(), reason))
+            .collect()
+    })
+}
+
+impl LaunchField {
+    /// The argument that gives it, such as `configurations[0].name`.
+    fn argument(&self) -> String {
+        match self {
+            LaunchField::Repetitions => "repetitions".into(),
+            LaunchField::Configuration { n, field } => {
+                let key = match field {
+                    ConfigurationField::Name => "name".into(),
+                    ConfigurationField::Model => "model".into(),
+                    ConfigurationField::Effort => "effort".into(),
+                    ConfigurationField::SessionTimeout => "session_timeout".into(),
+                    ConfigurationField::Brief(path) => format!("files_of_the_brief[{path:?}]"),
+                };
+                format!("configurations[{n}].{key}")
+            }
+        }
+    }
+}
 
 impl ConfigurationFields {
     /// Its field `field`.

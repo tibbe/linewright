@@ -376,7 +376,11 @@ pub async fn capture(
 }
 
 /// The stage of a task: one that can be captured.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+#[schemars(inline)]
 pub enum TaskStage {
     Triage,
     Design,
@@ -442,12 +446,6 @@ impl std::str::FromStr for TaskStage {
 impl fmt::Display for TaskStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
-    }
-}
-
-impl Serialize for TaskStage {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.name())
     }
 }
 

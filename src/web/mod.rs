@@ -19,7 +19,7 @@ mod facts;
 pub(crate) mod html;
 mod icons;
 mod item_page;
-mod launch;
+pub(crate) mod launch;
 mod making;
 mod names;
 mod pages;
@@ -272,9 +272,12 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
             .build()
             .expect("an HTTP client builds"),
     };
+    let server = oauth::Server::new(ui.public_url.clone());
+    let mcp = crate::mcp::router(sources.clone(), &server, ui.manager.clone());
     signed
         .merge(open)
         .layer(middleware::from_fn(caller::cross_site))
+        .merge(mcp)
         .layer(middleware::from_fn(confined))
         .fallback(no_such_page)
         .layer(middleware::from_fn_with_state(
@@ -283,9 +286,7 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         ))
         .layer(Extension(people_page::Named(ui.manager.clone())))
         .layer(Extension(std::sync::Arc::new(sign_in)))
-        .layer(Extension(std::sync::Arc::new(oauth::Server::new(
-            ui.public_url.clone(),
-        ))))
+        .layer(Extension(std::sync::Arc::new(server)))
         .layer(Extension(stopping))
         .with_state(sources)
 }

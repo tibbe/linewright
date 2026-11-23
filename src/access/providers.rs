@@ -51,7 +51,7 @@ impl Provider {
     }
 
     /// Its name in `manager`, before the `:`.
-    fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> &'static str {
         match self {
             Provider::Google => "google",
             Provider::GitHub => "github",

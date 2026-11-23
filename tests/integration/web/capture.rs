@@ -11,7 +11,7 @@ const RUN_PAGE: &str = "/runs/1/implement-1";
 const CRITERIA: &str = "A good result ships gh.\n";
 
 /// The benchmark of implement tasks #1's run is captured into.
-const IMPLEMENTS: &str = "implements";
+pub(super) const IMPLEMENTS: &str = "implements";
 
 /// The ID of [`IMPLEMENTS`], made first.
 const IMPLEMENTS_ID: &str = "1";
@@ -23,7 +23,7 @@ const DESIGNS: &str = "designs";
 const DESIGNS_ID: &str = "2";
 
 /// What run 1 recorded of its input.
-enum Recorded {
+pub(super) enum Recorded {
     Nothing,
     WithoutProperties,
     Whole,
@@ -33,7 +33,7 @@ enum Recorded {
 /// recorded of its input what `recorded` says, the default branch's head in
 /// the store among it.
 #[track_caller]
-fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
+pub(super) fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
     let caller = Location::caller();
     async move {
         let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;

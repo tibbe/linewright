@@ -81,6 +81,11 @@ impl<F: Field> FieldRefusals<F> {
         self
     }
 
+    /// Each field refused, with its reason.
+    pub(super) fn into_reasons(self) -> impl Iterator<Item = (F, String)> {
+        self.0.into_iter()
+    }
+
     /// Why `field` is refused, if it is.
     fn reason(&self, field: &F) -> Option<&str> {
         self.0.get(field).map(String::as_str)

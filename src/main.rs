@@ -109,6 +109,12 @@ struct Log {
     begun: std::sync::Once,
 }
 
+/// What the log holds without `LINEWRIGHT_LOG`: Linewright's own lines from
+/// info on, and only the warnings of rmcp, which logs each request it
+/// answers at info.
+/// <https://docs.rs/rmcp/3.11.0/src/rmcp/service.rs.html>
+const DEFAULT_LOG: &str = "info,rmcp=warn";
+
 impl Log {
     fn new(format: LogFormat) -> Log {
         Log {
@@ -121,7 +127,7 @@ impl Log {
     fn begin(&self) {
         self.begun.call_once(|| {
             let filter = tracing_subscriber::EnvFilter::try_from_env("LINEWRIGHT_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG));
             let builder = tracing_subscriber::fmt()
                 .with_env_filter(filter)
                 .with_writer(std::io::stderr);

@@ -68,6 +68,12 @@ impl Server {
         self.public_url.join(MCP_PATH)
     }
 
+    /// Where its protected resource metadata is, which a request to the
+    /// MCP server without a valid access token is pointed to.
+    pub fn resource_metadata_url(&self) -> String {
+        self.url(RESOURCE_METADATA_PATH)
+    }
+
     fn url(&self, path: &str) -> String {
         self.public_url.join(path).to_string()
     }

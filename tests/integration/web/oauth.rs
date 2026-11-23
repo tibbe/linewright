@@ -46,7 +46,7 @@ impl Browsing<'_> {
 
     /// Registers a client named `name`, with [`REDIRECT_URI`]: its ID.
     #[track_caller]
-    fn register<'b>(&'b mut self, name: &'b str) -> impl Future<Output = String> + 'b {
+    pub(super) fn register<'b>(&'b mut self, name: &'b str) -> impl Future<Output = String> + 'b {
         let caller = std::panic::Location::caller();
         async move {
             let registered = self
@@ -71,7 +71,7 @@ impl Browsing<'_> {
     /// Sends the person to authorize `client` with `state`, signs them in
     /// with Google as `email`, and gives Consent as it shows.
     #[track_caller]
-    fn reach_consent<'b>(
+    pub(super) fn reach_consent<'b>(
         &'b mut self,
         client: &'b str,
         state: &'b str,
@@ -96,7 +96,7 @@ impl Browsing<'_> {
     /// Takes `decision`, "allow" or "deny", on `consent`: where the browser
     /// is sent.
     #[track_caller]
-    fn decide<'b>(
+    pub(super) fn decide<'b>(
         &'b mut self,
         consent: &'b Answer,
         decision: &'b str,
@@ -112,7 +112,7 @@ impl Browsing<'_> {
     }
 
     /// Exchanges `code` of `client` for tokens.
-    async fn exchange_code(&mut self, client: &str, code: &str) -> Answer {
+    pub(super) async fn exchange_code(&mut self, client: &str, code: &str) -> Answer {
         self.post_as_client(
             "/oauth/token",
             &[
@@ -192,21 +192,21 @@ fn decision_fields(consent: &Answer, decision: &str) -> Vec<(String, String)> {
 }
 
 /// The value of `name` in `url`'s query.
-fn query_value(url: &url::Url, name: &str) -> Option<String> {
+pub(super) fn query_value(url: &url::Url, name: &str) -> Option<String> {
     url.query_pairs()
         .find(|(named, _)| named == name)
         .map(|(_, value)| value.into_owned())
 }
 
 /// The tokens a token request was issued.
-struct Tokens {
-    access: String,
-    refresh: String,
+pub(super) struct Tokens {
+    pub(super) access: String,
+    pub(super) refresh: String,
 }
 
 impl Tokens {
     #[track_caller]
-    fn of(answer: &Answer) -> Tokens {
+    pub(super) fn of(answer: &Answer) -> Tokens {
         let issued = json(answer);
         Tokens {
             access: issued["access_token"].as_str().unwrap().to_string(),
@@ -234,10 +234,11 @@ fn acting_as<'b>(
 }
 
 /// Authorizes a new client named `name` for the person whose browser
-/// `cookie` signs in, by the back door: the client's ID and its tokens.
+/// `cookie` signs in to `sources`, by the back door: the client's ID and
+/// its tokens.
 #[track_caller]
-fn authorized_by_back_door<'b>(
-    signing: &'b Signing,
+pub(super) fn authorized_by_back_door<'b>(
+    sources: &'b Sources,
     cookie: &'b str,
     name: &'b str,
 ) -> impl Future<Output = (String, Tokens)> + 'b {
@@ -251,7 +252,6 @@ fn authorized_by_back_door<'b>(
     use linewright::access::sessions::{Resolved, SESSION_COOKIE, SessionCookie, Sessions};
     let caller = std::panic::Location::caller();
     async move {
-        let sources = &signing.pages.sources;
         let database = sources.runs.database().clone();
         let now = sources.clock.now();
         let session = SessionCookie::of(
@@ -639,7 +639,7 @@ async fn a_request_linewright_refuses_is_sent_back_to_its_client() {
 async fn refresh_tokens_rotate_with_the_grace_of_a_lost_response() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, first) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let mut client = Browsing::new(&signing);
     let lost = client.refresh(&id, &first.refresh).await;
     assert_eq!(lost.status, 200, "{}", lost.html.html());
@@ -676,7 +676,7 @@ async fn refresh_tokens_rotate_with_the_grace_of_a_lost_response() {
 async fn the_refresh_token_of_a_lost_response_ends_its_authorization() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, first) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let mut client = Browsing::new(&signing);
     let lost = Tokens::of(&client.refresh(&id, &first.refresh).await);
     let retried = Tokens::of(&client.refresh(&id, &first.refresh).await);
@@ -693,7 +693,7 @@ async fn the_refresh_token_of_a_lost_response_ends_its_authorization() {
 async fn the_previous_refresh_token_stops_working_once_its_replacement_is_used() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, first) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (id, first) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let mut client = Browsing::new(&signing);
     let second = Tokens::of(&client.refresh(&id, &first.refresh).await);
     let third = Tokens::of(&client.refresh(&id, &second.refresh).await);
@@ -711,7 +711,7 @@ async fn an_access_token_lasts_an_hour() {
     let signing = signing(None).await;
     let clock = signing.pages.clock.clone();
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (_, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (_, tokens) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
 
     clock.advance(chrono::TimeDelta::minutes(59));
     assert!(acting_as(&signing, &tokens.access).await.is_some());
@@ -741,8 +741,8 @@ fn authorization_rows(html: &Html) -> Vec<Vec<String>> {
 async fn a_person_sees_their_authorizations_and_ends_one() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (_, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
-    let (_, later) = authorized_by_back_door(&signing, &person, "").await;
+    let (_, tokens) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
+    let (_, later) = authorized_by_back_door(&signing.pages.sources, &person, "").await;
     let mut browser = Browsing::with_cookie(&signing, &person);
 
     let page = browser.get("/authorizations").await;
@@ -827,7 +827,7 @@ async fn a_person_sees_their_authorizations_and_ends_one() {
 async fn a_person_cannot_end_anothers_authorization() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (_, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (_, tokens) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let manager = signing.pages.cookie.clone();
     let mut manager = Browsing::with_cookie(&signing, &manager);
 
@@ -844,7 +844,7 @@ async fn a_person_cannot_end_anothers_authorization() {
 async fn disabling_a_person_ends_their_authorizations() {
     let signing = signing(None).await;
     let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
-    let (id, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (id, tokens) = authorized_by_back_door(&signing.pages.sources, &person, "My agent").await;
     let mut browser = Browsing::new(&signing);
     let manager = signing.pages.cookie.clone();
     let mut manager = Browsing::with_cookie(&signing, &manager);
