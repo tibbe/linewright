@@ -14,6 +14,14 @@
   its top. The repository is `mx-5` from its sides. It shows the repository's
   avatar and the links' icons, without their names. The name of each is in a
   daisyUI `tooltip` to its right, `tooltip-right`.
+- **The account** is a daisyUI `dropdown`, `dropdown-top`, above the button
+  that expands and collapses the navigation. Its button is a `btn-ghost`
+  that holds the avatar, then the name in
+  `font-semibold` over the role in `text-xs`, in secondary text. Its menu is
+  a daisyUI `menu`, each entry with its icon first: `key` for
+  "Authorizations" and `arrow-right-start-on-rectangle` for "Sign out". On
+  the rail, the button holds the avatar alone, and the name is in a
+  `tooltip-right`.
 - **Expanding and collapsing.** From `lg`, a `btn-ghost` `btn-circle` at the
   foot of the navigation expands the rail to the sidebar, and collapses the
   sidebar to the rail. Its name is in a `tooltip-right`: "Expand navigation"

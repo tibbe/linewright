@@ -45,6 +45,7 @@ path, is a file.
 | bookkeeping that no person sets, such as Linewright's pull requests and each automation's last scheduled run | rows in the database                                                  |
 | the environment's commit, and the time of its build                                          | rows in the database                                                          |
 | benchmarks, benchmark runs, and the names of tasks ([Benchmarks](benchmarks.md))                       | rows in the database                                                          |
+| people, clients, authorizations and tokens ([Access](access.md))                                 | rows in the database                                                          |
 | a session's brief, follow-ups and transcript, and its maintenance command's output               | files of the session, with the transcript as one JSON Lines file that only grows |
 | a session's attachments                                                                          | its attachments directory, each file by its own name ([Attachments](runs.md#attachments)) |
 | the output of the environment's builds                                                           | files                                                                         |
@@ -121,6 +122,12 @@ of it, such as a drain.
 | Paths | the API under `/api/` |
 | Bodies | JSON; a monitoring command's `--json` prints the response as it is |
 | A transcript being followed | server-sent events, which a reader resumes by event id |
+
+## Actions
+
+Each action that a person can do is defined once, with the access level that
+it needs ([Actions](access.md#actions)). The UI and the MCP server are thin
+layers over the actions, with one access check for both.
 
 ## Configuration
 

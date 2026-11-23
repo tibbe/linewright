@@ -102,8 +102,8 @@ through and those Linewright sets.
   | the proxy variables                          | the password in the URL, both as written and percent-decoded                                                     |
   | those the harness reads request headers from | each header's value, both whole and, when it opens with a scheme, without it, as in `Authorization: Bearer …` |
 - **Never passed.** `session-pass-env` never passes Linewright's GitHub
-  tokens or the webhook secret: a pattern skips them, and naming one is an
-  error at startup.
+  tokens, the webhook secret or the identity providers' client secrets: a
+  pattern skips them, and naming one is an error at startup.
 - **Logged at startup.** At startup Linewright logs the names, never the
   values, of the variables in its environment that sessions are not given,
   and, for the whole pipeline and for each stage, the names `session-env`

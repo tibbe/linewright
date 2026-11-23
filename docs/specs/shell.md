@@ -1,6 +1,8 @@
 # Shell
 
-- **Layout.** The navigation is to the left of the content. At the top of the
+- **Layout.** Every screen but Sign in, Consent and Authorization error
+  ([Screens](access.md#screens)) shows in the shell. The navigation is to the
+  left of the content. At the top of the
   content is the repository's name. Under it are the notices, while there are
   any, then the breadcrumbs, where the screen has any. The screen's buttons are
   at the right of the breadcrumbs, or of its heading on a screen without them
@@ -10,7 +12,11 @@
   owns it, then the repository's name. Both link to the repository on GitHub.
   Then links to [Board](board.md#board-1), [Runs](runs.md#runs-1),
   [Automations](automations.md#automations-1),
-  [Benchmarks](benchmarks.md#benchmarks-2) and [Server](operation.md#server).
+  [Benchmarks](benchmarks.md#benchmarks-2), [Server](operation.md#server)
+  and [People](access.md#people-1). At the foot is the account.
+- **The account.** The reader's avatar, then their name, with their role
+  under it. It opens a menu: "Authorizations", which opens
+  [Authorizations](access.md#authorizations), then "Sign out".
 - **Breadcrumbs.** They show where the screen is in the UI, such as
   "Benchmarks › Design cuts › Benchmark run" on Benchmark run.
   - **The crumbs.** The first crumb is the screen's area, by its name in the
