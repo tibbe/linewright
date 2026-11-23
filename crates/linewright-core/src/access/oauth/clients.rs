@@ -3,6 +3,7 @@
 //! it fetched, kept for as long as the document stays fresh.
 
 use anyhow::Context as _;
+use hyper_util::client::proxy::matcher::Matcher;
 use tracing::{info, warn};
 
 use super::metadata_document::{self, DocumentUrl};
@@ -98,7 +99,7 @@ impl Clients {
         let Some(url) = DocumentUrl::parse(id) else {
             return Ok(None);
         };
-        let (client, fresh_for) = match metadata_document::fetch(&url).await {
+        let (client, fresh_for) = match metadata_document::fetch(&url, &Matcher::from_env()).await {
             Ok(fetched) => fetched,
             Err(e) => {
                 warn!(

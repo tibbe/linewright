@@ -1,6 +1,7 @@
 //! A client's metadata document: the client registers by its URL, which is
 //! its client ID, and Linewright fetches it, guarded against reaching
-//! anything but the public internet over HTTPS.
+//! anything but the public internet over HTTPS: by the host's proxy where
+//! there is one, and else by its own check of the address.
 //! <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00>
 
 use std::net::{IpAddr, SocketAddr};
@@ -8,6 +9,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use chrono::TimeDelta;
+use hyper_util::client::proxy::matcher::{Intercept, Matcher};
 use serde::Deserialize;
 use url::Url;
 
@@ -170,21 +172,33 @@ pub fn client_of(url: &Url, body: &[u8]) -> Result<Client, String> {
 }
 
 /// Fetches the document at `url` and gives its client, and how long it
-/// stays fresh. It connects straight rather than through
-/// a proxy, which would resolve the host again, only to the address its
-/// host resolves to, and only when every address it resolves to is
-/// public; it follows no redirect, gives up resolving and then fetching
-/// after [`TIMEOUT`] each, and reads no more than [`LARGEST`].
-pub async fn fetch(DocumentUrl(url): &DocumentUrl) -> anyhow::Result<(Client, TimeDelta)> {
-    let host = url.host_str().context("it has no host")?;
-    let port = url.port_or_known_default().unwrap_or(443);
-    let address = public_address(host, port).await?;
+/// stays fresh (`docs/specs/access.md`, The authorization server, Fetching
+/// a metadata document). Where `host_proxy`, the host's proxy as
+/// [`Matcher::from_env`] reads it, applies to `url` with HTTP to the
+/// proxy, it fetches through the proxy, which the spec has refuse a
+/// private or loopback address, and checks no address of its own. Else it
+/// connects only to the address its host resolves to, and only when every
+/// address it resolves to is public, giving up resolving after
+/// [`TIMEOUT`]. Either way it follows no redirect, gives up fetching after
+/// [`TIMEOUT`], and reads no more than [`LARGEST`].
+pub async fn fetch(
+    DocumentUrl(url): &DocumentUrl,
+    host_proxy: &Matcher,
+) -> anyhow::Result<(Client, TimeDelta)> {
     let mut builder = crate::http::client_builder_trusting_the_host_store_alone()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(TIMEOUT);
-    if url.domain().is_some() {
-        builder = builder.resolve(host, address);
+    let uri: hyper::Uri = url.as_str().parse().context("it is not a URI")?;
+    if let Some(proxy) = host_proxy.intercept(&uri).filter(spoken_over_http) {
+        builder = builder.proxy(proxy_of(&proxy)?);
+    } else {
+        let host = url.host_str().context("it has no host")?;
+        let port = url.port_or_known_default().unwrap_or(443);
+        let address = public_address(host, port).await?;
+        if url.domain().is_some() {
+            builder = builder.resolve(host, address);
+        }
     }
     let http = builder.build().context("building an HTTP client")?;
     let mut response = http
@@ -217,6 +231,22 @@ pub async fn fetch(DocumentUrl(url): &DocumentUrl) -> anyhow::Result<(Client, Ti
     }
     let client = client_of(url, &body).map_err(anyhow::Error::msg)?;
     Ok((client, fresh))
+}
+
+/// Whether Linewright can reach the proxy `intercept` names: over HTTP or
+/// HTTPS, and not SOCKS, which its HTTP client is built without.
+fn spoken_over_http(intercept: &Intercept) -> bool {
+    matches!(intercept.uri().scheme_str(), Some("http" | "https"))
+}
+
+/// The proxy `intercept` names, with its credentials.
+fn proxy_of(intercept: &Intercept) -> anyhow::Result<reqwest::Proxy> {
+    let proxy =
+        reqwest::Proxy::all(intercept.uri().to_string()).context("reading the host's proxy")?;
+    Ok(match intercept.basic_auth() {
+        Some(credentials) => proxy.custom_http_auth(credentials.clone()),
+        None => proxy,
+    })
 }
 
 /// The address `host` resolves to, on `port`, when every address it
@@ -423,14 +453,129 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn a_document_is_fetched_only_from_a_public_address() {
+    async fn without_a_proxy_a_document_is_fetched_only_from_a_public_address() {
         for url in [
             "https://127.0.0.1/client",
             "https://[::1]/client",
             "https://localhost/client",
         ] {
-            let refused = fetch(&DocumentUrl::parse(url).unwrap()).await;
-            assert!(refused.is_err(), "{url}");
+            let refused = fetch(
+                &DocumentUrl::parse(url).unwrap(),
+                &Matcher::builder().build(),
+            )
+            .await;
+            assert!(
+                refused.unwrap_err().to_string().contains("not public"),
+                "{url}"
+            );
         }
+    }
+
+    /// A proxy that answers each `CONNECT` with 403, as one that refuses a
+    /// private address does.
+    struct RefusingProxy {
+        url: String,
+        /// The head of each request it was asked, as it came.
+        asked: tokio::sync::mpsc::UnboundedReceiver<String>,
+    }
+
+    #[track_caller]
+    fn refusing_proxy() -> impl Future<Output = RefusingProxy> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let caller = std::panic::Location::caller();
+        async move {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .unwrap_or_else(|e| panic!("binding the proxy at {caller}: {e}"));
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let (ask, asked) = tokio::sync::mpsc::unbounded_channel();
+            tokio::spawn(async move {
+                while let Ok((mut stream, _)) = listener.accept().await {
+                    let mut head = Vec::new();
+                    let mut byte = [0; 1];
+                    while !head.ends_with(b"\r\n\r\n")
+                        && stream.read(&mut byte).await.unwrap_or(0) == 1
+                    {
+                        head.push(byte[0]);
+                    }
+                    let _ = ask.send(String::from_utf8_lossy(&head).into_owned());
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                }
+            });
+            RefusingProxy { url, asked }
+        }
+    }
+
+    /// `docs/specs/access.md`, The authorization server, Fetching a
+    /// metadata document.
+    #[test_log::test(tokio::test)]
+    async fn through_the_hosts_proxy_a_document_is_fetched_with_no_address_check_of_its_own() {
+        let mut proxy = refusing_proxy().await;
+        let host_proxy = Matcher::builder().https(proxy.url.clone()).build();
+
+        for (url, connect) in [
+            ("https://localhost/client", "CONNECT localhost:443 HTTP/1.1"),
+            (
+                "https://127.0.0.1:8443/client",
+                "CONNECT 127.0.0.1:8443 HTTP/1.1",
+            ),
+        ] {
+            let refused = fetch(&DocumentUrl::parse(url).unwrap(), &host_proxy).await;
+
+            assert!(refused.is_err(), "{url}");
+            let head = proxy.asked.try_recv().unwrap_or_default();
+            assert_eq!(head.lines().next(), Some(connect), "{url}");
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn the_proxys_credentials_go_to_the_proxy() {
+        let mut proxy = refusing_proxy().await;
+        let with_credentials = proxy.url.replace("http://", "http://bot:p%40ss@");
+        let host_proxy = Matcher::builder().all(with_credentials).build();
+
+        let refused = fetch(
+            &DocumentUrl::parse("https://localhost/client").unwrap(),
+            &host_proxy,
+        )
+        .await;
+
+        assert!(refused.is_err());
+        let head = proxy.asked.try_recv().unwrap_or_default();
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("\r\nproxy-authorization: basic ym90onbac3m=\r\n"),
+            "{head}"
+        );
+    }
+
+    /// A SOCKS proxy, and a host `NO_PROXY` names, are fetched from
+    /// straight.
+    #[test_log::test(tokio::test)]
+    async fn a_document_the_proxy_does_not_reach_is_fetched_straight() {
+        let mut proxy = refusing_proxy().await;
+        let socks = proxy.url.replace("http://", "socks5h://");
+        for host_proxy in [
+            Matcher::builder()
+                .all(proxy.url.clone())
+                .no("localhost")
+                .build(),
+            Matcher::builder().all(socks).build(),
+        ] {
+            let refused = fetch(
+                &DocumentUrl::parse("https://localhost/client").unwrap(),
+                &host_proxy,
+            )
+            .await;
+
+            assert!(
+                refused.unwrap_err().to_string().contains("not public"),
+                "{host_proxy:?}"
+            );
+        }
+        assert!(proxy.asked.try_recv().is_err());
     }
 }
