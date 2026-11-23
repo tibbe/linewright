@@ -87,6 +87,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(SIGN_IN_PURPOSES),
     Migration::Sql(USED_REFRESH_TOKENS),
     Migration::Sql(ENDED_BROWSER_SESSIONS),
+    Migration::Sql(ALLOWED_REQUESTS),
 ];
 
 /// The table of the release that made each schema version.
@@ -516,6 +517,26 @@ const USED_REFRESH_TOKENS: &str = "CREATE TABLE refresh_tokens_used (
 /// (`docs/specs/access.md`, Signing in, An open screen).
 const ENDED_BROWSER_SESSIONS: &str = "ALTER TABLE browser_sessions
     ADD COLUMN ended TEXT CHECK (ended IN ('signed-out', 'disabled'))";
+
+/// Each authorization request asked on Consent before its sign-in, and the
+/// hash of the handle "Allow" gives it once allowed, in place of who signed
+/// in for it: a request that waited for its person's Consent after their
+/// sign-in is asked again.
+const ALLOWED_REQUESTS: &str = "CREATE TABLE authorization_requests_allowed (
+        hash BLOB PRIMARY KEY,
+        client TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+        redirect_uri TEXT NOT NULL,
+        challenge TEXT NOT NULL,
+        state TEXT,
+        allowed_hash BLOB UNIQUE,
+        expires_at TEXT NOT NULL
+    ) STRICT;
+    INSERT INTO authorization_requests_allowed
+        (hash, client, redirect_uri, challenge, state, expires_at)
+        SELECT hash, client, redirect_uri, challenge, state, expires_at
+        FROM authorization_requests;
+    DROP TABLE authorization_requests;
+    ALTER TABLE authorization_requests_allowed RENAME TO authorization_requests;";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

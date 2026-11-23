@@ -5,6 +5,9 @@
 <div class="flex justify-between gap-6"><dt class="shrink-0 text-base-content/60">{{ label }}</dt><dd class="min-w-0 text-end">{{ value }}</dd></div>
 {%- endfor %}
 </dl>
+{%- if let Some(warning) = warning %}
+<div class="alert alert-warning mb-6" role="alert"><span>{{ warning }}</span></div>
+{%- endif %}
 <form method="post" action="{{ linewright_core::access::oauth::AUTHORIZE_PATH }}" class="grid grid-cols-2 gap-2">
 <input type="hidden" name="{{ REQUEST }}" value="{{ request }}">
 <button class="btn btn-sm btn-primary" type="submit" name="{{ DECISION }}" value="allow">{{ crate::buttons::Verb::Allow.labelled() }}</button>

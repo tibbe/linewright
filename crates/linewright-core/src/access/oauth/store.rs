@@ -1,11 +1,13 @@
 //! The authorization server's records in the database: the authorization
-//! requests waiting for their person, the authorizations, and the codes and
+//! requests that have not ended, the authorizations, and the codes and
 //! tokens, each kept only as its SHA-256, and found by it.
 
 use anyhow::Context as _;
 use chrono::TimeDelta;
 use tracing::info;
+use url::Url;
 
+use super::clients::Registration;
 use super::{
     AuthorizationId, CODE_LASTS, Challenge, Checked, ClientId, Grant, OAuthError, RedirectUri,
     RefreshState, Server, Stored, StoredAuthorization, TokenDecision, TokenRequest, Used,
@@ -13,59 +15,138 @@ use super::{
 };
 use crate::access::Caller;
 use crate::access::people::{People, PersonId};
-use crate::access::tokens::{hashed, random_token};
+use crate::access::tokens::{hashed, host_cookie, random_token};
 use crate::database::{Database, parse_time, time_text};
 use crate::domain::Timestamp;
 
-/// How long an authorization request waits for its person to sign in, and
-/// then to allow or deny its client.
-const WAITS_FOR: TimeDelta = TimeDelta::minutes(10);
+/// How long an authorization request lasts from when its client makes it,
+/// whatever happens to it in between (`docs/specs/access.md`, The
+/// authorization server, When a request ends).
+const LASTS: TimeDelta = TimeDelta::minutes(10);
 
-/// The authorization requests waiting for their person.
+/// The name of the cookie that holds the handle "Allow" gives a request,
+/// which only its sign-in takes, so that a client that reads Consent's
+/// handle cannot skip Consent.
+pub const AUTHORIZATION_COOKIE: &str = "__Host-linewright-authorization";
+
+/// The authorization requests that have not ended: each asked, waiting for
+/// Consent and found by the handle that [`AuthorizationRequests::begin`]
+/// gives, and once allowed also waiting for its sign-in, found by the
+/// handle that [`AuthorizationRequests::allow`] gives.
 #[derive(Clone, Debug)]
 pub struct AuthorizationRequests {
     db: Database,
 }
 
-/// An authorization request waiting for its person: its client, where it
-/// sends the browser back, and who signed in for it, once someone did.
+/// An authorization request, as Consent shows it: its client, and where it
+/// sends the browser back.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Waiting {
+pub struct Asked {
     pub client: ClientId,
     pub client_name: Option<String>,
+    /// The host of the client's ID, for a client whose ID is the URL of its
+    /// metadata document.
+    pub client_host: Option<String>,
     pub redirect_uri: RedirectUri,
-    pub challenge: Challenge,
     pub state: Option<String>,
-    /// Who signed in for it, and when.
-    pub signed_in: Option<(PersonId, Timestamp)>,
 }
 
-impl Waiting {
-    /// Whether `person` signed in for it.
-    pub fn signed_in_by(&self, person: PersonId) -> bool {
-        self.signed_in
-            .is_some_and(|(signed_in, _)| signed_in == person)
+/// The handle "Allow" gave a request, for its browser's
+/// [`AUTHORIZATION_COOKIE`], and how long the request still lasts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Allowed {
+    pub handle: String,
+    pub lasts: TimeDelta,
+}
+
+impl Allowed {
+    /// The `Set-Cookie` that keeps its handle in the browser as long as
+    /// the request lasts.
+    pub fn set_cookie(&self) -> String {
+        host_cookie(AUTHORIZATION_COOKIE, &self.handle, self.lasts)
+    }
+
+    /// The `Set-Cookie` that removes it from the browser.
+    pub fn removed() -> String {
+        host_cookie(AUTHORIZATION_COOKIE, "", TimeDelta::zero())
     }
 }
 
-type WaitingRow = (
+/// An authorization request that its sign-in ended: the authorization it
+/// began, and the code for its client.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedIn {
+    pub asked: Asked,
+    pub authorization: AuthorizationId,
+    pub code: String,
+}
+
+/// A request: its client, the client's name and registration, its redirect
+/// URI, PKCE challenge, state, and when it ends.
+type RequestRow = (
     String,
     Option<String>,
     String,
     String,
-    Option<String>,
-    Option<i64>,
+    String,
     Option<String>,
     String,
 );
 
-/// The query of the authorization request whose secret's hash it binds.
-macro_rules! waiting {
-    () => {
-        "SELECT r.client, c.name, r.redirect_uri, r.challenge, r.state, r.person,
-            r.signed_in_at, r.expires_at
-         FROM authorization_requests r JOIN clients c ON c.id = r.client WHERE r.hash = ?"
+/// The query of the request whose handle's hash, as the column `$by`
+/// keeps it, it binds.
+macro_rules! request_by {
+    ($by:literal) => {
+        concat!(
+            "SELECT r.client, c.name, c.registration, r.redirect_uri, r.challenge, r.state,
+                r.expires_at
+             FROM authorization_requests r JOIN clients c ON c.id = r.client WHERE r.",
+            $by,
+            " = ?"
+        )
     };
+}
+
+/// The request whose handle is `handle`, by the hash `query` (of
+/// `request_by!`) finds it by, in `conn`: with its PKCE challenge and when
+/// it ends, if it has not ended at `now`.
+async fn read_request(
+    conn: &mut sqlx::SqliteConnection,
+    query: &'static str,
+    handle: &str,
+    now: Timestamp,
+) -> anyhow::Result<Option<(Asked, Challenge, Timestamp)>> {
+    let row: Option<RequestRow> = sqlx::query_as(query)
+        .bind(hashed(handle))
+        .fetch_optional(&mut *conn)
+        .await
+        .context("reading the authorization request")?;
+    let Some((client, client_name, registration, redirect_uri, challenge, state, expires_at)) = row
+    else {
+        return Ok(None);
+    };
+    let expires_at = parse_time(&expires_at)?;
+    if expires_at <= now {
+        return Ok(None);
+    }
+    let client_host = match Registration::named(&registration) {
+        Some(Registration::MetadataDocument) => Some(
+            Url::parse(&client)
+                .ok()
+                .and_then(|url| url.host_str().map(ToString::to_string))
+                .with_context(|| format!("the client ID {client:?} is not a URL with a host"))?,
+        ),
+        Some(Registration::Dynamic) => None,
+        None => anyhow::bail!("a client has the unknown registration {registration:?}"),
+    };
+    let asked = Asked {
+        client: ClientId::of(client),
+        client_name,
+        client_host,
+        redirect_uri: stored_redirect_uri(&redirect_uri)?,
+        state,
+    };
+    Ok(Some((asked, stored_challenge(&challenge)?, expires_at)))
 }
 
 impl AuthorizationRequests {
@@ -73,198 +154,161 @@ impl AuthorizationRequests {
         AuthorizationRequests { db }
     }
 
-    /// Keeps `checked` from `now` until its person signs in and allows or
-    /// denies its client, forgetting those that waited too long, and gives
-    /// the secret that names it.
+    /// Keeps `checked`, which its client made at `now`, for 10 minutes,
+    /// forgetting those that have ended, and gives the handle that Consent
+    /// finds it by.
     pub async fn begin(&self, checked: &Checked, now: Timestamp) -> anyhow::Result<String> {
-        let secret = random_token();
+        let handle = random_token();
         sqlx::query("DELETE FROM authorization_requests WHERE expires_at <= ?")
             .bind(time_text(now))
             .execute(self.db.pool())
             .await
-            .context("forgetting the authorization requests that waited too long")?;
+            .context("forgetting the authorization requests that ended")?;
         sqlx::query(
             "INSERT INTO authorization_requests
                 (hash, client, redirect_uri, challenge, state, expires_at)
              VALUES (?, ?, ?, ?, ?, ?)",
         )
-        .bind(hashed(&secret))
+        .bind(hashed(&handle))
         .bind(checked.client.as_str())
         .bind(checked.redirect_uri.as_str())
         .bind(checked.challenge.as_str())
         .bind(&checked.state)
-        .bind(time_text(now + WAITS_FOR))
+        .bind(time_text(now + LASTS))
         .execute(self.db.pool())
         .await
         .context("keeping the authorization request")?;
-        Ok(secret)
+        Ok(handle)
     }
 
-    /// Records that `person` signed in at `now` for the request `secret`
-    /// names, which then waits for them, and no one who signed in for it
-    /// before, to allow or deny its client.
-    pub async fn signed_in(
+    /// The request Consent's `handle` finds, if it has not ended at `now`.
+    pub async fn asked(&self, handle: &str, now: Timestamp) -> anyhow::Result<Option<Asked>> {
+        let mut conn = self.db.pool().acquire().await?;
+        let read = read_request(&mut conn, request_by!("hash"), handle, now).await?;
+        Ok(read.map(|(asked, _, _)| asked))
+    }
+
+    /// Whether `allowed`, the handle "Allow" gave, finds a request that has
+    /// not ended at `now`.
+    pub async fn is_allowed(&self, allowed: &str, now: Timestamp) -> anyhow::Result<bool> {
+        let mut conn = self.db.pool().acquire().await?;
+        let read = read_request(&mut conn, request_by!("allowed_hash"), allowed, now).await?;
+        Ok(read.is_some())
+    }
+
+    /// Allows the request Consent's `handle` finds, if it has not ended at
+    /// `now`: it then waits for its sign-in, which only the new handle it
+    /// gives finds, in place of any that an earlier "Allow" gave.
+    pub async fn allow(
         &self,
-        secret: &str,
-        person: PersonId,
+        handle: &str,
         now: Timestamp,
-    ) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE authorization_requests SET person = ?, signed_in_at = ?, expires_at = ?
-             WHERE hash = ? AND expires_at > ?",
-        )
-        .bind(person.row())
-        .bind(time_text(now))
-        .bind(time_text(now + WAITS_FOR))
-        .bind(hashed(secret))
-        .bind(time_text(now))
-        .execute(self.db.pool())
-        .await
-        .context("recording the sign-in for the authorization request")?;
-        Ok(())
-    }
-
-    /// The request `secret` names, if it still waits at `now`.
-    pub async fn get(&self, secret: &str, now: Timestamp) -> anyhow::Result<Option<Waiting>> {
-        let row: Option<WaitingRow> = sqlx::query_as(waiting!())
-            .bind(hashed(secret))
-            .fetch_optional(self.db.pool())
-            .await
-            .context("reading the authorization request")?;
-        waiting_of(row, now)
-    }
-
-    /// Answers the request `secret` names with `decision` at `now`, for
-    /// the MCP server of `server`, if it still waits, `person` signed in for
-    /// it and is enabled, taking it so that no other request can. Allowing
-    /// records an authorization that ends as [`authorization_ends`] says
-    /// from that sign-in, and the code the client exchanges for its tokens.
-    /// One transaction reads and writes, so that disabling the person
-    /// cannot come between.
-    pub async fn answer(
-        &self,
-        secret: &str,
-        person: PersonId,
-        decision: Decision,
-        server: &Server,
-        now: Timestamp,
-    ) -> anyhow::Result<Option<Answered>> {
+    ) -> anyhow::Result<Option<(Asked, Allowed)>> {
         let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
-        let row: Option<WaitingRow> = sqlx::query_as(concat!(
-            waiting!(),
-            " AND r.person = ? AND EXISTS
-                (SELECT 1 FROM people p WHERE p.id = r.person AND p.state = 'enabled')"
-        ))
-        .bind(hashed(secret))
-        .bind(person.row())
-        .fetch_optional(&mut *tx)
-        .await
-        .context("reading the authorization request")?;
-        let Some(waiting) = waiting_of(row, now)? else {
+        let Some((asked, _, expires_at)) =
+            read_request(&mut tx, request_by!("hash"), handle, now).await?
+        else {
             return Ok(None);
         };
-        let Some((_, signed_in_at)) = waiting.signed_in else {
-            return Ok(None);
+        let allowed = Allowed {
+            handle: random_token(),
+            lasts: expires_at - now,
         };
-        sqlx::query("DELETE FROM authorization_requests WHERE hash = ?")
-            .bind(hashed(secret))
+        sqlx::query("UPDATE authorization_requests SET allowed_hash = ? WHERE hash = ?")
+            .bind(hashed(&allowed.handle))
+            .bind(hashed(handle))
             .execute(&mut *tx)
             .await
-            .context("taking the authorization request")?;
-        let answered = match decision {
-            Decision::Deny => Answered::Denied { waiting },
-            Decision::Allow => {
-                let code = random_token();
-                let (id,): (i64,) = sqlx::query_as(
-                    "INSERT INTO authorizations
-                        (person, client, redirect_uri, resource, allowed_at, ends_at)
-                     VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-                )
-                .bind(person.row())
-                .bind(waiting.client.as_str())
-                .bind(waiting.redirect_uri.as_str())
-                .bind(server.resource().as_str())
-                .bind(time_text(now))
-                .bind(time_text(authorization_ends(signed_in_at)))
-                .fetch_one(&mut *tx)
-                .await
-                .context("recording the authorization")?;
-                sqlx::query(
-                    "INSERT INTO codes
-                        (hash, authorization, challenge, redirect_uri, expires_at, used)
-                     VALUES (?, ?, ?, ?, ?, 0)",
-                )
-                .bind(hashed(&code))
-                .bind(id)
-                .bind(waiting.challenge.as_str())
-                .bind(waiting.redirect_uri.as_str())
-                .bind(time_text(now + CODE_LASTS))
-                .execute(&mut *tx)
-                .await
-                .context("keeping the code")?;
-                Answered::Allowed {
-                    waiting,
-                    authorization: AuthorizationId::of_row(id),
-                    code,
-                }
-            }
-        };
+            .context("allowing the authorization request")?;
         tx.commit().await?;
-        Ok(Some(answered))
+        Ok(Some((asked, allowed)))
     }
-}
 
-/// What a person decides on Consent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Decision {
-    Allow,
-    Deny,
-}
-
-/// An authorization request answered, with the request as it waited.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Answered {
-    /// Allowed, with its authorization and the code for its client.
-    Allowed {
-        waiting: Waiting,
-        authorization: AuthorizationId,
-        code: String,
-    },
-    Denied {
-        waiting: Waiting,
-    },
-}
-
-fn waiting_of(row: Option<WaitingRow>, now: Timestamp) -> anyhow::Result<Option<Waiting>> {
-    let Some((
-        client,
-        client_name,
-        redirect_uri,
-        challenge,
-        state,
-        person,
-        signed_in_at,
-        expires_at,
-    )) = row
-    else {
-        return Ok(None);
-    };
-    if parse_time(&expires_at)? <= now {
-        return Ok(None);
+    /// Ends the request Consent's `handle` finds, its client denied, and
+    /// gives it, if it had not ended at `now`.
+    pub async fn deny(&self, handle: &str, now: Timestamp) -> anyhow::Result<Option<Asked>> {
+        let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let denied = read_request(&mut tx, request_by!("hash"), handle, now)
+            .await?
+            .map(|(asked, _, _)| asked);
+        sqlx::query("DELETE FROM authorization_requests WHERE hash = ?")
+            .bind(hashed(handle))
+            .execute(&mut *tx)
+            .await
+            .context("ending the authorization request")?;
+        tx.commit().await?;
+        Ok(denied)
     }
-    let signed_in = match (person, signed_in_at) {
-        (Some(person), Some(at)) => Some((PersonId::of_row(person), parse_time(&at)?)),
-        _ => None,
-    };
-    Ok(Some(Waiting {
-        client: ClientId::of(client),
-        client_name,
-        redirect_uri: stored_redirect_uri(&redirect_uri)?,
-        challenge: stored_challenge(&challenge)?,
-        state,
-        signed_in,
-    }))
+
+    /// Ends the allowed request that `allowed`, the handle "Allow" gave,
+    /// finds, with `person` signed in for it at `now`, if it had not ended
+    /// and they are enabled: records the authorization it begins, for the
+    /// MCP server of `server`, which ends as [`authorization_ends`] says,
+    /// and the code its client exchanges for its tokens. One transaction
+    /// reads and writes, so that the request ends once and disabling the
+    /// person cannot come between.
+    pub async fn sign_in(
+        &self,
+        allowed: &str,
+        person: PersonId,
+        server: &Server,
+        now: Timestamp,
+    ) -> anyhow::Result<Option<SignedIn>> {
+        let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
+        let Some((asked, challenge, _)) =
+            read_request(&mut tx, request_by!("allowed_hash"), allowed, now).await?
+        else {
+            return Ok(None);
+        };
+        let enabled: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM people WHERE id = ? AND state = 'enabled'")
+                .bind(person.row())
+                .fetch_optional(&mut *tx)
+                .await
+                .context("reading the person")?;
+        if enabled.is_none() {
+            return Ok(None);
+        }
+        sqlx::query("DELETE FROM authorization_requests WHERE allowed_hash = ?")
+            .bind(hashed(allowed))
+            .execute(&mut *tx)
+            .await
+            .context("ending the authorization request")?;
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO authorizations
+                (person, client, redirect_uri, resource, allowed_at, ends_at)
+             VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+        )
+        .bind(person.row())
+        .bind(asked.client.as_str())
+        .bind(asked.redirect_uri.as_str())
+        .bind(server.resource().as_str())
+        .bind(time_text(now))
+        .bind(time_text(authorization_ends(now)))
+        .fetch_one(&mut *tx)
+        .await
+        .context("recording the authorization")?;
+        let code = random_token();
+        sqlx::query(
+            "INSERT INTO codes
+                (hash, authorization, challenge, redirect_uri, expires_at, used)
+             VALUES (?, ?, ?, ?, ?, 0)",
+        )
+        .bind(hashed(&code))
+        .bind(id)
+        .bind(challenge.as_str())
+        .bind(asked.redirect_uri.as_str())
+        .bind(time_text(now + CODE_LASTS))
+        .execute(&mut *tx)
+        .await
+        .context("keeping the code")?;
+        tx.commit().await?;
+        Ok(Some(SignedIn {
+            asked,
+            authorization: AuthorizationId::of_row(id),
+            code,
+        }))
+    }
 }
 
 /// The redirect URI `stored`, as the database holds it.
@@ -379,19 +423,13 @@ impl Authorizations {
     }
 }
 
-/// Ends every authorization of `person` at `now`, and forgets the
-/// authorization requests they signed in for, in the transaction `conn` has
-/// open.
+/// Ends every authorization of `person` at `now`, in the transaction `conn`
+/// has open.
 pub(crate) async fn end_all_of(
     conn: &mut sqlx::SqliteConnection,
     person: PersonId,
     now: Timestamp,
 ) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM authorization_requests WHERE person = ?")
-        .bind(person.row())
-        .execute(&mut *conn)
-        .await
-        .context("forgetting the person's authorization requests")?;
     sqlx::query(
         "DELETE FROM access_tokens WHERE authorization IN
             (SELECT id FROM authorizations WHERE person = ? AND ended_at IS NULL)",

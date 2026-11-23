@@ -5,7 +5,7 @@ use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 
-use crate::access::oauth::store::{Authorizations, Tokens};
+use crate::access::oauth::store::{AuthorizationRequests, Authorizations, Tokens};
 use crate::access::oauth::{ClientId, Grant, Server, TokenRequest};
 use crate::access::people::PersonId;
 use crate::access::providers::Provider;
@@ -1499,4 +1499,54 @@ async fn a_database_from_before_refresh_tokens_were_current_or_used_opens_with_e
         .map(|listed| listed.id.row())
         .collect();
     assert_eq!(left, [3], "the used ones' authorizations ended");
+}
+
+static BEFORE_ALLOWED_REQUESTS: &[Migration] = MIGRATIONS.split_at(24).0;
+
+/// `docs/specs/access.md`, The authorization server: a request that waited
+/// for its person's sign-in before Consent came first is asked again, and
+/// its handle signs no one in.
+#[test_log::test(tokio::test)]
+async fn a_request_signed_in_for_before_consent_came_first_is_asked_again() {
+    let work_dir = tempfile::tempdir().unwrap();
+    let before = Database::open_in(work_dir.path(), BEFORE_ALLOWED_REQUESTS, Absent::Make)
+        .await
+        .unwrap();
+    for statement in [
+        "INSERT INTO people (id, provider, subject, shown_as, role, state, signed_in_at)
+            VALUES (1, 'google', '1', 'a@example.com', 'viewer', 'enabled', '2026-11-23T09:59:00Z')",
+        "INSERT INTO clients (id, registration, name, redirect_uris, registered_at)
+            VALUES ('agent', 'dynamic', 'My agent', '[\"http://127.0.0.1:5000/cb\"]',
+                '2026-11-23T09:00:00Z')",
+    ] {
+        sqlx::query(statement).execute(before.pool()).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO authorization_requests
+            (hash, client, redirect_uri, challenge, state, person, signed_in_at, expires_at)
+         VALUES (?, 'agent', 'http://127.0.0.1:5000/cb',
+            'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 's', 1, '2026-11-23T09:59:00Z',
+            '2026-11-23T10:09:00Z')",
+    )
+    .bind(hashed("handle"))
+    .execute(before.pool())
+    .await
+    .unwrap();
+    drop(before);
+
+    let db = Database::open(work_dir.path()).await.unwrap();
+
+    let requests = AuthorizationRequests::new(db);
+    let now = "2026-11-23T10:00:00Z".parse().unwrap();
+    let server = Server::new(crate::testing::ui().public_url);
+    assert_eq!(
+        requests
+            .sign_in("handle", PersonId::of_row(1), &server, now)
+            .await
+            .unwrap(),
+        None
+    );
+    let asked = requests.asked("handle", now).await.unwrap().expect("asked");
+    assert_eq!(asked.client_name.as_deref(), Some("My agent"));
+    assert!(requests.allow("handle", now).await.unwrap().is_some());
 }

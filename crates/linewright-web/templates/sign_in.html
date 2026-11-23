@@ -6,13 +6,13 @@
 <div class="flex flex-col items-center gap-2">
 {%- if let Some(google) = google %}
 <form method="post" action="{{ google.action }}">
-<input type="hidden" name="return" value="{{ return_to.as_str() }}">
+<input type="hidden" name="{{ for_.field().0 }}" value="{{ for_.field().1 }}">
 <button class="google cursor-pointer rounded-full" type="submit"><picture><source srcset="{{ google.dark }}" media="(prefers-color-scheme: dark)"><img src="{{ google.light }}" width="180" height="40" alt="Sign in with Google"></picture></button>
 </form>
 {%- endif %}
 {%- if let Some(github) = github %}
 <form method="post" action="{{ github.action }}">
-<input type="hidden" name="return" value="{{ return_to.as_str() }}">
+<input type="hidden" name="{{ for_.field().0 }}" value="{{ for_.field().1 }}">
 <button class="github btn" type="submit">{{ github.mark }}Sign in with GitHub</button>
 </form>
 {%- endif %}

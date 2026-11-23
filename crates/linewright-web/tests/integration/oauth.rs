@@ -7,6 +7,8 @@
 
 use linewright_core::access::oauth::store::AccessTokens;
 
+use linewright_core::access::providers::Provider;
+
 use super::sign_in::{Answer, Browsing, Signing, signing};
 use super::*;
 use linewright_core::testing::oauth::*;
@@ -58,28 +60,65 @@ impl Browsing<'_> {
         }
     }
 
-    /// Sends the person to authorize `client` with `state`, signs them in
-    /// with Google as `email`, and gives Consent as it shows.
+    /// Sends the person to authorize `client` with `state`, as the client
+    /// does: Consent as it shows.
     #[track_caller]
     pub(super) fn reach_consent<'b>(
         &'b mut self,
         client: &'b str,
         state: &'b str,
-        email: &'b str,
     ) -> impl Future<Output = Answer> + 'b {
         let caller = std::panic::Location::caller();
         async move {
-            let path = authorize_path(client, REDIRECT_URI, state);
-            let back = self.sign_in(&path, Some(email)).await;
-            assert_eq!(back.status, 303, "at {caller}: {}", back.html.html());
+            let sent = self.get(&authorize_path(client, REDIRECT_URI, state)).await;
+            assert_eq!(sent.status, 303, "at {caller}: {}", sent.html.html());
             assert!(
-                back.location().starts_with("/oauth/authorize?"),
+                sent.location().starts_with("/oauth/authorize?"),
                 "at {caller}: {}",
-                back.location()
+                sent.location()
             );
-            let consent = self.get(back.location()).await;
+            let consent = self.get(sent.location()).await;
             assert_eq!(consent.status, 200, "at {caller}: {}", consent.html.html());
             consent
+        }
+    }
+
+    /// Takes "Allow" on `consent`: Sign in as it then shows.
+    #[track_caller]
+    pub(super) fn allow<'b>(
+        &'b mut self,
+        consent: &'b Answer,
+    ) -> impl Future<Output = Answer> + 'b {
+        let caller = std::panic::Location::caller();
+        async move {
+            let allowed = self
+                .post_fields("/oauth/authorize", &decision_fields(consent, "allow"))
+                .await;
+            assert_eq!(allowed.status, 303, "at {caller}: {}", allowed.html.html());
+            let sign_in = self.get(allowed.location()).await;
+            assert_eq!(sign_in.status, 200, "at {caller}: {}", sign_in.html.html());
+            sign_in
+        }
+    }
+
+    /// Sends the person to authorize `client` with `state`, allows it on
+    /// Consent and signs in with Google as `email`: where the browser is
+    /// sent back to the client.
+    #[track_caller]
+    pub(super) fn authorize<'b>(
+        &'b mut self,
+        client: &'b str,
+        state: &'b str,
+        email: &'b str,
+    ) -> impl Future<Output = url::Url> + 'b {
+        let caller = std::panic::Location::caller();
+        async move {
+            let consent = self.reach_consent(client, state).await;
+            let sign_in = self.allow(&consent).await;
+            let back = self.sign_in_on(&sign_in, email).await;
+            assert_eq!(back.status, 303, "at {caller}: {}", back.html.html());
+            url::Url::parse(back.location())
+                .unwrap_or_else(|e| panic!("at {caller}: {e}: {}", back.location()))
         }
     }
 
@@ -275,18 +314,21 @@ async fn a_client_registers_as_a_public_client_and_is_logged() {
     );
 }
 
-/// `docs/specs/access.md`, The authorization server, 1 to 6, Consent and
-/// Tokens; `docs/specs/web/access.md`, Consent.
+/// `docs/specs/access.md`, The authorization server, 1 and 2, When a
+/// request ends, When an authorization begins and Logged, and Consent;
+/// `docs/specs/web/access.md`, Consent.
 #[test_log::test(tokio::test)]
-async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
+async fn a_person_allows_a_client_then_signs_in_and_the_client_exchanges_its_code_once() {
     let signing = signing(None).await;
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
     let (log, _guard) = Log::capture();
 
-    let consent = browser
-        .reach_consent(&client, "the state", "nameless@example.com")
+    let requested = browser
+        .get(&authorize_path(&client, REDIRECT_URI, "the state"))
         .await;
+    let consent_path = requested.location().to_string();
+    let consent = browser.get(&consent_path).await;
 
     assert_eq!(
         text(select(&consent.html, ".consent h1")[0]),
@@ -294,12 +336,15 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
     );
     assert_eq!(
         consent_facts(&consent.html),
-        [
-            ("Signed in as".into(), "nameless@example.com".into()),
-            ("Sends you back to".into(), "127.0.0.1".into()),
-            ("Access".into(), "viewer".into()),
-        ]
+        [("Sends you back to".into(), "127.0.0.1".into())]
     );
+    let warning = select(&consent.html, ".consent .alert");
+    assert_eq!(warning.len(), 1, "{}", consent.html.html());
+    assert_eq!(
+        text(warning[0]),
+        "This client is an app on this computer. Linewright cannot check which app."
+    );
+    assert!(has_classes(warning[0], &["alert-warning", "mb-6"]));
     let buttons = select(&consent.html, ".consent .grid.grid-cols-2 button");
     assert_eq!(
         buttons.iter().map(|b| text(*b)).collect::<Vec<_>>(),
@@ -316,8 +361,37 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
             .contains("frame-ancestors 'none'")
     );
 
-    let sent = browser.decide(&consent, "allow").await;
+    let allowed = browser
+        .post_fields("/oauth/authorize", &decision_fields(&consent, "allow"))
+        .await;
 
+    assert_eq!(allowed.status, 303, "{}", allowed.html.html());
+    let cookie = allowed
+        .set_cookies()
+        .into_iter()
+        .find(|set| set.starts_with("__Host-linewright-authorization="))
+        .expect("the authorization's cookie")
+        .to_string();
+    assert!(
+        cookie.ends_with("; Secure; HttpOnly; SameSite=Lax"),
+        "{cookie}"
+    );
+    assert!((590..=600).contains(&max_age(&cookie)), "{cookie}");
+    let handle = cookie.split(['=', ';']).nth(1).unwrap();
+    assert!(
+        !consent.html.html().contains(handle),
+        "the handle Allow gives is not Consent's"
+    );
+    let sign_in = browser.get(allowed.location()).await;
+    assert_eq!(sign_in.status, 200, "{}", sign_in.html.html());
+    assert_eq!(
+        text(select(&sign_in.html, ".sign-in h1")[0]),
+        "Sign in to Linewright"
+    );
+    let back = browser.sign_in_on(&sign_in, "nameless@example.com").await;
+
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    let sent = url::Url::parse(back.location()).unwrap();
     assert_eq!(
         format!("{}://{}{}", sent.scheme(), sent.authority(), sent.path()),
         REDIRECT_URI
@@ -330,10 +404,37 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
     let code = query_value(&sent, "code").expect("a code");
     let logged = log.lines("INFO");
     assert!(
-        logged.iter().any(|line| line.contains("allowed a client")
-            && line.contains(r#"identity="google:nameless@example.com""#)
-            && line.contains(&client)),
+        logged
+            .iter()
+            .any(|line| line.contains("allowed a client") && line.contains(&client)),
         "{logged:?}"
+    );
+    assert!(
+        logged
+            .iter()
+            .any(|line| line.contains("authorized a client")
+                && line.contains(r#"identity="google:nameless@example.com""#)
+                && line.contains(&client)),
+        "{logged:?}"
+    );
+    let authorizations = browser.get("/authorizations").await;
+    assert_eq!(authorizations.status, 200, "the browser is signed in");
+    assert_eq!(
+        authorization_rows(&authorizations.html)[0][..2],
+        ["My agent", "127.0.0.1"]
+    );
+    assert!(
+        back.set_cookies()
+            .iter()
+            .any(|set| set.starts_with("__Host-linewright-authorization=;") && max_age(set) == 0),
+        "the request's cookie is removed: {:?}",
+        back.set_cookies()
+    );
+    let again = browser.begin_on(&sign_in, Provider::Google).await;
+    assert_eq!(authorization_error(&again), ENDED);
+    assert_eq!(
+        authorization_error(&browser.get(&consent_path).await),
+        ENDED
     );
 
     let exchanged = browser.exchange_code(&client, &code).await;
@@ -348,9 +449,9 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
         acting_as(&signing, &tokens.access).await.as_deref(),
         Some("google:nameless@example.com")
     );
-    let again = browser.exchange_code(&client, &code).await;
-    assert_eq!(again.status, 400);
-    assert_eq!(json(&again)["error"], "invalid_grant");
+    let twice = browser.exchange_code(&client, &code).await;
+    assert_eq!(twice.status, 400);
+    assert_eq!(json(&twice)["error"], "invalid_grant");
     assert_eq!(
         acting_as(&signing, &tokens.access).await,
         None,
@@ -368,17 +469,18 @@ async fn a_loopback_redirect_uri_takes_the_port_the_request_gives() {
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
     let on_its_port = "http://127.0.0.1:61234/cb";
-    let back = browser
-        .sign_in(
-            &authorize_path(&client, on_its_port, "s"),
-            Some("nameless@example.com"),
-        )
+    let requested = browser
+        .get(&authorize_path(&client, on_its_port, "s"))
         .await;
-    let consent = browser.get(back.location()).await;
+    assert_eq!(requested.status, 303, "{}", requested.html.html());
+    let consent = browser.get(requested.location()).await;
     assert_eq!(consent.status, 200, "{}", consent.html.html());
+    let sign_in = browser.allow(&consent).await;
 
-    let sent = browser.decide(&consent, "allow").await;
+    let back = browser.sign_in_on(&sign_in, "nameless@example.com").await;
 
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    let sent = url::Url::parse(back.location()).unwrap();
     assert_eq!(
         format!("{}://{}{}", sent.scheme(), sent.authority(), sent.path()),
         on_its_port
@@ -390,94 +492,243 @@ async fn a_loopback_redirect_uri_takes_the_port_the_request_gives() {
     assert_eq!(exchanged.status, 200, "{}", exchanged.html.html());
 }
 
-/// `docs/specs/access.md`, The authorization server: each authorization
-/// takes steps 3 and 4, whatever the browser is signed in to.
-#[test_log::test(tokio::test)]
-async fn a_signed_in_browser_still_signs_in_for_an_authorization() {
-    let signing = signing(None).await;
-    let mut browser = Browsing::new(&signing);
-    let client = browser.register("My agent").await;
-    browser.sign_in("/", Some("nameless@example.com")).await;
-
-    let sent = browser
-        .get(&authorize_path(&client, REDIRECT_URI, "s"))
-        .await;
-
-    assert_eq!(sent.status, 303);
-    assert!(
-        sent.location().starts_with("/sign-in?return="),
-        "{}",
-        sent.location()
-    );
-    let sign_in = url::Url::parse("http://127.0.0.1:8081")
-        .unwrap()
-        .join(sent.location())
-        .unwrap();
-    let request = query_value(&sign_in, "return").expect("the request to return to");
-    let consent = browser.get(&request).await;
-    assert_eq!(consent.status, 303, "Consent waits for the sign-in");
-    assert!(consent.location().starts_with("/sign-in?return="));
+/// The `Max-Age` of the `Set-Cookie` `cookie`.
+#[track_caller]
+fn max_age(cookie: &str) -> i64 {
+    cookie
+        .split("; ")
+        .find_map(|attribute| attribute.strip_prefix("Max-Age="))
+        .and_then(|age| age.parse().ok())
+        .unwrap_or_else(|| panic!("no Max-Age: {cookie}"))
 }
 
-/// `docs/specs/access.md`, The authorization server, 3 and 4: Consent is
-/// for the person who signed in for the request last.
-#[test_log::test(tokio::test)]
-async fn consent_is_for_whoever_signed_in_for_the_request_last() {
-    let signing = signing(Some("google:boss@elsewhere.example")).await;
-    let mut browser = Browsing::new(&signing);
-    let client = browser.register("My agent").await;
-    let first = browser
-        .reach_consent(&client, "s", "nameless@example.com")
-        .await;
-    let request = decision_fields(&first, "allow")[0].1.clone();
-    let signed_out = browser.post("/sign-out", &[]).await;
-    assert_eq!(signed_out.status, 303, "{}", signed_out.html.html());
+/// What Authorization error says on `answer`, which must be it.
+#[track_caller]
+fn authorization_error(answer: &Answer) -> String {
+    assert_eq!(answer.status, 400, "{}", answer.html.html());
+    assert!(!answer.headers.contains_key("location"));
+    assert_eq!(
+        text(select(&answer.html, ".authorization-error h1")[0]),
+        "Linewright cannot authorize this client"
+    );
+    let alert = select(&answer.html, ".authorization-error .alert")[0];
+    assert!(has_classes(alert, &["alert-error"]));
+    text(alert)
+}
 
-    let back = browser
-        .sign_in(
-            &format!("/oauth/authorize?waiting={request}"),
-            Some("boss@elsewhere.example"),
-        )
+/// The message of Authorization error for a request that has ended.
+const ENDED: &str = "This authorization request has ended. Start again from the client.";
+
+/// `docs/specs/access.md`, Consent, Facts and The warning.
+#[test_log::test(tokio::test)]
+async fn consent_names_a_metadata_document_clients_host_and_warns_only_of_a_loopback_redirect_uri()
+{
+    let signing = signing(None).await;
+    let mut browser = Browsing::new(&signing);
+    let client = "https://agent.example/oauth/client.json";
+    metadata_document_client(
+        &signing.pages.sources,
+        client,
+        "Doc agent",
+        "https://back.example/cb",
+    )
+    .await;
+
+    let sent = browser
+        .get(&authorize_path(client, "https://back.example/cb", "s"))
         .await;
-    let consent = browser.get(back.location()).await;
+    assert_eq!(sent.status, 303, "{}", sent.html.html());
+    let consent = browser.get(sent.location()).await;
 
     assert_eq!(consent.status, 200, "{}", consent.html.html());
     assert_eq!(
-        consent_facts(&consent.html)[0],
-        ("Signed in as".into(), "boss@elsewhere.example".into())
+        text(select(&consent.html, ".consent h1")[0]),
+        "Allow Doc agent to act as you?"
+    );
+    assert_eq!(
+        consent_facts(&consent.html),
+        [
+            ("Client".into(), "agent.example".into()),
+            ("Sends you back to".into(), "back.example".into()),
+        ]
+    );
+    assert_eq!(
+        select(&consent.html, ".consent .alert").len(),
+        0,
+        "no warning"
     );
 }
 
-/// `docs/specs/access.md`, The authorization server, 4a.
+/// `docs/specs/access.md`, The authorization server, 2: whatever the
+/// browser is signed in to, the sign-in signs it in as the person who
+/// signs in.
 #[test_log::test(tokio::test)]
-async fn a_person_denies_a_client_which_is_sent_access_denied() {
+async fn a_signed_in_browser_still_signs_in_for_an_authorization() {
+    let signing = signing(Some("google:boss@elsewhere.example")).await;
+    let mut browser = Browsing::new(&signing);
+    let client = browser.register("My agent").await;
+    browser.sign_in("/", Some("boss@elsewhere.example")).await;
+    let consent = browser.reach_consent(&client, "s").await;
+
+    let sign_in = browser.allow(&consent).await;
+    let back = browser.sign_in_on(&sign_in, "nameless@example.com").await;
+
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    let code = query_value(&url::Url::parse(back.location()).unwrap(), "code").expect("a code");
+    let tokens = tokens_of(&browser.exchange_code(&client, &code).await);
+    assert_eq!(
+        acting_as(&signing, &tokens.access).await.as_deref(),
+        Some("google:nameless@example.com")
+    );
+    let own = browser.get("/authorizations").await;
+    assert_eq!(authorization_rows(&own.html).len(), 1, "nameless's own");
+}
+
+/// `docs/specs/access.md`, Signing in, 3c, and The authorization server,
+/// 2: a refused sign-in says why on Sign in, which is still for the
+/// authorization.
+#[test_log::test(tokio::test)]
+async fn a_refused_sign_in_shows_sign_in_still_for_the_authorization() {
     let signing = signing(None).await;
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
-    let consent = browser
-        .reach_consent(&client, "s", "nameless@example.com")
+    let consent = browser.reach_consent(&client, "s").await;
+    let sign_in = browser.allow(&consent).await;
+
+    let refused = browser
+        .sign_in_on(&sign_in, "mallory@elsewhere.example")
         .await;
+
+    assert_eq!(refused.status, 403, "{}", refused.html.html());
+    assert_eq!(
+        text(select(&refused.html, ".sign-in .alert")[0]),
+        "mallory@elsewhere.example has no access to this Linewright."
+    );
+    let back = browser.sign_in_on(&refused, "nameless@example.com").await;
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    assert!(
+        query_value(&url::Url::parse(back.location()).unwrap(), "code").is_some(),
+        "{}",
+        back.location()
+    );
+}
+
+/// `docs/specs/access.md`, The authorization server, 1 and 2: a sign-in
+/// that has only Consent's handle, which the client can read, completes
+/// nothing, so that the client cannot skip Consent.
+#[test_log::test(tokio::test)]
+async fn a_sign_in_with_only_the_handle_of_consent_completes_nothing() {
+    let signing = signing(None).await;
+    let mut client_side = Browsing::new(&signing);
+    let client = client_side.register("My agent").await;
+    let sent = client_side
+        .get(&authorize_path(&client, REDIRECT_URI, "s"))
+        .await;
+    let consent_url = url::Url::parse("http://127.0.0.1:8081")
+        .unwrap()
+        .join(sent.location())
+        .unwrap();
+    let (_, asked) = consent_url.query_pairs().next().expect("Consent's handle");
+    let with_asked = format!("__Host-linewright-authorization={asked}");
+    let mut victim = Browsing::with_cookie(&signing, &with_asked);
+    let consent = victim.get(sent.location()).await;
+    let sign_in = victim.allow(&consent).await;
+    let mut skipping = Browsing::with_cookie(&signing, &with_asked);
+
+    let begun = skipping.begin_on(&sign_in, Provider::Google).await;
+
+    assert_eq!(authorization_error(&begun), ENDED);
+    let allowed = victim.sign_in_on(&sign_in, "nameless@example.com").await;
+    assert_eq!(
+        allowed.status, 303,
+        "the request still waits for its own sign-in"
+    );
+    assert!(allowed.location().starts_with(REDIRECT_URI));
+}
+
+/// `docs/specs/access.md`, The authorization server, When a request ends:
+/// 10 minutes after the client makes it, whatever happened in between.
+#[test_log::test(tokio::test)]
+async fn a_request_ends_ten_minutes_after_the_client_makes_it() {
+    let signing = signing(None).await;
+    let clock = signing.pages.clock.clone();
+    let mut browser = Browsing::new(&signing);
+    let client = browser.register("My agent").await;
+    let sent = browser
+        .get(&authorize_path(&client, REDIRECT_URI, "s"))
+        .await;
+    let consent_path = sent.location().to_string();
+    clock.advance(chrono::TimeDelta::minutes(4));
+    let consent = browser.get(&consent_path).await;
+    assert_eq!(consent.status, 200, "{}", consent.html.html());
+    clock.advance(chrono::TimeDelta::minutes(5));
+    let allowed = browser
+        .post_fields("/oauth/authorize", &decision_fields(&consent, "allow"))
+        .await;
+    let cookie = allowed
+        .set_cookies()
+        .into_iter()
+        .find(|set| set.starts_with("__Host-linewright-authorization="))
+        .expect("the authorization's cookie")
+        .to_string();
+    assert!(
+        (50..=60).contains(&max_age(&cookie)),
+        "it lasts as long as the request: {cookie}"
+    );
+    let sign_in = browser.get(allowed.location()).await;
+    let begun = browser.begin_on(&sign_in, Provider::Google).await;
+    clock.advance(chrono::TimeDelta::minutes(1));
+
+    let again = browser.get(&consent_path).await;
+    let allowed_again = browser
+        .post_fields("/oauth/authorize", &decision_fields(&consent, "allow"))
+        .await;
+    let back = browser
+        .choose_at_google(&begun, "nameless@example.com")
+        .await;
+
+    assert_eq!(authorization_error(&again), ENDED);
+    assert_eq!(authorization_error(&allowed_again), ENDED);
+    assert_eq!(authorization_error(&back), ENDED);
+}
+
+/// `docs/specs/access.md`, The authorization server, When a request ends
+/// and Logged.
+#[test_log::test(tokio::test)]
+async fn a_person_denies_a_client_which_is_sent_access_denied_and_the_request_ends() {
+    let signing = signing(None).await;
+    let mut browser = Browsing::new(&signing);
+    let client = browser.register("My agent").await;
+    let sent = browser
+        .get(&authorize_path(&client, REDIRECT_URI, "s"))
+        .await;
+    let consent_path = sent.location().to_string();
+    let consent = browser.get(&consent_path).await;
     let (log, _guard) = Log::capture();
 
-    let sent = browser.decide(&consent, "deny").await;
+    let denied = browser.decide(&consent, "deny").await;
 
     assert_eq!(
-        query_value(&sent, "error").as_deref(),
+        query_value(&denied, "error").as_deref(),
         Some("access_denied")
     );
-    assert_eq!(query_value(&sent, "state").as_deref(), Some("s"));
-    assert_eq!(query_value(&sent, "code"), None);
+    assert_eq!(query_value(&denied, "state").as_deref(), Some("s"));
+    assert_eq!(query_value(&denied, "code"), None);
     let logged = log.lines("INFO");
     assert!(
-        logged.iter().any(|line| line.contains("denied a client")
-            && line.contains(r#"identity="google:nameless@example.com""#)),
+        logged
+            .iter()
+            .any(|line| line.contains("denied a client") && line.contains(&client)),
         "{logged:?}"
     );
-    let authorizations = browser.get("/authorizations").await;
     assert_eq!(
-        select(&authorizations.html, "#authorizations tbody tr").len(),
-        0
+        authorization_error(&browser.get(&consent_path).await),
+        ENDED
     );
+    let allowed = browser
+        .post_fields("/oauth/authorize", &decision_fields(&consent, "allow"))
+        .await;
+    assert_eq!(authorization_error(&allowed), ENDED);
 }
 
 /// `docs/specs/access.md`, Consent; `docs/specs/web/access.md`: Allow and
@@ -487,9 +738,7 @@ async fn a_decision_from_another_site_is_refused() {
     let signing = signing(None).await;
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
-    let consent = browser
-        .reach_consent(&client, "s", "nameless@example.com")
-        .await;
+    let consent = browser.reach_consent(&client, "s").await;
     let fields = decision_fields(&consent, "allow");
     let mut form = form_urlencoded::Serializer::new(String::new());
     form.extend_pairs(&fields);
@@ -507,6 +756,7 @@ async fn a_decision_from_another_site_is_refused() {
     assert!(!refused.headers.contains_key("location"));
     let allowed = browser.post_fields("/oauth/authorize", &fields).await;
     assert_eq!(allowed.status, 303, "the request still waits");
+    assert!(allowed.location().starts_with("/sign-in?"));
 }
 
 /// `docs/specs/access.md`, Authorization error; `docs/specs/web/access.md`,
@@ -532,18 +782,14 @@ async fn an_unknown_client_unusable_metadata_document_or_redirect_uri_shows_auth
             authorize_path(&client, "http://127.0.0.1:5000/other", "s"),
             "This is not a redirect URI of this client.",
         ),
+        (
+            "/oauth/authorize?waiting=no-such-request".to_string(),
+            ENDED,
+        ),
     ] {
         let error = browser.get(&path).await;
 
-        assert_eq!(error.status, 400, "{path}");
-        assert!(!error.headers.contains_key("location"));
-        assert_eq!(
-            text(select(&error.html, ".authorization-error h1")[0]),
-            "Linewright cannot authorize this client"
-        );
-        let alert = select(&error.html, ".authorization-error .alert")[0];
-        assert_eq!(text(alert), message);
-        assert!(has_classes(alert, &["alert-error"]));
+        assert_eq!(authorization_error(&error), message, "{path}");
     }
 }
 
@@ -749,28 +995,4 @@ async fn disabling_a_person_ends_their_authorizations() {
     manager.post("/people/2/enable", &[]).await;
     assert_eq!(acting_as(&signing, &tokens.access).await, None);
     assert_eq!(browser.refresh(&id, &tokens.refresh).await.status, 400);
-}
-
-/// `docs/specs/access.md`, People, Disabling: a request the person signed
-/// in for, but did not answer, is gone with their authorizations.
-#[test_log::test(tokio::test)]
-async fn disabling_a_person_forgets_the_requests_they_signed_in_for() {
-    let signing = signing(None).await;
-    let mut browser = Browsing::new(&signing);
-    let client = browser.register("My agent").await;
-    let consent = browser
-        .reach_consent(&client, "s", "nameless@example.com")
-        .await;
-    let manager = signing.pages.cookie.clone();
-    let mut manager = Browsing::with_cookie(&signing, &manager);
-    manager.post("/people/2/disable", &[]).await;
-    manager.post("/people/2/enable", &[]).await;
-    browser.sign_in("/", Some("nameless@example.com")).await;
-
-    let answered = browser
-        .post_fields("/oauth/authorize", &decision_fields(&consent, "allow"))
-        .await;
-
-    assert_eq!(answered.status, 400, "{}", answered.html.html());
-    assert!(!answered.headers.contains_key("location"));
 }

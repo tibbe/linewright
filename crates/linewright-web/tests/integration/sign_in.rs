@@ -153,7 +153,7 @@ impl Answer {
 
     /// Each `Set-Cookie`.
     #[track_caller]
-    fn set_cookies(&self) -> Vec<&str> {
+    pub(super) fn set_cookies(&self) -> Vec<&str> {
         self.headers
             .get_all("set-cookie")
             .iter()
@@ -297,16 +297,68 @@ impl<'a> Browsing<'a> {
             _ => opened,
         };
         assert_eq!(sign_in.status, 200, "{path} at {caller}");
-        let action = format!("/auth/{provider}");
-        let form = select(&sign_in.html, &format!("form[action='{action}']"));
-        assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
-        let return_to = select_in(form[0], "input[name=return]")[0]
-            .attr("value")
-            .expect("the path to return to")
-            .to_string();
-        let begun = self.post(&action, &[("return", &return_to)]).await;
-        assert_eq!(begun.status, 303, "at {caller}");
+        let begun = self.begin_on(&sign_in, provider).await;
+        assert_eq!(begun.status, 303, "at {caller}: {}", begun.html.html());
         url::Url::parse(begun.location()).expect("the provider's URL")
+    }
+
+    /// Begins a sign-in with `provider` on `sign_in`, Sign in as it shows,
+    /// posting its form as it is: what the browser is answered.
+    #[track_caller]
+    pub(super) fn begin_on<'b>(
+        &'b mut self,
+        sign_in: &'b Answer,
+        provider: Provider,
+    ) -> impl Future<Output = Answer> + 'b {
+        let caller = Location::caller();
+        async move {
+            let action = format!("/auth/{provider}");
+            let form = select(&sign_in.html, &format!("form[action='{action}']"));
+            assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
+            let fields: Vec<(String, String)> = select_in(form[0], "input[type=hidden]")
+                .into_iter()
+                .map(|input| {
+                    (
+                        input.attr("name").unwrap().to_string(),
+                        input.attr("value").unwrap().to_string(),
+                    )
+                })
+                .collect();
+            let fields: Vec<(&str, &str)> = fields
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str()))
+                .collect();
+            self.post(&action, &fields).await
+        }
+    }
+
+    /// Signs in with Google on `sign_in`, Sign in as it shows, choosing the
+    /// account of `email`: what the browser is answered as it is sent back.
+    pub(super) async fn sign_in_on(&mut self, sign_in: &Answer, email: &str) -> Answer {
+        let begun = self.begin_on(sign_in, Provider::Google).await;
+        self.choose_at_google(&begun, email).await
+    }
+
+    /// Chooses the account of `email` at Google, where `begun`, a sign-in
+    /// begun with Google, sent the browser: what the browser is answered as
+    /// it is sent back.
+    #[track_caller]
+    pub(super) fn choose_at_google<'b>(
+        &'b mut self,
+        begun: &'b Answer,
+        email: &'b str,
+    ) -> impl Future<Output = Answer> + 'b {
+        let caller = Location::caller();
+        async move {
+            assert_eq!(begun.status, 303, "at {caller}: {}", begun.html.html());
+            let authorize = url::Url::parse(begun.location()).expect("the provider's URL");
+            self.choose(
+                FakeGoogle::choosing(&authorize, Some(email)),
+                Provider::Google,
+                caller,
+            )
+            .await
+        }
     }
 
     /// Goes to `chosen`, where `provider` sends the browser back to its

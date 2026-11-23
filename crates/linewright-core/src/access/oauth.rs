@@ -270,6 +270,13 @@ impl RedirectUri {
     pub fn host(&self) -> &str {
         self.url.host_str().unwrap_or_default()
     }
+
+    /// Whether it leads to an app on the person's own computer: to a
+    /// loopback address, `localhost` among them (`docs/specs/access.md`,
+    /// The authorization server, Loopback).
+    pub fn is_loopback(&self) -> bool {
+        to_loopback(&self.url)
+    }
 }
 
 /// Whether `url` is to a loopback address, `localhost` included.
