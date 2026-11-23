@@ -583,23 +583,33 @@ async fn a_decision_from_another_site_is_refused() {
 /// `docs/specs/access.md`, The authorization server, 2a, and Authorization
 /// error; `docs/specs/web/access.md`, Authorization error.
 #[test_log::test(tokio::test)]
-async fn an_unknown_client_shows_authorization_error_and_sends_nothing_back() {
+async fn an_unknown_client_or_redirect_uri_shows_authorization_error_and_sends_nothing_back() {
     let signing = signing(None).await;
     let mut browser = Browsing::new(&signing);
+    let client = browser.register("My agent").await;
 
-    let error = browser
-        .get(&authorize_path("no-such-client", REDIRECT_URI, "s"))
-        .await;
+    for (path, message) in [
+        (
+            authorize_path("no-such-client", REDIRECT_URI, "s"),
+            "Linewright does not know this client.",
+        ),
+        (
+            authorize_path(&client, "http://127.0.0.1:5001/cb", "s"),
+            "This is not a redirect URI of this client.",
+        ),
+    ] {
+        let error = browser.get(&path).await;
 
-    assert_eq!(error.status, 400);
-    assert!(!error.headers.contains_key("location"));
-    assert_eq!(
-        text(select(&error.html, ".authorization-error h1")[0]),
-        "Linewright cannot authorize this client"
-    );
-    let alert = select(&error.html, ".authorization-error .alert")[0];
-    assert_eq!(text(alert), "Linewright does not know this client.");
-    assert!(has_classes(alert, &["alert-error"]));
+        assert_eq!(error.status, 400, "{path}");
+        assert!(!error.headers.contains_key("location"));
+        assert_eq!(
+            text(select(&error.html, ".authorization-error h1")[0]),
+            "Linewright cannot authorize this client"
+        );
+        let alert = select(&error.html, ".authorization-error .alert")[0];
+        assert_eq!(text(alert), message);
+        assert!(has_classes(alert, &["alert-error"]));
+    }
 }
 
 /// `docs/specs/access.md`, The authorization server, Grants.
@@ -658,6 +668,40 @@ async fn refresh_tokens_rotate_with_the_grace_of_a_lost_response() {
             .any(|line| line.contains("ended an authorization")),
         "{logged:?}"
     );
+}
+
+/// `docs/specs/access.md`, Tokens: the refresh token that a lost response
+/// held stopped working, and using it ends its authorization.
+#[test_log::test(tokio::test)]
+async fn the_refresh_token_of_a_lost_response_ends_its_authorization() {
+    let signing = signing(None).await;
+    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
+    let (id, first) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let mut client = Browsing::new(&signing);
+    let lost = Tokens::of(&client.refresh(&id, &first.refresh).await);
+    let retried = Tokens::of(&client.refresh(&id, &first.refresh).await);
+
+    let dead = client.refresh(&id, &lost.refresh).await;
+
+    assert_eq!(dead.status, 400);
+    assert_eq!(acting_as(&signing, &retried.access).await, None);
+}
+
+/// `docs/specs/access.md`, Tokens: the previous refresh token stops working
+/// once the client first uses the one that replaced it.
+#[test_log::test(tokio::test)]
+async fn the_previous_refresh_token_stops_working_once_its_replacement_is_used() {
+    let signing = signing(None).await;
+    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
+    let (id, first) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let mut client = Browsing::new(&signing);
+    let second = Tokens::of(&client.refresh(&id, &first.refresh).await);
+    let third = Tokens::of(&client.refresh(&id, &second.refresh).await);
+
+    let dead = client.refresh(&id, &first.refresh).await;
+
+    assert_eq!(dead.status, 400);
+    assert_eq!(acting_as(&signing, &third.access).await, None);
 }
 
 /// `docs/specs/access.md`, Tokens: an access token stops working one hour
