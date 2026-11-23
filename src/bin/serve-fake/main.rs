@@ -8,7 +8,9 @@
 //! but for the work directory when `SERVE_FAKE_WORK_DIR` names one: so that
 //! one release can serve the work directory another left. With
 //! `SERVE_FAKE_UNPOLLED` set, each poll fails, so that the web UI stays as it
-//! is before Linewright's first poll.
+//! is before Linewright's first poll. With `SERVE_FAKE_UNNAMED` set, the
+//! `manager` setting names no one, so that the seed's manager is only the
+//! last manager.
 //!
 //! It runs `lw` and `fake-claude` from beside itself, as
 //! `cargo build --features fake-claude` leaves them.
@@ -143,21 +145,27 @@ const WORK_DIR: &str = "SERVE_FAKE_WORK_DIR";
 /// The variable that, set, fails each poll.
 const UNPOLLED: &str = "SERVE_FAKE_UNPOLLED";
 
+/// The variable that, set, leaves the `manager` setting out.
+const UNNAMED: &str = "SERVE_FAKE_UNNAMED";
+
 /// Serving the seed's repository from `dir` on `port`, with the work
 /// directory [`WORK_DIR`] names or one in `dir`, each stage's sessions told
-/// their stage, as `fake-claude` takes its steps by it.
+/// their stage, as `fake-claude` takes its steps by it, and the `manager`
+/// setting naming the seed's manager unless [`UNNAMED`] is set.
 fn config(dir: &Path, port: u16) -> Result<Config> {
     let work = std::env::var_os(WORK_DIR).map_or_else(|| dir.join("work"), PathBuf::from);
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
          public-url = \"http://127.0.0.1:{port}\"\ngoogle-client-id = \"serve-fake\"\n\
-         google-signup-domains = [\"{domain}\"]\nmanager = \"google:{manager}\"\n\
+         google-signup-domains = [\"{domain}\"]\n\
          poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",
         repo = seed::REPO,
         work = work.display(),
         domain = seed::SIGNUP_DOMAIN,
-        manager = seed::MANAGER,
     );
+    if std::env::var_os(UNNAMED).is_none() {
+        writeln!(text, "manager = \"google:{}\"", seed::MANAGER)?;
+    }
     for name in WorkKind::ALL
         .map(WorkKind::name)
         .into_iter()
