@@ -19,7 +19,7 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
 
     assert_eq!(
         page.headers()["content-security-policy"],
-        "default-src 'self'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com"
+        "default-src 'self'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com https://*.googleusercontent.com; frame-ancestors 'none'"
     );
     assert_eq!(select(&html, "script:not([src])").len(), 0);
     let named: Vec<(&str, &str)> = scripts
@@ -53,9 +53,9 @@ async fn pages_run_only_linewrights_own_scripts_and_assets_are_kept_for_good() {
 }
 
 /// The status of `router`'s answer to a GET of `path` with `host` as its
-/// `Host`, or none.
-async fn status_at(router: &Router, host: Option<&str>, path: &str) -> u16 {
-    routed(router, hyper::Method::GET, host, path)
+/// `Host`, or none, from a browser holding the cookies `cookie`.
+async fn status_at(router: &Router, host: Option<&str>, path: &str, cookie: &str) -> u16 {
+    routed_with_cookie(router, hyper::Method::GET, host, path, cookie)
         .await
         .status()
         .as_u16()
@@ -89,7 +89,11 @@ async fn the_ui_answers_the_public_urls_host_ignoring_case_port_and_a_trailing_d
             (&loopback, "[0:0:0:0:0:0:0:1]"),
             (&mapped, "[::ffff:7f00:1]"),
         ] {
-            assert_eq!(status_at(ui, Some(host), &path).await, 200, "{host} {path}");
+            assert_eq!(
+                status_at(ui, Some(host), &path, pages.cookie()).await,
+                200,
+                "{host} {path}"
+            );
         }
     }
 }
@@ -111,7 +115,7 @@ async fn the_ui_refuses_any_other_host_or_none_as_misdirected_and_logs_it() {
         ] {
             let (log, _guard) = Log::capture();
 
-            let status = status_at(&ui, host, &path).await;
+            let status = status_at(&ui, host, &path, pages.cookie()).await;
 
             assert_eq!(status, 421, "{host:?} {path}");
             let refused = log.lines("WARN");
@@ -187,7 +191,14 @@ async fn a_web_ui_stopped_with_a_stream_open_frees_its_address() {
     let ui = pages.listen().await;
     let address = ui.local_address();
     let connection = tokio::net::TcpStream::connect(address).await.unwrap();
-    let stream = send_over(connection, hyper::Method::GET, Some(UI_HOST), "/events/").await;
+    let stream = send_over(
+        connection,
+        hyper::Method::GET,
+        Some(UI_HOST),
+        "/events/",
+        &[("Cookie", pages.cookie())],
+    )
+    .await;
     assert_eq!(stream.status(), 200);
 
     tokio::time::timeout(Duration::from_secs(10), ui.stop())

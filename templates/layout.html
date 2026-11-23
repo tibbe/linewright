@@ -64,7 +64,17 @@
 {%- call nav_link(area) %}{% endcall %}
 {%- endfor %}
 </ul>
-<div class="tooltip tooltip-right mt-auto mb-4 ms-3 hidden self-start lg:block">
+<div class="account dropdown dropdown-top mt-auto mb-4 lg:mb-0">
+<div class="lg:rail:tooltip lg:rail:tooltip-right">{% call rail_tip(frame.account.name) %}{% endcall %}<div class="btn btn-ghost btn-sm h-auto justify-start gap-2 px-3 py-1 text-start font-normal" tabindex="0" role="button" aria-label="{{ frame.account.name }}, {{ frame.account.role }}">
+{%- if let Some(avatar) = frame.account.avatar %}<div class="avatar"><div class="size-8 rounded-full"><img src="{{ avatar }}" width="32" height="32" alt="" referrerpolicy="no-referrer"></div></div>
+{%- else %}<div class="avatar avatar-placeholder"><div class="size-8 rounded-full bg-neutral text-neutral-content"><span>{{ frame.account.letter }}</span></div></div>
+{%- endif %}<span class="flex min-w-0 flex-col lg:rail:hidden"><span class="account-name truncate font-semibold">{{ frame.account.name }}</span><span class="account-role text-xs text-base-content/60">{{ frame.account.role }}</span></span></div></div>
+<ul class="dropdown-content menu z-10 w-52 rounded-box bg-base-100 p-2 shadow-sm" tabindex="0">
+<li><button type="submit" form="sign-out">{{ crate::web::buttons::Verb::SignOut.labelled() }}</button></li>
+</ul>
+<form id="sign-out" method="post" action="{{ crate::web::sign_in::SIGN_OUT_PATH }}" hidden></form>
+</div>
+<div class="tooltip tooltip-right mt-2 mb-4 ms-3 hidden self-start lg:block">
 <span id="navigation-toggle-name" class="tooltip-content">{{ page.navigation.toggle_name() }}</span>
 <button type="button" class="btn btn-ghost btn-circle btn-sm" data-navigation-toggle="{{ crate::web::shell::Navigation::PATH }}" aria-labelledby="navigation-toggle-name">{% call ui::icon(crate::web::icons::Icon::ChevronDoubleRight, crate::web::icons::IconSize::Inline, "-scale-x-100 lg:rail:scale-x-100") %}{% endcall %}</button>
 </div>

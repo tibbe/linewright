@@ -20,7 +20,7 @@ use super::icons::{CardIcon, Icon};
 use super::names::Names;
 use super::{Page, cookie_headers, cookie_values, render, run_path};
 use crate::access::{self, Permit};
-use crate::actions::{self, ServerAnswer};
+use crate::actions::{self, Action, ServerAnswer};
 use crate::api::Sources;
 use crate::domain::{Number, Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
@@ -432,6 +432,31 @@ impl Within {
 pub(super) struct Frame {
     pub(super) repo: Repo,
     pub(super) holds: Vec<HoldShown>,
+    pub(super) account: Account,
+    /// The reader's access level.
+    reach: access::Level,
+}
+
+/// The reader, as the account at the foot of the navigation shows them
+/// (`docs/specs/shell.md`, The account).
+pub(super) struct Account {
+    pub(super) name: String,
+    pub(super) avatar: Option<String>,
+    /// What stands in for the avatar without one.
+    pub(super) letter: String,
+    pub(super) role: &'static str,
+}
+
+impl Account {
+    fn of(caller: &access::Caller) -> Account {
+        let person = caller.person();
+        Account {
+            name: person.shown_name().to_string(),
+            avatar: person.avatar.as_ref().map(ToString::to_string),
+            letter: person.letter(),
+            role: caller.role().name(),
+        }
+    }
 }
 
 /// A hold on Linewright's work, shown on every page while it lasts
@@ -605,10 +630,10 @@ impl Read {
 
 impl Frame {
     pub(super) async fn of(permit: &Permit<access::Read>, sources: &Sources) -> Frame {
-        Frame::of_read(sources, &Read::of(permit, sources).await)
+        Frame::of_read(permit, sources, &Read::of(permit, sources).await)
     }
 
-    pub(super) fn of_read(sources: &Sources, read: &Read) -> Frame {
+    pub(super) fn of_read(permit: &Permit<access::Read>, sources: &Sources, read: &Read) -> Frame {
         let linewright = &read.linewright;
         let repo = sources.work_dir.repo.clone();
         let names = read.names(&repo);
@@ -620,7 +645,19 @@ impl Frame {
                 href: hold.href(),
             })
             .collect();
-        Frame { repo, holds }
+        Frame {
+            repo,
+            holds,
+            account: Account::of(permit.caller()),
+            reach: permit.caller().role().level(),
+        }
+    }
+
+    /// Whether the reader's role allows `action`, for whether the screen
+    /// shows its buttons (`docs/specs/access.md`, Actions, What the
+    /// reader's role does not allow).
+    pub(super) fn allows(&self, action: Action) -> bool {
+        self.reach >= action.level()
     }
 }
 
@@ -646,12 +683,14 @@ struct CrumbsRegion<'a> {
 #[template(path = "shell_heading.html")]
 struct HeadingRegion<'a> {
     page: &'a Page,
+    frame: &'a Frame,
 }
 
 #[derive(Template)]
 #[template(path = "shell_buttons.html")]
 struct ButtonsRegion<'a> {
     page: &'a Page,
+    frame: &'a Frame,
 }
 
 /// The regions of the shell, which every page's stream sends before its
@@ -665,8 +704,8 @@ pub(super) fn regions(frame: &Frame, page: &Page) -> Vec<(&'static str, String)>
         holds(frame),
         ("title", render(&TitleRegion { page })),
         ("crumbs", render(&CrumbsRegion { page })),
-        ("heading", render(&HeadingRegion { page })),
-        ("buttons", render(&ButtonsRegion { page })),
+        ("heading", render(&HeadingRegion { page, frame })),
+        ("buttons", render(&ButtonsRegion { page, frame })),
     ]
 }
 

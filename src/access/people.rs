@@ -95,6 +95,10 @@ impl PersonId {
     pub(crate) fn row(self) -> i64 {
         self.0
     }
+
+    pub(crate) fn of_row(row: i64) -> PersonId {
+        PersonId(row)
+    }
 }
 
 impl fmt::Display for PersonId {

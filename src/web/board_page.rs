@@ -3,11 +3,9 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 
 use super::caller::Reader;
 use super::cards::{self, card_line, lane_head};
@@ -240,7 +238,7 @@ pub(super) async fn board_page(
 /// to its person, if set, and the people Person is chosen from.
 pub(super) async fn board_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Query(filters): Query<FilterQuery>,
     navigation: Navigation,
 ) -> Response {
@@ -272,5 +270,5 @@ pub(super) async fn board_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }

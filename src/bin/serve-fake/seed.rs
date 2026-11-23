@@ -7,6 +7,10 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use linewright::access::Role;
+use linewright::access::people::{Claims, Identity, People};
+use linewright::access::providers::Provider;
+use linewright::access::providers::fake::FakeAccount;
 use linewright::apply::hand_back::LogTail;
 use linewright::benchmarks::{
     BenchmarkId, BenchmarkRuns, Benchmarks, RunTask, ScoreFigures, TrialChange, TrialFigures,
@@ -1023,4 +1027,63 @@ fn returned(id: &str, output: &str) -> Value {
         "type": "user",
         "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": output}]},
     })
+}
+
+/// The person the `manager` setting names.
+pub const MANAGER: &str = "ada@example.com";
+
+/// The domain whose verified emails meet Google's sign-up rule.
+pub const SIGNUP_DOMAIN: &str = "example.com";
+
+/// The accounts the fake Google signs in: the manager; a contributor and a
+/// viewer, whom [`people`] adds; someone of the sign-up rule's domain, whom
+/// a first sign-in adds as a viewer; and two that Linewright refuses.
+pub fn google_accounts() -> Vec<FakeAccount> {
+    let account = |subject: &str, email: &str, verified: bool, name: Option<&str>| FakeAccount {
+        subject: subject.into(),
+        email: email.into(),
+        email_verified: verified,
+        name: name.map(Into::into),
+        picture: None,
+    };
+    vec![
+        account("1001", MANAGER, true, Some("Ada Lovelace")),
+        account("1002", "grace@example.com", true, Some("Grace Hopper")),
+        account("1003", "vera@example.com", true, Some("Vera Viewer")),
+        account("1004", "new@example.com", true, None),
+        account("1005", "mallory@elsewhere.example", true, Some("Mallory")),
+        account(
+            "1006",
+            "unverified@example.com",
+            false,
+            Some("Una Verified"),
+        ),
+    ]
+}
+
+/// Adds the manager, the contributor and the viewer of
+/// [`google_accounts`], as their first sign-ins would have, but those the
+/// database already holds.
+pub async fn people(database: &Database) -> Result<()> {
+    let people = People::new(database.clone());
+    for (account, role) in
+        google_accounts()
+            .into_iter()
+            .zip([Role::Manager, Role::Contributor, Role::Viewer])
+    {
+        let claims = Claims {
+            identity: Identity {
+                provider: Provider::Google,
+                subject: account.subject,
+            },
+            shown_as: account.email,
+            name: account.name,
+            avatar: None,
+            email_verified: account.email_verified,
+        };
+        if people.find_by_identity(&claims.identity).await?.is_none() {
+            people.add(&claims, role, started_at()).await?;
+        }
+    }
+    Ok(())
 }

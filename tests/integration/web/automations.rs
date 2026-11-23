@@ -331,13 +331,12 @@ async fn before_the_first_poll_the_automations_page_says_there_has_been_none() {
     let clock = std::sync::Arc::new(FakeClock::new());
     let (_unpolled, served) = tokio::sync::watch::channel(None);
     let (_unended, polling) = tokio::sync::watch::channel(None);
-    let router = web::router(
-        sources(&dir, &clock, clock.now(), served, polling).await,
-        public_url(),
-        CancellationToken::new(),
-    );
+    let sources = sources(&dir, &clock, clock.now(), served, polling).await;
+    let cookie = signed_in_as(&sources, linewright::access::Role::Viewer, "Vera Viewer").await;
+    let router = web::router(sources, &ui(), CancellationToken::new());
     let request = axum::http::Request::get("/automations")
         .header("Host", UI_HOST)
+        .header("Cookie", cookie)
         .body(Body::empty())
         .unwrap();
 

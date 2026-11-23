@@ -216,7 +216,7 @@ async fn in_the_rail_each_link_is_its_icon_with_its_name_in_a_tooltip_to_its_rig
     assert_eq!(in_the_rail(side), ["overflow-visible"], "{}", side.html());
     let nav = select_in(side, "nav")[0];
     assert!(in_the_rail(nav).contains(&"w-14"), "{}", nav.html());
-    let items = select_in(nav, ".menu > li");
+    let items = select_in(nav, ".menu:not(.dropdown-content) > li");
     assert_eq!(items.len(), 5, "{}", nav.html());
     for item in items {
         let link = select_in(item, "a")[0];

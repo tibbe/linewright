@@ -1,0 +1,30 @@
+{%- import "macros.html" as ui -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sign in · Linewright</title>
+<link rel="stylesheet" href="{{ css }}">
+</head>
+<body class="bg-base-100 text-base-content">
+<main class="flex min-h-screen items-center justify-center p-4">
+<section class="sign-in {% call ui::card_look() %}{% endcall %} w-full max-w-100 p-12">
+<h1 class="mb-2 text-center text-3xl font-bold">Sign in to Linewright</h1>
+<p class="repo-name mb-6 text-center text-base-content/60">{{ repo }}</p>
+{%- if let Some(message) = message %}
+<div class="alert{% if message.error %} alert-error{% endif %} mb-6" role="{% if message.error %}alert{% else %}status{% endif %}"><span>{{ message.text }}</span></div>
+{%- endif %}
+<div class="flex flex-col items-center gap-2">
+{%- if google %}
+<form method="post" action="{{ crate::web::sign_in::GOOGLE_PATH }}">
+<input type="hidden" name="return" value="{{ return_to.as_str() }}">
+<button class="google cursor-pointer rounded-full" type="submit"><picture><source srcset="{{ google_dark }}" media="(prefers-color-scheme: dark)"><img src="{{ google_light }}" width="180" height="40" alt="Sign in with Google"></picture></button>
+</form>
+{%- endif %}
+</div>
+</section>
+</main>
+</body>
+</html>

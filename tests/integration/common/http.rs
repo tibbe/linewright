@@ -6,8 +6,23 @@ pub async fn routed(
     host: Option<&str>,
     path: &str,
 ) -> axum::response::Response {
+    routed_with_cookie(router, method, host, path, "").await
+}
+
+/// As [`routed`], from a browser holding the cookies `cookie`, or none
+/// where it is empty.
+pub async fn routed_with_cookie(
+    router: &axum::Router,
+    method: hyper::Method,
+    host: Option<&str>,
+    path: &str,
+    cookie: &str,
+) -> axum::response::Response {
     use tower::ServiceExt as _;
     let mut request = axum::http::Request::builder().method(method).uri(path);
+    if !cookie.is_empty() {
+        request = request.header("Cookie", cookie);
+    }
     if let Some(host) = host {
         request = request.header("Host", host);
     }
@@ -24,12 +39,14 @@ pub async fn status_and_body(response: axum::response::Response) -> (u16, String
 }
 
 /// Sends a request for `path` over `stream`, with `host` as its `Host`, or
-/// none, and gives the answer as soon as its head arrives.
+/// none, and `headers` besides, and gives the answer as soon as its head
+/// arrives.
 pub async fn send_over(
     stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     method: hyper::Method,
     host: Option<&str>,
     path: &str,
+    headers: &[(&str, &str)],
 ) -> hyper::Response<hyper::body::Incoming> {
     let (mut sender, connection) =
         hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
@@ -39,6 +56,9 @@ pub async fn send_over(
     let mut request = hyper::Request::builder().method(method).uri(path);
     if let Some(host) = host {
         request = request.header("Host", host);
+    }
+    for (name, value) in headers {
+        request = request.header(*name, *value);
     }
     let request = request
         .body(http_body_util::Empty::<axum::body::Bytes>::new())
@@ -89,5 +109,51 @@ pub fn ui_on(address: &str) -> linewright::web::Ui {
             endpoints: linewright::access::providers::GoogleEndpoints::default(),
         }),
         manager: None,
+    }
+}
+
+/// The web UI as tests drive it in-process, at [`public_url`].
+pub fn ui() -> linewright::web::Ui {
+    ui_on("127.0.0.1:8081")
+}
+
+/// A browser signed in by the back door as a new, enabled person of `role`
+/// whose name is `name`, signed in with Google as `EMAIL`, the name's first
+/// word lower-cased `@example.com`, as a [`FakeClock`] starts, without
+/// reading the clock of `sources`: the `Cookie` it sends.
+#[track_caller]
+pub fn signed_in_as(
+    sources: &linewright::api::Sources,
+    role: linewright::access::Role,
+    name: &str,
+) -> impl Future<Output = String> + use<> {
+    use linewright::access::people::{Claims, Identity, People};
+    use linewright::access::providers::Provider;
+    use linewright::access::sessions::{SESSION_COOKIE, Sessions};
+    let caller = std::panic::Location::caller();
+    let database = sources.runs.database().clone();
+    let now = super::at(super::STARTED);
+    let first = name.split(' ').next().unwrap().to_lowercase();
+    let claims = Claims {
+        identity: Identity {
+            provider: Provider::Google,
+            subject: format!("subject-of-{first}"),
+        },
+        shown_as: format!("{first}@example.com"),
+        name: Some(name.to_string()),
+        avatar: None,
+        email_verified: true,
+    };
+    let name = name.to_string();
+    async move {
+        let person = People::new(database.clone())
+            .add(&claims, role, now)
+            .await
+            .unwrap_or_else(|e| panic!("adding {name} at {caller}: {e:#}"));
+        let cookie = Sessions::new(database)
+            .start(person.id, now)
+            .await
+            .unwrap_or_else(|e| panic!("signing {name} in at {caller}: {e:#}"));
+        format!("{SESSION_COOKIE}={}", cookie.value())
     }
 }

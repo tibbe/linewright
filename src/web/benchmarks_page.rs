@@ -6,13 +6,11 @@ use std::sync::Arc;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::buttons::ScreenButton;
@@ -339,6 +337,7 @@ fn page(narrowing: &Narrowing, navigation: Navigation) -> Page {
     )
     .buttons(vec![ScreenButton::New {
         dialog: NEW_BENCHMARK,
+        action: Action::CreateBenchmark,
     }])
 }
 
@@ -366,7 +365,7 @@ pub(super) async fn benchmarks_page(
 /// keep.
 pub(super) async fn benchmarks_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Query(query): Query<BenchmarksQuery>,
     navigation: Navigation,
 ) -> Response {
@@ -387,7 +386,7 @@ pub(super) async fn benchmarks_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }
 
 /// What the New benchmark dialog's form sends, a field it lacks being empty.

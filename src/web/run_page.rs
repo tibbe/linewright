@@ -9,14 +9,12 @@ use std::fmt::Write as _;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use futures_util::future::BoxFuture;
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 use tracing::error;
 
 use super::buttons::{ScreenButton, Verb};
@@ -32,6 +30,7 @@ use super::{
 };
 use crate::access::{Permit, Read};
 use crate::actions;
+use crate::actions::Action;
 use crate::api::{EventId, Sources};
 use crate::domain::Timestamp;
 use crate::logs::{KeptRuns, LogsError, RunRecords, Which};
@@ -1238,6 +1237,7 @@ fn transcript_page_at(
         .then(|| ScreenButton::Act {
             verb: Verb::AddTask,
             dialog: capture::DIALOG.into(),
+            action: Action::AddTask,
         })
         .into_iter()
         .collect();
@@ -1400,7 +1400,7 @@ const LAST_EVENT_ID: &str = "last-event-id";
 /// starts stays so, as its page shows it.
 pub(super) async fn run_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(id): Path<String>,
     Query(query): Query<RunQuery>,
     headers: HeaderMap,
@@ -1441,7 +1441,7 @@ pub(super) async fn run_events(
     transcript_events(
         permit,
         sources,
-        stopping,
+        watch,
         transcribed.as_ref(),
         &query,
         &headers,
@@ -1462,7 +1462,7 @@ pub(super) type PageOf = Box<dyn Fn() -> BoxFuture<'static, Option<Page>> + Send
 pub(super) async fn transcript_events(
     permit: Permit<Read>,
     sources: Sources,
-    stopping: CancellationToken,
+    watch: super::caller::Watch,
     transcribed: Option<&Transcribed>,
     query: &RunQuery,
     headers: &HeaderMap,
@@ -1509,7 +1509,7 @@ pub(super) async fn transcript_events(
         page,
         permit,
         sources,
-        stopping,
+        watch,
     };
     let events = futures_util::stream::unfold(stream, |mut stream| async move {
         let events = stream.next().await?.into_iter().map(Ok::<_, Infallible>);
@@ -1526,7 +1526,7 @@ struct RunStream {
     page: PageOf,
     permit: Permit<Read>,
     sources: Sources,
-    stopping: CancellationToken,
+    watch: super::caller::Watch,
 }
 
 /// What a stream woke for.
@@ -1541,7 +1541,7 @@ impl RunStream {
     async fn next(&mut self) -> Option<Vec<Event>> {
         loop {
             let wake = tokio::select! {
-                () = self.stopping.cancelled() => return None,
+                () = self.watch.stopping().cancelled() => return None,
                 events = next_events(self.transcript.as_mut()) => Wake::Transcript(events),
                 _ = self.samples.tick() => Wake::Sample,
             };
@@ -1557,6 +1557,9 @@ impl RunStream {
                     vec![]
                 }
                 Wake::Sample => {
+                    if !self.watch.signs_someone_in().await {
+                        return None;
+                    }
                     let frame = Frame::of(&self.permit, &self.sources).await;
                     let regions = match (self.page)().await {
                         Some(page) => shell::regions(&frame, &page),

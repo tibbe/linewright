@@ -6,7 +6,6 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::FromRequestParts;
 use axum::extract::{Path, Query, State};
@@ -15,7 +14,6 @@ use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use serde::Deserialize;
 use std::convert::Infallible;
-use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use super::benchmark_run_page::{shown_of, state_status};
@@ -406,6 +404,8 @@ struct BenchmarkRunsRegion<'a> {
 #[template(path = "benchmark_new_benchmark_run.html")]
 struct NewBenchmarkRunRegion {
     tasks: usize,
+    /// Whether the reader's role allows launching a benchmark run.
+    allowed: bool,
 }
 
 /// The New task dialog's fields (`docs/specs/benchmarks.md`, New task).
@@ -803,6 +803,7 @@ async fn benchmark_page_on(
                 frame,
                 new_benchmark_run_offer: html::rendered(&NewBenchmarkRunRegion {
                     tasks: task_count,
+                    allowed: permit.caller().can(Action::RunBenchmark.level()),
                 }),
                 added_configuration: new_benchmark_run.added(),
                 added_file: NewBenchmarkRunForm::added_file(),
@@ -857,7 +858,7 @@ async fn benchmark_page_on(
 /// run's title, and the values Edit benchmark starts from.
 pub(super) async fn benchmark_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(id): Path<String>,
     Query(paging): Query<Paging>,
     navigation: Navigation,
@@ -888,7 +889,10 @@ pub(super) async fn benchmark_events(
             ));
             regions.push((
                 "new-benchmark-run-offer",
-                render(&NewBenchmarkRunRegion { tasks: task_count }),
+                render(&NewBenchmarkRunRegion {
+                    tasks: task_count,
+                    allowed: permit.caller().can(Action::RunBenchmark.level()),
+                }),
             ));
             regions.push((
                 "tasks",
@@ -936,7 +940,7 @@ pub(super) async fn benchmark_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }
 
 /// The ID of the benchmark of a write's path, or else what the page says of

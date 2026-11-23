@@ -8,6 +8,9 @@ use linewright::domain::Timestamp;
 /// The time the functional core is asked at.
 pub const NOW: &str = "2026-10-01T12:00:30Z";
 
+/// The time a [`FakeClock`] starts at.
+pub const STARTED: &str = "2026-10-01T12:00:00Z";
+
 /// The `Timestamp` the RFC 3339 `time` names.
 pub fn at(time: &str) -> Timestamp {
     DateTime::parse_from_rfc3339(time)
@@ -26,11 +29,7 @@ impl FakeClock {
     pub fn new() -> FakeClock {
         let (sleeps, slept) = tokio::sync::mpsc::unbounded_channel();
         FakeClock {
-            now: Mutex::new(
-                DateTime::parse_from_rfc3339("2026-10-01T12:00:00Z")
-                    .unwrap()
-                    .with_timezone(&Utc),
-            ),
+            now: Mutex::new(at(STARTED)),
             advanced: tokio::sync::Notify::new(),
             sleeps,
             slept: tokio::sync::Mutex::new(slept),

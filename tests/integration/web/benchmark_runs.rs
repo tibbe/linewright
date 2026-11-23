@@ -289,11 +289,16 @@ async fn new_benchmark_run_shows_in_the_benchmark_runs_bar_only_on_a_benchmark_w
 /// benchmark runs as it was told.
 struct Showing {
     router: axum::Router,
+    cookie: String,
 }
 
 impl Routed for Showing {
     fn router(&self) -> &axum::Router {
         &self.router
+    }
+
+    fn cookie(&self) -> &str {
+        &self.cookie
     }
 }
 
@@ -313,7 +318,8 @@ fn showing(pages: &Pages, shown: linewright::benchmarks::Shown) -> Showing {
         ..pages.sources.clone()
     };
     Showing {
-        router: web::router(sources, public_url(), pages.stopping.clone()),
+        router: web::router(sources, &ui(), pages.stopping.clone()),
+        cookie: pages.cookie.clone(),
     }
 }
 

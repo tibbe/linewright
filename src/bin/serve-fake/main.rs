@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use linewright::access::providers::GOOGLE_SECRET_VARIABLE;
+use linewright::access::providers::fake::FakeGoogle;
+use linewright::access::providers::{GOOGLE_SECRET_VARIABLE, Providers};
 use linewright::clock::{Clock, RunningFrom};
 use linewright::config::{Config, Settings};
 use linewright::factory::{Factory, SessionToken};
@@ -57,7 +58,13 @@ async fn serve() -> Result<()> {
     let clock: Arc<dyn Clock> = Arc::new(RunningFrom::new(seed::started_at()));
     let agent = fake_agent(dir, &beside.join("fake-claude"), clock.as_ref())?;
     let port = free_port()?;
-    let config = config(dir, port)?;
+    let google = FakeGoogle::serve(seed::google_accounts(), clock.clone()).await?;
+    let mut config = config(dir, port)?;
+    if let Some(ui) = &mut config.ui
+        && let Providers::Google(settings) = &mut ui.providers
+    {
+        settings.endpoints = google.endpoints();
+    }
     let store =
         Arc::new(LocalStore::create(&dir.join("store"), seed::repository()?, clock.clone()).await?);
     seed::seed(&store).await?;
@@ -80,6 +87,7 @@ async fn serve() -> Result<()> {
                 Ok(SessionToken::Separate("serve-fake".into()))
             })
             .await?;
+            seed::people(&database).await?;
             let harness = starting.harness(beside.join("lw"), clock.clone());
             let factory_config = starting.factory_config(
                 &config,
@@ -143,9 +151,12 @@ fn config(dir: &Path, port: u16) -> Result<Config> {
     let mut text = format!(
         "repo = \"{repo}\"\nwork-dir = \"{work}\"\nui-address = \"127.0.0.1:{port}\"\n\
          public-url = \"http://127.0.0.1:{port}\"\ngoogle-client-id = \"serve-fake\"\n\
+         google-signup-domains = [\"{domain}\"]\nmanager = \"google:{manager}\"\n\
          poll-interval = \"1s\"\nmodel = \"claude-opus-5-5\"\n",
         repo = seed::REPO,
         work = work.display(),
+        domain = seed::SIGNUP_DOMAIN,
+        manager = seed::MANAGER,
     );
     for name in WorkKind::ALL
         .map(WorkKind::name)

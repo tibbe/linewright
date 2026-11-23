@@ -3,10 +3,8 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::Path;
 use axum::response::{IntoResponse, Response};
-use tokio_util::sync::CancellationToken;
 
 use super::caller::Reader;
 use super::cards::{self, card_line, lane_head};
@@ -329,7 +327,7 @@ fn error_page(number: Number, frame: Frame, e: &Unexplained, navigation: Navigat
 /// holds it.
 pub(super) async fn item_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Path(number): Path<Number>,
     navigation: Navigation,
 ) -> Response {
@@ -358,5 +356,5 @@ pub(super) async fn item_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }

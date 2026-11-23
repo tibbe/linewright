@@ -6,12 +6,10 @@ use std::sync::Arc;
 
 use askama::Template;
 use askama_web::WebTemplate;
-use axum::Extension;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use tokio_util::sync::CancellationToken;
 
 use super::caller::Reader;
 use super::names::Names;
@@ -215,7 +213,7 @@ pub(super) async fn runs_page(
 /// start and end.
 pub(super) async fn runs_events(
     Reader { permit, sources }: Reader,
-    Extension(stopping): Extension<CancellationToken>,
+    watch: super::caller::Watch,
     Query(query): Query<RunsQuery>,
     navigation: Navigation,
 ) -> Response {
@@ -231,5 +229,5 @@ pub(super) async fn runs_events(
             regions
         }
     };
-    events(regions, stopping)
+    events(regions, watch)
 }
