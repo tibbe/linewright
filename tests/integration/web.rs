@@ -25,7 +25,6 @@ use common::*;
 use http_body_util::BodyExt as _;
 use linewright::api::Sources;
 use linewright::clock::Clock;
-use linewright::host::UiHosts;
 use linewright::web;
 use linewright::webhook::{Listener, Pending};
 use scraper::{ElementRef, Html, Selector};
@@ -123,7 +122,7 @@ impl Web {
             )
             .await
         };
-        let router = web::router(sources, UiHosts::default(), stopping.clone());
+        let router = web::router(sources, public_url(), stopping.clone());
         Web {
             serving,
             listener,
@@ -269,7 +268,7 @@ impl Pages {
             ..sources(&dir, &clock, since, served_receiver, polling).await
         };
         let stopping = CancellationToken::new();
-        let router = web::router(sources.clone(), UiHosts::default(), stopping.clone());
+        let router = web::router(sources.clone(), public_url(), stopping.clone());
         Pages {
             router,
             sources,
@@ -308,16 +307,18 @@ impl Pages {
         self.served.send_replace(Some(served));
     }
 
-    /// The web UI listening on a port of its own, answering `hosts` besides
-    /// the local names and IP addresses.
-    async fn listen(&self, hosts: &[&str]) -> web::Listener {
-        let ui = web::Ui {
-            address: "127.0.0.1:0".parse().unwrap(),
-            hosts: UiHosts::new(hosts.iter().copied()).unwrap(),
-        };
-        web::Listener::bind(&ui, self.sources.clone())
+    /// The web UI listening on a port of its own, at [`public_url`].
+    async fn listen(&self) -> web::Listener {
+        web::Listener::bind(&ui_on("127.0.0.1:0"), self.sources.clone())
             .await
             .unwrap()
+    }
+
+    /// The pages' router, at the public URL `url`.
+    #[track_caller]
+    fn at(&self, url: &str) -> Router {
+        let url = linewright::host::PublicUrl::parse(url).unwrap();
+        web::router(self.sources.clone(), url, self.stopping.clone())
     }
 
     /// Keeps the run `record`, in the form of a run's record file, as its
@@ -373,7 +374,7 @@ trait Routed {
     fn router(&self) -> &Router;
 
     async fn response(&self, path: &str) -> axum::response::Response {
-        routed(self.router(), hyper::Method::GET, Some("localhost"), path).await
+        routed(self.router(), hyper::Method::GET, Some(UI_HOST), path).await
     }
 
     async fn get(&self, path: &str) -> (u16, String) {
@@ -410,7 +411,7 @@ fn answer_with_cookie<W: Routed>(
     let caller = std::panic::Location::caller();
     let request = axum::http::Request::builder()
         .uri(path)
-        .header("Host", "localhost")
+        .header("Host", UI_HOST)
         .header("Cookie", cookie.as_bytes())
         .body(Body::empty())
         .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
@@ -461,7 +462,7 @@ fn post_answer<W: Routed>(
     let mut request = axum::http::Request::builder()
         .method(hyper::Method::POST)
         .uri(path)
-        .header("Host", "localhost:8080")
+        .header("Host", format!("{UI_HOST}:8080"))
         .header("Content-Type", "application/x-www-form-urlencoded");
     for (header, value) in headers {
         request = request.header(*header, *value);

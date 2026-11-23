@@ -7,6 +7,7 @@ use std::ffi::OsString;
 
 use aho_corasick::AhoCorasick;
 
+use crate::access::providers;
 use crate::git::Addition;
 use crate::redaction::Redaction;
 use crate::session_env;
@@ -16,13 +17,15 @@ use crate::webhook;
 
 pub const SETTING: &str = "secrets";
 
-/// The variables Linewright reads its own GitHub tokens and webhook secret
-/// from.
-pub const OWN_CREDENTIAL_VARIABLES: [&str; 4] = [
+/// The variables Linewright reads its own GitHub tokens, webhook secret
+/// and identity providers' client secrets from.
+pub const OWN_CREDENTIAL_VARIABLES: [&str; 6] = [
     TOKEN_VARIABLES[0],
     TOKEN_VARIABLES[1],
     SESSION_TOKEN_VARIABLE,
     webhook::SECRET_VARIABLE,
+    providers::GOOGLE_SECRET_VARIABLE,
+    providers::GITHUB_SECRET_VARIABLE,
 ];
 
 /// The variable the harness reads its Anthropic API key from.

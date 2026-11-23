@@ -149,8 +149,8 @@ fn without_scheme(value: &str) -> Option<&str> {
     (token && !rest.is_empty()).then_some(rest)
 }
 
-/// Whether `name` is a variable Linewright reads its own GitHub tokens or
-/// webhook secret from, which `session-pass-env` never passes.
+/// Whether `name` is a variable Linewright reads one of its own credentials
+/// from, which `session-pass-env` never passes.
 fn never_passed(name: &str) -> bool {
     OWN_CREDENTIAL_VARIABLES.contains(&name)
 }
@@ -220,7 +220,7 @@ impl PassEnv {
                 if never_passed(&name) {
                     return Err(format!(
                         "the setting `{PASS_SETTING}` names `{name}`: sessions are never given \
-                         Linewright's GitHub tokens or its webhook secret"
+                         Linewright's own credentials"
                     ));
                 }
                 variable_names::check(PASS_SETTING, &name)?;

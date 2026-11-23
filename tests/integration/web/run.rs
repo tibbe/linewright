@@ -447,7 +447,7 @@ async fn stream_with_ids(
     path: &str,
     last_id: Option<&str>,
 ) -> tokio::sync::mpsc::UnboundedReceiver<(Option<String>, String)> {
-    let mut request = axum::http::Request::get(path).header("Host", "localhost");
+    let mut request = axum::http::Request::get(path).header("Host", UI_HOST);
     if let Some(last_id) = last_id {
         request = request.header("Last-Event-ID", last_id);
     }

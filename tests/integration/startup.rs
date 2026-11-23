@@ -89,7 +89,15 @@ fn lw_with_model(
         .env("PATH", path)
         .env("XDG_RUNTIME_DIR", dir.path())
         .env("LINEWRIGHT_WORK_DIR", dir.path().join("work"))
-        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
+        .env_remove("LINEWRIGHT_UI_ADDRESS")
+        .env_remove("LINEWRIGHT_PUBLIC_URL")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GOOGLE_SIGNUP_DOMAINS")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GITHUB_SIGNUP_ORGS")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_MANAGER")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .env_remove("GH_TOKEN")
         .env_remove("GITHUB_TOKEN")
@@ -426,42 +434,23 @@ fn serve_with_status(args: &[&str], env: &[(&str, &str)]) -> (std::process::Exit
     lw_with_status(empty.path(), &args, env)
 }
 
+/// The settings of a web UI at a loopback address signing people in with
+/// Google, as variables.
+const UI: [(&str, &str); 3] = [
+    ("LINEWRIGHT_PUBLIC_URL", "http://127.0.0.1:8081"),
+    ("LINEWRIGHT_GOOGLE_CLIENT_ID", "google-id"),
+    ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", "google-s3cret"),
+];
+
 #[test_log::test]
-fn serve_refuses_ui_hosts_with_no_web_ui() {
-    let (flag, flag_error) =
-        serve_with_status(&["--ui-address", "", "--ui-hosts", "a.example"], &[]);
-    let (env, env_error) = serve_with_status(
-        &[],
-        &[
-            ("LINEWRIGHT_UI_ADDRESS", ""),
-            ("LINEWRIGHT_UI_HOSTS", "a.example"),
-        ],
-    );
+fn serve_refuses_a_ui_setting_without_public_url() {
+    let (flag, flag_error) = serve_with_status(&["--google-client-id", "google-id"], &[]);
+    let (env, env_error) = serve_with_status(&[], &[("LINEWRIGHT_MANAGER", "github:octocat")]);
 
     assert_eq!(flag.code(), Some(2), "{flag_error}");
     assert_eq!(env.code(), Some(1), "{env_error}");
     for error in [flag_error, env_error] {
-        assert!(
-            error.contains("`ui-hosts` is set, but `ui-address` is empty"),
-            "{error}"
-        );
-    }
-}
-
-#[test_log::test]
-fn serve_takes_ui_hosts_naming_no_host_with_no_web_ui() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = dir.path().join("linewright.toml");
-    std::fs::write(&config, "ui-hosts = []\n").unwrap();
-    let no_ui = ("LINEWRIGHT_UI_ADDRESS", "");
-    let errors = [
-        serve_with_status(&["--ui-address", "", "--ui-hosts", ""], &[]).1,
-        serve_with_status(&[], &[no_ui, ("LINEWRIGHT_UI_HOSTS", "")]).1,
-        serve_with_status(&["--config", config.to_str().unwrap()], &[no_ui]).1,
-    ];
-
-    for error in errors {
-        assert!(error.contains("`git` is not on the path"), "{error}");
+        assert!(error.contains("`public-url` is not"), "{error}");
     }
 }
 
@@ -497,7 +486,7 @@ fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
     let (succeeded, error) = lw(
         empty.path(),
         &["--repo", "owner/name", "--ui-address", &address, "serve"],
-        &[("GH_TOKEN", ""), ("GITHUB_TOKEN", "")],
+        &[&UI[..], &[("GH_TOKEN", ""), ("GITHUB_TOKEN", "")]].concat(),
     );
 
     assert!(!succeeded, "{error}");
@@ -505,23 +494,30 @@ fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
     assert!(error.contains(&address), "{error}");
 }
 
-/// What `serve` logs as JSON lines, with `ui_address` as its `ui-address`,
-/// until startup fails for want of `git`.
-fn serve_log_lines(ui_address: &str) -> Vec<serde_json::Value> {
-    json_log(&["--ui-address", ui_address, "serve"]).0
+/// What `serve` logs as JSON lines, with `ui_address` as its `ui-address`
+/// and the variables `env`, until startup fails for want of `git`.
+#[track_caller]
+fn serve_log_lines(ui_address: &str, env: &[(&str, &str)]) -> Vec<serde_json::Value> {
+    json_log_with(&["--ui-address", ui_address, "serve"], env).0
 }
 
 /// The lines of the JSON log of `lw` on `owner/name` with `args` until it
 /// fails for want of `git`, and the log as it is.
 #[track_caller]
 fn json_log(args: &[&str]) -> (Vec<serde_json::Value>, String) {
+    json_log_with(args, &[])
+}
+
+/// As [`json_log`], with the variables `env`.
+#[track_caller]
+fn json_log_with(args: &[&str], env: &[(&str, &str)]) -> (Vec<serde_json::Value>, String) {
     let empty = tempfile::tempdir().unwrap();
     let args: Vec<&str> = ["--repo", "owner/name", "--log-format", "json"]
         .iter()
         .chain(args)
         .copied()
         .collect();
-    let (_, log) = lw(empty.path(), &args, &[]);
+    let (_, log) = lw(empty.path(), &args, env);
     let lines = log
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -531,7 +527,7 @@ fn json_log(args: &[&str]) -> (Vec<serde_json::Value>, String) {
 
 #[test_log::test]
 fn serve_logs_the_address_it_serves_the_web_ui_on() {
-    let lines = serve_log_lines("127.0.0.1:0");
+    let lines = serve_log_lines("127.0.0.1:0", &UI);
 
     let serving: Vec<&serde_json::Value> = lines
         .iter()
@@ -544,21 +540,36 @@ fn serve_logs_the_address_it_serves_the_web_ui_on() {
 }
 
 #[test_log::test]
-fn with_an_empty_ui_address_serve_serves_no_web_ui() {
-    let lines = serve_log_lines("");
+fn without_public_url_serve_logs_that_it_serves_no_web_ui_and_why() {
+    let (lines, log) = json_log(&["serve"]);
 
     assert!(
         lines
             .iter()
             .all(|line| line["fields"]["message"] != "serving the web UI"),
-        "{lines:?}"
+        "{log}"
     );
+    let none: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|line| line["fields"]["message"] == "serving no web UI")
+        .collect();
+    assert_eq!(none.len(), 1, "{log}");
+    assert_eq!(none[0]["fields"]["reason"], "`public-url` is not set");
     assert!(
         lines.iter().any(
             |line| line["fields"]["message"] == "answering the monitoring commands and `drain`"
         ),
-        "{lines:?}"
+        "{log}"
     );
+}
+
+#[test_log::test]
+fn without_public_url_serve_starts_though_it_cannot_listen_on_ui_address() {
+    let _held_here_unless_held_already = std::net::TcpListener::bind("127.0.0.1:8081");
+
+    let (_, error) = serve_with_status(&[], &[]);
+
+    assert!(error.contains("`git` is not on the path"), "{error}");
 }
 
 #[test_log::test]
@@ -1110,7 +1121,15 @@ fn sigterm_while_serve_is_starting_drains_it_with_status_0_saying_the_next_signa
         .env("LINEWRIGHT_WORK_DIR", runtime_dir.path().join("work"))
         .env("GH_TOKEN", "token")
         .env("LINEWRIGHT_MODEL", MODEL)
-        .env("LINEWRIGHT_UI_ADDRESS", "127.0.0.1:0")
+        .env_remove("LINEWRIGHT_UI_ADDRESS")
+        .env_remove("LINEWRIGHT_PUBLIC_URL")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GOOGLE_SIGNUP_DOMAINS")
+        .env_remove("LINEWRIGHT_GOOGLE_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_ID")
+        .env_remove("LINEWRIGHT_GITHUB_SIGNUP_ORGS")
+        .env_remove("LINEWRIGHT_GITHUB_CLIENT_SECRET")
+        .env_remove("LINEWRIGHT_MANAGER")
         .env_remove("LINEWRIGHT_WEBHOOK_SECRET")
         .stderr(std::fs::File::create(&log).unwrap())
         .spawn()

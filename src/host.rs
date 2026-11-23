@@ -4,6 +4,7 @@
 use std::net::IpAddr;
 
 use axum::http::{HeaderMap, header};
+use url::{Host, Url};
 
 /// A `Host` header's name: without the brackets of an IPv6 address, the
 /// port or a trailing dot, lower-cased.
@@ -36,61 +37,92 @@ impl HostName {
     /// `localhost` or a loopback address
     /// (`docs/specs/operation.md`, Monitoring commands).
     pub fn is_local(&self) -> bool {
-        self.0 == "localhost" || self.ip().is_some_and(|address| address.is_loopback())
+        self.0 == "localhost" || self.is_loopback_address()
     }
 
-    pub fn is_ip(&self) -> bool {
-        self.ip().is_some()
+    fn is_loopback_address(&self) -> bool {
+        self.ip().is_some_and(|address| address.is_loopback())
     }
 
     fn ip(&self) -> Option<IpAddr> {
         self.0.parse().ok()
     }
+
+    /// Whether it names the same host as `other`: the same address, however
+    /// each writes it, or else the same name.
+    fn same_host(&self, other: &HostName) -> bool {
+        match (self.ip(), other.ip()) {
+            (Some(address), Some(other)) => address == other,
+            _ => self.0 == other.0,
+        }
+    }
 }
 
-/// The names the web UI answers besides the local ones and IP addresses:
-/// the `ui-hosts` setting (`docs/specs/operation.md`, Serving the UI).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct UiHosts(Vec<HostName>);
+/// `name` lower-cased and without a trailing dot, when it is a domain name:
+/// dot-separated labels of letters, digits and hyphens, none starting or
+/// ending with a hyphen.
+pub fn domain_name(name: &str) -> Option<String> {
+    let name = name.strip_suffix('.').unwrap_or(name);
+    let labels = name.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    });
+    labels.then(|| name.to_ascii_lowercase())
+}
 
-impl UiHosts {
-    /// From `names`, each a host name such as `linewright.example.com`,
-    /// with what is wrong with the first that is not.
-    pub fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<UiHosts, String> {
-        names
-            .into_iter()
-            .map(|name| {
-                let refused = name.is_empty()
-                    || name == "."
-                    || name
-                        .chars()
-                        .any(|c| matches!(c, ':' | '/' | '*') || c.is_whitespace());
-                if refused {
-                    Err(format!(
-                        "names {name:?}: it is a host name, such as `linewright.example.com`"
-                    ))
-                } else {
-                    Ok(HostName::normalised(name))
-                }
-            })
-            .collect::<Result<_, _>>()
-            .map(UiHosts)
+/// The URL people reach the web UI at, `public-url`
+/// (`docs/specs/operation.md`, Serving the UI): HTTPS, or HTTP to a loopback
+/// address, with nothing after its host and port.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicUrl {
+    url: Url,
+    host: HostName,
+}
+
+impl PublicUrl {
+    /// The public URL `given` is, with why it is none when it is not.
+    pub fn parse(given: &str) -> Result<PublicUrl, String> {
+        let url = Url::parse(given).map_err(|e| format!("it is not a URL: {e}"))?;
+        let host = match url.host() {
+            Some(Host::Domain(name)) => HostName(
+                domain_name(name).ok_or_else(|| format!("its host {name:?} is no domain name"))?,
+            ),
+            Some(Host::Ipv4(address)) => HostName(address.to_string()),
+            Some(Host::Ipv6(address)) => HostName(address.to_string()),
+            None => return Err("it has no host".into()),
+        };
+        let secure = match url.scheme() {
+            "https" => true,
+            "http" => host.is_loopback_address(),
+            _ => false,
+        };
+        if !secure {
+            return Err("it is HTTPS, or HTTP to a loopback address such as \
+                        `http://127.0.0.1:8081`"
+                .into());
+        }
+        let bare = url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none();
+        if !bare {
+            return Err("it has nothing after its host and port".into());
+        }
+        Ok(PublicUrl { url, host })
     }
 
-    /// These names and `more`'s, a layer below them, as a list combines.
-    #[must_use]
-    pub fn and(&self, more: &UiHosts) -> UiHosts {
-        UiHosts(
-            crate::layer::list([&self.0, &more.0], |name| name)
-                .into_iter()
-                .cloned()
-                .collect(),
-        )
-    }
-
-    /// Whether the web UI answers a request whose `Host` is `host`: a local
-    /// name, an IP address or one of these.
+    /// Whether the web UI answers a request whose `Host` is `host`: this
+    /// URL's host.
     pub fn answers(&self, host: &HostName) -> bool {
-        host.is_local() || host.is_ip() || self.0.contains(host)
+        self.host.same_host(host)
+    }
+}
+
+impl std::fmt::Display for PublicUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.url.fmt(f)
     }
 }

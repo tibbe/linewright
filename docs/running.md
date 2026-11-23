@@ -407,35 +407,62 @@ starts. It exits 4 when the run ID names nothing.
 
 ## The web UI
 
-`serve` also serves a web UI, on `ui-address`, a host and port,
-`127.0.0.1:8081` unless set otherwise, and logs that address as it starts. It
-exits at startup if it cannot listen there. Set `ui-address` to an empty value
-to serve no web UI. The UI has no login of its own: whoever reaches the port
-can read it.
+`serve` serves a web UI while `public-url` is set: the URL people reach it
+at, HTTPS, or HTTP to a loopback address such as `http://127.0.0.1:8081`. It
+listens on `ui-address`, a host and port, `127.0.0.1:8081` unless set
+otherwise, and logs that address as it starts. It exits at startup if it
+cannot listen there. Without `public-url`, it serves no web UI, and logs
+why.
 
-It answers only requests whose `Host` is `localhost`, an IP address or one of
-the names in `ui-hosts`, ignoring case, port and a trailing dot, so that a web
-page elsewhere cannot read it under a name it controls. Every other request
-gets `421 Misdirected Request`, and `serve` logs each with the `Host` it named.
+The UI needs an identity provider to sign people in through, Google, GitHub
+or both, though it does not sign anyone in yet: until it does, whoever
+reaches the port can read it. Register Linewright with each provider as an
+OAuth app, with `/auth/google/callback` or `/auth/github/callback` under the
+public URL as its callback, such as
+`https://linewright.example.com/auth/google/callback`:
 
-- **On the same machine**, open `http://localhost:8081`.
-- **From another machine**, forward a port to it over SSH,
-  `ssh -N -L 8081:localhost:8081 HOST`, and open `http://localhost:8081`.
-- **Behind a reverse proxy** that authenticates its users and terminates
-  TLS, add the name the proxy serves it under to `ui-hosts`, unless the proxy
-  sends `Host: localhost`:
+- **Google**: an OAuth client ID of the type "Web application", in the Google
+  Cloud console. Set `google-client-id` to its client ID, and
+  `LINEWRIGHT_GOOGLE_CLIENT_SECRET` to its secret. `google-signup-domains`
+  names the domains, such as `example.com`, whose people may sign in.
+- **GitHub**: an OAuth app, in your account's or your organization's
+  developer settings. Set `github-client-id` to its client ID, and
+  `LINEWRIGHT_GITHUB_CLIENT_SECRET` to its secret. `github-signup-orgs` names
+  the organizations, and `org/team` for a team, whose members may sign in.
 
-  ```toml
-  ui-hosts = ["linewright.example.com"]
-  ```
+`manager` names an identity that is always a manager, as `google:` and an
+email or `github:` and a login, such as `github:octocat`. The client secrets
+come from the environment only, never a flag or `linewright.toml`, and
+sessions are never given them.
 
-  As a flag or variable, `ui-hosts` is comma-separated:
-  `--ui-hosts linewright.example.com,linewright.internal`. A flag and the
-  variable add their names to those in `linewright.toml`.
+```toml
+public-url = "https://linewright.example.com"
+google-client-id = "1234-abcd.apps.googleusercontent.com"
+google-signup-domains = ["example.com"]
+manager = "google:alice@example.com"
+```
+
+Linewright exits at startup when these settings do not fit together, such as
+a provider's client ID without its secret, or a provider's setting without
+`public-url`, and says which.
+
+It answers only requests whose `Host` is the public URL's host, ignoring
+case, port and a trailing dot, so that a web page elsewhere cannot read it
+under a name it controls. Every other request gets `421 Misdirected
+Request`, and `serve` logs each with the `Host` it named.
+
+- **On the same machine**, set `public-url` to `http://127.0.0.1:8081` and
+  open it as written: `http://localhost:8081` names another host, and gets
+  421.
+- **From another machine**, set `public-url` the same, forward a port to it
+  over SSH, `ssh -N -L 8081:127.0.0.1:8081 HOST`, and open
+  `http://127.0.0.1:8081`.
+- **Behind a reverse proxy** that terminates TLS, set `public-url` to the URL
+  the proxy serves it at, such as `https://linewright.example.com`.
 
 In a container, set `ui-address` to `0.0.0.0:8081`, so the UI answers outside
 the container, and publish the port on the host's loopback, such as
-`127.0.0.1:8081:8081`. [`deploy/`](../deploy/README.md#the-web-ui) does that.
+`127.0.0.1:8081:8081`. [`deploy/`](../deploy/README.md#the-web-ui) shows how.
 
 ## Webhooks
 

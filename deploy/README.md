@@ -19,8 +19,9 @@ repository on the host, which keeps the host's `.env` and
    `LINEWRIGHT_SESSION_GITHUB_TOKEN`, a read-only token for the agents (see the
    [running guide](../docs/running.md#a-read-only-github-token-for-sessions)),
    either `ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` from
-   `claude setup-token`, and, for webhooks, `LINEWRIGHT_WEBHOOK_SECRET` (see
-   [Webhooks](#webhooks)).
+   `claude setup-token`, for webhooks, `LINEWRIGHT_WEBHOOK_SECRET` (see
+   [Webhooks](#webhooks)), and, for the web UI, its identity providers' client
+   secrets (see [The web UI](#the-web-ui)).
 
 2. Optionally, set what this host needs in `compose.override.yaml`, such as a
    directory of the host's for the work directory, in place of a volume, owned
@@ -76,19 +77,33 @@ attach NPM's container to it, as an external network in NPM's own
 
 ## The web UI
 
-`linewright` serves the web UI on `0.0.0.0:8081` in its container
-(`LINEWRIGHT_UI_ADDRESS`), and `ui-relay`, a socat container like
-`webhook-relay`, publishes it on the host's loopback, `127.0.0.1:8081`:
-`fenced` is internal, so Docker publishes no port of `linewright`'s itself.
-On the host, open `http://localhost:8081`; from your machine, forward a port
-to it and open `http://localhost:8081`:
+`linewright` serves the web UI once its public URL and an identity provider
+are set ([Running Linewright](../docs/running.md#the-web-ui)); until then it
+serves none. It serves it on `0.0.0.0:8081` in its container, and `ui-relay`,
+a socat container like `webhook-relay`, publishes it on the host's loopback,
+`127.0.0.1:8081`: `fenced` is internal, so Docker publishes no port of
+`linewright`'s itself.
 
-```sh
-ssh -N -L 8081:localhost:8081 HOST
+To reach it over SSH, with `http://127.0.0.1:8081` as its public URL, set in
+`compose.override.yaml`:
+
+```yaml
+services:
+  linewright:
+    environment:
+      LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
+      LINEWRIGHT_PUBLIC_URL: http://127.0.0.1:8081
+      LINEWRIGHT_GOOGLE_CLIENT_ID: 1234-abcd.apps.googleusercontent.com
 ```
 
-The UI has no login of its own. To reach it through NPM instead, add a proxy
-host for it with an access list that lets in only your users:
+with `LINEWRIGHT_GOOGLE_CLIENT_SECRET` in `.env`, rerun step 3 above, then
+forward a port to it from your machine and open `http://127.0.0.1:8081`:
+
+```sh
+ssh -N -L 8081:127.0.0.1:8081 HOST
+```
+
+To reach it through NPM instead, add a proxy host for it:
 
 - **Domain names**: the public name for the UI, such as
   `linewright-ui.example.com`.
@@ -96,14 +111,9 @@ host for it with an access list that lets in only your users:
   `ui-relay` has on the `proxy` network, **Forward port** `8081`.
 - Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
 
-Then add that name to `ui-hosts` in `compose.override.yaml`, so the UI
-answers requests for it, and restart it:
-
-```yaml
-services:
-  linewright:
-    environment: {LINEWRIGHT_UI_HOSTS: linewright-ui.example.com}
-```
+and set `LINEWRIGHT_PUBLIC_URL` to `https://linewright-ui.example.com`. The
+UI does not sign anyone in yet, so give the proxy host an access list that
+lets in only your users.
 
 ## The agents' browser
 

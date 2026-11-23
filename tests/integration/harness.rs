@@ -456,6 +456,8 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
         ("SCCACHE_DIR", "/var/cache/sccache"),
         ("LINEWRIGHT_WEBHOOK_SECRET", SECRET),
         ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token"),
+        ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", "google-s3cret"),
+        ("LINEWRIGHT_GITHUB_CLIENT_SECRET", "github-s3cret"),
         ("MY_SECRET", "hunter2"),
         ("TMPDIR", "/tmp"),
         ("GH_TOKEN", "linewright-token"),
