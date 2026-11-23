@@ -101,6 +101,20 @@ impl PersonId {
     }
 }
 
+impl std::str::FromStr for PersonId {
+    type Err = String;
+
+    fn from_str(id: &str) -> Result<PersonId, String> {
+        id.bytes()
+            .all(|b| b.is_ascii_digit())
+            .then(|| id.parse::<i64>().ok())
+            .flatten()
+            .filter(|id| *id > 0)
+            .map(PersonId)
+            .ok_or_else(|| format!("{id:?} is not a person's ID: it is a positive number"))
+    }
+}
+
 impl fmt::Display for PersonId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -288,6 +302,56 @@ pub fn decide_sign_in(
     }
 }
 
+/// Why a person cannot lose the role of manager or be disabled, with what
+/// Edit person says of it (`docs/specs/access.md`, Edit person, Refusals),
+/// naming them as they are shown.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum Protected {
+    /// The identity the `manager` setting names
+    /// (`docs/specs/access.md`, People, The named manager).
+    #[error("The `manager` setting names {0}.")]
+    NamedManager(String),
+    /// The only enabled manager (`docs/specs/access.md`, People, The last
+    /// manager).
+    #[error("{0} is the last manager.")]
+    LastManager(String),
+}
+
+/// Whether `person` may lose the role of manager or be disabled, among
+/// `people`, everyone in Linewright's record, under the `manager` setting
+/// `manager`: not while `manager` names them, nor while they are the only
+/// enabled manager.
+pub fn may_change(
+    person: &Person,
+    people: &[Person],
+    manager: Option<&ManagerName>,
+) -> Result<(), Protected> {
+    let name = || person.shown_name().to_string();
+    if manager.is_some_and(|manager| manager.names(person.identity.provider, &person.shown_as)) {
+        return Err(Protected::NamedManager(name()));
+    }
+    let enabled_manager = |p: &Person| p.role == Role::Manager && p.state == State::Enabled;
+    if enabled_manager(person)
+        && !people
+            .iter()
+            .any(|other| other.id != person.id && enabled_manager(other))
+    {
+        return Err(Protected::LastManager(name()));
+    }
+    Ok(())
+}
+
+/// Why a change to a person was not made.
+#[derive(Debug, thiserror::Error)]
+pub enum ChangeRefusal {
+    #[error("No such person {0}")]
+    NoSuchPerson(PersonId),
+    #[error(transparent)]
+    Protected(#[from] Protected),
+    #[error(transparent)]
+    Failed(anyhow::Error),
+}
+
 const READING: &str = "reading the people";
 
 /// Linewright's record of people, in its database.
@@ -411,6 +475,92 @@ impl People {
         person_of(row)
     }
 
+    /// Everyone in the record, in the order of the names they are shown by,
+    /// by the Unicode Collation Algorithm (`docs/specs/access.md`, People,
+    /// The table).
+    pub async fn list(&self) -> anyhow::Result<Vec<Person>> {
+        let mut people = everyone(self.db.pool()).await?;
+        crate::name::collated_by(&mut people, Person::shown_name);
+        Ok(people)
+    }
+
+    /// Gives the person `id` the role `role`, unless that takes the role of
+    /// manager from someone [`may_change`] protects under `manager`.
+    pub async fn set_role(
+        &self,
+        id: PersonId,
+        role: Role,
+        manager: Option<&ManagerName>,
+    ) -> Result<Person, ChangeRefusal> {
+        self.change(id, Change::Role(role), manager).await
+    }
+
+    /// Disables the person `id`, signing them out of every browser at once,
+    /// unless [`may_change`] protects them under `manager`
+    /// (`docs/specs/access.md`, People, Disabling).
+    pub async fn disable(
+        &self,
+        id: PersonId,
+        manager: Option<&ManagerName>,
+    ) -> Result<Person, ChangeRefusal> {
+        self.change(id, Change::Disable, manager).await
+    }
+
+    /// Enables the person `id`.
+    pub async fn enable(&self, id: PersonId) -> Result<Person, ChangeRefusal> {
+        self.change(id, Change::Enable, None).await
+    }
+
+    /// Makes `change` to the person `id`, unless it takes the role of
+    /// manager from them or disables them while [`may_change`] protects them
+    /// under `manager`; and gives them as it left them. Who is protected is
+    /// read in the transaction that writes, so that two changes at once
+    /// cannot leave no manager.
+    async fn change(
+        &self,
+        id: PersonId,
+        change: Change,
+        manager: Option<&ManagerName>,
+    ) -> Result<Person, ChangeRefusal> {
+        let failed =
+            |e: anyhow::Error| ChangeRefusal::Failed(e.context(format!("changing person {id}")));
+        let written = async {
+            let mut tx = self.db.pool().begin_with("BEGIN IMMEDIATE").await?;
+            let people = everyone(&mut *tx).await?;
+            let Some(person) = people.iter().find(|person| person.id == id) else {
+                return Ok(Err(ChangeRefusal::NoSuchPerson(id)));
+            };
+            if change.guarded()
+                && let Err(protected) = may_change(person, &people, manager)
+            {
+                return Ok(Err(protected.into()));
+            }
+            let (update, value) = match change {
+                Change::Role(role) => ("UPDATE people SET role = ? WHERE id = ?", role.name()),
+                Change::Disable => ("UPDATE people SET state = ? WHERE id = ?", "disabled"),
+                Change::Enable => ("UPDATE people SET state = ? WHERE id = ?", "enabled"),
+            };
+            sqlx::query(update)
+                .bind(value)
+                .bind(id.row())
+                .execute(&mut *tx)
+                .await?;
+            if change == Change::Disable {
+                sqlx::query("DELETE FROM browser_sessions WHERE person = ?")
+                    .bind(id.row())
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            anyhow::Ok(Ok(()))
+        };
+        written.await.map_err(failed)??;
+        self.get(id)
+            .await
+            .map_err(failed)?
+            .ok_or(ChangeRefusal::NoSuchPerson(id))
+    }
+
     /// Makes each person whose identity matched `manager` at their last
     /// sign-in an enabled manager (`docs/specs/access.md`, People, The named
     /// manager), and gives them.
@@ -445,6 +595,35 @@ impl People {
     }
 }
 
+/// A change to a person.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    Role(Role),
+    Disable,
+    Enable,
+}
+
+impl Change {
+    /// Whether it takes the role of manager or disables, which
+    /// [`may_change`] guards.
+    fn guarded(self) -> bool {
+        match self {
+            Change::Role(role) => role != Role::Manager,
+            Change::Disable => true,
+            Change::Enable => false,
+        }
+    }
+}
+
+/// Everyone in the record, read by `executor`.
+async fn everyone<'e>(executor: impl sqlx::SqliteExecutor<'e>) -> anyhow::Result<Vec<Person>> {
+    let rows: Vec<Row> = sqlx::query_as(concat!("SELECT ", people_columns!(), " FROM people"))
+        .fetch_all(executor)
+        .await
+        .context(READING)?;
+    rows.into_iter().map(person_of).collect()
+}
+
 /// The person a row of `people` holds.
 fn person_of(row: Row) -> anyhow::Result<Person> {
     let (id, provider, subject, shown_as, name, avatar, role, state, signed_in_at) = row;
@@ -468,6 +647,7 @@ fn person_of(row: Row) -> anyhow::Result<Person> {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::super::sessions::{Resolved, Sessions};
     use super::*;
 
     /// Person `id`, of `role` and `state`, signed in with Google as
@@ -684,6 +864,182 @@ pub(crate) mod tests {
             (unnamed.shown_name(), unnamed.letter().as_str()),
             ("person2@example.com", "P")
         );
+    }
+
+    /// `docs/specs/access.md`, People, The named manager; Edit person,
+    /// Refusals.
+    #[test_log::test]
+    fn the_named_manager_cannot_lose_the_role_or_be_disabled() {
+        let named = manager("google:ADA@example.com");
+        let ada = Person {
+            name: Some("Ada Lovelace".into()),
+            ..ada(Role::Manager, State::Enabled)
+        };
+        let grace = person(2, Role::Manager, State::Enabled);
+        let everyone = [ada.clone(), grace.clone()];
+
+        let refused = may_change(&ada, &everyone, Some(&named)).unwrap_err();
+
+        assert_eq!(refused, Protected::NamedManager("Ada Lovelace".into()));
+        assert_eq!(
+            refused.to_string(),
+            "The `manager` setting names Ada Lovelace."
+        );
+        assert_eq!(may_change(&grace, &everyone, Some(&named)), Ok(()));
+        assert_eq!(may_change(&ada, &everyone, None), Ok(()));
+    }
+
+    /// `docs/specs/access.md`, People, The last manager: only enabled
+    /// managers count.
+    #[test_log::test]
+    fn the_last_enabled_manager_cannot_lose_the_role_or_be_disabled() {
+        let ada = ada(Role::Manager, State::Enabled);
+        let disabled_manager = person(2, Role::Manager, State::Disabled);
+        let contributor = person(3, Role::Contributor, State::Enabled);
+        let everyone = [ada.clone(), disabled_manager.clone(), contributor.clone()];
+
+        let refused = may_change(&ada, &everyone, None).unwrap_err();
+
+        assert_eq!(refused, Protected::LastManager("ada@example.com".into()));
+        assert_eq!(refused.to_string(), "ada@example.com is the last manager.");
+        assert_eq!(may_change(&disabled_manager, &everyone, None), Ok(()));
+        assert_eq!(may_change(&contributor, &everyone, None), Ok(()));
+        let two = [ada.clone(), person(4, Role::Manager, State::Enabled)];
+        assert_eq!(may_change(&ada, &two, None), Ok(()));
+    }
+
+    /// The people of a new database, each added by a sign-in with Google as
+    /// its email, named its name, with its role.
+    async fn people_of(added: &[(&str, Option<&str>, Role)]) -> (tempfile::TempDir, People) {
+        let dir = tempfile::tempdir().unwrap();
+        let people = People::new(Database::open(dir.path()).await.unwrap());
+        for (n, (email, name, role)) in added.iter().enumerate() {
+            let claims = Claims {
+                identity: Identity {
+                    provider: Provider::Google,
+                    subject: format!("{n}"),
+                },
+                name: name.map(str::to_string),
+                ..claims(email, true)
+            };
+            people
+                .add(&claims, *role, chrono::DateTime::UNIX_EPOCH)
+                .await
+                .unwrap();
+        }
+        (dir, people)
+    }
+
+    /// `docs/specs/access.md`, People (the screen): in the order of their
+    /// names by the Unicode Collation Algorithm, the identity standing in
+    /// for a name.
+    #[test_log::test(tokio::test)]
+    async fn the_people_are_listed_in_the_order_of_their_names() {
+        let (_dir, people) = people_of(&[
+            ("zed@example.com", Some("Zed"), Role::Viewer),
+            ("eve@example.com", Some("Émile"), Role::Viewer),
+            ("bob@example.com", None, Role::Viewer),
+            ("ann@example.com", Some("ann"), Role::Manager),
+        ])
+        .await;
+
+        let listed = people.list().await.unwrap();
+
+        let names: Vec<&str> = listed.iter().map(Person::shown_name).collect();
+        assert_eq!(names, ["ann", "bob@example.com", "Émile", "Zed"]);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn a_role_is_changed_unless_the_person_is_protected() {
+        let (_dir, people) = people_of(&[
+            ("ada@example.com", Some("Ada"), Role::Manager),
+            ("bob@example.com", Some("Bob"), Role::Viewer),
+        ])
+        .await;
+        let [ada, bob] = &people.list().await.unwrap()[..] else {
+            panic!("Ada and Bob, as added")
+        };
+
+        let made = people.set_role(bob.id, Role::Manager, None).await.unwrap();
+        assert_eq!(made.role, Role::Manager);
+        let demoted = people.set_role(ada.id, Role::Viewer, None).await.unwrap();
+        assert_eq!(demoted.role, Role::Viewer);
+        let refused = people.set_role(bob.id, Role::Contributor, None).await;
+
+        assert!(
+            matches!(refused, Err(ChangeRefusal::Protected(Protected::LastManager(ref name))) if name == "Bob"),
+            "{refused:?}"
+        );
+        assert_eq!(
+            people.get(bob.id).await.unwrap().unwrap().role,
+            Role::Manager
+        );
+        let kept = people.set_role(bob.id, Role::Manager, None).await.unwrap();
+        assert_eq!(kept.role, Role::Manager);
+        let named = manager("google:bob@example.com");
+        people.set_role(ada.id, Role::Manager, None).await.unwrap();
+        assert!(matches!(
+            people.set_role(bob.id, Role::Viewer, Some(&named)).await,
+            Err(ChangeRefusal::Protected(Protected::NamedManager(_)))
+        ));
+        assert!(matches!(
+            people.set_role(PersonId(9), Role::Viewer, None).await,
+            Err(ChangeRefusal::NoSuchPerson(PersonId(9)))
+        ));
+    }
+
+    /// `docs/specs/access.md`, People, Disabling: it signs them out of
+    /// every browser.
+    #[test_log::test(tokio::test)]
+    async fn disabling_signs_a_person_out_of_every_browser_and_enabling_lets_them_back() {
+        let (_dir, people) = people_of(&[
+            ("ada@example.com", Some("Ada"), Role::Manager),
+            ("bob@example.com", Some("Bob"), Role::Manager),
+        ])
+        .await;
+        let [ada, bob] = &people.list().await.unwrap()[..] else {
+            panic!("Ada and Bob, as added")
+        };
+        let sessions = Sessions::new(people.db.clone());
+        let now = chrono::DateTime::UNIX_EPOCH;
+        let browsers = [
+            sessions.start(bob.id, now).await.unwrap(),
+            sessions.start(bob.id, now).await.unwrap(),
+        ];
+        let ada_browser = sessions.start(ada.id, now).await.unwrap();
+
+        let disabled = people.disable(bob.id, None).await.unwrap();
+
+        assert_eq!(disabled.state, State::Disabled);
+        for browser in &browsers {
+            assert_eq!(
+                sessions.resolve(browser, now).await.unwrap(),
+                Resolved::NoOne
+            );
+        }
+        assert!(matches!(
+            sessions.resolve(&ada_browser, now).await.unwrap(),
+            Resolved::Caller(_)
+        ));
+        assert!(matches!(
+            people.disable(ada.id, None).await,
+            Err(ChangeRefusal::Protected(Protected::LastManager(_)))
+        ));
+        let raced = sessions.start(bob.id, now).await.unwrap();
+        let enabled = people.enable(bob.id).await.unwrap();
+        assert_eq!(
+            sessions.resolve(&raced, now).await.unwrap(),
+            Resolved::NoOne,
+            "a sign-in that finished while they were disabled"
+        );
+        assert_eq!(
+            (enabled.role, enabled.state),
+            (Role::Manager, State::Enabled)
+        );
+        assert!(matches!(
+            people.enable(PersonId(9)).await,
+            Err(ChangeRefusal::NoSuchPerson(PersonId(9)))
+        ));
     }
 
     /// `docs/specs/access.md`, People, The named manager: at startup.

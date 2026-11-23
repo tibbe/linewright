@@ -81,13 +81,18 @@ impl Serialize for Name {
 /// Collation Algorithm's root collation, and by their characters where it
 /// finds two names equal.
 pub fn collated<T>(items: &mut [T], key: impl Fn(&T) -> &Name) {
+    collated_by(items, |item| key(item).as_str());
+}
+
+/// Sorts `items` by the text `key` gives, as [`collated`] sorts by names.
+pub fn collated_by<T>(items: &mut [T], key: impl Fn(&T) -> &str) {
     let collator = icu_collator::Collator::try_new(
         icu_collator::CollatorPreferences::default(),
         icu_collator::options::CollatorOptions::default(),
     )
     .expect("the root collation is compiled in");
     items.sort_by(|a, b| {
-        let (a, b) = (key(a).as_str(), key(b).as_str());
+        let (a, b) = (key(a), key(b));
         collator.compare(a, b).then_with(|| a.cmp(b))
     });
 }
