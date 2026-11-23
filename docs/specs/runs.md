@@ -219,7 +219,7 @@ sessions.
 
 A run ends in one of these outcomes, each with its name in JSON.
 
-| Outcome                   | In JSON       | Meaning                                                                              | Shows as ([Status](design_system.md#status)) |
+| Outcome                   | In JSON       | Meaning                                                                              | Shows as ([Status](ui_patterns.md#status)) |
 | ------------------------- | ------------- | ------------------------------------------------------------------------------------ | --------- |
 | done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. | done      |
 | handed back               | `handed-back` | it could not finish and handed its item back.                                        | waiting   |
@@ -354,7 +354,7 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **Running.** A tool call, the clone and the maintenance command are entries
   that run. Each shows `running` in place of its account until it ends. An
   entry whose session ends first shows `interrupted`. `running` shows as in
-  flight, and `interrupted` as cancelled ([Status](design_system.md#status)).
+  flight, and `interrupted` as cancelled ([Status](ui_patterns.md#status)).
 - **In full.** A transcript in full shows everything it holds, including the
   agent's thinking, each tool's full input and result, and the brief and
   follow-ups.
@@ -433,10 +433,12 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 
 ### Runs
 
+- **Address.** `/runs`.
 - **Layout.** The list of
   runs, with its filters.
 - **Filters.** Filters for the item, the stage and the time since which runs
-  started narrow the list.
+  started narrow the list. Item and Since are `input`s, and Stage is a
+  `select`.
 - **The list of runs.** A table with a row per run, newest first.
 
 | Column   | Holds                                                                                          |
@@ -448,8 +450,12 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 | Started  | when the run started, with an automation's run by hand marked there                            |
 | Duration | the run's duration                                                                             |
 
+- **"By hand"**, the mark of an automation's run by hand, is a daisyUI
+  `badge`, `badge-sm`, with no colour or style class.
+
 ### Run
 
+- **Address.** `/runs/ID`.
 - **Layout.** The heading at
   the top, then the run's transcripts ([Transcripts](#transcripts)), each under
   its session's heading.
@@ -461,12 +467,14 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   not include a wait for the usage limit to reset. Where Linewright does not
   know when the session ended, such as when a restart interrupted its run,
   the time goes up to its last entry.
+- **The transcripts** are each a [transcript](components.md#transcript).
 - **A session's settings.** Under its heading, the session's model and effort
   open on click to where its settings and brief files came from.
 - **Views.** The screen shows the transcripts as the agent's own default view
   does. With the verbose switch, it shows them as the agent's verbose view
   does: for example, the agent's thinking is open only with the switch. The
-  screen never shows what the agent was told other than its prompts.
+  screen never shows what the agent was told other than its prompts. The
+  verbose switch is a daisyUI `toggle`.
 - **Prompts.** The brief and each follow-up are entries, each shown as its
   first line.
 - **Durations.** Each entry that runs shows how long it ran, and the time
@@ -489,10 +497,13 @@ session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
   everything, a session's settings too.
 - **Following.** A run in flight is followed. The screen stays at the bottom
   until the reader scrolls up, and then offers "Jump to the latest entry".
+  "Jump to the latest entry" is a button with the icon `arrow-down` and
+  `shadow-md`, fixed at the bottom right of the screen, `bottom-6` and
+  `right-6`.
 - **Capturing.** A run that can be captured
   ([Capturing](benchmarks.md#capturing)) has "Add task" with the screen's
   buttons ([Shell](shell.md)). It opens a dialog titled "Add task to a
-  benchmark" ([Making](design_system.md#making)), with these fields, then "Add
+  benchmark" ([Making](ui_patterns.md#making)), with these fields, then "Add
   task":
 
   | Field          | Holds                                                                                                   |

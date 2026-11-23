@@ -395,9 +395,9 @@ while `public-url` is set. People reach the UI at `public-url`.
 
 ### Server
 
-- **Layout.** The facts
-  about Linewright itself ([Facts](design_system.md#facts)), as a list of
-  labels, each with its value beside it.
+- **Address.** `/server`.
+- **Layout.** The facts about Linewright itself, as
+  [facts](components.md#facts).
 - **The facts.** Server shows each fact about Linewright that `status` shows,
   when `status` shows it ([`lw status`](#lw-status)). It shows the environment
   with its builds, as `environment` shows them
@@ -406,7 +406,7 @@ while `public-url` is set. People reach the UI at `public-url`.
   command does, and opens the same way ([Run](runs.md#run)); a build in progress
   is followed.
 - **The environment's status.** The environment shows as the status of the
-  first row below that holds ([Status](design_system.md#status)).
+  first row below that holds ([Status](ui_patterns.md#status)).
 
   | The environment                 | Shows as  |
   | ------------------------------- | --------- |
