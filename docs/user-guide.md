@@ -227,15 +227,15 @@ the branch to have it start over. Closing the issue deletes it.
 ## Following Linewright in a browser
 
 `serve` serves a web UI at the URL whoever runs Linewright set for it, its
-public URL. Open the address they give you. When it is
-`http://127.0.0.1:8081` on another machine, forward a port to it from yours
-over SSH:
+public URL: an `https://` URL, served by a reverse proxy in front of
+Linewright, such as Caddy, nginx or Nginx Proxy Manager. Open the address
+they give you.
 
-```sh
-ssh -N -L 8081:127.0.0.1:8081 linewright-host
-```
-
-Then open `http://127.0.0.1:8081`.
+A UI reached only over a [Tailscale](https://tailscale.com) network has the
+host's `*.ts.net` name, with a trusted certificate through
+[Tailscale Serve](https://tailscale.com/kb/1312/serve): open it from a machine
+on the tailnet. Claude Code on such a machine can reach its MCP server too, but
+claude.ai cannot.
 
 ## Recurring work
 

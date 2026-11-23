@@ -63,10 +63,8 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
-    ports: ["127.0.0.1:8081:8081"]
     networks:
       fenced:
-      default:
       npm-proxy:
         aliases: [linewright-ui]
 

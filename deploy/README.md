@@ -79,41 +79,37 @@ attach NPM's container to it, as an external network in NPM's own
 
 `linewright` serves the web UI once its public URL and an identity provider
 are set ([Running Linewright](../docs/running.md#the-web-ui)); until then it
-serves none. It serves it on `0.0.0.0:8081` in its container, and `ui-relay`,
-a socat container like `webhook-relay`, publishes it on the host's loopback,
-`127.0.0.1:8081`: `fenced` is internal, so Docker publishes no port of
-`linewright`'s itself.
+serves none. Its public URL is HTTPS, so people reach it through NPM, which
+terminates TLS. It serves the UI on `0.0.0.0:8081` in its container, and
+`ui-relay`, a socat container like `webhook-relay`, forwards to it from the
+`proxy` network, where NPM reaches it as `linewright-ui`: `fenced` is internal,
+so nothing outside it reaches `linewright` itself.
 
-To reach it over SSH, with `http://127.0.0.1:8081` as its public URL, set in
-`compose.override.yaml`:
+1. In NPM, add a proxy host for it:
+   - **Domain names**: the public name for the UI, such as
+     `linewright-ui.example.com`.
+   - **Scheme** `http`, **Forward hostname** `linewright-ui`, **Forward port**
+     `8081`.
+   - Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
 
-```yaml
-services:
-  linewright:
-    environment:
-      LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
-      LINEWRIGHT_PUBLIC_URL: http://127.0.0.1:8081
-      LINEWRIGHT_GOOGLE_CLIENT_ID: 1234-abcd.apps.googleusercontent.com
-```
+2. Set in `compose.override.yaml`:
 
-with `LINEWRIGHT_GOOGLE_CLIENT_SECRET` in `.env`, rerun step 3 above, then
-forward a port to it from your machine and open `http://127.0.0.1:8081`:
+   ```yaml
+   services:
+     linewright:
+       environment:
+         LINEWRIGHT_UI_ADDRESS: 0.0.0.0:8081
+         LINEWRIGHT_PUBLIC_URL: https://linewright-ui.example.com
+         LINEWRIGHT_GOOGLE_CLIENT_ID: 1234-abcd.apps.googleusercontent.com
+   ```
 
-```sh
-ssh -N -L 8081:127.0.0.1:8081 HOST
-```
+   with `LINEWRIGHT_GOOGLE_CLIENT_SECRET` in `.env`, and rerun step 3 above.
 
-To reach it through NPM instead, add a proxy host for it:
-
-- **Domain names**: the public name for the UI, such as
-  `linewright-ui.example.com`.
-- **Scheme** `http`, **Forward hostname** `linewright-ui`, the name
-  `ui-relay` has on the `proxy` network, **Forward port** `8081`.
-- Under **SSL**, a Let's Encrypt certificate, with **Force SSL** on.
-
-and set `LINEWRIGHT_PUBLIC_URL` to `https://linewright-ui.example.com`. The
-UI does not sign anyone in yet, so give the proxy host an access list that
-lets in only your users.
+Linewright signs people in itself. A proxy that puts its own login in front,
+such as Authelia, must leave `/mcp`,
+`/.well-known/oauth-protected-resource/mcp`,
+`/.well-known/oauth-authorization-server`, `/oauth/token` and
+`/oauth/register` open: MCP clients call them without a browser.
 
 ## The agents' browser
 
