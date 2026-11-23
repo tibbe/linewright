@@ -21,6 +21,7 @@ use std::fmt::Display;
 use tracing::{info, warn};
 
 use crate::access::{Caller, LevelMarker, NeedsLevel, Permit};
+use crate::domain::Number;
 
 /// An action of `docs/specs/access.md`'s table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -265,6 +266,43 @@ fn logged(caller: &Caller, action: Action, changed: &str, ended: Ended) {
         Ended::Failed(why) => {
             let error = format!("{why:#}");
             warn!(person = %id, identity, action = tool, changed, error, "{title}: failed");
+        }
+    }
+}
+
+/// The refusal of a required field, or argument, that is empty or holds
+/// only white space (`docs/specs/design_system.md`, Making, Required).
+pub const REQUIRED: &str = "Required.";
+
+/// What an action or a link named that does not exist, and the refusal
+/// that names it (`docs/specs/design_system.md`, Screen states, Nothing
+/// there). A thing is named as it was given, whether or not it parses.
+#[derive(Clone, Debug)]
+pub enum Missing {
+    Item(Number),
+    Run(String),
+    Benchmark(String),
+    Task(String),
+    BenchmarkRun(String),
+    /// A configuration of a benchmark run, which has no screen of its own.
+    Configuration(String),
+    /// A person, who has no screen of their own.
+    Person(String),
+    /// One of the reader's own authorizations.
+    Authorization(String),
+}
+
+impl Display for Missing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Missing::Item(number) => write!(f, "No such item {number}"),
+            Missing::Run(id) => write!(f, "No such run {id}"),
+            Missing::Benchmark(id) => write!(f, "No such benchmark {id}"),
+            Missing::Task(id) => write!(f, "No such task {id}"),
+            Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
+            Missing::Configuration(id) => write!(f, "No such configuration {id}"),
+            Missing::Person(id) => write!(f, "No such person {id}"),
+            Missing::Authorization(id) => write!(f, "No such authorization {id}"),
         }
     }
 }

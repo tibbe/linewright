@@ -21,7 +21,7 @@ use super::making::{
     parse_name,
 };
 use super::write::Write;
-use crate::actions::{self, Action};
+use crate::actions::{self, Action, another_named, no_tasks};
 use crate::api::Sources;
 use crate::benchmarks::{Benchmark, LaunchRefusal, as_is_name};
 use crate::config;
@@ -839,11 +839,6 @@ pub(super) fn launch_title(benchmark: impl std::fmt::Display) -> String {
 /// The refusal of repetitions that are not a whole number, 1 or more.
 const REPETITIONS: &str = "Repetitions are a whole number, 1 or more.";
 
-/// The refusal of the name `name` that another configuration has.
-pub(super) fn another_named(name: &Name) -> String {
-    format!("Another configuration is named {name}.")
-}
-
 /// The refusal of a session timeout that is not a duration.
 const NOT_A_DURATION: &str = "A session timeout is a duration, such as 6h.";
 
@@ -863,10 +858,7 @@ fn launch_refused(
     let whole = |status, why: String| (status, Refusal::Whole(why));
     match refusal {
         LaunchRefusal::NoSuchBenchmark(_) => whole(StatusCode::NOT_FOUND, refusal.to_string()),
-        LaunchRefusal::NoTasks(name) => whole(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("The benchmark {name} has no tasks."),
-        ),
+        LaunchRefusal::NoTasks(name) => whole(StatusCode::UNPROCESSABLE_ENTITY, no_tasks(name)),
         LaunchRefusal::DuplicateConfiguration(name) => {
             let why = another_named(name);
             let named = fields

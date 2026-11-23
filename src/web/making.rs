@@ -309,24 +309,10 @@ pub(super) fn success(said: &Html) -> Html {
     ))
 }
 
-/// The refusal of a required field that is empty or holds only white space
-/// (`docs/specs/design_system.md`, Making, Required).
-pub(super) const REQUIRED: &str = "Required.";
+pub(super) use crate::actions::REQUIRED;
 
 /// The name `sent` (`docs/specs/benchmarks.md`, Names and IDs), clean, or
 /// else [`REQUIRED`] while it is no name.
 pub(super) fn parse_name(sent: &str) -> Result<Name, &'static str> {
     Name::parse(sent).map_err(|_| REQUIRED)
-}
-
-/// The refusal of a benchmark named as one that exists
-/// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
-pub(super) fn benchmark_taken(name: &Name) -> String {
-    format!("A benchmark named {name} already exists.")
-}
-
-/// The refusal of a task named as another task of its benchmark
-/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
-pub(super) fn task_taken(task: &Name, benchmark: &Name) -> String {
-    format!("A task named {task} already exists in {benchmark}.")
 }

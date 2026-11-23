@@ -20,9 +20,10 @@ use super::icons::{CardIcon, Icon};
 use super::names::Names;
 use super::{Page, cookie_headers, cookie_values, render, run_path};
 use crate::access::{self, Permit};
+pub(super) use crate::actions::Missing;
 use crate::actions::{self, Action, ServerAnswer};
 use crate::api::Sources;
-use crate::domain::{Number, Repo, Snapshot, Timestamp};
+use crate::domain::{Repo, Snapshot, Timestamp};
 use crate::environment::shown::{Attention, BuildShown, EnvironmentShown};
 use crate::phrase::{Phrase, Status};
 use crate::repo_files::FileError;
@@ -275,23 +276,6 @@ impl Heading {
     }
 }
 
-/// What a link named that does not exist, as the screens name it
-/// (`docs/specs/design_system.md`, Screen states, Nothing there). A run,
-/// benchmark or benchmark run is named as the path gave it, whether or not it
-/// parses.
-#[derive(Clone)]
-pub(super) enum Missing {
-    Item(Number),
-    Run(String),
-    Benchmark(String),
-    Task(String),
-    BenchmarkRun(String),
-    /// A configuration of a benchmark run, which has no screen of its own.
-    Configuration(String),
-    /// A person, who has no screen of their own.
-    Person(String),
-}
-
 impl Missing {
     /// The name the link gave, as the heading of what it names would.
     fn name(&self) -> String {
@@ -301,22 +285,9 @@ impl Missing {
             | Missing::Benchmark(id)
             | Missing::Task(id)
             | Missing::Configuration(id)
-            | Missing::Person(id) => id.clone(),
+            | Missing::Person(id)
+            | Missing::Authorization(id) => id.clone(),
             Missing::BenchmarkRun(id) => format!("Benchmark run {id}"),
-        }
-    }
-}
-
-impl std::fmt::Display for Missing {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Missing::Item(number) => write!(f, "No such item {number}"),
-            Missing::Run(id) => write!(f, "No such run {id}"),
-            Missing::Benchmark(id) => write!(f, "No such benchmark {id}"),
-            Missing::Task(id) => write!(f, "No such task {id}"),
-            Missing::BenchmarkRun(id) => write!(f, "No such benchmark run {id}"),
-            Missing::Configuration(id) => write!(f, "No such configuration {id}"),
-            Missing::Person(id) => write!(f, "No such person {id}"),
         }
     }
 }
@@ -739,6 +710,7 @@ pub(super) fn holds(frame: &Frame) -> (&'static str, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::Number;
     use crate::environment::shown::BuiltShown;
 
     /// `docs/specs/web/shell.md`, Remembered: the cookie the server

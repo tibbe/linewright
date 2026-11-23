@@ -17,15 +17,14 @@ use super::buttons::{ScreenButton, Verb};
 use super::caller::Asking;
 use super::capture::{Task, TaskField, TaskFields};
 use super::html::{self, Html};
-use super::launch::another_named;
-use super::making::{
-    self, Answer, Field, FieldRefusals, Form, Making, Refusal, benchmark_taken, task_taken,
-};
+use super::making::{self, Answer, Field, FieldRefusals, Form, Making, Refusal};
 use super::shell::Missing;
 use super::write::{Refused, Write};
 use super::{benchmark_path, benchmark_run_path, render, task_path};
 use crate::access::{Act, LevelMarker, Permit};
-use crate::actions::{self, Action};
+use crate::actions::{
+    self, AS_IS_KEEPS_ITS_NAME, Action, another_named, benchmark_taken, task_taken,
+};
 use crate::api::Sources;
 use crate::benchmarks::{
     Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, ConfigurationId, EditTaskError,
@@ -469,9 +468,6 @@ pub(super) fn configuration_values(record: &BenchmarkRunRecord) -> String {
         .collect();
     format!(r#"<div id="{EDIT_CONFIGURATIONS_VALUES}" hidden>{values}</div>"#)
 }
-
-/// The refusal of a change to the name of `as-is`, which keeps it.
-const AS_IS_KEEPS_ITS_NAME: &str = "The configuration as-is keeps its name.";
 
 /// Why the configuration `configuration` of the benchmark run `record`,
 /// which a path names `id`, cannot be renamed whatever the name: there is no

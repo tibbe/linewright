@@ -3,7 +3,7 @@
 
 use tracing::warn;
 
-use super::benchmarks::benchmarks;
+use super::benchmarks::{benchmark_taken, benchmarks, task_taken};
 use super::{Action, Ended, logged};
 use crate::access::{Act, Permit, Read};
 use crate::api::Sources;
@@ -62,6 +62,43 @@ pub enum AddTaskError {
     /// redacted.
     #[error("{why}")]
     Capture { error: CaptureError, why: String },
+}
+
+impl AddTaskError {
+    /// Its message (`docs/specs/benchmarks.md`, Capturing, Refusals on a
+    /// screen). A refusal the spec gives no message keeps the capture's own
+    /// wording.
+    pub fn said(&self) -> String {
+        let AddTaskError::Capture { error, why } = self else {
+            return self.to_string();
+        };
+        match error {
+            CaptureError::Taken { task, benchmark } => task_taken(task, benchmark),
+            CaptureError::OtherStage {
+                run,
+                stage,
+                benchmark,
+            } => format!(
+                "Run {run} is of {stage}, and {} holds tasks of {}.",
+                benchmark.name, benchmark.stage
+            ),
+            CaptureError::NoInput(run) => format!("Run {run} recorded no input."),
+            CaptureError::Lacks { run, part } => {
+                format!("The record of run {run} lacks {part}.")
+            }
+            CaptureError::NoSuchRun(run) => no_such_run(run),
+            CaptureError::BenchmarkTaken(name) => benchmark_taken(name),
+            CaptureError::NotCapturable(_)
+            | CaptureError::NoSuchBenchmark(_)
+            | CaptureError::Failed(_) => why.clone(),
+        }
+    }
+}
+
+/// The refusal of a capture of run `run`, which does not exist
+/// (`docs/specs/benchmarks.md`, Capturing, Refusals on a screen).
+pub fn no_such_run(run: &impl std::fmt::Display) -> String {
+    format!("No such run {run}.")
 }
 
 /// Captures run `run` as the task `name`, with `criteria` as what a good
