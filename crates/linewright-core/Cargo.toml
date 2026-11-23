@@ -37,7 +37,7 @@ hmac = { workspace = true }
 http-body-util = { workspace = true }
 humantime = { workspace = true }
 hyper = { workspace = true }
-hyper-util = { workspace = true }
+hyper-util = { workspace = true, features = ["client-proxy"] }
 icu_collator = { workspace = true }
 icu_normalizer = { workspace = true }
 icu_properties = { workspace = true }
