@@ -103,12 +103,18 @@ impl Browsing<'_> {
 
     /// Exchanges `code` of `client` for tokens.
     pub(super) async fn exchange_code(&mut self, client: &str, code: &str) -> Answer {
+        self.exchange_code_from(client, code, REDIRECT_URI).await
+    }
+
+    /// Exchanges `code` of `client`, sent back to `redirect_uri`, for
+    /// tokens.
+    async fn exchange_code_from(&mut self, client: &str, code: &str, redirect_uri: &str) -> Answer {
         self.post_as_client(
             "/oauth/token",
             &[
                 ("grant_type", "authorization_code"),
                 ("code", code),
-                ("redirect_uri", REDIRECT_URI),
+                ("redirect_uri", redirect_uri),
                 ("code_verifier", VERIFIER),
                 ("client_id", client),
                 ("resource", RESOURCE),
@@ -230,8 +236,8 @@ async fn the_metadata_name_linewright_under_its_public_url() {
     assert_eq!(json(&resource)["resource"], RESOURCE);
 }
 
-/// `docs/specs/access.md`, The authorization server, Clients, Redirect URIs
-/// and Logged.
+/// `docs/specs/access.md`, The authorization server, Clients, Loopback and
+/// Logged.
 #[test_log::test(tokio::test)]
 async fn a_client_registers_as_a_public_client_and_is_logged() {
     let signing = signing(None).await;
@@ -345,6 +351,38 @@ async fn a_person_signs_in_and_allows_a_client_which_exchanges_its_code_once() {
     );
     assert_eq!(again.status, 400);
     assert_eq!(json(&again)["error"], "invalid_grant");
+}
+
+/// `docs/specs/access.md`, The authorization server, Loopback: a request
+/// may give a loopback redirect URI with another port than the client
+/// registered, and Linewright sends the browser back there.
+/// <https://www.rfc-editor.org/rfc/rfc8252#section-7.3>
+#[test_log::test(tokio::test)]
+async fn a_loopback_redirect_uri_takes_the_port_the_request_gives() {
+    let signing = signing(None).await;
+    let mut browser = Browsing::new(&signing);
+    let client = browser.register("My agent").await;
+    let on_its_port = "http://127.0.0.1:61234/cb";
+    let back = browser
+        .sign_in(
+            &authorize_path(&client, on_its_port, "s"),
+            Some("nameless@example.com"),
+        )
+        .await;
+    let consent = browser.get(back.location()).await;
+    assert_eq!(consent.status, 200, "{}", consent.html.html());
+
+    let sent = browser.decide(&consent, "allow").await;
+
+    assert_eq!(
+        format!("{}://{}{}", sent.scheme(), sent.authority(), sent.path()),
+        on_its_port
+    );
+    let code = query_value(&sent, "code").expect("a code");
+    let exchanged = browser
+        .exchange_code_from(&client, &code, on_its_port)
+        .await;
+    assert_eq!(exchanged.status, 200, "{}", exchanged.html.html());
 }
 
 /// `docs/specs/access.md`, The authorization server: each authorization
@@ -486,7 +524,7 @@ async fn an_unknown_client_unusable_metadata_document_or_redirect_uri_shows_auth
             "Linewright cannot use this client's metadata document.",
         ),
         (
-            authorize_path(&client, "http://127.0.0.1:5001/cb", "s"),
+            authorize_path(&client, "http://127.0.0.1:5000/other", "s"),
             "This is not a redirect URI of this client.",
         ),
     ] {
