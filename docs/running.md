@@ -414,12 +414,10 @@ otherwise, and logs that address as it starts. It exits at startup if it
 cannot listen there. Without `public-url`, it serves no web UI, and logs
 why.
 
-The UI needs an identity provider to sign people in through, Google, GitHub
-or both, though it does not sign anyone in yet: until it does, whoever
-reaches the port can read it. Register Linewright with each provider as an
-OAuth app, with `/auth/google/callback` or `/auth/github/callback` under the
-public URL as its callback, such as
-`https://linewright.example.com/auth/google/callback`:
+The UI signs people in through an identity provider, Google, GitHub or both.
+Register Linewright with each provider as an OAuth app, with
+`/auth/google/callback` or `/auth/github/callback` under the public URL as its
+callback, such as `https://linewright.example.com/auth/google/callback`:
 
 - **Google**: an OAuth client ID of the type "Web application", in the Google
   Cloud console. Set `google-client-id` to its client ID, and
@@ -428,7 +426,10 @@ public URL as its callback, such as
 - **GitHub**: an OAuth app, in your account's or your organization's
   developer settings. Set `github-client-id` to its client ID, and
   `LINEWRIGHT_GITHUB_CLIENT_SECRET` to its secret. `github-signup-orgs` names
-  the organizations, and `org/team` for a team, whose members may sign in.
+  the organizations, and `org/team` for a team, whose members may sign in;
+  while it is set, signing in asks the person to let Linewright read their
+  organizations. An organization that restricts OAuth apps must approve
+  Linewright's before its members can sign in by it.
 
 `manager` names an identity that is always a manager, as `google:` and an
 email or `github:` and a login, such as `github:octocat`. The client secrets
