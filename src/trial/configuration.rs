@@ -55,6 +55,12 @@ fn listed(errors: &[FileError]) -> String {
         .collect()
 }
 
+/// Whether `path` names a file under the directory it is relative to: its
+/// every part a name, none empty, `.` or `..`.
+fn within(path: &str) -> bool {
+    path.split('/').all(|part| !matches!(part, "" | "." | ".."))
+}
+
 const NOT_HELD: &str = "not a file a configuration may hold: it holds `config.toml` and `briefs/`";
 
 impl Configuration {
@@ -135,6 +141,10 @@ impl Configuration {
                     Err(error) => refuse(path, error),
                 }
             } else if let Some(under) = path.strip_prefix(BRIEFS) {
+                if !within(under) {
+                    refuse(path, NOT_HELD.into());
+                    continue;
+                }
                 brief_files.push((under.to_string(), Blob::from_bytes(bytes.clone())));
             } else {
                 refuse(path, NOT_HELD.into());
@@ -193,5 +203,32 @@ impl Configuration {
             write_whole(&file, &parent.join(format!(".{name}")), bytes)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test_log::test]
+    fn a_file_of_the_brief_outside_briefs_is_not_held() {
+        for path in [
+            "briefs/../../escaped",
+            "briefs//etc/passwd",
+            "briefs/./prompts/implement.md",
+        ] {
+            let files = BTreeMap::from([(path.to_string(), b"text".to_vec())]);
+
+            let errors = Configuration::parse(files).unwrap_err();
+
+            assert_eq!(
+                errors,
+                [FileError {
+                    path: path.to_string(),
+                    error: NOT_HELD.to_string(),
+                }],
+                "{path}"
+            );
+        }
     }
 }
