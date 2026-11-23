@@ -389,14 +389,13 @@ async fn each_tool_has_the_action_as_its_title_and_its_screens_arguments() {
     }
 }
 
-/// What a call that changed something returned, as structured content,
-/// once checked to be the same JSON as its text.
+/// What a call returned, as structured content, once checked to come with
+/// no other content (`docs/specs/access.md`, The MCP server, What a tool
+/// shows).
 #[track_caller]
 fn done(result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{result}");
-    let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap())
-        .unwrap_or_else(|e| panic!("{e}: {result}"));
-    assert_eq!(text, result["structuredContent"], "{result}");
+    assert_eq!(result["content"], json!([]), "{result}");
     result["structuredContent"].clone()
 }
 
