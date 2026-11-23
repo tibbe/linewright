@@ -8,8 +8,8 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::access::people::{ManagerName, NotAManager};
 use crate::access::providers::{
-    self, ClientId, ClientSecret, GitHub, Google, GoogleEndpoints, Provider, Providers,
-    SignUpDomains, SignUpOrgs,
+    self, ClientId, ClientSecret, GitHub, GitHubEndpoints, Google, GoogleEndpoints, Provider,
+    Providers, SignUpDomains, SignUpOrgs,
 };
 use crate::automation::AutomationName;
 use crate::benchmarks::{BenchmarkId, BenchmarkRunId, ConfigurationId, Repetitions, TaskId};
@@ -1337,6 +1337,7 @@ impl Config {
                     client_id,
                     secret: client_secret,
                     signup: github_signup,
+                    endpoints: GitHubEndpoints::default(),
                 }
             });
         let ui = match public_url {

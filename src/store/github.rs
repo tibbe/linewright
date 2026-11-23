@@ -2064,7 +2064,7 @@ fn header(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
 
 /// The URL of the next page a `Link` header gives
 /// (<https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api#using-link-headers>).
-fn next_link(link: &str) -> Option<String> {
+pub(crate) fn next_link(link: &str) -> Option<String> {
     link.split(',').find_map(|part| {
         let (url, rel) = part.split_once(';')?;
         (rel.trim() == "rel=\"next\"").then(|| {
