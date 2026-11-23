@@ -182,9 +182,18 @@ impl ServerHandler for Handler {
         };
         let called = tools::call(&acting, &caller, request).await?;
         Ok(match called {
-            Ok(value) => CallToolResult::structured(value),
+            Ok(value) => structured(value),
             Err(said) => CallToolResult::error(vec![ContentBlock::text(said)]),
         }
         .into())
     }
+}
+
+/// A successful call's result: `value` as structured content alone, not
+/// also as text as [`CallToolResult::structured`] gives it.
+/// <https://docs.rs/rmcp/3.11.0/rmcp/model/struct.CallToolResult.html#method.structured>
+fn structured(value: serde_json::Value) -> CallToolResult {
+    let mut result = CallToolResult::structured(value);
+    result.content.clear();
+    result
 }
