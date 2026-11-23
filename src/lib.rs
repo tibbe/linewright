@@ -9,6 +9,7 @@ pub const VERSION_AND_COMMIT: &str = concat!(
     ")"
 );
 
+pub mod access;
 pub mod api;
 pub mod apply;
 pub mod attachments;
