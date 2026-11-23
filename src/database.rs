@@ -83,6 +83,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(WORKFLOW_RUN_TRIGGERS),
     clean_names::CLEAN_NAMES,
     Migration::Sql(SIGN_IN_TABLES),
+    Migration::Sql(OAUTH_TABLES),
 ];
 
 /// The table of the release that made each schema version.
@@ -399,6 +400,64 @@ const SIGN_IN_TABLES: &str = "CREATE TABLE people (
         return_to TEXT NOT NULL,
         expires_at TEXT NOT NULL
     ) STRICT;";
+
+/// The authorization server's records (`docs/specs/access.md`, The
+/// authorization server and Tokens): the clients, each by its ID, with
+/// when Linewright last fetched the metadata document of one that has one;
+/// each authorization request waiting for its person to sign in and
+/// allow or deny its client; the authorizations; and the codes, access
+/// tokens and refresh tokens, each only as its SHA-256.
+const OAUTH_TABLES: &str = "CREATE TABLE clients (
+        id TEXT PRIMARY KEY,
+        registration TEXT NOT NULL CHECK (registration IN ('dynamic', 'metadata-document')),
+        name TEXT,
+        redirect_uris TEXT NOT NULL,
+        registered_at TEXT NOT NULL,
+        fresh_until TEXT,
+        CHECK ((registration = 'metadata-document') = (fresh_until IS NOT NULL))
+    ) STRICT;
+    CREATE TABLE authorization_requests (
+        hash BLOB PRIMARY KEY,
+        client TEXT NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+        redirect_uri TEXT NOT NULL,
+        challenge TEXT NOT NULL,
+        state TEXT,
+        person INTEGER REFERENCES people (id) ON DELETE CASCADE,
+        signed_in_at TEXT,
+        expires_at TEXT NOT NULL,
+        CHECK ((person IS NULL) = (signed_in_at IS NULL))
+    ) STRICT;
+    CREATE TABLE authorizations (
+        id INTEGER PRIMARY KEY CHECK (id > 0),
+        person INTEGER NOT NULL REFERENCES people (id) ON DELETE CASCADE,
+        client TEXT NOT NULL REFERENCES clients (id),
+        redirect_uri TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        allowed_at TEXT NOT NULL,
+        ends_at TEXT NOT NULL,
+        ended_at TEXT
+    ) STRICT;
+    CREATE INDEX authorizations_of_people ON authorizations (person);
+    CREATE TABLE codes (
+        hash BLOB PRIMARY KEY,
+        authorization INTEGER NOT NULL REFERENCES authorizations (id) ON DELETE CASCADE,
+        challenge TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used INTEGER NOT NULL CHECK (used IN (0, 1))
+    ) STRICT;
+    CREATE TABLE access_tokens (
+        hash BLOB PRIMARY KEY,
+        authorization INTEGER NOT NULL REFERENCES authorizations (id) ON DELETE CASCADE,
+        expires_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX access_tokens_of_authorizations ON access_tokens (authorization);
+    CREATE TABLE refresh_tokens (
+        hash BLOB PRIMARY KEY,
+        authorization INTEGER NOT NULL REFERENCES authorizations (id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN ('current', 'previous', 'retired'))
+    ) STRICT;
+    CREATE INDEX refresh_tokens_of_authorizations ON refresh_tokens (authorization);";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,

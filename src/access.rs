@@ -2,6 +2,7 @@
 //! access levels and roles, the caller a request resolves to, and the permit
 //! that every action needs.
 
+pub mod oauth;
 pub mod people;
 pub mod providers;
 pub mod sessions;
