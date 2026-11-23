@@ -467,8 +467,7 @@ pub struct Settings {
     /// is set [default: 127.0.0.1:8081]
     #[arg(long, global = true)]
     pub ui_address: Option<String>,
-    /// The URL people reach the web UI at: HTTPS, or HTTP to a loopback
-    /// address [default: none: no web UI]
+    /// The HTTPS URL people reach the web UI at [default: none: no web UI]
     #[arg(long, global = true, value_name = "URL")]
     pub public_url: Option<String>,
     /// The client ID Google gave Linewright, its secret in

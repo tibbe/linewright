@@ -191,7 +191,7 @@ fn token_of<'a>(pages: &'a Pages, role: Role, name: &'a str) -> impl Future<Outp
 #[test_log::test(tokio::test)]
 async fn a_request_without_a_valid_access_token_gets_401_pointing_to_the_resource_metadata() {
     let pages = Pages::of(a_ticket()).await;
-    let metadata = r#"Bearer resource_metadata="http://127.0.0.1:8081/.well-known/oauth-protected-resource/mcp""#;
+    let metadata = r#"Bearer resource_metadata="https://127.0.0.1:8081/.well-known/oauth-protected-resource/mcp""#;
     let (log, _guard) = Log::capture();
 
     for (token, challenge) in [
@@ -324,9 +324,9 @@ async fn a_request_is_taken_without_an_origin_or_from_the_public_urls_alone() {
 
     for (origin, status) in [
         (None, 200),
-        (Some("http://127.0.0.1:8081"), 200),
-        (Some("http://127.0.0.1:8082"), 403),
-        (Some("https://127.0.0.1:8081"), 403),
+        (Some("https://127.0.0.1:8081"), 200),
+        (Some("https://127.0.0.1:8082"), 403),
+        (Some("http://127.0.0.1:8081"), 403),
         (Some("https://evil.example"), 403),
         (Some("null"), 403),
     ] {

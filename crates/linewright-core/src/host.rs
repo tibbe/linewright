@@ -73,8 +73,9 @@ pub fn domain_name(name: &str) -> Option<String> {
 }
 
 /// The URL people reach the web UI at, `public-url`
-/// (`docs/specs/operation.md`, Serving the UI): HTTPS, or HTTP to a loopback
-/// address, with nothing after its host and port.
+/// (`docs/specs/operation.md`, Serving the UI): HTTPS, as RFC 8414 has the
+/// issuer that `docs/specs/access.md`, The authorization server, makes it, with
+/// nothing after its host and port.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicUrl {
     url: Url,
@@ -85,6 +86,9 @@ impl PublicUrl {
     /// The public URL `given` is, with why it is none when it is not.
     pub fn parse(given: &str) -> Result<PublicUrl, String> {
         let url = Url::parse(given).map_err(|e| format!("it is not a URL: {e}"))?;
+        if url.scheme() != "https" {
+            return Err("it is HTTPS, such as `https://linewright.example.com`".into());
+        }
         let host = match url.host() {
             Some(Host::Domain(name)) => HostName(
                 domain_name(name).ok_or_else(|| format!("its host {name:?} is no domain name"))?,
@@ -93,16 +97,6 @@ impl PublicUrl {
             Some(Host::Ipv6(address)) => HostName(address.to_string()),
             None => return Err("it has no host".into()),
         };
-        let secure = match url.scheme() {
-            "https" => true,
-            "http" => host.is_loopback_address(),
-            _ => false,
-        };
-        if !secure {
-            return Err("it is HTTPS, or HTTP to a loopback address such as \
-                        `http://127.0.0.1:8081`"
-                .into());
-        }
         let bare = url.username().is_empty()
             && url.password().is_none()
             && url.path() == "/"
@@ -130,7 +124,7 @@ impl PublicUrl {
         let port = self
             .url
             .port_or_known_default()
-            .expect("an HTTP or HTTPS URL has a port");
+            .expect("an HTTPS URL has a port");
         let host = self.url.host_str().expect("a public URL has a host");
         format!("{}://{host}:{port}", self.url.scheme())
     }

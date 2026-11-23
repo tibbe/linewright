@@ -75,7 +75,7 @@ async fn a_page_its_stream_and_an_asset(pages: &Pages) -> [String; 3] {
 async fn the_ui_answers_the_public_urls_host_ignoring_case_port_and_a_trailing_dot() {
     let pages = pages().await;
     let named = pages.at("https://Linewright.Example.com");
-    let loopback = pages.at("http://[::1]:8081");
+    let loopback = pages.at("https://[::1]:8081");
     let mapped = pages.at("https://[::ffff:127.0.0.1]");
 
     for path in a_page_its_stream_and_an_asset(&pages).await {

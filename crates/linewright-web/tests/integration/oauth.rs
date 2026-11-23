@@ -270,7 +270,7 @@ async fn the_metadata_name_linewright_under_its_public_url() {
         .await;
 
     assert_eq!(server.status, 200);
-    assert_eq!(json(&server)["issuer"], "http://127.0.0.1:8081");
+    assert_eq!(json(&server)["issuer"], "https://127.0.0.1:8081");
     assert_eq!(resource.status, 200);
     assert_eq!(json(&resource)["resource"], RESOURCE);
 }
@@ -399,7 +399,7 @@ async fn a_person_allows_a_client_then_signs_in_and_the_client_exchanges_its_cod
     assert_eq!(query_value(&sent, "state").as_deref(), Some("the state"));
     assert_eq!(
         query_value(&sent, "iss").as_deref(),
-        Some("http://127.0.0.1:8081")
+        Some("https://127.0.0.1:8081")
     );
     let code = query_value(&sent, "code").expect("a code");
     let logged = log.lines("INFO");
@@ -624,7 +624,7 @@ async fn a_sign_in_with_only_the_handle_of_consent_completes_nothing() {
     let sent = client_side
         .get(&authorize_path(&client, REDIRECT_URI, "s"))
         .await;
-    let consent_url = url::Url::parse("http://127.0.0.1:8081")
+    let consent_url = url::Url::parse("https://127.0.0.1:8081")
         .unwrap()
         .join(sent.location())
         .unwrap();

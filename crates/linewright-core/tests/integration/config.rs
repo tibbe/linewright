@@ -1605,7 +1605,7 @@ fn the_ui_settings_are_keys_in_the_file_or_flags_that_add_to_its_lists() {
     let from_flags = resolve(
         &[
             "--public-url",
-            "http://127.0.0.1:9000",
+            "https://127.0.0.1:9000",
             "--google-client-id",
             "flag-id",
             "--google-signup-domains",
@@ -1636,7 +1636,7 @@ fn the_ui_settings_are_keys_in_the_file_or_flags_that_add_to_its_lists() {
     );
     assert_eq!(in_file.manager.unwrap().to_string(), "github:octo-cat");
     let by_flags = from_flags.ui.unwrap();
-    assert_eq!(by_flags.public_url.to_string(), "http://127.0.0.1:9000/");
+    assert_eq!(by_flags.public_url.to_string(), "https://127.0.0.1:9000/");
     let flagged = by_flags.providers.google().unwrap();
     assert_eq!(flagged.client_id.as_str(), "flag-id");
     assert_eq!(
@@ -1646,7 +1646,7 @@ fn the_ui_settings_are_keys_in_the_file_or_flags_that_add_to_its_lists() {
 }
 
 #[test_log::test]
-fn public_url_is_https_or_http_to_a_loopback_address() {
+fn public_url_is_https() {
     for (given, url) in [
         ("https://lw.example.com", "https://lw.example.com/"),
         (
@@ -1654,9 +1654,8 @@ fn public_url_is_https_or_http_to_a_loopback_address() {
             "https://lw.example.com:8443/",
         ),
         ("https://192.0.2.7", "https://192.0.2.7/"),
-        ("http://127.0.0.1:8081", "http://127.0.0.1:8081/"),
-        ("http://127.1.2.3", "http://127.1.2.3/"),
-        ("http://[::1]:8081", "http://[::1]:8081/"),
+        ("https://127.0.0.1:8081", "https://127.0.0.1:8081/"),
+        ("https://[::1]:8081", "https://[::1]:8081/"),
     ] {
         let env = [("LINEWRIGHT_PUBLIC_URL", given), GOOGLE_ID, GOOGLE_SECRET];
 
@@ -1667,10 +1666,11 @@ fn public_url_is_https_or_http_to_a_loopback_address() {
 }
 
 #[test_log::test]
-fn a_public_url_that_is_not_https_or_http_to_a_loopback_address_is_an_error_naming_it() {
+fn a_public_url_that_is_not_https_is_an_error_naming_it() {
     for bad in [
         "http://lw.example.com",
         "http://localhost:8081",
+        "http://[::1]:8081",
         "http://192.0.2.7",
         "ftp://lw.example.com",
         "lw.example.com",
@@ -1689,6 +1689,22 @@ fn a_public_url_that_is_not_https_or_http_to_a_loopback_address_is_an_error_nami
         );
         assert!(error.contains(bad), "{bad}: {error}");
     }
+}
+
+#[test_log::test]
+fn a_public_url_over_http_is_an_error_saying_it_is_https() {
+    let error = resolve(
+        &["--public-url", "http://127.0.0.1:8081"],
+        &[GOOGLE_ID, GOOGLE_SECRET],
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "the setting `public-url` is \"http://127.0.0.1:8081\": it is HTTPS, such as \
+         `https://linewright.example.com`"
+    );
 }
 
 #[test_log::test]

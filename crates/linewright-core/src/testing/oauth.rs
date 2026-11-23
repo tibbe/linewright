@@ -15,7 +15,7 @@ pub const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 pub const CHALLENGE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
 /// The MCP server's URI under the tests' public URL.
-pub const RESOURCE: &str = "http://127.0.0.1:8081/mcp";
+pub const RESOURCE: &str = "https://127.0.0.1:8081/mcp";
 
 /// The path that sends a person to authorize `client`, as a client sends it.
 pub fn authorize_path(client: &str, redirect_uri: &str, state: &str) -> String {
