@@ -1842,6 +1842,7 @@ fn manager_names_a_google_email_or_a_github_login_ignoring_case() {
         "google:alice@example.com"
     );
     assert_eq!(manager("GitHub:Octo-Cat"), "github:octo-cat");
+    assert_eq!(manager("github:Mona_Acme"), "github:mona_acme");
 }
 
 #[test_log::test]
