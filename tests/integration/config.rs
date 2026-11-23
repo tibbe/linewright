@@ -1372,6 +1372,7 @@ fn session_env_setting_a_variable_linewright_may_set_itself_is_an_error() {
         "CLAUDE_CODE_EFFORT_LEVEL",
         "GH_TOKEN",
         "GITHUB_TOKEN",
+        "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
     ] {
         let error = resolve(
             &[],
