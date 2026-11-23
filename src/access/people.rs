@@ -538,15 +538,17 @@ impl People {
         self.change(id, Change::Role(role), manager).await
     }
 
-    /// Disables the person `id`, signing them out of every browser at once,
-    /// unless [`may_change`] protects them under `manager`
-    /// (`docs/specs/access.md`, People, Disabling).
+    /// Disables the person `id` at `now`, signing them out of every browser
+    /// and ending their authorizations at once, unless [`may_change`]
+    /// protects them under `manager` (`docs/specs/access.md`, People,
+    /// Disabling).
     pub async fn disable(
         &self,
         id: PersonId,
         manager: Option<&ManagerName>,
+        now: Timestamp,
     ) -> Result<Person, ChangeRefusal> {
-        self.change(id, Change::Disable, manager).await
+        self.change(id, Change::Disable(now), manager).await
     }
 
     /// Enables the person `id`.
@@ -580,7 +582,7 @@ impl People {
             }
             let (update, value) = match change {
                 Change::Role(role) => ("UPDATE people SET role = ? WHERE id = ?", role.name()),
-                Change::Disable => ("UPDATE people SET state = ? WHERE id = ?", "disabled"),
+                Change::Disable(_) => ("UPDATE people SET state = ? WHERE id = ?", "disabled"),
                 Change::Enable => ("UPDATE people SET state = ? WHERE id = ?", "enabled"),
             };
             sqlx::query(update)
@@ -588,11 +590,12 @@ impl People {
                 .bind(id.row())
                 .execute(&mut *tx)
                 .await?;
-            if change == Change::Disable {
+            if let Change::Disable(now) = change {
                 sqlx::query("DELETE FROM browser_sessions WHERE person = ?")
                     .bind(id.row())
                     .execute(&mut *tx)
                     .await?;
+                super::oauth::store::end_all_of(&mut tx, id, now).await?;
             }
             tx.commit().await?;
             anyhow::Ok(Ok(()))
@@ -642,7 +645,8 @@ impl People {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Change {
     Role(Role),
-    Disable,
+    /// Disabling, at the time it holds.
+    Disable(Timestamp),
     Enable,
 }
 
@@ -652,7 +656,7 @@ impl Change {
     fn guarded(self) -> bool {
         match self {
             Change::Role(role) => role != Role::Manager,
-            Change::Disable => true,
+            Change::Disable(_) => true,
             Change::Enable => false,
         }
     }
@@ -1192,7 +1196,7 @@ pub(crate) mod tests {
         ];
         let ada_browser = sessions.start(ada.id, now).await.unwrap();
 
-        let disabled = people.disable(bob.id, None).await.unwrap();
+        let disabled = people.disable(bob.id, None, now).await.unwrap();
 
         assert_eq!(disabled.state, State::Disabled);
         for browser in &browsers {
@@ -1206,7 +1210,7 @@ pub(crate) mod tests {
             Resolved::Caller(_)
         ));
         assert!(matches!(
-            people.disable(ada.id, None).await,
+            people.disable(ada.id, None, now).await,
             Err(ChangeRefusal::Protected(Protected::LastManager(_)))
         ));
         let raced = sessions.start(bob.id, now).await.unwrap();

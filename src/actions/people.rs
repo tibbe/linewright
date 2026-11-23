@@ -69,8 +69,8 @@ pub async fn edit_person(
     changed
 }
 
-/// Disables person `id`, signing them out of every browser
-/// (`docs/specs/access.md`, Disable person).
+/// Disables person `id`, signing them out of every browser and ending
+/// their authorizations (`docs/specs/access.md`, Disable person).
 ///
 /// # Errors
 ///
@@ -82,7 +82,9 @@ pub async fn disable_person(
     manager: Option<&ManagerName>,
     id: PersonId,
 ) -> Result<Person, ChangeRefusal> {
-    let disabled = people(sources).disable(id, manager).await;
+    let disabled = people(sources)
+        .disable(id, manager, sources.clock.now())
+        .await;
     let how = Ended::of(&disabled);
     logged(
         permit.caller(),
