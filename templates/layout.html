@@ -68,6 +68,7 @@
 <div class="lg:rail:tooltip lg:rail:tooltip-right">{% call rail_tip(frame.account.name) %}{% endcall %}<div class="btn btn-ghost btn-sm h-auto justify-start gap-2 px-3 py-1 text-start font-normal" tabindex="0" role="button" aria-label="{{ frame.account.name }}, {{ frame.account.role }}">
 {%- call ui::avatar(frame.account.avatar, frame.account.letter) %}{% endcall %}<span class="flex min-w-0 flex-col lg:rail:hidden"><span class="account-name truncate font-semibold">{{ frame.account.name }}</span><span class="account-role text-xs text-base-content/60">{{ frame.account.role }}</span></span></div></div>
 <ul class="dropdown-content menu z-10 w-52 rounded-box bg-base-100 p-2 shadow-sm" tabindex="0">
+<li><a href="{{ crate::web::authorizations_page::PATH }}">{% call ui::icon(crate::web::icons::Icon::Key, crate::web::icons::IconSize::Inline) %}{% endcall %}Authorizations</a></li>
 <li><button type="submit" form="sign-out">{{ crate::web::buttons::Verb::SignOut.labelled() }}</button></li>
 </ul>
 <form id="sign-out" method="post" action="{{ crate::web::sign_in::SIGN_OUT_PATH }}" hidden></form>

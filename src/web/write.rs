@@ -1,7 +1,7 @@
 //! The web UI's writes: capturing a run, making a benchmark, changing a
 //! benchmark, a task, a configuration or a person's role, removing a task
-//! from its benchmark, launching and cancelling a benchmark run, and
-//! disabling and enabling a person. Each is refused
+//! from its benchmark, launching and cancelling a benchmark run,
+//! disabling and enabling a person, and ending an authorization. Each is refused
 //! without a permit of its action, such as for a request that did not come
 //! from the web UI's own pages, and answered with what the page says of it.
 
@@ -26,6 +26,8 @@ pub(super) enum Write {
     Cancel,
     Disable,
     Enable,
+    /// Ending an authorization.
+    End,
 }
 
 impl Write {
@@ -40,6 +42,7 @@ impl Write {
             Write::Cancel => "Not cancelled",
             Write::Disable => "Not disabled",
             Write::Enable => "Not enabled",
+            Write::End => "Not ended",
         }
     }
 
@@ -54,6 +57,7 @@ impl Write {
             Write::Cancel => "a cancel",
             Write::Disable => "disabling a person",
             Write::Enable => "enabling a person",
+            Write::End => "ending an authorization",
         }
     }
 

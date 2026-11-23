@@ -1,8 +1,9 @@
 //! Linewright as the OAuth authorization server of MCP clients
-//! (`docs/specs/access.md`, The authorization server, Tokens, Consent and
-//! Authorization error; `docs/specs/web/access.md`, Consent and
-//! Authorization error), through the router, signing people in with the
-//! fake Google.
+//! (`docs/specs/access.md`, The authorization server, Tokens, Consent,
+//! Authorization error, Authorizations and End authorization;
+//! `docs/specs/web/access.md`, Consent, Authorization error and
+//! Authorizations), through the router, signing people in with the fake
+//! Google.
 
 use linewright::access::oauth::store::AccessTokens;
 
@@ -543,6 +544,11 @@ async fn a_person_denies_a_client_which_is_sent_access_denied() {
             && line.contains(r#"identity="google:nameless@example.com""#)),
         "{logged:?}"
     );
+    let authorizations = browser.get("/authorizations").await;
+    assert_eq!(
+        select(&authorizations.html, "#authorizations tbody tr").len(),
+        0
+    );
 }
 
 /// `docs/specs/access.md`, Consent; `docs/specs/web/access.md`: Allow and
@@ -668,6 +674,125 @@ async fn an_access_token_lasts_an_hour() {
     clock.advance(chrono::TimeDelta::minutes(1));
 
     assert_eq!(acting_as(&signing, &tokens.access).await, None);
+}
+
+/// Authorizations' rows: each cell's text but the buttons'.
+fn authorization_rows(html: &Html) -> Vec<Vec<String>> {
+    select(html, "#authorizations tbody tr")
+        .into_iter()
+        .map(|row| {
+            select_in(row, "th, td")
+                .into_iter()
+                .filter(|cell| select_in(*cell, "button").is_empty())
+                .map(text)
+                .collect()
+        })
+        .collect()
+}
+
+/// `docs/specs/access.md`, Authorizations and End authorization;
+/// `docs/specs/shell.md`, The account; `docs/specs/web/access.md`,
+/// Authorizations.
+#[test_log::test(tokio::test)]
+async fn a_person_sees_their_authorizations_and_ends_one() {
+    let signing = signing(None).await;
+    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
+    let (_, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let (_, later) = authorized_by_back_door(&signing, &person, "").await;
+    let mut browser = Browsing::with_cookie(&signing, &person);
+
+    let page = browser.get("/authorizations").await;
+
+    assert_eq!(page.status, 200, "{}", page.html.html());
+    let menu = select(&page.html, ".account .menu a[href='/authorizations']");
+    assert_eq!(menu.len(), 1);
+    assert_eq!(text(menu[0]), "Authorizations");
+    assert_eq!(select_in(menu[0], "[data-icon=key]").len(), 1);
+    assert_eq!(
+        text(select(&page.html, "title")[0]),
+        "Authorizations · Linewright"
+    );
+    assert!(
+        select(&page.html, "#crumbs[hidden]").len() == 1,
+        "no breadcrumbs"
+    );
+    assert_eq!(
+        select(&page.html, "#authorizations .card-title [data-icon=key]").len(),
+        1
+    );
+    assert_eq!(
+        select(&page.html, "#authorizations thead th")
+            .into_iter()
+            .map(text)
+            .collect::<Vec<_>>(),
+        ["Client", "Sends back to", "Allowed", "Ends", ""]
+    );
+    let rows = authorization_rows(&page.html);
+    assert_eq!(
+        rows.iter().map(|row| row[..2].to_vec()).collect::<Vec<_>>(),
+        [
+            ["an unnamed client", "127.0.0.1"],
+            ["My agent", "127.0.0.1"],
+        ],
+        "newest first"
+    );
+    assert!(rows[1][3].starts_with("2026-10-31"), "{:?}", rows[1]);
+    let ends = confirmations(&page.html);
+    assert_eq!(
+        ends[1],
+        Confirmation {
+            asking: "End".into(),
+            question: "End the authorization of My agent? My agent can no longer act as you."
+                .into(),
+            turn_down: "Cancel".into(),
+            action: "/authorizations/1/end".into(),
+            fields: vec![],
+        }
+    );
+    assert_eq!(
+        select(
+            &page.html,
+            "#authorizations tbody button [data-icon=link-slash]"
+        )
+        .len(),
+        2
+    );
+    let (log, _guard) = Log::capture();
+
+    let ended = browser.post("/authorizations/1/end", &[]).await;
+
+    assert_eq!(ended.status, 200, "{}", ended.html.html());
+    assert_eq!(acting_as(&signing, &tokens.access).await, None);
+    assert!(acting_as(&signing, &later.access).await.is_some());
+    let after = browser.get("/authorizations").await;
+    assert_eq!(authorization_rows(&after.html).len(), 1);
+    let logged = log.lines("INFO");
+    assert!(
+        logged.iter().any(
+            |line| line.contains("End one of one's own authorizations: done")
+                && line.contains(r#"action="end_authorization""#)
+                && line.contains(r#"identity="google:vera@example.com""#)
+        ),
+        "{logged:?}"
+    );
+}
+
+/// `docs/specs/access.md`, Out of scope: seeing or ending another person's
+/// authorizations.
+#[test_log::test(tokio::test)]
+async fn a_person_cannot_end_anothers_authorization() {
+    let signing = signing(None).await;
+    let person = signed_in_as(&signing.pages.sources, Role::Viewer, "Vera Viewer").await;
+    let (_, tokens) = authorized_by_back_door(&signing, &person, "My agent").await;
+    let manager = signing.pages.cookie.clone();
+    let mut manager = Browsing::with_cookie(&signing, &manager);
+
+    let refused = manager.post("/authorizations/1/end", &[]).await;
+    let page = manager.get("/authorizations").await;
+
+    assert_eq!(refused.status, 404, "{}", refused.html.html());
+    assert_eq!(authorization_rows(&page.html).len(), 0);
+    assert!(acting_as(&signing, &tokens.access).await.is_some());
 }
 
 /// `docs/specs/access.md`, People, Disabling.

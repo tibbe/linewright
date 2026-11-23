@@ -223,6 +223,10 @@ pub(super) enum Place {
     /// A screen of one thing in `area` that belongs to no other, such as
     /// Run: it has no breadcrumbs, and its heading's name is its `h1`.
     Alone(Area, Thing),
+    /// A screen of the account's menu, named `name`, such as
+    /// Authorizations: it has no breadcrumbs and no heading card, and its
+    /// card's title, by `icon`, is its `h1`.
+    Account { name: &'static str, icon: CardIcon },
 }
 
 /// What a screen of one thing shows of it.
@@ -357,7 +361,7 @@ impl Place {
                 screen,
                 ..
             } => (*area, crumbs, screen),
-            Place::Alone(..) => return vec![],
+            Place::Alone(..) | Place::Account { .. } => return vec![],
         };
         let area = CrumbShown {
             name: area.name(),
@@ -380,21 +384,26 @@ impl Place {
     /// Whether it has breadcrumbs, whose last crumb is then the page's `h1`
     /// and at whose right are the screen's buttons.
     pub(super) fn has_crumbs(&self) -> bool {
-        !matches!(self, Place::Alone(..))
+        !matches!(self, Place::Alone(..) | Place::Account { .. })
     }
 
     /// What a screen of one thing shows of it.
     fn thing(&self) -> Option<&Thing> {
         match self {
-            Place::Navigation(_) => None,
+            Place::Navigation(_) | Place::Account { .. } => None,
             Place::Within { thing, .. } | Place::Alone(_, thing) => Some(thing),
         }
     }
 
-    /// The icon of its heading card's title: its area's.
+    /// The icon of its heading card's title: its area's, or a screen of
+    /// the account's menu's own.
     pub(super) fn icon(&self) -> CardIcon {
-        let (Place::Navigation(area) | Place::Within { area, .. } | Place::Alone(area, _)) = self;
-        CardIcon::Area(*area)
+        match self {
+            Place::Navigation(area) | Place::Within { area, .. } | Place::Alone(area, _) => {
+                CardIcon::Area(*area)
+            }
+            Place::Account { icon, .. } => *icon,
+        }
     }
 
     /// Its heading card, on a screen of one thing that Linewright found.
@@ -410,6 +419,7 @@ impl Place {
     pub(super) fn title(&self) -> String {
         let name = match self {
             Place::Navigation(area) => area.name().to_string(),
+            Place::Account { name, .. } => (*name).to_string(),
             Place::Within { thing, .. } | Place::Alone(_, thing) => thing.name(),
         };
         format!("{name} · Linewright")

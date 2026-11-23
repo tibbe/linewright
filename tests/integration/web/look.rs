@@ -365,7 +365,7 @@ async fn the_shells_parts_have_their_icons() {
         }
     }
     assert_eq!(
-        select(&html, ".drawer-side ul.menu a > svg")
+        select(&html, ".drawer-side nav > ul.menu a > svg")
             .into_iter()
             .map(icon_name)
             .collect::<Vec<_>>(),
@@ -377,6 +377,14 @@ async fn the_shells_parts_have_their_icons() {
             "server",
             "users"
         ]
+    );
+    assert_eq!(
+        select(&html, ".account .menu li > * > svg")
+            .into_iter()
+            .map(icon_name)
+            .collect::<Vec<_>>(),
+        ["key", "arrow-right-start-on-rectangle"],
+        "the account's menu (`docs/specs/web/shell.md`, The account)"
     );
 }
 

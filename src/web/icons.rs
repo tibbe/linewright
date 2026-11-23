@@ -80,6 +80,8 @@ icons! {
     Users: "users", "icons/heroicons/users.svg";
     LockClosed: "lock-closed", "icons/heroicons/lock-closed.svg";
     LockOpen: "lock-open", "icons/heroicons/lock-open.svg";
+    Key: "key", "icons/heroicons/key.svg";
+    LinkSlash: "link-slash", "icons/heroicons/link-slash.svg";
     IssueOpened: "issue-opened", "icons/octicons/issue-opened-16.svg";
     GitPullRequest: "git-pull-request", "icons/octicons/git-pull-request-16.svg";
     GitHubMark: "github", "icons/octicons/mark-github-16.svg";
@@ -229,6 +231,8 @@ pub(super) enum CardIcon {
     Chart,
     /// A task's criteria.
     Criteria,
+    /// One's own authorizations.
+    Authorizations,
 }
 
 impl CardIcon {
@@ -239,6 +243,7 @@ impl CardIcon {
             CardIcon::Grid => Icon::TableCells,
             CardIcon::Chart => Icon::ChartBar,
             CardIcon::Criteria => Icon::ClipboardDocumentCheck,
+            CardIcon::Authorizations => Icon::Key,
         }
     }
 }

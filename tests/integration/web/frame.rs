@@ -51,7 +51,7 @@ async fn every_page_has_the_same_sidebar_naming_the_repository_and_the_pages_wit
         assert_eq!(text(repo[0]), "owner/widgets");
         assert_eq!(icons(repo[0]), 0, "{path}");
         assert_eq!(select_in(repo[0], "img").len(), 1, "{path}");
-        let links: Vec<(String, String, usize)> = select(&html, ".drawer-side .menu a")
+        let links: Vec<(String, String, usize)> = select(&html, ".drawer-side nav > ul.menu a")
             .into_iter()
             .map(|a| (text(a), a.attr("href").unwrap().to_string(), icons(a)))
             .collect();

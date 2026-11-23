@@ -2,6 +2,7 @@
 //! on the server, each kept up by one event stream of the regions that changed.
 
 mod authorization_server;
+pub(crate) mod authorizations_page;
 mod automations_page;
 mod benchmark_page;
 mod benchmark_run_page;
@@ -204,6 +205,18 @@ pub fn router(sources: Sources, ui: &Ui, stopping: CancellationToken) -> Router 
         .route(
             "/events/benchmark-runs/{id}/{configuration}/{task}/{repetition}/{of}",
             get(benchmark_run_page::trial_events),
+        )
+        .route(
+            authorizations_page::PATH,
+            get(authorizations_page::authorizations_page),
+        )
+        .route(
+            "/events/authorizations",
+            get(authorizations_page::authorizations_events),
+        )
+        .route(
+            "/authorizations/{id}/end",
+            get(no_such_page).post(authorizations_page::end),
         )
         .route("/people", get(people_page::people_page))
         .route("/events/people", get(people_page::people_events))

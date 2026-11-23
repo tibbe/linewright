@@ -63,15 +63,16 @@
     the buttons at its right, if `buttons`. A card that shows no name is named
     `name` for screen readers alone. The filters are in a row of their own
     under the top, unless `filters_stream` is empty, applied as the page's
-    filters are to its address and to its stream at `filters_stream`. Then
-    comes the table. The caller draws each `crate::web::table::Part` it is
+    filters are to its address and to its stream at `filters_stream`. Its
+    title is the element `heading`, such as `h1` on a screen with neither
+    breadcrumbs nor a heading card. Then comes the table. The caller draws each `crate::web::table::Part` it is
     given: the filters' fields, the buttons and the table. -#}
-{%- macro table_card(name, icon, shows_name, filters_stream = "", buttons = false) -%}
+{%- macro table_card(name, icon, shows_name, filters_stream = "", buttons = false, heading = "h2") -%}
 <section class="table-card {% call card_look() %}{% endcall %} min-h-0 gap-4 overflow-hidden pt-4"{% if !shows_name %} aria-label="{{ name }}"{% endif %}>
 {%- if shows_name || buttons %}
 <div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4">
 {%- if shows_name %}
-<h2 class="card-title">{% call icon(icon.icon(), crate::web::icons::IconSize::CardTitle) %}{% endcall %}{{ name }}</h2>
+<{{ heading }} class="card-title">{% call icon(icon.icon(), crate::web::icons::IconSize::CardTitle) %}{% endcall %}{{ name }}</{{ heading }}>
 {%- endif %}
 {%- if buttons %}
 <div class="ml-auto flex flex-wrap items-center gap-2">
