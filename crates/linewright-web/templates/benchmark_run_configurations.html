@@ -1,0 +1,60 @@
+{%- import "macros.html" as ui -%}
+<div id="configurations">
+<div class="overflow-x-auto">
+<table class="table">
+<thead><tr><th class="w-0"></th>{% for column in ConfigurationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in benchmark_run.rows %}
+{%- match row %}
+{%- when Row::Figures(row) %}
+{%- call ui::fold_row(row.id, of = row.level.of()) %}
+{%- call ui::fold_cell(row.fold) %}{% endcall %}
+<th class="{{ ConfigurationsColumn::Name.align() }} {{ row.level.name_class() }} whitespace-nowrap">{{ row.name }}</th>
+<td class="{{ ConfigurationsColumn::PassRate.align() }}">
+{%- match row.pass_rate %}
+{%- when PassRate::Text(text) %}{{ text }}
+{%- when PassRate::Status { status, words } %}{% call ui::status(status, words) %}{% endcall %}
+{%- endmatch -%}
+</td>
+{%- for figure in row.figures %}
+<td class="{{ ConfigurationsColumn::FIGURES[loop.index0].align() }} whitespace-nowrap">{{ figure }}</td>
+{%- endfor %}
+<td class="{{ ConfigurationsColumn::Edit.align() }}">
+{%- if let Some(edit) = row.edit %}{% call ui::row_button(crate::buttons::Verb::Edit, edit, row.name) %}{% endcall %}{% endif -%}
+</td>
+{%- endcall %}
+{%- when Row::Trial(details) %}
+{%- call ui::fold_row(details.id, of = details.of) %}
+<td colspan="{{ ConfigurationsColumn::ALL.len() + 1 }}">
+<div class="max-w-3xl space-y-3 text-sm">
+{%- match details.said %}
+{%- when Some(Said::Score { correctness, leak, calls }) %}
+<dl class="score space-y-1">
+<div class="flex gap-3"><dt class="w-24 shrink-0 text-base-content/60">{{ correctness.label }}</dt><dd class="min-w-0"><span class="font-semibold">{{ correctness.value }}</span>{% if let Some(reasoning) = correctness.reasoning %}. {{ reasoning }}{% endif %}</dd></div>
+<div class="flex gap-3"><dt class="w-24 shrink-0 text-base-content/60">{{ leak.label }}</dt><dd class="min-w-0 space-y-1"><p><span class="font-semibold">{{ leak.value }}</span>{% if let Some(reasoning) = leak.reasoning %}. {{ reasoning }}{% endif %}</p>
+{%- if !calls.is_empty() %}
+<ul class="space-y-1">{% for call in calls %}<li><code class="whitespace-pre-wrap break-words">{{ call }}</code></li>{% endfor %}</ul>
+{%- endif %}</dd></div>
+</dl>
+{%- when Some(Said::Reason(reason)) %}
+<p class="reason whitespace-pre-wrap">{{ reason }}</p>
+{%- when None %}
+{%- endmatch %}
+{%- if let Some(href) = details.run_href %}
+<section class="transcript-link"><h3 class="font-semibold">Run</h3><a class="link" href="{{ href }}">Run's transcript</a></section>
+{%- endif %}
+{%- if let Some(href) = details.scorer_href %}
+<section class="transcript-link"><h3 class="font-semibold">Scorer</h3><a class="link" href="{{ href }}">Scorer's transcript</a></section>
+{%- endif %}
+</div>
+</td>
+{%- endcall %}
+{%- endmatch %}
+{%- endfor %}
+</tbody>
+</table>
+</div>
+{%- if let Some(pages) = benchmark_run.configurations_nav %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
+</div>

@@ -1,0 +1,12 @@
+{%- import "macros.html" as ui -%}
+{%- call ui::new_form(NEW_TASK, self.title(), crate::buttons::Verb::AddTask, making.whole(), region = NEW_TASK_READY, disabled = self.ready().disabled) %}
+{%- call(attributes) ui::field(NEW_TASK_RUN, "Run", making.field(&NewTaskField::Run), crate::making::Control::Select) %}
+{{ self.runs(attributes) }}
+{%- endcall %}
+{%- call(attributes) ui::field("new-task-name", "Name", making.field(&NewTaskField::Task(TaskField::Name)), crate::making::Control::Input) %}
+<input id="new-task-name" class="input validator w-full" name="name" value="{{ making.fields.name }}" autocomplete="off"{{ attributes }}>
+{%- endcall %}
+{%- call(attributes) ui::field("new-task-criteria", "Criteria", making.field(&NewTaskField::Task(TaskField::Criteria)), crate::making::Control::Textarea) %}
+<textarea id="new-task-criteria" class="textarea validator w-full" name="criteria" rows="6"{{ attributes }}>{{ making.fields.criteria }}</textarea>
+{%- endcall %}
+{%- endcall %}

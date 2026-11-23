@@ -2130,14 +2130,60 @@ dependencies = [
 name = "linewright"
 version = "0.25.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "globset",
+ "http-body-util",
+ "hyper",
+ "linewright",
+ "linewright-claude",
+ "linewright-core",
+ "linewright-github",
+ "linewright-web",
+ "reqwest",
+ "rstest",
+ "rustix",
+ "scraper",
+ "serde_json",
+ "serde_yaml_ng",
+ "sqlx",
+ "tempfile",
+ "test-log",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "linewright-claude"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dirs",
+ "globset",
+ "linewright-core",
+ "serde",
+ "serde_json",
+ "test-log",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "linewright-core"
+version = "0.25.0"
+dependencies = [
  "aho-corasick",
  "anyhow",
- "askama",
- "askama_web",
  "async-trait",
  "axum",
  "base64 0.23.1",
- "boa_engine",
  "chrono",
  "clap",
  "croner",
@@ -2156,8 +2202,7 @@ dependencies = [
  "icu_normalizer",
  "icu_properties",
  "jsonschema",
- "libtest-mimic",
- "linewright",
+ "linewright-core",
  "percent-encoding",
  "proptest",
  "pulldown-cmark",
@@ -2165,12 +2210,9 @@ dependencies = [
  "reflink-copy",
  "remove_dir_all",
  "reqwest",
- "rmcp",
  "rstest",
- "rust-embed",
  "rustix",
  "schemars",
- "scraper",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -2188,6 +2230,71 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "linewright-github"
+version = "0.25.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "chrono",
+ "form_urlencoded",
+ "futures-util",
+ "hex",
+ "humantime",
+ "libtest-mimic",
+ "linewright-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "test-log",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "linewright-web"
+version = "0.25.0"
+dependencies = [
+ "anyhow",
+ "askama",
+ "askama_web",
+ "axum",
+ "boa_engine",
+ "chrono",
+ "form_urlencoded",
+ "futures-util",
+ "hex",
+ "http-body-util",
+ "humantime",
+ "hyper",
+ "jsonschema",
+ "linewright-core",
+ "percent-encoding",
+ "reqwest",
+ "rmcp",
+ "rust-embed",
+ "schemars",
+ "scraper",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2 0.11.1",
+ "sqlx",
+ "tempfile",
+ "test-log",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tower",
+ "tracing",
+ "url",
 ]
 
 [[package]]

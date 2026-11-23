@@ -31,7 +31,7 @@ request. You steer it with issues, labels, comments and reviews.
 
 Download `lw` from the
 [latest release](https://github.com/tibbe/linewright/releases/latest), or build
-it from source with `cargo install --path .`. Then:
+it from source with `cargo install --path crates/linewright`. Then:
 
 ```sh
 export GH_TOKEN=...            # the token of Linewright's GitHub account

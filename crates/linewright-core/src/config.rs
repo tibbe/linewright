@@ -1,0 +1,1885 @@
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use chrono::TimeDelta;
+use clap::{ArgAction, Args, Parser, Subcommand};
+
+use crate::access::people::{ManagerName, NotAManager};
+use crate::access::providers::{
+    self, ClientId, ClientSecret, GitHub, GitHubEndpoints, Google, GoogleEndpoints, Provider,
+    Providers, SignUpDomains, SignUpOrgs,
+};
+use crate::automation::AutomationName;
+use crate::benchmarks::{BenchmarkId, BenchmarkRunId, ConfigurationId, Repetitions, TaskId};
+use crate::domain::{MergeMethod, Number, Repo, Timestamp};
+use crate::drain::Timeout;
+use crate::harness::Variables;
+use crate::host::PublicUrl;
+use crate::layer::{self, Layer};
+use crate::listening::Address;
+use crate::logs::Which;
+use crate::name::Name;
+use crate::reconcile::WorkKind;
+use crate::runs::{RepoWorkDir, RunId};
+use crate::secrets;
+use crate::session_env::{PassEnv, SessionEnv, SetEnv};
+use crate::spec_glob::SpecGlob;
+use crate::task::TaskStage;
+use crate::variable_names::{self, VariableNames};
+use crate::webhook::{self, Webhooks};
+use crate::work_settings::{
+    Effort, EnvLayers, MAINTENANCE, Maintenance, Model, Partial, PipelineSettings, RepoSettings,
+    RepositorySetting, SETUP, Setup, SetupPartial, StageKey, StageSetting, StageTable,
+    WorkSettings,
+};
+
+/// Where the web UI is served, where people reach it, and how it signs
+/// them in (`docs/specs/operation.md`, Serving the UI).
+#[derive(Clone, Debug)]
+pub struct Ui {
+    pub address: Address,
+    pub public_url: PublicUrl,
+    pub providers: Providers,
+    pub manager: Option<ManagerName>,
+}
+
+#[derive(Parser, Debug)]
+#[command(
+    name = crate::COMMAND,
+    about = "A spec-driven software factory"
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub invocation: Invocation,
+    #[command(flatten)]
+    pub settings: Settings,
+}
+
+/// What `lw` is run for: a command of the operator's, or Linewright's own
+/// wrapper for its sessions, which reads no settings.
+#[derive(Subcommand, Debug)]
+pub enum Invocation {
+    /// Run PROGRAM, and end everything it starts once it ends or `serve`
+    /// ends it (`crate::contain`).
+    #[command(hide = true)]
+    Contain {
+        #[arg(last = true, required = true, value_name = "PROGRAM")]
+        program: Vec<std::ffi::OsString>,
+    },
+    #[command(flatten)]
+    Command(Command),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Poll the repository until drained or stopped.
+    Serve,
+    /// Run one poll cycle and the runs it starts, then exit.
+    Once,
+    /// Tell the running `serve` to drain.
+    ///
+    /// `serve` claims no item and starts no run, and exits once no run is in
+    /// flight. Prints the runs it waits for and each as it ends, and returns
+    /// once `serve` has exited.
+    Drain {
+        /// Return once `serve` has taken the request.
+        #[arg(long)]
+        no_wait: bool,
+        /// After this long, such as 2h, the drain becomes a stop: the runs in
+        /// flight are cancelled, keeping their unfinished work. Replaces the
+        /// deadline of a drain already under way.
+        #[arg(long, value_name = "DURATION", value_parser = Timeout::parse)]
+        timeout: Option<Timeout>,
+        /// Print one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show what the running `serve` is doing and what holds it back.
+    Status {
+        /// Print `serve`'s answer as JSON, as it sent it.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the runs, newest first: all of them, or issue or pull request
+    /// #N's.
+    Runs {
+        /// Only the runs on issue or pull request #N.
+        #[arg(value_name = "N")]
+        item: Option<u64>,
+        /// Only the runs of this stage: triage, design, implement, rework,
+        /// fix-ci or update.
+        #[arg(long)]
+        stage: Option<WorkKind>,
+        /// Only the runs started since this time, as RFC 3339
+        /// (2026-10-14T12:00:00Z) or a date (2026-10-14) in UTC, or this
+        /// long ago (2h).
+        #[arg(long, value_parser = parse_since)]
+        since: Option<Since>,
+        /// At most this many runs, the newest.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show where issue or pull request #N stands and what Linewright waits
+    /// for before it acts on it next.
+    Explain {
+        #[arg(value_name = "N")]
+        number: u64,
+        /// Print `serve`'s answer as JSON, as it sent it.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the transcript of issue or pull request #N's run in flight, or
+    /// else of its latest run that started a session.
+    Logs {
+        #[command(flatten)]
+        which: Which,
+        /// Show everything the transcript holds: also the thinking, each
+        /// tool's full input and result, the brief and follow-ups, and the
+        /// harness's other events.
+        #[arg(long)]
+        verbose: bool,
+        /// Print one JSON object per transcript entry and line.
+        #[arg(long)]
+        json: bool,
+        /// Show the transcript so far, then each entry as it happens, until
+        /// the run ends.
+        #[arg(long)]
+        follow: bool,
+    },
+    /// Write run ID, such as 43/implement-2, into DIR as the output of a
+    /// trial gives its run: its outcome, its record and its sessions, as
+    /// they are now.
+    Export {
+        id: RunId,
+        /// Made if missing, and refused unless empty.
+        dir: PathBuf,
+    },
+    /// Show the environment and the output of its builds: the latest, and
+    /// the latest that failed when the latest succeeded. `environment
+    /// rebuild` builds it now.
+    #[command(args_conflicts_with_subcommands = true)]
+    Environment {
+        #[command(subcommand)]
+        command: Option<EnvironmentCommand>,
+        /// Show a build in progress so far, then follow it until it ends.
+        #[arg(long)]
+        follow: bool,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Automations: `automation run NAME` runs one now, then exits.
+    Automation {
+        #[command(subcommand)]
+        command: AutomationCommand,
+    },
+    /// Capture run ID, such as 43/implement-2, as a task named NAME in the
+    /// benchmark BENCHMARK, in `tasks/` under the work directory, and write
+    /// the task's ID.
+    Capture {
+        id: RunId,
+        /// The ID of the benchmark the task goes into: one of the run's stage.
+        #[arg(long)]
+        benchmark: BenchmarkId,
+        /// The task's name, kept clean, and refused when it is no name.
+        #[arg(long)]
+        name: Name,
+        /// What a good result is, as `criteria.md` in the task: refused
+        /// when it holds only white space.
+        #[arg(long, value_name = "FILE")]
+        criteria: PathBuf,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the stage of the task in the directory TASK on it again, with the
+    /// task in place of GitHub, writing what the run did to DIR.
+    Trial {
+        task: PathBuf,
+        /// The directory of the output: made if missing, and refused unless
+        /// empty.
+        #[arg(long, value_name = "DIR")]
+        out: PathBuf,
+        /// A configuration to run the trial with, laid out as a repository's
+        /// `.linewright/`: its `config.toml` and the files of its `briefs/`
+        /// override every other layer, flags included.
+        #[arg(long, value_name = "CONFIG")]
+        configuration: Option<PathBuf>,
+    },
+    /// Score DIR, the output of a trial of the task in the directory TASK,
+    /// against the task's criteria, keeping the score in DIR.
+    Score { task: PathBuf, dir: PathBuf },
+    /// List the benchmarks, each with its ID, its stage and how many tasks it
+    /// holds.
+    Benchmarks {
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Benchmarks: `benchmark show` shows one, `benchmark add` makes one,
+    /// `benchmark rename` renames one, `benchmark edit-task` changes a task of
+    /// one, and `benchmark remove-task` removes a task from one.
+    Benchmark {
+        #[command(subcommand)]
+        command: BenchmarkCommand,
+    },
+    /// Benchmark runs: `benchmark-run show` shows one, `benchmark-run launch`
+    /// launches one, `benchmark-run rename-configuration` renames a
+    /// configuration of one, and `benchmark-run cancel` cancels one.
+    BenchmarkRun {
+        #[command(subcommand)]
+        command: BenchmarkRunCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BenchmarkRunCommand {
+    /// Show the benchmark run ID: its state, its configurations with their
+    /// IDs, its trials and its results.
+    Show {
+        id: BenchmarkRunId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Launch a benchmark run on the tasks of the benchmark whose ID is
+    /// BENCHMARK, under `as-is` and each configuration given.
+    Launch {
+        benchmark: BenchmarkId,
+        /// A configuration named NAME, the text before the first `=`, laid
+        /// out in the directory DIR as a repository's `.linewright/`: its
+        /// `config.toml` and the files of its `briefs/`.
+        #[arg(long = "configuration", value_name = "NAME=DIR", value_parser = parse_configuration)]
+        configurations: Vec<(Name, PathBuf)>,
+        /// How many trials to make of each task under each configuration.
+        #[arg(long, value_name = "N", default_value = "1")]
+        repetitions: Repetitions,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name of the configuration whose ID is CONFIGURATION, of the
+    /// benchmark run ID, to NAME; `as-is`, configuration 1, keeps its name.
+    RenameConfiguration {
+        id: BenchmarkRunId,
+        configuration: ConfigurationId,
+        /// Kept clean, and refused when it is no name.
+        name: Name,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cancel the benchmark run ID.
+    Cancel {
+        id: BenchmarkRunId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// A configuration given as `NAME=DIR`, NAME the text before the first `=`.
+fn parse_configuration(value: &str) -> Result<(Name, PathBuf), String> {
+    let (name, dir) = value
+        .split_once('=')
+        .ok_or_else(|| format!("{value:?} is not NAME=DIR"))?;
+    if dir.is_empty() {
+        return Err(format!("{value:?} names no directory"));
+    }
+    Ok((
+        Name::parse(name).map_err(|e| e.to_string())?,
+        PathBuf::from(dir),
+    ))
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BenchmarkCommand {
+    /// Show the benchmark whose ID is BENCHMARK: its tasks with their IDs and
+    /// criteria, and its benchmark runs.
+    Show {
+        benchmark: BenchmarkId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Make the benchmark NAME, of the stage STAGE: triage, design or
+    /// implement, and write its ID.
+    Add {
+        /// Kept clean, and refused when it is no name.
+        name: Name,
+        stage: TaskStage,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name of the benchmark whose ID is BENCHMARK to NAME.
+    Rename {
+        benchmark: BenchmarkId,
+        /// Kept clean, and refused when it is no name.
+        name: Name,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Change the name, the criteria, or both, of the task whose ID is TASK
+    /// in the benchmark whose ID is BENCHMARK.
+    #[command(group = clap::ArgGroup::new("change").required(true).multiple(true))]
+    EditTask {
+        benchmark: BenchmarkId,
+        task: TaskId,
+        /// The task's new name, kept clean, and refused when it is no name.
+        #[arg(long, group = "change")]
+        name: Option<Name>,
+        /// The file that holds the task's new criteria.
+        #[arg(long, value_name = "FILE", group = "change")]
+        criteria: Option<PathBuf>,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove the task whose ID is TASK from the benchmark whose ID is
+    /// BENCHMARK, and with it the task's directory.
+    RemoveTask {
+        benchmark: BenchmarkId,
+        task: TaskId,
+        /// Print the answer as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Since {
+    At(Timestamp),
+    Ago(Duration),
+}
+
+impl Since {
+    pub fn at(self, now: Timestamp) -> Timestamp {
+        match self {
+            Since::At(at) => at,
+            Since::Ago(ago) => TimeDelta::from_std(ago)
+                .ok()
+                .and_then(|ago| now.checked_sub_signed(ago))
+                .unwrap_or(Timestamp::MIN_UTC),
+        }
+    }
+}
+
+pub fn parse_since(value: &str) -> Result<Since, String> {
+    if let Ok(at) = chrono::DateTime::parse_from_rfc3339(value) {
+        return Ok(Since::At(at.to_utc()));
+    }
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+        return Ok(Since::At(date.and_time(chrono::NaiveTime::MIN).and_utc()));
+    }
+    humantime::parse_duration(value).map(Since::Ago).map_err(|_| {
+        format!("{value:?} is not a time (2026-10-14T12:00:00Z), a date (2026-10-14) or a duration (2h)")
+    })
+}
+
+/// The arguments of `logs` that say which run to show: an item, a run ID,
+/// or both.
+#[derive(Args, Debug)]
+#[group(required = true, multiple = true)]
+struct WhichArgs {
+    /// The run's issue or pull request.
+    #[arg(value_name = "N")]
+    item: Option<u64>,
+    /// Another run, by its run ID, such as 42/rework-2 or weekly/3.
+    #[arg(long, value_name = "ID")]
+    run: Option<RunId>,
+}
+
+impl clap::FromArgMatches for Which {
+    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Which, clap::Error> {
+        let args = WhichArgs::from_arg_matches(matches)?;
+        Which::new(args.item.map(Number), args.run)
+            .map_err(|e| clap::Error::raw(clap::error::ErrorKind::MissingRequiredArgument, e))
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
+        *self = Which::from_arg_matches(matches)?;
+        Ok(())
+    }
+}
+
+impl Args for Which {
+    fn augment_args(command: clap::Command) -> clap::Command {
+        WhichArgs::augment_args(command)
+    }
+
+    fn augment_args_for_update(command: clap::Command) -> clap::Command {
+        WhichArgs::augment_args_for_update(command)
+    }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EnvironmentCommand {
+    /// Ask the running `serve` to build the environment, and return once
+    /// the build ends, with a non-zero status when it fails. Without
+    /// `serve`, build it here.
+    Rebuild {
+        /// Return once `serve` has taken the request.
+        #[arg(long)]
+        no_wait: bool,
+        /// Print one JSON object per line.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AutomationCommand {
+    /// Run the automation at `.linewright/automations/NAME`, such as
+    /// `team/weekly.md`, on the default branch once, now, then exit; its
+    /// schedule stays as it was.
+    Run {
+        #[arg(value_name = "NAME")]
+        name: AutomationName,
+    },
+}
+
+/// The settings as flags, unparsed: a string, or a string per entry for a
+/// table.
+#[derive(Args, Debug, Default)]
+pub struct Settings {
+    /// The TOML config file [default: linewright.toml in the working directory]
+    #[arg(long, global = true)]
+    pub config: Option<PathBuf>,
+    /// The repository, `owner/name` (required)
+    #[arg(long, global = true)]
+    pub repo: Option<String>,
+    /// How often to poll [default: 60s]
+    #[arg(long, global = true)]
+    pub poll_interval: Option<String>,
+    /// The host and port `serve` listens on for webhook deliveries
+    /// [default: 0.0.0.0:8080 with `LINEWRIGHT_WEBHOOK_SECRET` set, none
+    /// without it]
+    #[arg(long, global = true)]
+    pub webhook_address: Option<String>,
+    /// The host and port `serve` serves the web UI on, while `public-url`
+    /// is set [default: 127.0.0.1:8081]
+    #[arg(long, global = true)]
+    pub ui_address: Option<String>,
+    /// The URL people reach the web UI at: HTTPS, or HTTP to a loopback
+    /// address [default: none: no web UI]
+    #[arg(long, global = true, value_name = "URL")]
+    pub public_url: Option<String>,
+    /// The client ID Google gave Linewright, its secret in
+    /// `LINEWRIGHT_GOOGLE_CLIENT_SECRET` [default: none: no sign-in with
+    /// Google]
+    #[arg(long, global = true)]
+    pub google_client_id: Option<String>,
+    /// The domains whose verified Google emails may sign in,
+    /// comma-separated, and added to those the environment and the config
+    /// file give [default: none]
+    #[arg(long, global = true, value_name = "DOMAINS")]
+    pub google_signup_domains: Option<String>,
+    /// The client ID GitHub gave Linewright, its secret in
+    /// `LINEWRIGHT_GITHUB_CLIENT_SECRET` [default: none: no sign-in with
+    /// GitHub]
+    #[arg(long, global = true)]
+    pub github_client_id: Option<String>,
+    /// The GitHub organizations, and `org/team` for a team, whose members
+    /// may sign in, comma-separated, and added to those the
+    /// environment and the config file give [default: none]
+    #[arg(long, global = true, value_name = "ORGS")]
+    pub github_signup_orgs: Option<String>,
+    /// The identity that is always a manager: `google:EMAIL` or
+    /// `github:LOGIN` [default: none]
+    #[arg(long, global = true, value_name = "IDENTITY")]
+    pub manager: Option<String>,
+    /// The tracked Markdown files that are the spec [default: docs/**/*.md]
+    #[arg(long, global = true)]
+    pub spec_glob: Option<String>,
+    /// How far back merged spec changes are picked up [default: 7d]
+    #[arg(long, global = true)]
+    pub spec_lookback: Option<String>,
+    /// How long a finished item stays in the board's Done column [default: 7d]
+    #[arg(long, global = true)]
+    pub done_window: Option<String>,
+    /// The ceiling on runs in flight [default: 4]
+    #[arg(long, global = true)]
+    pub max_runs: Option<String>,
+    /// The ceiling on trials and scorers of benchmark runs in flight
+    /// [default: 1]
+    #[arg(long, global = true)]
+    pub max_trials: Option<String>,
+    /// Where clones and session transcripts go [default: linewright/ under the user's data directory]
+    #[arg(long, global = true)]
+    pub work_dir: Option<String>,
+    /// The model for every stage; a stage's table in the config file,
+    /// `[stage.NAME]`, can set its own (required, for a command that starts
+    /// a session)
+    #[arg(long, global = true)]
+    pub model: Option<String>,
+    /// How hard the agent thinks: `low`, `medium`, `high`, `xhigh` or `max`,
+    /// for every stage; a stage's table in the config file, `[stage.NAME]`,
+    /// can set its own [default: medium]
+    #[arg(long, global = true)]
+    pub effort: Option<String>,
+    /// A directory laid out as the briefs Linewright ships, each file in it
+    /// taken in place of Linewright's own [default: none]
+    #[arg(long, global = true)]
+    pub briefs: Option<String>,
+    /// A variable to set in agent sessions, its value taken as written and
+    /// replacing a passed variable of the same name; given once per
+    /// variable, and added to the config file's; a stage's table in the
+    /// config file, `[stage.NAME]`, can add values for its sessions
+    /// [default: none]
+    #[arg(long, global = true, value_name = "NAME=VALUE", action = ArgAction::Append)]
+    pub session_env: Vec<String>,
+    /// The variables of Linewright's environment that agent sessions are given
+    /// besides the ones they always get, comma-separated, and added to those
+    /// the environment and the config file name; a name ending in `*` names
+    /// every variable with that prefix; a stage's table in the config file,
+    /// `[stage.NAME]`, can add names for its sessions [default: none]
+    #[arg(long, global = true, value_name = "NAMES")]
+    pub session_pass_env: Option<String>,
+    /// The variables of Linewright's environment whose values are secrets,
+    /// redacted and refused in commits, besides the ones Linewright reads a
+    /// credential from, comma-separated, and added to those the environment
+    /// and the config file name; a name ending in `*` names every variable
+    /// with that prefix [default: none]
+    #[arg(long, global = true, value_name = "NAMES")]
+    pub secrets: Option<String>,
+    /// Each agent session's timeout; a stage's table in the config file,
+    /// `[stage.NAME]`, can set its own [default: 6h]
+    #[arg(long, global = true)]
+    pub session_timeout: Option<String>,
+    /// The command that makes each agent session's clone ready before the
+    /// agent's first prompt, run by `bash` [default: none]
+    #[arg(long, global = true, value_name = "COMMAND")]
+    pub maintenance: Option<String>,
+    /// Refused, naming `--setup-command` and `--maintenance`.
+    #[arg(long, global = true, hide = true, value_name = "COMMAND")]
+    pub setup: Option<String>,
+    /// The command that builds the environment, the repository made ready
+    /// for agents' work once, that every agent session's clone starts
+    /// from, run by `bash` [default: none]
+    #[arg(long, global = true, value_name = "COMMAND")]
+    pub setup_command: Option<String>,
+    /// How old the environment grows before it is built again [default: 24h]
+    #[arg(long, global = true, value_name = "DURATION")]
+    pub setup_max_age: Option<String>,
+    /// How long a build of the environment may run [default: 60m]
+    #[arg(long, global = true, value_name = "DURATION")]
+    pub setup_timeout: Option<String>,
+    /// How often an unparseable result goes back to its session [default: 1]
+    #[arg(long, global = true)]
+    pub result_retries: Option<String>,
+    /// How long to wait for CI to appear [default: 5m]
+    #[arg(long, global = true)]
+    pub ci_grace: Option<String>,
+    /// How long to wait for CI to complete [default: 6h]
+    #[arg(long, global = true)]
+    pub ci_timeout: Option<String>,
+    /// CI fix attempts before handing back [default: 2]
+    #[arg(long, global = true)]
+    pub ci_attempts: Option<String>,
+    /// Merge green pull requests instead of leaving them for review [default: off]
+    #[arg(long, global = true, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    pub auto_merge: Option<String>,
+    /// `merge`, `squash` or `rebase` [default: from the repository's settings]
+    #[arg(long, global = true)]
+    pub merge_method: Option<String>,
+    /// Start work only on issues carrying this label [default: every issue]
+    #[arg(long, global = true)]
+    pub require_label: Option<String>,
+    /// `text` or `json` [default: text on a terminal, json otherwise]
+    #[arg(long, global = true)]
+    pub log_format: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogFormat {
+    Text,
+    Json,
+}
+
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub repo: Option<String>,
+    pub poll_interval: Duration,
+    pub webhooks: Option<Webhooks>,
+    /// `None` when `public-url` is not set.
+    pub ui: Option<Ui>,
+    pub spec_glob: SpecGlob,
+    pub spec_lookback: TimeDelta,
+    pub done_window: TimeDelta,
+    pub max_runs: usize,
+    pub max_trials: usize,
+    pub work_dir: PathBuf,
+    /// `model`, `effort`, `session-timeout`, `maintenance` and the stages'
+    /// tables, and where `session-env` and `session-pass-env` came from.
+    pub work: WorkSettings,
+    pub briefs: Option<PathBuf>,
+    pub session_env: SessionEnv,
+    pub secrets: VariableNames,
+    pub result_retries: u32,
+    pub ci_grace: TimeDelta,
+    pub ci_timeout: TimeDelta,
+    pub ci_attempts: u32,
+    pub auto_merge: bool,
+    /// `None` follows the repository's settings.
+    pub merge_method: Option<MergeMethod>,
+    pub require_label: Option<String>,
+    pub log_format: LogFormat,
+}
+
+impl Settings {
+    fn flags(&self) -> BTreeMap<&'static str, &String> {
+        [
+            ("repo", &self.repo),
+            ("poll-interval", &self.poll_interval),
+            ("webhook-address", &self.webhook_address),
+            ("ui-address", &self.ui_address),
+            (PUBLIC_URL, &self.public_url),
+            (GOOGLE_CLIENT_ID, &self.google_client_id),
+            (GOOGLE_SIGNUP_DOMAINS, &self.google_signup_domains),
+            (GITHUB_CLIENT_ID, &self.github_client_id),
+            (GITHUB_SIGNUP_ORGS, &self.github_signup_orgs),
+            (MANAGER, &self.manager),
+            ("spec-glob", &self.spec_glob),
+            ("spec-lookback", &self.spec_lookback),
+            ("done-window", &self.done_window),
+            ("max-runs", &self.max_runs),
+            ("max-trials", &self.max_trials),
+            ("work-dir", &self.work_dir),
+            ("model", &self.model),
+            ("effort", &self.effort),
+            ("briefs", &self.briefs),
+            ("session-pass-env", &self.session_pass_env),
+            ("secrets", &self.secrets),
+            ("session-timeout", &self.session_timeout),
+            ("maintenance", &self.maintenance),
+            (SETUP_COMMAND, &self.setup_command),
+            (SETUP_MAX_AGE, &self.setup_max_age),
+            (SETUP_TIMEOUT, &self.setup_timeout),
+            ("result-retries", &self.result_retries),
+            ("ci-grace", &self.ci_grace),
+            ("ci-timeout", &self.ci_timeout),
+            ("ci-attempts", &self.ci_attempts),
+            ("auto-merge", &self.auto_merge),
+            ("merge-method", &self.merge_method),
+            ("require-label", &self.require_label),
+            ("log-format", &self.log_format),
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| Some((key, value.as_ref()?)))
+        .collect()
+    }
+
+    /// The tables given as flags, each as its `NAME=value` entries.
+    fn tables(&self) -> BTreeMap<&'static str, &[String]> {
+        [(SESSION_ENV, &self.session_env)]
+            .into_iter()
+            .filter(|(_, entries)| !entries.is_empty())
+            .map(|(key, entries)| (key, entries.as_slice()))
+            .collect()
+    }
+}
+
+/// What a setting holds, which says how it is given
+/// (`docs/specs/operation.md`, Configuration).
+#[derive(Clone, Copy, Debug)]
+enum Form {
+    /// Held as the text its flag takes, and also an environment variable,
+    /// `LINEWRIGHT_<FLAG>`.
+    Text(Text),
+    /// Variables' values by name, as `session-env` holds them: a flag given
+    /// once per entry, or a table in a file.
+    Table,
+}
+
+/// The form of a setting held as the text its flag takes.
+#[derive(Clone, Copy, Debug)]
+enum Text {
+    /// A string, number or boolean.
+    Value,
+    /// Entries separated by commas, or an array in a file, each entry
+    /// being `holds`.
+    List { holds: &'static str },
+}
+
+const VALUE: Form = Form::Text(Text::Value);
+
+const fn list(holds: &'static str) -> Form {
+    Form::Text(Text::List { holds })
+}
+
+/// The keys of `session-env` and `session-pass-env`.
+const SESSION_ENV: &str = StageSetting::SessionEnv.name();
+const PASS_ENV: &str = StageSetting::SessionPassEnv.name();
+
+/// A variable's name, what `session-pass-env` and `secrets` hold.
+const VARIABLE_NAME: &str = "a variable's name";
+
+/// The form of `setting`, a stage's setting.
+const fn stage_form(setting: StageSetting) -> Form {
+    match setting {
+        StageSetting::Repository(_) => VALUE,
+        StageSetting::SessionPassEnv => list(VARIABLE_NAME),
+        StageSetting::SessionEnv => Form::Table,
+    }
+}
+
+/// `setting`, a stage's setting, as an entry of `SETTINGS`.
+const fn stage_entry(setting: StageSetting) -> (&'static str, Form) {
+    (setting.name(), stage_form(setting))
+}
+
+const UI_ADDRESS: &str = "ui-address";
+const PUBLIC_URL: &str = "public-url";
+const GOOGLE_CLIENT_ID: &str = "google-client-id";
+const GOOGLE_SIGNUP_DOMAINS: &str = "google-signup-domains";
+const GITHUB_CLIENT_ID: &str = "github-client-id";
+const GITHUB_SIGNUP_ORGS: &str = "github-signup-orgs";
+const MANAGER: &str = "manager";
+
+/// `ui-address`'s default.
+const UI_ADDRESS_DEFAULT: &str = "127.0.0.1:8081";
+
+/// The `setup` table's settings.
+const SETUP_COMMAND: &str = "setup.command";
+const SETUP_MAX_AGE: &str = "setup.max-age";
+const SETUP_TIMEOUT: &str = "setup.timeout";
+
+/// The operator's settings, each with its form. A setting whose name holds
+/// a dot is a key of the table named before the dot
+/// (`docs/specs/operation.md`, Configuration, A table of settings).
+const SETTINGS: [(&str, Form); 35] = [
+    ("repo", VALUE),
+    ("poll-interval", VALUE),
+    ("webhook-address", VALUE),
+    (UI_ADDRESS, VALUE),
+    (PUBLIC_URL, VALUE),
+    (GOOGLE_CLIENT_ID, VALUE),
+    (GOOGLE_SIGNUP_DOMAINS, list("a domain")),
+    (GITHUB_CLIENT_ID, VALUE),
+    (GITHUB_SIGNUP_ORGS, list("an organization or a team")),
+    (MANAGER, VALUE),
+    ("spec-glob", VALUE),
+    ("spec-lookback", VALUE),
+    ("done-window", VALUE),
+    ("max-runs", VALUE),
+    ("max-trials", VALUE),
+    ("work-dir", VALUE),
+    stage_entry(StageSetting::Repository(RepositorySetting::Model)),
+    stage_entry(StageSetting::Repository(RepositorySetting::Effort)),
+    ("briefs", VALUE),
+    stage_entry(StageSetting::SessionEnv),
+    stage_entry(StageSetting::SessionPassEnv),
+    ("secrets", list(VARIABLE_NAME)),
+    stage_entry(StageSetting::Repository(RepositorySetting::SessionTimeout)),
+    (MAINTENANCE, VALUE),
+    (SETUP_COMMAND, VALUE),
+    (SETUP_MAX_AGE, VALUE),
+    (SETUP_TIMEOUT, VALUE),
+    ("result-retries", VALUE),
+    ("ci-grace", VALUE),
+    ("ci-timeout", VALUE),
+    ("ci-attempts", VALUE),
+    ("auto-merge", VALUE),
+    ("merge-method", VALUE),
+    ("require-label", VALUE),
+    ("log-format", VALUE),
+];
+
+/// The form of the setting `key`, `None` when it is no setting.
+fn form(key: &str) -> Option<Form> {
+    SETTINGS
+        .iter()
+        .find_map(|&(setting, form)| (setting == key).then_some(form))
+}
+
+/// The keys of the table of settings `table`, such as `command` for
+/// `setup.command`: none when `table` is no table of settings.
+fn table_keys(table: &str) -> Vec<&'static str> {
+    SETTINGS
+        .iter()
+        .filter_map(|&(setting, _)| setting.strip_prefix(table)?.strip_prefix('.'))
+        .collect()
+}
+
+/// `value`, of the table of settings `table`, as each setting it sets by
+/// its name, `table.key`, and the text its flag takes.
+fn settings_table(table: &str, value: toml::Value) -> Result<Vec<(String, String)>> {
+    let keys = table_keys(table);
+    let holds = format!("`{}`", keys.join("`, `"));
+    let toml::Value::Table(entries) = value else {
+        let maintenance = if table == SETUP {
+            format!("; the command each session starts with is `{MAINTENANCE}`")
+        } else {
+            String::new()
+        };
+        bail!(
+            "the setting `{table}` is {value}, not a table: `{table}` is a table holding {holds}, \
+             such as `[{table}]`{maintenance}"
+        );
+    };
+    entries
+        .into_iter()
+        .map(|(key, entry)| {
+            if !keys.contains(&key.as_str()) {
+                bail!("`[{table}]` has an unknown setting `{key}`: it holds {holds}");
+            }
+            let name = format!("{table}.{key}");
+            let Some(Form::Text(form)) = form(&name) else {
+                unreachable!("a table's settings are held as text");
+            };
+            let text = setting_value(&name, form, entry)?;
+            Ok((name, text))
+        })
+        .collect()
+}
+
+/// Sets the setting `name` of the `setup` table in `setup` to `text`.
+fn set_setup(setup: &mut SetupPartial, name: &str, text: String) -> Result<()> {
+    let duration = |given: &str| {
+        humantime::parse_duration(given)
+            .with_context(|| format!("the setting `{name}` is {given:?}"))
+    };
+    match name {
+        SETUP_COMMAND => setup.command = Some(Setup::from(text)),
+        SETUP_MAX_AGE => setup.max_age = Some(duration(&text)?),
+        SETUP_TIMEOUT => setup.timeout = Some(duration(&text)?),
+        other => unreachable!("`{other}` is not a setting of the `setup` table"),
+    }
+    Ok(())
+}
+
+/// An operator's layer a setting is set in, highest first
+/// (`docs/specs/operation.md`, Configuration).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OperatorLayer {
+    Flag,
+    Environment,
+    File,
+}
+
+/// What each operator's layer sets of a setting, highest first.
+#[derive(Clone)]
+enum Layers {
+    /// Each layer's text, as its flag takes it.
+    Text {
+        form: Text,
+        set: Vec<(OperatorLayer, String)>,
+    },
+    /// Each layer's values by name.
+    Table(Vec<(OperatorLayer, BTreeMap<String, String>)>),
+}
+
+/// A value, or one entry of a list or a table, and the layer it came from.
+#[derive(Clone, Debug)]
+struct Entry {
+    value: String,
+    layer: OperatorLayer,
+}
+
+/// A setting's layers combined by what it holds.
+enum Combined {
+    Value(Option<Entry>),
+    List(Vec<Entry>),
+    Table(BTreeMap<String, Entry>),
+}
+
+impl Layers {
+    /// The layers that set the setting, even to nothing, highest first.
+    fn layers(&self) -> Vec<OperatorLayer> {
+        match self {
+            Layers::Text { set, .. } => set.iter().map(|&(layer, _)| layer).collect(),
+            Layers::Table(set) => set.iter().map(|&(layer, _)| layer).collect(),
+        }
+    }
+
+    /// The highest layer that sets the setting.
+    fn highest(&self) -> Option<OperatorLayer> {
+        self.layers().first().copied()
+    }
+
+    /// The setting's value: a value is the highest layer's, a list every
+    /// layer's entries and a table every layer's names, each with the
+    /// highest layer's value (`docs/specs/operation.md`, Configuration,
+    /// Combining layers).
+    fn combine(self) -> Combined {
+        match self {
+            Layers::Text {
+                form: Text::Value,
+                set,
+            } => Combined::Value(
+                set.into_iter()
+                    .next()
+                    .map(|(layer, value)| Entry { value, layer }),
+            ),
+            Layers::Text {
+                form: Text::List { .. },
+                set,
+            } => Combined::List(layer::list(
+                set.into_iter().map(|(layer, text)| {
+                    variable_names::comma_separated(&text)
+                        .map(move |value| Entry { value, layer })
+                        .collect::<Vec<_>>()
+                }),
+                |entry| &entry.value,
+            )),
+            Layers::Table(set) => {
+                Combined::Table(layer::table(set.into_iter().map(|(layer, values)| {
+                    values
+                        .into_iter()
+                        .map(move |(name, value)| (name, Entry { value, layer }))
+                })))
+            }
+        }
+    }
+}
+
+/// A list setting's `entries`, each parsed by `parse` and joined by `and`.
+/// An entry that does not parse is blamed by `blame_on` on the layer that
+/// gave it.
+fn joined<T: Default>(
+    entries: Vec<Entry>,
+    blame_on: &dyn Fn(Option<OperatorLayer>, anyhow::Error) -> ResolveError,
+    parse: impl Fn(String) -> Result<T, String>,
+    and: fn(&T, &T) -> T,
+) -> Result<T, ResolveError> {
+    entries.into_iter().try_fold(T::default(), |joined, entry| {
+        let one = parse(entry.value).map_err(|e| blame_on(Some(entry.layer), anyhow!(e)))?;
+        Ok(and(&joined, &one))
+    })
+}
+
+/// A feature and what turns it on or off: a setting only it uses is an
+/// error while it is off unless the setting is at its default
+/// (`docs/specs/operation.md`, Configuration, A feature's settings).
+struct Feature {
+    setting: &'static str,
+    /// The settings that turn it on or off, which an error is blamed on.
+    switches: &'static [&'static str],
+    /// What is off and how to turn it on, after "is set, but".
+    when_off: fn() -> String,
+}
+
+const WEBHOOKS: Feature = Feature {
+    setting: "webhook-address",
+    switches: &[],
+    when_off: || {
+        format!(
+            "`{}` is not: set it to the webhook's secret to turn webhooks on",
+            webhook::SECRET_VARIABLE
+        )
+    },
+};
+
+/// `setting`, `feature`'s setting parsed with `None` at its default, unless
+/// it is not at its default while `feature` is off.
+fn refuse_while_off<T>(
+    feature: &Feature,
+    on: bool,
+    setting: Option<T>,
+    blame: impl Fn(&[&str], anyhow::Error) -> ResolveError,
+) -> Result<Option<T>, ResolveError> {
+    match setting {
+        Some(_) if !on => Err(blame(
+            feature.switches,
+            anyhow!(
+                "the setting `{}` is set, but {}",
+                feature.setting,
+                (feature.when_off)()
+            ),
+        )),
+        setting => Ok(setting),
+    }
+}
+
+/// An identity provider's settings and the variable of its client secret
+/// (`docs/specs/operation.md`, Configuration).
+struct ProviderSettings {
+    provider: Provider,
+    client_id: &'static str,
+    signup: &'static str,
+    secret_variable: &'static str,
+}
+
+const GOOGLE: ProviderSettings = ProviderSettings {
+    provider: Provider::Google,
+    client_id: GOOGLE_CLIENT_ID,
+    signup: GOOGLE_SIGNUP_DOMAINS,
+    secret_variable: providers::GOOGLE_SECRET_VARIABLE,
+};
+
+const GITHUB: ProviderSettings = ProviderSettings {
+    provider: Provider::GitHub,
+    client_id: GITHUB_CLIENT_ID,
+    signup: GITHUB_SIGNUP_ORGS,
+    secret_variable: providers::GITHUB_SECRET_VARIABLE,
+};
+
+impl ProviderSettings {
+    fn of(provider: Provider) -> &'static ProviderSettings {
+        match provider {
+            Provider::Google => &GOOGLE,
+            Provider::GitHub => &GITHUB,
+        }
+    }
+
+    /// How to turn the provider on, as an error says it.
+    fn turn_on(&self) -> String {
+        format!(
+            "set `{}` to sign people in with {}",
+            self.client_id,
+            self.provider.name()
+        )
+    }
+}
+
+/// `webhook-address`'s default with the webhook secret set.
+const WEBHOOK_ADDRESS: &str = "0.0.0.0:8080";
+
+impl Config {
+    pub fn required_repo(&self) -> Result<Repo> {
+        self.repo
+            .as_deref()
+            .context("set `repo` (owner/name)")?
+            .parse()
+    }
+
+    /// The work directory of `repo`, whatever `repo` is set to.
+    pub fn work_dir_for(&self, repo: &Repo) -> PathBuf {
+        self.work_dir.join(&**repo)
+    }
+
+    pub fn repo_work_dir(&self) -> Result<RepoWorkDir> {
+        Ok(RepoWorkDir {
+            base: self.work_dir.clone(),
+            repo: self.required_repo()?,
+        })
+    }
+
+    /// The config `settings`, the file, and the environment `env` reads
+    /// give, the file found from `cwd`, for sessions of the harness whose
+    /// variables are `harness`.
+    pub fn resolve(
+        settings: &Settings,
+        cwd: &Path,
+        env: &dyn Fn(&str) -> Option<String>,
+        on_terminal: bool,
+        harness: &Variables,
+    ) -> Result<Config, ResolveError> {
+        let FileSettings {
+            path,
+            top: file,
+            tables: file_tables,
+            stages,
+        } = read_file(settings.config.as_deref(), cwd, harness)?;
+        let variable = |key: &str| env(&variable_name(key));
+        if settings.setup.is_some() {
+            return Err(ResolveError::CommandLine(setup_is_not_a_command(
+                &format!("--{SETUP}"),
+                &flag_name(SETUP_COMMAND),
+                &flag_name(MAINTENANCE),
+            )));
+        }
+        if variable(SETUP).is_some() {
+            return Err(ResolveError::Elsewhere(setup_is_not_a_command(
+                &variable_name(SETUP),
+                &variable_name(SETUP_COMMAND),
+                &variable_name(MAINTENANCE),
+            )));
+        }
+        let flags = settings.flags();
+        let text_layers: BTreeMap<&str, Layers> = SETTINGS
+            .iter()
+            .filter_map(|&(key, form)| {
+                let Form::Text(form) = form else {
+                    return None;
+                };
+                let set = [
+                    (
+                        OperatorLayer::Flag,
+                        flags.get(key).map(|&text| text.clone()),
+                    ),
+                    (OperatorLayer::Environment, variable(key)),
+                    (OperatorLayer::File, file.get(key).cloned()),
+                ]
+                .into_iter()
+                .filter_map(|(layer, text)| Some((layer, text?)))
+                .collect();
+                Some((key, Layers::Text { form, set }))
+            })
+            .collect();
+        let layers = |key: &str| -> &Layers {
+            text_layers
+                .get(key)
+                .unwrap_or_else(|| panic!("`{key}` is not a setting held as text"))
+        };
+        let flag_tables = settings.tables();
+        let table_layers = |key: &str| -> Result<Layers, ResolveError> {
+            let flag = flag_tables
+                .get(key)
+                .map(|&entries| SetEnv::from_flags(entries, harness))
+                .transpose()
+                .map_err(|e| ResolveError::CommandLine(anyhow!(e)))?;
+            let set = [
+                (OperatorLayer::Flag, flag.as_ref()),
+                (OperatorLayer::File, file_tables.get(key)),
+            ]
+            .into_iter()
+            .filter_map(|(layer, values)| Some((layer, values?.values().clone())))
+            .collect();
+            Ok(Layers::Table(set))
+        };
+        let combined = |key: &str| layers(key).clone().combine();
+        let value_of = |key: &str| match combined(key) {
+            Combined::Value(entry) => entry,
+            Combined::List(_) | Combined::Table(_) => panic!("`{key}` is not a value"),
+        };
+        let get = |key: &str| value_of(key).map(|entry| entry.value);
+        let list_of = |key: &str| match combined(key) {
+            Combined::List(entries) => entries,
+            Combined::Value(_) | Combined::Table(_) => panic!("`{key}` is not a list"),
+        };
+        let blame_on = |layer: Option<OperatorLayer>, error: anyhow::Error| match layer {
+            Some(OperatorLayer::Flag) => ResolveError::CommandLine(error),
+            Some(OperatorLayer::File) => {
+                ResolveError::Elsewhere(error.context(path.display().to_string()))
+            }
+            Some(OperatorLayer::Environment) | None => ResolveError::Elsewhere(error),
+        };
+        let blame = |keys: &[&str], error: anyhow::Error| {
+            if keys
+                .iter()
+                .any(|key| layers(key).highest() == Some(OperatorLayer::Flag))
+            {
+                ResolveError::CommandLine(error)
+            } else {
+                ResolveError::Elsewhere(error)
+            }
+        };
+        let refused = |key: &str, error: anyhow::Error| blame_on(layers(key).highest(), error);
+        let not_one = |key: &str, value: &str, error: anyhow::Error| {
+            refused(
+                key,
+                error.context(format!("the setting `{key}` is {value:?}")),
+            )
+        };
+        let wrong = |key: &str, error: String| refused(key, anyhow!(error));
+        let value = |key: &str, default: &str| get(key).unwrap_or_else(|| default.to_string());
+        let duration = |key: &str, default: &str| {
+            let value = value(key, default);
+            humantime::parse_duration(&value).map_err(|e| not_one(key, &value, e.into()))
+        };
+        let delta = |key: &str, default: &str| -> Result<TimeDelta, ResolveError> {
+            TimeDelta::from_std(duration(key, default)?).map_err(|e| refused(key, e.into()))
+        };
+        let number = |key: &str, default: &str| {
+            let value = value(key, default);
+            value
+                .parse::<u32>()
+                .map_err(|e| not_one(key, &value, e.into()))
+        };
+        let glob = value("spec-glob", "docs/**/*.md");
+        let spec_glob = SpecGlob::new(&glob).map_err(|e| not_one("spec-glob", &glob, e.into()))?;
+        let auto_merge = match get("auto-merge").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(other) => {
+                return Err(wrong(
+                    "auto-merge",
+                    format!("the setting `auto-merge` is {other:?}: it is `true` or `false`"),
+                ));
+            }
+        };
+        let parse_merge_method = |name: String| {
+            name.parse::<MergeMethod>().map_err(|()| {
+                wrong(
+                    "merge-method",
+                    format!(
+                        "the setting `merge-method` is {name:?}: it is `merge`, `squash` or `rebase`"
+                    ),
+                )
+            })
+        };
+        let merge_method = get("merge-method").map(parse_merge_method).transpose()?;
+        let log_format = match get("log-format").as_deref() {
+            None if on_terminal => LogFormat::Text,
+            None => LogFormat::Json,
+            Some("text") => LogFormat::Text,
+            Some("json") => LogFormat::Json,
+            Some(other) => {
+                return Err(wrong(
+                    "log-format",
+                    format!("the setting `log-format` is {other:?}: it is `text` or `json`"),
+                ));
+            }
+        };
+        let work_dir = match get("work-dir") {
+            Some(dir) => PathBuf::from(dir),
+            None => dirs::data_dir()
+                .ok_or_else(|| {
+                    wrong(
+                        "work-dir",
+                        "no data directory for the default `work-dir`; set it".into(),
+                    )
+                })?
+                .join("linewright"),
+        };
+        let secret = env(webhook::SECRET_VARIABLE).and_then(webhook::Secret::new);
+        let parse_webhook_address = |address: &str| {
+            address
+                .parse()
+                .map_err(|e| not_one("webhook-address", address, e))
+        };
+        let webhook_address = refuse_while_off(
+            &WEBHOOKS,
+            secret.is_some(),
+            get("webhook-address")
+                .map(|address| parse_webhook_address(&address))
+                .transpose()?,
+            blame,
+        )?;
+        let webhooks = match secret {
+            Some(secret) => Some(Webhooks {
+                address: match webhook_address {
+                    Some(address) => address,
+                    None => parse_webhook_address(WEBHOOK_ADDRESS)?,
+                },
+                secret,
+            }),
+            None => None,
+        };
+        let given = |key: &str| get(key).filter(|text| !text.is_empty());
+        let public_url = given(PUBLIC_URL)
+            .map(|url| PublicUrl::parse(&url).map_err(|e| not_one(PUBLIC_URL, &url, anyhow!(e))))
+            .transpose()?;
+        let ui_address = value(UI_ADDRESS, UI_ADDRESS_DEFAULT);
+        let google_id = given(GOOGLE_CLIENT_ID).and_then(ClientId::new);
+        let github_id = given(GITHUB_CLIENT_ID).and_then(ClientId::new);
+        let google_signup = joined(
+            list_of(GOOGLE_SIGNUP_DOMAINS),
+            &blame_on,
+            |domain| {
+                SignUpDomains::of(&domain)
+                    .map_err(|e| format!("the setting `{GOOGLE_SIGNUP_DOMAINS}` {e}"))
+            },
+            SignUpDomains::and,
+        )?;
+        let github_signup = joined(
+            list_of(GITHUB_SIGNUP_ORGS),
+            &blame_on,
+            |name| {
+                SignUpOrgs::of(&name).map_err(|e| format!("the setting `{GITHUB_SIGNUP_ORGS}` {e}"))
+            },
+            SignUpOrgs::and,
+        )?;
+        let google_signup_set = !google_signup.is_empty();
+        let github_signup_set = !github_signup.is_empty();
+        let manager = given(MANAGER);
+        if public_url.is_none() {
+            let ui_settings = [
+                (UI_ADDRESS, ui_address != UI_ADDRESS_DEFAULT),
+                (GOOGLE_CLIENT_ID, google_id.is_some()),
+                (GOOGLE_SIGNUP_DOMAINS, google_signup_set),
+                (GITHUB_CLIENT_ID, github_id.is_some()),
+                (GITHUB_SIGNUP_ORGS, github_signup_set),
+                (MANAGER, manager.is_some()),
+            ];
+            if let Some((key, _)) = ui_settings.into_iter().find(|&(_, set)| set) {
+                return Err(blame(
+                    &[key, PUBLIC_URL],
+                    anyhow!(
+                        "the setting `{key}` is set, but `{PUBLIC_URL}` is not: set \
+                         `{PUBLIC_URL}` to serve the web UI, or unset `{key}`"
+                    ),
+                ));
+            }
+        }
+        let client = |keys: &ProviderSettings, id: Option<ClientId>, signup_set: bool| {
+            let ProviderSettings {
+                provider,
+                client_id: id_key,
+                signup: signup_key,
+                secret_variable,
+            } = *keys;
+            match (id, env(secret_variable).and_then(ClientSecret::new)) {
+                (None, _) if signup_set => Err(blame(
+                    &[signup_key, id_key],
+                    anyhow!(
+                        "the setting `{signup_key}` is set, but `{id_key}` is not: {}, or unset \
+                         `{signup_key}`",
+                        keys.turn_on()
+                    ),
+                )),
+                (None, Some(_)) => Err(blame(
+                    &[id_key],
+                    anyhow!(
+                        "`{secret_variable}` is set, but the setting `{id_key}` is not: {}, or \
+                         unset `{secret_variable}`",
+                        keys.turn_on()
+                    ),
+                )),
+                (None, None) => Ok(None),
+                (Some(_), None) => Err(blame(
+                    &[id_key],
+                    anyhow!(
+                        "the setting `{id_key}` is set, but `{secret_variable}` is not: set it \
+                         to the client secret {} gave",
+                        provider.name()
+                    ),
+                )),
+                (Some(id), Some(client_secret)) => Ok(Some((id, client_secret))),
+            }
+        };
+        let google =
+            client(&GOOGLE, google_id, google_signup_set)?.map(|(client_id, client_secret)| {
+                Google {
+                    client_id,
+                    secret: client_secret,
+                    signup: google_signup,
+                    endpoints: GoogleEndpoints::default(),
+                }
+            });
+        let github =
+            client(&GITHUB, github_id, github_signup_set)?.map(|(client_id, client_secret)| {
+                GitHub {
+                    client_id,
+                    secret: client_secret,
+                    signup: github_signup,
+                    endpoints: GitHubEndpoints::default(),
+                }
+            });
+        let ui = match public_url {
+            None => None,
+            Some(public_url) => {
+                if ui_address.is_empty() {
+                    return Err(blame(
+                        &[PUBLIC_URL, UI_ADDRESS],
+                        anyhow!(
+                            "the setting `{PUBLIC_URL}` is set, but `{UI_ADDRESS}` is empty: \
+                             set `{UI_ADDRESS}` to serve the web UI on it, or unset `{PUBLIC_URL}`"
+                        ),
+                    ));
+                }
+                let providers = Providers::of(google, github).ok_or_else(|| {
+                    blame(
+                        &[PUBLIC_URL],
+                        anyhow!(
+                            "the setting `{PUBLIC_URL}` is set, but no identity provider is: \
+                             set `{GOOGLE_CLIENT_ID}`, `{GITHUB_CLIENT_ID}` or both"
+                        ),
+                    )
+                })?;
+                let manager = manager
+                    .map(|name| {
+                        ManagerName::parse(&name, &providers).map_err(|e| match e {
+                            NotAManager::Malformed(why) => not_one(MANAGER, &name, anyhow!(why)),
+                            NotAManager::NotOffered(provider) => {
+                                let keys = ProviderSettings::of(provider);
+                                blame(
+                                    &[MANAGER, keys.client_id],
+                                    anyhow!(
+                                        "the setting `{MANAGER}` names a {} identity, but `{}` \
+                                         is not set: {}, or name a {} identity",
+                                        provider.name(),
+                                        keys.client_id,
+                                        keys.turn_on(),
+                                        provider.other().name()
+                                    ),
+                                )
+                            }
+                        })
+                    })
+                    .transpose()?;
+                Some(Ui {
+                    address: ui_address
+                        .parse()
+                        .map_err(|e| not_one(UI_ADDRESS, &ui_address, e))?,
+                    public_url,
+                    providers,
+                    manager,
+                })
+            }
+        };
+        let pass = joined(
+            list_of(PASS_ENV),
+            &blame_on,
+            |name| name.parse(),
+            PassEnv::and,
+        )?;
+        let session_env_layers = table_layers(SESSION_ENV)?;
+        let session_env_set = !session_env_layers.layers().is_empty();
+        let Combined::Table(entries) = session_env_layers.combine() else {
+            panic!("`{SESSION_ENV}` is a table");
+        };
+        let values = SetEnv::new(
+            entries.into_iter().map(|(name, entry)| (name, entry.value)),
+            harness,
+        )
+        .expect("each layer's values were checked as it was read, and a name is set once");
+        let session_env = SessionEnv::new(pass, values);
+        let secrets = joined(
+            list_of(secrets::SETTING),
+            &blame_on,
+            |name| VariableNames::new(secrets::SETTING, [name]),
+            VariableNames::and,
+        )?;
+        let session_timeout = |set: Option<String>| {
+            set.map(|text| session_timeout(&text).map_err(|e| refused("session-timeout", e)))
+                .transpose()
+        };
+        let effort = |set: Option<String>| {
+            set.map(|text| effort(&text).map_err(|e| refused("effort", e)))
+                .transpose()
+        };
+        let model = |set: Option<String>| {
+            set.map(|text| parse_model(text).map_err(|e| refused("model", e)))
+                .transpose()
+        };
+        let operator_if = |set: bool| {
+            if set {
+                Layer::Operator
+            } else {
+                Layer::Linewright
+            }
+        };
+        let flag_or_env =
+            |key: &str| value_of(key).filter(|entry| entry.layer != OperatorLayer::File);
+        let in_file = |key: &str| value_of(key).filter(|entry| entry.layer == OperatorLayer::File);
+        let text = |entry: Option<Entry>| entry.map(|entry| entry.value);
+        let setup = |pick: &dyn Fn(&str) -> Option<Entry>| {
+            let mut setup = SetupPartial::default();
+            for key in table_keys(SETUP) {
+                let name = format!("{SETUP}.{key}");
+                if let Some(entry) = pick(&name) {
+                    set_setup(&mut setup, &name, entry.value).map_err(|e| refused(&name, e))?;
+                }
+            }
+            Ok::<_, ResolveError>(setup)
+        };
+        let work = WorkSettings {
+            flags_and_env: Partial {
+                model: model(text(flag_or_env("model")))?,
+                effort: effort(text(flag_or_env("effort")))?,
+                session_timeout: session_timeout(text(flag_or_env("session-timeout")))?,
+            },
+            file: Partial {
+                model: model(text(in_file("model")))?,
+                effort: effort(text(in_file("effort")))?,
+                session_timeout: session_timeout(text(in_file("session-timeout")))?,
+            },
+            pipeline_flags_and_env: PipelineSettings {
+                maintenance: text(flag_or_env(MAINTENANCE)).map(Maintenance::from),
+                setup: setup(&flag_or_env)?,
+            },
+            pipeline_file: PipelineSettings {
+                maintenance: text(in_file(MAINTENANCE)).map(Maintenance::from),
+                setup: setup(&in_file)?,
+            },
+            stages,
+            env_layers: EnvLayers {
+                set: operator_if(session_env_set),
+                pass: operator_if(!layers(PASS_ENV).layers().is_empty()),
+            },
+        };
+        let (ci_grace, ci_timeout) = (delta("ci-grace", "5m")?, delta("ci-timeout", "6h")?);
+        if ci_timeout <= ci_grace {
+            return Err(blame(
+                &["ci-grace", "ci-timeout"],
+                anyhow!("the setting `ci-timeout` must be longer than `ci-grace`"),
+            ));
+        }
+        Ok(Config {
+            repo: get("repo"),
+            poll_interval: duration("poll-interval", "60s")?,
+            webhooks,
+            ui,
+            spec_glob,
+            spec_lookback: delta("spec-lookback", "7d")?,
+            done_window: delta("done-window", "7d")?,
+            max_runs: number("max-runs", "4")? as usize,
+            max_trials: number("max-trials", "1")? as usize,
+            work_dir,
+            work,
+            briefs: get("briefs").map(PathBuf::from),
+            session_env,
+            secrets,
+            result_retries: number("result-retries", "1")?,
+            ci_grace,
+            ci_timeout,
+            ci_attempts: number("ci-attempts", "2")?,
+            auto_merge,
+            merge_method,
+            require_label: get("require-label"),
+            log_format,
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveError {
+    /// A flag, or the file `--config` names, which cannot be read.
+    #[error("{0:#}")]
+    CommandLine(anyhow::Error),
+    /// The environment or the config file's contents.
+    #[error("{0:#}")]
+    Elsewhere(anyhow::Error),
+}
+
+/// The operator's config file.
+struct FileSettings {
+    path: PathBuf,
+    /// Each value as the text its flag takes, but for the tables'.
+    top: BTreeMap<String, String>,
+    /// The tables' values, by setting.
+    tables: BTreeMap<String, SetEnv>,
+    /// The `[stage.NAME]` tables.
+    stages: BTreeMap<StageKey, StageTable>,
+}
+
+fn read_file(
+    explicit: Option<&Path>,
+    cwd: &Path,
+    harness: &Variables,
+) -> Result<FileSettings, ResolveError> {
+    let path = explicit
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| cwd.join("linewright.toml"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if explicit.is_none() && e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileSettings {
+                path,
+                top: BTreeMap::new(),
+                tables: BTreeMap::new(),
+                stages: BTreeMap::new(),
+            });
+        }
+        Err(e) => {
+            let error = anyhow!(e).context(format!("reading {}", path.display()));
+            return Err(match explicit {
+                Some(_) => ResolveError::CommandLine(error),
+                None => ResolveError::Elsewhere(error),
+            });
+        }
+    };
+    settings_in(&path, &text, harness).map_err(ResolveError::Elsewhere)
+}
+
+/// The key of the stages' tables.
+const STAGE: &str = "stage";
+
+/// The error for `setup` given as a command, as `setup` names it where it
+/// was given, and `command` and `maintenance` name those settings there.
+fn setup_is_not_a_command(setup: &str, command: &str, maintenance: &str) -> anyhow::Error {
+    anyhow!(
+        "`{setup}` is not a setting: the setup command is `{command}`, and the command each \
+         session starts with is `{maintenance}`"
+    )
+}
+
+/// The flag of the setting `key`, its dots as `-`.
+fn flag_name(key: &str) -> String {
+    format!("--{}", key.replace('.', "-"))
+}
+
+/// The environment variable of the setting `key`, its dots and `-` as `_`.
+fn variable_name(key: &str) -> String {
+    format!("LINEWRIGHT_{}", key.to_uppercase().replace(['-', '.'], "_"))
+}
+
+/// The error for the whole-pipeline setting `key` set `at` a place that
+/// sets only a stage's or an automation's sessions.
+pub(crate) fn only_the_whole_pipelines_error(key: &str, at: &str) -> anyhow::Error {
+    anyhow!("{at} sets `{key}`, which is the whole pipeline's: set it at the top level")
+}
+
+/// Refuses `key`, in a stage's table `at`, when only the whole pipeline
+/// sets it.
+fn not_the_whole_pipelines(key: &str, at: &str) -> Result<()> {
+    if key == MAINTENANCE || key == SETUP {
+        return Err(only_the_whole_pipelines_error(key, at));
+    }
+    Ok(())
+}
+
+/// The setting `key` names in a stage's table, `at`, in the operator's
+/// file.
+fn operator_stage_setting(key: &str, at: &str) -> Result<StageSetting> {
+    not_the_whole_pipelines(key, at)?;
+    StageSetting::named(key).ok_or_else(|| {
+        let keys = StageSetting::ALL.map(StageSetting::name);
+        anyhow!(
+            "{at} has an unknown setting `{key}`: a stage's table holds `{}`",
+            keys.join("`, `")
+        )
+    })
+}
+
+/// The setting `key` names in a stage's table, `at`, in the repository's
+/// file.
+fn repository_stage_setting(key: &str, at: &str) -> Result<RepositorySetting> {
+    not_the_whole_pipelines(key, at)?;
+    repository_setting(key, at, &RepositorySetting::keys())
+}
+
+/// The session setting `key` names in the repository's file, `at` naming
+/// where, which holds the keys `holds`, as a list in an error. An error
+/// says when the key is the operator's.
+fn repository_setting(key: &str, at: &str, holds: &str) -> Result<RepositorySetting> {
+    if let Some(setting) = RepositorySetting::named(key) {
+        return Ok(setting);
+    }
+    let holds = format!("{at} holds {holds}");
+    if form(key).is_some() {
+        bail!("the setting `{key}` is the operator's: {holds}");
+    }
+    bail!("{at} has an unknown setting `{key}`: {holds}")
+}
+
+/// Sets `setting` in `table`, a stage's in the operator's file, to `value`,
+/// for sessions of the harness whose variables are `harness`.
+fn set(
+    table: &mut StageTable,
+    setting: StageSetting,
+    value: toml::Value,
+    harness: &Variables,
+) -> Result<()> {
+    match setting {
+        StageSetting::Repository(setting) => set_session(&mut table.settings, setting, value)?,
+        StageSetting::SessionEnv => {
+            table.session_env = Some(set_env(setting.name(), value, harness)?);
+        }
+        StageSetting::SessionPassEnv => {
+            let names = setting_value(
+                setting.name(),
+                Text::List {
+                    holds: VARIABLE_NAME,
+                },
+                value,
+            )?;
+            table.session_pass_env = Some(names.parse().map_err(|e: String| anyhow!(e))?);
+        }
+    }
+    Ok(())
+}
+
+/// Sets `setting` in `settings` to `value`, as the repository's file and
+/// a trial's configuration set it.
+pub(crate) fn set_session(
+    settings: &mut Partial,
+    setting: RepositorySetting,
+    value: toml::Value,
+) -> Result<()> {
+    let text = |given| setting_value(setting.name(), Text::Value, given);
+    match setting {
+        RepositorySetting::Model => settings.model = Some(parse_model(text(value)?)?),
+        RepositorySetting::Effort => settings.effort = Some(effort(&text(value)?)?),
+        RepositorySetting::SessionTimeout => {
+            settings.session_timeout = Some(session_timeout(&text(value)?)?);
+        }
+    }
+    Ok(())
+}
+
+fn settings_in(path: &Path, text: &str, harness: &Variables) -> Result<FileSettings> {
+    let table: toml::Table = text
+        .parse()
+        .with_context(|| format!("parsing {}", path.display()))?;
+    let mut settings = FileSettings {
+        path: path.to_path_buf(),
+        top: BTreeMap::new(),
+        tables: BTreeMap::new(),
+        stages: BTreeMap::new(),
+    };
+    for (key, value) in table {
+        if key == STAGE {
+            settings.stages = stage_tables(value, |stage: &mut StageTable, name, given, at| {
+                set(stage, operator_stage_setting(name, at)?, given, harness)
+            })
+            .with_context(|| path.display().to_string())?;
+            continue;
+        }
+        if !table_keys(&key).is_empty() {
+            let entries =
+                settings_table(&key, value).with_context(|| path.display().to_string())?;
+            settings.top.extend(entries);
+            continue;
+        }
+        let Some(form) = form(&key) else {
+            bail!("{} has an unknown setting `{key}`", path.display());
+        };
+        match form {
+            Form::Text(form) => {
+                let value = setting_value(&key, form, value)
+                    .with_context(|| format!("{}", path.display()))?;
+                settings.top.insert(key, value);
+            }
+            Form::Table => {
+                let values =
+                    set_env(&key, value, harness).with_context(|| path.display().to_string())?;
+                settings.tables.insert(key, values);
+            }
+        }
+    }
+    Ok(settings)
+}
+
+impl RepoSettings {
+    /// The repository's `.linewright/config.toml`. An error names the key
+    /// at fault, and says so when the key is the operator's.
+    pub fn parse(file: &str) -> Result<RepoSettings> {
+        let keys: toml::Table = file.parse().context("it does not parse")?;
+        let mut top = Partial::default();
+        let mut pipeline = PipelineSettings::default();
+        let mut stages = BTreeMap::new();
+        for (key, value) in keys {
+            match key.as_str() {
+                STAGE => {
+                    stages = stage_tables(value, |stage: &mut Partial, name, given, at| {
+                        set_session(stage, repository_stage_setting(name, at)?, given)
+                    })?;
+                }
+                MAINTENANCE => {
+                    let text = setting_value(MAINTENANCE, Text::Value, value)?;
+                    pipeline.maintenance = Some(Maintenance::from(text));
+                }
+                SETUP => {
+                    for (name, text) in settings_table(SETUP, value)? {
+                        set_setup(&mut pipeline.setup, &name, text)?;
+                    }
+                }
+                key => {
+                    let holds =
+                        format!("{}, `{MAINTENANCE}`, `{SETUP}`", RepositorySetting::keys());
+                    let setting = repository_setting(key, "the repository's file", &holds)?;
+                    set_session(&mut top, setting, value)?;
+                }
+            }
+        }
+        Ok(RepoSettings::new(top, pipeline, stages))
+    }
+}
+
+/// A trial's configuration's `config.toml`, which holds only `model`,
+/// `effort` and `session-timeout` (`docs/specs/benchmarks.md`,
+/// Configurations). An error names the key at fault.
+pub fn configuration_settings(file: &str) -> Result<Partial> {
+    let keys: toml::Table = file.parse().context("it does not parse")?;
+    let mut settings = Partial::default();
+    for (key, value) in keys {
+        let setting = repository_setting(
+            &key,
+            "the configuration's `config.toml`",
+            &RepositorySetting::keys(),
+        )?;
+        set_session(&mut settings, setting, value)?;
+    }
+    Ok(settings)
+}
+
+/// `[stage.NAME]` tables, each a `Table` whose keys `set` sets, given the
+/// table, the key, its value and the table's name. An error names the table.
+fn stage_tables<Table: Default>(
+    stages: toml::Value,
+    set: impl Fn(&mut Table, &str, toml::Value, &str) -> Result<()>,
+) -> Result<BTreeMap<StageKey, Table>> {
+    let toml::Value::Table(stages) = stages else {
+        bail!("`{STAGE}` is {stages}, not a table of stages such as `[{STAGE}.implement]`");
+    };
+    stages
+        .into_iter()
+        .map(|(name, table)| {
+            let at = format!("`[{STAGE}.{name}]`");
+            let stage: StageKey = name.parse().map_err(|e| anyhow!("{at}: {e}"))?;
+            let toml::Value::Table(table) = table else {
+                bail!("{at} is {table}, not a table");
+            };
+            let mut parsed = Table::default();
+            for (key, value) in table {
+                set(&mut parsed, &key, value, &at).context(at.clone())?;
+            }
+            Ok((stage, parsed))
+        })
+        .collect()
+}
+
+fn parse_model(text: String) -> Result<Model> {
+    Model::new(text).map_err(|e| anyhow!(e))
+}
+
+fn effort(text: &str) -> Result<Effort> {
+    text.parse().map_err(|e: String| anyhow!("the setting {e}"))
+}
+
+fn session_timeout(text: &str) -> Result<Duration> {
+    humantime::parse_duration(text)
+        .with_context(|| format!("the setting `session-timeout` is {text:?}"))
+}
+
+/// `value`, of the setting `key` with form `form`, as the text its flag
+/// takes.
+fn setting_value(key: &str, form: Text, value: toml::Value) -> Result<String> {
+    Ok(match (form, value) {
+        (_, toml::Value::String(s)) => s,
+        (_, toml::Value::Integer(i)) => i.to_string(),
+        (_, toml::Value::Boolean(b)) => b.to_string(),
+        (Text::List { holds }, toml::Value::Array(entries)) => entries
+            .into_iter()
+            .map(|entry| match entry.as_str() {
+                Some(entry) if !entry.is_empty() && !entry.contains(',') => Ok(entry.to_string()),
+                Some(_) | None => bail!("the setting `{key}` holds {entry}, not {holds}"),
+            })
+            .collect::<Result<Vec<_>>>()?
+            .join(","),
+        (
+            Text::Value | Text::List { .. },
+            other @ (toml::Value::Float(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_)
+            | toml::Value::Table(_)),
+        ) => {
+            bail!("the setting `{key}` is {other}, not a string, number or boolean")
+        }
+    })
+}
+
+/// `value`, of the table setting `key`, `session-env`, as the values it
+/// sets. The error for an array points to `session-pass-env`.
+fn set_env(key: &str, value: toml::Value, harness: &Variables) -> Result<SetEnv> {
+    let toml::Value::Table(table) = value else {
+        let pass = match value {
+            toml::Value::Array(_) => "; `session-pass-env` names variables to pass",
+            toml::Value::String(_)
+            | toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Table(_) => "",
+        };
+        bail!(
+            "the setting `{key}` is {value}, not a table of variables' values such as \
+             `{{ RUST_LOG = \"info\" }}`{pass}"
+        );
+    };
+    let entries = table
+        .into_iter()
+        .map(|(name, entry)| match entry {
+            toml::Value::String(text) => Ok((name, text)),
+            other @ (toml::Value::Integer(_)
+            | toml::Value::Float(_)
+            | toml::Value::Boolean(_)
+            | toml::Value::Datetime(_)
+            | toml::Value::Array(_)
+            | toml::Value::Table(_)) => {
+                bail!("the setting `{key}` sets `{name}` to {other}, not a string")
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    SetEnv::new(entries, harness).map_err(|e| anyhow!(e))
+}

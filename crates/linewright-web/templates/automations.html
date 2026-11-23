@@ -1,0 +1,56 @@
+{%- extends "layout.html" -%}
+{%- import "macros.html" as ui -%}
+{%- block main -%}
+{% block automations -%}
+<section id="automations" class="flex min-h-0 flex-1 flex-col gap-6">
+{%- if !automations.unparsed.is_empty() %}
+<ul class="unparsed space-y-1">
+{%- for file in automations.unparsed %}
+<li class="{{ linewright_core::phrase::Status::Failed.alert() }}">{% call ui::icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Inline) %}{% endcall %}<span>{{ file|safe }}</span></li>
+{%- endfor %}
+</ul>
+{%- endif %}
+{%- call(part) ui::table_card("Automations", crate::icons::CardIcon::Area(crate::shell::Area::Automations), shows_name = false) %}
+{%- if part == crate::table::Part::Table %}
+{%- if automations.rows.is_empty() %}
+<p class="px-4 pb-4">No automations</p>
+{%- else %}
+<div class="scroll-box overflow-x-auto">
+<table class="table table-pin-rows">
+<thead><tr>{% for column in AutomationsColumn::ALL %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for row in automations.rows %}
+<tr>
+{%- for column in AutomationsColumn::ALL %}
+{%- match column %}
+{%- when AutomationsColumn::Name %}
+<th class="{{ column.align() }}">{{ row.name }}</th>
+{%- when AutomationsColumn::Trigger %}
+<td class="{{ column.align() }}">{{ row.trigger }}</td>
+{%- when AutomationsColumn::LastRun %}
+<td class="{{ column.align() }}">
+{%- match row.last_run -%}
+{%- when LastRunShown::Run { id, href, status, word, about } -%}
+<a class="link link-hover" href="{{ href }}">{{ id|safe }}</a>{{ about|safe }} — {% call ui::status(status, word) %}{% endcall %}
+{%- when LastRunShown::NoneYet(phrase) -%}
+{{ phrase|safe }}
+{%- endmatch -%}
+</td>
+{%- when AutomationsColumn::NextRun %}
+<td class="{{ column.align() }}">{%- if let Some(next_run) = row.next_run %}{{ next_run|safe }}{%- endif %}</td>
+{%- endmatch %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table>
+</div>
+{%- if let Some(pages) = automations.pages %}
+{%- call ui::pages(pages) %}{% endcall %}
+{%- endif %}
+{%- endif %}
+{%- endif %}
+{%- endcall %}
+</section>
+{%- endblock %}
+{%- endblock -%}

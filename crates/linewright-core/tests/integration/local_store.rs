@@ -1,0 +1,338 @@
+use linewright_core::clock::Clock;
+use linewright_core::domain::{
+    Assignment, CheckState, IssueCloseReason, Login, Mergeability, Number, Pull, Requirement,
+    ReviewState, Scope, Timestamp, Windows,
+};
+use linewright_core::store::Store;
+use linewright_core::testing::*;
+
+async fn snapshot_pull(world: &World, pr: Number) -> Pull {
+    let snapshot = world
+        .store
+        .snapshot(Windows::EVER, &Scope::default())
+        .await
+        .unwrap();
+    snapshot.pull(pr).expect("the snapshot holds it").clone()
+}
+
+#[test_log::test(tokio::test)]
+async fn a_pull_request_lists_its_assignees_and_who_assigned_and_unassigned_whom_when() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    let opened = snapshot_pull(&world, pr).await.assignments.len();
+
+    let start = world.clock.now();
+    world
+        .store
+        .unassign_as("maintainer", pr, "factory")
+        .unwrap();
+    let unassigned = world.clock.now();
+    world.store.assign_as("lead", pr, "maintainer").unwrap();
+    let end = world.clock.now();
+
+    let pull = snapshot_pull(&world, pr).await;
+    assert_eq!(pull.assignees, [Login::new("maintainer")]);
+    let changes = &pull.assignments[opened..];
+    assert!(
+        matches!(
+            changes,
+            [
+                Assignment::Unassigned { assignee, actor, at: first },
+                Assignment::Assigned { assignee: second_assignee, actor: second_actor, at: second },
+            ] if assignee.as_str() == "factory"
+                && actor.as_str() == "maintainer"
+                && second_assignee.as_str() == "maintainer"
+                && second_actor.as_str() == "lead"
+                && start < *first && *first < unassigned
+                && unassigned < *second && *second < end
+        ),
+        "{changes:?}"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn unassigning_someone_a_pull_request_is_not_assigned_to_records_nothing() {
+    let mut world = World::new().await;
+    let (_, pr) = world.ticket_in_review().await;
+    let before = snapshot_pull(&world, pr).await.assignments;
+
+    world.store.unassign_as("maintainer", pr, "alice").unwrap();
+
+    assert_eq!(snapshot_pull(&world, pr).await.assignments, before);
+}
+
+#[test_log::test(tokio::test)]
+async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
+    let world = World::new().await;
+    let branches = ["1-Gadgets", "1-gadgets"];
+
+    for branch in branches {
+        let contents = format!("{branch}\n");
+        world
+            .store
+            .commit(
+                LINEWRIGHT,
+                branch,
+                &[("src/gadgets.txt", &contents)],
+                "Gadgets",
+            )
+            .await
+            .unwrap();
+    }
+
+    for branch in branches {
+        let contents = world.store.file(branch, "src/gadgets.txt").await.unwrap();
+        assert_eq!(contents, format!("{branch}\n"));
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_commit_keeps_files_whose_paths_need_quoting_in_git() {
+    let world = World::new().await;
+    let paths = [
+        "\"quoted\".txt",
+        "new\nline.txt",
+        "back\\slash.txt",
+        "with space.txt",
+        "naïve.txt",
+    ];
+    let files: Vec<(&str, &str)> = paths.iter().map(|path| (*path, "kept\n")).collect();
+
+    world
+        .store
+        .commit(LINEWRIGHT, "1-paths", &files, "Paths")
+        .await
+        .unwrap();
+
+    for path in paths {
+        assert_eq!(world.store.file("1-paths", path).await.unwrap(), "kept\n");
+    }
+}
+
+/// When the snapshot says GitHub last updated the issue #`number`, open or
+/// closed.
+async fn updated_at(world: &World, number: Number) -> Timestamp {
+    let snapshot = world
+        .store
+        .snapshot(Windows::EVER, &Scope::default())
+        .await
+        .unwrap();
+    snapshot.updated_at(number).expect("the snapshot holds it")
+}
+
+#[test_log::test(tokio::test)]
+async fn every_write_to_an_issue_moves_when_it_was_last_updated() {
+    let world = World::new().await;
+    let issue = world
+        .store
+        .open_issue("maintainer", "Do the thing", "Please.", &["needs-triage"]);
+    let blocker = world
+        .store
+        .open_issue("maintainer", "First", "Before.", &["needs-triage"]);
+    let store = &world.store;
+
+    let mut last = updated_at(&world, issue).await;
+    let mut written = async |what: &str| {
+        let now = updated_at(&world, issue).await;
+        assert!(now > last, "{what} left it at {last}");
+        last = now;
+    };
+    store.comment(issue, "A comment.").await.unwrap();
+    written("a comment").await;
+    store.comment_as("alice", issue, "Another.").unwrap();
+    written("a person's comment").await;
+    store.add_label(issue, "bug").await.unwrap();
+    written("a label").await;
+    store.remove_label(issue, "bug").await.unwrap();
+    written("a label removed").await;
+    store.assign(issue).await.unwrap();
+    written("an assignment").await;
+    store.unassign(issue).await.unwrap();
+    written("an unassignment").await;
+    store.edit_body(issue, "Edited.").await.unwrap();
+    written("an edit").await;
+    store.set_issue_type(issue, "Bug").await.unwrap();
+    written("an issue type").await;
+    store.add_blocked_by(issue, blocker).await.unwrap();
+    written("a blocker").await;
+    store
+        .close_issue(issue, IssueCloseReason::NotPlanned)
+        .await
+        .unwrap();
+    written("a close").await;
+    store.reopen_issue_as(issue).unwrap();
+    written("a reopening").await;
+}
+
+#[test_log::test(tokio::test)]
+async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
+    let world = World::new().await;
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let pr = world.persons_pull_closing(issue).await;
+    let store = &world.store;
+
+    let mut last = world.store.snapshot_pull(pr).await.updated_at;
+    let mut written = async |what: &str| {
+        let now = world.store.snapshot_pull(pr).await.updated_at;
+        assert!(now > last, "{what} left it at {last}");
+        last = now;
+    };
+    store.comment(pr, "A comment.").await.unwrap();
+    written("a comment").await;
+    store.add_label(pr, "bug").await.unwrap();
+    written("a label").await;
+    store.remove_label(pr, "bug").await.unwrap();
+    written("a label removed").await;
+    store.assign(pr).await.unwrap();
+    written("an assignment").await;
+    store
+        .edit_body(pr, &format!("Closes {issue}, edited."))
+        .await
+        .unwrap();
+    written("an edit").await;
+    store
+        .commit(
+            "alice",
+            &format!("alice-closes-{}", issue.0),
+            &[("src/more.txt", "more\n")],
+            "More",
+        )
+        .await
+        .unwrap();
+    written("a push").await;
+    store
+        .review_as(
+            "bob",
+            pr,
+            ReviewState::ChangesRequested,
+            "Fix it.",
+            &[("src/thing.txt", "Here.")],
+        )
+        .unwrap();
+    written("a review").await;
+    let thread = format!("T{}-1", pr.0);
+    store.reply_in_thread(pr, &thread, "Done.").await.unwrap();
+    written("a reply").await;
+    store.resolve_thread(pr, &thread).await.unwrap();
+    written("a resolved thread").await;
+    store
+        .request_review(pr, &[Login::new("bob")])
+        .await
+        .unwrap();
+    written("a review request").await;
+    store
+        .set_checks(pr, vec![check("test", CheckState::Passed, "")])
+        .await
+        .unwrap();
+    written("a check").await;
+    store.merge_pull(pr).await.unwrap();
+    written("a merge").await;
+    assert_eq!(
+        updated_at(&world, issue).await,
+        last,
+        "the merge closed the issue"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn closing_a_pull_request_moves_when_it_was_last_updated() {
+    let world = World::new().await;
+    let issue = world.store.open_issue(
+        "maintainer",
+        "Do the thing",
+        "Please.",
+        &["ready-for-agent"],
+    );
+    let pr = world.persons_pull_closing(issue).await;
+    let before = world.store.snapshot_pull(pr).await.updated_at;
+
+    world.store.close_pull_as(pr).unwrap();
+
+    assert!(world.store.snapshot_pull(pr).await.updated_at > before);
+}
+
+#[test_log::test(tokio::test)]
+async fn uploads_of_the_same_bytes_keep_one_file() {
+    let world = World::new().await;
+    let session = tempfile::tempdir().unwrap();
+    let shot = session.path().join("shot.png");
+    let again = session.path().join("again.png");
+    std::fs::write(&shot, "the bytes").unwrap();
+    std::fs::write(&again, "the bytes").unwrap();
+
+    let first = world
+        .store
+        .attach(&shot, "shot.png", "image/png")
+        .await
+        .unwrap();
+    let second = world
+        .store
+        .attach(&again, "again.png", "image/png")
+        .await
+        .unwrap();
+
+    let named_by_the_sha256_of_the_bytes =
+        "attachments/ed589341c9fd5da96aaff4c5efa008226282a716186608d5a032ac75895a9c2f.png";
+    assert_eq!(first, named_by_the_sha256_of_the_bytes);
+    assert_eq!(second, named_by_the_sha256_of_the_bytes);
+    let root = world.dir.path().join("store");
+    let kept: Vec<_> = std::fs::read_dir(root.join("attachments"))
+        .unwrap()
+        .collect();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(root.join(&first)).unwrap(),
+        "the bytes"
+    );
+}
+
+/// A world, requiring branches up to date where `requires_up_to_date`, whose
+/// pull request, ready for review, the default branch has moved past without
+/// a conflict.
+async fn moved_past(requires_up_to_date: bool) -> (World, Number) {
+    let repository = if requires_up_to_date {
+        Repository::requiring_up_to_date()
+    } else {
+        Repository::default()
+    };
+    let mut world = World::with_repository(repository, |_| {}).await;
+    let (_, pr) = world.ticket_in_review().await;
+    world.store.mark_ready(pr).await.unwrap();
+    world.move_default_branch_on().await;
+    (world, pr)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_pull_request_behind_is_reported_behind_only_where_the_repository_requires_it_up_to_date()
+{
+    let (lax, lax_pr) = moved_past(false).await;
+    let (strict, strict_pr) = moved_past(true).await;
+
+    assert_eq!(
+        snapshot_pull(&lax, lax_pr).await.mergeability,
+        Mergeability::Clean
+    );
+    assert_eq!(
+        snapshot_pull(&strict, strict_pr).await.mergeability,
+        Mergeability::Behind
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_merge_blocked_by_a_missing_requirement_is_reported_blocked_rather_than_behind() {
+    let (world, pr) = moved_past(true).await;
+
+    world.store.block_merge(pr, vec![Requirement::Approval]);
+
+    assert_eq!(
+        snapshot_pull(&world, pr).await.mergeability,
+        Mergeability::Blocked {
+            requires: vec![Requirement::Approval]
+        }
+    );
+}

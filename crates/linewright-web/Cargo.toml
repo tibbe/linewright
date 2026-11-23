@@ -1,0 +1,50 @@
+[package]
+name = "linewright-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+askama = { workspace = true }
+askama_web = { workspace = true }
+axum = { workspace = true }
+form_urlencoded = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }
+humantime = { workspace = true }
+linewright-core = { workspace = true }
+percent-encoding = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+rust-embed = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+linewright-core = { workspace = true, features = ["test-utils"] }
+boa_engine = { workspace = true }
+chrono = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+jsonschema = { workspace = true }
+scraper = { workspace = true }
+sqlx = { workspace = true }
+tempfile = { workspace = true }
+test-log = { workspace = true }
+tower = { workspace = true }

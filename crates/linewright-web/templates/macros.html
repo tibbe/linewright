@@ -1,0 +1,419 @@
+{#- A status as a daisyUI badge in its colour, holding its icon and its
+    words, so that it is never told by colour alone. -#}
+{%- macro status(status, word) -%}
+<span class="tone badge badge-sm {{ status.badge() }}">{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Badge) %}{% endcall %}<span>{{ word }}</span></span>
+{%- endmacro -%}
+
+{#- A status among a page's facts (`docs/specs/web/components.md`, Facts):
+    a daisyUI `status` dot in its colour, then its icon, named by the status,
+    and its words. -#}
+{%- macro status_text(status, words) -%}
+<span class="status-text"><span class="{{ status.dot() }}" aria-hidden="true"></span>{{ crate::icons::named_status_icon(status) }}<span>{{ words|safe }}</span></span>
+{%- endmacro -%}
+
+{#- A page's facts (`docs/specs/web/components.md`, Facts), in a card, each a
+    row of its label at the start, in secondary text, and its value at the
+    end, each line of the value a block of its own, its text read from
+    the start. An item among them is
+    shown as its card is, its card status's icon in place of its line. -#}
+{%- macro facts(facts) -%}
+<dl class="{% call card_look() %}{% endcall %} grid w-fit gap-3 p-4 text-sm">
+{%- for fact in facts %}
+<div class="flex justify-between gap-6">
+<dt class="shrink-0 text-base-content/60">{{ fact.label }}</dt>
+<dd class="flex min-w-0 flex-col items-end">
+{%- for line in fact.lines -%}
+<div>
+{%- for piece in line -%}
+{%- match piece -%}
+{%- when crate::facts::Piece::Text(text) -%}
+{{ text|safe }}
+{%- when crate::facts::Piece::Status { status, words } -%}
+{% call status_text(status, words) %}{% endcall %}
+{%- when crate::facts::Piece::Item { status, kind, heading } -%}
+<span class="related-item">{% if let Some(status) = status %}{% call icon(crate::icons::status_icon(status), crate::icons::IconSize::Inline) %}{% endcall %}{% endif %}{{ kind.svg() }}{{ heading|safe }}</span>
+{%- when crate::facts::Piece::LaneHead(heading) -%}
+<span class="related-item">{{ heading|safe }}</span>
+{%- when crate::facts::Piece::Markup(markup) -%}
+{{ markup|safe }}
+{%- endmatch -%}
+{%- endfor -%}
+</div>
+{%- endfor -%}
+</dd>
+</div>
+{%- endfor %}
+</dl>
+{%- endmacro -%}
+
+{#- A page's filters (`docs/specs/design_system.md`, Filters;
+    `docs/specs/web/design_system.md`, Filters), the fields its caller
+    draws, outside every region a stream sends. The script applies them
+    as each is chosen, to the page's address and to its stream at
+    `stream_path`. -#}
+{%- macro filters(stream_path) -%}
+<form class="flex flex-wrap items-center gap-2" data-filters="{{ stream_path }}">
+{{- caller() }}
+</form>
+{%- endmacro -%}
+
+{#- A table in its card (`docs/specs/design_system.md`, Tables;
+    `docs/specs/web/design_system.md`, Tables), named `name`. The card's top
+    holds `name` after `icon` as its title at its left, if `shows_name`, and
+    the buttons at its right, if `buttons`. A card that shows no name is named
+    `name` for screen readers alone. The filters are in a row of their own
+    under the top, unless `filters_stream` is empty, applied as the page's
+    filters are to its address and to its stream at `filters_stream`. Its
+    title is the element `heading`, such as `h1` on a screen with neither
+    breadcrumbs nor a heading card. Then comes the table. The caller draws each `crate::table::Part` it is
+    given: the filters' fields, the buttons and the table. -#}
+{%- macro table_card(name, icon, shows_name, filters_stream = "", buttons = false, heading = "h2") -%}
+<section class="table-card {% call card_look() %}{% endcall %} min-h-0 gap-4 overflow-hidden pt-4"{% if !shows_name %} aria-label="{{ name }}"{% endif %}>
+{%- if shows_name || buttons %}
+<div class="table-top flex shrink-0 flex-wrap items-center gap-2 px-4">
+{%- if shows_name %}
+<{{ heading }} class="card-title">{% call icon(icon.icon(), crate::icons::IconSize::CardTitle) %}{% endcall %}{{ name }}</{{ heading }}>
+{%- endif %}
+{%- if buttons %}
+<div class="ml-auto flex flex-wrap items-center gap-2">
+{{- caller(crate::table::Part::Buttons) }}
+</div>
+{%- endif %}
+</div>
+{%- endif %}
+{%- if !filters_stream.is_empty() %}
+<form class="table-filters flex shrink-0 flex-wrap items-center gap-2 px-4" data-filters="{{ filters_stream }}">
+{{- caller(crate::table::Part::Filters) }}
+</form>
+{%- endif %}
+{{ caller(crate::table::Part::Table) }}
+</section>
+{%- endmacro -%}
+
+{#- The pages under a table (`docs/specs/design_system.md`, Tables, Pages;
+    `docs/specs/web/design_system.md`, Tables), of a
+    `crate::pages::PagesShown`: which rows show at the left, then
+    "Previous", the numbers and "Next" at the right in a `join`. Each link
+    leads to its page's address, and the script applies it to the page's
+    stream at its `data-stream` as it applies a filter. A disabled end and
+    "…" are no links. -#}
+{%- macro pages(shown) -%}
+<nav class="pages flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-3" aria-label="{{ shown.label }}">
+<span class="pages-showing text-base-content/60 text-sm">{{ shown.showing }}</span>
+<div class="join">
+{%- call page_end("Previous", shown.previous) %}{% endcall %}
+{%- for item in shown.items %}
+{%- match item %}
+{%- when crate::pages::PageItem::Page { number, href, current } %}
+<a class="join-item btn btn-sm{% if current %} btn-active{% endif %}" href="{{ href.page }}" data-stream="{{ href.stream }}"{% if current %} aria-current="page"{% endif %}>{{ number }}</a>
+{%- when crate::pages::PageItem::Gap %}
+<span class="join-item btn btn-sm btn-disabled">…</span>
+{%- endmatch %}
+{%- endfor %}
+{%- call page_end("Next", shown.next) %}{% endcall %}
+</div>
+</nav>
+{%- endmacro -%}
+
+{#- "Previous" or "Next" among a table's pages: a link to `href`, or a
+    disabled button where there is no page there. -#}
+{%- macro page_end(label, href) -%}
+{%- match href %}
+{%- when Some(href) %}
+<a class="join-item btn btn-sm" href="{{ href.page }}" data-stream="{{ href.stream }}">{{ label }}</a>
+{%- when None %}
+<button class="join-item btn btn-sm" type="button" disabled>{{ label }}</button>
+{%- endmatch %}
+{%- endmacro -%}
+
+{#- A filter typed in, `value` empty while it is unset, `width` wide and
+    with the keyboard `inputmode` asks for. -#}
+{%- macro filter_input(label, name, value, width = "w-32", placeholder = "", inputmode = "") -%}
+<label class="input input-sm w-auto"><span class="label">{{ label }}</span><input class="{{ width }}" name="{{ name }}" value="{{ value }}"{% if !placeholder.is_empty() %} placeholder="{{ placeholder }}"{% endif %}{% if !inputmode.is_empty() %} inputmode="{{ inputmode }}"{% endif %} autocomplete="off"></label>
+{%- endmacro -%}
+
+{#- A filter that searches (`docs/specs/web/design_system.md`, Filters): a
+    search `input` with its icon at its start, named `label` for screen
+    readers and taking the spare width of its row, `value` empty while it is
+    unset. -#}
+{%- macro filter_search(label, name, value) -%}
+<label class="input input-sm grow">{% call icon(crate::icons::Icon::MagnifyingGlass, crate::icons::IconSize::Inline, "opacity-60") %}{% endcall %}<input type="search" name="{{ name }}" value="{{ value }}" placeholder="{{ label }}" aria-label="{{ label }}" autocomplete="off"></label>
+{%- endmacro -%}
+
+{#- A filter chosen from `options`, each its value and whether it is
+    chosen, reading `all` while it is unset. Given `options_from`, the id of
+    an element on the page, the script keeps its options those of that
+    element as updates bring it. -#}
+{%- macro filter_select(label, name, all, options, options_from = "") -%}
+<label class="select select-sm w-auto"><span class="label">{{ label }}</span><select name="{{ name }}"{% if !options_from.is_empty() %} data-options="{{ options_from }}"{% endif %}>
+<option value="">{{ all }}</option>
+{%- for (option, chosen) in options %}
+<option value="{{ option }}"{% if chosen %} selected{% endif %}>{{ option }}</option>
+{%- endfor %}
+</select></label>
+{%- endmacro -%}
+
+{#- A confirmation's daisyUI `modal` (`docs/specs/design_system.md`,
+    Confirming). Focus starts on turning it down, the least destructive
+    answer. -#}
+{%- macro confirm_dialog(confirmation) -%}
+<dialog id="{{ confirmation.id }}" class="modal" aria-labelledby="{{ confirmation.id }}_question">
+<div class="modal-box">
+<p id="{{ confirmation.id }}_question">{{ confirmation.question }}</p>
+<div class="modal-action">
+<form method="dialog"><button class="btn btn-sm" autofocus>{{ confirmation.turn_down.verb().labelled() }}</button></form>
+<form method="post" action="{{ confirmation.action }}" hx-post="{{ confirmation.action }}" hx-target="#{{ confirmation.said }}" hx-swap="innerHTML">
+{%- for (name, value) in confirmation.fields %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor -%}
+<button class="btn btn-sm btn-error" type="submit">{{ confirmation.verb.labelled() }}</button></form>
+</div>
+</div>
+</dialog>
+{%- endmacro -%}
+
+{#- The button "New" in a table's bar (`docs/specs/design_system.md`,
+    Making), which opens the dialog `id` with no request. -#}
+{%- macro new_button(id) -%}
+<button class="btn btn-sm btn-primary" type="button" command="show-modal" commandfor="{{ id }}">New</button>
+{%- endmacro -%}
+
+{#- A dialog in which the reader makes a thing, such as the one "New" opens
+    (`docs/specs/design_system.md`, Dialogs and Making;
+    `docs/specs/web/design_system.md`, Navigation and Making): a daisyUI
+    `modal` with no `modal-backdrop`, so that a click outside it leaves it
+    open. It is drawn outside every region a stream sends, so that an update
+    leaves it and what the reader typed in it as they were. Its form posts
+    to `action`, and the answer, the form that `new_form` draws, replaces
+    what the form holds. A `wide` dialog has room for fields side by
+    side, and `form_class` gives the form its classes. A dialog that changes
+    a thing names in `values` the element whose values its fields start
+    from as it opens. -#}
+{%- macro new_dialog(id, action, wide = false, form_class = "", values = "") -%}
+<dialog id="{{ id }}" class="modal" aria-labelledby="{{ id }}-title">
+<div class="modal-box{% if wide %} max-w-3xl{% endif %}">
+<form{% if !form_class.is_empty() %} class="{{ form_class }}"{% endif %} method="post" action="{{ action }}" hx-post="{{ action }}" hx-target="this" autocomplete="off" data-new{% if !values.is_empty() %} data-values="{{ values }}"{% endif %}>
+{{- caller() }}
+</form>
+</div>
+</dialog>
+{%- endmacro -%}
+
+{#- A dialog that "Edit" opens (`docs/specs/design_system.md`, Editing;
+    `docs/specs/web/design_system.md`, Editing), a
+    `crate::editing::EditDialog`: the dialog that makes a thing, its
+    form holding the thing's values, and starting from those of its
+    `crate::editing::EditValues` as it opens. -#}
+{%- macro edit_dialog(dialog) -%}
+{%- call new_dialog(dialog.id, dialog.action, values = dialog.values_id()) %}
+{{ dialog.form }}
+{%- endcall %}
+{%- endmacro -%}
+
+{#- The title `title` of the making dialog `id`'s form, which a stream can
+    send as a region of its page, so that it names a thing as it is named
+    now. -#}
+{%- macro form_title(id, title) -%}
+<legend id="{{ id }}-title" class="fieldset-legend" data-region>{{ title }}</legend>
+{%- endmacro -%}
+
+{#- What the form of the making dialog `id` holds: the fieldset titled
+    `title`, whose fields, each drawn by `field`, its caller draws, then
+    `whole`, the reason of a refusal of no field, if there is one, then
+    "Cancel" and the button of the `crate::buttons::Verb` `verb` that
+    makes the thing, drawn by `new_submit` with `region` and `disabled`. -#}
+{%- macro new_form(id, title, verb, whole, region = "", disabled = false) -%}
+<fieldset class="fieldset">
+{% call form_title(id, title) %}{% endcall %}
+{{- caller() }}
+</fieldset>
+{%- if let Some(whole) = whole %}
+<div class="alert alert-error mt-2" role="alert"><span>{{ whole }}</span></div>
+{%- endif %}
+<div class="modal-action">
+<button class="btn btn-sm" type="button" command="close" commandfor="{{ id }}">{{ crate::buttons::Verb::CloseDialog.labelled() }}</button>
+{% call new_submit(verb, region, disabled) %}{% endcall %}
+</div>
+{%- endmacro -%}
+
+{#- A making dialog's field (`docs/specs/design_system.md`, Making, Required
+    and A refusal; `docs/specs/web/design_system.md`, Making), in a wrapper of
+    its own so that daisyUI's `.validator ~ .validator-hint` reaches its hint
+    alone (https://daisyui.com/components/validator/): its `label`, then the control of the `crate::making::Control`
+    `control` with the id `id`, which its caller draws with the class
+    `validator` and the attributes it is given, then its `validator-hint`,
+    taking no room while it is hidden, and "Optional" under an optional field.
+    `shown`, a `crate::making::FieldShown`, says what the hint holds, and
+    `data-unrefused-hint` what it holds again once the reader edits a refused
+    field. `class` gives the wrapper more classes. -#}
+{%- macro field(id, label, shown, control, class = "") -%}
+<div class="field grid gap-1.5{% if !class.is_empty() %} {{ class }}{% endif %}">
+<label class="label" for="{{ id }}">{{ label }}</label>
+{{- caller(shown.attributes(id, *control)) }}
+<p id="{{ id }}-hint" class="validator-hint hidden" data-unrefused-hint="{{ shown.unrefused_hint() }}">{{ shown.hint() }}</p>
+{%- if !shown.required() %}
+<span class="label optional">Optional</span>
+{%- endif %}
+</div>
+{%- endmacro -%}
+
+{#- The button of the verb `verb` that makes a making dialog's thing. Given `region`,
+    the id of a region of the page's stream inside the dialog, it is in that
+    region, `disabled` as the stream keeps it. -#}
+{%- macro new_submit(verb, region = "", disabled = false) -%}
+{%- if !region.is_empty() %}<div id="{{ region }}" class="contents" data-region>{% endif -%}
+<button class="btn btn-sm btn-primary" type="submit"{% if disabled %} disabled{% endif %}>{{ verb.labelled() }}</button>
+{%- if !region.is_empty() %}</div>{% endif %}
+{%- endmacro -%}
+
+{#- A table's row `id` that opens to the rows under it, or one of those,
+    under the row `of`, hidden until that row opens. The caller draws its
+    cells, the first of a row in a table whose rows open drawn by
+    `fold_cell`. -#}
+{%- macro fold_row(id, of = "") -%}
+<tr id="{{ id }}"{% if !of.is_empty() %} data-fold-of="{{ of }}" hidden{% endif %}>
+{{- caller() -}}
+</tr>
+{%- endmacro -%}
+
+{#- A row's leading cell (`docs/specs/design_system.md`, Tables, Opening in
+    place): the button that opens and closes the rows its
+    `crate::table::Fold` opens, with a chevron pointing right while they
+    are closed and down while they are open, or nothing where it opens
+    nothing. -#}
+{%- macro fold_cell(fold) -%}
+<td class="fold-cell w-0 pr-0">
+{%- match fold -%}
+{%- when crate::table::Fold::Opens(opens) -%}
+<button class="fold group btn btn-ghost btn-xs btn-square" type="button" aria-expanded="false" aria-controls="{{ opens.rows()|join(" ") }}" aria-label="{{ opens.label() }}">{% call icon(crate::icons::Icon::ChevronRight, crate::icons::IconSize::Inline, "group-aria-expanded:hidden") %}{% endcall %}{% call icon(crate::icons::Icon::ChevronDown, crate::icons::IconSize::Inline, "hidden group-aria-expanded:block") %}{% endcall %}</button>
+{%- when crate::table::Fold::Nothing -%}
+{%- endmatch -%}
+</td>
+{%- endmacro -%}
+
+{#- A row's `crate::table::View`, at the row's end. -#}
+{%- macro row_view(view) -%}
+<a class="row-view btn btn-ghost btn-xs" href="{{ view.href }}" aria-label="View {{ view.name }}">View</a>
+{%- endmacro -%}
+
+{#- A button on a table's row named `name` (`docs/specs/design_system.md`,
+    Tables, A row's buttons, and Editing, Edit;
+    `docs/specs/web/design_system.md`, Buttons): its verb's label after its
+    icon, which a screen reader reads with the row's name after it, opening
+    the dialog `dialog` with no request. -#}
+{%- macro row_button(verb, dialog, name) -%}
+<button class="btn btn-ghost btn-xs" type="button" command="show-modal" commandfor="{{ dialog }}" aria-label="{{ verb.label() }} {{ name }}">{{ verb.labelled() }}</button>
+{%- endmacro -%}
+
+{#- A screen's facts side by side, each a `crate::stats::Stat`, in a
+    daisyUI `stats` drawn as a card is (`docs/specs/web/benchmarks.md`,
+    Benchmark run and Task). -#}
+{%- macro stats(stats) -%}
+<div class="stats max-w-full {% call card_look() %}{% endcall %}">
+{%- for stat in stats %}
+<div class="stat">
+<div class="stat-title">{{ stat.label }}</div>
+<div class="stat-value text-xl font-semibold">{{ stat.value }}</div>
+</div>
+{%- endfor %}
+</div>
+{%- endmacro -%}
+
+{#- `said` of what does not read, in secondary text after Failed's icon,
+    and in `class` too. -#}
+{%- macro unreadable(said, class = "") -%}
+<div class="text-base-content/60 flex items-center gap-1{% if !class.is_empty() %} {{ class }}{% endif %}">{% call icon(crate::icons::status_icon(&linewright_core::phrase::Status::Failed), crate::icons::IconSize::Inline) %}{% endcall %}<span>{{ said }}</span></div>
+{%- endmacro -%}
+
+{#- The classes of a card (`docs/specs/web/design_system.md`, Cards), in
+    `bg-base-200`, or in `colour`. -#}
+{%- macro card_look(colour = "bg-base-200") -%}
+card {% call card_surface(colour) %}{% endcall %}
+{%- endmacro -%}
+
+{#- The classes that colour a card and give it its shadow, for what is
+    drawn as a card is without being one. -#}
+{%- macro card_surface(colour = "bg-base-200") -%}
+{{ colour }} shadow-xs
+{%- endmacro -%}
+
+{#- A person's avatar (`docs/specs/web/design_system.md`, Avatars): the
+    image at `avatar`, or else `letter` in its place. -#}
+{%- macro avatar(avatar, letter) -%}
+{%- if let Some(avatar) = avatar %}<div class="avatar"><div class="size-8 rounded-full"><img src="{{ avatar }}" width="32" height="32" alt="" referrerpolicy="no-referrer"></div></div>
+{%- else %}<div class="avatar avatar-placeholder"><div class="size-8 rounded-full bg-neutral text-neutral-content"><span>{{ letter }}</span></div></div>
+{%- endif %}
+{%- endmacro -%}
+
+{#- `icon` in `size`, a `crate::icons::IconSize`, with the classes
+    `class` too. -#}
+{%- macro icon(icon, size, class = "") -%}
+{{ icon.svg_classed(size, class) }}
+{%- endmacro -%}
+
+{#- What a run is of, as the Item column of a list of runs names it
+    (`docs/specs/runs.md`, Runs). An automation, being no name, is cut on its
+    own in a cut name's holder. -#}
+{%- macro item_cell(item) -%}
+{%- match item -%}
+{%- when crate::runs_table::ItemCell::Item(item) -%}
+{{ item|safe }}
+{%- when crate::runs_table::ItemCell::Automation(name) -%}
+<a class="link link-hover min-w-0 shrink truncate" href="/automations">automation {{ name }}</a>
+{%- endmatch -%}
+{%- endmacro -%}
+
+{#- A list of runs (`docs/specs/runs.md`, Runs), the region `runs`, in the
+    page's scroll box,
+    its heads pinned, each column aligned as its kind is
+    (`docs/specs/design_system.md`, Tables). A title is on one line, cut as
+    a name is, and whole in the page's tooltip while it is cut, as a board
+    card's is. A cut list's last row spans the table. -#}
+{%- macro runs(shown) -%}
+<div id="runs" class="flex min-h-0 flex-1 flex-col">
+{%- match shown %}
+{%- when crate::runs_table::RunsShown::Table(table) %}
+<div class="scroll-box overflow-x-auto">
+<table class="table table-pin-rows">
+<thead><tr>{% for column in table.columns() %}<th class="{{ column.align() }}">{{ column.head() }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for (item, row) in table.rows() %}
+<tr>
+{%- for column in table.columns() %}
+<td class="{{ column.align() }}">
+{%- match column -%}
+{%- when crate::runs_table::RunsColumn::Outcome -%}
+{% call status(row.status, row.word) %}{% endcall %}
+{%- when crate::runs_table::RunsColumn::Run -%}
+<span class="whitespace-nowrap">{{ row.id|safe }}</span>
+{%- when crate::runs_table::RunsColumn::Item -%}
+{%- if let Some(item) = item -%}
+<div class="name-cut-1 min-w-48 max-w-md" data-tip-cut>{% call item_cell(item) %}{% endcall %}</div>
+{%- endif -%}
+{%- when crate::runs_table::RunsColumn::Stage -%}
+{%- if let Some(stage) = row.stage %}{{ stage }}{% endif -%}
+{%- when crate::runs_table::RunsColumn::Started -%}
+<span class="whitespace-nowrap">{{ row.started|safe }}{% if row.by_hand %} <span class="badge badge-sm">by hand</span>{% endif %}</span>
+{%- when crate::runs_table::RunsColumn::Duration -%}
+{%- if let Some(duration) = row.duration %}<span class="whitespace-nowrap">{{ duration|safe }}</span>{% endif -%}
+{%- when crate::runs_table::RunsColumn::View -%}
+{% call row_view(row.view) %}{% endcall %}
+{%- endmatch -%}
+</td>
+{%- endfor %}
+</tr>
+{%- endfor %}
+{%- if let Some(left_out) = table.left_out() %}
+<tr class="left-out"><td colspan="{{ table.column_count() }}">left out: {{ left_out.earlier }}; <a class="link" href="{{ left_out.href }}">show them all</a></td></tr>
+{%- endif %}
+</tbody>
+</table>
+</div>
+{%- if let Some(pages) = table.pages() %}
+{%- call pages(pages) %}{% endcall %}
+{%- endif %}
+{%- when crate::runs_table::RunsShown::NoRuns %}
+<p class="px-4 pb-4">No runs</p>
+{%- when crate::runs_table::RunsShown::Unlisted(error) %}
+<p class="px-4 pb-4">{{ error }}</p>
+{%- endmatch %}
+</div>
+{%- endmacro -%}

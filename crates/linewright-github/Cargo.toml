@@ -1,0 +1,42 @@
+[package]
+name = "linewright-github"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+doctest = false
+
+[[test]]
+name = "contract"
+path = "tests/contract/main.rs"
+harness = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+form_urlencoded = { workspace = true }
+futures-util = { workspace = true }
+hex = { workspace = true }
+humantime = { workspace = true }
+linewright-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+linewright-core = { workspace = true, features = ["test-utils"] }
+axum = { workspace = true }
+libtest-mimic = { workspace = true }
+tempfile = { workspace = true }
+test-log = { workspace = true }
+uuid = { workspace = true }

@@ -17,7 +17,7 @@ check_markdown() {
   rumdl check . 2>&1 | sed "s/^Run \`rumdl fmt\`/Run \`scripts\/fix markdown\`/"
 }
 
-# Fails when assets/linewright.css is not what styles/linewright.css builds.
+# Fails when the web UI's stylesheet is not what styles/linewright.css builds.
 check_css() {
   local built output status=0
   need tailwindcss || return 1
@@ -25,8 +25,8 @@ check_css() {
   if ! output="$(tailwindcss --input styles/linewright.css --output "$built" --minify 2>&1)"; then
     echo "$output"
     status=1
-  elif ! cmp -s "$built" assets/linewright.css; then
-    echo "assets/linewright.css is not what styles/linewright.css builds: run \`scripts/fix css\` and commit it"
+  elif ! cmp -s "$built" "$stylesheet"; then
+    echo "$stylesheet is not what styles/linewright.css builds: run \`scripts/fix css\` and commit it"
     status=1
   fi
   rm -f "$built"
@@ -59,9 +59,9 @@ check_test() {
   if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
     export PATH="$exec_path:$PATH"
   fi
-  if grep -rqE --include='*.rs' "$test_attribute" src tests; then
+  if grep -rqE --include='*.rs' "$test_attribute" crates; then
     # shellcheck disable=SC2016 # the backticks are Markdown's
-    grep -rnE --include='*.rs' "$test_attribute" src tests |
+    grep -rnE --include='*.rs' "$test_attribute" crates |
       sed 's/$/: use `#[test_log::test]`, around `#[tokio::test]` where async: run `scripts\/fix test`/'
     status=1
   fi
@@ -240,8 +240,8 @@ check_bench() {
     if [ -n "${BENCH_TREE:-}" ]; then
       tree="$(cd "$invoked_in" && cd "$BENCH_TREE" && pwd)" || return 1
     fi
-    cargo build --release --locked --quiet --features bench --bin tree-bench || return 1
-    export PATH="$PWD/target/release:$PATH"
+    cargo build --release --locked --quiet --package linewright-core --example tree-bench || return 1
+    export PATH="$PWD/target/release/examples:$PATH"
     work="$(mktemp -d "${BENCH_DIR:-${TMPDIR:-/tmp}}/tree-bench.XXXXXX")"
     trap 'tree-bench remove linewright "$work"' EXIT
     cd "$work"
@@ -288,6 +288,7 @@ check_bench() {
 
 stages=("fmt markdown compose css comments model-tables model-quotes model-coverage" "clippy" "test doc")
 named_only="model-quick model bench"
+stylesheet=crates/linewright-web/assets/linewright.css
 
 usage() {
   echo "usage: scripts/check [NAME...]"

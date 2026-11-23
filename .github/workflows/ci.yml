@@ -129,7 +129,7 @@ jobs:
             echo "deploy-images=$(changed Dockerfile .dockerignore rust-toolchain.toml \
               linewright.toml deploy scripts/install quint/package.json quint/package-lock.json \
               $workflows/deploy-images.yml $workflows/docker.yml $workflows/ci.yml)"
-            echo "binaries=$(changed Cargo.toml Cargo.lock rust-toolchain.toml \
+            echo "binaries=$(changed Cargo.toml 'crates/*/Cargo.toml' Cargo.lock rust-toolchain.toml \
               $workflows/binaries.yml $workflows/release.yml $workflows/ci.yml)"
             echo "rust=$(changed . ':!docs' ':!deploy' ':!.agents' ':!.claude' \
               ':!.linewright' ':(exclude,glob)*.md')"

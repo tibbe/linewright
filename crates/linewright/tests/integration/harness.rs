@@ -1,0 +1,1668 @@
+use std::collections::BTreeMap;
+use std::panic::Location;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use linewright_claude::ClaudeCode;
+use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
+use linewright_core::domain::Number;
+use linewright_core::harness::{
+    Deadline, GhReach, Harness, HarnessSettings, Purpose, Reported, Reporter, SessionError,
+    SessionSpec,
+};
+use linewright_core::reconcile::{Subject, WorkKind};
+use linewright_core::redaction::Redaction;
+use linewright_core::session_env::{Given, PassEnv, SessionEnv, SetEnv};
+use linewright_core::testing::*;
+use linewright_core::transcript::{Course, Prompt, What};
+use linewright_core::trial::{Gate, Upstream};
+use linewright_core::work_settings::Effort;
+use rstest::rstest;
+use serde_json::{Value, json};
+
+use crate::programs::*;
+
+/// Claude Code as `program`, with Linewright's token `linewright-token`
+/// and nothing to redact.
+fn claude_code(program: &Path) -> ClaudeCode {
+    ClaudeCode(HarnessSettings {
+        program: program.to_str().unwrap().into(),
+        bash: "/bin/bash".into(),
+        github_token: "linewright-token".into(),
+        redaction: Redaction::default(),
+        container: env!("CARGO_BIN_EXE_lw").into(),
+        clock: Arc::new(FakeClock::new()),
+    })
+}
+
+fn harness_done(dir: &Path) -> ClaudeCode {
+    harness_streaming(dir, &[done()])
+}
+
+fn harness_streaming(dir: &Path, events: &[Value]) -> ClaudeCode {
+    claude_code(&fake_claude_streaming(dir, events))
+}
+
+/// Claude Code as the fake `claude`, carrying out `turn` on each turn.
+fn harness_running(dir: &Path, turn: Vec<Step>) -> ClaudeCode {
+    claude_code(&fake_claude_turning(dir, turn))
+}
+
+/// A turn's result, `Done.`.
+fn done() -> Value {
+    json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})
+}
+
+/// An assistant message saying `text`.
+fn saying(text: &str) -> Value {
+    json!({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+}
+
+/// Waits until the session whose record is `record` has streamed `text`.
+async fn until_said(record: &Path, text: &str) {
+    let output = record.join(linewright_core::transcript::OUTPUT);
+    eventually(|| std::fs::read_to_string(&output).is_ok_and(|output| output.contains(text))).await;
+}
+
+/// Runs `session` on `harness` and times it out once it has streamed `said`,
+/// returning the error it ends with. A test may call this at most once, on
+/// the default current-thread runtime.
+async fn timed_out_once_said(
+    harness: ClaudeCode,
+    mut session: SessionSpec,
+    said: &str,
+) -> SessionError {
+    session.deadline = Deadline::after(tokio::time::Instant::now(), Duration::from_hours(1));
+    let record = session.record.clone();
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    until_said(&record, said).await;
+    tokio::time::pause();
+    match turn.await.unwrap() {
+        Ok(_) => panic!("expected the session to time out, but it finished"),
+        Err(error) => error,
+    }
+}
+
+fn turn_args(dir: &Path) -> Vec<Vec<String>> {
+    std::fs::read_to_string(dir.join("args.log"))
+        .unwrap()
+        .split_terminator("\n\n")
+        .map(|turn| turn.lines().map(str::to_string).collect())
+        .collect()
+}
+
+fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let at = args.iter().position(|arg| arg == flag)?;
+    args.get(at + 1).map(String::as_str)
+}
+
+fn settings(args: &[String]) -> Value {
+    flag_value(args, "--settings").map_or(Value::Null, |s| serde_json::from_str(s).unwrap())
+}
+
+/// The `claudeMdExcludes` the settings in `args` give, as `globset` globs
+/// whose `*` does not match `/`.
+fn instruction_excludes(args: &[String]) -> globset::GlobSet {
+    let mut excludes = globset::GlobSetBuilder::new();
+    for pattern in settings(args)["claudeMdExcludes"].as_array().unwrap() {
+        let glob = globset::GlobBuilder::new(pattern.as_str().unwrap())
+            .literal_separator(true)
+            .build()
+            .unwrap();
+        excludes.add(glob);
+    }
+    excludes.build().unwrap()
+}
+
+fn triage_session(dir: &Path) -> SessionSpec {
+    for sub in ["repo", "tmp"] {
+        std::fs::create_dir(dir.join(sub)).unwrap();
+    }
+    SessionSpec {
+        purpose: Purpose::Work {
+            subject: Subject::Issue(Number(1)),
+            kind: WorkKind::Triage,
+        },
+        dir: dir.join("repo"),
+        scratch: dir.join("tmp"),
+        record: dir.to_path_buf(),
+        attachments: dir.join("attachments"),
+        plugin: dir.join("plugin"),
+        prompt: "Triage #1.".into(),
+        model: model("sonnet"),
+        effort: Effort::Medium,
+        environment: Arc::new(Given::default()),
+        gh: GhReach::Direct,
+        deadline: Deadline::after(tokio::time::Instant::now(), Duration::from_secs(30)),
+        report: Reporter::new(|_| {}),
+    }
+}
+
+/// What the harness reports of `session`, as it reports it.
+fn reports_of(session: &mut SessionSpec) -> Arc<Mutex<Vec<Reported>>> {
+    let reports = Arc::new(Mutex::new(vec![]));
+    let kept = reports.clone();
+    session.report = Reporter::new(move |reported| kept.lock().unwrap().push(reported));
+    reports
+}
+
+/// An `init` event as Claude Code streams it:
+/// <https://code.claude.com/docs/en/agent-sdk/typescript#sdksystemmessage>.
+fn init_naming(model: &str) -> Value {
+    json!({
+        "type": "system",
+        "subtype": "init",
+        "session_id": "0d5b1b8e-6a0c-4e0e-9f0e-4b3c6f1e2a7d",
+        "cwd": "/clone",
+        "tools": ["Bash", "Read", "Edit"],
+        "mcp_servers": [],
+        "model": model,
+        "permissionMode": "bypassPermissions",
+        "apiKeySource": "none",
+        "slash_commands": [],
+        "output_style": "default",
+    })
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_reports_the_model_its_init_event_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &[init_naming("claude-opus-5-5"), done()]);
+    let mut session = triage_session(dir.path());
+    session.model = model("opus");
+    let reports = reports_of(&mut session);
+
+    harness.start(&session).await.unwrap();
+
+    assert_eq!(models(&reports), ["claude-opus-5-5"]);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_that_times_out_has_reported_the_model_it_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![
+                init_naming("claude-sonnet-5-5"),
+                saying("Still reading."),
+            ]),
+            Step::Hang,
+        ],
+    );
+    let mut session = triage_session(dir.path());
+    let reports = reports_of(&mut session);
+
+    let error = timed_out_once_said(harness, session, "Still reading.").await;
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert_eq!(
+        *reports.lock().unwrap(),
+        [
+            Reported::TurnStarted,
+            Reported::Model("claude-sonnet-5-5".into()),
+            Reported::TurnEnded(TurnSpend::None),
+        ]
+    );
+}
+
+/// The models `reports` named, in order.
+#[track_caller]
+fn models(reports: &Mutex<Vec<Reported>>) -> Vec<String> {
+    reports
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|reported| match reported {
+            Reported::Model(model) => Some(model.clone()),
+            Reported::TurnStarted | Reported::TurnEnded(_) => None,
+        })
+        .collect()
+}
+
+/// An `init` event recorded from Claude Code 2.1.311.
+#[track_caller]
+fn recorded_init() -> Value {
+    serde_json::from_str(include_str!("fixtures/cost/init.json")).unwrap()
+}
+
+/// The `result` event recorded with [`recorded_init`], of a session that
+/// ran on Opus with subagents on Haiku.
+#[track_caller]
+fn recorded_result() -> Value {
+    serde_json::from_str(include_str!("fixtures/cost/result.json")).unwrap()
+}
+
+/// What [`recorded_result`] says each model used.
+fn recorded_figures() -> Figures {
+    Figures(BTreeMap::from([
+        (
+            "claude-haiku-5-5".to_string(),
+            Spend {
+                tokens: Some(Tokens {
+                    input: 447_386,
+                    output: 30_754,
+                    cache_write: 0,
+                    cache_read: 0,
+                }),
+                usd: Usd::new(0.150_115_600_000_000_02),
+            },
+        ),
+        (
+            "claude-opus-5-5".to_string(),
+            Spend {
+                tokens: Some(Tokens {
+                    input: 258,
+                    output: 81_950,
+                    cache_write: 315_443,
+                    cache_read: 8_174_300,
+                }),
+                usd: Usd::new(5.229_354_000_000_001),
+            },
+        ),
+    ]))
+}
+
+/// What a turn on `harness`, of a session recorded in `dir`, reported last
+/// of its spend, once it reported its start first.
+#[track_caller]
+fn turn_spend(dir: &Path, harness: ClaudeCode) -> impl Future<Output = TurnSpend> + '_ {
+    let caller = Location::caller();
+    async move {
+        let mut session = triage_session(dir);
+        let reports = reports_of(&mut session);
+        let _ = harness.start(&session).await;
+        let reports = reports.lock().unwrap();
+        assert_eq!(
+            reports.first(),
+            Some(&Reported::TurnStarted),
+            "the turn at {caller} reported {reports:?}"
+        );
+        match reports.last() {
+            Some(Reported::TurnEnded(spend)) => spend.clone(),
+            last => panic!("expected the turn's end last at {caller}, got {last:?}"),
+        }
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_on_claude_code_from_2_1_277_reports_the_sessions_figures_so_far() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &[recorded_init(), recorded_result()]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfSessionSoFar(recorded_figures()));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_on_claude_code_before_2_1_277_reports_its_own_figures() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut init = recorded_init();
+    init["claude_code_version"] = "2.1.276".into();
+    let harness = harness_streaming(dir.path(), &[init, recorded_result()]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfTurn(recorded_figures()));
+}
+
+/// The recorded `init` alone.
+fn without_a_result() -> Vec<Value> {
+    vec![recorded_init()]
+}
+
+/// The recorded `init`, and the recorded `result` as `change` changes it.
+fn with_result_changed(change: impl FnOnce(&mut Value)) -> Vec<Value> {
+    let mut result = recorded_result();
+    change(&mut result);
+    vec![recorded_init(), result]
+}
+
+/// The recorded `init` as `change` changes it, and the recorded `result`.
+fn with_init_changed(change: impl FnOnce(&mut Value)) -> Vec<Value> {
+    let mut init = recorded_init();
+    change(&mut init);
+    vec![init, recorded_result()]
+}
+
+#[rstest]
+#[case::no_result(without_a_result())]
+#[case::a_result_of_an_error_during_execution(with_result_changed(|result| {
+    result["subtype"] = "error_during_execution".into();
+    result["is_error"] = true.into();
+}))]
+#[case::a_result_without_model_usage(with_result_changed(|result| {
+    result.as_object_mut().unwrap().remove("modelUsage");
+}))]
+#[case::no_version(with_init_changed(|init| {
+    init.as_object_mut().unwrap().remove("claude_code_version");
+}))]
+#[case::a_version_that_does_not_read(with_init_changed(|init| {
+    init["claude_code_version"] = "2.x".into();
+}))]
+#[test_log::test(tokio::test)]
+async fn a_turn_reports_no_figures_on(#[case] events: Vec<Value>) {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &events);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::None);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_that_times_out_after_its_result_reports_the_figures_the_result_gave() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![
+                recorded_init(),
+                recorded_result(),
+                saying("Still running."),
+            ]),
+            Step::Hang,
+        ],
+    );
+    let mut session = triage_session(dir.path());
+    let reports = reports_of(&mut session);
+
+    let error = timed_out_once_said(harness, session, "Still running.").await;
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert_eq!(
+        reports.lock().unwrap().last(),
+        Some(&Reported::TurnEnded(TurnSpend::OfSessionSoFar(
+            recorded_figures()
+        )))
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_process_never_starts_used_no_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = harness_streaming(dir.path(), &[recorded_init(), recorded_result()]);
+    harness.0.container = dir.path().join("missing");
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    assert_eq!(spend, TurnSpend::OfTurn(Figures::default()));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_model_the_harness_cannot_price_has_no_cost_and_one_missing_a_kind_no_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut result = recorded_result();
+    result["modelUsage"]["claude-haiku-5-5"]["costBasis"] = "unknown".into();
+    result["modelUsage"]["claude-opus-5-5"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cacheReadInputTokens");
+    let harness = harness_streaming(dir.path(), &[recorded_init(), result]);
+
+    let spend = turn_spend(dir.path(), harness).await;
+
+    let mut figures = recorded_figures();
+    figures.0.get_mut("claude-haiku-5-5").unwrap().usd = None;
+    figures.0.get_mut("claude-opus-5-5").unwrap().tokens = None;
+    assert_eq!(spend, TurnSpend::OfSessionSoFar(figures));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_production_session_gets_linewrights_github_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = fake_claude(dir.path(), "Done.");
+    let harness = ClaudeCode(HarnessSettings {
+        github_token: "linewright-token".into(),
+        ..claude_code(&program).0
+    });
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tokens.log")).unwrap(),
+        "GH_TOKEN=linewright-token GITHUB_TOKEN=linewright-token\n"
+    );
+}
+
+/// The names of the variables the session's harness was started with.
+fn session_variables(dir: &Path) -> Vec<String> {
+    let env = std::fs::read_to_string(dir.join("env.log")).unwrap();
+    let mut names: Vec<String> = env
+        .lines()
+        .filter_map(|line| Some(line.split_once('=')?.0.to_string()))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let linewrights = [
+        ("PATH", path.as_str()),
+        ("HOME", "/home/linewright"),
+        ("LC_ALL", "C.UTF-8"),
+        ("LC_TIME", "C"),
+        ("https_proxy", "http://proxy:4750"),
+        ("ANTHROPIC_API_KEY", "sk-ant"),
+        ("ANTHROPIC_MODEL", "opus"),
+        ("CLAUDE_CONFIG_DIR", "/home/linewright/.claude"),
+        ("CARGO_HOME", "/usr/local/cargo"),
+        ("CARGO_TARGET_DIR", "/tmp/target"),
+        ("RUSTUP_HOME", "/usr/local/rustup"),
+        ("SCCACHE_DIR", "/var/cache/sccache"),
+        ("LINEWRIGHT_WEBHOOK_SECRET", SECRET),
+        ("LINEWRIGHT_SESSION_GITHUB_TOKEN", "session-token"),
+        ("LINEWRIGHT_GOOGLE_CLIENT_SECRET", "google-s3cret"),
+        ("LINEWRIGHT_GITHUB_CLIENT_SECRET", "github-s3cret"),
+        ("MY_SECRET", "hunter2"),
+        ("TMPDIR", "/tmp"),
+        ("GH_TOKEN", "linewright-token"),
+    ];
+    let session_env = SessionEnv::new(
+        PassEnv::new(["CARGO_*", "RUSTUP_HOME", "LINEWRIGHT_*"].map(String::from)).unwrap(),
+        SetEnv::default(),
+    );
+    let harness = harness_done(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = Arc::new(
+        session_env
+            .split(
+                linewrights.map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+
+    harness.start(&session).await.unwrap();
+
+    assert_eq!(
+        session_variables(dir.path()),
+        [
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_MODEL",
+            "CARGO_HOME",
+            "CARGO_TARGET_DIR",
+            "CLAUDE_CODE_EFFORT_LEVEL",
+            "CLAUDE_CODE_SHELL",
+            "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
+            "CLAUDE_CONFIG_DIR",
+            "DISABLE_UPDATES",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "HOME",
+            "LC_ALL",
+            "LC_TIME",
+            "PATH",
+            "RUSTUP_HOME",
+            "TMPDIR",
+            "https_proxy",
+        ]
+    );
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert!(!env.contains(SECRET), "{env}");
+    assert!(
+        env.contains(&format!("TMPDIR={}\n", dir.path().join("tmp").display())),
+        "{env}"
+    );
+    assert!(env.contains("DISABLE_UPDATES=1\n"), "{env}");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_is_given_the_values_session_env_sets_over_passed_ones_and_below_linewrights() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let linewrights = [
+        ("PATH", path.as_str()),
+        ("CARGO_HOME", "/usr/local/cargo"),
+        ("TMPDIR", "/tmp"),
+    ];
+    let session_env = SessionEnv::new(
+        PassEnv::new(["CARGO_HOME", "TMPDIR"].map(String::from)).unwrap(),
+        SetEnv::new(
+            [
+                ("CARGO_HOME", "/opt/cargo"),
+                ("RUST_LOG", "$RUST_LOG"),
+                ("EMPTY", ""),
+            ]
+            .map(|(name, value)| (name.to_string(), value.to_string())),
+            &linewright_claude::PROGRAM.variables,
+        )
+        .unwrap(),
+    );
+    let harness = harness_done(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = Arc::new(
+        session_env
+            .split(
+                linewrights.map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(session_variable(&env, "CARGO_HOME"), Some("/opt/cargo"));
+    assert_eq!(session_variable(&env, "RUST_LOG"), Some("$RUST_LOG"));
+    assert_eq!(session_variable(&env, "EMPTY"), Some(""));
+    let scratch = dir.path().join("tmp");
+    assert_eq!(
+        session_variable(&env, "TMPDIR"),
+        Some(scratch.to_str().unwrap())
+    );
+}
+
+/// The variables `session-env` setting `GH_CONFIG_DIR` to `/etc/gh` gives.
+fn given_etc_gh() -> Arc<Given> {
+    let session_env = SessionEnv::new(
+        PassEnv::default(),
+        SetEnv::new(
+            [("GH_CONFIG_DIR".to_string(), "/etc/gh".to_string())],
+            &linewright_claude::PROGRAM.variables,
+        )
+        .unwrap(),
+    );
+    Arc::new(session_env.split([], &[]).given)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_trials_session_is_given_its_gates_gh_configuration_over_session_envs() {
+    let dir = tempfile::tempdir().unwrap();
+    let gate = Gate::start(&"acme/widgets".parse().unwrap(), Upstream::GitHub).unwrap();
+    let harness = harness_done(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = given_etc_gh();
+    session.gh = gate.gh();
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "GH_CONFIG_DIR"),
+        Some(gate.config().path().to_str().unwrap())
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_outside_a_trial_is_given_the_gh_configuration_session_env_sets() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+    let mut session = triage_session(dir.path());
+    session.environment = given_etc_gh();
+
+    harness.start(&session).await.unwrap();
+
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(session_variable(&env, "GH_CONFIG_DIR"), Some("/etc/gh"));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::env::var("PATH").unwrap();
+    let session_env = SessionEnv::new(
+        PassEnv::new(["CARGO_HOME", "TMPDIR"].map(String::from)).unwrap(),
+        SetEnv::default(),
+    );
+    let harness = harness_done(dir.path());
+    let mut session = triage_session(dir.path());
+    session.effort = Effort::High;
+    session.environment = Arc::new(
+        session_env
+            .split(
+                [
+                    ("PATH", path.as_str()),
+                    ("CARGO_HOME", "/usr/local/cargo"),
+                    ("TMPDIR", "/tmp"),
+                ]
+                .map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+
+    let environment = harness.environment(
+        &session.environment,
+        &session.scratch,
+        Some(session.effort),
+        &session.gh,
+    );
+    harness.start(&session).await.unwrap();
+
+    let scratch = session.scratch.to_str().unwrap();
+    let exposed: Vec<(&str, &str)> = environment
+        .iter()
+        .map(|(name, value)| (name.to_str().unwrap(), value.to_str().unwrap()))
+        .collect();
+    assert_eq!(
+        exposed,
+        [
+            ("PATH", path.as_str()),
+            ("CARGO_HOME", "/usr/local/cargo"),
+            ("TMPDIR", "/tmp"),
+            ("TMPDIR", scratch),
+            ("CLAUDE_CODE_SHELL", "/bin/bash"),
+            ("DISABLE_UPDATES", "1"),
+            ("CLAUDE_CODE_EFFORT_LEVEL", "high"),
+            ("GH_TOKEN", "linewright-token"),
+            ("GITHUB_TOKEN", "linewright-token"),
+            ("CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "1"),
+        ]
+    );
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    let mut spawned: Vec<&str> = env
+        .lines()
+        .filter(|line| {
+            !["PWD=", "OLDPWD=", "SHLVL=", "_="]
+                .iter()
+                .any(|own| line.starts_with(own))
+        })
+        .collect();
+    spawned.sort_unstable();
+    let mut expected = vec![
+        format!("PATH={path}"),
+        "CARGO_HOME=/usr/local/cargo".to_string(),
+        format!("TMPDIR={scratch}"),
+        "CLAUDE_CODE_SHELL=/bin/bash".to_string(),
+        "DISABLE_UPDATES=1".to_string(),
+        "CLAUDE_CODE_EFFORT_LEVEL=high".to_string(),
+        "GH_TOKEN=linewright-token".to_string(),
+        "GITHUB_TOKEN=linewright-token".to_string(),
+        "CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1".to_string(),
+    ];
+    expected.sort_unstable();
+    assert_eq!(spawned, expected);
+}
+
+#[test_log::test(tokio::test)]
+async fn every_turn_of_a_session_has_its_scratch_directory_as_its_temporary_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    harness
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let scratch = dir.path().join("tmp");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tmpdir.log")).unwrap(),
+        format!("TMPDIR={0}\nTMPDIR={0}\n", scratch.display())
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn every_turn_of_a_session_is_given_its_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    harness
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let plugin = dir.path().join("plugin");
+    assert_eq!(
+        turn_args(dir.path())
+            .iter()
+            .map(|args| flag_value(args, "--plugin-dir"))
+            .collect::<Vec<_>>(),
+        [plugin.to_str(), plugin.to_str()]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn every_turn_reads_only_the_repositorys_configuration_and_keeps_no_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    harness
+        .resume(&spec, &turn.session, "Your answer did not parse.")
+        .await
+        .unwrap();
+
+    let configuration: Vec<(Option<String>, Value, Value)> = turn_args(dir.path())
+        .iter()
+        .map(|args| {
+            let passed = settings(args);
+            (
+                flag_value(args, "--setting-sources").map(str::to_string),
+                passed["autoMemoryEnabled"].clone(),
+                passed["disableClaudeAiConnectors"].clone(),
+            )
+        })
+        .collect();
+    let isolated = (Some("project,local".to_string()), json!(false), json!(true));
+    assert_eq!(configuration, vec![isolated.clone(), isolated]);
+}
+
+/// A session whose environment chooses a model and effort of its own.
+fn session_choosing_in_its_environment(dir: &Path) -> SessionSpec {
+    let mut session = triage_session(dir);
+    session.environment = Arc::new(
+        SessionEnv::default()
+            .split(
+                [
+                    ("ANTHROPIC_MODEL", "haiku"),
+                    ("CLAUDE_CODE_EFFORT_LEVEL", "low"),
+                ]
+                .map(|(name, value)| (name.into(), value.into())),
+                &[],
+            )
+            .given,
+    );
+    session
+}
+
+fn session_variable<'a>(env: &'a str, name: &str) -> Option<&'a str> {
+    env.lines()
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+}
+
+#[test_log::test(tokio::test)]
+async fn a_sessions_model_and_effort_win_over_its_environment_and_the_harnesss_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = session_choosing_in_its_environment(dir.path());
+    session.model = model("opus");
+    session.effort = Effort::High;
+    let harness = harness_done(dir.path());
+
+    let turn = harness.start(&session).await.unwrap();
+    harness
+        .resume(&session, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    for args in turn_args(dir.path()) {
+        assert_eq!(flag_value(&args, "--model"), Some("opus"));
+        assert_eq!(flag_value(&args, "--effort"), Some("high"));
+        let passed = settings(&args);
+        assert_eq!(
+            (&passed["model"], &passed["effortLevel"]),
+            (&json!("opus"), &json!("high"))
+        );
+    }
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
+        Some("high")
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn an_effort_of_max_is_set_but_not_in_the_settings_which_do_not_take_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = triage_session(dir.path());
+    session.effort = Effort::Max;
+
+    harness_done(dir.path()).start(&session).await.unwrap();
+
+    let args = &turn_args(dir.path())[0];
+    assert_eq!(flag_value(args, "--effort"), Some("max"));
+    assert_eq!(settings(args)["effortLevel"], Value::Null);
+    let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
+    assert_eq!(
+        session_variable(&env, "CLAUDE_CODE_EFFORT_LEVEL"),
+        Some("max")
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn every_turn_leaves_out_what_no_brief_uses() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    let passed = settings(&turn_args(dir.path())[0]);
+    assert_eq!(
+        [
+            "disableBundledSkills",
+            "disableWorkflows",
+            "disableRemoteControl",
+            "disableArtifact"
+        ]
+        .map(|key| passed[key].clone()),
+        [json!(true), json!(true), json!(true), json!(true)]
+    );
+    let denied = passed["permissions"]["deny"].as_array().unwrap();
+    assert_eq!(
+        [
+            "AskUserQuestion",
+            "EnterPlanMode",
+            "CronCreate",
+            "SendMessage"
+        ]
+        .map(|tool| denied.contains(&json!(tool))),
+        [true, true, true, true]
+    );
+    assert_eq!(
+        [
+            "Task",
+            "Agent",
+            "Skill",
+            "Bash",
+            "Read",
+            "Edit",
+            "Write",
+            "WebFetch",
+            "WebSearch"
+        ]
+        .map(|tool| denied.contains(&json!(tool))),
+        [false; 9]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn every_turn_leaves_out_the_skills_the_harness_ships() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_done(dir.path());
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    let overrides = &settings(&turn_args(dir.path())[0])["skillOverrides"];
+    let kept_by_turning_off_bundled_skills =
+        json!({ "design": "off", "doctor": "off", "plugin-authoring": "off" });
+    assert_eq!(overrides, &kept_by_turning_off_bundled_skills);
+    assert_eq!(
+        [
+            "linewright:triage",
+            "linewright:software-design",
+            "linewright:prototype",
+            "linewright:to-tickets",
+            "linewright:implement",
+            "linewright:code-review",
+            "linewright:pr",
+            "linewright:tdd",
+            "prior-art"
+        ]
+        .map(|skill| overrides.get(skill).is_some()),
+        [false; 9]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn agent_instructions_above_the_clone_do_not_reach_a_session() {
+    let dir = tempfile::Builder::new()
+        .prefix("work [a]{b}*?")
+        .tempdir()
+        .unwrap();
+    let harness = harness_done(dir.path());
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    let excludes = instruction_excludes(&turn_args(dir.path())[0]);
+    let parent = dir.path().canonicalize().unwrap();
+    let clone = parent.join("repo");
+    assert_eq!(
+        [
+            parent.join("CLAUDE.md"),
+            parent.join("CLAUDE.local.md"),
+            parent.join(".claude/CLAUDE.md"),
+            parent.join(".claude/rules/style.md"),
+            "/CLAUDE.md".into(),
+            clone.join("CLAUDE.md"),
+            clone.join("AGENTS.md"),
+            clone.join("CLAUDE.local.md"),
+            clone.join(".claude/rules/style.md"),
+            clone.join("src/CLAUDE.md"),
+        ]
+        .map(|path| excludes.is_match(path)),
+        [
+            true, true, true, true, true, false, false, false, false, false
+        ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_clone_under_a_claude_directory_keeps_its_own_agent_instructions() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join(".claude/work");
+    std::fs::create_dir_all(&work).unwrap();
+    let harness = harness_done(dir.path());
+
+    harness.start(&triage_session(&work)).await.unwrap();
+
+    let excludes = instruction_excludes(&turn_args(dir.path())[0]);
+    let parent = dir.path().canonicalize().unwrap();
+    let clone = work.canonicalize().unwrap().join("repo");
+    assert_eq!(
+        [
+            parent.join("CLAUDE.md"),
+            parent.join(".claude/CLAUDE.md"),
+            clone.join("CLAUDE.md"),
+            clone.join("AGENTS.md"),
+            clone.join(".claude/rules/style.md"),
+        ]
+        .map(|path| excludes.is_match(path)),
+        [true, true, false, false, false]
+    );
+}
+
+fn refused_for_the_usage_limit(rate_limit_info: &Value) -> Vec<Value> {
+    let session = "9f4fb233-b170-4a09-8ce1-34e0a9c68e36";
+    vec![
+        json!({"type": "system", "subtype": "init", "session_id": session}),
+        json!({"type": "rate_limit_event", "rate_limit_info": rate_limit_info, "session_id": session}),
+        json!({
+            "type": "assistant",
+            "message": {
+                "model": "<synthetic>",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "You've hit your session limit \u{b7} resets 7:50am (UTC)"}],
+            },
+            "error": "rate_limit",
+            "session_id": session,
+        }),
+        json!({
+            "type": "result",
+            "subtype": "success",
+            "is_error": true,
+            "terminal_reason": "api_error",
+            "api_error_status": 429,
+            "result": "You've hit your session limit \u{b7} resets 7:50am (UTC)",
+            "session_id": session,
+        }),
+    ]
+}
+
+fn rejected() -> Value {
+    json!({
+        "status": "rejected",
+        "resetsAt": 1_791_877_800,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "overageDisabledReason": "out_of_credits",
+        "isUsingOverage": false,
+    })
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_refused_for_the_usage_limit_ends_saying_when_it_resets() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::UsageLimit { limit, session } = error else {
+        panic!("expected the usage limit, got {error:?}");
+    };
+    assert_eq!(limit.resets_at.to_rfc3339(), "2026-10-13T07:50:00+00:00");
+    let started = flag_value(&turn_args(dir.path())[0], "--session-id").map(str::to_string);
+    assert_eq!(Some(session), started);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_resumed_turn_refused_for_the_usage_limit_names_the_resumed_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &refused_for_the_usage_limit(&rejected()));
+
+    let error = harness
+        .resume(&triage_session(dir.path()), "c0ffee", "Go on.")
+        .await
+        .unwrap_err();
+
+    let SessionError::UsageLimit { session, .. } = error else {
+        panic!("expected the usage limit, got {error:?}");
+    };
+    assert_eq!(session, "c0ffee");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_refusal_that_does_not_say_when_the_limit_resets_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(
+        dir.path(),
+        &refused_for_the_usage_limit(&json!({"status": "rejected"})),
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        "the harness's API failed (You've hit your session limit \u{b7} resets 7:50am (UTC))"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(dir.path(), &[]);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::NoResult { why, .. } = error else {
+        panic!("expected no result, got {error:?}");
+    };
+    assert_eq!(why, "the harness exited (exit status: 0) without a result");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_result_with_fields_linewright_does_not_read_finishes_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut result = done();
+    result["credential_expires_at"] = json!("2026-12-23T06:24:00.000Z");
+    let harness = harness_streaming(dir.path(), &[result]);
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+}
+
+/// Why `error` failed on its infrastructure, when it did.
+#[track_caller]
+fn infrastructure_failure(error: SessionError) -> String {
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    reason
+}
+
+/// The `result` Claude Code 2.1.323 streams with
+/// `CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1`, on a `~/.claude.json` that is
+/// not valid JSON.
+#[track_caller]
+fn recorded_startup_failure() -> Value {
+    serde_json::from_str(include_str!("fixtures/startup_failure/result.json")).unwrap()
+}
+
+#[test_log::test(tokio::test)]
+async fn a_harness_that_fails_to_start_is_an_infrastructure_failure_naming_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stderr("Fix the JSON in /home/linewright/.claude.json\n".into()),
+            Step::Stream(vec![recorded_startup_failure()]),
+            Step::Exit(1),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness could not start (config_file_invalid): \
+         Configuration error in /home/linewright/.claude.json: JSON Parse error: Expected '}'"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_harness_that_exits_with_an_error_after_its_result_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![done()]),
+            Step::Stderr("Error: could not write ~/.claude.json (EDQUOT)\n".into()),
+            Step::Exit(1),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness exited (exit status: 1) after its result: \
+         Error: could not write ~/.claude.json (EDQUOT)"
+    );
+}
+
+/// An assistant message, `uuid`, saying `text`, as Claude Code 2.1.287
+/// streamed one and keeps it in its transcript.
+#[track_caller]
+fn message(uuid: &str, text: &str) -> Value {
+    let recorded = linewright_core::testing::TURN_2
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| {
+            event["type"] == "assistant" && event["message"]["content"][0]["type"] == "text"
+        });
+    let mut message = recorded.unwrap();
+    message["uuid"] = json!(uuid);
+    message["message"]["content"][0]["text"] = json!(text);
+    message
+}
+
+/// A session whose harness has its configuration in `config`, as
+/// `session-env` sets it.
+#[track_caller]
+fn session_configured_in(dir: &Path, config: &Path) -> SessionSpec {
+    let mut session = triage_session(dir);
+    let set = SetEnv::new(
+        [(
+            "CLAUDE_CONFIG_DIR".to_string(),
+            config.to_str().unwrap().to_string(),
+        )],
+        &linewright_claude::PROGRAM.variables,
+    )
+    .unwrap();
+    session.environment = Arc::new(
+        SessionEnv::new(PassEnv::new([]).unwrap(), set)
+            .split([], &[])
+            .given,
+    );
+    session
+}
+
+/// A harness that keeps `kept` in the transcript under `config`, then
+/// streams `streamed` and `Done.`, saying `errors` on standard error.
+fn harness_keeping(
+    dir: &Path,
+    config: &Path,
+    kept: &[Value],
+    streamed: &[Value],
+    errors: &str,
+) -> ClaudeCode {
+    let mut turn: Vec<Step> = kept
+        .iter()
+        .map(|entry| Step::Keep {
+            projects: config.join("projects/-repo"),
+            entry: entry.clone(),
+        })
+        .collect();
+    turn.push(Step::Stderr(errors.into()));
+    let mut events = streamed.to_vec();
+    events.push(done());
+    turn.push(Step::Stream(events));
+    harness_running(dir, turn)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_transcript_holds_its_last_message_finishes_and_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let kept = [message("m-1", "Reading."), message("m-2", "Done.")];
+    let harness = harness_keeping(dir.path(), &config, &kept, &kept, "");
+
+    let turn = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap();
+
+    assert_eq!(turn.message, "Done.");
+    let transcript = std::fs::read_to_string(dir.path().join("transcript.jsonl")).unwrap();
+    assert_eq!(
+        transcript,
+        format!("{}\n{}\n", kept[0], kept[1]),
+        "the transcript kept under the session's CLAUDE_CONFIG_DIR"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_transcript_lacks_its_last_message_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let harness = harness_keeping(
+        dir.path(),
+        &config,
+        &[message("m-1", "Reading.")],
+        &[message("m-1", "Reading."), message("m-2", "Done.")],
+        "Error: could not save all of this session's transcript (ENOSPC)\n",
+    );
+
+    let error = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness did not keep all of the session's transcript: \
+         Error: could not save all of this session's transcript (ENOSPC)"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_subagents_messages_are_not_looked_for_in_the_sessions_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut subagents = message("s-1", "Found it.");
+    subagents["parent_tool_use_id"] = json!("toolu_1");
+    let harness = harness_keeping(
+        dir.path(),
+        &config,
+        &[message("m-1", "Done.")],
+        &[message("m-1", "Done."), subagents],
+        "",
+    );
+
+    let turn = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap();
+
+    assert_eq!(turn.message, "Done.");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_that_runs_past_its_deadline_times_out_with_what_it_said() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![Step::Stream(vec![saying("Still reading.")]), Step::Hang],
+    );
+    let session = triage_session(dir.path());
+
+    let error = timed_out_once_said(harness, session, "Still reading.").await;
+
+    let SessionError::TimedOut { log_tail } = error else {
+        panic!("expected a timeout, got {error:?}");
+    };
+    assert_eq!(log_tail, "Still reading.");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_session_that_finishes_while_warned_of_the_usage_limit_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(
+        dir.path(),
+        &[
+            json!({
+                "type": "rate_limit_event",
+                "rate_limit_info": {"status": "allowed_warning", "resetsAt": 1_791_877_800},
+            }),
+            done(),
+        ],
+    );
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+}
+
+#[test_log::test(tokio::test)]
+async fn each_turns_output_is_kept_marked_as_the_brief_or_a_follow_up_started_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_streaming(
+        dir.path(),
+        &[
+            json!({"type": "system", "subtype": "init", "cwd": "/clone"}),
+            json!({
+                "type": "assistant",
+                "timestamp": "2026-10-13T10:09:11.268Z",
+                "message": {"content": [{"type": "text", "text": "Done."}]},
+            }),
+            done(),
+        ],
+    );
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    harness
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let record = linewright_core::transcript::SessionRecord::read(dir.path()).unwrap();
+    let session =
+        linewright_core::transcript::parse(&record, linewright_core::transcript::Written::Whole);
+    let turns: Vec<(&Prompt, Vec<&What>)> = session
+        .turns
+        .iter()
+        .map(|kept| {
+            let messages = kept
+                .entries
+                .iter()
+                .map(|entry| &entry.what)
+                .filter(|what| matches!(what, What::Message(_)))
+                .collect();
+            (&kept.prompt, messages)
+        })
+        .collect();
+    let done = What::Message("Done.".into());
+    assert_eq!(
+        turns,
+        [
+            (&Prompt::Brief(None), vec![&done]),
+            (&Prompt::FollowUp(None), vec![&done])
+        ]
+    );
+    assert!(session.turns.iter().all(|kept| kept.started_at.is_some()));
+}
+
+#[test_log::test(tokio::test)]
+async fn each_turn_starts_when_the_harnesss_clock_says() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(FakeClock::new());
+    let harness = ClaudeCode(HarnessSettings {
+        clock: clock.clone(),
+        ..harness_streaming(dir.path(), &[done()]).0
+    });
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await.unwrap();
+    clock.advance(chrono::TimeDelta::minutes(5));
+    harness
+        .resume(&spec, &turn.session, "Answer again.")
+        .await
+        .unwrap();
+
+    let record = linewright_core::transcript::SessionRecord::read(dir.path()).unwrap();
+    let started: Vec<_> =
+        linewright_core::transcript::parse(&record, linewright_core::transcript::Written::Whole)
+            .turns
+            .iter()
+            .map(|kept| kept.started_at)
+            .collect();
+    assert_eq!(
+        started,
+        [
+            Some(at("2026-10-01T12:00:01Z")),
+            Some(at("2026-10-01T12:05:03Z"))
+        ]
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn each_turn_ends_when_the_harnesss_clock_says_the_agents_output_ended() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(FakeClock::new());
+    let harness = ClaudeCode(HarnessSettings {
+        clock: clock.clone(),
+        ..harness_streaming(dir.path(), &[saying("Not done.")]).0
+    });
+    let spec = triage_session(dir.path());
+
+    let turn = harness.start(&spec).await;
+
+    assert!(turn.is_err(), "a turn with no result fails");
+    let record = linewright_core::transcript::SessionRecord::read(dir.path()).unwrap();
+    let ends: Vec<_> =
+        linewright_core::transcript::parse(&record, linewright_core::transcript::Written::Whole)
+            .turns
+            .iter()
+            .map(|kept| kept.end)
+            .collect();
+    assert_eq!(ends, [Course::Ended(Some(at("2026-10-01T12:00:02Z")))]);
+}
+
+#[test_log::test(tokio::test)]
+async fn each_line_the_agent_streams_is_in_the_sessions_record_while_it_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let go = dir.path().join("go");
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![saying("Looking.")]),
+            Step::WaitFor(go.clone()),
+            Step::Stream(vec![done()]),
+        ],
+    );
+    let spec = triage_session(dir.path());
+
+    let turn = tokio::spawn(async move { harness.start(&spec).await });
+    until_said(dir.path(), "Looking.").await;
+    std::fs::write(&go, "").unwrap();
+
+    assert_eq!(turn.await.unwrap().unwrap().message, "Done.");
+}
+
+const CREDENTIAL: &str = "ghp_s3cr3t";
+
+/// A session that prints `CREDENTIAL` in all it says, as one that ran `env`
+/// would, and ends with `last`, if any.
+fn harness_printing_a_secret(dir: &Path, last: Option<Value>) -> ClaudeCode {
+    let said = saying(&format!("GH_TOKEN={CREDENTIAL}"));
+    let harness = harness_running(
+        dir,
+        vec![
+            Step::Stderr(format!("GH_TOKEN={CREDENTIAL}\n")),
+            Step::Stream([said].into_iter().chain(last).collect()),
+        ],
+    );
+    ClaudeCode(HarnessSettings {
+        redaction: redaction_of(&[("GH_TOKEN", CREDENTIAL)]),
+        ..harness.0
+    })
+}
+
+#[test_log::test(tokio::test)]
+async fn a_secret_a_session_prints_is_kept_and_answered_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_printing_a_secret(
+        dir.path(),
+        Some(json!({
+            "type": "result", "subtype": "success", "is_error": false,
+            "result": format!("It is {CREDENTIAL}."),
+        })),
+    );
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "It is [redacted].");
+    for file in [linewright_core::transcript::OUTPUT, "stderr.log"] {
+        let kept = std::fs::read_to_string(dir.path().join(file)).unwrap();
+        assert!(
+            !kept.contains(CREDENTIAL) && kept.contains("GH_TOKEN=[redacted]"),
+            "{file}: {kept}"
+        );
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn a_failed_sessions_log_tail_has_its_secrets_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_printing_a_secret(dir.path(), None);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::NoResult { log_tail, .. } = error else {
+        panic!("expected no result, got {error:?}");
+    };
+    assert_eq!(log_tail, "GH_TOKEN=[redacted]");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_failed_sessions_reason_has_its_secrets_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_printing_a_secret(
+        dir.path(),
+        Some(json!({
+            "type": "result", "subtype": "error_max_turns", "is_error": true,
+            "result": format!("stuck on {CREDENTIAL}"),
+        })),
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Errored { kind, result, .. } = error else {
+        panic!("expected an error, got {error:?}");
+    };
+    assert_eq!(
+        (kind.as_str(), result.as_deref()),
+        ("error_max_turns", Some("stuck on [redacted]"))
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_secret_that_holds_another_is_redacted_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = harness_printing_a_secret(dir.path(), None);
+    harness.0.redaction = redaction_of(&[("GH_TOKEN", CREDENTIAL), ("GH_PREFIX_TOKEN", "ghp_s3")]);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::NoResult { log_tail, .. } = error else {
+        panic!("expected no result, got {error:?}");
+    };
+    assert_eq!(log_tail, "GH_TOKEN=[redacted]");
+}
+
+/// The SIGINT a terminal sends `serve`'s process group on Ctrl-C, which
+/// drains, does not also end the sessions in flight.
+#[test_log::test(tokio::test)]
+async fn a_session_runs_in_a_process_group_of_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let group = dir.path().join("pgid.log");
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::WriteProcessGroup(group.clone()),
+            Step::Stream(vec![done()]),
+        ],
+    );
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_in_a_process_group_of_its_own(&std::fs::read_to_string(&group).unwrap());
+}
+
+/// A Claude Code that, like the shell commands Claude Code runs, starts a
+/// process in a session of its own and in the background, writes its PID to
+/// `dir/left.pid`, says `Started.` and then carries out `then`.
+fn harness_leaving_a_process(dir: &Path, then: Vec<Step>) -> ClaudeCode {
+    let turn = [
+        Step::LeaveInOwnSession {
+            pid: dir.join("left.pid"),
+        },
+        Step::Stream(vec![saying("Started.")]),
+    ];
+    harness_running(dir, turn.into_iter().chain(then).collect())
+}
+
+fn left_process(dir: &Path) -> rustix::process::Pid {
+    let pid = std::fs::read_to_string(dir.join("left.pid")).unwrap();
+    rustix::process::Pid::from_raw(pid.trim().parse().unwrap()).unwrap()
+}
+
+fn has_ended(pid: rustix::process::Pid) -> bool {
+    rustix::process::test_kill_process(pid) == Err(rustix::io::Errno::SRCH)
+}
+
+/// Without a subreaper, which only Linux has, a process whose parent has
+/// exited is beyond reach
+/// (<https://man7.org/linux/man-pages/man2/PR_SET_CHILD_SUBREAPER.2const.html>).
+#[cfg(target_os = "linux")]
+#[test_log::test(tokio::test)]
+async fn what_a_session_started_has_ended_once_it_ends_with_a_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Stream(vec![done()])]);
+
+    harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert!(has_ended(left_process(dir.path())));
+}
+
+#[cfg(target_os = "linux")]
+#[test_log::test(tokio::test)]
+async fn what_a_session_started_has_ended_once_it_crashes() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Exit(3)]);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, SessionError::NoResult { .. }), "{error:?}");
+    assert!(has_ended(left_process(dir.path())));
+}
+
+#[test_log::test(tokio::test)]
+async fn what_a_session_started_has_ended_once_it_times_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
+    let session = triage_session(dir.path());
+
+    let error = timed_out_once_said(harness, session, "Started.").await;
+
+    assert!(matches!(error, SessionError::TimedOut { .. }), "{error:?}");
+    assert!(has_ended(left_process(dir.path())));
+}
+
+/// As when its run is cancelled.
+#[test_log::test(tokio::test)]
+async fn what_a_session_started_ends_once_its_turn_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_leaving_a_process(dir.path(), vec![Step::Hang]);
+    let session = triage_session(dir.path());
+
+    let turn = tokio::spawn(async move { harness.start(&session).await });
+    until_said(dir.path(), "Started.").await;
+    turn.abort();
+    let left = left_process(dir.path());
+
+    eventually(|| has_ended(left)).await;
+}
+
+#[test_log::test(tokio::test)]
+async fn a_harness_that_cannot_be_started_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("missing");
+    let harness = claude_code(&program);
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    assert_eq!(
+        reason,
+        format!(
+            "starting {}: No such file or directory (os error 2)",
+            program.display()
+        )
+    );
+}
+
+/// Claude Code's background commands share its standard output, and a turn
+/// reads that output to its end.
+#[cfg(target_os = "linux")]
+#[test_log::test(tokio::test)]
+async fn a_process_a_session_left_holding_its_output_does_not_hold_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![Step::LeaveHoldingOutput, Step::Stream(vec![done()])],
+    );
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+}

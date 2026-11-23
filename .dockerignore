@@ -1,11 +1,8 @@
 *
 !Cargo.toml
 !Cargo.lock
-!build.rs
-!src/
+!crates/
 !briefs/
-!templates/
-!assets/
 !rust-toolchain.toml
 !linewright.toml
 !deploy/sccache
