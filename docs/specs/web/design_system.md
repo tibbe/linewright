@@ -74,11 +74,13 @@ The web UI follows daisyUI, with two themes of its own.
 - **The icons** are [Heroicons](https://heroicons.com) 2, in its 20 solid
   ("mini") style. The exceptions are the icons of an issue and of a pull
   request, which are GitHub's own, from
-  [Octicons](https://primer.style/octicons). An icon is `size-5` before a
+  [Octicons](https://primer.style/octicons), and the logo of an identity
+  provider, which is the provider's own. An icon is `size-5` before a
   `card-title`, `size-[1em]` in a `badge`, as daisyUI's badge with an icon has
   it, and `size-4` elsewhere. Where a daisyUI component draws an icon of its
   own, such as the arrow of a `select`, it keeps it.
-- **Which icon.** Each part has the icon in the table below, and no other. A
+- **Which icon.** Each part has the icon that the table below gives it, or
+  that the file of its area gives it, and no other. A
   card has the icon of the area of the thing it holds, such as Runs for a
   run's heading or for a table of runs. The cards that the table names are the
   exceptions.
@@ -122,6 +124,12 @@ The web UI follows daisyUI, with two themes of its own.
 | "Lost `serve`"                             | `signal-slash`              |
 | "Jump to the latest entry"                 | `arrow-down`                |
 
+## Avatars
+
+- **A person's avatar** is a daisyUI `avatar`, `size-8` and `rounded-full`.
+  The letter in place of one is a daisyUI `avatar-placeholder` in
+  `bg-neutral`.
+
 ## Cards
 
 - **A card** is a daisyUI `card` in `bg-base-200`, with daisyUI's
@@ -161,6 +169,10 @@ The web UI follows daisyUI, with two themes of its own.
 | Task            | `/tasks/ID`           |
 | Benchmark run  | `/benchmark-runs/ID` |
 | Server      | `/server`         |
+| People      | `/people`         |
+| Authorizations | `/authorizations` |
+| Sign in     | `/sign-in`        |
+| Consent, and Authorization error | `/oauth/authorize` |
 
 ## Making
 

@@ -66,8 +66,8 @@ request that is reviewed, green and ready for a person.
   an ID that it gives it, so that a name can be any words and can change.
 - **The maintainer in the UI, the operator on the command line.** A
   maintainer works with Linewright in GitHub and the UI. The operator runs
-  Linewright from the command line, where an agent can also do what a person
-  does in the UI.
+  Linewright from the command line. An agent does what a person does in the
+  UI over MCP, as that person ([Access](access.md)).
 
 A maintainer merges a pull request that adds invoices to the spec. Linewright
 implements the change, has agents review the work and delivers it as pull
@@ -114,6 +114,7 @@ flowchart LR
 | [Runs](runs.md) | What holds for every run, and what each run did. |
 | [Sessions](sessions.md) | What an agent session is given, and what it is kept from. |
 | [Operation](operation.md) | Running Linewright, and seeing what it is doing. |
+| [Access](access.md) | Who can use the UI and the MCP server, how they sign in, and what each can do. |
 | [Benchmarks](benchmarks.md) | Measuring Linewright against work it has already done. |
 
 ## Out of scope

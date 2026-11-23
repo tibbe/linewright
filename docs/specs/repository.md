@@ -284,6 +284,7 @@ Linewright exits with an error at startup when it cannot work.
     is off is at its default ([Configuration](operation.md#configuration));
   - every file in the operator's layer of briefs is one that a layer may hold
     and has its placeholders ([Briefs](operation.md#briefs));
-  - unless `ui-address` is empty, `serve` can listen on it.
+  - while it serves the UI ([Serving the UI](operation.md#serving-the-ui)),
+    `serve` can listen on `ui-address`.
 - **One Linewright per repository.** A `serve` started for a repository whose
   `serve` already runs on the same host exits with an error saying so.

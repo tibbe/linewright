@@ -189,7 +189,12 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `poll-interval`                              | 60s                                         |
 | `webhook-address`                            | `0.0.0.0:8080` with the webhook secret set; none without it |
 | `ui-address`                                 | `127.0.0.1:8081`                            |
-| `ui-hosts` (host names)                      | none: local names only                      |
+| `public-url` (the URL people reach the UI at) | none: no UI                                |
+| `google-client-id`                           | none: no sign-in with Google                |
+| `google-signup-domains` (domains)            | none: no identity meets the rule            |
+| `github-client-id`                           | none: no sign-in with GitHub                |
+| `github-signup-orgs` (organizations, `org/team` for a team) | none: no identity meets the rule |
+| `manager` (`google:EMAIL`, `github:LOGIN`)   | none                                        |
 | `spec-glob`                                  | `docs/**/*.md`                              |
 | `spec-lookback`                              | 7d                                          |
 | `done-window`                                | 7d                                          |
@@ -242,8 +247,17 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
   repository's ([Linewright's files](repository.md#linewrights-files)).
 - **A feature's settings.** A setting that only one feature uses is an error
   at startup when it is not at its default while that feature is off
-  ([Startup](repository.md#startup)): `webhook-address` without the webhook
-  secret, `ui-hosts` with `ui-address` empty.
+  ([Startup](repository.md#startup)):
+  - `webhook-address` without the webhook secret;
+  - `ui-address` without `public-url`;
+  - an identity provider's settings, or `manager`, without `public-url`;
+  - a provider's sign-up rule or client secret without its client ID;
+  - `manager` naming a provider without a client ID.
+- **Settings a feature needs.** A feature that is on without a setting it
+  needs is an error at startup:
+  - `public-url` with `ui-address` empty;
+  - `public-url` without an identity provider's client ID;
+  - a provider's client ID without its client secret.
 - **Model and effort.** The operator's layers set `model` for the whole
   pipeline. A session's model and effort win over what the session's
   environment variables and the harness's own settings say.
@@ -254,7 +268,9 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
   webhook secret has no such variable and is `LINEWRIGHT_WEBHOOK_SECRET`, and
   the GitHub token agent sessions are given in place of Linewright's
   ([What a session has](sessions.md#what-a-session-has)) is
-  `LINEWRIGHT_SESSION_GITHUB_TOKEN`.
+  `LINEWRIGHT_SESSION_GITHUB_TOKEN`. The identity providers' client secrets
+  ([Signing in](access.md#signing-in)) are `LINEWRIGHT_GOOGLE_CLIENT_SECRET`
+  and `LINEWRIGHT_GITHUB_CLIENT_SECRET`.
 - **Linewright's GitHub token.** A command that runs sessions needs
   Linewright's GitHub token. Without that token, the command exits with an
   error at startup.
@@ -361,15 +377,15 @@ image the operator builds with those in it.
 
 ## Serving the UI
 
-`serve` serves the UI ([Shell](shell.md)) on `ui-address`, a
-host and port, and serves none when `ui-address` is empty.
+`serve` serves the UI ([Shell](shell.md)) on `ui-address`, a host and port,
+while `public-url` is set. People reach the UI at `public-url`.
 
-- **Access.** Whoever reaches the port; who reaches it is the operator's to
-  restrict, such as with an authenticating proxy in front.
-- **Requests answered.** Only those whose `Host` is local
-  ([Monitoring commands](#monitoring-commands)), an IP address or one of
-  `ui-hosts`, each compared ignoring case, port and a trailing dot. The
-  others get 421 Misdirected Request.
+- **The public URL.** It is HTTPS, or HTTP to a loopback address.
+- **Access.** The people that Linewright signs in, each with what their role
+  allows ([Access](access.md)).
+- **Requests answered.** Only those whose `Host` is the public URL's host,
+  compared ignoring case, port and a trailing dot. The others get 421
+  Misdirected Request.
 
 ## Screens
 
@@ -406,10 +422,13 @@ that answers a question, or asks `serve` to act, logs nothing.
 
 - **Format.** The log is readable for a person tailing it and structured
   (JSON lines) for machines, by the `log-format` setting.
-- **What `serve` logs.** It includes, while `serve` serves the UI, its
-  address and each request it refuses and why, and, with webhooks on, the
-  address it listens on for them, each delivery and what it names, and each
-  delivery refused and why.
+- **What `serve` logs.** It includes:
+  - while `serve` serves the UI, its address and each request it refuses and
+    why;
+  - why `serve` serves no UI, while it serves none;
+  - what [Access](access.md) says it logs, such as who did each action;
+  - with webhooks on, the address it listens on for them, each delivery and
+    what it names, and each delivery refused and why.
 - **The first line.** It names the version and the commit, as `--version`
   does.
 - **The last line.** It is the exit, with the exit status. An exit at once
@@ -423,8 +442,7 @@ that answers a question, or asks `serve` to act, logs nothing.
   choose.
 - The repository's file naming the variables a stage's sessions get, even
   from those the operator's `session-pass-env` names.
-- A layer taking away what a lower one sets, such as a variable it passes or
-  a host it allows.
+- A layer taking away what a lower one sets, such as a variable it passes.
 - A value built from other variables, such as a `PATH` with a directory
   added.
 - The settings the pipeline reads between runs, such as `auto-merge` or
@@ -433,10 +451,8 @@ that answers a question, or asks `serve` to act, logs nothing.
 - Calling off a drain; the restart it ends in takes the work up again.
 - A setting that bounds every drain; the bound is each request's.
 - A command that backs up the work directory.
-- A login of Linewright's own for the UI.
 - The monitoring commands from another host, but through a shell on, or a
   tunnel to, Linewright's host.
-- An MCP server.
 - A liveness check for a container healthcheck or a supervisor.
 - A record of each decision Linewright makes on an item; the log holds them.
 - Answers from `once` and `automation run` while they run.
