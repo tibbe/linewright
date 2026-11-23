@@ -467,7 +467,8 @@ impl Tokens {
     /// [`exchange`] decides from what the database holds of what it
     /// presents: the tokens it is issued, or the error it is answered with.
     /// Reading and writing are one transaction, so that a code or a
-    /// refresh token is used once.
+    /// refresh token is used once, and a second use of it ends its
+    /// authorization.
     pub async fn answer(
         &self,
         request: &TokenRequest,
@@ -495,22 +496,14 @@ impl Tokens {
                 access_until,
             } => {
                 let id = authorization.row();
-                if used == Used::Code {
-                    sqlx::query("UPDATE codes SET used = 1 WHERE hash = ?")
-                        .bind(&presented)
-                        .execute(&mut *tx)
-                        .await?;
+                match used {
+                    Used::Code => sqlx::query("UPDATE codes SET used = 1 WHERE hash = ?"),
+                    Used::Refresh => {
+                        sqlx::query("UPDATE refresh_tokens SET state = ? WHERE hash = ?")
+                            .bind(RefreshState::Used.name())
+                    }
                 }
-                sqlx::query(
-                    "UPDATE refresh_tokens
-                     SET state = CASE state WHEN ? THEN ? WHEN ? THEN ? ELSE state END
-                     WHERE authorization = ?",
-                )
-                .bind(RefreshState::Current.name())
-                .bind(used.turns(RefreshState::Current).name())
-                .bind(RefreshState::Previous.name())
-                .bind(used.turns(RefreshState::Previous).name())
-                .bind(id)
+                .bind(&presented)
                 .execute(&mut *tx)
                 .await?;
                 let issued = Issued {
@@ -546,7 +539,8 @@ impl Tokens {
                 tx.commit().await?;
                 info!(
                     authorization = %authorization,
-                    "ended an authorization: its client used a refresh token that had stopped working"
+                    why = %error.error_description,
+                    "ended an authorization"
                 );
                 Ok(Err(error))
             }

@@ -672,32 +672,25 @@ impl StoredAuthorization {
 /// Where a refresh token stands in its authorization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RefreshState {
-    /// The latest issued.
+    /// The latest issued, which works once.
     Current,
-    /// The one the current replaced, which works until the current is
-    /// first used.
-    Previous,
-    /// One that stopped working.
-    Retired,
+    /// One that a token request used, whose second use ends its
+    /// authorization.
+    Used,
 }
 
 impl RefreshState {
     pub(crate) fn name(self) -> &'static str {
         match self {
             RefreshState::Current => "current",
-            RefreshState::Previous => "previous",
-            RefreshState::Retired => "retired",
+            RefreshState::Used => "used",
         }
     }
 
     pub(crate) fn named(name: &str) -> Option<RefreshState> {
-        [
-            RefreshState::Current,
-            RefreshState::Previous,
-            RefreshState::Retired,
-        ]
-        .into_iter()
-        .find(|state| state.name() == name)
+        [RefreshState::Current, RefreshState::Used]
+            .into_iter()
+            .find(|state| state.name() == name)
     }
 }
 
@@ -739,39 +732,19 @@ pub enum TokenDecision {
     Refuse(OAuthError),
 }
 
-/// What a token request that is issued tokens used up.
+/// What a token request that is issued tokens used up, which works no
+/// more.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Used {
-    /// A code, which works no more.
     Code,
-    /// The current refresh token, which becomes the previous one, and
-    /// retires the previous one.
-    Current,
-    /// The previous refresh token, after a lost response: it stays the
-    /// previous one, and retires the current one, which the client did not
-    /// get.
-    Previous,
-}
-
-impl Used {
-    /// What a refresh token of the authorization in `state` turns to once
-    /// it is used, before its new current one is added (`docs/specs/access.md`,
-    /// Tokens: a refresh token stops working when the client first uses a
-    /// token that replaced it).
-    pub fn turns(self, state: RefreshState) -> RefreshState {
-        match (self, state) {
-            (Used::Current, RefreshState::Current) => RefreshState::Previous,
-            (Used::Current, RefreshState::Previous) => RefreshState::Retired,
-            (Used::Previous, RefreshState::Current) => RefreshState::Retired,
-            (Used::Code | Used::Previous, state)
-            | (Used::Current, state @ RefreshState::Retired) => state,
-        }
-    }
+    /// The current refresh token, which becomes a used one.
+    Refresh,
 }
 
 /// What Linewright does at `now` with `request`, which presents what
 /// `stored` holds, for the resource that `server` guards
-/// (`docs/specs/access.md`, Tokens).
+/// (`docs/specs/access.md`, The authorization server: Grants, A code, An
+/// access token, An ended authorization and A second use).
 pub fn exchange(
     request: &TokenRequest,
     stored: &Stored,
@@ -802,11 +775,19 @@ pub fn exchange(
                 used,
             },
         ) => {
-            if authorization.client != request.client_id {
-                return refuse(OAuthError::invalid_grant("the code is another client's"));
+            if authorization.over(now) {
+                return refuse(OAuthError::invalid_grant("the authorization ended"));
             }
             if *used {
-                return refuse(OAuthError::invalid_grant("the code was used"));
+                return TokenDecision::End {
+                    authorization: authorization.id,
+                    error: OAuthError::invalid_grant(
+                        "the code was used before, which ends its authorization",
+                    ),
+                };
+            }
+            if authorization.client != request.client_id {
+                return refuse(OAuthError::invalid_grant("the code is another client's"));
             }
             if *expires_at <= now {
                 return refuse(OAuthError::invalid_grant("the code expired"));
@@ -826,9 +807,6 @@ pub fn exchange(
                     "the PKCE code verifier does not match the challenge",
                 ));
             }
-            if authorization.over(now) {
-                return refuse(OAuthError::invalid_grant("the authorization ended"));
-            }
             issue(authorization, Used::Code)
         }
         (
@@ -838,24 +816,23 @@ pub fn exchange(
                 state,
             },
         ) => {
+            if authorization.over(now) {
+                return refuse(OAuthError::invalid_grant("the authorization ended"));
+            }
+            if *state == RefreshState::Used {
+                return TokenDecision::End {
+                    authorization: authorization.id,
+                    error: OAuthError::invalid_grant(
+                        "the refresh token was used before, which ends its authorization",
+                    ),
+                };
+            }
             if authorization.client != request.client_id {
                 return refuse(OAuthError::invalid_grant(
                     "the refresh token is another client's",
                 ));
             }
-            if authorization.over(now) {
-                return refuse(OAuthError::invalid_grant("the authorization ended"));
-            }
-            match state {
-                RefreshState::Current => issue(authorization, Used::Current),
-                RefreshState::Previous => issue(authorization, Used::Previous),
-                RefreshState::Retired => TokenDecision::End {
-                    authorization: authorization.id,
-                    error: OAuthError::invalid_grant(
-                        "the refresh token stopped working, which ends its authorization",
-                    ),
-                },
-            }
+            issue(authorization, Used::Refresh)
         }
         (Grant::Code { .. }, _) => refuse(OAuthError::invalid_grant("no such code")),
         (Grant::Refresh { .. }, _) => refuse(OAuthError::invalid_grant("no such refresh token")),
@@ -864,7 +841,8 @@ pub fn exchange(
 
 /// Whether an access token that works until `expires_at`, of
 /// `authorization`, acts at `now`: no longer once it expired or its
-/// authorization is over (`docs/specs/access.md`, Tokens).
+/// authorization is over (`docs/specs/access.md`, The authorization server,
+/// An access token and An ended authorization).
 pub fn access_works(
     expires_at: Timestamp,
     authorization: &StoredAuthorization,

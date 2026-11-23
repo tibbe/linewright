@@ -1,4 +1,3 @@
-use super::RefreshState::{Current, Previous, Retired};
 use super::*;
 
 #[track_caller]
@@ -490,9 +489,11 @@ fn issued(used: Used) -> TokenDecision {
     }
 }
 
-/// `docs/specs/access.md`, The authorization server, 6.
+/// `docs/specs/access.md`, The authorization server, A second use: a code
+/// works once, and a second use ends its authorization. A code that has
+/// expired and been forgotten is no code Linewright knows.
 #[test_log::test]
-fn a_code_with_its_verifier_is_exchanged_once() {
+fn a_code_with_its_verifier_is_exchanged_once_and_a_second_use_ends_its_authorization() {
     let request = code_request(Some(VERIFIER_OF_RFC));
 
     assert_eq!(
@@ -500,8 +501,32 @@ fn a_code_with_its_verifier_is_exchanged_once() {
         issued(Used::Code)
     );
     assert_eq!(
-        refused(exchange(&request, &code(true), at(NOW), &server())),
-        "invalid_grant"
+        ended(exchange(&request, &code(true), at(NOW), &server())),
+        7
+    );
+    let another_client = TokenRequest {
+        client_id: ClientId::of("c-2".into()),
+        ..request.clone()
+    };
+    assert_eq!(
+        ended(exchange(&another_client, &code(true), at(NOW), &server())),
+        7,
+        "whoever presents it"
+    );
+    let over = Stored::Code {
+        authorization: StoredAuthorization {
+            ended: true,
+            ..authorization()
+        },
+        challenge: Challenge::parse(CHALLENGE_OF_RFC).unwrap(),
+        redirect_uri: RedirectUri::parse("http://127.0.0.1:33418/callback").unwrap(),
+        expires_at: at(NOW) + TimeDelta::minutes(10),
+        used: true,
+    };
+    assert_eq!(
+        refused(exchange(&request, &over, at(NOW), &server())),
+        "invalid_grant",
+        "an authorization that ended ends no more"
     );
     assert_eq!(
         refused(exchange(&request, &Stored::Unknown, at(NOW), &server())),
@@ -526,6 +551,23 @@ fn a_wrong_or_missing_verifier_is_refused() {
         )),
         "invalid_request"
     );
+}
+
+/// The authorization a decision ends, having answered `invalid_grant`.
+#[track_caller]
+fn ended(decision: TokenDecision) -> i64 {
+    match decision {
+        TokenDecision::End {
+            authorization,
+            error,
+        } => {
+            assert_eq!(error.error, "invalid_grant");
+            authorization.row()
+        }
+        other @ (TokenDecision::Issue { .. } | TokenDecision::Refuse(_)) => {
+            panic!("ended, not {other:?}")
+        }
+    }
 }
 
 #[test_log::test]
@@ -570,108 +612,55 @@ fn a_token_for_another_resource_is_refused() {
     );
 }
 
-/// `docs/specs/access.md`, Tokens, Rotation and A lost response.
+/// `docs/specs/access.md`, The authorization server, A second use: the
+/// current refresh token works once, and a second use of one ends its
+/// authorization.
+/// <https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-13#section-4.3.1>
 #[test_log::test]
-fn a_refresh_token_rotates_and_a_lost_response_is_retried_with_the_previous_one() {
-    let request = refresh_request();
-
+fn a_refresh_token_works_once_and_a_second_use_ends_its_authorization() {
     assert_eq!(
         exchange(
-            &request,
+            &refresh_request(),
             &refresh(RefreshState::Current),
             at(NOW),
             &server()
         ),
-        issued(Used::Current)
+        issued(Used::Refresh)
     );
     assert_eq!(
-        exchange(
-            &request,
-            &refresh(RefreshState::Previous),
+        ended(exchange(
+            &refresh_request(),
+            &refresh(RefreshState::Used),
             at(NOW),
             &server()
-        ),
-        issued(Used::Previous)
+        )),
+        7
     );
-}
-
-/// The state each refresh token of an authorization is in after `used`,
-/// of those in `states`, with the new current one last.
-fn rotated(states: &[RefreshState], used: Used) -> Vec<RefreshState> {
-    let mut rotated: Vec<_> = states.iter().map(|state| used.turns(*state)).collect();
-    rotated.push(RefreshState::Current);
-    rotated
-}
-
-/// `docs/specs/access.md`, Tokens: a refresh token works until the client
-/// first uses a token that replaced it, and a client that lost its new
-/// tokens uses the one before again.
-#[test_log::test]
-fn the_previous_token_stops_working_once_its_replacement_is_used() {
-    let first = rotated(&[], Used::Code);
-    assert_eq!(first, [Current], "a code gives the first");
-
-    let refreshed = rotated(&first, Used::Current);
-    assert_eq!(
-        refreshed,
-        [Previous, Current],
-        "the first works until its replacement is used"
-    );
-    let lost = rotated(&refreshed, Used::Previous);
-    assert_eq!(
-        lost,
-        [Previous, Retired, Current],
-        "the lost response's token retires"
-    );
-    let used = rotated(&lost, Used::Current);
-    assert_eq!(
-        used,
-        [Retired, Retired, Previous, Current],
-        "the first stops working once its replacement is used"
-    );
-    assert!(matches!(
-        exchange(&refresh_request(), &refresh(used[0]), at(NOW), &server()),
-        TokenDecision::End { .. }
-    ));
-}
-
-/// `docs/specs/access.md`, Tokens: a refresh token stops working once the
-/// client first uses the token that replaced it, and using it then ends its
-/// authorization.
-#[test_log::test]
-fn presenting_a_refresh_token_that_stopped_working_ends_its_authorization() {
-    let decision = exchange(
-        &refresh_request(),
-        &refresh(RefreshState::Retired),
-        at(NOW),
-        &server(),
-    );
-
-    match decision {
-        TokenDecision::End {
-            authorization,
-            error,
-        } => {
-            assert_eq!(authorization, AuthorizationId(7));
-            assert_eq!(error.error, "invalid_grant");
-        }
-        other @ (TokenDecision::Issue { .. } | TokenDecision::Refuse(_)) => {
-            panic!("ended, not {other:?}")
-        }
-    }
     let another_client = TokenRequest {
         client_id: ClientId::of("c-2".into()),
         ..refresh_request()
     };
     assert_eq!(
-        refused(exchange(
+        ended(exchange(
             &another_client,
-            &refresh(RefreshState::Retired),
+            &refresh(RefreshState::Used),
             at(NOW),
             &server()
         )),
+        7,
+        "whoever presents it"
+    );
+    let over = Stored::Refresh {
+        authorization: StoredAuthorization {
+            ended: true,
+            ..authorization()
+        },
+        state: RefreshState::Used,
+    };
+    assert_eq!(
+        refused(exchange(&refresh_request(), &over, at(NOW), &server())),
         "invalid_grant",
-        "another client's presenting it ends nothing"
+        "an authorization that ended ends no more"
     );
     assert_eq!(
         refused(exchange(
@@ -684,8 +673,8 @@ fn presenting_a_refresh_token_that_stopped_working_ends_its_authorization() {
     );
 }
 
-/// `docs/specs/access.md`, Tokens, and The authorization server, How long
-/// it lasts.
+/// `docs/specs/access.md`, The authorization server, An access token and
+/// How long it lasts.
 #[test_log::test]
 fn an_access_token_lasts_an_hour_and_an_authorization_30_days_from_its_sign_in() {
     let signed_in_at = at(NOW) - TimeDelta::minutes(5);
@@ -703,7 +692,7 @@ fn an_access_token_lasts_an_hour_and_an_authorization_30_days_from_its_sign_in()
             at(NOW),
             &server()
         ),
-        issued(Used::Current),
+        issued(Used::Refresh),
         "an hour from now"
     );
     let near_the_end = ends_at - TimeDelta::minutes(20);
@@ -716,7 +705,7 @@ fn an_access_token_lasts_an_hour_and_an_authorization_30_days_from_its_sign_in()
         ),
         TokenDecision::Issue {
             authorization: AuthorizationId(7),
-            used: Used::Current,
+            used: Used::Refresh,
             access_until: ends_at,
         },
         "no later than the authorization"
@@ -780,8 +769,8 @@ fn a_token_request_names_its_client_and_a_grant_linewright_takes() {
     );
 }
 
-/// `docs/specs/access.md`, Tokens: an access token stops working one hour
-/// after Linewright issues it, or when its authorization ends.
+/// `docs/specs/access.md`, The authorization server, An access token and An
+/// ended authorization.
 #[test_log::test]
 fn an_access_token_works_until_it_expires_or_its_authorization_ends() {
     let expires_at = at(NOW) + TimeDelta::hours(1);
