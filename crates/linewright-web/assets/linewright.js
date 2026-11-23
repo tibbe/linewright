@@ -1,7 +1,9 @@
 /**
  * The web UI's script (docs/specs/design_system.md): it says since when the
- * page lost `serve`, shows times and durations in the page's language and the
- * reader's time zone, keeping them up, keeps a run's transcript at its latest
+ * page lost `serve`, loads the page again once its browser no longer signs
+ * anyone in (docs/specs/access.md, Signing in, An open screen), shows times
+ * and durations in the page's language and the reader's time zone, keeping
+ * them up, keeps a run's transcript at its latest
  * entry while the reader is there, opens and closes fold rows by their
  * buttons, keeps each fold, fold row and confirmation as the reader opened or
  * closed it through updates, closes a confirmation as it goes ahead and a
@@ -455,9 +457,11 @@
   let lastEntryId = "";
   /** Whether the `hx-sse` extension has taken over the page's event stream. */
   let streaming = false;
+  /** Whether the stream said the browser no longer signs anyone in. */
+  let signedOut = false;
 
   function lose() {
-    if (lostSince !== null) return;
+    if (signedOut || lostSince !== null) return;
     lostSince = new Date();
     lost.querySelector("time").dateTime = lostSince.toISOString();
     lost.hidden = false;
@@ -465,6 +469,10 @@
   }
 
   document.body.addEventListener("htmx:sse:error", lose);
+  document.body.addEventListener("signed-out", () => {
+    signedOut = true;
+    location.reload();
+  });
   document.body.addEventListener("htmx:sse:after:connection", () => {
     streaming = true;
     lostSince = null;

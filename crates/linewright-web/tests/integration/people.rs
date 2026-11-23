@@ -291,7 +291,10 @@ async fn disabling_a_person_signs_them_out_and_enabling_lets_them_sign_in_again(
         }
     );
     assert_eq!(status, 200);
-    assert_eq!(viewer.response("/").await.status(), 303);
+    assert_eq!(
+        text(select(&viewer.page("/").await, ".sign-in .alert")[0]),
+        "vera@example.com is disabled."
+    );
     let after = pages.page("/people").await;
     assert_eq!(rows(&after)[2][2], "disabled");
     let vera = select(&after, "#people tbody tr")[2];

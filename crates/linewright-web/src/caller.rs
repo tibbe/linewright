@@ -5,20 +5,25 @@
 //! gets no permit for an action that changes something, so that none runs
 //! for it.
 
+use std::sync::Arc;
+
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Redirect, Response};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use linewright_core::access::sessions::{Resolved, SESSION_COOKIE, SessionCookie, Sessions};
+use linewright_core::access::sessions::{
+    Reason, Resolved, SESSION_COOKIE, SessionCookie, Sessions,
+};
 use linewright_core::access::{Caller, LevelMarker, NeedsLevel, Permit, Read};
 use linewright_core::actions::Action;
 use linewright_core::api::Sources;
 
-use super::sign_in::{Reason, ReturnPath, sign_in_path};
+use super::sign_in::{ReturnPath, SignIn, ended_page, sign_in_path};
 use super::{cookie_headers, cookie_values};
 
 /// A request of an unsafe method that its browser does not show came from
@@ -44,9 +49,11 @@ pub(super) fn session_cookie(headers: &HeaderMap) -> Option<SessionCookie> {
 }
 
 /// Resolves who each request is from by its browser's session cookie, for
-/// [`Asking`] and [`Watch`]. A request from no one is sent to Sign in, to
-/// come back once signed in, when it asks for a screen, and is answered
-/// with 401 otherwise.
+/// [`Asking`] and [`Watch`]. A request for a screen from a browser whose
+/// sign-in ended is answered with Sign in, saying why, and from no one is
+/// sent to Sign in; either comes back to the screen once signed in. A
+/// request for an event stream gets a stream that says its browser is
+/// signed out, and any other request 401.
 pub(super) async fn signed_in(
     State(sources): State<Sources>,
     mut request: Request,
@@ -66,8 +73,8 @@ pub(super) async fn signed_in(
             request.extensions_mut().insert(cookie);
             next.run(request).await
         }
-        (Ok(Resolved::Ended), _) => not_signed_in(&request, Some(Reason::Ended)),
-        (Ok(Resolved::Caller(_) | Resolved::NoOne), _) => not_signed_in(&request, None),
+        (Ok(Resolved::Ended(reason)), _) => not_signed_in(&sources, &request, Some(&reason)),
+        (Ok(Resolved::Caller(_) | Resolved::NoOne), _) => not_signed_in(&sources, &request, None),
         (Err(failed), _) => failed,
     }
 }
@@ -80,12 +87,18 @@ fn unread(e: &anyhow::Error) -> Response {
     (StatusCode::INTERNAL_SERVER_ERROR, error).into_response()
 }
 
-/// The answer to `request` from a browser signed in as no one: to Sign in
-/// for a screen, saying `reason` where there is one, and 401 otherwise.
-fn not_signed_in(request: &Request, reason: Option<Reason>) -> Response {
-    let screen = matches!(*request.method(), Method::GET | Method::HEAD)
-        && !request.uri().path().starts_with("/events/");
-    if !screen {
+/// The answer to `request` from a browser signed in as no one, its
+/// sign-in having ended for `reason` where there is one: for a screen,
+/// Sign in, in its place for a reason and else by a redirect; for an event
+/// stream, [`signed_out`]; and 401 otherwise. The browser keeps its cookie,
+/// so that each of its tabs can say why.
+fn not_signed_in(sources: &Sources, request: &Request, reason: Option<&Reason>) -> Response {
+    let read = matches!(*request.method(), Method::GET | Method::HEAD);
+    if read && request.uri().path().starts_with("/events/") {
+        let sent = futures_util::stream::once(std::future::ready(Ok(signed_out())));
+        return linewright_core::event_stream::respond(sent);
+    }
+    if !read {
         return sign_in_first();
     }
     let return_to = ReturnPath::parse(
@@ -94,16 +107,23 @@ fn not_signed_in(request: &Request, reason: Option<Reason>) -> Response {
             .path_and_query()
             .map(axum::http::uri::PathAndQuery::as_str),
     );
-    let mut response = Redirect::to(&sign_in_path(&return_to, reason)).into_response();
-    if reason.is_some() {
-        response.headers_mut().insert(
-            header::SET_COOKIE,
-            SessionCookie::removed()
-                .parse()
-                .expect("the cookie is a header value"),
-        );
+    match reason {
+        Some(reason) => {
+            let sign_in = request
+                .extensions()
+                .get::<Arc<SignIn>>()
+                .expect("the router gives every request how it signs people in");
+            ended_page(sign_in, sources, return_to, reason)
+        }
+        None => Redirect::to(&sign_in_path(&return_to, None)).into_response(),
     }
-    response
+}
+
+/// The event that tells a page its browser no longer signs anyone in, on
+/// which the page loads again (`docs/specs/access.md`, Signing in, An open
+/// screen).
+pub(super) fn signed_out() -> Event {
+    Event::default().event("signed-out")
 }
 
 /// The answer to a request that needs a sign-in its browser does not have.
@@ -197,23 +217,39 @@ impl Watch {
     }
 
     /// Whether the browser still signs someone in, as its record has them
-    /// now. A sign-in that does not read, which it logs, signs no one in.
-    pub(super) async fn signs_someone_in(&self) -> bool {
-        self.caller().await.is_some()
+    /// now. A sign-in that does not read, it logs.
+    pub(super) async fn signed(&self) -> Signed {
+        match self.sessions.resolve(&self.cookie, self.clock.now()).await {
+            Ok(Resolved::Caller(_)) => Signed::In,
+            Ok(Resolved::Ended(_) | Resolved::NoOne) => Signed::Out,
+            Err(e) => {
+                unread(&e);
+                Signed::Unread
+            }
+        }
     }
 
     /// Who the browser signs in, as their record has them now, if anyone.
     /// A sign-in that does not read, which it logs, signs no one in.
     pub(super) async fn caller(&self) -> Option<Caller> {
         match self.sessions.resolve(&self.cookie, self.clock.now()).await {
-            Ok(Resolved::Caller(caller)) => Some(caller),
-            Ok(Resolved::Ended | Resolved::NoOne) => None,
+            Ok(resolved) => resolved.caller(),
             Err(e) => {
                 unread(&e);
                 None
             }
         }
     }
+}
+
+/// Whether a stream's reader's browser still signs someone in: while it
+/// does, the stream goes on; once it does not, the stream sends
+/// [`signed_out`] and ends; and where its sign-in does not read, the stream
+/// ends, for the page to connect again.
+pub(super) enum Signed {
+    In,
+    Out,
+    Unread,
 }
 
 /// The watch of a request [`signed_in`] let through, or else 401.

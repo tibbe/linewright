@@ -1814,3 +1814,27 @@ var click = () => {
         ]
     );
 }
+
+/// `docs/specs/access.md`, Signing in, An open screen: the page loads again,
+/// rather than saying it lost `serve` as its stream ends.
+#[test_log::test(tokio::test)]
+async fn a_page_whose_stream_says_its_browser_signed_out_loads_again() {
+    let page = r#"
+var lost = Object.assign(element("DIV", { id: "lost" }), {
+  hidden: true,
+  querySelector() { return {}; },
+});
+document.getElementById = (id) => (id === "stream" ? stream : id === "lost" ? lost : null);
+var reloads = 0;
+location.reload = () => { reloads += 1; };
+"#;
+    let asked = r#"
+const seen = [`${reloads} ${lost.hidden}`];
+fire("signed-out", event(stream));
+fire("htmx:sse:error", event(stream));
+seen.push(`${reloads} ${lost.hidden}`);
+seen.join("\n")
+"#;
+
+    assert_eq!(with_filters(page, asked).await, ["0 true", "1 true"]);
+}

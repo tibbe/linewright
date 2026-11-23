@@ -86,6 +86,7 @@ static MIGRATIONS: &[Migration] = &[
     Migration::Sql(OAUTH_TABLES),
     Migration::Sql(SIGN_IN_PURPOSES),
     Migration::Sql(USED_REFRESH_TOKENS),
+    Migration::Sql(ENDED_BROWSER_SESSIONS),
 ];
 
 /// The table of the release that made each schema version.
@@ -508,6 +509,13 @@ const USED_REFRESH_TOKENS: &str = "CREATE TABLE refresh_tokens_used (
     DROP TABLE refresh_tokens;
     ALTER TABLE refresh_tokens_used RENAME TO refresh_tokens;
     CREATE INDEX refresh_tokens_of_authorizations ON refresh_tokens (authorization);";
+
+/// Why each browser's sign-in that ended before its 30 days ended: the
+/// person signed out, or was disabled. Such a sign-in's `expires_at` is
+/// when it ended, so that Linewright knows it as long as an expired one
+/// (`docs/specs/access.md`, Signing in, An open screen).
+const ENDED_BROWSER_SESSIONS: &str = "ALTER TABLE browser_sessions
+    ADD COLUMN ended TEXT CHECK (ended IN ('signed-out', 'disabled'))";
 
 /// A handle on the work directory's database. It holds a shared `flock` on
 /// the lock file beside the database for as long as it, or a clone of it,
