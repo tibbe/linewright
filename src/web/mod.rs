@@ -13,7 +13,7 @@ mod cards;
 mod confirmation;
 mod editing;
 mod facts;
-mod html;
+pub(crate) mod html;
 mod icons;
 mod item_page;
 mod launch;

@@ -83,6 +83,7 @@ croner = "4"
 dirs = "7"
 form_urlencoded = "1"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+getrandom = "0.4"
 globset = "0.4"
 hex = "0.4"
 hmac = "0.13"

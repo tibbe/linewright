@@ -4,6 +4,8 @@
 
 pub mod people;
 pub mod providers;
+pub mod sign_ins;
+mod tokens;
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -43,6 +45,22 @@ pub enum Role {
 }
 
 impl Role {
+    /// Its name, as the spec gives it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Viewer => "viewer",
+            Role::Contributor => "contributor",
+            Role::Manager => "manager",
+        }
+    }
+
+    /// The role named `name`, as [`Role::name`] gives it.
+    pub fn named(name: &str) -> Option<Role> {
+        [Role::Viewer, Role::Contributor, Role::Manager]
+            .into_iter()
+            .find(|role| role.name() == name)
+    }
+
     /// The access level it gives.
     pub fn level(self) -> Level {
         match self {

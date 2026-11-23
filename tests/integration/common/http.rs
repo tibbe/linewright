@@ -86,6 +86,7 @@ pub fn ui_on(address: &str) -> linewright::web::Ui {
             client_id: ClientId::new("google-id".into()).unwrap(),
             secret: ClientSecret::new("google-s3cret".into()).unwrap(),
             signup: SignUpDomains::default(),
+            endpoints: linewright::access::providers::GoogleEndpoints::default(),
         }),
         manager: None,
     }
