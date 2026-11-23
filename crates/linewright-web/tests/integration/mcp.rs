@@ -820,10 +820,39 @@ async fn people_are_listed_100_or_limit_at_a_time_in_the_order_of_their_names() 
             "signed_in_at": "2026-10-01T12:00:00Z",
         })
     );
-    assert_eq!(
-        refusal(&mcp.call("list_people", json!({ "limt": 2 })).await),
-        "The arguments do not read: unknown field `limt`, expected `limit` or `after`."
-    );
+}
+
+/// `docs/specs/access.md`, The MCP server, A wrong argument: one the tool's
+/// input schema does not allow, named as the schema names it.
+#[test_log::test(tokio::test)]
+async fn a_call_with_an_argument_its_input_schema_does_not_allow_names_the_argument() {
+    let pages = super::benchmarks::with_benchmarks().await;
+    let token = token_of(&pages, Role::Manager, "Mona Manager").await;
+    let mcp = Mcp::new(&pages, &token);
+
+    for (name, arguments, argument) in [
+        ("list_people", json!({ "limt": 2 }), "limt"),
+        ("list_people", json!({ "limit": 0 }), "limit"),
+        ("create_benchmark", json!({ "stage": "design" }), "name"),
+        (
+            "edit_person",
+            json!({ "person_id": "one", "role": "viewer" }),
+            "person_id",
+        ),
+        (
+            "edit_person",
+            json!({ "person_id": 1, "role": "boss" }),
+            "role",
+        ),
+    ] {
+        let called = mcp.call(name, arguments.clone()).await;
+
+        assert_eq!(
+            refusal(&called),
+            format!("The argument {argument} is not valid."),
+            "{name} {arguments}"
+        );
+    }
 }
 
 /// `docs/specs/access.md`, People: the named manager and the last manager,

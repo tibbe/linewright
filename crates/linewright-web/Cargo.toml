@@ -20,6 +20,7 @@ form_urlencoded = { workspace = true }
 futures-util = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
+jsonschema = { workspace = true }
 linewright-core = { workspace = true }
 percent-encoding = { workspace = true }
 reqwest = { workspace = true }
@@ -42,7 +43,6 @@ boa_engine = { workspace = true }
 chrono = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
-jsonschema = { workspace = true }
 scraper = { workspace = true }
 sqlx = { workspace = true }
 tempfile = { workspace = true }
