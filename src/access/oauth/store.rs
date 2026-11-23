@@ -660,6 +660,7 @@ impl AccessTokens {
             return Ok(None);
         };
         let authorization = stored_authorization(&mut conn, authorization).await?;
+        drop(conn);
         if !access_works(parse_time(&expires_at)?, &authorization, now) {
             return Ok(None);
         }
