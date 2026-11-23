@@ -2,12 +2,27 @@
 //! `styles/linewright.css` sets them, from which `scripts/fix css` builds
 //! the stylesheet that the web UI serves.
 
-const SPEC: &str = include_str!("../../../../docs/specs/design_system.md");
-const STYLES: &str = include_str!("../../../../styles/linewright.css");
+use linewright_core::testing::repository;
+
+/// The file at `path` from the root of the repository.
+///
+/// # Panics
+///
+/// If it can't be read, naming the path.
+#[track_caller]
+fn repo_file(path: &str) -> String {
+    let path = repository().join(path);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("reading {}: {error}", path.display()))
+}
+
+const STYLES: &str = "styles/linewright.css";
 
 /// Each variable of the spec's table, with its light and its dark value.
+#[track_caller]
 fn spec_variables() -> Vec<(String, String, String)> {
-    SPEC.lines()
+    repo_file("docs/specs/design_system.md")
+        .lines()
         .filter_map(|line| {
             let cells: Vec<&str> = line
                 .trim()
@@ -34,7 +49,8 @@ fn unquoted(cell: &str) -> String {
 /// order.
 #[track_caller]
 fn theme_variables(name: &str) -> Vec<(String, String)> {
-    let blocks: Vec<&str> = STYLES
+    let stylesheet = repo_file(STYLES);
+    let blocks: Vec<&str> = stylesheet
         .split("@plugin \"./daisyui-theme.mjs\" {")
         .skip(1)
         .map(|rest| rest.split('}').next().expect("a closed block"))
@@ -74,7 +90,8 @@ fn each_theme_sets_exactly_the_variables_of_the_specs_table() {
 /// themes.
 #[test_log::test]
 fn the_stylesheet_sets_no_colour_but_in_its_themes() {
-    let mut parts = STYLES.split("@plugin \"./daisyui-theme.mjs\" {");
+    let stylesheet = repo_file(STYLES);
+    let mut parts = stylesheet.split("@plugin \"./daisyui-theme.mjs\" {");
     let outside_the_themes: String = parts
         .next()
         .into_iter()
@@ -102,7 +119,8 @@ fn the_stylesheet_colours_nothing_in_a_fill_but_its_background() {
         "warning",
         "error",
     ];
-    let coloured: Vec<&str> = STYLES
+    let stylesheet = repo_file(STYLES);
+    let coloured: Vec<&str> = stylesheet
         .split_whitespace()
         .map(|class| class.trim_end_matches(';'))
         .filter(|class| {
@@ -134,7 +152,8 @@ fn the_stylesheet_colours_nothing_in_a_fill_but_its_background() {
 /// padding of `px-1`.
 #[test_log::test]
 fn inline_code_is_drawn_as_the_spec_gives_it() {
-    let rule = STYLES
+    let stylesheet = repo_file(STYLES);
+    let rule = stylesheet
         .split("  code {")
         .nth(1)
         .and_then(|rest| rest.split('}').next())
