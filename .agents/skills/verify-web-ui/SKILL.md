@@ -25,12 +25,21 @@ When the page your change touches needs a state the seed lacks, such as an
 item in another lane or a transcript entry of another kind, add it to the
 seed in your change.
 
+`serve-fake` serves HTTPS, as the public URL is, with a certificate it
+signed itself at start, in front of the plain HTTP `lw serve` serves.
+
 ## Drive it
 
-Call the Skill tool with "playwright-cli". Before going to the URL, run the
-`playwright-cli run-code` command `serve-fake` printed after it, so the browser
-tells `serve-fake`'s time: the pages work out how long ago and how long for
-in the browser.
+Call the Skill tool with "playwright-cli". Open the browser with HTTPS errors
+ignored, so that it takes `serve-fake`'s certificate:
+
+```bash
+playwright-cli open --config=.claude/skills/verify-web-ui/playwright.json
+```
+
+Before going to the URL, run the `playwright-cli run-code` command
+`serve-fake` printed after it, so the browser tells `serve-fake`'s time: the
+pages work out how long ago and how long for in the browser.
 
 ## Evidence
 
