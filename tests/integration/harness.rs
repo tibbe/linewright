@@ -488,6 +488,7 @@ async fn a_session_is_given_only_the_variables_the_table_and_session_pass_env_na
             "CARGO_TARGET_DIR",
             "CLAUDE_CODE_EFFORT_LEVEL",
             "CLAUDE_CODE_SHELL",
+            "CLAUDE_CODE_STARTUP_FAILURE_RESULTS",
             "CLAUDE_CONFIG_DIR",
             "DISABLE_UPDATES",
             "GH_TOKEN",
@@ -645,6 +646,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
             ("CLAUDE_CODE_EFFORT_LEVEL", "high"),
             ("GH_TOKEN", "linewright-token"),
             ("GITHUB_TOKEN", "linewright-token"),
+            ("CLAUDE_CODE_STARTUP_FAILURE_RESULTS", "1"),
         ]
     );
     let env = std::fs::read_to_string(dir.path().join("env.log")).unwrap();
@@ -666,6 +668,7 @@ async fn a_sessions_turns_are_spawned_with_the_environment_the_harness_exposes()
         "CLAUDE_CODE_EFFORT_LEVEL=high".to_string(),
         "GH_TOKEN=linewright-token".to_string(),
         "GITHUB_TOKEN=linewright-token".to_string(),
+        "CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1".to_string(),
     ];
     expected.sort_unstable();
     assert_eq!(spawned, expected);
@@ -1050,6 +1053,210 @@ async fn a_session_that_ends_without_a_result_says_the_harness_exited() {
         panic!("expected no result, got {error:?}");
     };
     assert_eq!(why, "the harness exited (exit status: 0) without a result");
+}
+
+#[test_log::test(tokio::test)]
+async fn a_result_with_fields_linewright_does_not_read_finishes_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut result = done();
+    result["credential_expires_at"] = json!("2026-12-23T06:24:00.000Z");
+    let harness = harness_streaming(dir.path(), &[result]);
+
+    let turn = harness.start(&triage_session(dir.path())).await.unwrap();
+
+    assert_eq!(turn.message, "Done.");
+}
+
+/// Why `error` failed on its infrastructure, when it did.
+#[track_caller]
+fn infrastructure_failure(error: SessionError) -> String {
+    let SessionError::Infrastructure(reason) = error else {
+        panic!("expected an infrastructure failure, got {error:?}");
+    };
+    reason
+}
+
+/// The `result` Claude Code 2.1.323 streams with
+/// `CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1`, on a `~/.claude.json` that is
+/// not valid JSON.
+#[track_caller]
+fn recorded_startup_failure() -> Value {
+    serde_json::from_str(include_str!("fixtures/startup_failure/result.json")).unwrap()
+}
+
+#[test_log::test(tokio::test)]
+async fn a_harness_that_fails_to_start_is_an_infrastructure_failure_naming_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stderr("Fix the JSON in /home/linewright/.claude.json\n".into()),
+            Step::Stream(vec![recorded_startup_failure()]),
+            Step::Exit(1),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness could not start (config_file_invalid): \
+         Configuration error in /home/linewright/.claude.json: JSON Parse error: Expected '}'"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_harness_that_exits_with_an_error_after_its_result_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let harness = harness_running(
+        dir.path(),
+        vec![
+            Step::Stream(vec![done()]),
+            Step::Stderr("Error: could not write ~/.claude.json (EDQUOT)\n".into()),
+            Step::Exit(1),
+        ],
+    );
+
+    let error = harness
+        .start(&triage_session(dir.path()))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness exited (exit status: 1) after its result: \
+         Error: could not write ~/.claude.json (EDQUOT)"
+    );
+}
+
+/// An assistant message, `uuid`, saying `text`, as Claude Code 2.1.287
+/// streamed one and keeps it in its transcript.
+#[track_caller]
+fn message(uuid: &str, text: &str) -> Value {
+    let recorded = include_str!("fixtures/transcript/turn-2.jsonl")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| {
+            event["type"] == "assistant" && event["message"]["content"][0]["type"] == "text"
+        });
+    let mut message = recorded.unwrap();
+    message["uuid"] = json!(uuid);
+    message["message"]["content"][0]["text"] = json!(text);
+    message
+}
+
+/// A session whose harness has its configuration in `config`, as
+/// `session-env` sets it.
+#[track_caller]
+fn session_configured_in(dir: &Path, config: &Path) -> SessionSpec {
+    let mut session = triage_session(dir);
+    let set = SetEnv::new([(
+        "CLAUDE_CONFIG_DIR".to_string(),
+        config.to_str().unwrap().to_string(),
+    )])
+    .unwrap();
+    session.environment = Arc::new(
+        SessionEnv::new(PassEnv::new([]).unwrap(), set)
+            .split([], &[])
+            .given,
+    );
+    session
+}
+
+/// A harness that keeps `kept` in the transcript under `config`, then
+/// streams `streamed` and `Done.`, saying `errors` on standard error.
+fn harness_keeping(
+    dir: &Path,
+    config: &Path,
+    kept: &[Value],
+    streamed: &[Value],
+    errors: &str,
+) -> ClaudeCode {
+    let mut turn: Vec<Step> = kept
+        .iter()
+        .map(|entry| Step::Keep {
+            projects: config.join("projects/-repo"),
+            entry: entry.clone(),
+        })
+        .collect();
+    turn.push(Step::Stderr(errors.into()));
+    let mut events = streamed.to_vec();
+    events.push(done());
+    turn.push(Step::Stream(events));
+    harness_running(dir, turn)
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_transcript_holds_its_last_message_finishes_and_is_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let kept = [message("m-1", "Reading."), message("m-2", "Done.")];
+    let harness = harness_keeping(dir.path(), &config, &kept, &kept, "");
+
+    let turn = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap();
+
+    assert_eq!(turn.message, "Done.");
+    let transcript = std::fs::read_to_string(dir.path().join("transcript.jsonl")).unwrap();
+    assert_eq!(
+        transcript,
+        format!("{}\n{}\n", kept[0], kept[1]),
+        "the transcript kept under the session's CLAUDE_CONFIG_DIR"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_turn_whose_transcript_lacks_its_last_message_is_an_infrastructure_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let harness = harness_keeping(
+        dir.path(),
+        &config,
+        &[message("m-1", "Reading.")],
+        &[message("m-1", "Reading."), message("m-2", "Done.")],
+        "Error: could not save all of this session's transcript (ENOSPC)\n",
+    );
+
+    let error = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap_err();
+
+    let reason = infrastructure_failure(error);
+    assert_eq!(
+        reason,
+        "the harness did not keep all of the session's transcript: \
+         Error: could not save all of this session's transcript (ENOSPC)"
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn a_subagents_messages_are_not_looked_for_in_the_sessions_transcript() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let mut subagents = message("s-1", "Found it.");
+    subagents["parent_tool_use_id"] = json!("toolu_1");
+    let harness = harness_keeping(
+        dir.path(),
+        &config,
+        &[message("m-1", "Done.")],
+        &[message("m-1", "Done."), subagents],
+        "",
+    );
+
+    let turn = harness
+        .start(&session_configured_in(dir.path(), &config))
+        .await
+        .unwrap();
+
+    assert_eq!(turn.message, "Done.");
 }
 
 #[test_log::test(tokio::test)]
