@@ -130,3 +130,9 @@ scraper = "0.29"
 test-log = { version = "0.2.21", default-features = false, features = ["trace"] }
 tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
