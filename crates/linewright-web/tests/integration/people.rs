@@ -1,5 +1,4 @@
-//! People (`docs/specs/access.md`, People, Edit person and Disable person;
-//! `docs/specs/web/access.md`, People and Edit person).
+//! People (`docs/specs/access.md`, People, Edit person and Disable person).
 
 use super::*;
 
@@ -176,7 +175,7 @@ async fn a_viewer_or_contributor_sees_people_without_its_buttons() {
     );
 }
 
-/// `docs/specs/access.md`, Edit person; `docs/specs/web/access.md`, Edit
+/// `docs/specs/access.md`, Edit person; `docs/specs/access.md`, Edit
 /// person: Role is a `select`.
 #[test_log::test(tokio::test)]
 async fn edit_person_changes_a_role() {
@@ -339,7 +338,7 @@ async fn next_sending(
     .unwrap_or_else(|_| panic!("no {id} in time"))
 }
 
-/// `docs/specs/design_system.md`, Liveness; `docs/specs/access.md`, Roles,
+/// `docs/specs/ui_patterns.md`, Liveness; `docs/specs/access.md`, Roles,
 /// At each request: a row People gains has its dialogs, and a reader made
 /// a manager gets the buttons, without opening People again.
 #[test_log::test(tokio::test)]

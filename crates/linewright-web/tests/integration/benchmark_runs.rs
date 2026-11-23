@@ -166,7 +166,7 @@ pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
     }
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark, Runs; `docs/specs/design_system.md`,
+/// `docs/specs/benchmarks.md`, Benchmark, Runs; `docs/specs/ui_patterns.md`,
 /// Tables and Status.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_from_its_end() {
@@ -338,7 +338,7 @@ fn benchmark_run_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
     )
 }
 
-/// The benchmark run page's facts (`docs/specs/web/benchmarks.md`,
+/// The benchmark run page's facts (`docs/specs/benchmarks.md`,
 /// Benchmark run), each its `stat-title` and its `stat-value`.
 #[track_caller]
 fn benchmark_run_facts(html: &Html) -> Vec<(String, String)> {
@@ -472,7 +472,7 @@ async fn an_ended_benchmark_run_says_when_it_ended_and_how_long_it_took() {
     );
 }
 
-/// `docs/specs/design_system.md`, Screen states, Absent: a benchmark run that
+/// `docs/specs/ui_patterns.md`, Screen states, Absent: a benchmark run that
 /// ended before its end was kept.
 #[test_log::test(tokio::test)]
 async fn a_benchmark_run_whose_end_was_not_kept_shows_its_end_and_duration_absent() {
@@ -491,7 +491,7 @@ async fn a_benchmark_run_whose_end_was_not_kept_shows_its_end_and_duration_absen
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark run, Heading, and Cancel benchmark
-/// run; `docs/specs/design_system.md`, Confirming.
+/// run; `docs/specs/ui_patterns.md`, Confirming.
 #[test_log::test(tokio::test)]
 async fn the_benchmark_run_page_offers_to_cancel_an_open_benchmark_run_and_cancelling_ends_it() {
     let pages = with_benchmark_run().await;
@@ -593,8 +593,8 @@ fn drawn_at(html: &Html, id: &str) -> (f64, f64) {
     (at("x"), at("y"))
 }
 
-/// `docs/specs/benchmarks.md`, Benchmark run, The chart and A point;
-/// `docs/specs/web/benchmarks.md`, Benchmark run.
+/// `docs/specs/benchmarks.md`, Benchmark run, The chart, The chart's look
+/// and A point.
 #[test_log::test(tokio::test)]
 async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the_reader_chooses() {
     let pages = with_benchmark_run().await;
@@ -677,7 +677,7 @@ async fn the_chart_puts_each_configuration_at_its_pass_rate_against_the_mean_the
     );
 }
 
-/// `docs/specs/web/components.md`, Chart: the plot is as wide as its card in
+/// `docs/specs/components.md`, Chart: the plot is as wide as its card in
 /// the proportions 480:260, its axes are in `base-content/60` and its grid
 /// lines in `base-content/10`, its ticks in `text-xs` and secondary text, and
 /// a point is a `size-4` dot in `bg-primary` with a `border-2` in `base-200`,
@@ -792,7 +792,7 @@ fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> 
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark run, The table;
-/// `docs/specs/design_system.md`, Tables.
+/// `docs/specs/ui_patterns.md`, Tables.
 #[test_log::test(tokio::test)]
 async fn the_configurations_table_shows_each_configurations_figures() {
     let pages = with_benchmark_run().await;
@@ -1235,7 +1235,7 @@ async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_th
     assert_eq!(named, ["b", "a", "c"]);
 }
 
-/// `docs/specs/design_system.md`, Tables, Pages: the table pages its
+/// `docs/specs/ui_patterns.md`, Tables, Pages: the table pages its
 /// configurations alone, each carrying its rows, and the grid its tasks.
 #[test_log::test(tokio::test)]
 async fn the_configurations_and_the_grid_each_show_their_rows_25_at_a_time_on_a_page_of_their_own()
@@ -1378,8 +1378,8 @@ async fn a_trial_opens_to_the_transcripts_of_its_run_and_of_its_scorer() {
     );
 }
 
-/// `docs/specs/web/benchmarks.md`, Benchmark run: a trial's transcripts are
-/// each a transcript (`docs/specs/web/components.md`, Transcript).
+/// `docs/specs/benchmarks.md`, Benchmark run: a trial's transcripts are
+/// each a transcript (`docs/specs/components.md`, Transcript).
 #[test_log::test(tokio::test)]
 async fn a_trials_transcripts_are_drawn_as_the_run_pages_is() {
     let pages = with_benchmark_run().await;
@@ -1407,7 +1407,7 @@ async fn a_trial_with_no_output_or_scorer_answers_404() {
     assert_eq!([pending, no_scorer, no_task, no_benchmark_run], [404; 4]);
 }
 
-/// `docs/specs/design_system.md`, Screen states, Nothing there.
+/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn the_page_of_no_benchmark_run_says_there_is_none() {
     let pages = with_benchmark_run().await;
@@ -1615,7 +1615,7 @@ async fn before_the_first_poll_a_new_configuration_starts_with_no_effort_chosen(
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark run;
-/// `docs/specs/design_system.md`, Dialogs and Making.
+/// `docs/specs/ui_patterns.md`, Dialogs and Making.
 #[test_log::test(tokio::test)]
 async fn new_opens_the_new_benchmark_run_dialog_with_as_is_first_the_repetitions_and_the_trials_they_make()
  {
@@ -1928,10 +1928,9 @@ type Refusal = (
 );
 
 /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
-/// `docs/specs/design_system.md`, Making, Required and A refusal;
-/// `docs/specs/web/design_system.md`, Making: each refusal of a field is
-/// under it: of the repetitions, a configuration's name, a setting and a
-/// file of the brief.
+/// `docs/specs/ui_patterns.md`, Making, Required, A field and A refusal:
+/// each refusal of a field is under it: of the repetitions, a configuration's
+/// name, a setting and a file of the brief.
 #[test_log::test(tokio::test)]
 async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_field() {
     let pages = with_benchmarks().await;
@@ -2016,7 +2015,7 @@ async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_fi
     assert!(!pages.path("benchmark-runs/1").exists());
 }
 
-/// `docs/specs/design_system.md`, Making, A refusal: the fields keep every
+/// `docs/specs/ui_patterns.md`, Making, A refusal: the fields keep every
 /// configuration, its settings and its files' texts.
 #[test_log::test(tokio::test)]
 async fn a_refused_launch_keeps_every_configuration_with_its_settings_and_its_files() {
@@ -2117,7 +2116,7 @@ async fn a_launch_from_another_site_is_refused_keeping_the_form_as_sent() {
 }
 
 /// `docs/specs/benchmarks.md`, New benchmark run;
-/// `docs/specs/design_system.md`, Making.
+/// `docs/specs/ui_patterns.md`, Making.
 #[test_log::test(tokio::test)]
 async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benchmark_run_shows() {
     let pages = with_benchmarks().await;
@@ -2335,7 +2334,7 @@ fn row_buttons(html: &Html) -> Vec<(String, Vec<RowButton>)> {
 
 /// `docs/specs/benchmarks.md`, Edit configuration and Benchmark runs, The
 /// configurations: "Edit" at the end of each configuration's row but
-/// `as-is`'s; `docs/specs/design_system.md`, Editing, Edit and The dialog.
+/// `as-is`'s; `docs/specs/ui_patterns.md`, Editing, Edit and The dialog.
 #[test_log::test(tokio::test)]
 async fn each_configuration_but_as_is_has_edit_at_the_end_of_its_row() {
     let pages = with_benchmark_run().await;
@@ -2379,7 +2378,7 @@ async fn each_configuration_but_as_is_has_edit_at_the_end_of_its_row() {
     );
 }
 
-/// `docs/specs/design_system.md`, Editing, Saving: the dialog closes holding
+/// `docs/specs/ui_patterns.md`, Editing, Saving: the dialog closes holding
 /// what was saved, and the table names the configuration so, while the
 /// benchmark run runs and after it ends.
 #[test_log::test(tokio::test)]
@@ -2452,7 +2451,7 @@ async fn saving_a_configurations_name_closes_the_dialog_and_the_table_shows_it()
 }
 
 /// `docs/specs/benchmarks.md`, Edit configuration, Refusals;
-/// `docs/specs/design_system.md`, Editing, Required and refused, and A thing
+/// `docs/specs/ui_patterns.md`, Editing, Required and refused, and A thing
 /// that is gone.
 #[test_log::test(tokio::test)]
 async fn a_refused_configuration_name_keeps_what_the_reader_typed_with_its_reason() {

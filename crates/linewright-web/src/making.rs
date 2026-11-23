@@ -1,9 +1,8 @@
-//! Making a thing in a dialog, such as one that "New" opens, or changing one
-//! in a dialog that "Edit" opens (`docs/specs/design_system.md`, Dialogs,
-//! Making and Editing; `docs/specs/web/design_system.md`, Making and
+//! Making a thing in a dialog, such as one that "New" opens, or changing one in
+//! a dialog that "Edit" opens (`docs/specs/ui_patterns.md`, Dialogs, Making and
 //! Editing), drawn by the `new_dialog` and `new_form` macros, its form
-//! answering into itself, and what was made said on a screen that does not
-//! show it.
+//! answering into itself, and what was made said on a screen that does not show
+//! it.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -25,7 +24,7 @@ pub(super) trait Form: Default {
 /// A field a dialog draws.
 pub(super) trait Field: Ord + Clone {
     /// Whether Linewright cannot make the thing without it
-    /// (`docs/specs/design_system.md`, Making, Required).
+    /// (`docs/specs/ui_patterns.md`, Making, Required).
     fn required(&self) -> bool;
 }
 
@@ -146,8 +145,7 @@ impl<F: Form> Making<F> {
 }
 
 /// A field as its dialog's form draws it with the `field` macro
-/// (`docs/specs/design_system.md`, Making, Required and A refusal;
-/// `docs/specs/web/design_system.md`, Making).
+/// (`docs/specs/ui_patterns.md`, Making, Required, A field and A refusal).
 pub(super) struct FieldShown {
     required: bool,
     /// Why Linewright refused it, if it did.
@@ -249,7 +247,7 @@ pub(super) enum Answer<Form: Template> {
     /// not show it.
     Made { blank: Form, shown: MadeShown },
     /// 200 with the form holding what was saved, and the `made` event, on
-    /// which the dialog closes (`docs/specs/design_system.md`, Editing,
+    /// which the dialog closes (`docs/specs/ui_patterns.md`, Editing,
     /// Saving).
     Saved { form: Form },
     /// The form as sent, with its refusal.
@@ -257,7 +255,7 @@ pub(super) enum Answer<Form: Template> {
 }
 
 /// Whether the dialog's screen shows what it made
-/// (`docs/specs/design_system.md`, Making, What was made).
+/// (`docs/specs/ui_patterns.md`, Making, What was made).
 pub(super) enum MadeShown {
     /// The screen shows it, so says nothing of it.
     OnScreen,
@@ -308,7 +306,7 @@ fn made_said(said: &Html) -> String {
 }
 
 /// `said` of what was made or removed, as a daisyUI success alert
-/// (`docs/specs/web/design_system.md`, Making).
+/// (`docs/specs/ui_patterns.md`, Making).
 pub(super) fn success(said: &Html) -> Html {
     html::built(format!(
         r#"<div class="alert alert-success" role="status"><span>{said}</span></div>"#

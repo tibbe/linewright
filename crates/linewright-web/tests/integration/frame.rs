@@ -138,8 +138,8 @@ fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool
 }
 
 /// The name `element` shows in a tooltip to its right on the rail alone
-/// (`docs/specs/web/shell.md`, The rail), which a screen reader skips for
-/// the name `element` gives itself.
+/// (`docs/specs/shell.md`, Navigation, The rail), which a screen reader skips
+/// for the name `element` gives itself.
 #[track_caller]
 fn rail_tip(element: ElementRef<'_>) -> String {
     assert_eq!(
@@ -160,8 +160,8 @@ fn rail_tip(element: ElementRef<'_>) -> String {
     text(tip)
 }
 
-/// `docs/specs/web/shell.md`, The sidebar, The rail: the repository is its
-/// owner's avatar beside its name, a tip while the name is cut; the rail
+/// `docs/specs/shell.md`, Navigation, The sidebar and The rail: the repository
+/// is its owner's avatar beside its name, a tip while the name is cut; the rail
 /// shows the avatar alone, with the name in a tooltip to its right.
 #[test_log::test(tokio::test)]
 async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the_avatar_with_its_name_in_a_tooltip()
@@ -205,8 +205,9 @@ async fn the_repository_is_its_owners_avatar_beside_its_name_and_in_the_rail_the
     assert_eq!(rail_tip(holder), "owner/widgets");
 }
 
-/// `docs/specs/web/shell.md`, The rail: `w-14`, each link its icon alone,
-/// its name in a daisyUI `tooltip` to its right, which the drawer lets out.
+/// `docs/specs/shell.md`, Navigation, The rail: `w-14`, each link its icon
+/// alone, its name in a daisyUI `tooltip` to its right, which the drawer lets
+/// out.
 #[test_log::test(tokio::test)]
 async fn in_the_rail_each_link_is_its_icon_with_its_name_in_a_tooltip_to_its_right() {
     let pages = Pages::of(a_ticket()).await;
@@ -260,10 +261,10 @@ fn foot_button(html: &Html) -> (String, String) {
     (icon.attr("data-icon").unwrap().to_string(), text(name))
 }
 
-/// `docs/specs/web/shell.md`, Expanding and collapsing: the foot button is
-/// a small (`docs/specs/web/design_system.md`, Buttons) `btn-ghost`
-/// `btn-circle`, from `lg` alone, named in a `tooltip-right`
-/// for what it does on the navigation the page is drawn with.
+/// `docs/specs/shell.md`, Navigation, Expanding and collapsing: the foot button
+/// is a small (`docs/specs/ui_patterns.md`, Buttons) `btn-ghost` `btn-circle`,
+/// from `lg` alone, named in a `tooltip-right` for what it does on the
+/// navigation the page is drawn with.
 #[test_log::test(tokio::test)]
 async fn the_foot_button_collapses_the_sidebar_and_expands_the_rail() {
     let pages = Pages::of(a_ticket()).await;
@@ -284,7 +285,7 @@ async fn the_foot_button_collapses_the_sidebar_and_expands_the_rail() {
 
 /// Asserts that the one notice in `html` is an alert of the classes
 /// `classes`, its status's icon `icon` first and its link a daisyUI `link` at
-/// its end: `docs/specs/web/shell.md`, A notice.
+/// its end: `docs/specs/shell.md`, Notices, Their look.
 #[track_caller]
 fn assert_notice(html: &Html, classes: &[&str], icon: &str) {
     let notices = select(html, "#holds > *");

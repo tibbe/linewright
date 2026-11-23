@@ -207,8 +207,7 @@ async fn an_automation_on_workflow_runs_shows_its_trigger_in_words_and_no_first_
     );
 }
 
-/// `docs/specs/design_system.md`, Tables; `docs/specs/web/design_system.md`,
-/// Tables.
+/// `docs/specs/ui_patterns.md`, Tables.
 #[test_log::test(tokio::test)]
 async fn the_automations_table_is_in_a_card_showing_no_name_under_the_unparsed_files_its_rows_named_by_their_headers()
  {
@@ -315,7 +314,7 @@ async fn a_run_handed_back_is_a_failed_last_run() {
     );
 }
 
-/// `docs/specs/design_system.md`, Screen states, Empty.
+/// `docs/specs/ui_patterns.md`, Screen states, Empty.
 #[test_log::test(tokio::test)]
 async fn the_automations_page_with_no_automations_says_so() {
     let pages = Pages::of(with(&[], false)).await;
@@ -423,7 +422,7 @@ async fn the_automations_pages_stream_sends_the_frame_and_the_automations_then_w
     web.stop().await;
 }
 
-/// `docs/specs/design_system.md`, Tables, Pages.
+/// `docs/specs/ui_patterns.md`, Tables, Pages.
 #[test_log::test(tokio::test)]
 async fn the_automations_page_shows_its_automations_25_at_a_time() {
     let names: Vec<String> = (1..=27).map(|n| format!("weekly-{n:02}.md")).collect();
@@ -457,8 +456,9 @@ async fn the_automations_page_shows_its_automations_25_at_a_time() {
     assert_eq!(events_path(&second), Some("/events/automations?page=2"));
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme; `docs/specs/web/shell.md`,
-/// A notice: an automation file that does not parse is a problem, an `alert`
+/// `docs/specs/design_system.md`, Colour; `docs/specs/automations.md`,
+/// Automations, A file that does not parse; `docs/specs/shell.md`, Notices,
+/// Their look: an automation file that does not parse is a problem, an `alert`
 /// in `alert-error` with `failed`'s icon first, not text coloured `error`.
 #[test_log::test(tokio::test)]
 async fn an_unparsed_automation_file_is_an_error_alert_with_faileds_icon_first() {

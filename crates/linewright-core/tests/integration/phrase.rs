@@ -21,7 +21,7 @@ fn a_phrase_reads_as_the_commands_word_items_times_durations_and_labels() {
     );
 }
 
-/// `docs/specs/design_system.md`, Time, Durations.
+/// `docs/specs/ui_patterns.md`, Time, Durations.
 #[test_log::test]
 fn a_duration_reads_as_its_two_largest_units_that_are_not_zero() {
     let shown = [45, 103, 10_929, 86_700]

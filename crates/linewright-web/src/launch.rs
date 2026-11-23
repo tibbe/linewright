@@ -983,7 +983,7 @@ mod tests {
     }
 
     /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
-    /// `docs/specs/design_system.md`, Making, Required.
+    /// `docs/specs/ui_patterns.md`, Making, Required.
     #[test_log::test]
     fn repetitions_that_are_empty_are_required_and_any_other_but_a_whole_number_1_or_more_refused()
     {
@@ -1005,7 +1005,7 @@ mod tests {
     }
 
     /// `docs/specs/benchmarks.md`, Names and IDs, A name;
-    /// `docs/specs/design_system.md`, Making, Required.
+    /// `docs/specs/ui_patterns.md`, Making, Required.
     #[test_log::test]
     fn a_name_that_is_no_name_once_clean_is_required() {
         for (typed, reason) in [
@@ -1114,7 +1114,7 @@ mod tests {
         );
     }
 
-    /// `docs/specs/design_system.md`, Making, A refusal: each field refused
+    /// `docs/specs/ui_patterns.md`, Making, A refusal: each field refused
     /// shows its reason, all at once.
     #[test_log::test]
     fn every_refusal_of_the_form_comes_at_once() {

@@ -1,4 +1,5 @@
-//! The web UI (`docs/specs/web/architecture.md`, Rendering): pages rendered
+//! The web UI (`docs/specs/architecture.md`, The web UI, Rendering and Live
+//! updates): pages rendered
 //! on the server, each kept up by one event stream of the regions that changed.
 
 mod authorization_server;
@@ -354,7 +355,7 @@ struct Page {
     /// The navigation it draws from Tailwind's `lg` width.
     navigation: Navigation,
     /// What the screen says under its heading of what was made or removed
-    /// (`docs/specs/design_system.md`, Making, What was made, and Confirming,
+    /// (`docs/specs/ui_patterns.md`, Making, What was made, and Confirming,
     /// What was removed), as it opens.
     said: Option<html::Html>,
     assets: PageAssets,
@@ -516,7 +517,7 @@ fn benchmark_path(id: BenchmarkId) -> String {
 }
 
 /// The path of tab `tab` of benchmark `id`'s page
-/// (`docs/specs/web/design_system.md`, A tab).
+/// (`docs/specs/ui_patterns.md`, Tabs, Addresses).
 fn benchmark_tab_path(id: BenchmarkId, tab: BenchmarkTab) -> String {
     format!("{}/{}", benchmark_path(id), tab.segment())
 }
@@ -561,7 +562,7 @@ fn with_query(path: &str, query: &str) -> String {
 }
 
 /// A filter's field, if it is set: an empty one is unset
-/// (`docs/specs/design_system.md`, Filters, Unset).
+/// (`docs/specs/ui_patterns.md`, Filters, Unset).
 fn given(field: &str) -> Option<&str> {
     Some(field).filter(|field| !field.is_empty())
 }

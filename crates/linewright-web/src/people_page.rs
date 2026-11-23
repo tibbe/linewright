@@ -1,6 +1,6 @@
-//! People (`docs/specs/access.md`, People; `docs/specs/web/access.md`,
-//! People): a row per person, and for a manager, "Edit", which opens Edit
-//! person, "Disable", which asks first in Disable person, and "Enable".
+//! People (`docs/specs/access.md`, People): a row per person, and for a
+//! manager, "Edit", which opens Edit person, "Disable", which asks first in
+//! Disable person, and "Enable".
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -31,7 +31,7 @@ use super::shell::{self, Area, Frame, Missing, Navigation, Place};
 use super::write::{Refused, Write};
 use super::{ErrorPage, Page, events, render, with_filters};
 
-/// The path of People (`docs/specs/web/design_system.md`, Navigation).
+/// The path of People (`docs/specs/access.md`, People, Address).
 const PATH: &str = "/people";
 
 /// The `manager` setting, as each request of People has it.

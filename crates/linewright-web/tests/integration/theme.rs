@@ -1,8 +1,8 @@
-//! The themes (`docs/specs/web/design_system.md`, Colour scheme), as
+//! The themes (`docs/specs/design_system.md`, Colour), as
 //! `styles/linewright.css` sets them, from which `scripts/fix css` builds
 //! the stylesheet that the web UI serves.
 
-const SPEC: &str = include_str!("../../../../docs/specs/web/design_system.md");
+const SPEC: &str = include_str!("../../../../docs/specs/design_system.md");
 const STYLES: &str = include_str!("../../../../styles/linewright.css");
 
 /// Each variable of the spec's table, with its light and its dark value.
@@ -69,8 +69,9 @@ fn each_theme_sets_exactly_the_variables_of_the_specs_table() {
     assert_eq!(theme_variables("dark"), dark);
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme: the web UI draws in no
-/// colour but daisyUI's, so the stylesheet sets no colour but in its themes.
+/// `docs/specs/design_system.md`, Colour, The colours drawn: the web UI draws
+/// in no colour but daisyUI's, so the stylesheet sets no colour but in its
+/// themes.
 #[test_log::test]
 fn the_stylesheet_sets_no_colour_but_in_its_themes() {
     let mut parts = STYLES.split("@plugin \"./daisyui-theme.mjs\" {");
@@ -86,8 +87,8 @@ fn the_stylesheet_sets_no_colour_but_in_its_themes() {
     );
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme: a fill is drawn only
-/// behind its content colour, so the stylesheet colours no text, outline,
+/// `docs/specs/design_system.md`, Colour, The colours drawn: a fill is drawn
+/// only behind its content colour, so the stylesheet colours no text, outline,
 /// border or ring in one.
 #[test_log::test]
 fn the_stylesheet_colours_nothing_in_a_fill_but_its_background() {
@@ -128,7 +129,7 @@ fn the_stylesheet_colours_nothing_in_a_fill_but_its_background() {
     assert!(coloured.is_empty(), "{coloured:?}");
 }
 
-/// `docs/specs/web/components.md`, Inline code: `font-mono` at
+/// `docs/specs/components.md`, Inline code: `font-mono` at
 /// `text-[0.9em]`, on `bg-base-content/10`, with `rounded-sm` corners and a
 /// padding of `px-1`.
 #[test_log::test]

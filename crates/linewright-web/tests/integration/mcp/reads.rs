@@ -50,7 +50,7 @@ async fn get_board_narrows_the_board_to_a_person() {
 }
 
 /// `docs/specs/board.md`, Item: its heading, its facts and its runs;
-/// `docs/specs/design_system.md`, Screen states, Nothing there.
+/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn get_item_returns_the_item_its_screen_shows() {
     let pages = Pages::of(a_ticket()).await;

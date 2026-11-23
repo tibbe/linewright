@@ -1,4 +1,4 @@
-//! A table's rows 25 at a time (`docs/specs/design_system.md`, Tables,
+//! A table's rows 25 at a time (`docs/specs/ui_patterns.md`, Tables,
 //! Pages), with the nav under the table that the `pages` macro draws.
 
 use std::num::{IntErrorKind, NonZeroUsize};
@@ -223,7 +223,7 @@ mod tests {
             .collect()
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages.
     #[test_log::test]
     fn a_missing_non_numeric_or_zero_page_is_the_first() {
         for field in [
@@ -242,7 +242,7 @@ mod tests {
         }
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages.
     #[test_log::test]
     fn a_page_shows_25_of_the_tables_rows() {
         assert_eq!(Pages::of(248, requested(1)).range(), 0..25);
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(Pages::of(0, requested(1)).range(), 0..0);
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages, Updates.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages, Updates.
     #[test_log::test]
     fn a_page_that_does_not_exist_shows_as_the_last() {
         assert_eq!(Pages::of(248, requested(11)).range(), 225..248);
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(window(60, 9), ["1", "2", "3*"]);
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages.
     #[test_log::test]
     fn a_table_of_25_rows_or_fewer_shows_no_pages() {
         assert_eq!(Pages::of(0, requested(1)).shown("runs", href), None);
@@ -274,7 +274,7 @@ mod tests {
         assert!(Pages::of(26, requested(1)).shown("runs", href).is_some());
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages, Under the table.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages, Under the table.
     #[test_log::test]
     fn the_nav_says_which_rows_show_of_how_many() {
         let showing = |total, page| {
@@ -289,7 +289,7 @@ mod tests {
         assert_eq!(showing(26, 2), "Showing 26–26 of 26 runs");
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages, Under the table.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages, Under the table.
     #[test_log::test]
     fn the_numbers_are_the_first_the_last_and_two_on_each_side_with_gaps_between() {
         assert_eq!(window(248, 1), ["1*", "2", "3", "…", "10"]);
@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(window(100, 2), ["1", "2*", "3", "4"]);
     }
 
-    /// `docs/specs/design_system.md`, Tables, Pages, Under the table.
+    /// `docs/specs/ui_patterns.md`, Tables, Pages, Under the table.
     #[test_log::test]
     fn previous_is_disabled_on_the_first_page_and_next_on_the_last() {
         let shown = |page| Pages::of(248, requested(page)).shown("runs", href).unwrap();

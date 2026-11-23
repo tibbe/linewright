@@ -1,9 +1,8 @@
 //! Changing a thing in the dialog that "Edit" opens
-//! (`docs/specs/design_system.md`, Editing; `docs/specs/web/design_system.md`,
-//! Editing): Edit benchmark, Edit task and Edit configuration
-//! (`docs/specs/benchmarks.md`), each the dialog that makes a thing, holding
-//! the thing's values as its page's stream last sent them, with "Save" in
-//! place of the button that makes it.
+//! (`docs/specs/ui_patterns.md`, Editing): Edit benchmark, Edit task and Edit
+//! configuration (`docs/specs/benchmarks.md`), each the dialog that makes a
+//! thing, holding the thing's values as its page's stream last sent them, with
+//! "Save" in place of the button that makes it.
 
 use askama::Template;
 use axum::body::Bytes;
@@ -121,7 +120,7 @@ fn failed<F: Field>(e: &anyhow::Error) -> (StatusCode, Refusal<F>) {
 }
 
 /// The refusal of a thing that does not exist, which the dialog shows
-/// above its buttons (`docs/specs/design_system.md`, Editing, A thing that
+/// above its buttons (`docs/specs/ui_patterns.md`, Editing, A thing that
 /// is gone).
 pub(super) fn gone<F: Field>(missing: &Missing) -> (StatusCode, Refusal<F>) {
     (StatusCode::NOT_FOUND, Refusal::Whole(missing.to_string()))

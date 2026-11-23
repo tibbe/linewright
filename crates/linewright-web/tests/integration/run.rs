@@ -219,7 +219,7 @@ async fn the_run_pages_session_settings_open_on_click_to_where_they_came_from_an
     assert_eq!(icons, [Some("chevron-right"), Some("chevron-down")]);
 }
 
-/// `docs/specs/web/design_system.md`, Colour scheme: secondary text is in
+/// `docs/specs/design_system.md`, Type: secondary text is in
 /// `text-base-content/60`.
 #[test_log::test(tokio::test)]
 async fn the_run_page_shows_a_sessions_settings_and_each_entrys_duration_in_secondary_text() {
@@ -311,7 +311,7 @@ async fn the_run_page_shows_the_agents_default_view_with_each_tool_call_folded_t
     assert_no_status_by_colour_alone(&html);
 }
 
-/// `docs/specs/web/components.md`, Transcript, Lines.
+/// `docs/specs/components.md`, Transcript, Lines.
 #[test_log::test(tokio::test)]
 async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_opens_fills() {
     let pages = implemented_as_recorded().await;
@@ -341,7 +341,7 @@ async fn every_entrys_line_starts_with_a_chevron_column_that_only_an_entry_that_
     }
 }
 
-/// `docs/specs/web/components.md`, Transcript: the run page draws each part
+/// `docs/specs/components.md`, Transcript: the run page draws each part
 /// of its transcript in the spec's classes, thinking in secondary text.
 #[test_log::test(tokio::test)]
 async fn the_run_pages_transcript_is_drawn_in_the_specs_classes() {
@@ -879,7 +879,7 @@ async fn the_page_of_a_run_that_started_no_session_says_so() {
     assert_eq!(events_path(&html), Some("/events/runs/2/update-1"));
 }
 
-/// `docs/specs/design_system.md`, Screen states, Nothing there.
+/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn the_page_of_no_run_says_there_is_none() {
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
@@ -1467,7 +1467,7 @@ fn working_step(html: &Html) -> Option<String> {
 }
 
 /// `docs/specs/runs.md`, Run, A session's heading;
-/// `docs/specs/web/components.md`, Transcript, Durations.
+/// `docs/specs/components.md`, Transcript, Durations.
 #[test_log::test(tokio::test)]
 async fn an_ended_sessions_heading_shows_how_long_it_ran_at_its_right_in_secondary_text() {
     let output = cloned_and_called() + &session_ended(at("2026-10-14T12:00:40Z")) + "\n";
@@ -1598,7 +1598,7 @@ async fn a_followed_sessions_heading_ticks_and_it_ends_with_the_agents_working_s
     assert_eq!(ended_heading, [heading("50s")]);
 }
 
-/// `docs/specs/web/components.md`, Transcript: "working" is in secondary
+/// `docs/specs/components.md`, Transcript: "working" is in secondary
 /// text, after a daisyUI `loading` in the `loading-dots` style,
 /// `loading-xs`.
 #[test_log::test(tokio::test)]

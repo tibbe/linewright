@@ -122,7 +122,7 @@ const morphed = (tagName, attributes, attrName, newValue) => {
     );
 }
 
-/// `docs/specs/design_system.md`, Confirming and Making: a dialog that makes
+/// `docs/specs/ui_patterns.md`, Confirming and Making: a dialog that makes
 /// a thing closes once it is made, not as it is sent.
 #[test_log::test(tokio::test)]
 async fn going_ahead_closes_the_confirmation_but_not_a_making_dialog_and_turning_it_down_is_left_to_the_browser()
@@ -716,7 +716,7 @@ async fn a_runs_duration_reads_its_two_largest_units_that_are_not_zero() {
     );
 }
 
-/// Stand-ins for a page with filters (`docs/specs/design_system.md`,
+/// Stand-ins for a page with filters (`docs/specs/ui_patterns.md`,
 /// Filters) and folds: `form` holds the fields `field(tagName, name,
 /// options)` makes, a select with `options` the values of its options,
 /// `fire(type, event)` sends an event to the listeners the script added,
@@ -883,7 +883,7 @@ async fn a_typed_filter_applies_on_enter_alone_with_the_others_set() {
     );
 }
 
-/// `docs/specs/design_system.md`, Tables, Pages, Links: a page link applies
+/// `docs/specs/ui_patterns.md`, Tables, Pages, Links: a page link applies
 /// to the address and the stream as a filter does, a link opened in a new tab
 /// is left to the browser, and changing a filter goes back to the first page.
 #[test_log::test(tokio::test)]
@@ -949,10 +949,9 @@ function tabs() {
 }
 "#;
 
-/// `docs/specs/design_system.md`, Tabs; `docs/specs/web/design_system.md`, A
-/// tab: a tab opens in place, its panel shown and the other's hidden, and the
-/// address becomes its with no reload; one the reader opens elsewhere is left
-/// to the browser.
+/// `docs/specs/ui_patterns.md`, Tabs, Addresses and Links: a tab opens in
+/// place, its panel shown and the other's hidden, and the address becomes its
+/// with no reload; one the reader opens elsewhere is left to the browser.
 #[test_log::test(tokio::test)]
 async fn a_tab_opens_in_place_and_the_address_becomes_its() {
     let applied = applied_after_each(&[
@@ -976,7 +975,7 @@ async fn a_tab_opens_in_place_and_the_address_becomes_its() {
     );
 }
 
-/// `docs/specs/design_system.md`, Tabs, Links: a tab's link carries the
+/// `docs/specs/ui_patterns.md`, Tabs, Links: a tab's link carries the
 /// pages a page link applied.
 #[test_log::test(tokio::test)]
 async fn a_page_link_carries_its_pages_into_the_tab_links() {
@@ -1013,7 +1012,7 @@ steps.push(tabs());"#,
     );
 }
 
-/// `docs/specs/web/design_system.md`, Filters: a search the reader clears by
+/// `docs/specs/ui_patterns.md`, Filters: a search the reader clears by
 /// its own button or by Escape, which fire `search` and no Enter, unsets its
 /// filter; a `search` the reader's Enter already applied applies nothing more.
 #[test_log::test(tokio::test)]
@@ -1042,7 +1041,7 @@ async fn a_search_cleared_by_its_button_unsets_its_filter_once() {
 }
 
 /// `docs/specs/board.md`, Filtering by person, The people, and
-/// `docs/specs/design_system.md`, Filters, Kept.
+/// `docs/specs/ui_patterns.md`, Filters, Kept.
 #[test_log::test(tokio::test)]
 async fn a_select_takes_its_sources_options_after_a_message_and_keeps_its_choice() {
     let page = r#"
@@ -1076,7 +1075,7 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/design_system.md`, Filters: Opened and closed.
+/// `docs/specs/ui_patterns.md`, Filters: Opened and closed.
 #[test_log::test(tokio::test)]
 async fn a_fold_the_reader_opened_or_closed_stays_so_when_an_update_brings_it_back() {
     let page = r#"
@@ -1097,7 +1096,7 @@ fire("htmx:sse:after:message", { detail: { message: { id: "" } } });
     assert_eq!(folds, ["lane-1: true", "lane-2: false", "lane-3: true"]);
 }
 
-/// `docs/specs/design_system.md`, Making: a dialog that makes a thing closes
+/// `docs/specs/ui_patterns.md`, Making: a dialog that makes a thing closes
 /// once Linewright has made it, and opens again as it starts however it was
 /// closed, as the answer to the last thing made started it: Run's "Add task"
 /// offers the benchmark it made (`docs/specs/runs.md`, Run, Capturing).
@@ -1153,7 +1152,7 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/design_system.md`, Editing, The dialog and Saving: a dialog
+/// `docs/specs/ui_patterns.md`, Editing, The dialog and Saving: a dialog
 /// that changes a thing opens holding the thing's values as the page's
 /// stream last sent them, whatever the reader typed before, and once saved
 /// holds what was saved until the stream sends it.
@@ -1220,7 +1219,7 @@ steps.join("\n")
     );
 }
 
-/// `docs/specs/design_system.md`, Making, Required and A refusal: the
+/// `docs/specs/ui_patterns.md`, Making, Required and A refusal: the
 /// browser's message for a making dialog's field it finds empty or of white
 /// space alone is "Required.", as the field's hint says, until the reader
 /// edits it or sends the form again; and editing a field Linewright refused
@@ -1363,7 +1362,7 @@ steps.join("\n")
 
 /// `docs/specs/benchmarks.md`, Benchmark run, The table: a row opens to the
 /// rows under it, and those to theirs, each staying as the reader left it
-/// through updates; `docs/specs/design_system.md`, Tables: only its chevron
+/// through updates; `docs/specs/ui_patterns.md`, Tables: only its chevron
 /// button opens it, and no other part of the row acts on a click.
 #[test_log::test(tokio::test)]
 async fn a_fold_row_opens_to_its_rows_by_its_button_alone_and_stays_as_the_reader_left_it_through_updates()
@@ -1497,7 +1496,7 @@ steps.join("\n")
 }
 
 /// `docs/specs/benchmarks.md`, New task, Fields, and
-/// `docs/specs/design_system.md`, Making, A refusal: the name stays as the
+/// `docs/specs/ui_patterns.md`, Making, A refusal: the name stays as the
 /// reader typed it through updates, and the run sent stays chosen.
 #[test_log::test(tokio::test)]
 async fn the_name_typed_stays_through_updates_and_the_run_sent_stays_chosen() {
@@ -1751,11 +1750,11 @@ held[0].fields.map((field) => `${field.name}=${field.value}`).join(" ")
     );
 }
 
-/// `docs/specs/web/shell.md`, Expanding and collapsing, Remembered: the foot
-/// button collapses the sidebar to the rail and expands it again at once,
-/// naming what it does next, and posts each choice to the URL it holds for
-/// the server to remember, once the one before is answered, without
-/// writing a cookie itself.
+/// `docs/specs/shell.md`, Navigation, Expanding and collapsing and Remembered:
+/// the foot button collapses the sidebar to the rail and expands it again at
+/// once, naming what it does next, and posts each choice to the URL it holds
+/// for the server to remember, once the one before is answered, without writing
+/// a cookie itself.
 #[test_log::test(tokio::test)]
 async fn the_foot_button_collapses_and_expands_the_navigation_and_posts_each_choice_in_turn() {
     let script = served_script().await;

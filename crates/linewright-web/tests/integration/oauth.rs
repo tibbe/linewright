@@ -1,7 +1,7 @@
 //! Linewright as the OAuth authorization server of MCP clients
 //! (`docs/specs/access.md`, The authorization server, Tokens, Consent,
 //! Authorization error, Authorizations and End authorization;
-//! `docs/specs/web/access.md`, Consent, Authorization error and
+//! `docs/specs/access.md`, Consent, Authorization error and
 //! Authorizations), through the router, signing people in with the fake
 //! Google.
 
@@ -316,7 +316,7 @@ async fn a_client_registers_as_a_public_client_and_is_logged() {
 
 /// `docs/specs/access.md`, The authorization server, 1 and 2, When a
 /// request ends, When an authorization begins and Logged, and Consent;
-/// `docs/specs/web/access.md`, Consent.
+/// `docs/specs/access.md`, Consent.
 #[test_log::test(tokio::test)]
 async fn a_person_allows_a_client_then_signs_in_and_the_client_exchanges_its_code_once() {
     let signing = signing(None).await;
@@ -731,7 +731,7 @@ async fn a_person_denies_a_client_which_is_sent_access_denied_and_the_request_en
     assert_eq!(authorization_error(&allowed), ENDED);
 }
 
-/// `docs/specs/access.md`, Consent; `docs/specs/web/access.md`: Allow and
+/// `docs/specs/access.md`, Consent: Allow and
 /// Deny are taken only from Linewright's own pages.
 #[test_log::test(tokio::test)]
 async fn a_decision_from_another_site_is_refused() {
@@ -759,9 +759,8 @@ async fn a_decision_from_another_site_is_refused() {
     assert!(allowed.location().starts_with("/sign-in?"));
 }
 
-/// `docs/specs/access.md`, Authorization error; `docs/specs/web/access.md`,
-/// Authorization error. A metadata document on a loopback address cannot
-/// be fetched.
+/// `docs/specs/access.md`, Authorization error. A metadata document on a
+/// loopback address cannot be fetched.
 #[test_log::test(tokio::test)]
 async fn an_unknown_client_unusable_metadata_document_or_redirect_uri_shows_authorization_error_and_sends_nothing_back()
  {
@@ -874,8 +873,7 @@ fn authorization_rows(html: &Html) -> Vec<Vec<String>> {
 }
 
 /// `docs/specs/access.md`, Authorizations and End authorization;
-/// `docs/specs/shell.md`, The account; `docs/specs/web/access.md`,
-/// Authorizations.
+/// `docs/specs/shell.md`, The account.
 #[test_log::test(tokio::test)]
 async fn a_person_sees_their_authorizations_and_ends_one() {
     let signing = signing(None).await;

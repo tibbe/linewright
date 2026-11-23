@@ -133,7 +133,7 @@ async fn the_item_page_of_an_item_linewright_leaves_says_left_alone_and_why() {
     assert_badges_hold_no_words(&html, "#item dl");
 }
 
-/// `docs/specs/design_system.md`, Screen states, Nothing there.
+/// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn the_item_page_of_no_item_says_there_is_none() {
     let pages = Pages::of(for_the_maintainer()).await;
@@ -596,8 +596,7 @@ fn kind(icon: ElementRef) -> (String, String) {
 
 /// `docs/specs/board.md`, Cards, Issue or pull request, and Item, Heading
 /// and Related items: beside its number, an item carries the icon of an
-/// issue or of a pull request (`docs/specs/web/design_system.md`, Icons),
-/// which a screen reader reads.
+/// issue or of a pull request, which a screen reader reads.
 #[test_log::test(tokio::test)]
 async fn the_item_page_shows_whether_it_and_each_related_item_is_an_issue_or_a_pull_request() {
     let pull = Pull {

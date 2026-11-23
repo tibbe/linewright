@@ -1,4 +1,4 @@
-//! Every icon the web UI draws (`docs/specs/web/design_system.md`, Icons):
+//! Every icon the web UI draws (`docs/specs/design_system.md`, Icons):
 //! Heroicons 2's 20 solid icons, three of GitHub's Octicons and Google's
 //! logo, vendored beside this file with their licences, and which icon each
 //! part has.
@@ -183,7 +183,7 @@ fn view_box_and_paths(source: &'static str) -> (&'static str, String) {
     (view_box, paths)
 }
 
-/// The icon of a status (`docs/specs/web/design_system.md`, Icons).
+/// The icon of a status (`docs/specs/ui_patterns.md`, Status).
 #[expect(
     clippy::trivially_copy_pass_by_ref,
     reason = "askama passes a template's values by reference, at any depth"
@@ -199,7 +199,7 @@ pub(super) fn status_icon(status: &Status) -> Icon {
     }
 }
 
-/// The icon of a status, named by the status (`docs/specs/design_system.md`,
+/// The icon of a status, named by the status (`docs/specs/ui_patterns.md`,
 /// Status), drawn inline.
 #[expect(
     clippy::trivially_copy_pass_by_ref,
@@ -218,7 +218,7 @@ pub(super) fn named_status_icon(status: &Status) -> Html {
 }
 
 /// The icon before a card's title, which stands for what the card holds
-/// (`docs/specs/web/design_system.md`, Cards and Icons).
+/// (`docs/specs/ui_patterns.md`, Cards and Icons).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CardIcon {
     /// What an area holds, by its icon in the navigation.
@@ -284,7 +284,7 @@ impl ItemKind {
 }
 
 /// The logo of an identity provider, its own
-/// (`docs/specs/web/design_system.md`, Icons), which a screen reader reads
+/// (`docs/specs/design_system.md`, Icons), which a screen reader reads
 /// as the provider's name.
 pub(super) fn provider_logo(provider: Provider) -> Html {
     let icon = match provider {
@@ -299,7 +299,8 @@ mod tests {
     use super::super::buttons::Verb;
     use super::*;
 
-    /// `docs/specs/web/design_system.md`, Icons, Which icon.
+    /// `docs/specs/ui_patterns.md`, Icons, Which icon: each part has the icon
+    /// that its section gives it.
     #[test_log::test]
     fn each_part_has_the_icon_the_specs_table_gives_it() {
         let areas = [
@@ -364,7 +365,7 @@ mod tests {
         );
     }
 
-    /// `docs/specs/web/design_system.md`, Icons: an icon is `size-5` before
+    /// `docs/specs/design_system.md`, Icons, Sizes: an icon is `size-5` before
     /// a `card-title`, `size-[1em]` in a `badge`, and `size-4` elsewhere.
     #[test_log::test]
     fn an_icon_is_sized_by_where_it_sits_and_takes_the_colour_of_its_text() {
