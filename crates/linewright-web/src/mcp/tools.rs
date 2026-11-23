@@ -79,17 +79,51 @@ async fn run<T: Tool>(
     caller: &Caller,
     context: &Context<'_>,
 ) -> Result<serde_json::Value, String> {
-    let read =
-        serde_json::from_value::<T>(serde_json::Value::Object(arguments.unwrap_or_default()));
+    let read = read::<T>(serde_json::Value::Object(arguments.unwrap_or_default()));
     let changing = read
         .as_ref()
         .map_or_else(|_| UNREAD.to_string(), Tool::changing);
     let permit = T::ACTION
         .permit::<T::Level>(caller, &changing)
         .map_err(|needs| needs.to_string())?;
-    let tool = read.map_err(|e| format!("The arguments do not read: {e}."))?;
+    let tool = read?;
     let output = tool.run(&permit, context).await?;
     Ok(serde_json::to_value(output).expect("what a tool returns serializes"))
+}
+
+/// `arguments` as `T`, or else the refusal of a wrong argument: the first
+/// that `T`'s input schema does not allow (`docs/specs/access.md`, The MCP
+/// server, A wrong argument).
+fn read<T: Tool>(arguments: serde_json::Value) -> Result<T, String> {
+    let schema = schema_for_input::<T>().expect("the arguments of a tool are an object");
+    let schema = serde_json::Value::Object(schema.as_ref().clone());
+    let validator = jsonschema::validator_for(&schema).expect("a tool's input schema compiles");
+    if let Some(wrong) = validator
+        .iter_errors(&arguments)
+        .find_map(|e| wrong_argument(&e))
+    {
+        return Err(format!("The argument {wrong} is not valid."));
+    }
+    serde_json::from_value(arguments).map_err(|e| format!("The arguments do not read: {e}."))
+}
+
+/// The argument that `error` is about: the first of its instance path;
+/// or, for an error about the arguments as a whole, the missing one for
+/// `required` and the unexpected one for `additionalProperties`, and else
+/// `None`.
+fn wrong_argument(error: &jsonschema::ValidationError<'_>) -> Option<String> {
+    use jsonschema::error::ValidationErrorKind;
+    use jsonschema::paths::LocationSegment;
+    if let Some(LocationSegment::Property(name)) = error.instance_path().iter().next() {
+        return Some(name.into_owned());
+    }
+    if let ValidationErrorKind::Required { property } = error.kind() {
+        return property.as_str().map(str::to_string);
+    }
+    if let ValidationErrorKind::AdditionalProperties { unexpected } = error.kind() {
+        return unexpected.first().cloned();
+    }
+    None
 }
 
 /// The registry of the tools: what lists them, and what runs one by name.
