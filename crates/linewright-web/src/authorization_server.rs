@@ -16,7 +16,7 @@ use serde::Deserialize;
 use tracing::{error, info};
 
 use linewright_core::access::Caller;
-use linewright_core::access::oauth::clients::Clients;
+use linewright_core::access::oauth::clients::{Clients, Found};
 use linewright_core::access::oauth::store::{
     Answered, AuthorizationRequests, Decision, Tokens, Waiting,
 };
@@ -361,13 +361,13 @@ async fn from_client(sources: &Sources, server: &Server, query: &str) -> Respons
                 .find(id, now)
                 .await
         }
-        None => Ok(None),
+        None => Ok(Found::Unknown),
     };
     let client = match client {
         Ok(client) => client,
         Err(e) => return failed("reading a client", &e),
     };
-    match check_authorize(&request, client.as_ref(), server) {
+    match check_authorize(&request, &client, server) {
         Ok(checked) => {
             match AuthorizationRequests::new(sources.runs.database().clone())
                 .begin(&checked, now)

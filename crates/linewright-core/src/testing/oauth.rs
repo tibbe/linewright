@@ -47,7 +47,7 @@ pub fn authorized_by_back_door<'b>(
     cookie: &'b str,
     name: &'b str,
 ) -> impl Future<Output = (String, Tokens)> + 'b {
-    use crate::access::oauth::clients::Clients;
+    use crate::access::oauth::clients::{Clients, Found};
     use crate::access::oauth::store::{
         Answered, AuthorizationRequests, Decision, Tokens as Issuing,
     };
@@ -81,7 +81,7 @@ pub fn authorized_by_back_door<'b>(
             .unwrap_or_else(|e| panic!("registering {name} at {caller}: {e:#}"));
         let path = authorize_path(client.id.as_str(), REDIRECT_URI, "s");
         let request = AuthorizeRequest::from_query(path.split_once('?').unwrap().1);
-        let checked = check_authorize(&request, Some(&client), &server)
+        let checked = check_authorize(&request, &Found::Client(client.clone()), &server)
             .unwrap_or_else(|e| panic!("authorizing at {caller}: {e:?}"));
         let requests = AuthorizationRequests::new(database.clone());
         let secret = requests.begin(&checked, now).await.unwrap();

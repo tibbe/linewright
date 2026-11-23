@@ -466,10 +466,12 @@ async fn a_decision_from_another_site_is_refused() {
     assert_eq!(allowed.status, 303, "the request still waits");
 }
 
-/// `docs/specs/access.md`, The authorization server, 2a, and Authorization
-/// error; `docs/specs/web/access.md`, Authorization error.
+/// `docs/specs/access.md`, Authorization error; `docs/specs/web/access.md`,
+/// Authorization error. A metadata document on a loopback address cannot
+/// be fetched.
 #[test_log::test(tokio::test)]
-async fn an_unknown_client_or_redirect_uri_shows_authorization_error_and_sends_nothing_back() {
+async fn an_unknown_client_unusable_metadata_document_or_redirect_uri_shows_authorization_error_and_sends_nothing_back()
+ {
     let signing = signing(None).await;
     let mut browser = Browsing::new(&signing);
     let client = browser.register("My agent").await;
@@ -478,6 +480,10 @@ async fn an_unknown_client_or_redirect_uri_shows_authorization_error_and_sends_n
         (
             authorize_path("no-such-client", REDIRECT_URI, "s"),
             "Linewright does not know this client.",
+        ),
+        (
+            authorize_path("https://127.0.0.1/client", REDIRECT_URI, "s"),
+            "Linewright cannot use this client's metadata document.",
         ),
         (
             authorize_path(&client, "http://127.0.0.1:5001/cb", "s"),
