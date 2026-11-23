@@ -51,16 +51,14 @@ struct ConsentForm {
 }
 
 /// The path of Consent of the authorization request `secret` names.
-fn consent_path(secret: &str) -> String {
+pub(super) fn consent_path(secret: &str) -> String {
     format!("{AUTHORIZE_PATH}?{REQUEST}={secret}")
 }
 
-/// The secret of the authorization request whose Consent `return_to` is,
-/// if it is one's.
-pub(super) fn waiting_request(return_to: &ReturnPath) -> Option<&str> {
-    return_to
-        .as_str()
-        .strip_prefix(AUTHORIZE_PATH)?
+/// The secret of the authorization request whose Consent `path` is, if it
+/// is one's: the inverse of [`consent_path`].
+pub(super) fn consent_secret(path: &str) -> Option<&str> {
+    path.strip_prefix(AUTHORIZE_PATH)?
         .strip_prefix('?')?
         .strip_prefix(REQUEST)?
         .strip_prefix('=')
