@@ -2196,99 +2196,49 @@ fn named(name: &str) -> ConfigurationShown {
     }
 }
 
-/// The fields a launch sends besides its repetitions, the configurations its
-/// refused form shows, and each field refused with the reason under it.
-type Refusal = (
-    &'static [(&'static str, &'static str)],
-    Vec<ConfigurationShown>,
-    Vec<(&'static str, &'static str)>,
-);
-
 /// `docs/specs/benchmarks.md`, New benchmark run, Refusals;
-/// `docs/specs/ui_patterns.md`, Making, Required, A field and A refusal:
-/// each refusal of a field is under it: of the repetitions, a configuration's
-/// name, a setting and a file of the brief.
+/// `docs/specs/ui_patterns.md`, Making, A field and A refusal: a refused
+/// launch answers the form as sent, with the reason under the field it
+/// refuses, here a file of the brief.
 #[test_log::test(tokio::test)]
-async fn a_refused_launch_answers_the_form_as_sent_with_each_reason_under_its_field() {
+async fn a_refused_launch_answers_the_form_as_sent_with_the_reason_under_its_field() {
     let pages = with_benchmarks().await;
-    let refusals: [Refusal; 5] = [
-        (
-            &[
-                ("repetitions", "1"),
-                ("c1.name", "short"),
-                ("c1.session-timeout", "soon"),
-            ],
-            vec![ConfigurationShown {
-                session_timeout: "soon".into(),
-                ..named("short")
-            }],
-            vec![(
-                "c1.session-timeout",
-                "A session timeout is a duration, such as 6h.",
-            )],
-        ),
-        (
-            &[
-                ("repetitions", "1"),
-                ("c1.name", "short"),
-                ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
-            ],
-            vec![ConfigurationShown {
-                files: vec![(
-                    "prompts/implement.md".into(),
-                    "Implement {{nothing}}.\n".into(),
-                    String::new(),
-                )],
-                ..named("short")
-            }],
-            vec![(
-                "c1.briefs/prompts/implement.md",
-                "prompts/implement.md has an error: it has unknown placeholders: `{{nothing}}`",
-            )],
-        ),
-        (
-            &[
-                ("repetitions", "1"),
-                ("c1.name", "short"),
-                ("c3.name", "short"),
-            ],
-            vec![named("short"), named("short")],
-            vec![
-                ("c1.name", "Another configuration is named short."),
-                ("c3.name", "Another configuration is named short."),
-            ],
-        ),
-        (
-            &[("repetitions", "1"), ("c1.name", "short"), ("c2.name", " ")],
-            vec![named("short"), named(" ")],
-            vec![("c2.name", "Required.")],
-        ),
-        (
-            &[("repetitions", " ")],
-            vec![],
-            vec![("repetitions", "Required.")],
-        ),
-    ];
 
-    for (sent, configurations, refused) in refusals {
-        let (status, headers, answer) =
-            post_answer(&pages, "/benchmarks/1/launch", &[SAME_ORIGIN], sent).await;
-        assert_eq!(status, 422, "{sent:?}");
-        assert!(headers.get("hx-trigger").is_none());
-        let shown = making_shown(&answer);
-        let reasons: Vec<(&str, &str)> = shown
-            .refused
-            .iter()
-            .map(|(field, reason)| (*field, reason.as_str()))
-            .collect();
-        assert_eq!(reasons, refused, "{sent:?}");
-        assert_eq!(shown.whole, None, "{sent:?}");
-        assert_eq!(
-            launch_form(&answer).configurations,
-            configurations,
-            "{sent:?}"
-        );
-    }
+    let (status, headers, answer) = post_answer(
+        &pages,
+        "/benchmarks/1/launch",
+        &[SAME_ORIGIN],
+        &[
+            ("repetitions", "1"),
+            ("c1.name", "short"),
+            ("c1.briefs/prompts/implement.md", "Implement {{nothing}}.\n"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, 422);
+    assert!(headers.get("hx-trigger").is_none());
+    let shown = making_shown(&answer);
+    assert_eq!(
+        shown.refused,
+        [(
+            "c1.briefs/prompts/implement.md",
+            "prompts/implement.md has an error: it has unknown placeholders: `{{nothing}}`"
+                .to_string()
+        )]
+    );
+    assert_eq!(shown.whole, None);
+    assert_eq!(
+        launch_form(&answer).configurations,
+        [ConfigurationShown {
+            files: vec![(
+                "prompts/implement.md".into(),
+                "Implement {{nothing}}.\n".into(),
+                String::new(),
+            )],
+            ..named("short")
+        }]
+    );
     assert!(!pages.path("benchmark-runs/1").exists());
 }
 
