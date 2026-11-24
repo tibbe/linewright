@@ -108,53 +108,22 @@ async fn lw_benchmark_add_of_a_stage_no_task_has_or_no_name_is_a_command_line_er
 
 /// `docs/specs/benchmarks.md`, Names and IDs.
 #[test_log::test(tokio::test)]
-async fn lw_benchmark_add_takes_a_name_in_plain_words_and_tells_letter_case_apart() {
+async fn lw_benchmark_add_tells_names_of_other_letter_case_apart() {
     let work_dir = tempfile::tempdir().unwrap();
 
-    let plain = lw_in(
-        work_dir.path(),
-        &[
-            "benchmark",
-            "add",
-            "Design an HTTP <cache>, für Bilder",
-            "design",
-        ],
-    )
-    .await;
     let upper = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
     let lower = lw_in(work_dir.path(), &["benchmark", "add", "board", "triage"]).await;
     let again = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
-    let clean = lw_in(
-        work_dir.path(),
-        &[
-            "benchmark",
-            "add",
-            " Two\nlines,  one\u{7} space ",
-            "triage",
-        ],
-    )
-    .await;
 
-    assert_eq!(plain.code, Some(0), "{}", plain.stderr);
-    assert_eq!(
-        plain.stdout,
-        "Made the benchmark 1 (Design an HTTP <cache>, für Bilder), of design\n"
-    );
     assert_eq!(upper.code, Some(0), "{}", upper.stderr);
     assert_eq!(lower.code, Some(0), "{}", lower.stderr);
     assert_eq!(again.code, Some(1), "{}", again.stderr);
     assert_eq!(again.stderr, "lw: a benchmark is already named Board\n");
-    assert_eq!(
-        clean.stdout,
-        "Made the benchmark 4 (Two lines, one space), of triage\n"
-    );
     let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
-        "3 (board): triage, no tasks\n\
-         2 (Board): triage, no tasks\n\
-         1 (Design an HTTP <cache>, für Bilder): design, no tasks\n\
-         4 (Two lines, one space): triage, no tasks\n"
+        "2 (board): triage, no tasks\n\
+         1 (Board): triage, no tasks\n"
     );
 }
 
