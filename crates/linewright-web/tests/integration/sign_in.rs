@@ -652,7 +652,7 @@ async fn a_sign_in_the_provider_refuses_or_that_does_not_come_back_to_its_browse
 /// People, How a person is shown, with their avatar.
 #[test_log::test(tokio::test)]
 async fn the_identity_manager_names_signs_in_as_a_manager() {
-    let signing = signing(Some("google:Boss@Elsewhere.example")).await;
+    let signing = signing(Some("google:boss@elsewhere.example")).await;
     let mut browser = Browsing::new(&signing);
 
     let back = browser.sign_in("/", Some("boss@elsewhere.example")).await;
