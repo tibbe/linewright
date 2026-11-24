@@ -5,7 +5,7 @@ use crate::name::Name;
 use crate::runs::{RunId, Runs};
 use crate::store::Store;
 use crate::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskStage};
-use crate::testing::{World, back_door, open_designed_gadgets, runs_in};
+use crate::testing::{World, back_door, keep_record, open_designed_gadgets, runs_in};
 
 pub async fn runs(world: &World) -> Runs {
     runs_in(&world.work_dir).await
@@ -116,4 +116,20 @@ pub async fn implemented(world: &World) -> String {
 
 pub fn benchmark(name: &str) -> Name {
     name.parse().unwrap()
+}
+
+/// Keeps the run `hourly.md/1` of the automation `hourly.md`, started by
+/// its schedule and ended done, in the database of `work_dir`.
+pub async fn hourly_run_kept(work_dir: &Path) {
+    keep_record(
+        work_dir,
+        &serde_json::json!({
+            "automation": "hourly.md",
+            "n": 1,
+            "started_at": "2026-10-01T13:00:01Z",
+            "end": {"at": "2026-10-01T13:00:05Z", "ending": "done"},
+            "sessions": ["sessions/automation-hourly.md/20261001T130002Z-automation"],
+        }),
+    )
+    .await;
 }

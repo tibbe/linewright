@@ -63,8 +63,8 @@ async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
 
 #[test_log::test(tokio::test)]
 async fn lw_capture_of_an_automations_run_exits_1_saying_why() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.hourly_by_schedule_then_by_hand().await;
+    let (_world, work_dir) = world_in_work_dir().await;
+    hourly_run_kept(&work_dir.path().join(REPO)).await;
 
     let output = lw_capture(work_dir.path(), "hourly.md/1", "hourly", "Gadgets.\n").await;
 

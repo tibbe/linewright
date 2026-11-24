@@ -5,7 +5,7 @@ use linewright_core::benchmarks::Benchmark;
 use linewright_core::domain::Number;
 use linewright_core::git::{self, CommitId};
 use linewright_core::name::Name;
-use linewright_core::store::API_VERSION;
+use linewright_core::store::{API_VERSION, Store};
 use linewright_core::task::{
     self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskPart, TaskStage,
 };
@@ -78,12 +78,11 @@ async fn forget_every_commit(world: &World) {
     git(&["gc", "--quiet", "--prune=now"]).await;
 }
 
-/// An implement run on a ticket whose branch holds earlier work, which
-/// records the head of the default branch and of the ticket's branch: the
-/// ticket, its run's ID and those heads.
-async fn implemented_on_a_branch(
-    world: &mut World,
-) -> (Number, String, BTreeMap<String, CommitId>) {
+/// A ticket whose branch holds earlier work, handed back, relabeled and
+/// designed again, ready for an implement run that records the head of the
+/// default branch and of the ticket's branch: the ticket, that run's ID and
+/// those heads.
+async fn ready_on_a_branch(world: &World) -> (Number, String, BTreeMap<String, CommitId>) {
     let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
     relabel_ready_for_agent(world, ticket);
     world.designed_on_the_issue(ticket).await;
@@ -91,14 +90,24 @@ async fn implemented_on_a_branch(
         ("main".to_string(), head(world, "main").await),
         (branch.clone(), head(world, &branch).await),
     ]);
-    world.poll().await;
     (ticket, format!("{}/implement-1", ticket.0), heads)
+}
+
+/// The implement run [`ready_on_a_branch`] readies, written through the back
+/// door with the input it recorded: the ticket and the run's ID.
+async fn implemented_on_a_branch(world: &World) -> (Number, String) {
+    let (ticket, run, heads) = ready_on_a_branch(world).await;
+    Store::assign(&*world.store, ticket).await.unwrap();
+    let branches: Vec<&str> = heads.keys().map(String::as_str).collect();
+    world.run_recorded(&run, &[ticket], &branches).await;
+    (ticket, run)
 }
 
 #[test_log::test(tokio::test)]
 async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria() {
     let mut world = World::new().await;
-    let (ticket, run, heads) = implemented_on_a_branch(&mut world).await;
+    let (ticket, run, heads) = ready_on_a_branch(&world).await;
+    world.poll().await;
     let started_at = runs(&world)
         .await
         .read_run(&id(&run))
@@ -182,8 +191,8 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
 #[test_log::test(tokio::test)]
 async fn a_task_reads_with_its_benchmark_and_what_its_directory_gives_and_once_removed_by_its_name()
 {
-    let mut world = World::new().await;
-    let (ticket, run, _) = implemented_on_a_branch(&mut world).await;
+    let world = World::new().await;
+    let (ticket, run) = implemented_on_a_branch(&world).await;
     let started_at = runs(&world)
         .await
         .read_run(&id(&run))
@@ -261,8 +270,8 @@ async fn a_run_id_that_names_no_run_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn an_automations_run_is_refused() {
-    let mut world = World::new().await;
-    world.hourly_by_schedule_then_by_hand().await;
+    let world = World::new().await;
+    hourly_run_kept(&world.work_dir).await;
 
     let refused = capture(&world, "hourly.md/1", "hourly", "Gadgets.\n").await;
 
@@ -316,7 +325,7 @@ async fn a_run_that_recorded_no_input_is_refused() {
 async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
     let world = World::new().await;
     let run = implemented(&world).await;
-    record_as_before_the_properties(&world.dir.path().join("work")).await;
+    record_as_before_the_properties(&world.work_dir).await;
 
     let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
 
@@ -487,8 +496,8 @@ async fn of_two_captures_under_one_name_one_wins_and_the_other_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_whose_commit_the_store_lacks_fails_and_leaves_nothing() {
-    let mut world = World::new().await;
-    let (_, run, _) = implemented_on_a_branch(&mut world).await;
+    let world = World::new().await;
+    let (_, run) = implemented_on_a_branch(&world).await;
     forget_every_commit(&world).await;
 
     let failed = capture(&world, &run, "gadgets", "Lost.\n").await;
@@ -650,8 +659,8 @@ async fn a_new_benchmark_a_benchmark_already_has_the_name_of_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_failed_capture_into_a_new_benchmark_leaves_no_benchmark() {
-    let mut world = World::new().await;
-    let (_, run, _) = implemented_on_a_branch(&mut world).await;
+    let world = World::new().await;
+    let (_, run) = implemented_on_a_branch(&world).await;
     forget_every_commit(&world).await;
 
     let failed = capture_into(
@@ -753,13 +762,7 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
     let world = World::new().await;
     let run = implemented(&world).await;
     let capturable = gadgets_capturable(&world, &run).await;
-    keep_task_row(
-        &world.dir.path().join("work"),
-        IMPLEMENTS,
-        "gadgets",
-        "9/implement-1",
-    )
-    .await;
+    keep_task_row(&world.work_dir, IMPLEMENTS, "gadgets", "9/implement-1").await;
 
     let refused = task::capture(
         &*world.store,
