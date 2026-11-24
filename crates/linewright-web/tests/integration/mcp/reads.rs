@@ -329,18 +329,13 @@ async fn get_run_returns_the_run_and_its_latest_entries_and_the_earlier_ones_bef
 
 /// What the local API answers at `path`, as a monitoring command's `--json`
 /// prints it.
-#[track_caller]
-fn answered(pages: &Pages, path: &str) -> impl Future<Output = Value> + use<> {
-    let caller = Location::caller();
+async fn answered(pages: &Pages, path: &str) -> Value {
     let router = linewright_core::api::router(pages.sources.clone(), CancellationToken::new());
     let path = format!("/api{path}");
-    async move {
-        let (status, body) =
-            status_and_body(routed(&router, hyper::Method::GET, Some("localhost"), &path).await)
-                .await;
-        assert_eq!(status, 200, "{path} at {caller}: {body}");
-        serde_json::from_str(&body).unwrap_or_else(|e| panic!("{path} at {caller}: {e}: {body}"))
-    }
+    let (status, body) =
+        status_and_body(routed(&router, hyper::Method::GET, Some("localhost"), &path).await).await;
+    assert_eq!(status, 200, "{path}: {body}");
+    serde_json::from_str(&body).unwrap_or_else(|e| panic!("{path}: {e}: {body}"))
 }
 
 /// `docs/specs/access.md`, The MCP server, What a tool shows: a fact that

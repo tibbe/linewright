@@ -373,7 +373,6 @@ fn holds_whole(text: &str, owner: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::Location;
     use std::sync::Mutex;
 
     use hyper::Method;
@@ -384,7 +383,6 @@ mod tests {
 
     /// The fixture `name` in `dir`, split into its head's lines and its
     /// body.
-    #[track_caller]
     fn fixture(dir: &str, name: &str) -> (Vec<String>, Bytes) {
         let path = format!(
             "{}/src/trial/fixtures/{dir}/{name}.http",
@@ -401,7 +399,6 @@ mod tests {
     }
 
     /// The request `gh` sent, recorded in the fixture `name`.
-    #[track_caller]
     fn recorded(name: &str) -> Request<Bytes> {
         let (lines, body) = fixture("gh-requests", name);
         let mut first = lines[0].split(' ');
@@ -418,7 +415,6 @@ mod tests {
     }
 
     /// The answer GitHub gave, recorded in the fixture `name`.
-    #[track_caller]
     fn answered(name: &str) -> Response<Bytes> {
         let (lines, body) = fixture("github-answers", name);
         let status = lines[0].split(' ').nth(1).unwrap();
@@ -432,12 +428,10 @@ mod tests {
         answer.body(body).unwrap()
     }
 
-    #[track_caller]
     fn names(target: &str, body: &[u8]) -> bool {
         names_repository(&REPO.parse().unwrap(), target, body)
     }
 
-    #[track_caller]
     fn names_recorded(name: &str) -> bool {
         let request = recorded(name);
         names(&request.uri().to_string(), request.body())
@@ -539,86 +533,70 @@ mod tests {
 
     /// A local server that answers every request with `answer`: its URL,
     /// and the requests it was sent.
-    #[track_caller]
-    fn fake_upstream(
-        answer: Response<Bytes>,
-    ) -> impl Future<Output = (reqwest::Url, Arc<Mutex<Vec<Seen>>>)> {
-        let caller = Location::caller();
-        async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .unwrap_or_else(|e| panic!("listening at {caller}: {e}"));
-            let url = format!("http://{}/", listener.local_addr().unwrap())
-                .parse()
-                .unwrap();
-            let seen = Arc::new(Mutex::new(vec![]));
-            let kept = seen.clone();
-            let (answer_head, answer_body) = answer.into_parts();
-            tokio::spawn(async move {
-                while let Ok((stream, _)) = listener.accept().await {
-                    let kept = kept.clone();
-                    let (answer_head, answer_body) = (answer_head.clone(), answer_body.clone());
-                    tokio::spawn(async move {
-                        let service =
-                            hyper::service::service_fn(move |request: Request<Incoming>| {
-                                let kept = kept.clone();
-                                let reply = Response::from_parts(
-                                    answer_head.clone(),
-                                    Full::new(answer_body.clone()),
-                                );
-                                async move {
-                                    let (asked, asked_body) = request.into_parts();
-                                    let was = Seen {
-                                        method: asked.method,
-                                        target: asked.uri.to_string(),
-                                        headers: asked.headers,
-                                        body: asked_body.collect().await.unwrap().to_bytes(),
-                                    };
-                                    kept.lock().unwrap().push(was);
-                                    Ok::<_, Infallible>(reply)
-                                }
-                            });
-                        let _ = hyper::server::conn::http1::Builder::new()
-                            .serve_connection(TokioIo::new(stream), service)
-                            .await;
+    async fn fake_upstream(answer: Response<Bytes>) -> (reqwest::Url, Arc<Mutex<Vec<Seen>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("listening: {e}"));
+        let url = format!("http://{}/", listener.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        let seen = Arc::new(Mutex::new(vec![]));
+        let kept = seen.clone();
+        let (answer_head, answer_body) = answer.into_parts();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let kept = kept.clone();
+                let (answer_head, answer_body) = (answer_head.clone(), answer_body.clone());
+                tokio::spawn(async move {
+                    let service = hyper::service::service_fn(move |request: Request<Incoming>| {
+                        let kept = kept.clone();
+                        let reply = Response::from_parts(
+                            answer_head.clone(),
+                            Full::new(answer_body.clone()),
+                        );
+                        async move {
+                            let (asked, asked_body) = request.into_parts();
+                            let was = Seen {
+                                method: asked.method,
+                                target: asked.uri.to_string(),
+                                headers: asked.headers,
+                                body: asked_body.collect().await.unwrap().to_bytes(),
+                            };
+                            kept.lock().unwrap().push(was);
+                            Ok::<_, Infallible>(reply)
+                        }
                     });
-                }
-            });
-            (url, seen)
-        }
+                    let _ = hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service)
+                        .await;
+                });
+            }
+        });
+        (url, seen)
     }
 
     /// What `gate` answers `request`.
-    #[track_caller]
-    fn ask(
-        gate: &Gate,
-        request: Request<Bytes>,
-    ) -> impl Future<Output = (StatusCode, HeaderMap, Bytes)> {
-        let caller = Location::caller();
+    async fn ask(gate: &Gate, request: Request<Bytes>) -> (StatusCode, HeaderMap, Bytes) {
         let yaml = std::fs::read_to_string(gate.config().path().join("config.yml"))
-            .unwrap_or_else(|e| panic!("reading the configuration at {caller}: {e}"));
+            .unwrap_or_else(|e| panic!("reading the configuration: {e}"));
         let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
         let socket = PathBuf::from(yaml["http_unix_socket"].as_str().unwrap());
-        async move {
-            let stream = tokio::net::UnixStream::connect(&socket)
-                .await
-                .unwrap_or_else(|e| panic!("connecting at {caller}: {e}"));
-            let (mut sender, connection) =
-                hyper::client::conn::http1::handshake(TokioIo::new(stream))
-                    .await
-                    .unwrap();
-            tokio::spawn(connection);
-            let answer = sender
-                .send_request(request.map(Full::new))
-                .await
-                .unwrap_or_else(|e| panic!("asking at {caller}: {e}"));
-            let (parts, body) = answer.into_parts();
-            let body = body.collect().await.unwrap().to_bytes();
-            (parts.status, parts.headers, body)
-        }
+        let stream = tokio::net::UnixStream::connect(&socket)
+            .await
+            .unwrap_or_else(|e| panic!("connecting: {e}"));
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let answer = sender
+            .send_request(request.map(Full::new))
+            .await
+            .unwrap_or_else(|e| panic!("asking: {e}"));
+        let (parts, body) = answer.into_parts();
+        let body = body.collect().await.unwrap().to_bytes();
+        (parts.status, parts.headers, body)
     }
 
-    #[track_caller]
     fn gate_to(url: reqwest::Url) -> Gate {
         Gate::start(&REPO.parse().unwrap(), Upstream::At(url)).unwrap()
     }

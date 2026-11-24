@@ -21,20 +21,16 @@ struct Routed {
 }
 
 impl Routed {
-    #[track_caller]
-    fn over(records: &[&str]) -> impl Future<Output = Routed> + use<> {
-        let kept = work_dir_keeping(records, &[]);
-        async move {
-            let (dir, work_dir) = kept.await;
-            let sources = sources_before_polling(work_dir).await;
-            let ends = sources.ends.clone();
-            let stopping = CancellationToken::new();
-            Routed {
-                router: api::router(sources, stopping.clone()),
-                ends,
-                stopping,
-                _work_dir: dir,
-            }
+    async fn over(records: &[&str]) -> Routed {
+        let (dir, work_dir) = work_dir_keeping(records, &[]).await;
+        let sources = sources_before_polling(work_dir).await;
+        let ends = sources.ends.clone();
+        let stopping = CancellationToken::new();
+        Routed {
+            router: api::router(sources, stopping.clone()),
+            ends,
+            stopping,
+            _work_dir: dir,
         }
     }
 

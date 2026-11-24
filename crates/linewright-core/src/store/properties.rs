@@ -288,7 +288,6 @@ mod tests {
         Property::Protection,
     ];
 
-    #[track_caller]
     fn fixture(text: &str) -> Value {
         serde_json::from_str(text).unwrap()
     }
@@ -296,7 +295,6 @@ mod tests {
     /// What GitHub answered for tibbe/linewright on 2026-11-15, to
     /// tibbe-bot: its default branch's rules require linear history, and its
     /// protection is not given.
-    #[track_caller]
     fn tibbe_linewright() -> RecordedProperties {
         [
             (
@@ -325,7 +323,6 @@ mod tests {
     }
 
     /// [`tibbe_linewright`], with `answer` for `property`.
-    #[track_caller]
     fn recorded_with(property: Property, answer: Value) -> RecordedProperties {
         let mut recorded = tibbe_linewright();
         recorded

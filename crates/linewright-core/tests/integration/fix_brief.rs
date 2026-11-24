@@ -60,7 +60,6 @@ fn created() -> Timestamp {
 }
 
 /// What a fix-CI brief for `failures` fills `failures` with.
-#[track_caller]
 fn filled_failures(failures: &[CheckFailure]) -> String {
     let issue = issue();
     let ticket = testing::ready(Ticket::read(&issue, None, vec![]));

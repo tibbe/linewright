@@ -77,38 +77,18 @@ impl Rested {
 
     /// What the tool `name` shows the viewer's client, called with
     /// `arguments`.
-    #[track_caller]
-    fn shown(&self, name: &str, arguments: Value) -> impl Future<Output = Value> + use<> {
-        let caller = std::panic::Location::caller();
-        let name = name.to_string();
-        let asked = shown_by(
-            self.ui.local_address(),
-            self.token.clone(),
-            name.clone(),
-            arguments,
-        );
-        async move {
-            let result = asked.await;
-            assert_eq!(result["isError"], false, "{name} at {caller}: {result}");
-            result["structuredContent"].clone()
-        }
+    async fn shown(&self, name: &str, arguments: Value) -> Value {
+        let result = shown_by(self.ui.local_address(), &self.token, name, arguments).await;
+        assert_eq!(result["isError"], false, "{name}: {result}");
+        result["structuredContent"].clone()
     }
 
     /// What `lw` with `args` prints as JSON on the work directory.
-    #[track_caller]
-    fn printed<'a>(&'a self, args: &'a [&'a str]) -> impl Future<Output = Value> + 'a {
-        let caller = std::panic::Location::caller();
-        async move {
-            let printed = lw_in(self.work_dir.path(), args).await;
-            assert_eq!(
-                printed.code,
-                Some(0),
-                "{args:?} at {caller}: {}",
-                printed.stderr
-            );
-            serde_json::from_str(&printed.stdout)
-                .unwrap_or_else(|e| panic!("{args:?} at {caller}: {e}: {}", printed.stdout))
-        }
+    async fn printed(&self, args: &[&str]) -> Value {
+        let printed = lw_in(self.work_dir.path(), args).await;
+        assert_eq!(printed.code, Some(0), "{args:?}: {}", printed.stderr);
+        serde_json::from_str(&printed.stdout)
+            .unwrap_or_else(|e| panic!("{args:?}: {e}: {}", printed.stdout))
     }
 
     async fn stop(self) {
@@ -120,7 +100,7 @@ impl Rested {
 /// The result of calling the tool `name` of the MCP server at `address`
 /// with `arguments`, as the bearer of `token`.
 /// <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#sending-messages-to-the-server>
-async fn shown_by(address: SocketAddr, token: String, name: String, arguments: Value) -> Value {
+async fn shown_by(address: SocketAddr, token: &str, name: &str, arguments: Value) -> Value {
     let call = json!({
         "jsonrpc": "2.0",
         "id": 1,

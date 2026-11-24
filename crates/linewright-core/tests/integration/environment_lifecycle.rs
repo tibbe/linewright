@@ -92,12 +92,10 @@ fn an_event_the_table_has_no_row_for_changes_nothing(#[case] state: State, #[cas
     assert_eq!(on(state, event), (state, vec![]));
 }
 
-#[track_caller]
 fn fingerprint(command: &str) -> Fingerprint {
     Fingerprint::of(command, [("HOME", "/home/lw")])
 }
 
-#[track_caller]
 fn basis(command: &str, time: &str) -> Basis {
     Basis {
         fingerprint: fingerprint(command),

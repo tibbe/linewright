@@ -410,7 +410,6 @@ enum TeamMembershipState {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::Location;
     use std::sync::{Arc, Mutex};
 
     use axum::Router;
@@ -466,42 +465,38 @@ mod tests {
 
     /// GitHub, answering each request by `answer`, and the requests it was
     /// sent.
-    #[track_caller]
-    fn github(answer: Answer) -> impl Future<Output = (GitHubEndpoints, Arc<Mutex<Vec<Sent>>>)> {
-        let caller = Location::caller();
-        async move {
-            let sent = Arc::new(Mutex::new(vec![]));
-            let socket = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .unwrap_or_else(|e| panic!("serving GitHub at {caller}: {e}"));
-            let address = socket
-                .local_addr()
-                .unwrap_or_else(|e| panic!("serving GitHub at {caller}: {e}"));
-            let origin = format!("http://{address}");
-            let router = Router::new().fallback({
-                let sent = sent.clone();
-                move |method: Method, uri: Uri, headers: HeaderMap, body: String| async move {
-                    let path = uri.path_and_query().map(ToString::to_string).unwrap();
-                    sent.lock().unwrap().push(Sent {
-                        method: method.clone(),
-                        path: path.clone(),
-                        authorization: headers
-                            .get("authorization")
-                            .map(|value| value.to_str().unwrap().to_string()),
-                        body,
-                    });
-                    answer(&method, &path, &origin).into_response()
-                }
-            });
-            tokio::spawn(async move { axum::serve(socket, router).await });
-            let url = |path: &str| Url::parse(&format!("http://{address}{path}")).unwrap();
-            let endpoints = GitHubEndpoints {
-                authorize: url("/login/oauth/authorize"),
-                token: url("/login/oauth/access_token"),
-                api: url("/api/"),
-            };
-            (endpoints, sent)
-        }
+    async fn github(answer: Answer) -> (GitHubEndpoints, Arc<Mutex<Vec<Sent>>>) {
+        let sent = Arc::new(Mutex::new(vec![]));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("serving GitHub: {e}"));
+        let address = socket
+            .local_addr()
+            .unwrap_or_else(|e| panic!("serving GitHub: {e}"));
+        let origin = format!("http://{address}");
+        let router = Router::new().fallback({
+            let sent = sent.clone();
+            move |method: Method, uri: Uri, headers: HeaderMap, body: String| async move {
+                let path = uri.path_and_query().map(ToString::to_string).unwrap();
+                sent.lock().unwrap().push(Sent {
+                    method: method.clone(),
+                    path: path.clone(),
+                    authorization: headers
+                        .get("authorization")
+                        .map(|value| value.to_str().unwrap().to_string()),
+                    body,
+                });
+                answer(&method, &path, &origin).into_response()
+            }
+        });
+        tokio::spawn(async move { axum::serve(socket, router).await });
+        let url = |path: &str| Url::parse(&format!("http://{address}{path}")).unwrap();
+        let endpoints = GitHubEndpoints {
+            authorize: url("/login/oauth/authorize"),
+            token: url("/login/oauth/access_token"),
+            api: url("/api/"),
+        };
+        (endpoints, sent)
     }
 
     /// GitHub answering as its documentation shows.
@@ -519,7 +514,6 @@ mod tests {
         (StatusCode::OK, HeaderMap::new(), body.to_string())
     }
 
-    #[track_caller]
     fn client(endpoints: GitHubEndpoints, signup: &[&str]) -> GitHub {
         GitHub {
             client_id: ClientId::new("Iv1.8a61f9b3a7aba766".into()).unwrap(),
@@ -535,7 +529,6 @@ mod tests {
         nonce: "unused",
     };
 
-    #[track_caller]
     fn callback() -> Url {
         Url::parse("https://lw.example.com/auth/github/callback").unwrap()
     }

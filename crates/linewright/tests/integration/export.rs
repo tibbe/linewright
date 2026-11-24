@@ -2,7 +2,6 @@
 //! output of a trial gives its run (`docs/specs/runs.md`, `lw export`).
 
 use std::collections::BTreeSet;
-use std::panic::Location;
 use std::path::PathBuf;
 
 use linewright_core::testing::exports::*;
@@ -13,31 +12,27 @@ use crate::programs::*;
 
 /// A work directory for `lw_in`, whose repository's work directory keeps
 /// the run 1/triage-1, ended done, with one session holding a brief.
-#[track_caller]
-fn triaged_in_work_dir() -> impl Future<Output = tempfile::TempDir> {
-    let caller = Location::caller();
-    async move {
-        let base = tempfile::tempdir().unwrap();
-        let work = base.path().join(REPO);
-        runs_in(&work).await;
-        keep_record(
-            &work,
-            &serde_json::from_str(&item_run_record(
-                1,
-                "triage",
-                1,
-                Some("done"),
-                &json!(["sessions/1/triage-1"]),
-            ))
-            .unwrap(),
-        )
-        .await;
-        let session = work.join("sessions/1/triage-1");
-        std::fs::create_dir_all(&session)
-            .and_then(|()| std::fs::write(session.join("brief.md"), "Triage #1.\n"))
-            .unwrap_or_else(|e| panic!("writing the session at {caller}: {e}"));
-        base
-    }
+async fn triaged_in_work_dir() -> tempfile::TempDir {
+    let base = tempfile::tempdir().unwrap();
+    let work = base.path().join(REPO);
+    runs_in(&work).await;
+    keep_record(
+        &work,
+        &serde_json::from_str(&item_run_record(
+            1,
+            "triage",
+            1,
+            Some("done"),
+            &json!(["sessions/1/triage-1"]),
+        ))
+        .unwrap(),
+    )
+    .await;
+    let session = work.join("sessions/1/triage-1");
+    std::fs::create_dir_all(&session)
+        .and_then(|()| std::fs::write(session.join("brief.md"), "Triage #1.\n"))
+        .unwrap_or_else(|e| panic!("writing the session: {e}"));
+    base
 }
 
 #[test_log::test(tokio::test)]

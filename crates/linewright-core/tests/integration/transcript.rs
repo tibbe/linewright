@@ -1422,7 +1422,6 @@ fn following_a_session_yet_to_write_anything_shows_the_runs_header_once() {
 
 /// The lines of a session's clone that started being made at `start`, then,
 /// if it has, ended `seconds` later with `error`, as `ended` gives them.
-#[track_caller]
 fn cloning(start: &str, ended: Option<(f64, Option<&str>)>) -> String {
     let start = time(start);
     let mut events = transcript::clone_started(start) + "\n";
@@ -1648,7 +1647,6 @@ fn calling(events: &[serde_json::Value]) -> SessionRecord {
     }
 }
 
-#[track_caller]
 fn session_ended(at: &str) -> serde_json::Value {
     serde_json::from_str(&transcript::session_ended(time(at))).unwrap()
 }
@@ -1689,7 +1687,6 @@ fn returned(at: &str, result: &serde_json::Value) -> serde_json::Value {
 
 /// How long the call `t1` that `record` makes lasted, as much of it
 /// `written`.
-#[track_caller]
 fn call_lasted(record: &SessionRecord, written: Written) -> Option<Lasted> {
     let first = Place::Entry(EntryAt {
         turn: 0,
@@ -1862,7 +1859,6 @@ fn waited(at: &str) -> serde_json::Value {
 }
 
 /// How long the session `record` holds has run, as much of it `written`.
-#[track_caller]
 fn session_lasted(record: &SessionRecord, written: Written) -> Option<SessionLasted> {
     transcript::parse(record, written).lasted_so_far()
 }
@@ -2047,7 +2043,6 @@ fn following_shows_each_entry_still_running_again_as_interrupted_once_its_sessio
     assert_eq!(run_ended, " 0:00  clone → interrupted\n");
 }
 
-#[track_caller]
 fn turn_ended(at: &str) -> serde_json::Value {
     serde_json::from_str(&transcript::turn_ended_marker(time(at))).unwrap()
 }

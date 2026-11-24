@@ -46,7 +46,6 @@ impl Record {
 
     /// The attachments directory as a file URL, such as
     /// `file:///tmp/x/Application%20Support/attachments`.
-    #[track_caller]
     fn file_url(&self) -> String {
         let path = self.path();
         assert!(
@@ -70,7 +69,6 @@ impl Record {
     }
 
     /// The path of each file `markdown` refers to.
-    #[track_caller]
     fn attached(&self, markdown: &str) -> Vec<PathBuf> {
         self.resolve(markdown)
             .unwrap()

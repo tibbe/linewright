@@ -1638,7 +1638,6 @@ mod tests {
 
     values!(Listed { title, items: List });
 
-    #[track_caller]
     fn filled(text: &str, items: &[&str]) -> String {
         let template = Template::<Listed>::parse(text.into()).unwrap();
         template.fill(&Listed {

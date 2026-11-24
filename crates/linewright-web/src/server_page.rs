@@ -431,7 +431,6 @@ mod tests {
 
     /// The Environment fact of `environment`, each line as the commands
     /// print its times, with the status it shows in, for lines of one piece.
-    #[track_caller]
     fn environment_lines(environment: &EnvironmentShown) -> Vec<(String, Option<Status>)> {
         self::environment(environment, vec![])
             .lines

@@ -22,7 +22,6 @@ fn tree(files: &[(&str, &str)]) -> tempfile::TempDir {
 
 /// What the scanner prints with `--check` in `dir`, one line per test it
 /// reports, checking that its status agrees.
-#[track_caller]
 fn reports(dir: &Path) -> Vec<String> {
     let output = scanner(dir, &["--check"]);
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -36,7 +35,6 @@ fn reports(dir: &Path) -> Vec<String> {
 }
 
 /// Runs the scanner without `--check` in `dir`, and returns the file at `path`.
-#[track_caller]
 fn after_fix(dir: &Path, path: &str) -> String {
     let output = scanner(dir, &[]);
     assert!(
@@ -48,7 +46,6 @@ fn after_fix(dir: &Path, path: &str) -> String {
 }
 
 /// Runs the scanner in `dir` with `args`.
-#[track_caller]
 fn scanner(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new("python3")
         .args(["-I", "-B", "scripts/test_attributes.py"])

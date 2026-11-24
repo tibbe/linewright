@@ -1,5 +1,3 @@
-use std::panic::Location;
-
 use serde_json::json;
 
 use super::benchmark_runs::{launched, with_benchmark_run};
@@ -585,7 +583,6 @@ type Tab = (String, String, bool, Vec<String>);
 /// `role="tab"` in a daisyUI `tabs tabs-border`, the open one `tab-active`
 /// and `aria-selected`, and controls its panel, which shows only while it is
 /// open.
-#[track_caller]
 fn tabs(html: &Html) -> Vec<Tab> {
     let lists = select(html, "main [role=tablist]");
     assert_eq!(lists.len(), 1, "{}", html.html());
@@ -625,7 +622,6 @@ fn tabs(html: &Html) -> Vec<Tab> {
 
 /// Of the tabs of the Benchmark page `html`, each one's label and whether it
 /// is open.
-#[track_caller]
 pub(super) fn open_tabs(html: &Html) -> Vec<(String, bool)> {
     tabs(html)
         .into_iter()
@@ -974,69 +970,52 @@ async fn removing_a_task_the_benchmark_does_not_hold_is_refused() {
 /// Keeps #1's run `n` of `stage`, started at `started` and ended half an
 /// hour later, and, given the default branch's `head`, the whole input it
 /// recorded.
-#[track_caller]
-fn record_run<'a>(
-    pages: &'a Pages,
-    stage: &str,
-    n: u32,
-    started: &str,
-    head: Option<&str>,
-) -> impl Future<Output = ()> + 'a {
-    let record = pages.record(&json!({
-        "item": 1,
-        "stage": stage,
-        "n": n,
-        "started_at": started,
-        "end": {"at": "2026-10-13T11:30:00Z", "ending": "done"},
-        "sessions": [],
-    }));
-    let input = head.map(|head| {
-        pages.input(
-            &format!("1/{stage}-{n}"),
-            &json!({
-                "api_version": linewright_core::store::API_VERSION,
-                "start": started,
-                "items": [{"number": 1, "resources": {"issues/1": {"number": 1, "title": "Ship gh"}}}],
-                "heads": {"main": head},
-                "properties": {"resources": {"account": {"login": "factory", "id": 7}}},
-            }),
-        )
-    });
-    async move {
-        record.await;
-        if let Some(input) = input {
-            input.await;
-        }
+async fn record_run(pages: &Pages, stage: &str, n: u32, started: &str, head: Option<&str>) {
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": stage,
+            "n": n,
+            "started_at": started,
+            "end": {"at": "2026-10-13T11:30:00Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
+    if let Some(head) = head {
+        pages
+            .input(
+                &format!("1/{stage}-{n}"),
+                &json!({
+                    "api_version": linewright_core::store::API_VERSION,
+                    "start": started,
+                    "items": [{"number": 1, "resources": {"issues/1": {"number": 1, "title": "Ship gh"}}}],
+                    "heads": {"main": head},
+                    "properties": {"resources": {"account": {"login": "factory", "id": 7}}},
+                }),
+            )
+            .await;
     }
 }
 
 /// The default branch's head, committed in `pages`' store.
-#[track_caller]
-fn committed(pages: &Pages) -> impl Future<Output = String> + '_ {
-    let caller = Location::caller();
-    async move {
-        pages
-            .store
-            .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
-            .await
-            .unwrap_or_else(|e| panic!("committing on main at {caller}: {e:#}"))
-    }
+async fn committed(pages: &Pages) -> String {
+    pages
+        .store
+        .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
+        .await
+        .unwrap_or_else(|e| panic!("committing on main: {e:#}"))
 }
 
 /// [`with_benchmarks`]'s pages, with #1's runs: its design run 1, and its
 /// implement runs 1 and 2, the design run and the last implement run
 /// having recorded their whole input.
-#[track_caller]
-fn with_runs() -> impl Future<Output = Pages> {
-    let benchmarks = Box::pin(with_benchmarks());
-    async move {
-        let pages = benchmarks.await;
-        let head = committed(&pages).await;
-        record_run(&pages, "design", 1, "2026-10-13T09:00:00Z", Some(&head)).await;
-        record_run(&pages, "implement", 1, "2026-10-13T10:00:00Z", None).await;
-        record_run(&pages, "implement", 2, "2026-10-13T11:00:00Z", Some(&head)).await;
-        pages
-    }
+async fn with_runs() -> Pages {
+    let pages = Box::pin(with_benchmarks()).await;
+    let head = committed(&pages).await;
+    record_run(&pages, "design", 1, "2026-10-13T09:00:00Z", Some(&head)).await;
+    record_run(&pages, "implement", 1, "2026-10-13T10:00:00Z", None).await;
+    record_run(&pages, "implement", 2, "2026-10-13T11:00:00Z", Some(&head)).await;
+    pages
 }
 
 /// A "New" dialog's form as a reader meets it: the name and value of each
@@ -1045,7 +1024,6 @@ type FormShown<'a> = (Vec<(&'a str, String)>, Option<String>);
 
 /// The New task dialog's form as a reader meets it: the value of each field,
 /// a select's its chosen option's, and the refusal above its buttons, if any.
-#[track_caller]
 fn new_task_form(form: &Html) -> FormShown<'_> {
     let shown = making_shown(form);
     (shown.values, shown.whole)
@@ -1352,18 +1330,15 @@ async fn a_failed_task_says_why_above_the_buttons() {
 
 /// Adds a task capturing run `run` as `gadgets` with `criteria` to the
 /// benchmark `board`: the status and the form it answers with.
-#[track_caller]
-fn add(pages: &Pages, run: &str, criteria: &str) -> impl Future<Output = (u16, Html)> + use<> {
-    let posted = post_answer(
+async fn add(pages: &Pages, run: &str, criteria: &str) -> (u16, Html) {
+    let (status, _, form) = post_answer(
         pages,
         "/benchmarks/1",
         &[SAME_ORIGIN],
         &[("run", run), ("name", "gadgets"), ("criteria", criteria)],
-    );
-    async move {
-        let (status, _, form) = posted.await;
-        (status, form)
-    }
+    )
+    .await;
+    (status, form)
 }
 
 /// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen.
@@ -1478,21 +1453,14 @@ async fn the_benchmark_pages_stream_sends_the_runs_to_capture_as_they_change() {
 }
 
 /// The region `id` of the next event of `events` that sends it.
-#[track_caller]
-fn next_region<'a>(
-    events: &'a mut tokio::sync::mpsc::UnboundedReceiver<String>,
-    id: &'a str,
-) -> impl Future<Output = Html> + 'a {
-    let caller = Location::caller();
-    async move {
-        loop {
-            let event = events
-                .recv()
-                .await
-                .unwrap_or_else(|| panic!("the stream ended before {id}, at {caller}"));
-            if let Some((_, region)) = regions(&event).into_iter().find(|(sent, _)| sent == id) {
-                return region;
-            }
+async fn next_region(events: &mut tokio::sync::mpsc::UnboundedReceiver<String>, id: &str) -> Html {
+    loop {
+        let event = events
+            .recv()
+            .await
+            .unwrap_or_else(|| panic!("the stream ended before {id}"));
+        if let Some((_, region)) = regions(&event).into_iter().find(|(sent, _)| sent == id) {
+            return region;
         }
     }
 }
@@ -1701,7 +1669,6 @@ async fn benchmarks_named_in_plain_words_are_listed_by_the_unicode_collation_alg
 /// a plain `btn` with `pencil-square` before its label
 /// (`docs/specs/ui_patterns.md`, Editing and Icons), and the form of
 /// the dialog it opens.
-#[track_caller]
 pub(super) fn edit_dialog(html: &Html) -> ElementRef<'_> {
     let edit: Vec<ElementRef> = select(html, "#buttons button")
         .into_iter()
@@ -1731,7 +1698,6 @@ pub(super) fn edit_dialog(html: &Html) -> ElementRef<'_> {
 /// Editing, The dialog; `docs/specs/ui_patterns.md`, Editing): titled
 /// `title`, with the fields `labels` above them, then "Cancel" and "Save",
 /// posting to `action`, and what its form holds.
-#[track_caller]
 pub(super) fn edit_form(
     dialog: ElementRef<'_>,
     title: &str,

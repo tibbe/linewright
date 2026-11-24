@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -208,7 +207,6 @@ async fn a_session_that_times_out_has_reported_the_model_it_ran() {
 }
 
 /// The models `reports` named, in order.
-#[track_caller]
 fn models(reports: &Mutex<Vec<Reported>>) -> Vec<String> {
     reports
         .lock()
@@ -222,14 +220,12 @@ fn models(reports: &Mutex<Vec<Reported>>) -> Vec<String> {
 }
 
 /// An `init` event recorded from Claude Code 2.1.311.
-#[track_caller]
 fn recorded_init() -> Value {
     serde_json::from_str(include_str!("fixtures/cost/init.json")).unwrap()
 }
 
 /// The `result` event recorded with [`recorded_init`], of a session that
 /// ran on Opus with subagents on Haiku.
-#[track_caller]
 fn recorded_result() -> Value {
     serde_json::from_str(include_str!("fixtures/cost/result.json")).unwrap()
 }
@@ -266,23 +262,19 @@ fn recorded_figures() -> Figures {
 
 /// What a turn on `harness`, of a session recorded in `dir`, reported last
 /// of its spend, once it reported its start first.
-#[track_caller]
-fn turn_spend(dir: &Path, harness: ClaudeCode) -> impl Future<Output = TurnSpend> + '_ {
-    let caller = Location::caller();
-    async move {
-        let mut session = triage_session(dir);
-        let reports = reports_of(&mut session);
-        let _ = harness.start(&session).await;
-        let reports = reports.lock().unwrap();
-        assert_eq!(
-            reports.first(),
-            Some(&Reported::TurnStarted),
-            "the turn at {caller} reported {reports:?}"
-        );
-        match reports.last() {
-            Some(Reported::TurnEnded(spend)) => spend.clone(),
-            last => panic!("expected the turn's end last at {caller}, got {last:?}"),
-        }
+async fn turn_spend(dir: &Path, harness: ClaudeCode) -> TurnSpend {
+    let mut session = triage_session(dir);
+    let reports = reports_of(&mut session);
+    let _ = harness.start(&session).await;
+    let reports = reports.lock().unwrap();
+    assert_eq!(
+        reports.first(),
+        Some(&Reported::TurnStarted),
+        "the turn reported {reports:?}"
+    );
+    match reports.last() {
+        Some(Reported::TurnEnded(spend)) => spend.clone(),
+        last => panic!("expected the turn's end last, got {last:?}"),
     }
 }
 
@@ -1074,7 +1066,6 @@ async fn a_result_with_fields_linewright_does_not_read_finishes_the_turn() {
 }
 
 /// Why `error` failed on its infrastructure, when it did.
-#[track_caller]
 fn infrastructure_failure(error: SessionError) -> String {
     let SessionError::Infrastructure(reason) = error else {
         panic!("expected an infrastructure failure, got {error:?}");
@@ -1085,7 +1076,6 @@ fn infrastructure_failure(error: SessionError) -> String {
 /// The `result` Claude Code 2.1.323 streams with
 /// `CLAUDE_CODE_STARTUP_FAILURE_RESULTS=1`, on a `~/.claude.json` that is
 /// not valid JSON.
-#[track_caller]
 fn recorded_startup_failure() -> Value {
     serde_json::from_str(include_str!("fixtures/startup_failure/result.json")).unwrap()
 }
@@ -1142,7 +1132,6 @@ async fn a_harness_that_exits_with_an_error_after_its_result_is_an_infrastructur
 
 /// An assistant message, `uuid`, saying `text`, as Claude Code 2.1.287
 /// streamed one and keeps it in its transcript.
-#[track_caller]
 fn message(uuid: &str, text: &str) -> Value {
     let recorded = linewright_core::testing::TURN_2
         .lines()
@@ -1158,7 +1147,6 @@ fn message(uuid: &str, text: &str) -> Value {
 
 /// A session whose harness has its configuration in `config`, as
 /// `session-env` sets it.
-#[track_caller]
 fn session_configured_in(dir: &Path, config: &Path) -> SessionSpec {
     let mut session = triage_session(dir);
     let set = SetEnv::new(

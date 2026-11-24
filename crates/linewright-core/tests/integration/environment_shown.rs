@@ -49,27 +49,23 @@ async fn without_serve_and_with_no_setup_command_a_rebuild_builds_nothing() {
 
 /// The environment of `world`'s repository, kept in the work directory
 /// `dir`, as `serve` drives it.
-#[track_caller]
-fn environment_of<'a>(world: &'a World, dir: &'a Path) -> impl Future<Output = Environment> + 'a {
-    let caller = std::panic::Location::caller();
-    async move {
-        let builder = Builder {
-            store: world.store.clone(),
-            harness: world.harness.clone(),
-            bash: bash(),
-            clock: world.clock.clone(),
-            redaction: Redaction::default(),
-            given: Arc::default(),
-            default_branch: "main".into(),
-            winding_up: linewright_core::winding_up::WindingUp::default(),
-            database: Database::open(dir)
-                .await
-                .unwrap_or_else(|e| panic!("opening the database at {caller} failed: {e:#}")),
-        };
-        Environment::open(linewright_core::environment::dir(dir), builder)
+async fn environment_of(world: &World, dir: &Path) -> Environment {
+    let builder = Builder {
+        store: world.store.clone(),
+        harness: world.harness.clone(),
+        bash: bash(),
+        clock: world.clock.clone(),
+        redaction: Redaction::default(),
+        given: Arc::default(),
+        default_branch: "main".into(),
+        winding_up: linewright_core::winding_up::WindingUp::default(),
+        database: Database::open(dir)
             .await
-            .unwrap_or_else(|e| panic!("opening the environment at {caller} failed: {e:#}"))
-    }
+            .unwrap_or_else(|e| panic!("opening the database failed: {e:#}")),
+    };
+    Environment::open(linewright_core::environment::dir(dir), builder)
+        .await
+        .unwrap_or_else(|e| panic!("opening the environment failed: {e:#}"))
 }
 
 fn setting_up(command: &str) -> SetupRead {

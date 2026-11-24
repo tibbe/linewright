@@ -33,7 +33,6 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
-#[track_caller]
 fn schedule(automation: &Automation) -> &Schedule {
     let Trigger::Schedule(schedule) = &automation.trigger else {
         panic!("{automation:?} is not on a schedule");
@@ -41,7 +40,6 @@ fn schedule(automation: &Automation) -> &Schedule {
     schedule
 }
 
-#[track_caller]
 fn filters(text: &str) -> Filters {
     let automation = parse(&name("fix-ci.md"), text).unwrap();
     let Trigger::WorkflowRun(filters) = automation.trigger else {

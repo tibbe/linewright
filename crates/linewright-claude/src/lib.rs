@@ -933,7 +933,6 @@ mod tests {
         classify(end, "session-1".into(), "the tail".into())
     }
 
-    #[track_caller]
     fn infrastructure(end: TurnEnd) -> String {
         match classified(end) {
             Err(SessionError::Infrastructure(reason)) => reason,

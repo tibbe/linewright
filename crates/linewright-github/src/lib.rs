@@ -7840,7 +7840,6 @@ mod tests {
         /// (<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository>).
         const LISTED_AT_MOST: usize = 1000;
 
-        #[track_caller]
         fn recorded(json: &str) -> Value {
             serde_json::from_str(json).unwrap()
         }
@@ -7930,87 +7929,79 @@ mod tests {
         /// sending it in `If-None-Match` with 304, as GitHub does
         /// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate>);
         /// with what it answered.
-        #[track_caller]
-        fn serving_actions(
-            repo: &str,
-            actions: Actions,
-        ) -> impl Future<Output = (GitHub, Answered)> {
-            let caller = std::panic::Location::caller();
-            let repo = repo.to_string();
-            async move {
-                use axum::http::{HeaderMap, StatusCode as Status, Uri};
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                    .await
-                    .unwrap_or_else(|e| panic!("serving GitHub's Actions at {caller}: {e}"));
-                let base = format!("http://{}", listener.local_addr().unwrap());
-                let answered = Answered::default();
-                let runs = format!("/repos/{repo}/actions/runs");
-                let mut actions = actions;
-                actions
-                    .runs
-                    .sort_by_key(|run| std::cmp::Reverse(run["created_at"].to_string()));
-                let actions = Arc::new(actions);
-                let app = axum::Router::new().fallback({
-                    let (base, answered) = (base.clone(), answered.clone());
-                    move |uri: Uri, headers: HeaderMap| {
-                        let (base, answered, runs) = (base.clone(), answered.clone(), runs.clone());
-                        let actions = actions.clone();
-                        async move {
-                            let path = uri.path();
-                            let query = uri.query().unwrap_or_default();
-                            let (status, link, body) = if path == runs {
-                                let (body, next) = actions.listing(&base, path, query);
-                                let body = body.to_string();
-                                let etag = format!("W/\"{}\"", hex::encode(Sha256::digest(&body)));
-                                if headers
-                                    .get("If-None-Match")
-                                    .is_some_and(|sent| sent == &*etag)
-                                {
-                                    (Status::NOT_MODIFIED, None, (etag, String::new()))
-                                } else {
-                                    let link = next.map(|next| format!("<{next}>; rel=\"next\""));
-                                    (Status::OK, link, (etag, body))
-                                }
+        async fn serving_actions(repo: &str, actions: Actions) -> (GitHub, Answered) {
+            use axum::http::{HeaderMap, StatusCode as Status, Uri};
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .unwrap_or_else(|e| panic!("serving GitHub's Actions: {e}"));
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let answered = Answered::default();
+            let runs = format!("/repos/{repo}/actions/runs");
+            let mut actions = actions;
+            actions
+                .runs
+                .sort_by_key(|run| std::cmp::Reverse(run["created_at"].to_string()));
+            let actions = Arc::new(actions);
+            let app = axum::Router::new().fallback({
+                let (base, answered) = (base.clone(), answered.clone());
+                move |uri: Uri, headers: HeaderMap| {
+                    let (base, answered, runs) = (base.clone(), answered.clone(), runs.clone());
+                    let actions = actions.clone();
+                    async move {
+                        let path = uri.path();
+                        let query = uri.query().unwrap_or_default();
+                        let (status, link, body) = if path == runs {
+                            let (body, next) = actions.listing(&base, path, query);
+                            let body = body.to_string();
+                            let etag = format!("W/\"{}\"", hex::encode(Sha256::digest(&body)));
+                            if headers
+                                .get("If-None-Match")
+                                .is_some_and(|sent| sent == &*etag)
+                            {
+                                (Status::NOT_MODIFIED, None, (etag, String::new()))
                             } else {
-                                let attempt = path
-                                    .strip_prefix(&format!("{runs}/"))
-                                    .and_then(|rest| rest.split_once("/attempts/"))
-                                    .and_then(|(run, n)| {
-                                        actions.attempts.get(&(run.parse().ok()?, n.parse().ok()?))
-                                    });
-                                match attempt {
-                                    Some(attempt) => {
-                                        (Status::OK, None, (String::new(), attempt.to_string()))
-                                    }
-                                    None => (Status::NOT_FOUND, None, (String::new(), "{}".into())),
+                                let link = next.map(|next| format!("<{next}>; rel=\"next\""));
+                                (Status::OK, link, (etag, body))
+                            }
+                        } else {
+                            let attempt = path
+                                .strip_prefix(&format!("{runs}/"))
+                                .and_then(|rest| rest.split_once("/attempts/"))
+                                .and_then(|(run, n)| {
+                                    actions.attempts.get(&(run.parse().ok()?, n.parse().ok()?))
+                                });
+                            match attempt {
+                                Some(attempt) => {
+                                    (Status::OK, None, (String::new(), attempt.to_string()))
                                 }
-                            };
-                            answered
-                                .lock()
-                                .unwrap()
-                                .push((uri.to_string(), status.as_u16()));
-                            let (etag, body) = body;
-                            let mut answer = axum::http::Response::builder().status(status);
-                            if !etag.is_empty() {
-                                answer = answer.header("ETag", etag);
+                                None => (Status::NOT_FOUND, None, (String::new(), "{}".into())),
                             }
-                            if let Some(link) = link {
-                                answer = answer.header("Link", link);
-                            }
-                            answer.body(axum::body::Body::from(body)).unwrap()
+                        };
+                        answered
+                            .lock()
+                            .unwrap()
+                            .push((uri.to_string(), status.as_u16()));
+                        let (etag, body) = body;
+                        let mut answer = axum::http::Response::builder().status(status);
+                        if !etag.is_empty() {
+                            answer = answer.header("ETag", etag);
                         }
+                        if let Some(link) = link {
+                            answer = answer.header("Link", link);
+                        }
+                        answer.body(axum::body::Body::from(body)).unwrap()
                     }
-                });
-                tokio::spawn(async move { axum::serve(listener, app).await });
-                let (owner, name) = repo.split_once('/').unwrap();
-                let github = GitHub {
-                    api: base,
-                    owner: owner.into(),
-                    name: name.into(),
-                    ..github("token")
-                };
-                (github, answered)
-            }
+                }
+            });
+            tokio::spawn(async move { axum::serve(listener, app).await });
+            let (owner, name) = repo.split_once('/').unwrap();
+            let github = GitHub {
+                api: base,
+                owner: owner.into(),
+                name: name.into(),
+                ..github("token")
+            };
+            (github, answered)
         }
 
         /// The requests answered for the path `path`, with their statuses.
@@ -8140,32 +8131,28 @@ mod retry_tests {
 
     /// The error of a request whose connection closes before GitHub answers,
     /// as #934's did.
-    #[track_caller]
-    fn lost_answer() -> impl Future<Output = anyhow::Error> {
-        let caller = std::panic::Location::caller();
-        async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .unwrap_or_else(|e| panic!("binding at {caller}: {e}"));
-            let address = listener.local_addr().unwrap();
-            tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = [0; 1024];
-                let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut request).await;
-            });
-            let github = GitHub {
-                api: format!("http://{address}"),
-                ..github()
-            };
-            let answered = github
-                .rest_once::<Value>(
-                    Method::POST,
-                    "/repos/tibbe/linewright/issues",
-                    Some(json!({})),
-                )
-                .await;
-            answered.map_or_else(|e| e, |v| panic!("answered at {caller}: {v}"))
-        }
+    async fn lost_answer() -> anyhow::Error {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("binding: {e}"));
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut stream, &mut request).await;
+        });
+        let github = GitHub {
+            api: format!("http://{address}"),
+            ..github()
+        };
+        let answered = github
+            .rest_once::<Value>(
+                Method::POST,
+                "/repos/tibbe/linewright/issues",
+                Some(json!({})),
+            )
+            .await;
+        answered.map_or_else(|e| e, |v| panic!("answered: {v}"))
     }
 
     fn github() -> GitHub {
@@ -8186,7 +8173,6 @@ mod retry_tests {
         }
     }
 
-    #[track_caller]
     fn answered(status: u16) -> anyhow::Error {
         ErrorResponse {
             request: CREATE.into(),
@@ -8312,7 +8298,6 @@ mod retry_tests {
         assert!(error.contains("500 Internal Server Error"), "{error}");
     }
 
-    #[track_caller]
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()
     }
@@ -8321,14 +8306,12 @@ mod retry_tests {
     /// issues and pull requests `tibbe-bot` opened last on
     /// <https://github.com/tibbe/linewright>, newest first, cut here to the
     /// fields read. Among them is #934, whose answer was lost.
-    #[track_caller]
     fn issues_created() -> Vec<ListedIssue> {
         serde_json::from_str(include_str!("fixtures/issues-created.json")).unwrap()
     }
 
     /// The issue that would have been opened as the `index`th of
     /// `fixtures/issues-created.json`.
-    #[track_caller]
     fn opened_as(index: usize) -> NewIssue {
         let listed: Vec<Value> =
             serde_json::from_str(include_str!("fixtures/issues-created.json")).unwrap();
@@ -8339,7 +8322,6 @@ mod retry_tests {
         }
     }
 
-    #[track_caller]
     fn issue_934() -> NewIssue {
         opened_as(2)
     }
@@ -8397,7 +8379,6 @@ mod retry_tests {
     /// `fixtures/issue-comments.json` is what GitHub returned for the
     /// comments on <https://github.com/tibbe/linewright/issues/930>, cut
     /// here to the fields read.
-    #[track_caller]
     fn comments_on_930() -> Vec<ListedComment> {
         serde_json::from_str(include_str!("fixtures/issue-comments.json")).unwrap()
     }
@@ -8458,7 +8439,6 @@ mod retry_tests {
     /// comments of a review thread on
     /// <https://github.com/tibbe/linewright/pull/862>: `tibbe`'s, then
     /// `tibbe-bot`'s reply.
-    #[track_caller]
     fn thread_on_862() -> Vec<ThreadComment> {
         let response: GqlResponse<ThreadData> =
             serde_json::from_str(include_str!("fixtures/thread-comments.json")).unwrap();
@@ -8573,24 +8553,17 @@ mod recording_tests {
 
     /// A GitHub store on tibbe/linewright, served [`recorded`]'s answers to
     /// requests made with [`API_VERSION`], and refused any other.
-    #[track_caller]
-    fn serving_recorded() -> impl Future<Output = GitHub> {
-        serving_recorded_with_rules(None)
+    async fn serving_recorded() -> GitHub {
+        serving_recorded_with_rules(None).await
     }
 
     /// [`serving_recorded`]'s store, answering a request for `main`'s rules
     /// with `rules` in place of the recorded list, when given.
-    #[track_caller]
-    fn serving_recorded_with_rules(
-        rules: Option<(Status, &'static str)>,
-    ) -> impl Future<Output = GitHub> {
-        let caller = std::panic::Location::caller();
-        async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .unwrap_or_else(|e| panic!("serving the recorded answers at {caller}: {e}"));
-            serving_on(listener, rules)
-        }
+    async fn serving_recorded_with_rules(rules: Option<(Status, &'static str)>) -> GitHub {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("serving the recorded answers: {e}"));
+        serving_on(listener, rules)
     }
 
     /// What GitHub answered, read with [`API_VERSION`], for `main`'s rules on
@@ -8685,7 +8658,6 @@ mod recording_tests {
         }
     }
 
-    #[track_caller]
     fn resource(recorded: &str) -> Value {
         serde_json::from_str(recorded).unwrap()
     }

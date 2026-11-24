@@ -3,7 +3,6 @@
 //! (`docs/specs/benchmarks.md`, Trials, The output of a trial).
 
 use std::collections::BTreeMap;
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -23,13 +22,6 @@ use linewright_core::trial::{self, Configuration, ConfigurationRefusal, OutputRe
 use linewright_core::work_settings::{Effort, RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
-/// Captures `world`'s run `run` as a task, and gives its directory.
-#[track_caller]
-fn captured<'a>(world: &'a World, run: &'a str) -> impl Future<Output = PathBuf> + 'a {
-    let caller = Location::caller();
-    task_at(caller, world, run)
-}
-
 /// A trial's output, and how its run ended or why it did not run.
 pub(crate) struct RanTrial {
     pub(crate) out: PathBuf,
@@ -40,59 +32,51 @@ pub(crate) struct RanTrial {
 /// factory config `adjust` makes of the tests' own, its work directory
 /// `REPO`'s and its output under `under`, and waits for what it leaves to
 /// remove.
-#[track_caller]
-fn ran_trial<'a>(
-    dir: &'a Path,
-    under: &'a Path,
+async fn ran_trial(
+    dir: &Path,
+    under: &Path,
     harness: Arc<ScriptedHarness>,
-    adjust: impl FnOnce(&mut FactoryConfig) + 'a,
-) -> impl Future<Output = RanTrial> + 'a {
-    ran_trial_with(dir, under, harness, adjust, None)
+    adjust: impl FnOnce(&mut FactoryConfig),
+) -> RanTrial {
+    ran_trial_with(dir, under, harness, adjust, None).await
 }
 
 /// [`ran_trial`], with `configuration` if one is given.
-#[track_caller]
-pub(crate) fn ran_trial_with<'a>(
-    dir: &'a Path,
-    under: &'a Path,
+pub(crate) async fn ran_trial_with(
+    dir: &Path,
+    under: &Path,
     harness: Arc<ScriptedHarness>,
-    adjust: impl FnOnce(&mut FactoryConfig) + 'a,
-    configuration: Option<&'a Configuration>,
-) -> impl Future<Output = RanTrial> + 'a {
-    let caller = Location::caller();
-    async move {
-        let task = Task::open(dir)
-            .await
-            .unwrap_or_else(|e| panic!("opening the case at {caller}: {e}"));
-        let out = under.join("out");
-        let output =
-            trial::Output::make(&out).unwrap_or_else(|e| panic!("the output at {caller}: {e}"));
-        let mut config = config(&under.join("work").join(REPO)).await;
-        adjust(&mut config);
-        let winding_up = config.winding_up.clone();
-        let ended = Box::pin(trial::run(
-            &task,
-            &output,
-            harness,
-            config,
-            configuration,
-            &trial::Under::command(),
-        ))
-        .await;
-        winding_up.wait().await;
-        RanTrial { out, ended }
-    }
+    adjust: impl FnOnce(&mut FactoryConfig),
+    configuration: Option<&Configuration>,
+) -> RanTrial {
+    let task = Task::open(dir)
+        .await
+        .unwrap_or_else(|e| panic!("opening the case: {e}"));
+    let out = under.join("out");
+    let output = trial::Output::make(&out).unwrap_or_else(|e| panic!("the output: {e}"));
+    let mut config = config(&under.join("work").join(REPO)).await;
+    adjust(&mut config);
+    let winding_up = config.winding_up.clone();
+    let ended = Box::pin(trial::run(
+        &task,
+        &output,
+        harness,
+        config,
+        configuration,
+        &trial::Under::command(),
+    ))
+    .await;
+    winding_up.wait().await;
+    RanTrial { out, ended }
 }
 
 impl RanTrial {
-    #[track_caller]
     fn read(&self, name: &str) -> String {
         let path = self.out.join(name);
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
     }
 
     /// Each write, in order: its kind, and its fields.
-    #[track_caller]
     fn writes(&self) -> Vec<(String, Value)> {
         let mut names = vec![];
         for entry in std::fs::read_dir(self.out.join("writes"))
@@ -119,7 +103,6 @@ impl RanTrial {
     }
 
     /// The fields of each write of `kind`, in order.
-    #[track_caller]
     fn writes_of(&self, kind: &str) -> Vec<Value> {
         self.writes()
             .into_iter()
@@ -253,7 +236,6 @@ async fn a_trials_run_reads_back_from_its_output_as_the_trial_wrote_it() {
 }
 
 /// Asserts that `part` is a number of seconds on a line of its own.
-#[track_caller]
 fn assert_seconds(part: &str) {
     let seconds = part.strip_suffix('\n').map(str::parse::<f64>);
     assert!(
@@ -263,7 +245,6 @@ fn assert_seconds(part: &str) {
 }
 
 /// The cost a trial's output keeps, its time checked and left out.
-#[track_caller]
 fn cost_without_time(ran_trial: &RanTrial) -> Value {
     let mut cost: Value = serde_json::from_str(&ran_trial.read("cost.json")).unwrap();
     let seconds = cost.as_object_mut().unwrap().remove("seconds");
@@ -355,7 +336,7 @@ async fn a_design_task_is_run_numbering_its_tickets_above_the_tasks_items() {
     tickets_script(&world);
     let issue = open_undesigned_gadgets(&world);
     world.poll().await;
-    let task = captured(&world, &format!("{}/design-1", issue.0)).await;
+    let task = task(&world, &format!("{}/design-1", issue.0)).await;
     for _ in 0..3 {
         open_ticket(&world, "Opened since");
     }
@@ -387,7 +368,7 @@ async fn an_implement_task_is_run_pushing_its_branch_into_the_output() {
     implement_gadgets(&world);
     let ticket = open_designed_gadgets(&world);
     world.poll().await;
-    let task = captured(&world, &format!("{}/implement-1", ticket.0)).await;
+    let task = task(&world, &format!("{}/implement-1", ticket.0)).await;
     let harness = world.harness.clone();
     let under = tempfile::tempdir().unwrap();
 
@@ -430,7 +411,6 @@ async fn an_implement_task_is_run_pushing_its_branch_into_the_output() {
 /// What the socket that the configuration of `gh` in the environment of
 /// `spec`'s session names answers a `GET` of `target`, as `gh` sends it:
 /// the whole answer, or why there is none.
-#[track_caller]
 pub(crate) fn gh_answer(spec: &SessionSpec, target: &str) -> String {
     use std::io::{Read as _, Write as _};
 
@@ -575,7 +555,6 @@ async fn a_trials_run_does_not_count_toward_max_runs() {
 }
 
 /// Commits `files` to the default branch of the task in `task`.
-#[track_caller]
 fn commit_to_task(task: &Path, files: &[(&str, &str)]) {
     let checkout = tempfile::tempdir().unwrap();
     let repository = task.join("repository.git");
@@ -704,7 +683,6 @@ async fn a_trial_removes_the_directory_of_one_a_signal_ended() {
 
 /// Linewright's own text of the file at `path` under `briefs/`, below a
 /// line `marker`.
-#[track_caller]
 fn marked(path: &str, marker: &str) -> String {
     let own = linewright_core::testing::repository()
         .join("briefs")
@@ -790,7 +768,6 @@ async fn a_configuration_wins_over_the_tasks_files_and_the_flags_leaving_the_res
 }
 
 /// The path of each file the refusal `refused` names, and its error.
-#[track_caller]
 fn refused_files(refused: Result<Configuration, ConfigurationRefusal>) -> Vec<(String, String)> {
     match refused {
         Err(ConfigurationRefusal::Errors { errors, .. }) => errors

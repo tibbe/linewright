@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::panic::Location;
 use std::path::Path;
 
 use linewright_core::benchmarks::Benchmark;
@@ -18,25 +17,24 @@ use serde_json::{Value, json};
 const SECRET: &str = "s3cr3t-of-the-maintainer";
 
 /// The lines `git` writes with `args` in the repository at `dir`, failing
-/// the test at `caller` when it fails.
-async fn git_lines_at(caller: &Location<'_>, dir: &Path, args: &[&str]) -> Vec<String> {
+/// the test when it fails.
+async fn git_lines(dir: &Path, args: &[&str]) -> Vec<String> {
     git::git(dir, args)
         .await
-        .unwrap_or_else(|e| panic!("git {args:?} at {caller}: {e:#}"))
+        .unwrap_or_else(|e| panic!("git {args:?}: {e:#}"))
         .lines()
         .map(str::to_string)
         .collect()
 }
 
 /// The head of `branch` in `world`'s store.
-async fn head_at(caller: &Location<'_>, world: &World, branch: &str) -> CommitId {
+async fn head(world: &World, branch: &str) -> CommitId {
     let rev = format!("refs/heads/{branch}");
-    let lines = git_lines_at(caller, &world.store.repository(), &["rev-parse", &rev]).await;
+    let lines = git_lines(&world.store.repository(), &["rev-parse", &rev]).await;
     CommitId::from(lines[0].as_str())
 }
 
 /// The names of the entries in `dir`, none when it does not exist.
-#[track_caller]
 fn entries(dir: &Path) -> BTreeSet<String> {
     match std::fs::read_dir(dir) {
         Ok(entries) => entries
@@ -47,64 +45,54 @@ fn entries(dir: &Path) -> BTreeSet<String> {
     }
 }
 
-#[track_caller]
 fn read(path: &Path) -> String {
     std::fs::read_to_string(path).unwrap()
 }
 
-#[track_caller]
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&read(path)).unwrap()
 }
 
 /// Leaves the store's repository holding one commit, made afresh on
 /// `main`, and no other.
-#[track_caller]
-fn forget_every_commit(world: &World) -> impl Future<Output = ()> + '_ {
-    let caller = Location::caller();
-    async move {
-        let repository = world.store.repository();
-        let git = async |args: &[&str]| git_lines_at(caller, &repository, args).await;
-        for name in git(&["for-each-ref", "--format=%(refname)"]).await {
-            git(&["update-ref", "-d", &name]).await;
-        }
-        let empty_tree = git(&["mktree"]).await;
-        let fresh = git(&[
-            "-c",
-            "user.name=Maintainer",
-            "-c",
-            "user.email=maintainer@example.com",
-            "commit-tree",
-            "-m",
-            "Afresh",
-            &empty_tree[0],
-        ])
-        .await;
-        git(&["update-ref", "refs/heads/main", &fresh[0]]).await;
-        git(&["reflog", "expire", "--expire=now", "--all"]).await;
-        git(&["gc", "--quiet", "--prune=now"]).await;
+async fn forget_every_commit(world: &World) {
+    let repository = world.store.repository();
+    let git = async |args: &[&str]| git_lines(&repository, args).await;
+    for name in git(&["for-each-ref", "--format=%(refname)"]).await {
+        git(&["update-ref", "-d", &name]).await;
     }
+    let empty_tree = git(&["mktree"]).await;
+    let fresh = git(&[
+        "-c",
+        "user.name=Maintainer",
+        "-c",
+        "user.email=maintainer@example.com",
+        "commit-tree",
+        "-m",
+        "Afresh",
+        &empty_tree[0],
+    ])
+    .await;
+    git(&["update-ref", "refs/heads/main", &fresh[0]]).await;
+    git(&["reflog", "expire", "--expire=now", "--all"]).await;
+    git(&["gc", "--quiet", "--prune=now"]).await;
 }
 
 /// An implement run on a ticket whose branch holds earlier work, which
 /// records the head of the default branch and of the ticket's branch: the
 /// ticket, its run's ID and those heads.
-#[track_caller]
-fn implemented_on_a_branch(
+async fn implemented_on_a_branch(
     world: &mut World,
-) -> impl Future<Output = (Number, String, BTreeMap<String, CommitId>)> + '_ {
-    let caller = Location::caller();
-    async move {
-        let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
-        relabel_ready_for_agent(world, ticket);
-        world.designed_on_the_issue(ticket).await;
-        let heads = BTreeMap::from([
-            ("main".to_string(), head_at(caller, world, "main").await),
-            (branch.clone(), head_at(caller, world, &branch).await),
-        ]);
-        world.poll().await;
-        (ticket, format!("{}/implement-1", ticket.0), heads)
-    }
+) -> (Number, String, BTreeMap<String, CommitId>) {
+    let (ticket, branch) = world.ticket_handed_back_with_its_branch().await;
+    relabel_ready_for_agent(world, ticket);
+    world.designed_on_the_issue(ticket).await;
+    let heads = BTreeMap::from([
+        ("main".to_string(), head(world, "main").await),
+        (branch.clone(), head(world, &branch).await),
+    ]);
+    world.poll().await;
+    (ticket, format!("{}/implement-1", ticket.0), heads)
 }
 
 #[test_log::test(tokio::test)]
@@ -177,8 +165,7 @@ async fn an_implement_run_is_captured_with_its_items_its_heads_and_its_criteria(
         read(&dir.join("criteria.md")),
         "A good result adds gadgets.\n"
     );
-    let refs = git_lines_at(
-        Location::caller(),
+    let refs = git_lines(
         &dir.join("repository.git"),
         &["for-each-ref", "--format=%(refname) %(objectname)"],
     )
@@ -497,36 +484,29 @@ async fn a_capture_whose_commit_the_store_lacks_fails_and_leaves_nothing() {
 
 /// The tasks of the benchmark `name` of `world`, each as its name, its run and
 /// its criteria; `None` when there is no such benchmark.
-#[track_caller]
-fn tasks_of<'a>(
-    world: &'a World,
-    name: &str,
-) -> impl Future<Output = Option<Vec<(String, String, String)>>> + 'a {
-    let caller = Location::caller();
+async fn tasks_of(world: &World, name: &str) -> Option<Vec<(String, String, String)>> {
     let name: Name = name.parse().unwrap();
-    async move {
-        let benchmarks = benchmarks(world).await;
-        let found = benchmarks
-            .named(&name)
-            .await
-            .unwrap_or_else(|e| panic!("finding the benchmark at {caller}: {e:#}"))?;
-        let shown = benchmarks
-            .show(found.id)
-            .await
-            .unwrap_or_else(|e| panic!("showing the benchmark at {caller}: {e:#}"))?;
-        Some(
-            shown
-                .tasks
-                .into_iter()
-                .map(|task| {
-                    let criteria = task
-                        .criteria
-                        .map_or_else(|refused| refused.why, |c| c.as_str().into());
-                    (task.name.to_string(), task.run.to_string(), criteria)
-                })
-                .collect(),
-        )
-    }
+    let benchmarks = benchmarks(world).await;
+    let found = benchmarks
+        .named(&name)
+        .await
+        .unwrap_or_else(|e| panic!("finding the benchmark: {e:#}"))?;
+    let shown = benchmarks
+        .show(found.id)
+        .await
+        .unwrap_or_else(|e| panic!("showing the benchmark: {e:#}"))?;
+    Some(
+        shown
+            .tasks
+            .into_iter()
+            .map(|task| {
+                let criteria = task
+                    .criteria
+                    .map_or_else(|refused| refused.why, |c| c.as_str().into());
+                (task.name.to_string(), task.run.to_string(), criteria)
+            })
+            .collect(),
+    )
 }
 
 #[test_log::test(tokio::test)]
@@ -710,26 +690,18 @@ async fn a_run_captured_into_two_benchmarks_gives_two_tasks() {
 
 /// The capture of `run` of `world` as the task `gadgets` of the benchmark
 /// [`IMPLEMENTS`], checked and not yet written.
-#[track_caller]
-fn gadgets_capturable<'a>(
-    world: &'a World,
-    run: &'a str,
-) -> impl Future<Output = task::Capturable> + 'a {
-    let caller = Location::caller();
+async fn gadgets_capturable(world: &World, run: &str) -> task::Capturable {
     let (run, gadgets) = (id(run), "gadgets".parse().unwrap());
-    let made = made(world, IMPLEMENTS);
-    async move {
-        let implements = made.await;
-        task::capturable(
-            &runs(world).await,
-            &benchmarks(world).await,
-            &run,
-            &gadgets,
-            &BenchmarkChoice::Existing(implements),
-        )
-        .await
-        .unwrap_or_else(|e| panic!("checking the capture at {caller}: {e}"))
-    }
+    let implements = made(world, IMPLEMENTS).await;
+    task::capturable(
+        &runs(world).await,
+        &benchmarks(world).await,
+        &run,
+        &gadgets,
+        &BenchmarkChoice::Existing(implements),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("checking the capture: {e}"))
 }
 
 #[test_log::test(tokio::test)]

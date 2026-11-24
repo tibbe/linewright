@@ -4,7 +4,6 @@
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
-use std::panic::Location;
 
 use crate::domain::Timestamp;
 use crate::store::Store;
@@ -12,12 +11,10 @@ use crate::workflow_run::{
     AttemptConclusion, AttemptId, CompletedAttempt, Conclusion, WorkflowRunId,
 };
 
-#[track_caller]
 fn at(time: &str) -> Timestamp {
     time.parse().unwrap()
 }
 
-#[track_caller]
 fn id(run: u64, attempt: u32) -> AttemptId {
     AttemptId {
         run: WorkflowRunId(run),
@@ -100,56 +97,40 @@ fn unknown(attempts: Vec<CompletedAttempt>, known: &BTreeSet<AttemptId>) -> Vec<
 
 /// `store` holds [`re_run_twice`]'s run, and perhaps others in progress:
 /// every attempt of it is read, and those known need not be.
-#[track_caller]
-pub fn every_attempt_of_a_run_re_run_twice_is_read(store: &dyn Store) -> impl Future<Output = ()> {
-    let caller = Location::caller();
-    async move {
-        let none = BTreeSet::new();
-        let all = read(store, re_run_created(), &none, caller).await;
-        assert_eq!(unknown(all, &none), re_run_twice(), "at {caller}");
+pub async fn every_attempt_of_a_run_re_run_twice_is_read(store: &dyn Store) {
+    let none = BTreeSet::new();
+    let all = read(store, re_run_created(), &none).await;
+    assert_eq!(unknown(all, &none), re_run_twice());
 
-        let known = BTreeSet::from([id(40_834_616_225, 1), id(40_834_616_225, 2)]);
-        let latest = read(store, re_run_created(), &known, caller).await;
-        assert_eq!(unknown(latest, &known), re_run_twice()[2..], "at {caller}");
-    }
+    let known = BTreeSet::from([id(40_834_616_225, 1), id(40_834_616_225, 2)]);
+    let latest = read(store, re_run_created(), &known).await;
+    assert_eq!(unknown(latest, &known), re_run_twice()[2..]);
 }
 
 /// `store` holds `attempt` alone: it is read as it is held.
-#[track_caller]
-pub fn the_attempt_is_read(
-    store: &dyn Store,
-    attempt: CompletedAttempt,
-) -> impl Future<Output = ()> {
-    let caller = Location::caller();
-    async move {
-        let read = read(store, attempt.run_created_at, &BTreeSet::new(), caller).await;
-        assert_eq!(read, [attempt], "at {caller}");
-    }
+pub async fn the_attempt_is_read(store: &dyn Store, attempt: CompletedAttempt) {
+    let read = read(store, attempt.run_created_at, &BTreeSet::new()).await;
+    assert_eq!(read, [attempt]);
 }
 
 /// `store` holds [`re_run_twice`]'s run: a poll after one that read it,
 /// with nothing new, reads the same.
-#[track_caller]
-pub fn a_poll_with_nothing_new_reads_the_same(store: &dyn Store) -> impl Future<Output = ()> {
-    let caller = Location::caller();
-    async move {
-        let none = BTreeSet::new();
-        for _ in 0..2 {
-            let read = read(store, re_run_created(), &none, caller).await;
-            assert_eq!(unknown(read, &none), re_run_twice(), "at {caller}");
-        }
+pub async fn a_poll_with_nothing_new_reads_the_same(store: &dyn Store) {
+    let none = BTreeSet::new();
+    for _ in 0..2 {
+        let read = read(store, re_run_created(), &none).await;
+        assert_eq!(unknown(read, &none), re_run_twice());
     }
 }
 
-/// What `store` reads, failing the test called at `caller` when it fails.
+/// What `store` reads, failing the test when it fails.
 async fn read(
     store: &dyn Store,
     created_since: Timestamp,
     known: &BTreeSet<AttemptId>,
-    caller: &Location<'_>,
 ) -> Vec<CompletedAttempt> {
     store
         .completed_attempts(created_since, known)
         .await
-        .unwrap_or_else(|e| panic!("reading the completed attempts at {caller}: {e:#}"))
+        .unwrap_or_else(|e| panic!("reading the completed attempts: {e:#}"))
 }

@@ -1,5 +1,4 @@
 use std::future::Future;
-use std::panic::Location;
 use std::sync::{Arc, Mutex};
 
 use tracing_subscriber::fmt::TestWriter;
@@ -70,33 +69,24 @@ impl Log {
     }
 }
 
-/// Waits until `done` holds, failing the test at the line that waited if it
-/// doesn't within 10s.
-#[track_caller]
-pub fn eventually(done: impl Fn() -> bool) -> impl Future<Output = ()> {
-    eventually_async(move || std::future::ready(done()))
+/// Waits until `done` holds, failing the test if it doesn't within 10s.
+pub async fn eventually(done: impl Fn() -> bool) {
+    eventually_async(move || std::future::ready(done())).await;
 }
 
 /// [`eventually`], for a condition that is async.
-#[track_caller]
-pub fn eventually_async<F: Future<Output = bool>>(
-    done: impl Fn() -> F,
-) -> impl Future<Output = ()> {
-    let caller = Location::caller();
-    async move {
-        let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            while !done().await {
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-        })
-        .await;
-        assert!(waited.is_ok(), "timed out waiting at {caller}");
-    }
+pub async fn eventually_async<F: Future<Output = bool>>(done: impl Fn() -> F) {
+    let waited = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !done().await {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(waited.is_ok(), "timed out waiting");
 }
 
 /// The keys `shown` and `answered`, both objects, have in common, each
 /// checked to hold the same value in both.
-#[track_caller]
 pub fn shared(shown: &serde_json::Value, answered: &serde_json::Value) -> Vec<String> {
     let (shown, answered) = (shown.as_object().unwrap(), answered.as_object().unwrap());
     shown

@@ -14,7 +14,6 @@ use super::*;
 use linewright_core::testing::oauth::*;
 
 /// What `answer` holds, as JSON.
-#[track_caller]
 fn json(answer: &Answer) -> serde_json::Value {
     let body = answer.html.root_element().text().collect::<String>();
     serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"))
@@ -37,107 +36,65 @@ impl Browsing<'_> {
     }
 
     /// Registers a client named `name`, with [`REDIRECT_URI`]: its ID.
-    #[track_caller]
-    pub(super) fn register<'b>(&'b mut self, name: &'b str) -> impl Future<Output = String> + 'b {
-        let caller = std::panic::Location::caller();
-        async move {
-            let registered = self
-                .post_json(
-                    "/oauth/register",
-                    &serde_json::json!({ "client_name": name, "redirect_uris": [REDIRECT_URI] }),
-                )
-                .await;
-            assert_eq!(
-                registered.status,
-                201,
-                "at {caller}: {}",
-                registered.html.html()
-            );
-            json(&registered)["client_id"]
-                .as_str()
-                .unwrap_or_else(|| panic!("its client_id at {caller}"))
-                .to_string()
-        }
+    pub(super) async fn register(&mut self, name: &str) -> String {
+        let registered = self
+            .post_json(
+                "/oauth/register",
+                &serde_json::json!({ "client_name": name, "redirect_uris": [REDIRECT_URI] }),
+            )
+            .await;
+        assert_eq!(registered.status, 201, "{}", registered.html.html());
+        json(&registered)["client_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("its client_id"))
+            .to_string()
     }
 
     /// Sends the person to authorize `client` with `state`, as the client
     /// does: Consent as it shows.
-    #[track_caller]
-    pub(super) fn reach_consent<'b>(
-        &'b mut self,
-        client: &'b str,
-        state: &'b str,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = std::panic::Location::caller();
-        async move {
-            let sent = self.get(&authorize_path(client, REDIRECT_URI, state)).await;
-            assert_eq!(sent.status, 303, "at {caller}: {}", sent.html.html());
-            assert!(
-                sent.location().starts_with("/oauth/authorize?"),
-                "at {caller}: {}",
-                sent.location()
-            );
-            let consent = self.get(sent.location()).await;
-            assert_eq!(consent.status, 200, "at {caller}: {}", consent.html.html());
-            consent
-        }
+    pub(super) async fn reach_consent(&mut self, client: &str, state: &str) -> Answer {
+        let sent = self.get(&authorize_path(client, REDIRECT_URI, state)).await;
+        assert_eq!(sent.status, 303, "{}", sent.html.html());
+        assert!(
+            sent.location().starts_with("/oauth/authorize?"),
+            "{}",
+            sent.location()
+        );
+        let consent = self.get(sent.location()).await;
+        assert_eq!(consent.status, 200, "{}", consent.html.html());
+        consent
     }
 
     /// Takes "Allow" on `consent`: Sign in as it then shows.
-    #[track_caller]
-    pub(super) fn allow<'b>(
-        &'b mut self,
-        consent: &'b Answer,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = std::panic::Location::caller();
-        async move {
-            let allowed = self
-                .post_fields("/oauth/authorize", &decision_fields(consent, "allow"))
-                .await;
-            assert_eq!(allowed.status, 303, "at {caller}: {}", allowed.html.html());
-            let sign_in = self.get(allowed.location()).await;
-            assert_eq!(sign_in.status, 200, "at {caller}: {}", sign_in.html.html());
-            sign_in
-        }
+    pub(super) async fn allow(&mut self, consent: &Answer) -> Answer {
+        let allowed = self
+            .post_fields("/oauth/authorize", &decision_fields(consent, "allow"))
+            .await;
+        assert_eq!(allowed.status, 303, "{}", allowed.html.html());
+        let sign_in = self.get(allowed.location()).await;
+        assert_eq!(sign_in.status, 200, "{}", sign_in.html.html());
+        sign_in
     }
 
     /// Sends the person to authorize `client` with `state`, allows it on
     /// Consent and signs in with Google as `email`: where the browser is
     /// sent back to the client.
-    #[track_caller]
-    pub(super) fn authorize<'b>(
-        &'b mut self,
-        client: &'b str,
-        state: &'b str,
-        email: &'b str,
-    ) -> impl Future<Output = url::Url> + 'b {
-        let caller = std::panic::Location::caller();
-        async move {
-            let consent = self.reach_consent(client, state).await;
-            let sign_in = self.allow(&consent).await;
-            let back = self.sign_in_on(&sign_in, email).await;
-            assert_eq!(back.status, 303, "at {caller}: {}", back.html.html());
-            url::Url::parse(back.location())
-                .unwrap_or_else(|e| panic!("at {caller}: {e}: {}", back.location()))
-        }
+    pub(super) async fn authorize(&mut self, client: &str, state: &str, email: &str) -> url::Url {
+        let consent = self.reach_consent(client, state).await;
+        let sign_in = self.allow(&consent).await;
+        let back = self.sign_in_on(&sign_in, email).await;
+        assert_eq!(back.status, 303, "{}", back.html.html());
+        url::Url::parse(back.location()).unwrap_or_else(|e| panic!("{e}: {}", back.location()))
     }
 
     /// Takes `decision`, "allow" or "deny", on `consent`: where the browser
     /// is sent.
-    #[track_caller]
-    pub(super) fn decide<'b>(
-        &'b mut self,
-        consent: &'b Answer,
-        decision: &'b str,
-    ) -> impl Future<Output = url::Url> + 'b {
-        let caller = std::panic::Location::caller();
-        async move {
-            let decided = self
-                .post_fields("/oauth/authorize", &decision_fields(consent, decision))
-                .await;
-            assert_eq!(decided.status, 303, "at {caller}: {}", decided.html.html());
-            url::Url::parse(decided.location()).unwrap()
-        }
+    pub(super) async fn decide(&mut self, consent: &Answer, decision: &str) -> url::Url {
+        let decided = self
+            .post_fields("/oauth/authorize", &decision_fields(consent, decision))
+            .await;
+        assert_eq!(decided.status, 303, "{}", decided.html.html());
+        url::Url::parse(decided.location()).unwrap()
     }
 
     /// Exchanges `code` of `client` for tokens.
@@ -186,7 +143,6 @@ impl Browsing<'_> {
 }
 
 /// The form `decision`'s button on `consent` posts.
-#[track_caller]
 fn decision_fields(consent: &Answer, decision: &str) -> Vec<(String, String)> {
     let form = select(
         &consent.html,
@@ -219,7 +175,6 @@ pub(super) fn query_value(url: &url::Url, name: &str) -> Option<String> {
 }
 
 /// The tokens `answer`, a token request's, holds.
-#[track_caller]
 pub(super) fn tokens_of(answer: &Answer) -> Tokens {
     let issued = json(answer);
     Tokens {
@@ -230,20 +185,13 @@ pub(super) fn tokens_of(answer: &Answer) -> Tokens {
 
 /// The identity, as the log gives it, of whom `access` acts as now, if
 /// anyone.
-#[track_caller]
-fn acting_as<'b>(
-    signing: &'b Signing,
-    access: &'b str,
-) -> impl Future<Output = Option<String>> + 'b {
-    let caller = std::panic::Location::caller();
-    async move {
-        let sources = &signing.pages.sources;
-        AccessTokens::new(sources.runs.database().clone())
-            .resolve(access, sources.clock.now())
-            .await
-            .unwrap_or_else(|e| panic!("resolving the access token at {caller}: {e:#}"))
-            .map(|caller| caller.person().logged())
-    }
+async fn acting_as(signing: &Signing, access: &str) -> Option<String> {
+    let sources = &signing.pages.sources;
+    AccessTokens::new(sources.runs.database().clone())
+        .resolve(access, sources.clock.now())
+        .await
+        .unwrap_or_else(|e| panic!("resolving the access token: {e:#}"))
+        .map(|caller| caller.person().logged())
 }
 
 /// Consent's facts: each label and its value.
@@ -493,7 +441,6 @@ async fn a_loopback_redirect_uri_takes_the_port_the_request_gives() {
 }
 
 /// The `Max-Age` of the `Set-Cookie` `cookie`.
-#[track_caller]
 fn max_age(cookie: &str) -> i64 {
     cookie
         .split("; ")
@@ -503,7 +450,6 @@ fn max_age(cookie: &str) -> i64 {
 }
 
 /// What Authorization error says on `answer`, which must be it.
-#[track_caller]
 fn authorization_error(answer: &Answer) -> String {
     assert_eq!(answer.status, 400, "{}", answer.html.html());
     assert!(!answer.headers.contains_key("location"));

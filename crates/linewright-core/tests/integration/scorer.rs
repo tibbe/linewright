@@ -4,7 +4,6 @@
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -32,45 +31,40 @@ use crate::trial::{gh_answer, ran_trial_with};
 /// scorers `harness` scripts and the factory config `adjust` makes of the
 /// tests' own, its work directory under `under`, keeping the score it
 /// makes, and gives its summary, and waits for what it leaves to remove.
-#[track_caller]
-fn scoring<'a>(
-    task: &'a Path,
-    out: &'a Path,
-    under: &'a Path,
+async fn scoring(
+    task: &Path,
+    out: &Path,
+    under: &Path,
     harness: Arc<ScriptedHarness>,
-    adjust: impl FnOnce(&mut FactoryConfig) + 'a,
-) -> impl Future<Output = Result<String, Unscored>> + 'a {
-    let caller = Location::caller();
-    async move {
-        let task = Task::open(task)
-            .await
-            .unwrap_or_else(|e| panic!("opening the case at {caller}: {e}"));
-        let scoreable = scorer::ScoreableTrial::open(out, &task)
-            .await
-            .unwrap_or_else(|e| panic!("opening the output at {caller}: {e}"));
-        let record = ScorerRecord::make(&scoreable)
-            .unwrap_or_else(|e| panic!("making the scorer's record at {caller}: {e}"));
-        let mut config = config(&under.join("work").join(REPO)).await;
-        adjust(&mut config);
-        let winding_up = config.winding_up.clone();
-        let scored = scorer::run(
-            &task,
-            &scoreable,
-            record,
-            harness,
-            config,
-            &Under::command(),
-        )
-        .await;
-        let kept = scored.map(|score: Score| {
-            let summary = score.summary();
-            scorer::keep(&scoreable, score)
-                .unwrap_or_else(|e| panic!("keeping the score at {caller}: {e}"));
-            summary
-        });
-        winding_up.wait().await;
-        kept
-    }
+    adjust: impl FnOnce(&mut FactoryConfig),
+) -> Result<String, Unscored> {
+    let task = Task::open(task)
+        .await
+        .unwrap_or_else(|e| panic!("opening the case: {e}"));
+    let scoreable = scorer::ScoreableTrial::open(out, &task)
+        .await
+        .unwrap_or_else(|e| panic!("opening the output: {e}"));
+    let record = ScorerRecord::make(&scoreable)
+        .unwrap_or_else(|e| panic!("making the scorer's record: {e}"));
+    let mut config = config(&under.join("work").join(REPO)).await;
+    adjust(&mut config);
+    let winding_up = config.winding_up.clone();
+    let scored = scorer::run(
+        &task,
+        &scoreable,
+        record,
+        harness,
+        config,
+        &Under::command(),
+    )
+    .await;
+    let kept = scored.map(|score: Score| {
+        let summary = score.summary();
+        scorer::keep(&scoreable, score).unwrap_or_else(|e| panic!("keeping the score: {e}"));
+        summary
+    });
+    winding_up.wait().await;
+    kept
 }
 
 #[test_log::test(tokio::test)]
@@ -430,7 +424,6 @@ struct Copied {
 
 /// What the scorer called with `call` sees in its copy of the trial, which
 /// it then overwrites the copy's first write of in place.
-#[track_caller]
 fn seen_then_overwritten(call: &Call) -> Copied {
     let prompt = &call.spec.prompt;
     let outcome = PathBuf::from(filled_in(prompt, "outcome"));
@@ -569,7 +562,6 @@ async fn an_output_is_refused_naming_its_outcome_or_its_task_part() {
 }
 
 /// The branch checked out in the clone `dir`.
-#[track_caller]
 fn checked_out(dir: &Path) -> String {
     git_in(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
         .trim()
@@ -602,7 +594,6 @@ async fn the_scorers_clone_is_at_the_default_branch_and_its_gh_is_refused_the_ta
 
 /// Writes the push of `branch` as the output `out` keeps it, as its write
 /// number `n`.
-#[track_caller]
 fn kept_push(out: &Path, n: u32, branch: &str) {
     let writes = out.join("writes");
     std::fs::create_dir_all(&writes).unwrap();

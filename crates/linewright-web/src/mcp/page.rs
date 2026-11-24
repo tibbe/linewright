@@ -149,7 +149,6 @@ pub(super) fn missing(id: &str) -> String {
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn earlier(limit: Option<usize>, before: Option<&str>) -> Earlier {
         Earlier {
             limit: limit.map(|limit| NonZeroUsize::new(limit).unwrap()),
@@ -207,7 +206,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn paging(limit: Option<usize>, after: Option<&str>) -> Paging {
         Paging {
             limit: limit.map(|limit| NonZeroUsize::new(limit).unwrap()),

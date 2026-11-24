@@ -155,7 +155,6 @@ mod tests {
     use super::*;
 
     /// The first column of each row of the spec's Holds table.
-    #[track_caller]
     fn spec_rows() -> Vec<String> {
         let runs = include_str!("../../../docs/specs/runs.md");
         let section = runs

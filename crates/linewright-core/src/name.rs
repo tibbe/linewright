@@ -101,7 +101,6 @@ pub fn collated_by<T>(items: &mut [T], key: impl Fn(&T) -> &str) {
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn name(text: &str) -> Name {
         Name::parse(text).unwrap()
     }

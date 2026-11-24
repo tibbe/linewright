@@ -19,7 +19,6 @@ pub fn write_files(dir: &Path, files: &[(&str, &str)]) {
 }
 
 /// Copies the directory `from` to `to`, as `cp -R` does.
-#[track_caller]
 pub fn copy_dir(from: &Path, to: &Path) {
     let copied = Command::new("cp")
         .arg("-R")

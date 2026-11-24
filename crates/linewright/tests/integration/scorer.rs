@@ -2,7 +2,6 @@
 //! what the trial left, and the score it keeps in the output
 //! (`docs/specs/benchmarks.md`, Scoring).
 
-use std::panic::Location;
 use std::path::Path;
 
 use linewright_core::testing::scores::*;
@@ -14,7 +13,6 @@ use crate::programs::*;
 use crate::trial::{lw_command, lw_isolated};
 
 /// What `lw --version` prints, without its newline.
-#[track_caller]
 fn lw_version() -> String {
     let version = std::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .arg("--version")
@@ -24,7 +22,6 @@ fn lw_version() -> String {
 }
 
 /// A directory to put on the path of `lw`, holding git and bash.
-#[track_caller]
 fn bin_with_git() -> tempfile::TempDir {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");
@@ -34,20 +31,15 @@ fn bin_with_git() -> tempfile::TempDir {
 
 /// Runs `lw score` on the task `task` and the output `out`, with `bin` on
 /// its path, from a work directory of its own.
-#[track_caller]
-fn lw_score<'a>(bin: &'a Path, task: &'a Path, out: &'a Path) -> impl Future<Output = Output> + 'a {
-    let caller = Location::caller();
-    async move {
-        let work =
-            tempfile::tempdir().unwrap_or_else(|e| panic!("a work directory at {caller}: {e}"));
-        lw_isolated(
-            bin,
-            work.path(),
-            &["score", task.to_str().unwrap(), out.to_str().unwrap()],
-            &[],
-        )
-        .await
-    }
+async fn lw_score(bin: &Path, task: &Path, out: &Path) -> Output {
+    let work = tempfile::tempdir().unwrap_or_else(|e| panic!("a work directory: {e}"));
+    lw_isolated(
+        bin,
+        work.path(),
+        &["score", task.to_str().unwrap(), out.to_str().unwrap()],
+        &[],
+    )
+    .await
 }
 
 #[test_log::test(tokio::test)]

@@ -1,11 +1,9 @@
 use super::*;
 
-#[track_caller]
 fn server() -> Server {
     Server::new(PublicUrl::parse("https://lw.example.com").unwrap())
 }
 
-#[track_caller]
 fn client() -> Client {
     Client {
         id: ClientId::of("c-1".into()),
@@ -248,7 +246,6 @@ fn an_unknown_client_an_unusable_metadata_document_or_an_unregistered_redirect_u
 }
 
 /// The error a request is sent back with, as its code.
-#[track_caller]
 fn sent_back(request: &AuthorizeRequest) -> &'static str {
     match check_authorize(request, &Found::Client(client()), &server()) {
         Err(AuthorizeError::SendBack(sent)) => {
@@ -503,7 +500,6 @@ fn refresh(state: RefreshState) -> Stored {
 }
 
 /// The error code a decision refuses with.
-#[track_caller]
 fn refused(decision: TokenDecision) -> &'static str {
     match decision {
         TokenDecision::Refuse(error) => error.error,
@@ -586,7 +582,6 @@ fn a_wrong_or_missing_verifier_is_refused() {
 }
 
 /// The authorization a decision ends, having answered `invalid_grant`.
-#[track_caller]
 fn ended(decision: TokenDecision) -> i64 {
     match decision {
         TokenDecision::End {

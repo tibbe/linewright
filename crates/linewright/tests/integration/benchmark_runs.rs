@@ -8,39 +8,19 @@ use crate::programs::*;
 /// The work directory of `REPO` under `work_dir`, its database made, with
 /// the design benchmark `board`, 1, holding the tasks `lanes`, 1, and
 /// `columns`, 2.
-#[track_caller]
-fn board(work_dir: &Path) -> impl Future<Output = PathBuf> + use<> {
+async fn board(work_dir: &Path) -> PathBuf {
     let repo = work_dir.join(REPO);
-    let runs = Box::pin(runs_in(&repo));
-    let benchmark = Box::pin(keep_benchmark(&repo, "board", "design"));
-    let lanes = Box::pin(keep_task(
-        &repo,
-        "board",
-        "lanes",
-        "4/design-1",
-        "Stacks them.\n",
-    ));
-    let columns = Box::pin(keep_task(
-        &repo,
-        "board",
-        "columns",
-        "3/design-2",
-        "Names them.\n",
-    ));
-    async move {
-        runs.await;
-        benchmark.await;
-        lanes.await;
-        let columns = columns.await;
-        let git = repo.join(format!("tasks/{columns}/commits.git"));
-        std::fs::create_dir_all(git.join("objects")).unwrap();
-        std::fs::write(git.join("HEAD"), "ref\n").unwrap();
-        repo
-    }
+    runs_in(&repo).await;
+    keep_benchmark(&repo, "board", "design").await;
+    keep_task(&repo, "board", "lanes", "4/design-1", "Stacks them.\n").await;
+    let columns = keep_task(&repo, "board", "columns", "3/design-2", "Names them.\n").await;
+    let git = repo.join(format!("tasks/{columns}/commits.git"));
+    std::fs::create_dir_all(git.join("objects")).unwrap();
+    std::fs::write(git.join("HEAD"), "ref\n").unwrap();
+    repo
 }
 
 /// A configuration in a directory of `dir`, setting the model.
-#[track_caller]
 fn short(dir: &Path) -> PathBuf {
     let configuration = dir.join("short");
     std::fs::create_dir_all(configuration.join("briefs/prompts")).unwrap();
@@ -48,7 +28,6 @@ fn short(dir: &Path) -> PathBuf {
     configuration
 }
 
-#[track_caller]
 fn names_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()

@@ -56,7 +56,6 @@ fn borders_and_shadows(element: ElementRef<'_>) -> Vec<&str> {
 
 /// Asserts that `element` is drawn as a card is, in the colour `colour`:
 /// with daisyUI's `shadow-xs` and no border.
-#[track_caller]
 pub(super) fn assert_drawn_as_a_card(element: ElementRef<'_>, colour: &str, context: &str) {
     assert!(
         has_classes(element, &[colour]),
@@ -204,7 +203,6 @@ async fn every_cards_title_has_an_icon_before_it() {
 }
 
 /// The name of `icon`'s icon (`docs/specs/design_system.md`, Icons).
-#[track_caller]
 fn icon_name(icon: ElementRef) -> String {
     icon.attr("data-icon")
         .unwrap_or_else(|| panic!("not an icon of the set: {}", icon.html()))

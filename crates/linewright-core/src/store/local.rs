@@ -3072,35 +3072,31 @@ mod tests {
 
     /// A local store of `repo` holding `attempts`, with the directory it
     /// keeps it in.
-    #[track_caller]
-    fn holding(
+    async fn holding(
         repo: &str,
         attempts: Vec<CompletedAttempt>,
-    ) -> impl Future<Output = (LocalStore, tempfile::TempDir)> {
-        let caller = std::panic::Location::caller();
+    ) -> (LocalStore, tempfile::TempDir) {
         let repo: Repo = repo.parse().unwrap();
-        async move {
-            let root = tempfile::tempdir().unwrap();
-            let store = LocalStore::create(
-                root.path(),
-                Seed {
-                    repo,
-                    default_branch: "main".into(),
-                    linewright: Login::new("linewright"),
-                    issue_types: None,
-                    linear_history: false,
-                    requires_up_to_date: false,
-                    allowed_merge_methods: MergeMethods::all(),
-                },
-                Arc::new(SystemClock),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("creating the local store at {caller}: {e:#}"));
-            for attempt in attempts {
-                store.complete_attempt(attempt);
-            }
-            (store, root)
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::create(
+            root.path(),
+            Seed {
+                repo,
+                default_branch: "main".into(),
+                linewright: Login::new("linewright"),
+                issue_types: None,
+                linear_history: false,
+                requires_up_to_date: false,
+                allowed_merge_methods: MergeMethods::all(),
+            },
+            Arc::new(SystemClock),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("creating the local store: {e:#}"));
+        for attempt in attempts {
+            store.complete_attempt(attempt);
         }
+        (store, root)
     }
 
     #[test_log::test(tokio::test)]

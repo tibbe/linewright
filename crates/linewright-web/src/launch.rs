@@ -957,7 +957,6 @@ mod tests {
 
     /// The fields of a launch sent as `sent`, by the names the dialog gives
     /// them.
-    #[track_caller]
     fn sent(sent: &[(&str, &str)]) -> LaunchFields {
         let (fields, unread) = LaunchFields::read(
             sent.iter()
@@ -974,7 +973,6 @@ mod tests {
     }
 
     /// The refusals of the launch sent as `fields`, over no starting texts.
-    #[track_caller]
     fn refused(fields: &[(&str, &str)]) -> FieldRefusals<LaunchField> {
         match sent(fields).check(&Starting::default()) {
             Ok(_) => panic!("{fields:?} is not refused"),
@@ -1265,7 +1263,6 @@ mod tests {
 
     /// The `config.toml` each configuration of the launch sent as `fields`
     /// keeps over `starting`, or none where it keeps none.
-    #[track_caller]
     fn settings_kept(fields: &[(&str, &str)], starting: &Starting) -> Vec<Option<String>> {
         let (_, configurations) = sent(fields)
             .check(starting)

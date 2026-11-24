@@ -1,7 +1,6 @@
 //! The maintenance command, run in each session's clone before the agent's
 //! first prompt (`docs/specs/runs.md`, Maintenance).
 
-use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -102,51 +101,47 @@ struct Triaged {
 /// Triages an issue in a world maintaining with `command`, each triage
 /// answering that the issue is ready for an agent, and gives the sessions and
 /// the issue's labels then.
-#[track_caller]
-fn triaged_maintaining_with(command: &str) -> impl Future<Output = (Vec<Triaged>, Vec<String>)> {
-    let caller = Location::caller();
-    async move {
-        let mut world = World::with(|config| {
-            maintaining_with(config, command);
-        })
-        .await;
-        let triaged = Arc::new(Mutex::new(vec![]));
-        world.harness.on(WorkKind::Triage, {
-            let triaged = triaged.clone();
-            move |call| {
-                let record = transcript::SessionRecord::read(&call.spec.record)
-                    .unwrap_or_else(|e| panic!("reading the transcript at {caller}: {e:#}"));
-                let maintenance = transcript::parse(&record, transcript::Written::SoFar)
-                    .maintenance
-                    .and_then(|maintenance| match maintenance.ran {
-                        MaintenanceRan::Started { course, .. } => course.ended().cloned(),
-                        MaintenanceRan::Recorded(ended) => Some(ended),
-                    });
-                triaged.lock().unwrap().push(Triaged {
-                    prompt: call
-                        .spec
-                        .prompt
-                        .replace(&call.spec.attachments.display().to_string(), "ATTACHMENTS"),
-                    maintenance,
+async fn triaged_maintaining_with(command: &str) -> (Vec<Triaged>, Vec<String>) {
+    let mut world = World::with(|config| {
+        maintaining_with(config, command);
+    })
+    .await;
+    let triaged = Arc::new(Mutex::new(vec![]));
+    world.harness.on(WorkKind::Triage, {
+        let triaged = triaged.clone();
+        move |call| {
+            let record = transcript::SessionRecord::read(&call.spec.record)
+                .unwrap_or_else(|e| panic!("reading the transcript: {e:#}"));
+            let maintenance = transcript::parse(&record, transcript::Written::SoFar)
+                .maintenance
+                .and_then(|maintenance| match maintenance.ran {
+                    MaintenanceRan::Started { course, .. } => course.ended().cloned(),
+                    MaintenanceRan::Recorded(ended) => Some(ended),
                 });
-                Ok(json!({
-                    "outcome": "ready-for-agent",
-                    "category": "bug",
-                    "comment": "## Agent Brief\n\n**Summary:** It crashes."
-                })
-                .to_string())
-            }
-        });
-        let issue = open_for_triage(&world);
+            triaged.lock().unwrap().push(Triaged {
+                prompt: call
+                    .spec
+                    .prompt
+                    .replace(&call.spec.attachments.display().to_string(), "ATTACHMENTS"),
+                maintenance,
+            });
+            Ok(json!({
+                "outcome": "ready-for-agent",
+                "category": "bug",
+                "comment": "## Agent Brief\n\n**Summary:** It crashes."
+            })
+            .to_string())
+        }
+    });
+    let issue = open_for_triage(&world);
 
-        world.poll().await;
+    world.poll().await;
 
-        let labels = labels(&world.issue(issue))
-            .into_iter()
-            .map(str::to_string)
-            .collect();
-        (std::mem::take(&mut *triaged.lock().unwrap()), labels)
-    }
+    let labels = labels(&world.issue(issue))
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    (std::mem::take(&mut *triaged.lock().unwrap()), labels)
 }
 
 /// `docs/specs/runs.md`, Stages, 2a, and Out of scope: the agent is not told.

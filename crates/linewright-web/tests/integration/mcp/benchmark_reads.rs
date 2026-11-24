@@ -26,7 +26,6 @@ fn seconds_since(pages: &Pages, launch: linewright_core::domain::Timestamp) -> i
 
 /// Checks that `duration` is a time up to now from a launch half an hour
 /// before a call, `up_to_now` seconds before its end.
-#[track_caller]
 fn up_to_now(duration: &Value, up_to_now: i64) {
     let seconds = duration.as_i64().unwrap_or_else(|| panic!("{duration}"));
     assert!(
@@ -259,7 +258,6 @@ fn trial(
 }
 
 /// The entries `shown` gives.
-#[track_caller]
 fn entries(shown: &Value) -> Vec<Value> {
     shown["entries"]
         .as_array()

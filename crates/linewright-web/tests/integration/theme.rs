@@ -9,7 +9,6 @@ use linewright_core::testing::repository;
 /// # Panics
 ///
 /// If it can't be read, naming the path.
-#[track_caller]
 fn repo_file(path: &str) -> String {
     let path = repository().join(path);
     std::fs::read_to_string(&path)
@@ -19,7 +18,6 @@ fn repo_file(path: &str) -> String {
 const STYLES: &str = "styles/linewright.css";
 
 /// Each variable of the spec's table, with its light and its dark value.
-#[track_caller]
 fn spec_variables() -> Vec<(String, String, String)> {
     repo_file("docs/specs/design_system.md")
         .lines()
@@ -47,7 +45,6 @@ fn unquoted(cell: &str) -> String {
 
 /// The variables that the stylesheet's theme block named `name` sets, in
 /// order.
-#[track_caller]
 fn theme_variables(name: &str) -> Vec<(String, String)> {
     let stylesheet = repo_file(STYLES);
     let blocks: Vec<&str> = stylesheet

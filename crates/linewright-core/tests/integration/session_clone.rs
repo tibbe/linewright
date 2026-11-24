@@ -1,7 +1,6 @@
 //! Making a session's clone, the first step of its session
 //! (`docs/specs/runs.md`, Stages).
 
-use std::panic::Location;
 use std::time::Duration;
 
 use linewright_core::reconcile::WorkKind;
@@ -12,40 +11,32 @@ use linewright_core::testing::session_clones::*;
 use linewright_core::testing::*;
 
 /// How many sessions each of `world`'s runs started.
-#[track_caller]
-fn sessions_per_run(world: &World) -> impl Future<Output = Vec<usize>> + '_ {
-    let caller = Location::caller();
-    async move {
-        runs_in(&world.dir.path().join("work"))
-            .await
-            .read()
-            .await
-            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))
-            .iter()
-            .map(|run| run.sessions.len())
-            .collect()
-    }
+async fn sessions_per_run(world: &World) -> Vec<usize> {
+    runs_in(&world.dir.path().join("work"))
+        .await
+        .read()
+        .await
+        .unwrap_or_else(|e| panic!("reading the runs: {e:#}"))
+        .iter()
+        .map(|run| run.sessions.len())
+        .collect()
 }
 
 /// The clones left in `world`'s work directory once every removal pending
 /// has ended.
-#[track_caller]
-fn clones_left(world: &World) -> impl Future<Output = Vec<std::ffi::OsString>> + '_ {
-    let caller = Location::caller();
-    async move {
-        world.factory.winding_up().wait().await;
-        let clones = world.dir.path().join("work").join("clones");
-        match std::fs::read_dir(clones) {
-            Ok(entries) => entries
-                .map(|entry| {
-                    entry
-                        .unwrap_or_else(|e| panic!("reading the clones at {caller}: {e}"))
-                        .file_name()
-                })
-                .collect(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
-            Err(e) => panic!("reading the clones at {caller}: {e}"),
-        }
+async fn clones_left(world: &World) -> Vec<std::ffi::OsString> {
+    world.factory.winding_up().wait().await;
+    let clones = world.dir.path().join("work").join("clones");
+    match std::fs::read_dir(clones) {
+        Ok(entries) => entries
+            .map(|entry| {
+                entry
+                    .unwrap_or_else(|e| panic!("reading the clones: {e}"))
+                    .file_name()
+            })
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(e) => panic!("reading the clones: {e}"),
     }
 }
 

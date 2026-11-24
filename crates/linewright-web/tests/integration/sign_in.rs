@@ -5,7 +5,6 @@
 //! over HTTP.
 
 use std::collections::BTreeMap;
-use std::panic::Location;
 
 use linewright_core::access::people::People;
 use linewright_core::access::providers::fake::{
@@ -92,59 +91,50 @@ pub(super) struct Signing {
     github: FakeGitHub,
 }
 
-#[track_caller]
-pub(super) fn signing(manager: Option<&str>) -> impl Future<Output = Signing> + use<> {
-    signing_offering(Offering::Both, manager)
+pub(super) async fn signing(manager: Option<&str>) -> Signing {
+    signing_offering(Offering::Both, manager).await
 }
 
-#[track_caller]
-fn signing_offering(
-    offering: Offering,
-    manager: Option<&str>,
-) -> impl Future<Output = Signing> + use<> {
-    let caller = Location::caller();
-    let manager = manager.map(ToString::to_string);
-    async move {
-        let pages = Pages::of(a_ticket()).await;
-        let google = FakeGoogle::serve(accounts(), pages.sources.clock.clone())
-            .await
-            .unwrap_or_else(|e| panic!("serving the fake Google at {caller}: {e:#}"));
-        let github = FakeGitHub::serve(github_accounts())
-            .await
-            .unwrap_or_else(|e| panic!("serving the fake GitHub at {caller}: {e:#}"));
-        let github_settings = GitHub {
-            client_id: ClientId::new("github-id".into()).unwrap(),
-            secret: ClientSecret::new("github-s3cret".into()).unwrap(),
-            signup: SignUpOrgs::of("acme")
-                .unwrap()
-                .and(&SignUpOrgs::of("guild/builders").unwrap()),
-            endpoints: github.endpoints(),
-        };
-        let google_settings = Google {
-            signup: SignUpDomains::of("example.com").unwrap(),
-            endpoints: google.endpoints(),
-            ..ui().providers.google().unwrap().clone()
-        };
-        let providers = match offering {
-            Offering::Both => Providers::Both(google_settings, github_settings),
-            Offering::GitHubAlone => Providers::GitHub(github_settings),
-        };
-        let manager = manager.map(|name| {
-            linewright_core::access::people::ManagerName::parse(&name, &providers)
-                .unwrap_or_else(|e| panic!("{name} at {caller}: {e:?}"))
-        });
-        let ui = linewright_core::config::Ui {
-            providers,
-            manager,
-            ..ui()
-        };
-        let router = linewright_web::router(pages.sources.clone(), &ui, pages.stopping.clone());
-        Signing {
-            pages,
-            router,
-            _google: google,
-            github,
-        }
+async fn signing_offering(offering: Offering, manager: Option<&str>) -> Signing {
+    let pages = Pages::of(a_ticket()).await;
+    let google = FakeGoogle::serve(accounts(), pages.sources.clock.clone())
+        .await
+        .unwrap_or_else(|e| panic!("serving the fake Google: {e:#}"));
+    let github = FakeGitHub::serve(github_accounts())
+        .await
+        .unwrap_or_else(|e| panic!("serving the fake GitHub: {e:#}"));
+    let github_settings = GitHub {
+        client_id: ClientId::new("github-id".into()).unwrap(),
+        secret: ClientSecret::new("github-s3cret".into()).unwrap(),
+        signup: SignUpOrgs::of("acme")
+            .unwrap()
+            .and(&SignUpOrgs::of("guild/builders").unwrap()),
+        endpoints: github.endpoints(),
+    };
+    let google_settings = Google {
+        signup: SignUpDomains::of("example.com").unwrap(),
+        endpoints: google.endpoints(),
+        ..ui().providers.google().unwrap().clone()
+    };
+    let providers = match offering {
+        Offering::Both => Providers::Both(google_settings, github_settings),
+        Offering::GitHubAlone => Providers::GitHub(github_settings),
+    };
+    let manager = manager.map(|name| {
+        linewright_core::access::people::ManagerName::parse(name, &providers)
+            .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+    });
+    let ui = linewright_core::config::Ui {
+        providers,
+        manager,
+        ..ui()
+    };
+    let router = linewright_web::router(pages.sources.clone(), &ui, pages.stopping.clone());
+    Signing {
+        pages,
+        router,
+        _google: google,
+        github,
     }
 }
 
@@ -156,13 +146,11 @@ pub(super) struct Answer {
 }
 
 impl Answer {
-    #[track_caller]
     pub(super) fn location(&self) -> &str {
         self.headers["location"].to_str().unwrap()
     }
 
     /// Each `Set-Cookie`.
-    #[track_caller]
     pub(super) fn set_cookies(&self) -> Vec<&str> {
         self.headers
             .get_all("set-cookie")
@@ -258,88 +246,56 @@ impl<'a> Browsing<'a> {
     /// Opens `path`, is sent to Sign in, and signs in there with Google,
     /// choosing the account of `email`, or turning the sign-in down with
     /// none: what the browser is answered as it is sent back.
-    #[track_caller]
-    pub(super) fn sign_in<'b>(
-        &'b mut self,
-        path: &'b str,
-        email: Option<&'b str>,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = Location::caller();
-        async move {
-            let authorize = self.begin(path, Provider::Google, caller).await;
-            self.choose(
-                FakeGoogle::choosing(&authorize, email),
-                Provider::Google,
-                caller,
-            )
+    pub(super) async fn sign_in(&mut self, path: &str, email: Option<&str>) -> Answer {
+        let authorize = self.begin(path, Provider::Google).await;
+        self.choose(FakeGoogle::choosing(&authorize, email), Provider::Google)
             .await
-        }
     }
 
     /// Opens `path`, is sent to Sign in, and signs in there with GitHub,
     /// choosing the account of `login`, or turning the sign-in down with
     /// none: what the browser is answered as it is sent back.
-    #[track_caller]
-    fn sign_in_with_github<'b>(
-        &'b mut self,
-        path: &'b str,
-        login: Option<&'b str>,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = Location::caller();
-        async move {
-            let authorize = self.begin(path, Provider::GitHub, caller).await;
-            self.choose(
-                FakeGitHub::choosing(&authorize, login),
-                Provider::GitHub,
-                caller,
-            )
+    async fn sign_in_with_github(&mut self, path: &str, login: Option<&str>) -> Answer {
+        let authorize = self.begin(path, Provider::GitHub).await;
+        self.choose(FakeGitHub::choosing(&authorize, login), Provider::GitHub)
             .await
-        }
     }
 
     /// Opens `path`, is sent to Sign in or shown it in the screen's place,
     /// and begins a sign-in there with `provider`: the provider's URL it is
     /// sent to.
-    async fn begin(&mut self, path: &str, provider: Provider, caller: &Location<'_>) -> url::Url {
+    async fn begin(&mut self, path: &str, provider: Provider) -> url::Url {
         let opened = self.get(path).await;
         let sign_in = match opened.status {
             303 => self.get(opened.location()).await,
             _ => opened,
         };
-        assert_eq!(sign_in.status, 200, "{path} at {caller}");
+        assert_eq!(sign_in.status, 200, "{path}");
         let begun = self.begin_on(&sign_in, provider).await;
-        assert_eq!(begun.status, 303, "at {caller}: {}", begun.html.html());
+        assert_eq!(begun.status, 303, "{}", begun.html.html());
         url::Url::parse(begun.location()).expect("the provider's URL")
     }
 
     /// Begins a sign-in with `provider` on `sign_in`, Sign in as it shows,
     /// posting its form as it is: what the browser is answered.
-    #[track_caller]
-    pub(super) fn begin_on<'b>(
-        &'b mut self,
-        sign_in: &'b Answer,
-        provider: Provider,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = Location::caller();
-        async move {
-            let action = format!("/auth/{provider}");
-            let form = select(&sign_in.html, &format!("form[action='{action}']"));
-            assert_eq!(form.len(), 1, "at {caller}: {}", sign_in.html.html());
-            let fields: Vec<(String, String)> = select_in(form[0], "input[type=hidden]")
-                .into_iter()
-                .map(|input| {
-                    (
-                        input.attr("name").unwrap().to_string(),
-                        input.attr("value").unwrap().to_string(),
-                    )
-                })
-                .collect();
-            let fields: Vec<(&str, &str)> = fields
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str()))
-                .collect();
-            self.post(&action, &fields).await
-        }
+    pub(super) async fn begin_on(&mut self, sign_in: &Answer, provider: Provider) -> Answer {
+        let action = format!("/auth/{provider}");
+        let form = select(&sign_in.html, &format!("form[action='{action}']"));
+        assert_eq!(form.len(), 1, "{}", sign_in.html.html());
+        let fields: Vec<(String, String)> = select_in(form[0], "input[type=hidden]")
+            .into_iter()
+            .map(|input| {
+                (
+                    input.attr("name").unwrap().to_string(),
+                    input.attr("value").unwrap().to_string(),
+                )
+            })
+            .collect();
+        let fields: Vec<(&str, &str)> = fields
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        self.post(&action, &fields).await
     }
 
     /// Signs in with Google on `sign_in`, Sign in as it shows, choosing the
@@ -352,33 +308,19 @@ impl<'a> Browsing<'a> {
     /// Chooses the account of `email` at Google, where `begun`, a sign-in
     /// begun with Google, sent the browser: what the browser is answered as
     /// it is sent back.
-    #[track_caller]
-    pub(super) fn choose_at_google<'b>(
-        &'b mut self,
-        begun: &'b Answer,
-        email: &'b str,
-    ) -> impl Future<Output = Answer> + 'b {
-        let caller = Location::caller();
-        async move {
-            assert_eq!(begun.status, 303, "at {caller}: {}", begun.html.html());
-            let authorize = url::Url::parse(begun.location()).expect("the provider's URL");
-            self.choose(
-                FakeGoogle::choosing(&authorize, Some(email)),
-                Provider::Google,
-                caller,
-            )
-            .await
-        }
+    pub(super) async fn choose_at_google(&mut self, begun: &Answer, email: &str) -> Answer {
+        assert_eq!(begun.status, 303, "{}", begun.html.html());
+        let authorize = url::Url::parse(begun.location()).expect("the provider's URL");
+        self.choose(
+            FakeGoogle::choosing(&authorize, Some(email)),
+            Provider::Google,
+        )
+        .await
     }
 
     /// Goes to `chosen`, where `provider` sends the browser back to its
     /// callback, and follows it there.
-    async fn choose(
-        &mut self,
-        chosen: url::Url,
-        provider: Provider,
-        caller: &Location<'_>,
-    ) -> Answer {
+    async fn choose(&mut self, chosen: url::Url, provider: Provider) -> Answer {
         let chosen = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -386,17 +328,11 @@ impl<'a> Browsing<'a> {
             .get(chosen)
             .send()
             .await
-            .unwrap_or_else(|e| {
-                panic!("choosing at the fake {} at {caller}: {e}", provider.name())
-            });
-        assert_eq!(chosen.status(), 303, "at {caller}");
+            .unwrap_or_else(|e| panic!("choosing at the fake {}: {e}", provider.name()));
+        assert_eq!(chosen.status(), 303);
         let back = url::Url::parse(chosen.headers()["location"].to_str().unwrap())
             .expect("the callback's URL");
-        assert_eq!(
-            back.path(),
-            format!("/auth/{provider}/callback"),
-            "at {caller}"
-        );
+        assert_eq!(back.path(), format!("/auth/{provider}/callback"));
         self.get(&format!(
             "{}?{}",
             back.path(),
@@ -408,7 +344,6 @@ impl<'a> Browsing<'a> {
 
 /// The account at the foot of the navigation, as a reader reads it: its
 /// name, its role and its avatar's image, or the letter in its place.
-#[track_caller]
 fn account(html: &Html) -> (String, String, String) {
     let account = select(html, "nav .account")[0];
     let avatar = match select_in(account, ".avatar img").first() {
@@ -423,7 +358,6 @@ fn account(html: &Html) -> (String, String, String) {
 }
 
 /// What Sign in says, and whether it says it as an error.
-#[track_caller]
 fn message(html: &Html) -> Option<(String, bool)> {
     let card = select(html, ".sign-in")[0];
     select_in(card, ".alert")
@@ -691,7 +625,6 @@ async fn the_identity_manager_names_signs_in_as_a_manager() {
 
 /// Sign in, as a screen of a browser whose sign-in ended shows it in its
 /// place: what it says, and the path it returns to after the sign-in.
-#[track_caller]
 fn in_place_of_the_screen(answer: &Answer) -> (Option<(String, bool)>, String) {
     assert_eq!(answer.status, 200, "{}", answer.html.html());
     let return_to = select(&answer.html, ".sign-in form input[name=return]")[0]
@@ -702,44 +635,32 @@ fn in_place_of_the_screen(answer: &Answer) -> (Option<(String, bool)>, String) {
 }
 
 /// The events a stream sends, as their text, until it ends.
-#[track_caller]
-fn sent_until_it_ends(response: axum::response::Response) -> impl Future<Output = String> + use<> {
-    let caller = Location::caller();
-    async move {
-        let mut body = response.into_body();
-        let mut sent = Vec::new();
-        let ended = tokio::time::timeout(Duration::from_secs(10), async {
-            while let Some(Ok(frame)) = body.frame().await {
-                if let Ok(data) = frame.into_data() {
-                    sent.extend_from_slice(&data);
-                }
+async fn sent_until_it_ends(response: axum::response::Response) -> String {
+    let mut body = response.into_body();
+    let mut sent = Vec::new();
+    let ended = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(Ok(frame)) = body.frame().await {
+            if let Ok(data) = frame.into_data() {
+                sent.extend_from_slice(&data);
             }
-        })
-        .await;
-        assert!(ended.is_ok(), "the stream still runs at {caller}");
-        String::from_utf8(sent).expect("a stream sends text")
-    }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "the stream still runs");
+    String::from_utf8(sent).expect("a stream sends text")
 }
 
 /// What the event stream at `path` sends to the browser of `cookie`, until
 /// it ends.
-#[track_caller]
-fn streamed<'a>(
-    signing: &'a Signing,
-    path: &str,
-    cookie: &str,
-) -> impl Future<Output = String> + 'a {
+async fn streamed(signing: &Signing, path: &str, cookie: &str) -> String {
     let request = axum::http::Request::get(path)
         .header("Host", UI_HOST)
         .header("Cookie", cookie)
         .body(Body::empty())
         .unwrap();
-    let caller = Location::caller();
-    async move {
-        let Ok(response) = signing.router.clone().oneshot(request).await;
-        assert_eq!(response.status().as_u16(), 200, "at {caller}");
-        sent_until_it_ends(response).await
-    }
+    let Ok(response) = signing.router.clone().oneshot(request).await;
+    assert_eq!(response.status().as_u16(), 200);
+    sent_until_it_ends(response).await
 }
 
 /// `docs/specs/access.md`, Signing in, Signed in and An open screen; Sign

@@ -3,7 +3,6 @@
 //! Under `serve`, After a restart; `docs/specs/operation.md`, Stopping).
 
 use std::num::NonZeroU32;
-use std::panic::Location;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,35 +28,29 @@ use tokio_util::sync::CancellationToken;
 
 /// The factory of a world of `store`, `harness` and `clock` started again
 /// over the work directory `repo`, as `serve` starts after a restart.
-#[track_caller]
-fn restarted(
+async fn restarted(
     store: Arc<LocalStore>,
     harness: Arc<ScriptedHarness>,
     clock: Arc<FakeClock>,
     repo: &Path,
-) -> impl Future<Output = Factory> + use<> {
-    restarted_with(store, harness, clock, repo, |_| {})
+) -> Factory {
+    restarted_with(store, harness, clock, repo, |_| {}).await
 }
 
 /// [`restarted`], its config changed by `adjust`.
-#[track_caller]
-fn restarted_with<F: FnOnce(&mut FactoryConfig) + 'static>(
+async fn restarted_with<F: FnOnce(&mut FactoryConfig)>(
     store: Arc<LocalStore>,
     harness: Arc<ScriptedHarness>,
     clock: Arc<FakeClock>,
     repo: &Path,
     adjust: F,
-) -> impl Future<Output = Factory> + use<F> {
-    let caller = Location::caller();
-    let config = config(repo);
-    async move {
-        let mut config = config.await;
-        config.max_trials = 1;
-        adjust(&mut config);
-        Factory::start(store, harness, clock, config)
-            .await
-            .unwrap_or_else(|e| panic!("starting the factory again at {caller}: {e:#}"))
-    }
+) -> Factory {
+    let mut config = config(repo).await;
+    config.max_trials = 1;
+    adjust(&mut config);
+    Factory::start(store, harness, clock, config)
+        .await
+        .unwrap_or_else(|e| panic!("starting the factory again: {e:#}"))
 }
 
 fn key(task: usize, configuration: usize) -> TrialKey {
@@ -103,22 +96,16 @@ async fn a_trial_whose_scorer_makes_no_score_keeps_why_as_lw_score_says_it() {
 
 /// The factory of `world`, its work directory `repo`, started again with
 /// `command` as its setup command, which builds the trials' environment.
-#[track_caller]
-fn with_setup(world: World, repo: &Path, command: &str) -> impl Future<Output = Factory> + use<> {
-    let command = command.to_string();
+async fn with_setup(world: World, repo: &Path, command: &str) -> Factory {
     drop(world.factory);
-    restarted_with(
-        world.store,
-        world.harness,
-        world.clock,
-        repo,
-        move |config| {
-            edit_work(config, |work| {
-                work.pipeline_flags_and_env.setup.command =
-                    Some(Setup::Command(SetupCommand::new(command).unwrap()));
-            });
-        },
-    )
+    restarted_with(world.store, world.harness, world.clock, repo, |config| {
+        edit_work(config, |work| {
+            work.pipeline_flags_and_env.setup.command = Some(Setup::Command(
+                SetupCommand::new(command.to_string()).unwrap(),
+            ));
+        });
+    })
+    .await
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score: its
@@ -291,40 +278,34 @@ async fn a_drain_waits_for_the_trial_in_flight_and_starts_no_other() {
 }
 
 /// The local API of `serving`, over the work directory `work_dir`.
-fn api_of(
-    serving: &Serving,
-    world_clock: Arc<FakeClock>,
-    work_dir: &Path,
-) -> impl Future<Output = axum::Router> + use<> {
+async fn api_of(serving: &Serving, world_clock: Arc<FakeClock>, work_dir: &Path) -> axum::Router {
     let work_dir = RepoWorkDir {
         base: work_dir.to_path_buf(),
         repo: REPO.parse().unwrap(),
     };
-    let runs = runs_in(&work_dir.resolve());
+    let runs = runs_in(&work_dir.resolve()).await;
     let (served, polling, benchmark_runs) = (
         serving.served.clone(),
         serving.polling.clone(),
         serving.benchmark_runs.clone(),
     );
-    async move {
-        let sources = Sources {
-            serving: linewright_core::status::Serving {
-                since: world_clock.now(),
-                max_runs: 4,
-            },
-            served,
-            polling,
-            deliveries: None,
-            clock: world_clock,
-            work_dir,
-            runs: runs.await,
-            ends: Ends::new(),
-            environment: linewright_core::api::EnvironmentLink::default(),
-            benchmark_runs,
-            exiting: linewright_core::winding_up::WindingUp::default().exiting(),
-        };
-        linewright_core::api::router(sources, CancellationToken::new())
-    }
+    let sources = Sources {
+        serving: linewright_core::status::Serving {
+            since: world_clock.now(),
+            max_runs: 4,
+        },
+        served,
+        polling,
+        deliveries: None,
+        clock: world_clock,
+        work_dir,
+        runs,
+        ends: Ends::new(),
+        environment: linewright_core::api::EnvironmentLink::default(),
+        benchmark_runs,
+        exiting: linewright_core::winding_up::WindingUp::default().exiting(),
+    };
+    linewright_core::api::router(sources, CancellationToken::new())
 }
 
 #[test_log::test(tokio::test)]

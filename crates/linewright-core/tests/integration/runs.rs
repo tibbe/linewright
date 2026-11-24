@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::panic::Location;
 
 use chrono::TimeDelta;
 use linewright_core::domain::Number;
@@ -467,29 +466,21 @@ fn an_items_runs_narrowed_to_none_are_no_runs_to_list_not_none_at_all() {
 
 /// What `Runs` reads from a work directory whose database keeps each of
 /// `records`.
-#[track_caller]
-fn read(records: &[&str]) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
-    let caller = Location::caller();
-    let kept = work_dir_keeping(records, &[]);
-    async move {
-        let (base, work_dir) = kept.await;
-        let recorded = runs_in(&work_dir.resolve())
-            .await
-            .read()
-            .await
-            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"));
-        (base, recorded)
-    }
+async fn read(records: &[&str]) -> (tempfile::TempDir, Vec<Recorded>) {
+    let (base, work_dir) = work_dir_keeping(records, &[]).await;
+    let recorded = runs_in(&work_dir.resolve())
+        .await
+        .read()
+        .await
+        .unwrap_or_else(|e| panic!("reading the runs: {e:#}"));
+    (base, recorded)
 }
 
 /// What `Runs` reads of #5's first rework, done in a minute, whose record
 /// gives its sessions as `sessions`.
-#[track_caller]
-fn rework_of_5_read(
-    sessions: &serde_json::Value,
-) -> impl Future<Output = (tempfile::TempDir, Vec<Recorded>)> + use<> {
+async fn rework_of_5_read(sessions: &serde_json::Value) -> (tempfile::TempDir, Vec<Recorded>) {
     let record = item_run_record(5, "rework", 1, Some("done"), sessions);
-    read(&[&record])
+    read(&[&record]).await
 }
 
 fn rework_of_5(sessions: Vec<SessionEntry>) -> Recorded {
@@ -527,26 +518,21 @@ async fn a_record_from_before_sessions_kept_what_they_ran_with_reads_none_of_it(
 
 /// What the one session of #5's first rework ran with, as read from a record
 /// giving its sessions as `sessions`.
-#[track_caller]
-fn ran_as_read(sessions: &serde_json::Value) -> impl Future<Output = Ran> + use<> {
-    let caller = Location::caller();
-    let read = rework_of_5_read(sessions);
-    async move {
-        let (_base, recorded) = read.await;
-        let [run] = &recorded[..] else {
-            panic!("one run at {caller}: {recorded:#?}");
-        };
-        let [
-            SessionEntry {
-                kept: Some(SessionKept { ran, .. }),
-                ..
-            },
-        ] = &run.sessions[..]
-        else {
-            panic!("one session with what it ran with at {caller}: {run:#?}");
-        };
-        ran.clone()
-    }
+async fn ran_as_read(sessions: &serde_json::Value) -> Ran {
+    let (_base, recorded) = rework_of_5_read(sessions).await;
+    let [run] = &recorded[..] else {
+        panic!("one run: {recorded:#?}");
+    };
+    let [
+        SessionEntry {
+            kept: Some(SessionKept { ran, .. }),
+            ..
+        },
+    ] = &run.sessions[..]
+    else {
+        panic!("one session with what it ran with: {run:#?}");
+    };
+    ran.clone()
 }
 
 #[test_log::test(tokio::test)]

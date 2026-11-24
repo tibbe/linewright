@@ -9,7 +9,6 @@ use linewright_core::variable_names::VariableNames;
 
 /// The secrets of an environment holding `name` as `value`, with no
 /// `secrets` setting.
-#[track_caller]
 fn secrets_of(name: &str, value: &str) -> Secrets {
     Secrets::of(
         &VariableNames::default(),

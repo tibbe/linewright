@@ -277,7 +277,6 @@ fn a_file_that_cannot_be_read_as_text_is_unusable() {
 }
 
 /// The operator's briefs from `dir`, over the markers.
-#[track_caller]
 fn operator_over_markers(dir: &Path) -> OperatorBriefs {
     OperatorBriefs::read_over(testing::markers(), Some(dir)).unwrap()
 }
@@ -661,7 +660,6 @@ fn the_plugin_written_is_the_briefs_own_with_each_skill_from_its_layer() {
 
 /// Every file under `root`, hidden ones too, by its path under it, with its
 /// text.
-#[track_caller]
 fn files_under(root: &Path) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     let mut dirs = vec![root.to_path_buf()];

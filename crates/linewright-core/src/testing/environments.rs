@@ -1,4 +1,3 @@
-use std::panic::Location;
 use std::path::PathBuf;
 
 use super::world::World;
@@ -11,19 +10,15 @@ pub fn setup_config(command: &str) -> String {
 }
 
 /// Ignores `node_modules` and sets `command` as the setup command.
-#[track_caller]
-pub fn set_up_with<'a>(world: &'a World, command: &str) -> impl Future<Output = ()> + 'a {
+pub async fn set_up_with(world: &World, command: &str) {
     let config = setup_config(command);
-    let caller = Location::caller();
-    async move {
-        let files = [(".gitignore", "node_modules/\n"), (CONFIG, config.as_str())];
-        if let Err(e) = world
-            .store
-            .commit("maintainer", "main", &files, "Change")
-            .await
-        {
-            panic!("setting up at {caller} failed: {e:#}");
-        }
+    let files = [(".gitignore", "node_modules/\n"), (CONFIG, config.as_str())];
+    if let Err(e) = world
+        .store
+        .commit("maintainer", "main", &files, "Change")
+        .await
+    {
+        panic!("setting up failed: {e:#}");
     }
 }
 
@@ -37,7 +32,6 @@ impl Default for Marks {
 }
 
 impl Marks {
-    #[track_caller]
     pub fn new() -> Marks {
         Marks(tempfile::tempdir().unwrap())
     }

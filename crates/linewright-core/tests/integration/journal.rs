@@ -1,7 +1,6 @@
 //! A trial's writes, kept as plain files in order (`docs/specs/benchmarks.md`,
 //! The output of a trial).
 
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,29 +24,23 @@ struct Journaled {
     journal: Journal,
 }
 
-#[track_caller]
-fn journaled() -> impl Future<Output = Journaled> {
-    let caller = Location::caller();
-    async move {
-        let dir = tempfile::tempdir()
-            .unwrap_or_else(|e| panic!("making a directory at {caller} failed: {e}"));
-        let store =
-            Arc::new(store_holding(&dir.path().join("store"), &[("README.md", "Widgets\n")]).await);
-        let out = dir.path().join("out");
-        let journal = Journal::new(store.clone(), &out);
-        Journaled {
-            dir,
-            store,
-            out,
-            journal,
-        }
+async fn journaled() -> Journaled {
+    let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("making a directory failed: {e}"));
+    let store =
+        Arc::new(store_holding(&dir.path().join("store"), &[("README.md", "Widgets\n")]).await);
+    let out = dir.path().join("out");
+    let journal = Journal::new(store.clone(), &out);
+    Journaled {
+        dir,
+        store,
+        out,
+        journal,
     }
 }
 
 impl Journaled {
     /// The names of the files under `writes/`, in order: none when there is
     /// no such directory.
-    #[track_caller]
     fn writes(&self) -> Vec<String> {
         let Ok(entries) = std::fs::read_dir(self.out.join("writes")) else {
             return vec![];
@@ -59,20 +52,17 @@ impl Journaled {
         names
     }
 
-    #[track_caller]
     fn markdown(&self, name: &str) -> String {
         let path = self.out.join("writes").join(name);
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
     }
 
-    #[track_caller]
     fn entry(&self, name: &str) -> Value {
         serde_json::from_str(&self.markdown(name)).unwrap()
     }
 
     /// The contents of the file `reference`, relative to `writes/`, refers
     /// to.
-    #[track_caller]
     fn attached(&self, reference: &str) -> Vec<u8> {
         let relative = reference
             .strip_prefix("../")
@@ -82,7 +72,6 @@ impl Journaled {
     }
 
     /// A file at `name` holding `contents`, outside the output.
-    #[track_caller]
     fn file(&self, name: &str, contents: &[u8]) -> PathBuf {
         let path = self.dir.path().join(name);
         std::fs::write(&path, contents).unwrap();
@@ -91,24 +80,20 @@ impl Journaled {
 
     /// Clones `main` through the journal into `clone` and commits on top,
     /// giving the commit.
-    #[track_caller]
-    fn commit_in_a_clone<'a>(&'a self, clone: &'a Path) -> impl Future<Output = CommitId> + 'a {
-        let caller = Location::caller();
-        async move {
-            self.journal
-                .clone_repo(
-                    clone,
-                    "main",
-                    &[
-                        ("user.name", "Factory"),
-                        ("user.email", "factory@example.com"),
-                    ],
-                )
-                .await
-                .unwrap_or_else(|e| panic!("cloning at {caller} failed: {e:#}"));
-            commit_in(clone, &[("gadgets.md", "Gadgets\n")], "Add gadgets");
-            CommitId::from(git_in(clone, &["rev-parse", "HEAD"]).trim())
-        }
+    async fn commit_in_a_clone(&self, clone: &Path) -> CommitId {
+        self.journal
+            .clone_repo(
+                clone,
+                "main",
+                &[
+                    ("user.name", "Factory"),
+                    ("user.email", "factory@example.com"),
+                ],
+            )
+            .await
+            .unwrap_or_else(|e| panic!("cloning failed: {e:#}"));
+        commit_in(clone, &[("gadgets.md", "Gadgets\n")], "Add gadgets");
+        CommitId::from(git_in(clone, &["rev-parse", "HEAD"]).trim())
     }
 }
 

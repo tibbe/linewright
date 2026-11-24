@@ -456,7 +456,6 @@ async fn triaged_in_runs(count: u32) -> Pages {
 }
 
 /// The run IDs of the table of runs on `html`, in order.
-#[track_caller]
 fn run_ids(html: &Html) -> Vec<String> {
     runs_shown(html)
         .into_iter()

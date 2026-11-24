@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::panic::Location;
 
 use linewright_core::domain::Number;
 use linewright_core::git::{self, CommitId};
@@ -9,42 +8,30 @@ use linewright_core::spec_gap;
 use linewright_core::store::{API_VERSION, NewIssue, Property, RecordedItem, Resource, Store};
 use linewright_core::testing::*;
 
-#[track_caller]
-fn runs(world: &World) -> impl Future<Output = Runs> + use<> {
-    runs_in(&world.dir.path().join("work"))
+async fn runs(world: &World) -> Runs {
+    runs_in(&world.dir.path().join("work")).await
 }
 
 /// The input the run `id` recorded, if any.
-#[track_caller]
-fn input_of<'a>(world: &'a World, id: &str) -> impl Future<Output = Option<Input>> + 'a {
-    let caller = Location::caller();
-    let id: RunId = id
-        .parse()
-        .unwrap_or_else(|e| panic!("the run {id} at {caller}: {e}"));
-    async move {
-        runs(world)
-            .await
-            .read_input(&id)
-            .await
-            .unwrap_or_else(|e| panic!("reading the input of {id} at {caller}: {e:#}"))
-    }
+async fn input_of(world: &World, id: &str) -> Option<Input> {
+    let id: RunId = id.parse().unwrap_or_else(|e| panic!("the run {id}: {e}"));
+    runs(world)
+        .await
+        .read_input(&id)
+        .await
+        .unwrap_or_else(|e| panic!("reading the input of {id}: {e:#}"))
 }
 
 /// The head of `branch` in `world`'s store.
-#[track_caller]
-fn head_of<'a>(world: &'a World, branch: &str) -> impl Future<Output = CommitId> + 'a {
-    let caller = Location::caller();
+async fn head_of(world: &World, branch: &str) -> CommitId {
     let rev = format!("refs/heads/{branch}");
-    async move {
-        let head = git::git(&world.store.repository(), &["rev-parse", &rev])
-            .await
-            .unwrap_or_else(|e| panic!("reading {rev} at {caller}: {e:#}"));
-        CommitId::from(head.trim())
-    }
+    let head = git::git(&world.store.repository(), &["rev-parse", &rev])
+        .await
+        .unwrap_or_else(|e| panic!("reading {rev}: {e:#}"));
+    CommitId::from(head.trim())
 }
 
 /// The bodies of the comments recorded for `item`.
-#[track_caller]
 fn comment_bodies(item: &RecordedItem) -> Vec<&str> {
     item.resource(Resource::Comments)
         .and_then(|comments| comments.as_array())

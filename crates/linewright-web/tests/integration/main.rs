@@ -63,33 +63,30 @@ fn work_dir(dir: &tempfile::TempDir) -> std::path::PathBuf {
 
 /// What `serve` answers from, over `served` and `polling`, with webhooks
 /// off, and the runs of the database of the work directory, which it makes.
-#[track_caller]
-fn sources(
+async fn sources(
     dir: &tempfile::TempDir,
     clock: &std::sync::Arc<FakeClock>,
     since: linewright_core::domain::Timestamp,
     served: tokio::sync::watch::Receiver<Option<linewright_core::api::Served>>,
     polling: tokio::sync::watch::Receiver<Option<linewright_core::status::Polling>>,
-) -> impl Future<Output = Sources> + use<> {
-    let runs = runs_in(&work_dir(dir));
+) -> Sources {
+    let runs = runs_in(&work_dir(dir)).await;
     let (clock, base) = (clock.clone(), dir.path().join("work"));
-    async move {
-        Sources {
-            serving: linewright_core::status::Serving { since, max_runs: 4 },
-            served,
-            polling,
-            deliveries: None,
-            clock,
-            work_dir: linewright_core::runs::RepoWorkDir {
-                base,
-                repo: REPO.parse().unwrap(),
-            },
-            runs: runs.await,
-            ends: linewright_core::ending::Ends::new(),
-            environment: linewright_core::api::EnvironmentLink::default(),
-            benchmark_runs: linewright_core::api::BenchmarkRunsLink::default(),
-            exiting: linewright_core::winding_up::WindingUp::default().exiting(),
-        }
+    Sources {
+        serving: linewright_core::status::Serving { since, max_runs: 4 },
+        served,
+        polling,
+        deliveries: None,
+        clock,
+        work_dir: linewright_core::runs::RepoWorkDir {
+            base,
+            repo: REPO.parse().unwrap(),
+        },
+        runs,
+        ends: linewright_core::ending::Ends::new(),
+        environment: linewright_core::api::EnvironmentLink::default(),
+        benchmark_runs: linewright_core::api::BenchmarkRunsLink::default(),
+        exiting: linewright_core::winding_up::WindingUp::default().exiting(),
     }
 }
 
@@ -344,7 +341,6 @@ impl Pages {
     }
 
     /// The pages' router, at the public URL `url`.
-    #[track_caller]
     fn at(&self, url: &str) -> Router {
         let ui = linewright_core::config::Ui {
             public_url: linewright_core::host::PublicUrl::parse(url).unwrap(),
@@ -355,7 +351,6 @@ impl Pages {
 
     /// The pages' router where the `manager` setting names `manager`, asked
     /// from the manager's browser.
-    #[track_caller]
     fn with_manager(&self, manager: &str) -> Asked {
         let ui = ui();
         let manager = linewright_core::access::people::ManagerName::parse(manager, &ui.providers)
@@ -372,15 +367,13 @@ impl Pages {
 
     /// Keeps the run `record`, in the form of a run's record file, as its
     /// run would have kept it.
-    #[track_caller]
-    fn record(&self, record: &serde_json::Value) -> impl Future<Output = ()> + use<> {
-        keep_record(&work_dir(&self.dir), record)
+    async fn record(&self, record: &serde_json::Value) {
+        keep_record(&work_dir(&self.dir), record).await;
     }
 
     /// Keeps `input` as the input the run `id` recorded.
-    #[track_caller]
-    fn input(&self, id: &str, input: &serde_json::Value) -> impl Future<Output = ()> + use<> {
-        keep_input(&work_dir(&self.dir), id, input)
+    async fn input(&self, id: &str, input: &serde_json::Value) {
+        keep_input(&work_dir(&self.dir), id, input).await;
     }
 
     /// Writes each of `files`, a path under the work directory and what it
@@ -417,25 +410,19 @@ impl Routed for Pages {
 
 impl Pages {
     /// The pages as a browser signed in as a viewer sees them.
-    #[track_caller]
-    fn as_viewer(&self) -> impl Future<Output = AsRole<'_>> {
-        self.as_role(Role::Viewer, "Vera Viewer")
+    async fn as_viewer(&self) -> AsRole<'_> {
+        self.as_role(Role::Viewer, "Vera Viewer").await
     }
 
     /// The pages as a browser signed in as a contributor sees them.
-    #[track_caller]
-    fn as_contributor(&self) -> impl Future<Output = AsRole<'_>> {
-        self.as_role(Role::Contributor, "Carl Contributor")
+    async fn as_contributor(&self) -> AsRole<'_> {
+        self.as_role(Role::Contributor, "Carl Contributor").await
     }
 
-    #[track_caller]
-    fn as_role(&self, role: Role, name: &str) -> impl Future<Output = AsRole<'_>> {
-        let cookie = signed_in_as(&self.sources, role, name);
-        async move {
-            AsRole {
-                router: &self.router,
-                cookie: cookie.await,
-            }
+    async fn as_role(&self, role: Role, name: &str) -> AsRole<'_> {
+        AsRole {
+            router: &self.router,
+            cookie: signed_in_as(&self.sources, role, name).await,
         }
     }
 }
@@ -514,38 +501,28 @@ trait Routed {
 
 /// The page at `path` of `web` as a browser holding the cookies `cookie`
 /// asks for it, whatever its status.
-#[track_caller]
-fn page_with_cookie<W: Routed>(
-    web: &W,
-    path: &str,
-    cookie: &str,
-) -> impl Future<Output = Html> + use<W> {
-    let answer = answer_with_cookie(web, path, cookie);
-    async move { answer.await.2 }
+async fn page_with_cookie<W: Routed>(web: &W, path: &str, cookie: &str) -> Html {
+    answer_with_cookie(web, path, cookie).await.2
 }
 
 /// As [`page_with_cookie`], with the status and the headers of the answer
 /// too.
-#[track_caller]
-fn answer_with_cookie<W: Routed>(
+async fn answer_with_cookie<W: Routed>(
     web: &W,
     path: &str,
     cookie: &str,
-) -> impl Future<Output = (u16, axum::http::HeaderMap, Html)> + use<W> {
-    let caller = std::panic::Location::caller();
+) -> (u16, axum::http::HeaderMap, Html) {
     let request = axum::http::Request::builder()
         .uri(path)
         .header("Host", UI_HOST)
         .header("Cookie", format!("{}; {cookie}", web.cookie()))
         .body(Body::empty())
-        .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
+        .unwrap_or_else(|e| panic!("building the request: {e}"));
     let router = web.router().clone();
-    async move {
-        let Ok(response) = router.oneshot(request).await;
-        let answered = response.headers().clone();
-        let (status, body) = status_and_body(response).await;
-        (status, answered, Html::parse_document(&body))
-    }
+    let Ok(response) = router.oneshot(request).await;
+    let answered = response.headers().clone();
+    let (status, body) = status_and_body(response).await;
+    (status, answered, Html::parse_document(&body))
 }
 
 /// A web UI's own page's request.
@@ -556,29 +533,23 @@ const CROSS_SITE: (&str, &str) = ("sec-fetch-site", "cross-site");
 
 /// Posts the form `fields` to `path` with `headers` besides its `Host`, as
 /// a browser does: the status and the fragment it answers with.
-#[track_caller]
-fn post<W: Routed>(
+async fn post<W: Routed>(
     web: &W,
     path: &str,
     headers: &[(&str, &str)],
     fields: &[(&str, &str)],
-) -> impl Future<Output = (u16, Html)> + use<W> {
-    let answer = post_answer(web, path, headers, fields);
-    async move {
-        let (status, _, html) = answer.await;
-        (status, html)
-    }
+) -> (u16, Html) {
+    let (status, _, html) = post_answer(web, path, headers, fields).await;
+    (status, html)
 }
 
 /// As [`post`], with the headers of the answer too.
-#[track_caller]
-fn post_answer<W: Routed>(
+async fn post_answer<W: Routed>(
     web: &W,
     path: &str,
     headers: &[(&str, &str)],
     fields: &[(&str, &str)],
-) -> impl Future<Output = (u16, axum::http::HeaderMap, Html)> + use<W> {
-    let caller = std::panic::Location::caller();
+) -> (u16, axum::http::HeaderMap, Html) {
     let mut form = form_urlencoded::Serializer::new(String::new());
     for (name, value) in fields {
         form.append_pair(name, value);
@@ -594,18 +565,15 @@ fn post_answer<W: Routed>(
     }
     let request = request
         .body(Body::from(form.finish()))
-        .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
+        .unwrap_or_else(|e| panic!("building the request: {e}"));
     let router = web.router().clone();
-    async move {
-        let Ok(response) = router.oneshot(request).await;
-        let answered = response.headers().clone();
-        let (status, body) = status_and_body(response).await;
-        (status, answered, Html::parse_fragment(&body))
-    }
+    let Ok(response) = router.oneshot(request).await;
+    let answered = response.headers().clone();
+    let (status, body) = status_and_body(response).await;
+    (status, answered, Html::parse_fragment(&body))
 }
 
 /// What a fragment says, as a reader reads it.
-#[track_caller]
 fn said(html: &Html) -> String {
     let alerts = select(html, ".alert");
     assert_eq!(alerts.len(), 1, "not one thing said");
@@ -613,7 +581,6 @@ fn said(html: &Html) -> String {
 }
 
 /// The tasks under `pages`' work directory, by name.
-#[track_caller]
 fn tasks(pages: &Pages) -> Vec<String> {
     match std::fs::read_dir(pages.path("tasks")) {
         Ok(entries) => {
@@ -664,7 +631,6 @@ struct Confirmation {
 /// as a modal with no request, that the dialog is named by its question,
 /// that focus starts on turning it down, and that the button that goes ahead
 /// has the asking button's label.
-#[track_caller]
 fn confirmations(html: &Html) -> Vec<Confirmation> {
     let mut confirmations = vec![];
     for asking in select(html, "button[command=show-modal]") {
@@ -713,7 +679,6 @@ fn confirmations(html: &Html) -> Vec<Confirmation> {
 /// The facts in the `stats` of `section` on `html`
 /// (`docs/specs/benchmarks.md`, Benchmark run), each its `stat-title` and
 /// its `stat-value`.
-#[track_caller]
 fn stats(html: &Html, section: &str) -> Vec<(String, String)> {
     select(html, &format!("{section} .stats > .stat"))
         .into_iter()
@@ -781,7 +746,6 @@ fn classes_starting_with<'a>(element: ElementRef<'a>, prefixes: &[&str]) -> Vec<
 /// drawn in the classes of `docs/specs/components.md`, Transcript: a
 /// session's heading, its settings, its entries and their lines, what an
 /// entry opens to, a sub-agent's work and its count, and thinking.
-#[track_caller]
 fn assert_transcript_drawn_as_the_spec_says(html: &Html) {
     let headings = select(html, "#transcript .session > h2");
     assert_ne!(headings.len(), 0, "{}", html.html());
@@ -878,7 +842,6 @@ fn grows_in_place(element: ElementRef<'_>) -> Vec<&str> {
 /// and with only its title cut, its number and its link to GitHub outside
 /// the title, and nothing in it but elements, each of which the rule sizes
 /// (`docs/specs/ui_patterns.md`, Layout).
-#[track_caller]
 fn assert_cuts_only_the_title(holder: ElementRef, lines: u8) {
     let html = holder.html();
     assert!(
@@ -983,7 +946,6 @@ fn assert_no_status_by_colour_alone(html: &Html) {
 
 /// `docs/specs/ui_patterns.md`, Status, A badge's words: a badge within
 /// `within` holds no reason or detail, here no words at all.
-#[track_caller]
 fn assert_badges_hold_no_words(html: &Html, within: &str) {
     for badge in select(html, &format!("{within} .badge")) {
         assert_eq!(text(badge), "", "{}", badge.html());
@@ -1039,7 +1001,6 @@ fn regions(event: &str) -> Vec<(String, Html)> {
 }
 
 /// The region `id` of `regions`.
-#[track_caller]
 fn region_of<'a>(regions: &'a [(String, Html)], id: &str) -> &'a Html {
     regions
         .iter()
@@ -1070,14 +1031,12 @@ fn runs_shown(html: &Html) -> Vec<Vec<String>> {
 
 /// The filters' names and values, a select's the value of its chosen
 /// option.
-#[track_caller]
 fn filters(html: &Html) -> Vec<(&str, String)> {
     field_values(select(html, "form[data-filters] :is(input, select)"))
 }
 
 /// The names and values of `fields`, a select's the value of its chosen
 /// option and a textarea's its text.
-#[track_caller]
 fn field_values(fields: Vec<ElementRef<'_>>) -> Vec<(&str, String)> {
     fields
         .into_iter()
@@ -1112,7 +1071,6 @@ struct MakingShown<'a> {
 /// `aria-invalid` and described by its hint, and another's hint saying what
 /// it says again once the reader edits a refused one; a refusal of no field
 /// is the one `alert` before the buttons.
-#[track_caller]
 fn making_shown(form: &Html) -> MakingShown<'_> {
     let controls = select(
         form,
@@ -1174,7 +1132,6 @@ fn making_shown(form: &Html) -> MakingShown<'_> {
 /// The fields of `form`, a making dialog's, that Linewright refused, by
 /// name, each with the reason under it, and the reason above its buttons, if
 /// any.
-#[track_caller]
 fn placed(form: &Html) -> (Vec<(&str, String)>, Option<String>) {
     let shown = making_shown(form);
     (shown.refused, shown.whole)
@@ -1193,7 +1150,6 @@ struct TableCard {
 
 /// The table cards on `html`. A card's top, where it has one, comes first,
 /// then its filters' row, if it has filters, then the rest.
-#[track_caller]
 fn table_cards(html: &Html) -> Vec<TableCard> {
     select(html, ".table-card")
         .into_iter()
@@ -1258,7 +1214,6 @@ fn unnamed_card(buttons: &[&str], filters: &[&str]) -> TableCard {
 /// The links at the ends of the rows of the table `table` on `html`
 /// (`docs/specs/ui_patterns.md`, Tables, A row's screen), each as a reader
 /// meets it: its text, its accessible name and where it goes.
-#[track_caller]
 fn views(html: &Html, table: &str) -> Vec<(String, String, String)> {
     select(
         html,
@@ -1283,7 +1238,6 @@ fn views(html: &Html, table: &str) -> Vec<(String, String, String)> {
 /// How each cell of the table `table` on `html` aligns, its head row
 /// first, "start" or "end" as its class says, and "none" for a cell that
 /// says neither.
-#[track_caller]
 fn alignments(html: &Html, table: &str) -> Vec<Vec<&'static str>> {
     select(html, &format!("{table} tr"))
         .into_iter()
@@ -1322,13 +1276,7 @@ fn classes<'a>(html: &'a Html, selector: &str) -> Vec<Vec<&'a str>> {
 
 /// Records run `n` of #`item`'s triage as started at `started_at` and never
 /// ended nor in flight: interrupted, as when its process died.
-#[track_caller]
-fn record_interrupted(
-    pages: &Pages,
-    item: u64,
-    n: u32,
-    started_at: &str,
-) -> impl Future<Output = ()> + use<> {
+async fn record_interrupted(pages: &Pages, item: u64, n: u32, started_at: &str) {
     let record = serde_json::json!({
         "item": item,
         "stage": "triage",
@@ -1337,7 +1285,7 @@ fn record_interrupted(
         "end": null,
         "sessions": [],
     });
-    pages.record(&record)
+    pages.record(&record).await;
 }
 
 /// The pages under a table (`docs/specs/ui_patterns.md`, Tables, Pages), as
@@ -1378,7 +1326,6 @@ fn no_link(text: &str) -> PageLink {
 /// The pages under the table in `within` on `html`, if it has any. Each item
 /// is a small button in a daisyUI `join`, and which rows show is in secondary
 /// text.
-#[track_caller]
 fn pages_nav(html: &Html, within: &str) -> Option<PagesNav> {
     let navs = select(html, &format!("{within} nav.pages"));
     assert!(navs.len() <= 1, "{}", html.html());

@@ -84,14 +84,12 @@ fn repo(name: &linewright_core::domain::Repo) -> Repo<'_> {
 }
 
 /// The file at `path` from the repository root.
-#[track_caller]
 fn read(path: &str) -> String {
     let full = linewright_core::testing::repository().join(path);
     std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 /// Fails unless `prompt` is the fixture `name` byte for byte.
-#[track_caller]
 fn assert_filled_as(prompt: &str, name: &str) {
     let expected = read(&format!(
         "crates/linewright-core/tests/integration/fixtures/prompts/{name}"

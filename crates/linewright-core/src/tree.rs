@@ -256,7 +256,6 @@ mod tests {
 
     /// The file type and permission bits of `path`, itself where it is a
     /// symlink.
-    #[track_caller]
     fn mode(path: &Path) -> u32 {
         fs::symlink_metadata(path).unwrap().mode()
     }
@@ -411,7 +410,6 @@ mod tests {
         rustix::process::geteuid().is_root()
     }
 
-    #[track_caller]
     fn set_mode(path: &Path, mode: u32) {
         fs::set_permissions(path, Permissions::from_mode(mode)).unwrap();
     }

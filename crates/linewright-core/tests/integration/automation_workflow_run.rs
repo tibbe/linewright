@@ -1,5 +1,4 @@
 use std::num::NonZeroU32;
-use std::panic::Location;
 
 use chrono::TimeDelta;
 use linewright_core::clock::Clock;
@@ -21,25 +20,21 @@ Fix what failed.
 ";
 
 /// A world with the automation `fix-ci.md`, which a poll has seen.
-#[track_caller]
-fn with_fix_ci() -> impl Future<Output = World> {
-    let caller = Location::caller();
-    async move {
-        let mut world = World::new().await;
-        world
-            .store
-            .commit(
-                "maintainer",
-                "main",
-                &[(".linewright/automations/fix-ci.md", FIX_CI)],
-                "Add an automation",
-            )
-            .await
-            .unwrap_or_else(|e| panic!("adding the automation at {caller}: {e:#}"));
-        world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-        world.poll().await;
-        world
-    }
+async fn with_fix_ci() -> World {
+    let mut world = World::new().await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/automations/fix-ci.md", FIX_CI)],
+            "Add an automation",
+        )
+        .await
+        .unwrap_or_else(|e| panic!("adding the automation: {e:#}"));
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world.poll().await;
+    world
 }
 
 /// The first attempt of the run `run` of CI on main, which GitHub created

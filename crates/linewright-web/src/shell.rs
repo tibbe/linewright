@@ -775,14 +775,12 @@ mod tests {
         assert!(alone.heading().is_none());
     }
 
-    #[track_caller]
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()
     }
 
     /// The status of the environment's notice, if it has one, with a setup
     /// command and `environment`.
-    #[track_caller]
     fn environment_status(environment: EnvironmentShown) -> Option<Status> {
         let linewright = Linewright {
             serving_since: at("2026-10-01T12:00:00Z"),
