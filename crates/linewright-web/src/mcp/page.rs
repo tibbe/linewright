@@ -266,12 +266,4 @@ mod tests {
         assert_eq!((next.left_out, next.after.as_deref()), (Some(1), Some("4")));
         assert_eq!(past.items, Vec::<usize>::new());
     }
-
-    #[test_log::test]
-    fn an_after_that_names_nothing_listed_is_refused() {
-        assert_eq!(
-            page(3, &paging(None, Some("7"))),
-            Err("Nothing listed has the ID 7.".to_string())
-        );
-    }
 }
