@@ -1,5 +1,8 @@
 use std::panic::Location;
 
+use linewright_core::access::{Caller, Permit, Read};
+use linewright_core::actions::{self, NoTrial, RunScreen, TrialAt, TrialTranscriptsScreen};
+use linewright_core::transcript::lines::Verbosity;
 use serde_json::json;
 
 use super::benchmarks::{edit_form, saved_regions, with_benchmarks};
@@ -1405,6 +1408,159 @@ async fn a_trial_with_no_output_or_scorer_answers_404() {
     let (no_benchmark_run, _) = pages.get("/benchmark-runs/9").await;
 
     assert_eq!([pending, no_scorer, no_task, no_benchmark_run], [404; 4]);
+}
+
+/// A reader's permit, of a viewer added to `pages`.
+async fn reader(pages: &Pages) -> Permit<Read> {
+    use linewright_core::access::people::{Claims, People, Vouched};
+    let claims = Claims {
+        subject: "subject-of-vera".into(),
+        shown_as: "vera@example.com".into(),
+        name: Some("Vera Viewer".into()),
+        avatar: None,
+        vouched: Vouched::Google {
+            email_verified: true,
+        },
+    };
+    let person = People::new(pages.sources.runs.database().clone())
+        .add(&claims, Role::Viewer, at(STARTED))
+        .await
+        .unwrap();
+    Caller::of(person).unwrap().permit().unwrap()
+}
+
+/// The trial of benchmark run `benchmark_run` that is `repetition` of task
+/// `task` under configuration `configuration`.
+fn trial_at(benchmark_run: i64, configuration: i64, task: i64, repetition: u32) -> TrialAt {
+    TrialAt {
+        benchmark_run: benchmark_run.to_string().parse().unwrap(),
+        configuration: configuration.to_string().parse().unwrap(),
+        task: task.to_string().parse().unwrap(),
+        repetition: std::num::NonZeroU32::new(repetition).unwrap(),
+    }
+}
+
+/// Why `find_trial` finds no trial at `at` of `pages`, or `None` where it
+/// finds one.
+async fn no_trial(pages: &Pages, at: TrialAt) -> Option<NoTrial> {
+    let permit = reader(pages).await;
+    actions::find_trial(&permit, &pages.sources, &at)
+        .await
+        .unwrap()
+        .err()
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs: a benchmark run makes a
+/// trial of each task under each configuration, as many times as its
+/// repetitions.
+#[test_log::test(tokio::test)]
+async fn a_trial_is_found_only_of_a_benchmark_run_that_has_it() {
+    let pages = with_benchmark_run().await;
+
+    assert_eq!(no_trial(&pages, trial_at(1, 1, 1, 1)).await, None);
+    assert_eq!(no_trial(&pages, trial_at(1, 2, 2, 2)).await, None);
+    assert_eq!(
+        no_trial(&pages, trial_at(1, 3, 1, 1)).await,
+        Some(NoTrial::Trial),
+        "a configuration it lacks"
+    );
+    assert_eq!(
+        no_trial(&pages, trial_at(1, 1, 3, 1)).await,
+        Some(NoTrial::Trial),
+        "a task it lacks"
+    );
+    assert_eq!(
+        no_trial(&pages, trial_at(1, 1, 1, 3)).await,
+        Some(NoTrial::Trial),
+        "a repetition it lacks"
+    );
+    assert_eq!(
+        no_trial(&pages, trial_at(9, 1, 1, 1)).await,
+        Some(NoTrial::BenchmarkRun)
+    );
+}
+
+/// `get_trial`'s screen of the trial at `at` of `pages`.
+async fn trial_screen(pages: &Pages, at: TrialAt) -> TrialTranscriptsScreen {
+    let permit = reader(pages).await;
+    actions::get_trial(&permit, &pages.sources, &at, Verbosity::Compact)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+/// That `screen` is run `run`, with as many sessions and entries as `page`,
+/// the page of its transcript, shows.
+#[track_caller]
+fn assert_shows_as_the_page(screen: &RunScreen, page: &Html, run: &str) {
+    assert_eq!(screen.heading.id.to_string(), run);
+    assert_eq!(screen.sessions.len(), select(page, ".session").len());
+    assert_eq!(screen.entries.len(), select(page, ".entry").len());
+    assert_ne!(screen.entries.len(), 0);
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: each
+/// once it has started.
+#[test_log::test(tokio::test)]
+async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
+    let pages = with_benchmark_run().await;
+    let output = "benchmark-runs/1/2/2/1";
+    pages.write(&[
+        (&format!("{output}/task"), "1/implement-1\n"),
+        (
+            &format!("{output}/runs/items/1/implement-1.json"),
+            &json!({
+                "item": 1,
+                "stage": "implement",
+                "n": 1,
+                "started_at": "2026-11-17T12:00:05Z",
+                "sessions": [{
+                    "dir": "sessions/issue-1/20261117T120005Z-implement",
+                    "model": null,
+                    "effort": null,
+                    "layers": {"settings": {"model": "harness"}, "prompts": {}},
+                }],
+            })
+            .to_string(),
+        ),
+        (
+            &format!("{output}/sessions/issue-1/20261117T120005Z-implement/output.jsonl"),
+            linewright_core::testing::TURN_1,
+        ),
+    ]);
+
+    let pending = trial_screen(&pages, trial_at(1, 2, 2, 2)).await;
+    let running = trial_screen(&pages, trial_at(1, 2, 2, 1)).await;
+    let scored = trial_screen(&pages, trial_at(1, 1, 1, 1)).await;
+
+    assert_eq!(pending, TrialTranscriptsScreen::NotBegun);
+    let TrialTranscriptsScreen::Begun { run, scorer } = running else {
+        panic!("a running trial has begun: {running:?}");
+    };
+    assert_shows_as_the_page(
+        &run,
+        &pages.page(&format!("/{output}/run")).await,
+        "1/implement-1",
+    );
+    assert_eq!(scorer, None);
+    let TrialTranscriptsScreen::Begun {
+        run: scored_run,
+        scorer: scored_scorer,
+    } = scored
+    else {
+        panic!("a scored trial has begun: {scored:?}");
+    };
+    let scored_scorer = scored_scorer.expect("a scored trial's scorer has begun");
+    assert_shows_as_the_page(
+        &scored_run,
+        &pages.page("/benchmark-runs/1/1/1/1/run").await,
+        "1/implement-1",
+    );
+    assert_shows_as_the_page(
+        &scored_scorer,
+        &pages.page("/benchmark-runs/1/1/1/1/scorer").await,
+        "1/implement-1",
+    );
 }
 
 /// `docs/specs/ui_patterns.md`, Screen states, Nothing there.

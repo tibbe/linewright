@@ -14,6 +14,7 @@ mod capture;
 mod item;
 mod people;
 mod run;
+mod trial;
 mod work;
 
 pub use authorizations::*;
@@ -26,6 +27,7 @@ pub use capture::*;
 pub use item::*;
 pub use people::*;
 pub use run::*;
+pub use trial::*;
 pub use work::*;
 
 use std::fmt::Display;
@@ -47,6 +49,7 @@ pub enum Action {
     GetBenchmark,
     GetTask,
     GetBenchmarkRun,
+    GetTrial,
     GetServer,
     ListPeople,
     ListAuthorizations,
@@ -65,7 +68,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 24] = [
+    pub const ALL: [Action; 25] = [
         Action::GetBoard,
         Action::GetItem,
         Action::ListRuns,
@@ -75,6 +78,7 @@ impl Action {
         Action::GetBenchmark,
         Action::GetTask,
         Action::GetBenchmarkRun,
+        Action::GetTrial,
         Action::GetServer,
         Action::ListPeople,
         Action::ListAuthorizations,
@@ -105,6 +109,7 @@ impl Action {
             | Action::GetBenchmark
             | Action::GetTask
             | Action::GetBenchmarkRun
+            | Action::GetTrial
             | Action::GetServer
             | Action::ListPeople
             | Action::ListAuthorizations
@@ -133,6 +138,7 @@ impl Action {
             Action::GetBenchmark => "get_benchmark",
             Action::GetTask => "get_task",
             Action::GetBenchmarkRun => "get_benchmark_run",
+            Action::GetTrial => "get_trial",
             Action::GetServer => "get_server",
             Action::ListPeople => "list_people",
             Action::ListAuthorizations => "list_authorizations",
@@ -164,6 +170,7 @@ impl Action {
             Action::GetBenchmark => "See a benchmark",
             Action::GetTask => "See a task",
             Action::GetBenchmarkRun => "See a benchmark run",
+            Action::GetTrial => "See a trial's transcripts",
             Action::GetServer => "See Linewright itself",
             Action::ListPeople => "See the people",
             Action::ListAuthorizations => "See one's own authorizations",
@@ -194,6 +201,7 @@ impl Action {
             | Action::GetBenchmark
             | Action::GetTask
             | Action::GetBenchmarkRun
+            | Action::GetTrial
             | Action::GetServer
             | Action::ListPeople
             | Action::ListAuthorizations => true,
@@ -388,6 +396,7 @@ mod tests {
                 "get_benchmark",
                 "get_task",
                 "get_benchmark_run",
+                "get_trial",
                 "get_server",
                 "list_people",
                 "list_authorizations",

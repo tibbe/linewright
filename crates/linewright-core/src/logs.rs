@@ -189,6 +189,21 @@ async fn pick_from(kept: &KeptRuns, which: &Which) -> Result<Recorded, LogsError
     Ok(pick(&recorded, which)?)
 }
 
+/// The record of the run `which` names of the runs `kept`, `None` where
+/// there is no such run.
+///
+/// # Errors
+///
+/// When the runs cannot be read, or the record of a run named by its ID
+/// does not read.
+pub async fn picked(kept: &KeptRuns, which: &Which) -> anyhow::Result<Option<Recorded>> {
+    match pick_from(kept, which).await {
+        Ok(recorded) => Ok(Some(recorded)),
+        Err(LogsError::NoSuchRun(_)) => Ok(None),
+        Err(LogsError::Other(e)) => Err(e),
+    }
+}
+
 /// The transcript of the run `which` names of `runs`, or of none where there
 /// is no database.
 pub async fn answer(runs: Option<&Runs>, which: &Which) -> Result<Transcript, LogsError> {
