@@ -7,6 +7,8 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use schemars::JsonSchema;
+use serde::Serialize;
 
 use super::benchmarks::{benchmark_run_record, trial_output_dir};
 use super::run::RunScreen;
@@ -32,8 +34,10 @@ pub struct TrialAt {
     pub repetition: NonZeroU32,
 }
 
-/// Which of a trial's transcripts, in the order of its screen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Which of a trial's transcripts, in the order of its screen. It
+/// serializes as its name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TrialTranscript {
     Run,
     Scorer,

@@ -339,7 +339,7 @@ async fn a_request_is_taken_without_an_origin_or_from_the_public_urls_alone() {
 }
 
 /// The tools a viewer is listed.
-const VIEWERS: [&str; 13] = [
+const VIEWERS: [&str; 14] = [
     "get_board",
     "get_item",
     "list_runs",
@@ -349,6 +349,7 @@ const VIEWERS: [&str; 13] = [
     "get_benchmark",
     "get_task",
     "get_benchmark_run",
+    "get_trial",
     "get_server",
     "list_people",
     "list_authorizations",
@@ -471,6 +472,18 @@ async fn each_tool_has_the_action_as_its_title_and_its_screens_arguments() {
     assert_eq!(arguments(&tool("get_benchmark")), ["benchmark_id"]);
     assert_eq!(arguments(&tool("get_task")), ["task_id"]);
     assert_eq!(arguments(&tool("get_benchmark_run")), ["benchmark_run_id"]);
+    assert_eq!(
+        arguments(&tool("get_trial")),
+        [
+            "before",
+            "benchmark_run_id",
+            "configuration_id",
+            "limit",
+            "repetition",
+            "task_id",
+            "verbose"
+        ]
+    );
     assert_eq!(
         tool("get_server")["inputSchema"],
         json!({

@@ -200,6 +200,7 @@ registry!(
     benchmark_screens::GetBenchmark,
     benchmark_screens::GetTask,
     benchmark_screens::GetBenchmarkRun,
+    benchmark_screens::GetTrial,
     work::GetServer,
     people::ListPeople,
     authorizations::ListAuthorizations,
