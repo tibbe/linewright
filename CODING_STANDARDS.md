@@ -90,9 +90,6 @@ A failing test says where it failed and what led there.
 
 - **Its log.** Every test is `#[test_log::test]`, around `#[tokio::test]`
   where it is async. `scripts/check test` enforces it.
-- **Its line.** A helper that can fail a test is `#[track_caller]`. An async
-  helper is a sync function that takes `Location::caller()` and returns the
-  future.
 
 ### Anti-patterns
 
