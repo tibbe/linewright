@@ -118,7 +118,7 @@ A workflow run failed on the default branch ...
   while Linewright was down does.
 - **In order.** The runs that an automation's trigger starts go one at a
   time, in the order in which the attempts completed.
-- **A cancelled run.** An attempt whose run is cancelled
+- **A run that shows as cancelled.** An attempt whose run shows as cancelled
   ([Ending](runs.md#ending)) runs the automation again.
 - **What has run it.** Linewright records the attempts that have run each
   automation in its database ([Storage](architecture.md#storage)).
