@@ -234,3 +234,178 @@ async fn get_benchmark_run_returns_its_results_and_trials() {
         "No such benchmark run 9"
     );
 }
+
+/// The arguments of `get_trial` for repetition `repetition` of task `task`
+/// under configuration `configuration` of benchmark run 1, with `more`.
+fn trial_of(configuration: i64, task: i64, repetition: i64, more: Value) -> Value {
+    let mut arguments = json!({
+        "benchmark_run_id": 1,
+        "configuration_id": configuration,
+        "task_id": task,
+        "repetition": repetition,
+    });
+    let Value::Object(more) = more else {
+        panic!("more arguments are an object: {more}");
+    };
+    arguments.as_object_mut().unwrap().extend(more);
+    arguments
+}
+
+/// The IDs of the entries `shown` gives.
+fn entry_ids(shown: &Value) -> Vec<String> {
+    shown["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{shown}"))
+        .iter()
+        .map(|entry| entry["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// The IDs of the entries of the transcript of the fixture's first turn,
+/// `linewright_core::testing::TURN_1`, as Run shows it: its brief, then
+/// each tool call, thought and message, then how long it worked for.
+const TURN_1_ENTRIES: [&str; 13] = [
+    "1/1",
+    "1/1/2",
+    "1/1/3",
+    "1/1/4",
+    "1/1/5",
+    "1/1/7",
+    "1/1/8",
+    "1/1/9",
+    "1/1/10",
+    "1/1/10/2",
+    "1/1/13",
+    "1/1/14",
+    "1/1/worked-for",
+];
+
+/// The IDs `get_trial` gives the entries of a trial whose run and scorer
+/// each have the transcript of the fixture's first turn: the run's, then
+/// the scorer's.
+fn trial_entry_ids() -> Vec<String> {
+    ["run", "scorer"]
+        .into_iter()
+        .flat_map(|transcript| {
+            TURN_1_ENTRIES
+                .iter()
+                .map(move |id| format!("{transcript}/{id}"))
+        })
+        .collect()
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: the
+/// run's, then the scorer's; `docs/specs/access.md`, The MCP server,
+/// Transcripts: one list of entries, the latest 100 or the latest `limit`,
+/// with how many were left out and the `before` that gives the ones before
+/// them, in full with `verbose`.
+#[test_log::test(tokio::test)]
+async fn get_trial_returns_the_run_then_the_scorer_and_their_latest_entries_as_one_list() {
+    let pages = with_benchmark_run().await;
+    let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
+    let mcp = Mcp::new(&pages, &token);
+
+    let all = mcp.shown("get_trial", trial_of(1, 1, 1, json!({}))).await;
+    let latest = mcp
+        .shown("get_trial", trial_of(1, 1, 1, json!({ "limit": 14 })))
+        .await;
+    let before = mcp
+        .shown(
+            "get_trial",
+            trial_of(1, 1, 1, json!({ "before": "run/1/1/worked-for" })),
+        )
+        .await;
+    let verbose = mcp
+        .shown("get_trial", trial_of(1, 1, 1, json!({ "verbose": true })))
+        .await;
+
+    for transcript in ["run", "scorer"] {
+        assert_eq!(all[transcript]["id"], "1/implement-1", "{all}");
+        assert_eq!(all[transcript]["outcome"], "done", "{all}");
+        assert_eq!(all[transcript]["sessions"][0]["session"], 1, "{all}");
+    }
+    let ids = trial_entry_ids();
+    assert_eq!(entry_ids(&all), ids);
+    let transcripts: Vec<&Value> = all["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| &entry["transcript"])
+        .collect();
+    assert_eq!(
+        transcripts,
+        [[&json!("run"); 13], [&json!("scorer"); 13]].concat()
+    );
+    assert_eq!(
+        (&all["left_out"], &all["before"]),
+        (&Value::Null, &Value::Null)
+    );
+    assert_eq!(entry_ids(&latest), ids[12..]);
+    assert_eq!(
+        (&latest["left_out"], &latest["before"]),
+        (&json!(12), &json!("run/1/1/worked-for"))
+    );
+    assert_eq!(entry_ids(&before), ids[..12]);
+    assert_eq!(
+        (&before["left_out"], &before["before"]),
+        (&Value::Null, &Value::Null)
+    );
+    let texts = |shown: &Value| -> Vec<Value> {
+        shown["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["type"] == "brief")
+            .map(|entry| entry["text"].clone())
+            .collect()
+    };
+    assert_eq!(texts(&all), [Value::Null, Value::Null]);
+    assert_eq!(
+        texts(&verbose),
+        [
+            json!("# Your task\n\nImplement the ticket below.\n"),
+            json!("# Your task\n\nScore the trial.\n"),
+        ]
+    );
+}
+
+/// `docs/specs/access.md`, The MCP server, A trial that does not exist;
+/// `docs/specs/benchmarks.md`, Benchmark run, A trial's transcripts: each
+/// once it has started.
+#[test_log::test(tokio::test)]
+async fn get_trial_refuses_a_trial_its_benchmark_run_lacks_and_shows_none_not_begun() {
+    let pages = with_benchmark_run().await;
+    let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
+    let mcp = Mcp::new(&pages, &token);
+
+    let not_begun = mcp.shown("get_trial", trial_of(2, 2, 2, json!({}))).await;
+    let mut refused = Vec::new();
+    for arguments in [
+        trial_of(3, 1, 1, json!({})),
+        trial_of(1, 3, 1, json!({})),
+        trial_of(1, 1, 3, json!({})),
+        trial_of(-1, 1, 1, json!({})),
+        trial_of(1, -1, 1, json!({})),
+    ] {
+        refused.push(refusal(&mcp.call("get_trial", arguments).await));
+    }
+    let mut no_benchmark_run = Vec::new();
+    for configuration in [1, -1] {
+        let arguments = json!({
+            "benchmark_run_id": 9,
+            "configuration_id": configuration,
+            "task_id": 1,
+            "repetition": 1,
+        });
+        no_benchmark_run.push(refusal(&mcp.call("get_trial", arguments).await));
+    }
+    let repetition_0 = mcp.call("get_trial", trial_of(1, 1, 0, json!({}))).await;
+
+    assert_eq!(not_begun, json!({ "entries": [] }));
+    assert_eq!(refused, ["No such trial."; 5]);
+    assert_eq!(no_benchmark_run, ["No such benchmark run 9"; 2]);
+    assert_eq!(
+        refusal(&repetition_0),
+        "The argument repetition is not valid."
+    );
+}
