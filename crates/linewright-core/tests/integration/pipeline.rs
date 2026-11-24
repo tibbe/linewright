@@ -1792,6 +1792,29 @@ async fn a_session_that_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_un
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
+/// `docs/specs/runs.md`, Ending: a run that could not finish and handed its
+/// item back ends handed back.
+#[test_log::test(tokio::test)]
+async fn a_run_whose_session_gives_up_ends_handed_back() {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Implement, |_| {
+        Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
+    });
+    world.store.open_issue(
+        "maintainer",
+        "Do it",
+        "Please.",
+        &["ready-for-agent", "linewright:designed"],
+    );
+
+    world.poll().await;
+
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright_core::runs::Ending::HandedBack]
+    );
+}
+
 /// Starts a ticket's run, which leaves edits uncommitted, and has `cancel`
 /// cancel it while its session runs.
 async fn cancelled_with_edits(world: &mut World, cancel: impl Fn(&World, Number)) -> Number {
@@ -2692,6 +2715,10 @@ async fn a_push_refused_for_a_missing_permission_hands_the_ticket_back_at_once_w
         "{comment}"
     );
     assert_eq!(world.store.pulls(), []);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright_core::runs::Ending::HandedBack]
+    );
 }
 
 async fn implemented_with_pushes_refused(output: &str) -> (World, linewright_core::domain::Number) {
