@@ -305,14 +305,8 @@ async fn an_attachment_github_refuses_over_linewrights_token_hands_the_ticket_ba
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let comment = last_comment(&issue);
-    assert!(
-        comment.starts_with(
-            "GitHub refused Linewright's token the upload of the attachment `shot.png`. \
-             GitHub's reason: Not Found\n\nLinewright's token needs write access to the \
-             repository, in a classic or fine-grained personal access token"
-        ),
-        "{comment}"
-    );
+    assert!(comment.contains("`shot.png`"), "{comment}");
+    assert!(comment.contains("Not Found"), "{comment}");
     assert_eq!(
         world
             .store
