@@ -189,6 +189,7 @@ async fn a_maintenance_command_that_exits_non_zero_runs_once_and_its_session_goe
 #[case::ended_by_a_signal(MaintenanceStatus::Signalled(9), AfterMaintenance::GoesOnPastAFailure)]
 #[case::still_running_at_the_deadline(MaintenanceStatus::TimedOut, AfterMaintenance::TimesOut)]
 #[case::cancelled(MaintenanceStatus::Cancelled, AfterMaintenance::Cancelled)]
+#[test_log::test]
 fn a_session_goes_on_after_its_maintenance_command_unless_it_timed_out_or_was_cancelled(
     #[case] status: MaintenanceStatus,
     #[case] expected: AfterMaintenance,

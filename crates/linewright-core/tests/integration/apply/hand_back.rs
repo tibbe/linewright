@@ -130,6 +130,7 @@ impl Item {
     HandBackKind::Stall,
     Asks { designed: None, stall: true, status: None, unassign: true }
 )]
+#[test_log::test]
 fn a_hand_back_asks(#[case] item: Item, #[case] kind: HandBackKind, #[case] expected: Asks) {
     let handed = hand_back_of(kind, "Too hard.", None);
 
@@ -160,6 +161,7 @@ fn a_hand_back_asks(#[case] item: Item, #[case] kind: HandBackKind, #[case] expe
     Some(log(Logged::Session, "Gave up.")),
     "Too hard.\n\n<details><summary>The end of the session's log</summary>\n\n```\nGave up.\n```\n\n</details>\n\nAssign @factory to this pull request again to try again."
 )]
+#[test_log::test]
 fn a_hand_back_comments(
     #[case] item: Item,
     #[case] log_tail: Option<LogTail>,
@@ -201,6 +203,7 @@ fn numbered_lines(to: u32) -> String {
         Some(log(Logged::Session, "I think it's a bug.")),
     ))
 )]
+#[test_log::test]
 fn a_result_sent_back(
     #[case] sent_before: u32,
     #[case] result_retries: u32,
@@ -236,6 +239,7 @@ fn shown(tail: Option<&LogTail>) -> Option<(Logged, &str)> {
     Some((Logged::Session, "2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n\
          26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41"))
 )]
+#[test_log::test]
 fn a_result_handed_back_gives_the_end_of_the_sessions_message(
     #[case] message: &str,
     #[case] expected: Option<(Logged, &str)>,
@@ -251,6 +255,7 @@ fn a_result_handed_back_gives_the_end_of_the_sessions_message(
 #[rstest]
 #[case::an_empty_log_gives_none("\n  \n", None)]
 #[case::a_log_is_trimmed("\n  Gave up.\n\n", Some((Logged::Session, "Gave up.")))]
+#[test_log::test]
 fn the_end_of_a_sessions_log(#[case] text: &str, #[case] expected: Option<(Logged, &str)>) {
     assert_eq!(shown(LogTail::session(text).as_ref()), expected);
 }
@@ -263,6 +268,7 @@ fn the_end_of_a_sessions_log(#[case] text: &str, #[case] expected: Option<(Logge
     Some((Logged::Maintenance, "3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n\
          26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42"))
 )]
+#[test_log::test]
 fn the_end_of_the_maintenance_commands_output(
     #[case] output: &str,
     #[case] expected: Option<(Logged, &str)>,
@@ -275,6 +281,7 @@ fn the_end_of_the_maintenance_commands_output(
 #[case::a_maintenance_commands_output_stays_one(Logged::Maintenance, "token [redacted]", Some((Logged::Maintenance, "token [redacted]")))]
 #[case::its_new_text_is_trimmed(Logged::Session, "\n token [redacted]\n", Some((Logged::Session, "token [redacted]")))]
 #[case::a_log_rewritten_to_nothing_gives_none(Logged::Session, " \n", None)]
+#[test_log::test]
 fn a_rewritten_log(
     #[case] of: Logged,
     #[case] new_text: &str,
@@ -342,6 +349,7 @@ fn stopped(kept: Kept, try_again: TryAgain) -> Stopped<'static> {
     TryAgain::Relabel,
     "\n\nKeeping the work so far on the branch `7-gadgets` failed: git commit: exit status 1"
 )]
+#[test_log::test]
 fn the_note_on_a_stopped_runs_work(
     #[case] kept: Kept,
     #[case] try_again: TryAgain,
@@ -369,6 +377,7 @@ fn the_note_on_a_stopped_runs_work(
      GitHub Personal Access Token in the commit `8f1d2c3`, at `src/config.rs:3`; Slack API \
      Token in the commit `9e0a1b2`, at `.env:1`."
 )]
+#[test_log::test]
 fn the_note_on_work_push_protection_refused(#[case] secrets: FoundSecrets, #[case] expected: &str) {
     assert_eq!(protected_note(&secrets), expected);
 }
@@ -380,6 +389,7 @@ fn the_note_on_work_push_protection_refused(#[case] secrets: FoundSecrets, #[cas
      permission. GitHub's reason: refusing to allow a workflow without `workflow` scope\n\n\
      The work was not kept. Grant the permission, or make the change yourself."
 )]
+#[test_log::test]
 fn a_refused_push_stalls(#[case] try_again: TryAgain, #[case] reason: &str) {
     let refused = refused_push(
         "7-gadgets",
@@ -399,6 +409,7 @@ fn a_refused_push_stalls(#[case] try_again: TryAgain, #[case] reason: &str) {
      write access to the repository, in a classic or fine-grained personal access token, to \
      attach files to what it posts."
 )]
+#[test_log::test]
 fn a_refused_attachment_stalls(#[case] file: &str, #[case] reason: &str, #[case] expected: &str) {
     assert_eq!(
         refused_attachment(file, reason),
@@ -415,6 +426,7 @@ fn a_refused_attachment_stalls(#[case] file: &str, #[case] reason: &str, #[case]
     "\n Should gadgets expire? \n",
     "Blocked on a question the spec cannot decide:\n\nShould gadgets expire?"
 )]
+#[test_log::test]
 fn a_blocked_design_is_a_decision(#[case] question: &str, #[case] reason: &str) {
     assert_eq!(
         design_blocked(question),
@@ -432,6 +444,7 @@ fn a_blocked_design_is_a_decision(#[case] question: &str, #[case] reason: &str) 
     "Blocked on a question the spec cannot decide:\n\nShould gadgets expire?\n\n\
      The work so far is on the branch `7-gadgets`."
 )]
+#[test_log::test]
 fn a_blocked_run_is_a_decision_saying_where_its_work_is(#[case] kept: Kept, #[case] reason: &str) {
     let blocked = blocked(
         " Should gadgets expire?\n",
@@ -460,6 +473,7 @@ fn a_blocked_run_is_a_decision_saying_where_its_work_is(#[case] kept: Kept, #[ca
         None,
     )
 )]
+#[test_log::test]
 fn a_design_that_gave_up_is_a_decision(
     #[case] of: DesignOf,
     #[case] session_log: &str,
@@ -488,6 +502,7 @@ fn a_design_that_gave_up_is_a_decision(
     Kept::Nothing,
     "The implementer handed the pull request back:\n\nToo hard."
 )]
+#[test_log::test]
 fn an_implementer_that_gave_up_is_a_decision_with_the_sessions_log(
     #[case] work: Implementing,
     #[case] kept: Kept,
@@ -571,6 +586,7 @@ fn an_issue_linewright_opened_with_nothing_to_build_is_closed_saying_why() {
         None,
     )
 )]
+#[test_log::test]
 fn a_timed_out_session_stalls_saying_after_how_long(
     #[case] setting: TimeoutSetting,
     #[case] seconds: u64,
@@ -620,6 +636,7 @@ fn a_timed_out_session_stalls_saying_after_how_long(
     UnexpectedEnd::NoResult,
     "The session ended unexpectedly: the harness stopped without a result."
 )]
+#[test_log::test]
 fn a_session_that_ended_unexpectedly_stalls_saying_why(
     #[case] end: UnexpectedEnd,
     #[case] reason: &str,
@@ -666,6 +683,7 @@ fn the_note_follows_the_reason_of_an_unexpected_end() {
     "Recording the run's outcome failed: commenting: rate limited\n\n\
      The work so far is on the branch `7-gadgets`."
 )]
+#[test_log::test]
 fn a_run_whose_recording_failed_stalls(#[case] note: &str, #[case] reason: &str) {
     let error = anyhow::anyhow!("rate limited").context("commenting");
 
@@ -685,6 +703,7 @@ fn a_run_whose_recording_failed_stalls(#[case] note: &str, #[case] reason: &str)
     Err(anyhow::anyhow!("pre-push: GH_TOKEN=ghp_s3cr3t").context("pushing 7-gadgets")),
     Kept::Failed("pushing 7-gadgets: pre-push: GH_TOKEN=[redacted]".into())
 )]
+#[test_log::test]
 fn what_a_stopped_runs_keep_gives(#[case] keep: anyhow::Result<Kept>, #[case] expected: Kept) {
     let redaction = linewright_core::testing::redaction_of(&[("GH_TOKEN", "ghp_s3cr3t")]);
 
@@ -694,6 +713,7 @@ fn what_a_stopped_runs_keep_gives(#[case] keep: anyhow::Result<Kept>, #[case] ex
 #[rstest]
 #[case::a_first_failure_is_retried(0, true)]
 #[case::a_failure_of_the_retry_is_not(1, false)]
+#[test_log::test]
 fn an_infrastructure_failure_is_retried(#[case] retries: u32, #[case] retried: bool) {
     assert_eq!(retries_infrastructure_failure(retries), retried);
 }

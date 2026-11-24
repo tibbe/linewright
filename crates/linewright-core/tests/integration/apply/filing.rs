@@ -100,6 +100,7 @@ fn gap(title: &str) -> SpecGap {
         ..Asks::default()
     }
 )]
+#[test_log::test]
 fn a_designed_issue_asks(#[case] cut: IssueWork, #[case] expected: Asks) {
     assert_eq!(designed_asks(&cut), expected);
 }
@@ -107,6 +108,7 @@ fn a_designed_issue_asks(#[case] cut: IssueWork, #[case] expected: Asks) {
 #[rstest]
 #[case::without_a_required_label(None, &["ready-for-agent"])]
 #[case::with_the_required_label(Some("from-linewright"), &["ready-for-agent", "from-linewright"])]
+#[test_log::test]
 fn a_spec_changes_issue_is_titled_for_it_links_it_and_is_ready_for_linewright(
     #[case] required: Option<&str>,
     #[case] labels: &[&str],
@@ -152,6 +154,7 @@ fn a_spec_changes_issue_is_titled_for_it_links_it_and_is_ready_for_linewright(
         new_ticket("listing", &["from-linewright"], &[0]),
     ]
 )]
+#[test_log::test]
 fn a_cut_files_each_ticket_with_its_blockers(
     #[case] drafts: Vec<(&str, Vec<usize>)>,
     #[case] required: Option<&str>,
@@ -171,6 +174,7 @@ fn a_cut_files_each_ticket_with_its_blockers(
     &[(11, "Store")],
     "A gadget store.\n\n## Tickets\n\n1. #11 Store\n\nSmall steps."
 )]
+#[test_log::test]
 fn a_cut_is_published_with_its_filed_tickets_in_order(
     #[case] tickets: &[(u64, &str)],
     #[case] design_comment: &str,
@@ -217,6 +221,7 @@ fn a_cut_is_published_with_its_filed_tickets_in_order(
         ),
     ]
 )]
+#[test_log::test]
 fn spec_gaps_are_filed_for_the_item(
     #[case] titles: &[&str],
     #[case] required: Option<&str>,
@@ -239,6 +244,7 @@ fn spec_gaps_are_filed_for_the_item(
     &[],
     &[(" empty WIDGETS ", 20)]
 )]
+#[test_log::test]
 fn a_spec_gap_already_filed_is_not_filed_again(
     #[case] returned: &[&str],
     #[case] kept: &[&str],
@@ -302,6 +308,7 @@ fn a_result_without_spec_gaps_drops_none() {
     "Does it.\n\nFixes #12",
     "Does it.\n\nFixes #12\n\nCloses #7"
 )]
+#[test_log::test]
 fn an_implement_run_opens_a_pull_request_closing_its_ticket(
     #[case] body: &str,
     #[case] expected_body: &str,
@@ -349,6 +356,7 @@ fn found_issues(titles: &[&str]) -> AutomationResult {
 #[case::those_past_max_issues_are_dropped_in_order(Some(1), &["A", "B", "C"], &["A"], &["B", "C"])]
 #[case::max_issues_zero_drops_every_one(Some(0), &["A"], &[], &["A"])]
 #[case::max_issues_is_three_unless_set(None, &["A", "B", "C", "D"], &["A", "B", "C"], &["D"])]
+#[test_log::test]
 fn an_automation_files_no_more_than_max_issues(
     #[case] max_issues: Option<u32>,
     #[case] returned: &[&str],
@@ -379,6 +387,7 @@ fn an_automation_files_no_more_than_max_issues(
     Some("from-linewright"),
     &["ready-for-agent", "from-linewright"]
 )]
+#[test_log::test]
 fn an_automation_files_its_issues_saying_which_automation_filed_them(
     #[case] label: AutomationIssueLabel,
     #[case] required: Option<&str>,

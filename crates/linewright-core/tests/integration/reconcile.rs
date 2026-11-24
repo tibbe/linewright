@@ -5227,6 +5227,7 @@ fn note(issue: u64, note: &str) -> ParentNote {
     &[],
     None
 )]
+#[test_log::test]
 fn a_discarded_cut_says_on_its_parent_what_it_closes(
     #[case] issue: Number,
     #[case] tickets: &[(u64, bool)],

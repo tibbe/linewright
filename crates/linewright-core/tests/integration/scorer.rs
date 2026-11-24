@@ -257,6 +257,7 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
     Unscored::Unexpected(anyhow::anyhow!("no such file").context("the task cannot be scored")),
     "The scorer stopped unexpectedly."
 )]
+#[test_log::test]
 fn a_scorer_that_makes_no_score_says_why(#[case] unscored: Unscored, #[case] why: &str) {
     assert_eq!(unscored.to_string(), why);
 }
