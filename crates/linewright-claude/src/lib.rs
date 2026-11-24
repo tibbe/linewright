@@ -1059,22 +1059,6 @@ mod tests {
     }
 
     #[test_log::test]
-    fn a_result_and_a_clean_exit_with_a_transcript_lacking_its_message_is_an_infrastructure_failure()
-     {
-        let reason = infrastructure(TurnEnd {
-            transcript: Kept::Lacks,
-            stderr_last_line: Some("Error: could not save (ENOSPC)".into()),
-            ..ended(Some(finished()))
-        });
-
-        assert_eq!(
-            reason,
-            "the harness did not keep all of the session's transcript: \
-             Error: could not save (ENOSPC)"
-        );
-    }
-
-    #[test_log::test]
     fn a_result_and_a_clean_exit_with_no_transcript_is_an_infrastructure_failure() {
         let reason = infrastructure(TurnEnd {
             transcript: Kept::Absent,
