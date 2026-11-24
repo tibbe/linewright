@@ -295,7 +295,8 @@ async fn a_serve_starting_while_drain_looks_at_the_claim_takes_it() {
 }
 
 #[test_log::test]
-fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not() {
+fn an_answer_naming_what_is_missing_is_missing_a_conflict_is_a_refusal_and_any_other_error_is_neither()
+ {
     let missing = api::check(
         StatusCode::NOT_FOUND,
         &Bytes::from(r#"{"error":"there is no issue or pull request #7","missing":"item"}"#),
@@ -305,6 +306,10 @@ fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not
         &Bytes::from(r#"{"error":"no such resource"}"#),
     );
     let not_json = api::check(StatusCode::BAD_GATEWAY, &Bytes::from("Bad Gateway"));
+    let refused = api::check(
+        StatusCode::CONFLICT,
+        &Bytes::from(r#"{"error":"a benchmark is already named board"}"#),
+    );
 
     assert!(
         matches!(&missing, Err(RequestError::NotFound(error)) if error == "there is no issue or pull request #7"),
@@ -319,6 +324,10 @@ fn an_answer_naming_what_is_missing_is_a_missing_item_and_any_other_error_is_not
         matches!(&not_json, Err(RequestError::Other(e))
             if e.to_string() == "`serve` answered 502 Bad Gateway: Bad Gateway"),
         "{not_json:?}"
+    );
+    assert!(
+        matches!(&refused, Err(RequestError::Refused(error)) if error == "a benchmark is already named board"),
+        "{refused:?}"
     );
     assert!(api::check(StatusCode::OK, &Bytes::from("{}")).is_ok());
 }
@@ -338,6 +347,10 @@ fn each_refusal_exits_with_its_own_status() {
         (
             RequestError::NotFound("there is no run 1/triage-2".into()),
             4,
+        ),
+        (
+            RequestError::Refused("a benchmark is already named board".into()),
+            1,
         ),
         (RequestError::HungUp(anyhow::anyhow!("hung up")), 1),
         (RequestError::Other(anyhow::anyhow!("failed")), 1),

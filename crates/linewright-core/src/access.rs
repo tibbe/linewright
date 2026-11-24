@@ -160,10 +160,6 @@ impl<L: LevelMarker> Permit<L, Operator> {
     /// The operator's permit, which is of every level
     /// (`docs/specs/access.md`, Out of scope: who can open the socket can use
     /// the commands).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "made only by the local API's routes that act")
-    )]
     pub(crate) fn operator() -> Permit<L, Operator> {
         Permit {
             holder: Operator,

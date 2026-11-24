@@ -9,6 +9,7 @@ mod benchmarks;
 mod capture;
 mod environment_shown;
 mod export;
+mod fake_serve;
 mod harness;
 mod local_api;
 mod logs;

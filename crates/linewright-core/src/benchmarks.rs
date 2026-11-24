@@ -47,11 +47,14 @@ macro_rules! given_id {
         pub struct $id(i64);
 
         impl $id {
+            /// `id`, if it is positive.
+            fn positive(id: i64) -> Option<$id> {
+                (id > 0).then_some($id(id))
+            }
+
             /// The ID a row holds.
             fn from_row(id: i64) -> Result<$id> {
-                (id > 0)
-                    .then_some($id(id))
-                    .with_context(|| format!("{id} is not {} ID", $whose))
+                $id::positive(id).with_context(|| format!("{id} is not {} ID", $whose))
             }
 
             /// The ID as a row holds it.
@@ -71,6 +74,16 @@ macro_rules! given_id {
         impl fmt::Display for $id {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{}", self.0)
+            }
+        }
+
+        /// A positive number, as it serializes.
+        impl<'de> serde::Deserialize<'de> for $id {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<$id, D::Error> {
+                let id = i64::deserialize(deserializer)?;
+                $id::positive(id).ok_or_else(|| {
+                    serde::de::Error::custom(format!("{id} is not {} ID", $whose))
+                })
             }
         }
     };
@@ -103,7 +116,7 @@ given_id!(
 );
 
 /// A named set of tasks of one stage.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize, JsonSchema)]
 pub struct Benchmark {
     pub id: BenchmarkId,
     pub name: Name,

@@ -77,6 +77,14 @@ impl Serialize for Name {
     }
 }
 
+/// A name as it serializes, clean ([`Name::parse`]).
+impl<'de> serde::Deserialize<'de> for Name {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Name, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Name::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Sorts `items` by the names `key` gives, in the order of the Unicode
 /// Collation Algorithm's root collation, and by their characters where it
 /// finds two names equal.

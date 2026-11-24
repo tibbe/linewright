@@ -1,7 +1,8 @@
 //! The programs cargo builds for these tests, `lw` and the fake `claude`.
 //!
 //! - `Output`: the exit code, stdout and stderr of an `lw`.
-//! - `lw_in`: runs `lw` on `REPO` with a work dir.
+//! - `lw_in`: runs `lw` on `REPO` with a work dir; `lw_asking`, asking a
+//!   `serve`.
 //! - `fake_claude`: a stand-in `claude` program whose turns answer a message.
 //! - `fake_claude_streaming`: a stand-in `claude` program that streams events.
 //! - `fake_claude_saying`: a stand-in `claude` that streams, keeps and writes errors.
@@ -24,12 +25,18 @@ pub struct Output {
 pub async fn lw_in(work_dir: &Path, args: &[&str]) -> Output {
     let runtime_dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
+    lw_asking(work_dir, runtime_dir.path(), cwd.path(), args).await
+}
+
+/// Runs `lw` on `REPO` with `args` and the work dir `work_dir`, from the
+/// directory `cwd`, asking the `serve` whose socket is in `runtime_dir`.
+pub async fn lw_asking(work_dir: &Path, runtime_dir: &Path, cwd: &Path, args: &[&str]) -> Output {
     let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_lw"))
         .args(["--repo", REPO, "--work-dir"])
         .arg(work_dir)
         .args(args)
-        .current_dir(cwd.path())
-        .env("XDG_RUNTIME_DIR", runtime_dir.path())
+        .current_dir(cwd)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
         .output()
         .await
         .unwrap();

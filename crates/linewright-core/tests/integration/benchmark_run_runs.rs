@@ -329,12 +329,11 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
     eventually_async(|| async { shown().await == (200, r#"{"state":"running"}"#.to_string()) })
         .await;
 
-    benchmark_runs.cancel(id, world.clock.now()).await.unwrap();
-    let nudged = routed(
+    let asked = routed(
         &api,
         hyper::Method::POST,
         Some("localhost"),
-        "/api/benchmark-runs/changed",
+        "/api/benchmark-runs/1/cancel",
     )
     .await;
     let record = rests(&benchmark_runs, id, |record| {
@@ -345,7 +344,7 @@ async fn cancelling_a_benchmark_run_stops_its_trial_in_flight_and_starts_no_othe
     serving.stop().await;
     drop(agent);
 
-    assert_eq!(nudged.status(), 200);
+    assert_eq!(asked.status(), 200);
     assert_eq!(cancelled, (200, r#"{"state":"cancelled"}"#.to_string()));
     assert!(
         matches!(record.state, BenchmarkRunState::Cancelled { at: Some(_) }),

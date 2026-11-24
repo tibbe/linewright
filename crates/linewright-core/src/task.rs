@@ -45,6 +45,21 @@ impl Criteria {
     }
 }
 
+impl Serialize for Criteria {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+/// Text as [`Criteria::parse`] takes it, refusing text that holds only
+/// white space with [`CRITERIA_REQUIRED`].
+impl<'de> serde::Deserialize<'de> for Criteria {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Criteria, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Criteria::parse(&text).ok_or_else(|| serde::de::Error::custom(CRITERIA_REQUIRED))
+    }
+}
+
 /// Why a capture given blank criteria is refused.
 pub const CRITERIA_REQUIRED: &str =
     "the criteria are required: what a good result is, not only white space";
