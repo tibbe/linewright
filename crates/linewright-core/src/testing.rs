@@ -82,7 +82,9 @@
 //!     first ticket implemented and its pull request opened;
 //!     `old_spec_change_cut`: one cut under a tracking issue, as an earlier
 //!     release left it.
-//!   - `issue_cut_into_tickets`: an issue cut into two tickets filed under it.
+//!   - `issue_cut_into_tickets`: an issue cut into two tickets filed under it;
+//!     `issue_ticket_in_review`, its first ticket implemented and its pull
+//!     request opened.
 //!   - `designed_on_the_issue`: an issue designed on the issue.
 //!   - `run_recorded`: a triage, design or implement run ended, with one
 //!     session and the input it recorded, read from the store as it is.

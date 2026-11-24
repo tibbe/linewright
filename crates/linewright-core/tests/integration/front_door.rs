@@ -102,16 +102,33 @@ async fn a_spec_change_ticket_in_review_is_what_design_then_the_implement_stage_
     assert_same_state(&front.store, &back.store).await;
 }
 
+/// A world whose `ready-for-agent` issue a poll designed.
+async fn issue_designed() -> World {
+    let mut world = World::new().await;
+    tickets_script(&world);
+    implement_gadgets(&world);
+    open_undesigned_gadgets(&world);
+    world.poll().await;
+    world
+}
+
 #[test_log::test(tokio::test)]
 async fn an_issue_cut_into_tickets_is_what_design_leaves() {
-    let mut front = World::new().await;
-    tickets_script(&front);
-    implement_gadgets(&front);
-    open_undesigned_gadgets(&front);
-    front.poll().await;
+    let front = issue_designed().await;
     let back = World::new().await;
 
     back.issue_cut_into_tickets().await;
+
+    assert_same_state(&front.store, &back.store).await;
+}
+
+#[test_log::test(tokio::test)]
+async fn an_issue_ticket_in_review_is_what_design_then_the_implement_stage_leave() {
+    let mut front = issue_designed().await;
+    front.poll().await;
+    let back = World::new().await;
+
+    back.issue_ticket_in_review().await;
 
     assert_same_state(&front.store, &back.store).await;
 }

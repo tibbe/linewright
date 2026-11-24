@@ -484,6 +484,15 @@ impl World {
         (issue, [filed[0].number, filed[1].number])
     }
 
+    /// [`World::issue_cut_into_tickets`]'s, with its first ticket
+    /// implemented and its pull request opened: the issue, its tickets in
+    /// order and the pull request.
+    pub async fn issue_ticket_in_review(&self) -> (Number, [Number; 2], Number) {
+        let (issue, tickets) = self.issue_cut_into_tickets().await;
+        let pr = self.implemented(tickets[0], &GADGETS).await;
+        (issue, tickets, pr)
+    }
+
     /// Files the tickets of [`tickets_script`]'s cut under `tracking`, each
     /// linked to the one blocking it.
     async fn file_cut_under(&self, tracking: Number) -> Vec<FiledTicket> {
