@@ -165,18 +165,10 @@ old, or on request, and a build replaces it only by succeeding.
   restarts, with secrets redacted ([Secrets](operation.md#secrets)).
 - **Stopping.** A drain waits for no build and starts none. A trigger that
   came while `serve` was down builds once it starts.
-- **Without `serve`.** `once` and `automation run` use the environment when
-  no trigger applies to it, and otherwise build it first and wait for the
-  build. A build that fails while there is an environment is no error of
-  theirs. When it fails and there is none, `automation run` runs nothing, and
-  `once` does its cycle under the hold as `serve` would
-  ([Holds](runs.md#holds)); each then exits with status 1, naming the failed
-  build and `lw environment` for its output.
-- **`lw environment rebuild`.** It asks the `serve` of the configured `repo`
-  on the same host to build, and returns once the build ends; `--no-wait`
-  returns once `serve` has taken the request. Without `serve`, it builds the
-  environment itself. A request while no build may start, as under a drain
-  or a `config.toml` Linewright cannot use
+- **`lw environment rebuild`.** It asks `serve` to build, and returns once the
+  build ends; `--no-wait` returns once `serve` has taken the request. A
+  request while no build may start, as under a drain or a `config.toml`
+  Linewright cannot use
   ([Linewright's files](repository.md#linewrights-files)), is refused, saying
   why, and is not kept for later. Its output and exit statuses are the
   monitoring commands' ([Output](operation.md#output)): it succeeds when what

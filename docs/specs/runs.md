@@ -224,7 +224,6 @@ A run ends in one of these outcomes, each with its name in JSON.
 | done                      | `done`        | it did its work, or found none left to do. A triage run is done whatever it decides. | done      |
 | handed back               | `handed-back` | it could not finish and handed its item back.                                        | waiting   |
 | cancelled                 | `cancelled`   | its item stopped asking for the work, or `serve` was stopped.                        | cancelled |
-| ended for the usage limit | `usage-limit` | its session was refused for the usage limit under a command other than `serve`.      | cancelled |
 | failed                    | `failed`      | it could not finish, and nothing on GitHub says so, such as an automation's run.     | failed    |
 | in flight                 | `in-flight`   | it has not ended.                                                                    | in flight |
 | interrupted               | `interrupted` | the process running it stopped before it ended, such as by a crash or a kill.        | cancelled |
@@ -313,8 +312,6 @@ limit resets, the usage limit holds runs until then ([Holds](#holds)).
 - **A reset time already passed.** It is waited out for a short time.
 - **No reset time.** A refusal that does not say when the limit resets is an
   infrastructure failure.
-- **Only `serve` waits.** Under any other command, the refused run ends for
-  the usage limit.
 - **Restarts.** A restart forgets the limit.
 
 ## Transcripts
@@ -419,8 +416,8 @@ that started a session.
 trial gives its run. That is the outcome of the run and the record of each
 session ([The output of a trial](benchmarks.md#the-output-of-a-trial)).
 
-- **DIR.** Linewright makes and refuses DIR as it makes and refuses the
-  directory of the output of a trial.
+- **DIR.** Linewright makes DIR if there is none, and refuses a DIR that
+  holds anything.
 - **A run in flight.** Linewright writes the run as it is when the command
   starts.
 

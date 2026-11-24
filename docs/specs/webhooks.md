@@ -33,7 +33,6 @@ Setting the webhook secret turns webhooks on.
   match is refused and logged, and its response does not say why.
 - **Listening.** `serve` then also listens for deliveries on the
   `webhook-address` setting, a host and port (default `0.0.0.0:8080`).
-  `once`, `status` and the other commands do not listen.
 - **Polling.** Polling continues at `poll-interval` with webhooks on: GitHub
   does not redeliver a failed delivery, so the poll is what catches a missed
   one.

@@ -136,9 +136,21 @@ counts against the ceiling on simultaneous runs.
   - `ready-for-agent`, for work an agent can do.
   - `ready-for-human`, when a person must decide or help.
 - **Beyond `max-issues`.** Issues beyond `max-issues` are dropped and logged.
-- **By hand.** `lw automation run NAME` runs one automation now and exits. It
-  changes neither the automation's schedule nor which attempts have run it.
-  A run by hand is marked as one wherever the run is shown.
+- **By hand.** `lw automation run NAME` asks `serve` to run one automation.
+  `serve` starts the run as it starts a run that the automation's trigger
+  asks for.
+- **The answer to a request by hand.** The command returns once `serve` has
+  taken the request. It says the run's ID, or what the run waits for. It
+  exits as the monitoring commands do ([Output](operation.md#output)).
+- **A run by hand.** It changes neither the automation's schedule nor which
+  attempts have run it. A run by hand is marked as one wherever the run is
+  shown.
+- **A second request.** While a request by hand for an automation waits for
+  its run to start, another request for that automation starts no other run.
+- **A request that `serve` refuses.** `serve` refuses a request during a
+  drain, and a request whose NAME names no automation. The command says why.
+- **A request after a restart.** A restart forgets a request whose run has
+  not started.
 - **The last run.** An automation's last run is its newest, whether by its
   trigger or by hand.
 
