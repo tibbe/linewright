@@ -9,6 +9,7 @@ use linewright_core::store::local::{LocalStore, Paused, Write};
 use linewright_core::store::{IssueRead, Store};
 use linewright_core::testing::*;
 use linewright_core::work_settings::{Effort, Partial, StageKey, StageTable};
+use rstest::rstest;
 use serde_json::{Value, json};
 
 #[test_log::test(tokio::test)]
@@ -1760,58 +1761,39 @@ async fn a_timed_out_session_leaves_its_uncommitted_edits_on_the_tickets_branch_
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
+#[rstest]
+#[case::blocked(
+    json!({"outcome": "blocked", "question": "Should gadgets expire?"}),
+    "Should gadgets expire?"
+)]
+#[case::gave_up(json!({"outcome": "gave-up", "reason": "Too hard."}), "Too hard.")]
 #[test_log::test(tokio::test)]
-async fn a_session_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit()
- {
-    use linewright_core::harness::SessionError;
+async fn a_session_that_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit(
+    #[case] answer: Value,
+    #[case] says: &str,
+) {
+    let mut world = World::new().await;
+    world.harness.on(WorkKind::Implement, move |call| {
+        start_and_leave_edits(&call.spec.dir);
+        Ok(answer.to_string())
+    });
+    let ticket = world.store.open_issue(
+        "maintainer",
+        "Gadgets",
+        "",
+        &["ready-for-agent", "linewright:designed"],
+    );
 
-    type Ending = fn() -> Result<String, SessionError>;
-    let endings: [(Ending, &str); 4] = [
-        (
-            || {
-                Err(SessionError::NoResult {
-                    why: "it crashed".into(),
-                    log_tail: String::new(),
-                })
-            },
-            "the harness stopped without a result",
-        ),
-        (|| Ok("Out of ideas.".into()), "Out of ideas."),
-        (
-            || Ok(json!({"outcome": "blocked", "question": "Should gadgets expire?"}).to_string()),
-            "Should gadgets expire?",
-        ),
-        (
-            || Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string()),
-            "Too hard.",
-        ),
-    ];
-    for (ending, says) in endings {
-        let mut world = World::new().await;
-        world.harness.on(WorkKind::Implement, move |call| {
-            if call.followup.is_none() {
-                start_and_leave_edits(&call.spec.dir);
-            }
-            ending()
-        });
-        let ticket = world.store.open_issue(
-            "maintainer",
-            "Gadgets",
-            "",
-            &["ready-for-agent", "linewright:designed"],
-        );
+    world.poll().await;
 
-        world.poll().await;
-
-        let branch = format!("{}-gadgets", ticket.0);
-        assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
-        let issue = world.issue(ticket);
-        assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
-        assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
-        let comment = last_comment(&issue);
-        assert!(comment.contains(says), "{comment}");
-        assert!(comment.contains(&kept_on(&branch)), "{comment}");
-    }
+    let branch = format!("{}-gadgets", ticket.0);
+    assert_eq!(subjects(&world, &branch), ["Start", UNFINISHED]);
+    let issue = world.issue(ticket);
+    assert!(issue.has_label("ready-for-human"), "{:?}", issue.labels);
+    assert!(!issue.is_assigned(&Login::new(LINEWRIGHT)));
+    let comment = last_comment(&issue);
+    assert!(comment.contains(says), "{comment}");
+    assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
 /// Starts a ticket's run, which leaves edits uncommitted, and has `cancel`
@@ -1970,19 +1952,23 @@ async fn a_timed_out_rework_leaves_its_uncommitted_edits_on_the_pull_requests_br
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
 }
 
+#[rstest]
+#[case::blocked(
+    json!({"outcome": "blocked", "question": "Should it keep its old name?"}),
+    "Should it keep its old name?"
+)]
+#[case::gave_up(json!({"outcome": "gave-up", "reason": "Too hard."}), "Too hard.")]
 #[test_log::test(tokio::test)]
-async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_branch_as_an_unfinished_commit()
- {
+async fn a_rework_that_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit(
+    #[case] answer: Value,
+    #[case] says: &str,
+) {
     let mut world = World::new().await;
-    let (ticket, pr) = world.ticket_in_review().await;
-    world
-        .store
-        .set_checks(pr, vec![check("test", CheckState::Failed, "it failed")])
-        .await
-        .unwrap();
-    world.harness.on(WorkKind::FixCi, |call| {
+    let (_, pr) = world.ticket_in_review().await;
+    world.rework_asked(pr);
+    world.harness.on(WorkKind::Rework, move |call| {
         rename_and_leave_edits(&call.spec.dir);
-        timed_out()
+        Ok(answer.to_string())
     });
 
     world.poll().await;
@@ -1992,67 +1978,10 @@ async fn a_timed_out_ci_fix_leaves_its_uncommitted_edits_on_the_pull_requests_br
         subjects(&world, &branch),
         ["Do the ticket", "Rename", UNFINISHED]
     );
-    let comment = handed_back_comment(&world, ticket, pr).await;
+    assert!(!linewright_assigned(&world, pr).await);
+    let comment = last_pull_comment(&world, pr).await;
+    assert!(comment.contains(says), "{comment}");
     assert!(comment.contains(&kept_on(&branch)), "{comment}");
-}
-
-#[test_log::test(tokio::test)]
-async fn a_rework_that_crashes_answers_no_json_blocks_or_gives_up_leaves_its_uncommitted_edits_as_an_unfinished_commit()
- {
-    use linewright_core::harness::SessionError;
-
-    type Ending = fn() -> Result<String, SessionError>;
-    let endings: [(Ending, &str); 4] = [
-        (
-            || {
-                Err(SessionError::NoResult {
-                    why: "it crashed".into(),
-                    log_tail: String::new(),
-                })
-            },
-            "The session ended unexpectedly: the harness stopped without a result.",
-        ),
-        (
-            || Ok("Out of ideas.".into()),
-            "The session ended unexpectedly: its result was not accepted: ",
-        ),
-        (
-            || {
-                Ok(
-                    json!({"outcome": "blocked", "question": "Should it keep its old name?"})
-                        .to_string(),
-                )
-            },
-            "Should it keep its old name?",
-        ),
-        (
-            || Ok(json!({"outcome": "gave-up", "reason": "Too hard."}).to_string()),
-            "Too hard.",
-        ),
-    ];
-    for (ending, says) in endings {
-        let mut world = World::new().await;
-        let (_, pr) = world.ticket_in_review().await;
-        world.rework_asked(pr);
-        world.harness.on(WorkKind::Rework, move |call| {
-            if call.followup.is_none() {
-                rename_and_leave_edits(&call.spec.dir);
-            }
-            ending()
-        });
-
-        world.poll().await;
-
-        let branch = world.store.snapshot_pull(pr).await.head_ref;
-        assert_eq!(
-            subjects(&world, &branch),
-            ["Do the ticket", "Rename", UNFINISHED]
-        );
-        assert!(!linewright_assigned(&world, pr).await);
-        let comment = last_pull_comment(&world, pr).await;
-        assert!(comment.contains(says), "{comment}");
-        assert!(comment.contains(&kept_on(&branch)), "{comment}");
-    }
 }
 
 /// Starts a rework, which leaves edits uncommitted, and has `cancel` cancel
