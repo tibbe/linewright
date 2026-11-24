@@ -11,6 +11,7 @@ use rstest::rstest;
     "2026-10-13T06:01:00Z"
 )]
 #[case::a_reset_now_is_waited_out_for_a_minute("2026-10-13T06:00:00Z", "2026-10-13T06:01:00Z")]
+#[test_log::test]
 fn a_refused_session_waits_until(#[case] resets_at: &str, #[case] until: &str) {
     let limit = UsageLimit {
         resets_at: at(resets_at),
@@ -22,6 +23,7 @@ fn a_refused_session_waits_until(#[case] resets_at: &str, #[case] until: &str) {
 #[rstest]
 #[case::the_time_left_at_the_refusal_is_carried_over(30, 20, 10)]
 #[case::a_deadline_passed_at_the_refusal_leaves_no_time(30, 40, 0)]
+#[test_log::test]
 fn a_session_resumed_after_waiting_out_the_usage_limit_has(
     #[case] deadline_minute: u64,
     #[case] refused_minute: u64,

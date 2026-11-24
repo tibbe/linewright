@@ -101,6 +101,7 @@ fn reply(thread: &str, resolve: bool) -> ThreadReply {
     Some("\nDoes it.\n\nCloses #7\n"),
     Some("Does it.\n\nCloses #7")
 )]
+#[test_log::test]
 fn a_new_description_closes_the_issues_the_pull_request_closes(
     #[case] closes: &[u64],
     #[case] pr_body: Option<&str>,
@@ -133,6 +134,7 @@ fn a_new_description_closes_the_issues_the_pull_request_closes(
     false
 )]
 #[case::a_thread_not_on_the_pull_request_is_left_alone(None, true, false)]
+#[test_log::test]
 fn a_reply_resolves_its_thread_only_where_a_bot_opened_it(
     #[case] opened_by: Option<&[&str]>,
     #[case] asks_to_resolve: bool,
@@ -211,6 +213,7 @@ fn every_reply_is_made_in_order_and_the_comment_is_posted() {
 #[case::a_rework_of_no_ones_feedback_asks_no_one(WorkKind::Rework, &[], &[])]
 #[case::fixing_ci_asks_no_one(WorkKind::FixCi, &["reviewer"], &[])]
 #[case::an_update_asks_no_one(WorkKind::Update, &["reviewer"], &[])]
+#[test_log::test]
 fn a_rework_requests_review_from_the_people_whose_feedback_it_answered(
     #[case] kind: WorkKind,
     #[case] feedback_authors: &[&str],
@@ -234,6 +237,7 @@ fn a_rework_requests_review_from_the_people_whose_feedback_it_answered(
 #[case::a_thread(None, None, Some("reviewer"), &["reviewer"])]
 #[case::a_bot(Some("linter[bot]"), None, None, &[])]
 #[case::linewright(None, None, Some(LINEWRIGHT), &[])]
+#[test_log::test]
 fn the_people_who_gave_feedback_are_its_authors_but_bots_and_linewright(
     #[case] commenter: Option<&str>,
     #[case] reviewer: Option<&str>,
@@ -261,6 +265,7 @@ fn the_people_who_gave_feedback_are_its_authors_but_bots_and_linewright(
 #[case::feedback_before_is_dropped(1, 0)]
 #[case::feedback_at_the_time_is_dropped(2, 0)]
 #[case::feedback_after_is_kept(3, 1)]
+#[test_log::test]
 fn late_feedback_is_what_came_after_the_time(#[case] minute: i64, #[case] kept: usize) {
     let comments = [comment("reviewer", minute)];
     let reviews = [review("reviewer", minute)];
@@ -305,6 +310,7 @@ fn late_feedback_in_a_thread_keeps_only_its_late_comments() {
 #[case::work_its_session_left_as_it_was_is_not(false, true, false)]
 #[case::work_on_a_pull_request_that_closed_is_not(true, false, false)]
 #[case::unchanged_work_on_a_closed_pull_request_is_not(false, false, false)]
+#[test_log::test]
 fn a_stopped_pull_request_runs_work(#[case] changed: bool, #[case] open: bool, #[case] kept: bool) {
     assert_eq!(keeps_work(changed, open), kept);
 }
@@ -353,6 +359,7 @@ fn pushed(pushes: &[(&str, &str)]) -> Vec<(String, String)> {
     "start", "head", Some("tip"), "head", &[]
 )]
 #[case::a_run_that_changed_nothing_pushes_nothing("start", "start", None, "start", &[])]
+#[test_log::test]
 fn the_pushes_that_apply_a_pull_request_runs_result(
     #[case] start: &str,
     #[case] on_remote: &str,
@@ -378,6 +385,7 @@ enum Job {
 #[case::a_ci_fix_with_a_conflict_also_resolves_it(Job::FixCi, true, Some(Job::FixCi))]
 #[case::an_update_with_a_conflict_resolves_it(Job::Update, true, Some(Job::Update))]
 #[case::an_update_without_a_conflict_starts_no_session(Job::Update, false, None)]
+#[test_log::test]
 fn a_pull_request_runs_session_is_asked(
     #[case] job: Job,
     #[case] conflicted: bool,

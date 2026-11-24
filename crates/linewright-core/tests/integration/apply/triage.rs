@@ -94,6 +94,7 @@ fn asks(status: StatusLabel, unassign: bool) -> Asks {
      `needs-triage` to triage it again. A comment alone starts nothing.",
     asks(StatusLabel::ReadyForHuman, true)
 )]
+#[test_log::test]
 fn a_triage_asks_comments_and_hands_on_by_its_outcome(
     #[case] author: &str,
     #[case] outcome: TriageOutcome,
@@ -148,6 +149,7 @@ fn a_triage_asks_comments_and_hands_on_by_its_outcome(
     "Bug",
     CategoryChange::IssueType("Bug".into())
 )]
+#[test_log::test]
 fn a_triage_categorizes_by_the_repositorys_scheme(
     #[case] labels: &[&str],
     #[case] categories: Categories,
