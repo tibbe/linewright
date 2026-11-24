@@ -61,8 +61,7 @@ tokens are the classes of daisyUI and Tailwind.
 - **The icon set** is [Heroicons](https://heroicons.com) 2, in its 20 solid
   ("mini") style. The exceptions are the icons of an issue and of a pull
   request, which are GitHub's own, from
-  [Octicons](https://primer.style/octicons), and the logo of an identity
-  provider, which is the provider's own.
+  [Octicons](https://primer.style/octicons).
 - **Sizes.** An icon is `size-5` before a `card-title`, `size-[1em]` in a
   `badge`, as daisyUI's badge with an icon has it, and `size-4` elsewhere.
 - **A component's own icons.** Where a daisyUI component draws an icon of its
