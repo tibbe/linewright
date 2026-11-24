@@ -29,6 +29,8 @@ contracts![
     closing_a_pull_request_moves_when_it_was_last_updated,
     a_reply_in_a_thread_reads_back_as_linewrights_last_comment_in_it,
     a_resolved_thread_reads_back_resolved,
+    the_failures_of_the_checks_asked_for_hold_their_failed_steps_output,
+    every_write_to_a_pull_request_moves_when_it_was_last_updated,
 ];
 
 /// Pushes a branch named for `what`, adding a file of its own, and opens a
@@ -636,5 +638,132 @@ async fn a_resolved_thread_reads_back_resolved(sandbox: Sandbox) -> Result<()> {
         equal("whether it is resolved", &thread.resolved, &true)
     })
     .await?;
+    Ok(())
+}
+
+async fn the_failures_of_the_checks_asked_for_hold_their_failed_steps_output(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let opened = opened(&sandbox, "check-failures").await?;
+    let failing = sandbox.unique("failing");
+    let line = sandbox.unique("the check failed here");
+
+    sandbox.fail_check(&opened, &failing, &line).await?;
+
+    let store = sandbox.store();
+    sandbox
+        .eventually(async || {
+            let failures = store
+                .check_failures(opened.pr, std::slice::from_ref(&failing))
+                .await?;
+            match &failures[..] {
+                [failure] => {
+                    equal("the check", &failure.name, &failing)?;
+                    let log = failure.log.as_ref().context("the failure has no log")?;
+                    ensure!(
+                        log.step_output.contains(&line),
+                        "the failed step's output is {:?}, not holding {line:?}",
+                        log.step_output
+                    );
+                    Ok(())
+                }
+                failures => bail!("the failures are {failures:?}"),
+            }
+        })
+        .await?;
+    let not_asked = store
+        .check_failures(opened.pr, &[sandbox.unique("not-asked")])
+        .await?;
+    equal("the failures of a check not asked for", &not_asked, &vec![])
+}
+
+async fn every_write_to_a_pull_request_moves_when_it_was_last_updated(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let what = "pull-updated";
+    let opened = opened(&sandbox, what).await?;
+    let (branch, pr) = (&opened.branch, opened.pr);
+    let label = sandbox.new_label(what, "Made by a contract").await?;
+    let owner = sandbox.reviewer();
+    let store = sandbox.store();
+
+    let mut last = at(&sandbox, pr, &branch.head).await?.updated_at;
+    let mut unmoved = vec![];
+    let mut written = async |write: &str| {
+        let moved = sandbox
+            .eventually(async || {
+                let now = store.pull(pr).await?.updated_at;
+                ensure!(now > last, "{write} left it at {now}, not after {last}");
+                Ok(now)
+            })
+            .await;
+        match moved {
+            Ok(now) => last = now,
+            Err(error) => unmoved.push(format!("{error:#}")),
+        }
+        sandbox.tick().await;
+    };
+    sandbox.tick().await;
+    store.comment(pr, "A contract's comment.").await?;
+    written("a comment").await;
+    store.add_label(pr, &label).await?;
+    written("a label").await;
+    store.remove_label(pr, &label).await?;
+    written("a label removed").await;
+    store.assign(pr).await?;
+    written("an assignment").await;
+    store.edit_body(pr, "Edited by a contract.").await?;
+    written("an edit").await;
+    let clone = sandbox.clone(&branch.name).await?;
+    commit(
+        &clone,
+        &[NewCommit {
+            message: "Change it",
+            files: &[("pushed.txt", b"pushed\n")],
+        }],
+    )
+    .await?;
+    let expected = branch.head.clone();
+    sandbox
+        .push(&clone, &branch.name, PushMode::Lease { expected })
+        .await?;
+    written("a push").await;
+    store.mark_ready(pr).await?;
+    written("marking it ready").await;
+    let path = added(&sandbox, what);
+    let thread = sandbox.start_thread(pr, &path, "Why this file?").await?;
+    written("a thread").await;
+    store.reply_in_thread(pr, &thread, "Because.").await?;
+    written("a reply").await;
+    store.resolve_thread(pr, &thread).await?;
+    written("a resolved thread").await;
+    store
+        .request_review(pr, std::slice::from_ref(&owner))
+        .await?;
+    written("a review request").await;
+    sandbox
+        .fail_check(&opened, &sandbox.unique("updated"), "Failed.")
+        .await?;
+    let checked = sandbox
+        .eventually(async || {
+            let pull = store.pull(pr).await?;
+            let push = pull.pushes.last().context("it has no pushes")?;
+            ensure!(
+                push.at > last,
+                "the last push listed is at {}, before the check's workflow was pushed",
+                push.at
+            );
+            ensure!(
+                pull.updated_at > push.at,
+                "a check left it at {}, when its workflow was pushed",
+                pull.updated_at
+            );
+            Ok(())
+        })
+        .await;
+    if let Err(error) = checked {
+        unmoved.push(format!("{error:#}"));
+    }
+    ensure!(unmoved.is_empty(), "{}", unmoved.join("; "));
     Ok(())
 }

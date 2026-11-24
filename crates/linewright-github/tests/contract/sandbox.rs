@@ -4,16 +4,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use futures_util::future::BoxFuture;
 use linewright_core::clock::SystemClock;
 use linewright_core::domain::label::Label;
 use linewright_core::domain::{
-    IssueCloseReason, Login, MergeMethod, MergeMethods, Number, PullState, Repo, ReviewState,
-    Timestamp, Windows,
+    CheckState, IssueCloseReason, Login, MergeMethod, MergeMethods, Number, PullState, Repo,
+    ReviewState, Scope, Timestamp, Windows,
 };
 use linewright_core::git;
-use linewright_core::store::local::{LocalStore, Seed};
+use linewright_core::store::local::{CheckRecord, LocalStore, Seed};
 use linewright_core::store::{NewIssue, NewPull, PushMode, Store};
 use linewright_github::GitHub;
 use reqwest::Method;
@@ -39,6 +39,13 @@ const GITHUB_SKEW: chrono::TimeDelta = chrono::TimeDelta::seconds(5);
 /// (<https://docs.github.com/en/rest/using-the-rest-api/timezones-and-the-rest-api>),
 /// to the whole second.
 const GITHUB_RESOLUTION: Duration = Duration::from_secs(1);
+
+/// How long GitHub Actions may take to run a check a contract fails, from
+/// the push that adds its workflow until it completes.
+const CHECK_RUN_WAIT: Duration = Duration::from_mins(3);
+
+/// How often to ask GitHub whether a check a contract fails has completed.
+const CHECK_RUN_POLL: Duration = Duration::from_secs(5);
 
 /// What starts the name of everything a contract makes, after the number of
 /// a branch named for a ticket.
@@ -230,19 +237,20 @@ impl Sandbox {
 
     /// The first answer `check` gives without failing, asked again on GitHub
     /// until [`GITHUB_LAG`] has passed and once on the local store.
-    pub async fn eventually<T, F, Fut>(&self, mut check: F) -> Result<T>
+    pub async fn eventually<T, F, Fut>(&self, check: F) -> Result<T>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = Result<T>>,
     {
-        let until = Instant::now() + self.lag;
-        loop {
-            match check().await {
-                Ok(answer) => return Ok(answer),
-                Err(error) if Instant::now() >= until => return Err(error),
-                Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
-            }
-        }
+        within(self.lag, Duration::from_secs(1), check).await
+    }
+
+    /// When a snapshot says #`number` was last updated, open or closed.
+    pub async fn updated_at(&self, number: Number) -> Result<Timestamp> {
+        let snapshot = self.store().snapshot(recent(), &Scope::default()).await?;
+        snapshot
+            .updated_at(number)
+            .with_context(|| format!("the snapshot does not hold {number}"))
     }
 
     /// Waits until the next write is stamped later than the last: a second
@@ -480,6 +488,43 @@ impl Sandbox {
         .await
     }
 
+    /// Pushes a commit on top of `opened`'s branch, as it is now, that adds
+    /// a workflow of its own, whose job `name` prints `line` and fails, and
+    /// returns the new head once the check has failed on it. On GitHub the
+    /// workflow runs again on every later push to the branch.
+    pub async fn fail_check(&self, opened: &Opened, name: &str, line: &str) -> Result<String> {
+        let branch = &opened.branch.name;
+        let clone = self.clone(branch).await?;
+        let expected = git::head(&clone).await?.to_string();
+        let path = format!(".github/workflows/{}.yml", self.unique("failing"));
+        let head = commit(
+            &clone,
+            &[NewCommit {
+                message: "Add a failing check",
+                files: &[(&path, failing_workflow(name, line).as_bytes())],
+            }],
+        )
+        .await?;
+        self.push(&clone, branch, PushMode::Lease { expected })
+            .await?;
+        match &self.side {
+            Side::Local(local) => {
+                local
+                    .set_checks(
+                        opened.pr,
+                        vec![CheckRecord {
+                            name: name.into(),
+                            state: CheckState::Failed,
+                            log: line.into(),
+                        }],
+                    )
+                    .await?;
+            }
+            Side::GitHub { github, .. } => wait_for_failed_check(github, &head, name).await?,
+        }
+        Ok(head)
+    }
+
     /// A token that can read the repository: the sandbox's own on GitHub,
     /// and any on the local store.
     pub fn reading_token(&self) -> String {
@@ -523,6 +568,82 @@ impl Sandbox {
     pub fn made_branch(&self, branch: &str) {
         let mut made = self.made.lock().expect("not poisoned");
         made.push(Thing::Branch(branch.to_string()));
+    }
+}
+
+/// A GitHub Actions workflow run on every push, whose one job, named
+/// `name`, prints `line` and fails
+/// (<https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions>).
+/// A step's log shows its environment before its output, so `line` is
+/// split across two variables that only the output joins. YAML reads a
+/// JSON string as the same string
+/// (<https://yaml.org/spec/1.2.2/#731-double-quoted-style>).
+fn failing_workflow(name: &str, line: &str) -> String {
+    let middle = line.char_indices().nth(line.chars().count() / 2);
+    let (head, tail) = line.split_at(middle.map_or(line.len(), |(at, _)| at));
+    let (name, head, tail) = (json!(name), json!(head), json!(tail));
+    format!(
+        r#"on: push
+jobs:
+  failing:
+    name: {name}
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          HEAD: {head}
+          TAIL: {tail}
+        run: |
+          echo "$HEAD$TAIL"
+          exit 1
+"#
+    )
+}
+
+/// Waits, for up to [`CHECK_RUN_WAIT`], until the check run `name` on the
+/// commit `head` has failed
+/// (<https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference>).
+async fn wait_for_failed_check(github: &GitHub, head: &str, name: &str) -> Result<()> {
+    let query: String = form_urlencoded::Serializer::new(String::new())
+        .append_pair("check_name", name)
+        .append_pair("status", "completed")
+        .finish();
+    let path = format!("/commits/{head}/check-runs?{query}");
+    within(CHECK_RUN_WAIT, CHECK_RUN_POLL, async || {
+        let runs = github.repo_request(Method::GET, &path, None).await?;
+        let conclusions: Vec<&Value> = runs["check_runs"]
+            .as_array()
+            .context("GitHub lists the check runs")?
+            .iter()
+            .map(|run| &run["conclusion"])
+            .collect();
+        match &conclusions[..] {
+            [conclusion] => {
+                ensure!(
+                    *conclusion == "failure",
+                    "the check {name} on {head} concluded {conclusion}"
+                );
+                Ok(())
+            }
+            _ => bail!("the completed checks {name} on {head} conclude {conclusions:?}"),
+        }
+    })
+    .await
+}
+
+/// The first answer `check` gives without failing, asked every `every`
+/// until `wait` has passed.
+async fn within<T, F, Fut>(wait: Duration, every: Duration, mut check: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    let until = Instant::now() + wait;
+    loop {
+        match check().await {
+            Ok(answer) => return Ok(answer),
+            Err(error) if Instant::now() >= until => return Err(error),
+            Err(_) => tokio::time::sleep(every).await,
+        }
     }
 }
 
