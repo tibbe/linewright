@@ -84,6 +84,8 @@
 //!     release left it.
 //!   - `issue_cut_into_tickets`: an issue cut into two tickets filed under it.
 //!   - `designed_on_the_issue`: an issue designed on the issue.
+//!   - `run_recorded`: a triage, design or implement run ended, with one
+//!     session and the input it recorded, read from the store as it is.
 //!   - `ticket_handed_back_with_its_branch`, `ticket_timed_out_with_edits`,
 //!     `ticket_blocked_filing_a_spec_gap`: a ticket the implement stage handed
 //!     back.

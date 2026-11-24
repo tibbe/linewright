@@ -234,8 +234,8 @@ async fn a_task_reads_with_its_benchmark_and_what_its_directory_gives_and_once_r
 
 #[test_log::test(tokio::test)]
 async fn the_criteria_are_kept_as_given_even_with_a_secret() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let criteria = format!("It never shows {SECRET}.\n");
 
     let kept = capture(&world, &run, "gadgets", &criteria).await.unwrap();
@@ -280,9 +280,24 @@ async fn an_automations_run_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_run_that_recorded_no_input_is_refused() {
-    let mut world = World::new().await;
-    world.store.fail_recording("GitHub is down");
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let ticket = open_designed_gadgets(&world);
+    let run = format!("{}/implement-1", ticket.0);
+    keep_record(
+        &world.work_dir,
+        &serde_json::from_str(&item_run_record(
+            ticket.0,
+            "implement",
+            1,
+            Some("done"),
+            &json!([format!(
+                "sessions/issue-{}/20261014T120001Z-implement",
+                ticket.0
+            )]),
+        ))
+        .unwrap(),
+    )
+    .await;
 
     let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
 
@@ -299,8 +314,8 @@ async fn a_run_that_recorded_no_input_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     record_as_before_the_properties(&world.dir.path().join("work")).await;
 
     let refused = capture(&world, &run, "gadgets", "Gadgets.\n").await;
@@ -318,8 +333,8 @@ async fn a_run_recorded_without_its_properties_is_refused_naming_them() {
 
 #[test_log::test(tokio::test)]
 async fn a_name_another_task_of_the_benchmark_has_is_refused_and_the_task_kept() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let kept = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
 
     let refused = capture(&world, &run, "gadgets", "Second.\n").await;
@@ -339,8 +354,8 @@ async fn a_name_another_task_of_the_benchmark_has_is_refused_and_the_task_kept()
 /// `docs/specs/benchmarks.md`, Names and IDs.
 #[test_log::test(tokio::test)]
 async fn tasks_are_named_in_plain_words_and_names_of_other_letter_case_are_two() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     capture(
         &world,
         &run,
@@ -389,8 +404,8 @@ async fn tasks_are_named_in_plain_words_and_names_of_other_letter_case_are_two()
 
 #[test_log::test(tokio::test)]
 async fn two_benchmarks_each_hold_a_task_of_one_name() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     capture(&world, &run, "gadgets", "Adds gadgets.\n")
         .await
         .unwrap();
@@ -423,8 +438,8 @@ async fn two_benchmarks_each_hold_a_task_of_one_name() {
 
 #[test_log::test(tokio::test)]
 async fn a_removed_tasks_name_is_captured_again_in_its_benchmark_with_a_new_id() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let first = capture(&world, &run, "gadgets", "First.\n").await.unwrap();
     benchmarks(&world)
         .await
@@ -447,8 +462,8 @@ async fn a_removed_tasks_name_is_captured_again_in_its_benchmark_with_a_new_id()
 
 #[test_log::test(tokio::test)]
 async fn of_two_captures_under_one_name_one_wins_and_the_other_is_refused() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let first = capture(&world, &run, "gadgets", "First.\n");
     let second = capture(&world, &run, "gadgets", "Second.\n");
 
@@ -511,8 +526,8 @@ async fn tasks_of(world: &World, name: &str) -> Option<Vec<(String, String, Stri
 
 #[test_log::test(tokio::test)]
 async fn a_capture_keeps_the_task_in_its_benchmark() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
 
     capture(&world, &run, "gadgets", "Gadgets.\n")
         .await
@@ -526,8 +541,8 @@ async fn a_capture_keeps_the_task_in_its_benchmark() {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothing() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let designs = benchmarks(&world)
         .await
         .make(&benchmark("designs"), TaskStage::Design)
@@ -557,8 +572,8 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
 
 #[test_log::test(tokio::test)]
 async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
 
     let refused = capture_into(
         &world,
@@ -579,8 +594,8 @@ async fn a_capture_into_a_benchmark_that_does_not_exist_is_refused() {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_into_a_new_benchmark_makes_it_of_the_runs_stage() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
 
     capture_into(
         &world,
@@ -609,8 +624,8 @@ async fn a_capture_into_a_new_benchmark_makes_it_of_the_runs_stage() {
 
 #[test_log::test(tokio::test)]
 async fn a_new_benchmark_a_benchmark_already_has_the_name_of_is_refused() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     capture(&world, &run, "first", "Gadgets.\n").await.unwrap();
 
     let refused = capture_into(
@@ -654,8 +669,8 @@ async fn a_failed_capture_into_a_new_benchmark_leaves_no_benchmark() {
 
 #[test_log::test(tokio::test)]
 async fn a_run_captured_into_two_benchmarks_gives_two_tasks() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     capture(&world, &run, "gadgets", "Adds gadgets.\n")
         .await
         .unwrap();
@@ -706,8 +721,8 @@ async fn gadgets_capturable(world: &World, run: &str) -> task::Capturable {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_passes_over_an_id_a_directory_in_the_tasks_is_named_as() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let capturable = gadgets_capturable(&world, &run).await;
     let before = tasks(&world).join("1");
     std::fs::create_dir_all(&before).unwrap();
@@ -735,8 +750,8 @@ async fn a_capture_passes_over_an_id_a_directory_in_the_tasks_is_named_as() {
 
 #[test_log::test(tokio::test)]
 async fn a_capture_whose_row_is_refused_writes_no_directory() {
-    let mut world = World::new().await;
-    let run = implemented(&mut world).await;
+    let world = World::new().await;
+    let run = implemented(&world).await;
     let capturable = gadgets_capturable(&world, &run).await;
     keep_task_row(
         &world.dir.path().join("work"),

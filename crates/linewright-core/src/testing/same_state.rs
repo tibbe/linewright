@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::panic::Location;
 use std::path::Path;
 
 use chrono::DateTime;
@@ -80,31 +79,21 @@ async fn state(store: &LocalStore) -> Value {
 /// `back`, written through the back door, in its order, field for field.
 /// Timestamps, also those that start a part of a path, as a session's
 /// directory's name does, are compared by their order.
-#[track_caller]
-pub fn assert_same_rows(
-    front: &Path,
-    back: &Path,
-    query: &str,
-) -> impl Future<Output = ()> + use<> {
-    let caller = Location::caller();
-    let (front, back) = (back_door(front), back_door(back));
-    let query = query.to_string();
-    async move {
-        let front = rows(caller, &front.await, &query).await;
-        let back = rows(caller, &back.await, &query).await;
-        if let Some(difference) = first_difference("", &front, &back) {
-            panic!("the rows of {query} differ at {difference}, at {caller}");
-        }
+pub async fn assert_same_rows(front: &Path, back: &Path, query: &str) {
+    let front = rows(&back_door(front).await, query).await;
+    let back = rows(&back_door(back).await, query).await;
+    if let Some(difference) = first_difference("", &front, &back) {
+        panic!("the rows of {query} differ at {difference}");
     }
 }
 
 /// The rows `query` gives in `pool`, each an object of its columns by name,
 /// each timestamp replaced by its place in the order of them all.
-async fn rows(caller: &Location<'_>, pool: &sqlx::SqlitePool, query: &str) -> Value {
+async fn rows(pool: &sqlx::SqlitePool, query: &str) -> Value {
     let rows = sqlx::query(sqlx::AssertSqlSafe(query))
         .fetch_all(pool)
         .await
-        .unwrap_or_else(|e| panic!("querying {query} at {caller}: {e}"));
+        .unwrap_or_else(|e| panic!("querying {query}: {e}"));
     pool.close().await;
     let rows: Vec<Value> = rows
         .iter()
@@ -138,34 +127,24 @@ async fn rows(caller: &Location<'_>, pool: &sqlx::SqlitePool, query: &str) -> Va
 /// stage, is what `back` holds for it, written through the back door, field
 /// for field. Timestamps are compared by their order and each head by its
 /// commit's author, message and tree.
-#[track_caller]
-pub fn assert_same_input<'a>(
-    front: &'a World,
-    back: &'a World,
-    run: &str,
-) -> impl Future<Output = ()> + 'a {
-    let caller = Location::caller();
-    let id: RunId = run
-        .parse()
-        .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
-    async move {
-        let front_input = input(caller, front, &id).await;
-        let back_input = input(caller, back, &id).await;
-        if let Some(difference) = first_difference("", &front_input, &back_input) {
-            panic!("the inputs of {id} differ at {difference}, at {caller}");
-        }
+pub async fn assert_same_input(front: &World, back: &World, run: &str) {
+    let id: RunId = run.parse().unwrap_or_else(|e| panic!("the run {run}: {e}"));
+    let front_input = input(front, &id).await;
+    let back_input = input(back, &id).await;
+    if let Some(difference) = first_difference("", &front_input, &back_input) {
+        panic!("the inputs of {id} differ at {difference}");
     }
 }
 
 /// The input `world` holds for the run `id`, each head as its commit, each
 /// timestamp replaced by its place in the order of them all.
-async fn input(caller: &Location<'_>, world: &World, id: &RunId) -> Value {
+async fn input(world: &World, id: &RunId) -> Value {
     let runs = runs_in(&world.work_dir).await;
     let input = runs
         .read_input(id)
         .await
-        .unwrap_or_else(|e| panic!("reading the input of {id} at {caller}: {e:#}"))
-        .unwrap_or_else(|| panic!("the run {id} recorded no input, at {caller}"));
+        .unwrap_or_else(|e| panic!("reading the input of {id}: {e:#}"))
+        .unwrap_or_else(|| panic!("the run {id} recorded no input"));
     let repo = world.store.repository();
     let mut input = serde_json::to_value(&input).unwrap();
     for head in input["heads"].as_object_mut().unwrap().values_mut() {
@@ -181,12 +160,10 @@ async fn input(caller: &Location<'_>, world: &World, id: &RunId) -> Value {
 /// task's `repository.git`, is compared by its refs, each by its commit's
 /// author, message and tree. Timestamps, also those that start a part of a
 /// path, are compared by their order.
-#[track_caller]
 pub fn assert_same_tree(front: &Path, back: &Path) {
-    let caller = Location::caller();
     let (front, back) = (tree(front), tree(back));
     if let Some(difference) = first_difference("", &front, &back) {
-        panic!("the trees differ at {difference}, at {caller}");
+        panic!("the trees differ at {difference}");
     }
 }
 

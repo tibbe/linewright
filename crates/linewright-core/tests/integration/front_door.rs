@@ -2,6 +2,7 @@
 //! stage from the same start.
 
 use linewright_core::domain::{CheckState, Requirement};
+use linewright_core::testing::captures;
 use linewright_core::testing::*;
 use serde_json::json;
 
@@ -278,4 +279,26 @@ async fn a_pull_request_reworked_is_what_the_rework_stage_leaves() {
     back.reworked(pr).await;
 
     assert_same_state(&front.store, &back.store).await;
+}
+
+#[test_log::test(tokio::test)]
+async fn a_recorded_run_is_what_the_implement_stage_records() {
+    let mut front = World::new().await;
+    implement_gadgets(&front);
+    open_designed_gadgets(&front);
+    front.poll().await;
+    let back = World::new().await;
+
+    let run = captures::implemented(&back).await;
+
+    assert_same_rows(
+        &front.work_dir,
+        &back.work_dir,
+        "SELECT runs.kind, runs.item, runs.stage, runs.automation, runs.n, runs.started_by, \
+         runs.workflow_run, runs.run_attempt, runs.started_at, runs.ended_at, runs.ending, \
+         runs.answered_until, sessions.seq, sessions.dir \
+         FROM runs LEFT JOIN sessions ON sessions.run = runs.id ORDER BY runs.id, sessions.seq",
+    )
+    .await;
+    assert_same_input(&front, &back, &run).await;
 }

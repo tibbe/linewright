@@ -7,14 +7,19 @@ use serde_json::{Value, json};
 
 use super::files::commit_in;
 use super::harness::subject_file;
+use super::records::{keep_input, keep_record, recorded_input};
 use super::world::{
     BUILT_AS_ASKED, Implementation, LINEWRIGHT, Repository, World, check, design_issues,
     implemented_file,
 };
+use crate::clock::Clock;
+use crate::database::time_text;
 use crate::domain::{CheckState, Login, Number, Requirement};
 use crate::git;
 use crate::harness::SessionError;
-use crate::reconcile::WorkKind;
+use crate::reconcile::{Subject, WorkKind};
+use crate::runs::{RunId, RunOf};
+use crate::session::subject_name;
 use crate::store::{NewIssue, PushMode, Store};
 use crate::tracking::{self, FiledTicket};
 
@@ -306,6 +311,49 @@ impl World {
         )
         .await;
         issue
+    }
+
+    /// What the triage, design or implement run `run` leaves in the
+    /// database, given `items` and `branches`: its record, started at the
+    /// clock's time and then ended `done`, with one session in the directory
+    /// its stage names, and its input, read from the store as it holds them
+    /// now, through [`recorded_input`].
+    ///
+    /// # Panics
+    ///
+    /// When `run` names no triage, design or implement run, or as
+    /// [`recorded_input`] does.
+    pub async fn run_recorded(&self, run: &str, items: &[Number], branches: &[&str]) {
+        let id: RunId = run.parse().unwrap_or_else(|e| panic!("the run {run}: {e}"));
+        let RunOf::Work {
+            item,
+            stage: stage @ (WorkKind::Triage | WorkKind::Design | WorkKind::Implement),
+        } = id.of
+        else {
+            panic!("only a triage, design or implement run records its input");
+        };
+        let (start, session, end) = (self.clock.now(), self.clock.now(), self.clock.now());
+        let record = json!({
+            "item": item.0,
+            "stage": stage.name(),
+            "n": id.n,
+            "started_at": time_text(start),
+            "end": {"at": time_text(end), "ending": "done"},
+            "sessions": [format!(
+                "sessions/{}/{}-{}",
+                subject_name(Subject::Issue(item)),
+                session.format("%Y%m%dT%H%M%SZ"),
+                stage.name()
+            )],
+        });
+        let input = recorded_input(&self.store, items, branches, start).await;
+        keep_record(&self.work_dir, &record).await;
+        keep_input(
+            &self.work_dir,
+            &id.to_string(),
+            &serde_json::to_value(input).unwrap(),
+        )
+        .await;
     }
 
     /// An issue needing triage, which triage asked its reporter about, each
