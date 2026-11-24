@@ -64,6 +64,17 @@ fn an_issue_s_state_is_the_first_row_of_the_state_table_that_holds() {
         sub_issues: vec![sub_issue(2, true, LINEWRIGHT)],
         ..issue(&[label::DESIGNED], &[])
     };
+    let ready = issue(&["ready-for-agent"], &[]);
+    let reopened_since = Issue {
+        events: [
+            ready.events.clone(),
+            vec![IssueEvent::Reopened {
+                at: at("2026-10-01T11:00:00Z"),
+            }],
+        ]
+        .concat(),
+        ..ready
+    };
     let cases: Vec<Case> = vec![
         (
             "closed",
@@ -139,8 +150,57 @@ fn an_issue_s_state_is_the_first_row_of_the_state_table_that_holds() {
             Some(State::ReadyForHuman),
         ),
         (
+            "needs-triage, then ready-for-agent",
+            relabeled(issue(&[], &[]), "needs-triage", "ready-for-agent"),
+            vec![],
+            None,
+            Some(State::ReadyForAgent),
+        ),
+        (
+            "ready-for-agent, then needs-triage",
+            relabeled(issue(&[], &[]), "ready-for-agent", "needs-triage"),
+            vec![],
+            None,
+            Some(State::NeedsTriage),
+        ),
+        (
+            "needs-triage, then ready-for-human",
+            relabeled(issue(&[], &[]), "needs-triage", "ready-for-human"),
+            vec![],
+            None,
+            Some(State::ReadyForHuman),
+        ),
+        (
+            "ready-for-agent, a pull request closing it merged before it was last reopened",
+            reopened_since,
+            vec![closing(2, merged_at("2026-10-01T10:00:00Z"))],
+            None,
+            Some(State::ReadyForAgent),
+        ),
+        (
             "ready-for-agent, assigned to someone else",
             issue(&["ready-for-agent"], &["alice"]),
+            vec![],
+            None,
+            Some(State::ReadyForAgent),
+        ),
+        (
+            "no status label, a pull request closing it merged",
+            issue(&[], &[]),
+            vec![closing(2, merged_at("2026-10-01T10:00:00Z"))],
+            None,
+            Some(State::Done),
+        ),
+        (
+            "needs-info",
+            issue(&["needs-info"], &[]),
+            vec![],
+            None,
+            Some(State::NeedsInfo),
+        ),
+        (
+            "ready-for-agent, not designed",
+            issue(&["ready-for-agent"], &[]),
             vec![],
             None,
             Some(State::ReadyForAgent),
