@@ -72,6 +72,7 @@ mod task_seeding;
 mod transcript;
 mod trial;
 mod trial_environments;
+mod trial_state;
 mod update_push;
 mod usage_limit;
 mod webhook;
