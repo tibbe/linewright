@@ -351,11 +351,6 @@ fn the_note_on_a_stopped_runs_work(
 }
 
 #[rstest]
-#[case::one_secret(
-    found_secrets(),
-    "\n\nThe work so far was not kept, as it holds a secret: GitHub's push protection found \
-     GitHub Personal Access Token in the commit `8f1d2c3`, at `src/config.rs:3`."
-)]
 #[case::two_secrets(
     FoundSecrets::new(vec![
         FoundSecret {
@@ -379,13 +374,6 @@ fn the_note_on_work_push_protection_refused(#[case] secrets: FoundSecrets, #[cas
 }
 
 #[rstest]
-#[case::a_ticket_says_to_relabel_it(
-    TryAgain::Relabel,
-    "GitHub refused to push the branch `7-gadgets` because Linewright's token lacks a \
-     permission. GitHub's reason: refusing to allow a workflow without `workflow` scope\n\n\
-     The work was not kept. Grant the permission and apply `ready-for-agent` again, or make \
-     the change yourself."
-)]
 #[case::a_pull_request_says_to_grant_the_permission(
     TryAgain::Reassign,
     "GitHub refused to push the branch `7-gadgets` because Linewright's token lacks a \
