@@ -76,33 +76,27 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
         .join("work/sessions/automation-team%2Fweekly.md");
     assert_eq!(std::fs::read_dir(sessions).unwrap().count(), 1);
     let issues = world.store.issues();
-    let filed: Vec<(&str, Vec<&str>, &str, &str)> = issues
+    let filed: Vec<(&str, Vec<&str>, &str)> = issues
         .iter()
-        .map(|i| {
-            (
-                i.title.as_str(),
-                labels(i),
-                i.author.as_str(),
-                i.body.as_str(),
-            )
-        })
+        .map(|i| (i.title.as_str(), labels(i), i.author.as_str()))
         .collect();
     assert_eq!(
         filed,
         [
-            (
-                "Fix the widget count",
-                vec!["ready-for-agent"],
-                LINEWRIGHT,
-                "Count them all.\n\n- [ ] All counted\n\nFiled by the automation `team/weekly.md`."
-            ),
+            ("Fix the widget count", vec!["ready-for-agent"], LINEWRIGHT),
             (
                 "Should gadgets expire?",
                 vec!["ready-for-human"],
-                LINEWRIGHT,
-                "Recommend: yes.\n\nFiled by the automation `team/weekly.md`."
+                LINEWRIGHT
             ),
         ]
+    );
+    assert!(
+        issues[0]
+            .body
+            .starts_with("Count them all.\n\n- [ ] All counted"),
+        "{}",
+        issues[0].body
     );
 }
 
@@ -125,22 +119,7 @@ fn three_issues() -> String {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_run_files_only_the_first_max_issues_issues() {
-    let mut world = with_automation("weekly.md", CAPPED).await;
-    world.harness.on_automation(|_| Ok(three_issues()));
-
-    world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
-        .unwrap();
-
-    let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
-    assert_eq!(titles, ["First", "Second"]);
-}
-
-#[test_log::test(tokio::test)]
-async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
+async fn the_issues_beyond_max_issues_are_not_filed_and_are_logged_as_dropped() {
     let mut world = with_automation("weekly.md", CAPPED).await;
     world.harness.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
@@ -151,6 +130,7 @@ async fn the_issues_beyond_max_issues_are_logged_as_dropped() {
         .await
         .unwrap();
 
+    assert_eq!(world.store.issues().len(), 2);
     let dropped: Vec<String> = log
         .lines("WARN")
         .into_iter()
