@@ -130,6 +130,8 @@ sign-in.
 
 - **The sign-up rule.** An identity provider's sign-up rule is the condition
   that an identity must meet at each sign-in.
+- **A team's members.** A GitHub team's members include the members of its
+  child teams.
 - **Settings.** Each identity provider has its client ID and its sign-up
   rule as settings, and its client secret as a credential
   ([Configuration](operation.md#configuration)). Linewright offers only the
