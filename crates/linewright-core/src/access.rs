@@ -12,7 +12,7 @@ pub(crate) mod tokens;
 use std::fmt;
 use std::marker::PhantomData;
 
-use people::{Person, State};
+use people::{PersonId, State};
 
 /// An access level (`docs/specs/access.md`, Roles), each including the
 /// ones before it.
@@ -84,16 +84,16 @@ impl Role {
 /// the time of the request (`docs/specs/access.md`, Roles, At each request).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caller {
-    person: Person,
+    person: people::Person,
 }
 
 impl Caller {
     /// `person` asking, `None` while they are disabled.
-    pub fn of(person: Person) -> Option<Caller> {
+    pub fn of(person: people::Person) -> Option<Caller> {
         (person.state == State::Enabled).then_some(Caller { person })
     }
 
-    pub fn person(&self) -> &Person {
+    pub fn person(&self) -> &people::Person {
         &self.person
     }
 
@@ -112,7 +112,7 @@ impl Caller {
     pub fn permit<L: LevelMarker>(&self) -> Result<Permit<L>, NeedsLevel> {
         if self.can(L::LEVEL) {
             Ok(Permit {
-                caller: self.clone(),
+                holder: Person(self.clone()),
                 level: PhantomData,
             })
         } else {
@@ -127,25 +127,91 @@ impl Caller {
 #[error("This needs the {0} access level.")]
 pub struct NeedsLevel(pub Level);
 
-/// That its caller's role reached the access level `L` as the request was
-/// resolved. Only [`Caller::permit`] makes one.
+/// That its holder reached the access level `L` as the request was
+/// resolved: a person, whose permit only [`Caller::permit`] makes, or the
+/// operator, whose permit only this crate makes.
 #[derive(Clone, Debug)]
-pub struct Permit<L> {
-    caller: Caller,
+pub struct Permit<L, H = Person> {
+    holder: H,
     level: PhantomData<L>,
 }
 
-impl<L> Permit<L> {
-    /// Who it was given to.
-    pub fn caller(&self) -> &Caller {
-        &self.caller
+impl<L, H: Holder> Permit<L, H> {
+    pub(crate) fn holder(&self) -> &H {
+        &self.holder
     }
 
-    fn lowered<M>(self) -> Permit<M> {
+    fn lowered<M>(self) -> Permit<M, H> {
         Permit {
-            caller: self.caller,
+            holder: self.holder,
             level: PhantomData,
         }
+    }
+}
+
+impl<L> Permit<L, Person> {
+    /// Who it was given to.
+    pub fn caller(&self) -> &Caller {
+        &self.holder.0
+    }
+}
+
+impl<L: LevelMarker> Permit<L, Operator> {
+    /// The operator's permit, which is of every level
+    /// (`docs/specs/access.md`, Out of scope: who can open the socket can use
+    /// the commands).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "made only by the local API's routes that act")
+    )]
+    pub(crate) fn operator() -> Permit<L, Operator> {
+        Permit {
+            holder: Operator,
+            level: PhantomData,
+        }
+    }
+}
+
+/// Who holds a [`Permit`].
+pub trait Holder: sealed::SealedHolder {
+    /// Who they are in the log (`docs/specs/access.md`, Actions, Logged).
+    fn logged(&self) -> Logged;
+}
+
+/// Who holds a permit, as the log gives them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Logged {
+    Person { id: PersonId, identity: String },
+    Operator,
+}
+
+/// A person, as the caller of a request.
+#[derive(Clone, Debug)]
+pub struct Person(Caller);
+
+impl Person {
+    pub(crate) fn of(caller: Caller) -> Person {
+        Person(caller)
+    }
+}
+
+/// The operator, asking through the local API.
+#[derive(Clone, Copy, Debug)]
+pub struct Operator;
+
+impl Holder for Person {
+    fn logged(&self) -> Logged {
+        let person = self.0.person();
+        Logged::Person {
+            id: person.id,
+            identity: person.logged(),
+        }
+    }
+}
+
+impl Holder for Operator {
+    fn logged(&self) -> Logged {
+        Logged::Operator
     }
 }
 
@@ -183,22 +249,26 @@ mod sealed {
     impl Sealed for super::Read {}
     impl Sealed for super::Act {}
     impl Sealed for super::Manage {}
+
+    pub trait SealedHolder {}
+    impl SealedHolder for super::Person {}
+    impl SealedHolder for super::Operator {}
 }
 
-impl From<Permit<Act>> for Permit<Read> {
-    fn from(permit: Permit<Act>) -> Permit<Read> {
+impl<H: Holder> From<Permit<Act, H>> for Permit<Read, H> {
+    fn from(permit: Permit<Act, H>) -> Permit<Read, H> {
         permit.lowered()
     }
 }
 
-impl From<Permit<Manage>> for Permit<Act> {
-    fn from(permit: Permit<Manage>) -> Permit<Act> {
+impl<H: Holder> From<Permit<Manage, H>> for Permit<Act, H> {
+    fn from(permit: Permit<Manage, H>) -> Permit<Act, H> {
         permit.lowered()
     }
 }
 
-impl From<Permit<Manage>> for Permit<Read> {
-    fn from(permit: Permit<Manage>) -> Permit<Read> {
+impl<H: Holder> From<Permit<Manage, H>> for Permit<Read, H> {
+    fn from(permit: Permit<Manage, H>) -> Permit<Read, H> {
         permit.lowered()
     }
 }

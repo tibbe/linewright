@@ -34,7 +34,7 @@ use std::fmt::Display;
 
 use tracing::{info, warn};
 
-use crate::access::{Caller, LevelMarker, NeedsLevel, Permit};
+use crate::access::{Caller, Holder, LevelMarker, Logged, NeedsLevel, Permit, Person};
 use crate::domain::Number;
 
 /// An action of `docs/specs/access.md`'s table.
@@ -235,7 +235,12 @@ impl Action {
         assert_eq!(L::LEVEL, self.level(), "{self:?} needs its own level");
         caller.permit::<L>().inspect_err(|refused| {
             if !self.read_only() {
-                logged(caller, self, changing, Ended::Refused(refused));
+                logged(
+                    &Person::of(caller.clone()),
+                    self,
+                    changing,
+                    Ended::Refused(refused),
+                );
             }
         })
     }
@@ -270,22 +275,38 @@ trait Ending: Display {
     fn failure(&self) -> Option<&anyhow::Error>;
 }
 
-/// Logs that `caller` did `action`, which changed or would have changed
+/// Logs that `holder` did `action`, which changed or would have changed
 /// `changed`, and how it ended: a failure with all its causes.
-fn logged(caller: &Caller, action: Action, changed: &str, ended: Ended) {
-    let person = caller.person();
-    let (id, identity) = (person.id, person.logged());
+fn logged(holder: &dyn Holder, action: Action, changed: &str, ended: Ended) {
+    let (id, identity) = match holder.logged() {
+        Logged::Person { id, identity } => (Some(id), identity),
+        Logged::Operator => (None, "operator".to_string()),
+    };
+    let id = id.map(tracing::field::display);
     let (tool, title) = (action.tool_name(), action.title());
     match ended {
         Ended::Done => {
-            info!(person = %id, identity, action = tool, changed, "{title}: done");
+            info!(
+                person = id,
+                identity,
+                action = tool,
+                changed,
+                "{title}: done"
+            );
         }
         Ended::Refused(why) => {
-            info!(person = %id, identity, action = tool, changed, reason = %why, "{title}: refused");
+            info!(person = id, identity, action = tool, changed, reason = %why, "{title}: refused");
         }
         Ended::Failed(why) => {
             let error = format!("{why:#}");
-            warn!(person = %id, identity, action = tool, changed, error, "{title}: failed");
+            warn!(
+                person = id,
+                identity,
+                action = tool,
+                changed,
+                error,
+                "{title}: failed"
+            );
         }
     }
 }
@@ -330,6 +351,9 @@ impl Display for Missing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::access::{Act, Operator};
+    use crate::task::TaskStage;
+    use crate::testing::{Log, sources_before_polling, work_dir_holding};
 
     /// The rows of the table of `docs/specs/access.md`, Actions: each
     /// action, its access level and its tool.
@@ -402,5 +426,32 @@ mod tests {
                 "list_authorizations",
             ]
         );
+    }
+
+    /// `docs/specs/access.md`, Actions, Logged, and Out of scope: who can
+    /// open the socket can use the commands, and has no person.
+    #[test_log::test(tokio::test)]
+    async fn an_action_done_by_the_operator_logs_the_operator_with_no_person() {
+        let (_dir, work_dir) = work_dir_holding(&[]);
+        let sources = sources_before_polling(work_dir).await;
+        let (log, _guard) = Log::capture();
+
+        benchmarks::create_benchmark(
+            &Permit::<Act, Operator>::operator(),
+            &sources,
+            &"gadgets".parse().unwrap(),
+            TaskStage::Design,
+        )
+        .await
+        .unwrap();
+
+        let logged = log.lines("INFO");
+        let made: Vec<&String> = logged
+            .iter()
+            .filter(|line| line.contains("Make a benchmark: done"))
+            .collect();
+        assert_eq!(made.len(), 1, "{logged:?}");
+        assert!(made[0].contains(r#" identity="operator" "#), "{logged:?}");
+        assert!(!made[0].contains(" person="), "{logged:?}");
     }
 }

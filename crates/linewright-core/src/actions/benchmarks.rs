@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 
 use super::{Action, Ended, Ending, logged};
-use crate::access::{Act, Permit, Read};
+use crate::access::{Act, Holder, Permit, Read};
 use crate::api::Sources;
 use crate::benchmarks::{
     Benchmark, BenchmarkId, BenchmarkRunId, BenchmarkRunRecord, BenchmarkRuns, BenchmarkShown,
@@ -132,7 +132,7 @@ pub fn trial_output_dir(
 ///
 /// When the name is taken, or the benchmark cannot be written.
 pub async fn create_benchmark(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     name: &Name,
     stage: TaskStage,
@@ -143,7 +143,7 @@ pub async fn create_benchmark(
         Ok(benchmark) => format!("benchmark {} named {name} of {stage}", benchmark.id),
         Err(_) => format!("a benchmark named {name} of {stage}"),
     };
-    logged(permit.caller(), Action::CreateBenchmark, &changed, how);
+    logged(permit.holder(), Action::CreateBenchmark, &changed, how);
     made
 }
 
@@ -155,7 +155,7 @@ pub async fn create_benchmark(
 /// When there is no such benchmark, the name is taken, or the change cannot
 /// be written.
 pub async fn edit_benchmark(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     id: BenchmarkId,
     name: &Name,
@@ -163,7 +163,7 @@ pub async fn edit_benchmark(
     let renamed = benchmarks(sources).rename(id, name).await;
     let how = Ended::of(&renamed);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EditBenchmark,
         &format!("benchmark {id}, renamed to {name}"),
         how,
@@ -179,7 +179,7 @@ pub async fn edit_benchmark(
 /// When there is no such benchmark or task, the name is taken in the
 /// benchmark, or the change cannot be written.
 pub async fn edit_task(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     benchmark: BenchmarkId,
     task: TaskId,
@@ -188,7 +188,7 @@ pub async fn edit_task(
     let changed = benchmarks(sources).edit_task(benchmark, task, change).await;
     let how = Ended::of(&changed);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EditTask,
         &format!("task {task} of benchmark {benchmark}"),
         how,
@@ -204,7 +204,7 @@ pub async fn edit_task(
 /// When there is no such benchmark or task, or the removal cannot be
 /// written.
 pub async fn remove_task(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     benchmark: BenchmarkId,
     task: TaskId,
@@ -215,7 +215,7 @@ pub async fn remove_task(
         Ok(name) => format!("task {task} named {name} of benchmark {benchmark}"),
         Err(_) => format!("task {task} of benchmark {benchmark}"),
     };
-    logged(permit.caller(), Action::RemoveTask, &changed, how);
+    logged(permit.holder(), Action::RemoveTask, &changed, how);
     removed
 }
 
@@ -227,7 +227,7 @@ pub async fn remove_task(
 ///
 /// As [`BenchmarkRuns::launch`].
 pub async fn run_benchmark(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     benchmark: BenchmarkId,
     configurations: Vec<(Name, Configuration)>,
@@ -247,7 +247,7 @@ pub async fn run_benchmark(
         ),
         Err(_) => format!("a benchmark run on benchmark {benchmark}"),
     };
-    logged(permit.caller(), Action::RunBenchmark, &changed, how);
+    logged(permit.holder(), Action::RunBenchmark, &changed, how);
     launched
 }
 
@@ -258,7 +258,7 @@ pub async fn run_benchmark(
 ///
 /// As [`BenchmarkRuns::rename_configuration`].
 pub async fn edit_configuration(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     id: BenchmarkRunId,
     configuration: ConfigurationId,
@@ -269,7 +269,7 @@ pub async fn edit_configuration(
         .await;
     let how = Ended::of(&renamed);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EditConfiguration,
         &format!("configuration {configuration} of benchmark run {id}, renamed to {name}"),
         how,
@@ -285,7 +285,7 @@ pub async fn edit_configuration(
 /// When there is no such benchmark run, it has ended, or the change cannot
 /// be written.
 pub async fn cancel_benchmark_run(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     id: BenchmarkRunId,
 ) -> Result<(), CancelRefusal> {
@@ -297,7 +297,7 @@ pub async fn cancel_benchmark_run(
     }
     let how = Ended::of(&cancelled);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::CancelBenchmarkRun,
         &format!("benchmark run {id}"),
         how,

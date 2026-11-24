@@ -5,7 +5,7 @@ use tracing::warn;
 
 use super::benchmarks::{benchmark_taken, benchmarks, task_taken};
 use super::{Action, Ended, logged};
-use crate::access::{Act, Permit, Read};
+use crate::access::{Act, Holder, Permit, Read};
 use crate::api::Sources;
 use crate::benchmarks::KeptTask;
 use crate::name::Name;
@@ -110,7 +110,7 @@ pub fn no_such_run(run: &impl std::fmt::Display) -> String {
 /// Before `serve`'s first poll, and as [`task::capturable`] and
 /// [`task::capture`].
 pub async fn add_task(
-    permit: &Permit<Act>,
+    permit: &Permit<Act, impl Holder>,
     sources: &Sources,
     run: &RunId,
     choice: &BenchmarkChoice,
@@ -121,7 +121,7 @@ pub async fn add_task(
     let Some(served) = sources.served.borrow().clone() else {
         let refused = AddTaskError::NotPolled;
         logged(
-            permit.caller(),
+            permit.holder(),
             Action::AddTask,
             &changed,
             Ended::Refused(&refused),
@@ -139,7 +139,7 @@ pub async fn add_task(
                 "run {run}, as the task {} named {name} in benchmark {}",
                 kept.id, kept.benchmark.id
             );
-            logged(permit.caller(), Action::AddTask, &kept_as, Ended::Done);
+            logged(permit.holder(), Action::AddTask, &kept_as, Ended::Done);
             Ok(kept)
         }
         Err(error) => {
@@ -148,7 +148,7 @@ pub async fn add_task(
                 Refusal::NoSuch | Refusal::Refused => Ended::Refused(&why),
                 Refusal::Failed => Ended::Failed(&why),
             };
-            logged(permit.caller(), Action::AddTask, &changed, how);
+            logged(permit.holder(), Action::AddTask, &changed, how);
             Err(AddTaskError::Capture { error, why })
         }
     }
