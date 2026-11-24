@@ -15,10 +15,12 @@ use linewright_core::git;
 use linewright_core::store::local::{LocalStore, Seed};
 use linewright_core::store::{NewIssue, NewPull, PushMode, Store};
 use linewright_github::GitHub;
+use reqwest::Method;
 use serde_json::Value;
 use tempfile::TempDir;
 
-/// One promise of the `Store` trait, checked through the trait alone.
+/// One promise of the `Store` trait, checked through the trait in a
+/// [`Sandbox`].
 pub type Contract = fn(Sandbox) -> BoxFuture<'static, Result<()>>;
 
 /// How long GitHub may take to answer a read with what a write just wrote,
@@ -50,7 +52,7 @@ const LOCAL_OWNER: &str = "contract-owner";
 /// What a contract runs against: a store and what it shares with the other
 /// contracts on it.
 pub struct Sandbox {
-    store: Arc<dyn Store>,
+    side: Side,
     repo: Repo,
     /// How long the store may take to answer a read with what a write just
     /// wrote.
@@ -60,6 +62,29 @@ pub struct Sandbox {
     scratch: Arc<TempDir>,
     clones: AtomicUsize,
     made: Arc<Mutex<Vec<Thing>>>,
+}
+
+/// Which store a contract runs against: the local store or the GitHub store,
+/// and no other.
+#[derive(Clone)]
+enum Side {
+    /// The local store, as its own type.
+    Local(Arc<LocalStore>),
+    /// The GitHub store, with the token it was reached with.
+    GitHub {
+        github: GitHub,
+        #[expect(dead_code, reason = "no setup on GitHub reads it yet")]
+        token: String,
+    },
+}
+
+impl Side {
+    fn store(&self) -> &dyn Store {
+        match self {
+            Side::Local(local) => &**local,
+            Side::GitHub { github, .. } => github,
+        }
+    }
 }
 
 /// A branch a contract pushed, and the commit it pushed it to.
@@ -97,7 +122,7 @@ enum Thing {
 /// What a contract made, to close or delete once it ends, whether it passed
 /// or not.
 pub struct Made {
-    store: Arc<dyn Store>,
+    side: Side,
     things: Arc<Mutex<Vec<Thing>>>,
     _scratch: Arc<TempDir>,
 }
@@ -129,23 +154,29 @@ impl Sandbox {
                 "Initial commit",
             )
             .await?;
-        Ok(Sandbox::new(Arc::new(store), repo, Duration::ZERO, scratch))
+        Ok(Sandbox::new(
+            Side::Local(Arc::new(store)),
+            repo,
+            Duration::ZERO,
+            scratch,
+        ))
     }
 
-    /// The GitHub store on the sandbox repository `repo`.
-    pub fn github(github: GitHub, repo: Repo) -> Result<Sandbox> {
+    /// The GitHub store on the sandbox repository `repo`, reached with
+    /// `token`.
+    pub fn github(github: GitHub, token: String, repo: Repo) -> Result<Sandbox> {
         Ok(Sandbox::new(
-            Arc::new(github),
+            Side::GitHub { github, token },
             repo,
             GITHUB_LAG,
             tempfile::tempdir()?,
         ))
     }
 
-    fn new(store: Arc<dyn Store>, repo: Repo, lag: Duration, scratch: TempDir) -> Sandbox {
+    fn new(side: Side, repo: Repo, lag: Duration, scratch: TempDir) -> Sandbox {
         let run = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         Sandbox {
-            store,
+            side,
             repo,
             lag,
             run,
@@ -158,14 +189,14 @@ impl Sandbox {
     /// What the contract makes, to clean up after it.
     pub fn made(&self) -> Made {
         Made {
-            store: self.store.clone(),
+            side: self.side.clone(),
             things: self.made.clone(),
             _scratch: self.scratch.clone(),
         }
     }
 
     pub fn store(&self) -> &dyn Store {
-        &*self.store
+        self.side.store()
     }
 
     /// The repository the store is of.
@@ -387,22 +418,23 @@ impl Made {
     /// Closes the issues and pull requests the contract opened and left
     /// open, then deletes its branches.
     pub async fn clean_up(self) -> Result<()> {
+        let store = self.side.store();
         let mut things = std::mem::take(&mut *self.things.lock().expect("not poisoned"));
         things.sort_by_key(|thing| matches!(thing, Thing::Branch(_)));
         for thing in things {
             match thing {
                 Thing::Pull(pr) => {
-                    let pull = self.store.pull(pr).await?;
+                    let pull = store.pull(pr).await?;
                     if matches!(pull.state, PullState::Open { .. }) {
-                        self.store.close_pull(pr).await?;
+                        store.close_pull(pr).await?;
                     }
                 }
                 Thing::Issue(issue) => {
-                    self.store
+                    store
                         .close_issue(issue, IssueCloseReason::NotPlanned)
                         .await?;
                 }
-                Thing::Branch(branch) => self.store.delete_branch(&branch).await?,
+                Thing::Branch(branch) => store.delete_branch(&branch).await?,
             }
         }
         Ok(())
@@ -436,7 +468,7 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
     let path = |page: u32| format!("/issues?state=open&per_page=100&page={page}");
     let mut left = vec![];
     for page in 1.. {
-        let items = github.repo_get(&path(page)).await?;
+        let items = github.repo_request(Method::GET, &path(page), None).await?;
         let items = items.as_array().context("GitHub lists the open issues")?;
         for item in items {
             if left_over(item, &linewright, before) {
@@ -450,7 +482,9 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
     }
     for (number, pull) in left {
         if pull {
-            let pr = github.repo_get(&format!("/pulls/{}", number.0)).await?;
+            let pr = github
+                .repo_request(Method::GET, &format!("/pulls/{}", number.0), None)
+                .await?;
             github.close_pull(number).await?;
             if let Some(branch) = pr["head"]["ref"].as_str() {
                 github.delete_branch(branch).await?;
@@ -462,7 +496,9 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
         }
     }
     // <https://docs.github.com/en/rest/git/refs#list-matching-references>
-    let refs = github.repo_get("/git/matching-refs/heads/").await?;
+    let refs = github
+        .repo_request(Method::GET, "/git/matching-refs/heads/", None)
+        .await?;
     let refs = refs.as_array().context("GitHub lists the matching refs")?;
     for branch in refs {
         let name = branch["ref"].as_str().context("a ref has a name")?;
@@ -477,7 +513,9 @@ pub async fn sweep(github: &GitHub) -> Result<()> {
         let sha = branch["object"]["sha"]
             .as_str()
             .context("a ref has a commit")?;
-        let commit = github.repo_get(&format!("/commits/{sha}")).await?;
+        let commit = github
+            .repo_request(Method::GET, &format!("/commits/{sha}"), None)
+            .await?;
         let committed: Option<Timestamp> = commit["commit"]["committer"]["date"]
             .as_str()
             .and_then(|at| at.parse().ok());

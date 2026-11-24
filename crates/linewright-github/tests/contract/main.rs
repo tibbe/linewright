@@ -3,6 +3,9 @@
 //! repository, against the GitHub store on it, so that the local store stays
 //! faithful to GitHub (`CODING_STANDARDS.md`, "A fake, against its adapter").
 //!
+//! A contract goes through the trait, and sets up what the trait can't
+//! through its sandbox, which knows which store it runs against.
+//!
 //! Each contract is a trial per store, `local::<area>::<contract>` and
 //! `github::<area>::<contract>`. Without a sandbox the GitHub trials are
 //! ignored. With one the store cannot reach, the run says so and runs none.
@@ -53,6 +56,8 @@ fn areas() -> Vec<(&'static str, Vec<(&'static str, Contract)>)> {
 /// The GitHub store on the sandbox repository.
 struct Reached {
     github: GitHub,
+    /// The token it was reached with.
+    token: String,
     repo: Repo,
 }
 
@@ -84,8 +89,13 @@ fn main() -> ExitCode {
             let trial = Trial::test(format!("github::{area}::{name}"), move || {
                 let reached = reached.with_context(|| format!("{REPO_VARIABLE} is not set"));
                 run(&on_github, async move {
-                    let Reached { github, repo } = &*reached?;
-                    checked(contract, Sandbox::github(github.clone(), repo.clone())?).await
+                    let Reached {
+                        github,
+                        token,
+                        repo,
+                    } = &*reached?;
+                    let sandbox = Sandbox::github(github.clone(), token.clone(), repo.clone())?;
+                    checked(contract, sandbox).await
                 })
             });
             trials.push(trial.with_ignored_flag(named.is_none()));
@@ -103,12 +113,16 @@ async fn reach(repo: &str) -> Result<Reached> {
         .into_iter()
         .find_map(|name| std::env::var(name).ok().filter(|t| !t.is_empty()))
         .context("set GH_TOKEN or GITHUB_TOKEN to the token of the sandbox's account")?;
-    let github = GitHub::connect(&repo, token).await?;
+    let github = GitHub::connect(&repo, token.clone()).await?;
     github.identity().await?;
     if let Err(error) = sandbox::sweep(&github).await {
         eprintln!("cannot close what earlier runs left open in {repo}: {error:#}");
     }
-    Ok(Reached { github, repo })
+    Ok(Reached {
+        github,
+        token,
+        repo,
+    })
 }
 
 /// Runs `contract` in `sandbox`, then cleans up what it made, which is no

@@ -684,9 +684,16 @@ impl GitHub {
         Ok(github)
     }
 
-    pub async fn repo_get(&self, path: &str) -> Result<Value> {
-        self.rest_once(Method::GET, &self.repo_path(path), None)
-            .await
+    /// GitHub's answer to a REST request of `method` to `path` under the
+    /// repository, such as `/issues`, sending `body`, if any: made once, with each rate limit
+    /// waited out.
+    pub async fn repo_request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        self.rest_once(method, &self.repo_path(path), body).await
     }
 
     pub fn full_name(&self) -> String {
@@ -924,7 +931,10 @@ impl GitHub {
         self.rest::<Value>(method, path, body).await.map(|_| ())
     }
 
-    async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
+    /// The data GitHub's GraphQL API answers `query` with, given
+    /// `variables`, asked again once when a retry could end it differently;
+    /// not for a mutation that makes something.
+    pub async fn graphql<T: DeserializeOwned>(&self, query: &str, variables: Value) -> Result<T> {
         gql_data(self.graphql_response(query, variables).await?)
     }
 
