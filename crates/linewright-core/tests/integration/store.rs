@@ -68,6 +68,13 @@ fn a_merge_method_the_repository_cannot_take_is_an_error_naming_what_it_allows()
              `rebase`; set `merge-method` to a method it allows",
         ),
         (
+            false,
+            &[Rebase],
+            Some(Merge),
+            "the repository doesn't allow the merge method `merge`: it allows only `rebase`; \
+             set `merge-method` to a method it allows",
+        ),
+        (
             true,
             &[Merge, Squash],
             Some(Rebase),
