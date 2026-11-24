@@ -168,6 +168,7 @@ pub(crate) async fn sources_of(
         work_dir,
         ends: ends.clone(),
         environment: serving.environment.clone(),
+        automations: serving.automations.clone(),
         benchmark_runs: serving.benchmark_runs.clone(),
         exiting: winding_up.exiting(),
     }
@@ -1735,4 +1736,111 @@ async fn with_no_setup_command_environment_and_its_rebuild_say_there_is_none() {
         rebuilt.stderr
     );
     answering.stop().await;
+}
+
+/// A world whose work dir is `REPO`'s, with the automation `team/weekly.md`,
+/// whose runs find nothing to do.
+async fn with_team_automation() -> World {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(
+                ".linewright/automations/team/weekly.md",
+                "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
+            )],
+            "Add an automation",
+        )
+        .await
+        .unwrap();
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    world
+}
+
+#[test_log::test(tokio::test)]
+async fn automation_run_prints_the_id_of_the_run_it_started_or_what_the_run_waits_for() {
+    let world = with_team_automation().await;
+    let agent = world.harness.hold();
+    let answering = Answering::start(world).await;
+
+    let started = answering.lw(&["automation", "run", "team/weekly.md"]).await;
+    let waiting = answering
+        .lw(&["automation", "run", "team/weekly.md", "--json"])
+        .await;
+    let waiting_as_text = answering.lw(&["automation", "run", "team/weekly.md"]).await;
+
+    assert_eq!(
+        (started.code, started.stdout.as_str()),
+        (Some(0), "team/weekly.md/1\n"),
+        "{}",
+        started.stderr
+    );
+    assert_eq!(waiting.code, Some(0), "{}", waiting.stderr);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&waiting.stdout).unwrap(),
+        serde_json::json!({
+            "request": "waiting",
+            "waits-for": { "run-in-flight": "team/weekly.md/1" }
+        })
+    );
+    assert_eq!(
+        waiting_as_text.stdout,
+        "waiting for a run of team/weekly.md in flight: team/weekly.md/1\n"
+    );
+    drop(agent);
+    answering.stop().await;
+}
+
+#[test_log::test(tokio::test)]
+async fn automation_run_of_no_automation_exits_1_saying_so() {
+    let answering = Answering::start(with_team_automation().await).await;
+
+    let output = answering.lw(&["automation", "run", "daily.md"]).await;
+
+    assert_eq!(output.code, Some(1));
+    assert_eq!(output.stdout, "");
+    assert!(
+        output.stderr.starts_with("lw: ") && output.stderr.contains("`daily.md`"),
+        "{}",
+        output.stderr
+    );
+    answering.stop().await;
+}
+
+#[test_log::test(tokio::test)]
+async fn automation_run_during_a_drain_exits_1_saying_serve_is_draining() {
+    let world = with_team_automation().await;
+    let agent = world.harness.hold();
+    let answering = Answering::start(world).await;
+    let started = answering.lw(&["automation", "run", "team/weekly.md"]).await;
+    let drain = answering.lw(&["drain", "--no-wait"]).await;
+
+    let output = answering.lw(&["automation", "run", "team/weekly.md"]).await;
+
+    assert_eq!(started.code, Some(0), "{}", started.stderr);
+    assert_eq!(drain.code, Some(0), "{}", drain.stderr);
+    assert_eq!(output.code, Some(1));
+    assert!(
+        output.stderr.contains("`serve` is draining"),
+        "{}",
+        output.stderr
+    );
+    let exited = answering.exits_once_served();
+    drop(agent);
+    assert_eq!(
+        within(STOPPING, "serve exits", exited).await.unwrap(),
+        ServeEnd::Drained
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn automation_run_without_serve_running_exits_3_saying_so() {
+    let runtime_dir = tempfile::tempdir().unwrap();
+
+    let output = lw(runtime_dir.path(), &["automation", "run", "weekly.md"]).await;
+
+    assert_eq!(output.code, Some(3));
+    assert!(output.stderr.contains("not running"), "{}", output.stderr);
 }

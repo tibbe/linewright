@@ -436,12 +436,16 @@ pub enum EnvironmentCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum AutomationCommand {
-    /// Run the automation at `.linewright/automations/NAME`, such as
-    /// `team/weekly.md`, on the default branch once, now, then exit; its
-    /// schedule stays as it was.
+    /// Ask `serve` to run the automation at `.linewright/automations/NAME`,
+    /// such as `team/weekly.md`, on the default branch once, as its trigger
+    /// would; its schedule stays as it was. Prints the run's ID, or what the
+    /// run waits for.
     Run {
         #[arg(value_name = "NAME")]
         name: AutomationName,
+        /// Print `serve`'s answer as JSON, as it sent it.
+        #[arg(long)]
+        json: bool,
     },
 }
 

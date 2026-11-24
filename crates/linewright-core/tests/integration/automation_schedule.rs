@@ -70,11 +70,7 @@ async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     world.poll().await;
     world.clock.advance(TimeDelta::hours(1));
 
-    world
-        .factory
-        .run_automation(&"hourly.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.run_by_hand("hourly.md").await.unwrap();
     world.poll().await;
 
     assert_eq!(world.harness.automation_prompts().len(), 2);

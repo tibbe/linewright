@@ -134,11 +134,7 @@ async fn running_the_automation_by_hand_leaves_the_attempts_that_have_run_it_as_
     world.clock.advance(TimeDelta::minutes(5));
     world.store.complete_attempt(fails_now(&world, 7));
 
-    world
-        .factory
-        .run_automation(&"fix-ci.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.run_by_hand("fix-ci.md").await.unwrap();
     world.poll().await;
     world.poll().await;
 

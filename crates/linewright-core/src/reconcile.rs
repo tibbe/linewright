@@ -10,7 +10,7 @@ use crate::domain::{
     SubIssue, TicketBranchName, Timestamp, Windows, label,
 };
 use crate::harness::UsageLimit;
-use crate::holds::InForce;
+use crate::holds::{Hold, InForce};
 use crate::lifecycle::{
     Cancel, IssueFacts, IssueStage, NotClaimed, Opener, PullClaim, PullFacts, PullRow, PullWorking,
     Row, State, TakeUp, cancels, done_by_merge, issue_state, may_claim, merged_row, pull_row,
@@ -19,7 +19,7 @@ use crate::lifecycle::{
 use crate::phrase::Phrase;
 use crate::pull_records::PullRecords;
 use crate::repo_files::{FileError, Unusable};
-use crate::runs::Ending;
+use crate::runs::{Ending, RunId};
 use crate::spec_glob::SpecGlob;
 use crate::work_settings::RunKind;
 use crate::workflow_run::{self, CompletedAttempt, TriggeredRun, TriggersSeen};
@@ -400,13 +400,18 @@ pub struct EndedRun {
 pub struct Automations {
     pub defined: Vec<Automation>,
     pub last_scheduled_runs: LastScheduledRuns,
-    pub in_flight: Vec<AutomationName>,
+    /// The run of each automation that has one in flight.
+    pub in_flight: BTreeMap<AutomationName, RunId>,
     /// The automations' workflow-run filters as Linewright last saw them.
     pub seen: TriggersSeen,
     /// The completed attempts of workflow runs Linewright keeps.
     pub attempts: Vec<CompletedAttempt>,
     /// The runs of automations that attempts started.
     pub triggered: Vec<TriggeredRun>,
+    /// The automations asked for by hand whose runs have not started
+    /// (`docs/specs/automations.md`, By hand), by name. Neither the schedule
+    /// nor the workflow runs act on them unless `defined` holds them too.
+    pub asked: BTreeMap<AutomationName, Automation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -500,6 +505,25 @@ pub enum AutomationStart {
     Schedule,
     /// An attempt of a workflow run that matches its trigger completed.
     WorkflowRun(CompletedAttempt),
+    /// The operator asked for it (`lw automation run`).
+    Hand,
+}
+
+/// What the run of an automation asked for by hand waits for before it
+/// starts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HandWait {
+    /// The first by rank of the holds over it.
+    Hold(Hold),
+    /// The automation's run in flight.
+    RunInFlight(RunId),
+    /// Room under `max-runs`.
+    Room,
+    /// The next poll that lists the automations: the reconcile that took
+    /// the request did not decide its run, such as when it failed or when
+    /// the last poll could not list them.
+    NextPoll,
 }
 
 impl Action {
@@ -732,6 +756,9 @@ pub enum Relabel {
 pub struct Decisions {
     pub actions: Vec<Action>,
     pub waits: BTreeMap<Number, Vec<Wait>>,
+    /// What each automation asked for by hand that does not start waits
+    /// for.
+    pub hand_waits: BTreeMap<AutomationName, HandWait>,
 }
 
 impl Decisions {
@@ -895,7 +922,23 @@ pub fn decisions(
     }
 
     let (mut decisions, room) = plan.into_decisions(room);
-    let scheduled = schedule(automations, now, room, &in_force);
+    let hand_starts = hand_starts(automations, room, &in_force);
+    let room = room.saturating_sub(hand_starts.started.len());
+    decisions.hand_waits = hand_starts.waits;
+    let busy = |name: &AutomationName| {
+        automations.in_flight.contains_key(name)
+            || hand_starts.started.iter().any(|a| a.name == *name)
+    };
+    decisions.actions.extend(
+        hand_starts
+            .started
+            .iter()
+            .map(|&automation| Action::RunAutomation {
+                automation: Box::new(automation.clone()),
+                start: AutomationStart::Hand,
+            }),
+    );
+    let scheduled = schedule(automations, now, room, &in_force, &busy);
     let room = room.saturating_sub(
         scheduled
             .iter()
@@ -905,19 +948,62 @@ pub fn decisions(
     decisions.actions.extend(scheduled);
     decisions
         .actions
-        .extend(trigger(automations, now, room, &in_force));
+        .extend(trigger(automations, now, room, &in_force, &busy));
     decisions
 }
 
+struct HandStarts<'a> {
+    started: Vec<&'a Automation>,
+    waits: BTreeMap<AutomationName, HandWait>,
+}
+
+/// The automations asked for by hand that start, at most `room`, in the
+/// order of their names, and what each of the others waits for: a hold in
+/// `in_force`, its run in flight, or room.
+fn hand_starts<'a>(
+    automations: &'a Automations,
+    room: usize,
+    in_force: &InForce,
+) -> HandStarts<'a> {
+    let mut hand_starts = HandStarts {
+        started: vec![],
+        waits: BTreeMap::new(),
+    };
+    for automation in automations.asked.values() {
+        let name = &automation.name;
+        let wait = if let Some(hold) = in_force
+            .holding(&RunKind::Automation(automation))
+            .into_iter()
+            .next()
+        {
+            Some(HandWait::Hold(hold))
+        } else if let Some(run) = automations.in_flight.get(name) {
+            Some(HandWait::RunInFlight(run.clone()))
+        } else if hand_starts.started.len() >= room {
+            Some(HandWait::Room)
+        } else {
+            None
+        };
+        match wait {
+            Some(wait) => {
+                hand_starts.waits.insert(name.clone(), wait);
+            }
+            None => hand_starts.started.push(automation),
+        }
+    }
+    hand_starts
+}
+
 /// The runs that the attempts of workflow runs start, at most `room`,
-/// followed by the record of the triggers seen if it changed. An
-/// automation with a run in flight, or that a hold in `in_force` holds,
-/// keeps its attempts pending.
+/// followed by the record of the triggers seen if it changed. A `busy`
+/// automation, or one that a hold in `in_force` holds, keeps its attempts
+/// pending.
 fn trigger(
     automations: &Automations,
     now: Timestamp,
     room: usize,
     in_force: &InForce,
+    busy: &dyn Fn(&AutomationName) -> bool,
 ) -> Vec<Action> {
     let triggered = workflow_run::trigger(
         &automations.defined,
@@ -925,7 +1011,7 @@ fn trigger(
         &automations.attempts,
         &automations.triggered,
         |automation| {
-            automations.in_flight.contains(&automation.name)
+            busy(&automation.name)
                 || !in_force
                     .holding(&RunKind::Automation(automation))
                     .is_empty()
@@ -1058,8 +1144,8 @@ pub fn next_run(schedule: &Schedule, last_scheduled_run: Timestamp, now: Timesta
 }
 
 /// The runs of the automations due, at most `room`, followed by the record
-/// of the last scheduled runs if it changed. An automation a hold in
-/// `in_force` holds stays due, to run once the hold ends. One not on a
+/// of the last scheduled runs if it changed. A `busy` automation, or one a
+/// hold in `in_force` holds, stays due, to run once it is neither. One not on a
 /// schedule loses its last scheduled run, so that it counts as new when it
 /// comes back to one (`docs/specs/automations.md`, A new automation).
 fn schedule(
@@ -1067,6 +1153,7 @@ fn schedule(
     now: Timestamp,
     room: usize,
     in_force: &InForce,
+    busy: &dyn Fn(&AutomationName) -> bool,
 ) -> Vec<Action> {
     let mut last_scheduled_runs = automations.last_scheduled_runs.clone();
     let mut due = vec![];
@@ -1079,7 +1166,7 @@ fn schedule(
             last_scheduled_runs.record(&automation.name, now);
             continue;
         };
-        let running = automations.in_flight.contains(&automation.name);
+        let running = busy(&automation.name);
         let held = !in_force
             .holding(&RunKind::Automation(automation))
             .is_empty();
@@ -1312,6 +1399,7 @@ impl Plan<'_> {
         let decisions = Decisions {
             actions,
             waits: self.waits,
+            hand_waits: BTreeMap::new(),
         };
         (decisions, room_left)
     }

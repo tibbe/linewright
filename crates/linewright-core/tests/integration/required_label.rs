@@ -218,11 +218,8 @@ async fn filing_automation(label_exists: bool) -> (World, Vec<Vec<String>>) {
         })
         .to_string())
     });
-    world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.poll().await;
+    world.run_by_hand("weekly.md").await.unwrap();
     let all = all_labels(&world);
     (world, all)
 }

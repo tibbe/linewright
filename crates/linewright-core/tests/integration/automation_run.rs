@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use clap::{CommandFactory, Parser};
+use linewright_core::by_hand::HandTaken;
 use linewright_core::config::Cli;
 use linewright_core::harness::SessionError;
+use linewright_core::reconcile::HandWait;
 use linewright_core::testing::*;
 use linewright_core::work_settings::Effort;
 use serde_json::json;
@@ -16,8 +18,9 @@ max-issues: 3
 Look at the bugs fixed in the past week ...
 ";
 
+/// A world with the automation `name` on the default branch, polled once.
 async fn with_automation(name: &str, text: &str) -> World {
-    let world = World::new().await;
+    let mut world = World::new().await;
     world
         .store
         .commit(
@@ -28,6 +31,7 @@ async fn with_automation(name: &str, text: &str) -> World {
         )
         .await
         .unwrap();
+    world.poll().await;
     world
 }
 
@@ -60,11 +64,7 @@ async fn an_automation_run_files_the_issues_its_result_returns_as_linewright() {
         }
     });
 
-    world
-        .factory
-        .run_automation(&"team/weekly.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.run_by_hand("team/weekly.md").await.unwrap();
 
     assert_eq!(
         given.lock().unwrap().clone(),
@@ -124,11 +124,7 @@ async fn the_issues_beyond_max_issues_are_not_filed_and_are_logged_as_dropped() 
     world.harness.on_automation(|_| Ok(three_issues()));
     let (log, _guard) = Log::capture();
 
-    world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.run_by_hand("weekly.md").await.unwrap();
 
     assert_eq!(world.store.issues().len(), 2);
     let dropped: Vec<String> = log
@@ -140,28 +136,12 @@ async fn the_issues_beyond_max_issues_are_not_filed_and_are_logged_as_dropped() 
     assert!(dropped[0].contains("Third"), "{}", dropped[0]);
 }
 
-#[test_log::test(tokio::test)]
-async fn an_unknown_automation_fails_naming_its_file() {
-    let mut world = with_automation("weekly.md", WEEKLY).await;
-
-    let error = format!(
-        "{:#}",
-        world
-            .factory
-            .run_automation(&"daily.md".parse().unwrap())
-            .await
-            .unwrap_err()
-    );
-
-    assert!(
-        error.contains("there is no automation `daily.md`"),
-        "{error}"
-    );
-    assert!(
-        error.contains(".linewright/automations/daily.md"),
-        "{error}"
-    );
-    assert_eq!(world.harness.automation_prompts(), Vec::<String>::new());
+/// The errors logged as runs of automations failed.
+fn failures(log: &Log) -> Vec<String> {
+    log.lines("ERROR")
+        .into_iter()
+        .filter(|line| line.contains("automation run failed"))
+        .collect()
 }
 
 #[test_log::test(tokio::test)]
@@ -172,22 +152,19 @@ async fn a_session_that_times_out_fails_the_run_without_a_retry_saying_it_timed_
             log_tail: String::new(),
         })
     });
+    let (log, _guard) = Log::capture();
 
-    let error = format!(
-        "{:#}",
-        world
-            .factory
-            .run_automation(&"weekly.md".parse().unwrap())
-            .await
-            .unwrap_err()
-    );
+    world.run_by_hand("weekly.md").await.unwrap();
 
-    assert!(error.contains("it timed out"), "{error}");
+    let failed = failures(&log);
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert!(failed[0].contains("it timed out"), "{}", failed[0]);
     assert!(
-        error.contains(
+        failed[0].contains(
             "or `session-timeout` in the automation's front matter may need to be longer"
         ),
-        "{error}"
+        "{}",
+        failed[0]
     );
     assert_eq!(world.harness.automation_prompts().len(), 1);
 }
@@ -201,19 +178,16 @@ async fn a_session_that_fails_fails_the_run() {
             log_tail: String::new(),
         })
     });
+    let (log, _guard) = Log::capture();
 
-    let error = format!(
-        "{:#}",
-        world
-            .factory
-            .run_automation(&"weekly.md".parse().unwrap())
-            .await
-            .unwrap_err()
-    );
+    world.run_by_hand("weekly.md").await.unwrap();
 
+    let failed = failures(&log);
+    assert_eq!(failed.len(), 1, "{failed:?}");
     assert!(
-        error.contains("The session ended unexpectedly: the harness stopped without a result."),
-        "{error}"
+        failed[0].contains("The session ended unexpectedly: the harness stopped without a result."),
+        "{}",
+        failed[0]
     );
 }
 
@@ -224,12 +198,11 @@ async fn a_result_that_still_does_not_parse_after_the_retries_fails_the_run() {
         .harness
         .on_automation(|_| Ok("I looked; all is well.".into()));
 
-    let error = world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await;
+    let (log, _guard) = Log::capture();
 
-    assert!(error.is_err());
+    world.run_by_hand("weekly.md").await.unwrap();
+
+    assert_eq!(failures(&log).len(), 1);
     let the_first_answer_and_one_follow_up = 2;
     assert_eq!(
         world.harness.automation_prompts().len(),
@@ -256,15 +229,97 @@ async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
     world.harness.on_automation(refused_for_the_usage_limit);
     let (log, _guard) = Log::capture();
 
-    world
-        .factory
-        .run_automation(&"weekly.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.run_by_hand("weekly.md").await.unwrap();
 
     let ended = log.usage_limit_warnings();
     assert_eq!(ended.len(), 1, "{ended:?}");
     assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
     assert_eq!(world.harness.automation_prompts().len(), 1, "not retried");
     assert_eq!(world.store.issues(), []);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_run_by_hand_is_answered_with_its_id() {
+    let mut world = with_automation("team/weekly.md", WEEKLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+
+    let taken = world.run_by_hand("team/weekly.md").await.unwrap();
+
+    assert_eq!(
+        taken,
+        HandTaken::Started {
+            run: "team/weekly.md/1".parse().unwrap()
+        }
+    );
+    assert_eq!(taken.render(), "team/weekly.md/1\n");
+}
+
+#[test_log::test(tokio::test)]
+async fn requests_while_a_run_is_in_flight_wait_for_it_and_then_start_one_run() {
+    let mut world = with_automation("weekly.md", WEEKLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    let agent = world.harness.hold();
+    let weekly = || "weekly.md".parse().unwrap();
+
+    let first = world.factory.ask_by_hand(weekly()).await.unwrap();
+    let second = world.factory.ask_by_hand(weekly()).await.unwrap();
+    let third = world.factory.ask_by_hand(weekly()).await.unwrap();
+    drop(agent);
+    world.factory.settle().await;
+    world.poll().await;
+    world.poll().await;
+
+    let waiting = HandTaken::Waiting {
+        waits_for: HandWait::RunInFlight("weekly.md/1".parse().unwrap()),
+    };
+    assert_eq!(
+        first,
+        HandTaken::Started {
+            run: "weekly.md/1".parse().unwrap()
+        }
+    );
+    assert_eq!([second.clone(), third], [waiting.clone(), waiting]);
+    assert_eq!(
+        second.render(),
+        "waiting for a run of weekly.md in flight: weekly.md/1\n"
+    );
+    assert_eq!(world.harness.automation_prompts().len(), 2);
+}
+
+#[test_log::test(tokio::test)]
+async fn a_restart_forgets_a_request_whose_run_has_not_started() {
+    let mut world = with_automation("weekly.md", WEEKLY).await;
+    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
+    let agent = world.harness.hold();
+    world
+        .factory
+        .ask_by_hand("weekly.md".parse().unwrap())
+        .await
+        .unwrap();
+    let waiting = world
+        .factory
+        .ask_by_hand("weekly.md".parse().unwrap())
+        .await
+        .unwrap();
+
+    world.restart(|_| {}).await;
+    drop(agent);
+    world.poll().await;
+    world.poll().await;
+
+    assert_eq!(
+        waiting,
+        HandTaken::Waiting {
+            waits_for: HandWait::RunInFlight("weekly.md/1".parse().unwrap())
+        }
+    );
+    let runs: Vec<String> = runs_in(&world.dir.path().join("work"))
+        .await
+        .read()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|run| run.id.to_string())
+        .collect();
+    assert_eq!(runs, ["weekly.md/1"]);
 }

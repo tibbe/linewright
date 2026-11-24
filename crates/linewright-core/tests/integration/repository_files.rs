@@ -177,37 +177,3 @@ async fn a_config_with_a_key_of_the_operators_holds_every_run_until_the_default_
     assert_eq!(world.harness.prompts(WorkKind::Triage).len(), 1);
     assert_eq!(world.harness.automation_prompts().len(), 1);
 }
-
-#[test_log::test(tokio::test)]
-async fn an_automation_run_by_hand_while_a_file_holds_it_fails_naming_the_file() {
-    let mut world = World::new().await;
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-    commit_on(
-        &world,
-        "main",
-        &[
-            (".linewright/automations/hourly.md", HOURLY),
-            (
-                ".linewright/briefs/prompts/automation.md",
-                "Do {{instructions}} {{nope}}\n",
-            ),
-        ],
-    )
-    .await;
-
-    let error = world
-        .factory
-        .run_automation(&"hourly.md".parse().unwrap())
-        .await
-        .unwrap_err();
-
-    let error = format!("{error:#}");
-    assert!(
-        error.contains(".linewright/briefs/prompts/automation.md"),
-        "{error}"
-    );
-    assert_eq!(
-        world.harness.automation_prompts(),
-        [] as [std::string::String; 0]
-    );
-}

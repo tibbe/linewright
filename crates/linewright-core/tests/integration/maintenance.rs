@@ -403,11 +403,9 @@ async fn an_automations_run_whose_maintenance_command_fails_goes_on_to_its_promp
         .unwrap();
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
 
-    world
-        .factory
-        .run_automation(&"look.md".parse().unwrap())
-        .await
-        .unwrap();
+    world.poll().await;
+
+    world.run_by_hand("look.md").await.unwrap();
 
     let prompts = world.harness.automation_prompts();
     assert_eq!(prompts.len(), 1, "{prompts:?}");

@@ -1,10 +1,10 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use chrono::TimeDelta;
 use tokio::task::{Id, JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -17,6 +17,7 @@ use crate::benchmark_runs::plan::Gate;
 use crate::benchmark_runs::runner::BenchmarkRunsRunner;
 use crate::benchmarks::BenchmarkRuns;
 use crate::briefs::OperatorBriefs;
+use crate::by_hand::{self, HandRefusal, HandTaken};
 use crate::cadence::Cadence;
 use crate::clock::Clock;
 use crate::clones::Clones;
@@ -28,16 +29,16 @@ use crate::domain::{
 use crate::ending::Ends;
 use crate::environment::{self, BuildEnded, Environment, SetupRead};
 use crate::harness::{GhReach, Harness, UsageLimit};
-use crate::holds::InForce;
+use crate::holds::{Hold, InForce};
 use crate::pull_records::PullRecords;
 use crate::pushed_branches::PushedBranches;
 use crate::reconcile::{
-    Action, AutomationStart, Automations, Discard, Drain, EndedRun, LiveRun, Memory, ParentNote,
-    Subject, Work, decisions, held_back_by_drain, requirements_note,
+    Action, AutomationStart, Automations, Decisions, Discard, Drain, EndedRun, HandWait, LiveRun,
+    Memory, ParentNote, Subject, Work, decisions, held_back_by_drain, requirements_note,
 };
-use crate::repo_files::{self, RepoLayer, Unusable, holding};
+use crate::repo_files::{self, RepoLayer, Unusable};
 use crate::run::{self, AutomationEnd, Shell, ShellParts};
-use crate::runs::{self, Begin, Recorded, RunOf, Runs, StartedBy};
+use crate::runs::{self, Begin, Recorded, RunId, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
 use crate::session::{Cancellation, Sessions};
 use crate::spec_glob::SpecGlob;
@@ -196,6 +197,12 @@ pub struct Factory {
     /// Whether the first poll since startup has labeled the old tracking
     /// issues ([`Snapshot::unlabeled_tracking_issues`]).
     labeled_old_tracking_issues: bool,
+    /// The automations asked for by hand whose runs have not started, kept
+    /// only in memory: a restart forgets them
+    /// (`docs/specs/automations.md`, A request after a restart).
+    asked_by_hand: BTreeSet<AutomationName>,
+    /// Whether the last poll that read the automation files listed them.
+    automations_listed: bool,
 }
 
 /// What the holds over benchmark runs' steps are taken from: the last
@@ -383,6 +390,8 @@ impl Factory {
             written: BTreeSet::new(),
             pushed_branches,
             labeled_old_tracking_issues: false,
+            asked_by_hand: BTreeSet::new(),
+            automations_listed: false,
         })
     }
 
@@ -408,13 +417,23 @@ impl Factory {
     }
 
     pub async fn cycle(&mut self) -> Result<Vec<Action>> {
+        Ok(self.cycle_deciding().await?.actions)
+    }
+
+    /// [`Factory::cycle`]'s, with what it decided.
+    async fn cycle_deciding(&mut self) -> Result<Decisions> {
         self.reap_before_reading().await;
         let now = self.shell.sessions.clock.now();
-        self.poll(now).await
+        self.poll_deciding(now).await
     }
 
     /// Polls as started at `now`, once the runs that ended are reaped.
     async fn poll(&mut self, now: Timestamp) -> Result<Vec<Action>> {
+        Ok(self.poll_deciding(now).await?.actions)
+    }
+
+    /// [`Factory::poll`]'s, with what it decided.
+    async fn poll_deciding(&mut self, now: Timestamp) -> Result<Decisions> {
         let shell = &self.shell;
         let windows = shell.policy.windows(now);
         self.adopt_pushed_branches(now)
@@ -457,7 +476,7 @@ impl Factory {
         &mut self,
         subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
     ) -> Result<Vec<Action>> {
-        self.read_and_reconcile(subjects, false).await
+        Ok(self.read_and_reconcile(subjects, false).await?.actions)
     }
 
     /// [`Factory::refresh`]'s, but reconciling `always`, even when it reads
@@ -467,9 +486,9 @@ impl Factory {
         &mut self,
         subjects: impl IntoIterator<Item: Into<webhook::Subject>>,
         always: bool,
-    ) -> Result<Vec<Action>> {
+    ) -> Result<Decisions> {
         let Some(mut kept) = self.kept.clone() else {
-            return self.cycle().await;
+            return self.cycle_deciding().await;
         };
         self.reap_before_reading().await;
         let now = self.shell.sessions.clock.now();
@@ -496,7 +515,7 @@ impl Factory {
             .filter(|item| !read.contains(item))
             .collect();
         if read.is_empty() && named.is_empty() && !always && !workflow_runs {
-            return Ok(vec![]);
+            return Ok(Decisions::default());
         }
         read.extend(read_all(snapshot, shell, named, windows).await?);
         let others = snapshot.closed_by_pulls_read(&read);
@@ -579,9 +598,9 @@ impl Factory {
     /// A refresh never races a poll: one still running when the poll falls
     /// due finishes first. A poll that is due goes before the deliveries,
     /// runs ended and builds waiting, and takes in the runs and the build
-    /// that ended as it starts; a stop, a drain and a rebuild asked for go
-    /// before it. Only polls count among the polls failed: a refresh that
-    /// fails leaves the next poll to catch up.
+    /// that ended as it starts; a stop, a drain, a rebuild and a run by hand
+    /// asked for go before it. Only polls count among the polls failed: a
+    /// refresh that fails leaves the next poll to catch up.
     pub async fn serve(
         &mut self,
         poll_interval: Duration,
@@ -593,7 +612,8 @@ impl Factory {
         let stopping = ends.stopping();
         let draining = ends.draining();
         let mut failed = None;
-        let mut asked = publish.environment.asked.lock().await;
+        let mut rebuilds_asked = publish.environment.asked.lock().await;
+        let mut runs_asked = publish.automations.asked.lock().await;
         let mut cadence = Cadence::new(poll_interval);
         while !stopping.is_cancelled() {
             pending.take();
@@ -641,8 +661,11 @@ impl Factory {
                         self.note_drain();
                     }
                     () = ends.deadline_passed(clock.as_ref()) => {}
-                    Some(reply) = asked.recv() => {
+                    Some(reply) = rebuilds_asked.recv() => {
                         let _ = reply.send(self.environment.rebuild());
+                    }
+                    Some((name, reply)) = runs_asked.recv() => {
+                        let _ = reply.send(self.ask_by_hand(name).await);
                     }
                     () = cadence.due() => break,
                     Some(result) = self.runs.join_next_with_id(), if !self.runs.is_empty() => {
@@ -698,6 +721,60 @@ impl Factory {
         self.benchmark_runs
             .tick(Gate::at(&in_force, pipeline_waits_for_room))
             .await;
+    }
+
+    /// Takes a request by hand for the automation `name`
+    /// (`docs/specs/automations.md`, By hand), refused as
+    /// [`by_hand::take`] says. A request taken joins those waiting, a second
+    /// for the same automation merging into the first, and Linewright
+    /// reconciles at once: the answer names the run that started, or what
+    /// the run waits for. When the last poll could not list the automation
+    /// files, the request waits for the next poll that does.
+    pub async fn ask_by_hand(&mut self, name: AutomationName) -> Result<HandTaken, HandRefusal> {
+        self.note_drain();
+        let listed = self.automations_listed.then_some(&self.automation_files);
+        let known = by_hand::take(&name, self.memory.drain.is_some(), listed)?.is_some();
+        info!(automation = %name, "a run of the automation is asked for by hand");
+        self.asked_by_hand.insert(name.clone());
+        if !known {
+            return Ok(HandTaken::Waiting {
+                waits_for: HandWait::NextPoll,
+            });
+        }
+        let subjects: [webhook::Subject; 0] = [];
+        let mut decided = match self.read_and_reconcile(subjects, true).await {
+            Ok(decided) => decided,
+            Err(e) => {
+                error!(
+                    error = format!("{e:#}"),
+                    "acting on a request by hand failed; the next poll catches up"
+                );
+                return Ok(HandTaken::Waiting {
+                    waits_for: HandWait::NextPoll,
+                });
+            }
+        };
+        let started = decided.actions.iter().any(|action| {
+            matches!(
+                action,
+                Action::RunAutomation { automation, start: AutomationStart::Hand }
+                    if automation.name == name
+            )
+        });
+        if started
+            && !self.asked_by_hand.contains(&name)
+            && let Some(run) = self.automations_in_flight().remove(&name)
+        {
+            return Ok(HandTaken::Started { run });
+        }
+        let waits_for = decided.hand_waits.remove(&name).unwrap_or_else(|| {
+            if self.memory.drain.is_some() {
+                HandWait::Hold(Hold::Drain)
+            } else {
+                HandWait::NextPoll
+            }
+        });
+        Ok(HandTaken::Waiting { waits_for })
     }
 
     /// Takes a drain asked for into memory, once.
@@ -802,22 +879,25 @@ impl Factory {
             .collect()
     }
 
-    fn automations_in_flight(&self) -> Vec<AutomationName> {
+    fn automations_in_flight(&self) -> BTreeMap<AutomationName, RunId> {
         self.live
             .values()
             .filter_map(|entry| match &entry.in_flight.id.of {
-                RunOf::Automation { automation } => Some(automation.clone()),
+                RunOf::Automation { automation } => {
+                    Some((automation.clone(), entry.in_flight.id.clone()))
+                }
                 RunOf::Work { .. } => None,
             })
             .collect()
     }
 
+    /// Reconciles, and gives what it decided, with the actions it took.
     async fn reconcile(
         &mut self,
         kept: Kept,
         defined: Vec<Automation>,
         now: Timestamp,
-    ) -> Vec<Action> {
+    ) -> Decisions {
         let kept = self.kept.insert(kept).clone();
         let snapshot = &kept.snapshot;
         if let Some(resets_at) = self.memory.lift_usage_limit(now) {
@@ -834,11 +914,12 @@ impl Factory {
             seen: self.triggers_seen.clone(),
             attempts: self.attempts.all(),
             triggered,
+            asked: self.asked_automations(),
         };
         self.take_shown_comments(snapshot, now);
         self.memory.retain_open(snapshot);
         self.record_pulls().await;
-        let decided = decisions(
+        let mut decided = decisions(
             snapshot,
             &live,
             &self.memory,
@@ -851,7 +932,7 @@ impl Factory {
             at: now,
             pipeline_waits_for_room: decided.wait_for_room(),
         });
-        let mut actions = decided.actions;
+        let mut actions = std::mem::take(&mut decided.actions);
         let mut planned_draining = self.memory.drain.is_some();
         let mut next = 0;
         while let Some(action) = actions.get(next).cloned() {
@@ -872,7 +953,30 @@ impl Factory {
             }
             next += 1;
         }
-        actions
+        Decisions { actions, ..decided }
+    }
+
+    /// The automations asked for by hand, as the last poll parsed them.
+    /// When that poll listed the automation files, it forgets each request
+    /// for an automation it did not parse, logging it.
+    fn asked_automations(&mut self) -> BTreeMap<AutomationName, Automation> {
+        let parsed = &self.automation_files.parsed;
+        let listed = self.automations_listed;
+        let mut asked = BTreeMap::new();
+        self.asked_by_hand.retain(|name| {
+            match parsed.iter().find(|automation| automation.name == *name) {
+                Some(automation) => {
+                    asked.insert(name.clone(), automation.clone());
+                }
+                None if listed => warn!(
+                    automation = %name,
+                    "an automation asked for by hand is no longer defined; its request is dropped"
+                ),
+                None => {}
+            }
+            asked.contains_key(name) || !listed
+        });
+        asked
     }
 
     /// `defined`, with the runs that attempts of workflow runs started when
@@ -963,68 +1067,12 @@ impl Factory {
         Ok(Arc::new(repo))
     }
 
-    /// Runs the automation `name` once, now, from the environment, which is
-    /// prepared first.
-    pub async fn run_automation(&mut self, name: &AutomationName) -> Result<()> {
-        self.prepare_environment()
-            .await
-            .with_context(|| format!("the automation `{name}` cannot run"))?;
-        let shell = &self.shell;
-        let branch = &shell.settings.default_branch;
-        let path = name.path();
-        let text = shell
-            .sessions
-            .store
-            .read_file(branch, &path)
-            .await
-            .with_context(|| format!("reading {path}"))?
-            .with_context(|| {
-                format!("there is no automation `{name}`: `{branch}` has no {path}")
-            })?;
-        let automation =
-            automation::parse(name, &text).with_context(|| format!("{path} does not parse"))?;
-        let repo = self.read_repo_files().await?;
-        if let Some(file) = holding(&repo.unusable, &RunKind::Automation(&automation)).first() {
-            bail!(
-                "the automation `{name}` cannot run until the default branch fixes {}, which \
-                 Linewright cannot use: {}",
-                file.path,
-                file.error
-            );
-        }
-        let cancel = Cancellation::default();
-        let run = run_and_log(
-            shell,
-            &repo,
-            &automation,
-            None,
-            begin_automation(
-                &self.recorded_runs,
-                name,
-                StartedBy::Hand,
-                shell.sessions.clock.now(),
-            )
-            .await?,
-            cancel.clone(),
-        );
-        let stopping = self.ends.stopping();
-        let stop = async {
-            stopping.cancelled().await;
-            cancel.cancel();
-            std::future::pending().await
-        };
-        tokio::select! {
-            ended = run => ended,
-            never = stop => never,
-        }
-        .with_context(|| format!("the run of the automation `{name}` failed"))
-    }
-
     /// The automations defined, `None` when they cannot be listed.
     async fn automations(&mut self) -> Option<Vec<Automation>> {
         let branch = &self.shell.settings.default_branch;
         let read = automation::read(self.shell.sessions.store.as_ref(), branch).await;
         let listed = read.is_ok();
+        self.automations_listed = listed;
         self.automation_files = read.unwrap_or_else(|e| {
             error!(error = format!("{e:#}"), "listing the automations failed");
             AutomationFiles::default()
@@ -1363,6 +1411,7 @@ impl Factory {
             Action::RunAutomation { automation, start } => {
                 let (started_by, trigger) = match start {
                     AutomationStart::Schedule => (StartedBy::Schedule, None),
+                    AutomationStart::Hand => (StartedBy::Hand, None),
                     AutomationStart::WorkflowRun(attempt) => {
                         (StartedBy::WorkflowRun(attempt.id), Some(attempt.clone()))
                     }
@@ -1400,6 +1449,9 @@ impl Factory {
                         cancel,
                     },
                 );
+                if *start == AutomationStart::Hand {
+                    self.asked_by_hand.remove(&automation.name);
+                }
             }
         }
         Ok(())
