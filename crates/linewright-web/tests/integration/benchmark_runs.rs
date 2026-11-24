@@ -1563,6 +1563,21 @@ async fn a_trial_shows_its_transcripts_as_its_pages_do_once_each_has_begun() {
     );
 }
 
+#[test_log::test(tokio::test)]
+async fn a_trial_whose_output_names_an_automations_run_is_no_trial() {
+    let pages = with_benchmark_run().await;
+    pages.write(&[("benchmark-runs/1/2/2/2/task", "weekly.md/3\n")]);
+
+    let (status, body) = pages.get("/benchmark-runs/1/2/2/2/run").await;
+
+    assert_eq!(status, 404);
+    let html = Html::parse_document(&body);
+    assert_eq!(
+        text(select(&html, "main #transcript")[0]),
+        "benchmark run 1 has no trial 2/2/2"
+    );
+}
+
 /// `docs/specs/ui_patterns.md`, Screen states, Nothing there.
 #[test_log::test(tokio::test)]
 async fn the_page_of_no_benchmark_run_says_there_is_none() {
