@@ -1,25 +1,41 @@
-//! The secrets Linewright finds in its environment with no `secrets`
-//! setting: the credentials the table of sessions' variables passes,
-//! "Credentials passed" in docs/specs/operation.md.
+//! The secrets Linewright finds in its environment: the credentials the
+//! table of sessions' variables passes, "Credentials passed" in
+//! docs/specs/operation.md, and the variables `secrets` names, "Secrets"
+//! there.
 
 use linewright_core::git::Addition;
+use linewright_core::secrets::Held;
 use linewright_core::testing::*;
+use rstest::rstest;
 
 /// What the secrets of an environment holding `variables` leave of `text`.
 fn redacted(variables: &[(&str, &str)], text: &str) -> String {
     secrets_unnamed(variables).redaction().apply(text)
 }
 
-/// The variable `secrets_unnamed(variables)` says a commit adding `text`
-/// holds the secret of, if any.
-fn held_in(variables: &[(&str, &str)], text: &str) -> Option<String> {
-    let addition = Addition {
+/// The commit `abc1234`'s addition of `text` to `notes.txt`.
+fn added(text: &str) -> Addition {
+    Addition {
         commit: "abc1234".to_string(),
         file: "notes.txt".to_string(),
         text: text.to_string(),
-    };
+    }
+}
+
+/// What `abc1234` holds in `notes.txt`: the secret of `variable`.
+fn held_of(variable: &str) -> Held {
+    Held {
+        variable: variable.into(),
+        file: "notes.txt".into(),
+        commit: "abc1234".into(),
+    }
+}
+
+/// The variable `secrets_unnamed(variables)` says a commit adding `text`
+/// holds the secret of, if any.
+fn held_in(variables: &[(&str, &str)], text: &str) -> Option<String> {
     secrets_unnamed(variables)
-        .held(&[addition])
+        .held(&[added(text)])
         .map(|held| held.variable)
 }
 
@@ -254,4 +270,22 @@ fn a_file_s_bytes_hold_a_secret_even_among_bytes_that_are_not_text() {
 fn a_file_s_bytes_holding_a_short_secret_hold_none() {
     let secrets = secrets_unnamed(&[("ANTHROPIC_API_KEY", "s3cr3")]);
     assert_eq!(secrets.held_in(b"the s3cr3 is out"), None);
+}
+
+#[rstest]
+#[case::a_named_secret_is_held_naming_its_variable(
+    ("NPM_TOKEN", "npm-s3cr3t"),
+    "//registry.npmjs.org/:_authToken=npm-s3cr3t",
+    Some(held_of("NPM_TOKEN"))
+)]
+#[case::a_named_secret_of_6_characters_is_held(("PIN", "123456"), "123456", Some(held_of("PIN")))]
+#[case::a_named_secret_of_5_characters_is_not(("PIN", "12345"), "12345", None)]
+#[case::a_named_secret_of_1_character_is_not(("PIN", "7"), "7", None)]
+#[test_log::test]
+fn a_commit_holding_a_named_secret(
+    #[case] named: (&str, &str),
+    #[case] text: &str,
+    #[case] expected: Option<Held>,
+) {
+    assert_eq!(secrets_of(&[named]).held(&[added(text)]), expected);
 }
