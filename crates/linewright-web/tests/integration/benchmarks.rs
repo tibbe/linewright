@@ -1650,14 +1650,7 @@ async fn benchmarks_named_in_plain_words_are_listed_by_the_unicode_collation_alg
     let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
 
     for name in ["Éclair", "Banana", "apple"] {
-        let (status, _, form) = post_answer(
-            &pages,
-            "/benchmarks",
-            &[SAME_ORIGIN],
-            &[("name", name), ("stage", "design")],
-        )
-        .await;
-        assert_eq!(status, 200, "{name:?}: {}", form.html());
+        keep_benchmark(&pages.path(""), name, "design").await;
     }
 
     let html = pages.page("/benchmarks").await;
