@@ -9,14 +9,15 @@ use futures_util::future::BoxFuture;
 use linewright_core::clock::SystemClock;
 use linewright_core::domain::label::Label;
 use linewright_core::domain::{
-    IssueCloseReason, Login, MergeMethod, MergeMethods, Number, PullState, Repo, Timestamp, Windows,
+    IssueCloseReason, Login, MergeMethod, MergeMethods, Number, PullState, Repo, ReviewState,
+    Timestamp, Windows,
 };
 use linewright_core::git;
 use linewright_core::store::local::{LocalStore, Seed};
 use linewright_core::store::{NewIssue, NewPull, PushMode, Store};
 use linewright_github::GitHub;
 use reqwest::Method;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 /// One promise of the `Store` trait, checked through the trait in a
@@ -54,6 +55,12 @@ const LOCAL_REPO: &str = "contract/sandbox";
 /// Who Linewright acts as on the local store.
 const LOCAL_LINEWRIGHT: &str = "contract-linewright";
 
+/// A token the local store lets read it.
+const LOCAL_READER: &str = "contract-reader";
+
+/// What a review that starts a thread says, beside its one comment.
+const THREAD_REVIEW: &str = "Started by a contract.";
+
 /// Who made the local store's first commit, as the sandbox's owner made its
 /// first.
 const LOCAL_OWNER: &str = "contract-owner";
@@ -80,11 +87,7 @@ enum Side {
     /// The local store, as its own type.
     Local(Arc<LocalStore>),
     /// The GitHub store, with the token it was reached with.
-    GitHub {
-        github: GitHub,
-        #[expect(dead_code, reason = "no setup on GitHub reads it yet")]
-        token: String,
-    },
+    GitHub { github: GitHub, token: String },
 }
 
 impl Side {
@@ -424,6 +427,80 @@ impl Sandbox {
             crate::check::equal("the issues it closes", &pull.closes, &vec![issue])
         })
         .await
+    }
+
+    /// Starts a thread on the first line of `path` in #`pr`, which changes
+    /// it, as a review of Linewright's commenting `body` there, and returns
+    /// the thread's id as #`pr`'s threads list it.
+    pub async fn start_thread(&self, pr: Number, path: &str, body: &str) -> Result<String> {
+        match &self.side {
+            Side::Local(local) => local.review_as(
+                LOCAL_LINEWRIGHT,
+                pr,
+                ReviewState::Commented,
+                THREAD_REVIEW,
+                &[(path, body)],
+            )?,
+            // GitHub refuses a line comment on a line the pull request's
+            // diff lacks, as it may until it has worked out the diff of a
+            // pull request just opened, and asks a `COMMENT` review for a
+            // body
+            // (<https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request>).
+            Side::GitHub { github, .. } => {
+                self.eventually(async || {
+                    github
+                        .repo_request(
+                            Method::POST,
+                            &format!("/pulls/{}/reviews", pr.0),
+                            Some(json!({
+                                "event": "COMMENT",
+                                "body": THREAD_REVIEW,
+                                "comments": [{"path": path, "line": 1, "side": "RIGHT", "body": body}],
+                            })),
+                        )
+                        .await
+                })
+                .await?;
+            }
+        }
+        self.eventually(async || {
+            let threads = self.store().pull(pr).await?.threads;
+            threads
+                .into_iter()
+                .find(|thread| {
+                    thread.path == path
+                        && thread
+                            .comments
+                            .first()
+                            .is_some_and(|first| first.body == body)
+                })
+                .map(|thread| thread.id)
+                .with_context(|| format!("{pr} lists no thread on {path} saying {body:?}"))
+        })
+        .await
+    }
+
+    /// A token that can read the repository: the sandbox's own on GitHub,
+    /// and any on the local store.
+    pub fn reading_token(&self) -> String {
+        match &self.side {
+            Side::Local(_) => LOCAL_READER.into(),
+            Side::GitHub { token, .. } => token.clone(),
+        }
+    }
+
+    /// A token that cannot read the repository: on GitHub, one shaped as a
+    /// personal access token that GitHub doesn't know, which it answers
+    /// with 401; on the local store, one it is told cannot read.
+    pub fn unreadable_token(&self) -> String {
+        // A personal access token is `ghp_` and 36 characters
+        // (<https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/>):
+        // here 32 of a fresh UUID's, padded with zeros.
+        let token = format!("ghp_0000{}", uuid::Uuid::new_v4().simple());
+        if let Side::Local(local) = &self.side {
+            local.refuse_reads_by(&token);
+        }
+        token
     }
 
     /// Closes the issue #`issue` once the contract ends.
