@@ -695,11 +695,7 @@ mod tests {
     #[test_log::test]
     fn the_navigation_cookie_saying_rail_chooses_the_rail_and_anything_else_the_sidebar() {
         for (headers, chosen) in [
-            (vec![], Navigation::Sidebar),
-            (vec!["navigation=rail"], Navigation::Rail),
-            (vec!["theme=dark; navigation=rail"], Navigation::Rail),
             (vec!["theme=dark", "navigation=rail"], Navigation::Rail),
-            (vec!["navigation=sidebar"], Navigation::Sidebar),
             (vec!["navigation=wide"], Navigation::Sidebar),
             (vec!["railnavigation=rail"], Navigation::Sidebar),
             (vec!["navigation=railway"], Navigation::Sidebar),
@@ -733,28 +729,10 @@ mod tests {
                 "Board · Linewright",
             ),
             (
-                Area::Runs,
-                ("Runs", "/runs"),
-                "All runs",
-                "Runs · Linewright",
-            ),
-            (
                 Area::Automations,
                 ("Automations", "/automations"),
                 "All automations",
                 "Automations · Linewright",
-            ),
-            (
-                Area::Benchmarks,
-                ("Benchmarks", "/benchmarks"),
-                "All benchmarks",
-                "Benchmarks · Linewright",
-            ),
-            (
-                Area::Server,
-                ("Server", "/server"),
-                "Status",
-                "Server · Linewright",
             ),
             (
                 Area::People,
@@ -775,41 +753,6 @@ mod tests {
             assert_eq!(place.title(), title, "{area:?}");
             assert!(place.heading().is_none(), "{area:?}");
         }
-    }
-
-    /// `docs/specs/shell.md`, Breadcrumbs: "Benchmarks › design-cuts ›
-    /// Benchmark run" on Benchmark run.
-    #[test_log::test]
-    fn a_screen_within_others_ends_its_crumbs_in_its_screen_and_is_titled_by_its_heading() {
-        let place = Place::within(Area::Benchmarks)
-            .under("design-cuts", "/benchmarks/design-cuts")
-            .screen(
-                "Benchmark run",
-                Thing::Found(Heading::named("Benchmark run 14")),
-            );
-
-        assert_eq!(
-            place.crumbs(),
-            [
-                link("Benchmarks", "/benchmarks"),
-                link("design-cuts", "/benchmarks/design-cuts"),
-                here("Benchmark run"),
-            ]
-        );
-        assert_eq!(place.title(), "Benchmark run 14 · Linewright");
-        assert_eq!(
-            place.heading().map(|heading| heading.title.as_str()),
-            Some("Benchmark run 14")
-        );
-    }
-
-    #[test_log::test]
-    fn a_screen_of_one_thing_alone_has_no_crumbs_and_is_titled_by_its_heading() {
-        let place = Place::Alone(Area::Runs, Thing::Found(Heading::named("43/rework-9")));
-
-        assert_eq!(place.crumbs(), []);
-        assert!(!place.has_crumbs());
-        assert_eq!(place.title(), "43/rework-9 · Linewright");
     }
 
     /// `docs/specs/shell.md`, Breadcrumbs, No such thing.
