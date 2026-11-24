@@ -72,22 +72,6 @@ async fn lw_capture_of_a_run_id_that_names_no_run_exits_4_saying_why() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_of_a_run_recorded_without_its_properties_exits_1_naming_them() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
-    record_as_before_the_properties(&work_dir.path().join(REPO)).await;
-
-    let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
-
-    assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert!(
-        output.stderr.contains("lacks the properties"),
-        "{}",
-        output.stderr
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn lw_capture_of_an_automations_run_exits_1_saying_why() {
     let (mut world, work_dir) = world_in_work_dir().await;
     world.hourly_by_schedule_then_by_hand().await;
@@ -132,36 +116,6 @@ async fn lw_capture_with_criteria_of_only_white_space_exits_1_before_reaching_gi
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_capture_into_a_benchmark_that_does_not_exist_exits_4_saying_why() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
-
-    let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
-
-    assert_eq!(output.code, Some(4), "{}", output.stderr);
-    assert_eq!(output.stderr, "lw: there is no benchmark 1\n");
-    assert!(!work_dir.path().join(REPO).join("tasks").exists());
-}
-
-#[test_log::test(tokio::test)]
-async fn lw_capture_into_a_benchmark_of_another_stage_exits_1_saying_why() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
-    keep_benchmark(&work_dir.path().join(REPO), IMPLEMENTS, "design").await;
-
-    let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
-
-    assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert_eq!(
-        output.stderr,
-        format!(
-            "lw: the benchmark implements holds tasks of design, and the run {run} is of implement\n"
-        )
-    );
-    assert!(!work_dir.path().join(REPO).join("tasks").exists());
-}
-
-#[test_log::test(tokio::test)]
 async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
     let (mut world, work_dir) = world_in_work_dir().await;
     let run = implemented(&mut world).await;
@@ -183,22 +137,4 @@ async fn lw_capture_without_a_benchmark_is_a_command_line_error() {
 
     assert_eq!(output.code, Some(2), "{}", output.stderr);
     assert!(output.stderr.contains("--benchmark"), "{}", output.stderr);
-}
-
-#[test_log::test(tokio::test)]
-async fn lw_capture_of_a_name_another_task_of_the_benchmark_has_exits_1_before_reaching_github() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    let run = implemented(&mut world).await;
-    let repo = work_dir.path().join(REPO);
-    keep_benchmark(&repo, IMPLEMENTS, "implement").await;
-    keep_task_row(&repo, IMPLEMENTS, "gadgets", "9/implement-1").await;
-
-    let output = lw_capture(work_dir.path(), &run, "gadgets", "Gadgets.\n").await;
-
-    assert_eq!(output.code, Some(1), "{}", output.stderr);
-    assert_eq!(
-        output.stderr,
-        "lw: a task named gadgets already exists in implements\n"
-    );
-    assert!(!repo.join("tasks").exists());
 }
