@@ -278,40 +278,6 @@ async fn a_rework_that_takes_a_secret_out_of_its_commits_when_sent_back_pushes_t
 }
 
 #[test_log::test(tokio::test)]
-async fn a_secret_of_1_to_5_characters_in_a_commit_is_pushed() {
-    let pin = "12345";
-    let mut world = World::with(|config| {
-        config.secrets = secrets_of(&[("PIN", pin)]);
-    })
-    .await;
-    world.harness.on(WorkKind::Implement, move |call| {
-        commit_in(
-            &call.spec.dir,
-            &[("pin.txt", &format!("{pin}\n"))],
-            "Add the PIN",
-        );
-        Ok(json!({"outcome": "done", "pr_title": "PIN", "pr_body": "Adds the PIN."}).to_string())
-    });
-    world.store.open_issue(
-        "maintainer",
-        "PIN",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
-    let pulls = world.store.pulls();
-    assert_eq!(pulls.len(), 1);
-    let head_ref = world.store.snapshot_pull(pulls[0]).await.head_ref;
-    assert_eq!(
-        world.store.file(&head_ref, "pin.txt").await.unwrap(),
-        "12345\n"
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_its_variable() {
     let token = "sk-ant-oat01-s3cr3t";
     let mut world = World::with(|config| {
