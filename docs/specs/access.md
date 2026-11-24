@@ -217,7 +217,9 @@ gives what the protocol leaves to Linewright.
   returns a tool error with the message that the UI shows for the refusal.
 - **Too many calls.** A person's clients can call tools 120 times in a
   minute. Each further call in that minute gets 429, with a `Retry-After`
-  header.
+  header. The answer is a JSON-RPC error for the call. Its message is "Too
+  many tool calls. Try again in N seconds.", where N is the seconds that
+  `Retry-After` gives.
 
 ## The authorization server
 
