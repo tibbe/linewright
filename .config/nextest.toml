@@ -9,6 +9,10 @@ fail-fast = false
 
 [profile.ci]
 slow-timeout = { period = "30s", terminate-after = 2 }
+# A profile can't unset a value it inherits, so "none" is nextest's own
+# "infinite" default:
+# https://github.com/nextest-rs/nextest/blob/main/nextest-runner/default-config.toml
+global-timeout = "30y"
 
 [[profile.default.overrides]]
 filter = 'test(/^serve_fake::/)'
