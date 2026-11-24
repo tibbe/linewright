@@ -113,3 +113,150 @@ fn only_an_rs_file_that_is_not_a_symlink_is_scanned() {
     assert_eq!(reports(tree.path()), Vec::<String>::new());
     assert_eq!(after_fix(tree.path(), "outside.rs"), "#[test]\nfn a() {}\n");
 }
+
+const RSTEST_TESTS: &str = r#"#[rstest]
+#[case(1)]
+fn plain(#[case] n: u8) {}
+
+#[rstest::rstest] // A comment after it.
+#[case::one(1)]
+fn by_path(#[case] n: u8) {}
+
+#[rstest]
+#[case::spanning(
+    "a ] that does not close it", // nor this (
+    [1, 2],
+    '[', 'é',
+)]
+// A comment in the run.
+
+#[case::another("x", [3, 4], ']', 'e')]
+fn multi_line(#[case] s: &str, #[case] v: [u8; 2], #[case] a: char, #[case] b: char) {}
+
+mod m {
+    mod n {
+        #[rstest]
+        #[case(1)]
+        pub(crate) async fn nested(#[case] n: u8) {}
+    }
+}
+
+#[test_log::test]
+#[rstest]
+#[case(1)]
+fn test_log_above(#[case] n: u8) {}
+"#;
+
+#[test_log::test]
+fn an_rstest_test_without_test_log_after_it_is_reported_at_its_rstest_line() {
+    let tree = tree(&[("crates/a/tests/t.rs", RSTEST_TESTS)]);
+
+    assert_eq!(
+        reports(tree.path()),
+        [1, 5, 9, 22, 29].map(|line| format!("crates/a/tests/t.rs:{line}: {USE_TEST_LOG}"))
+    );
+}
+
+#[test_log::test]
+fn the_fix_puts_test_log_just_before_an_rstest_tests_fn() {
+    let tree = tree(&[("crates/a/tests/t.rs", RSTEST_TESTS)]);
+
+    assert_eq!(
+        after_fix(tree.path(), "crates/a/tests/t.rs"),
+        r#"#[rstest]
+#[case(1)]
+#[test_log::test]
+fn plain(#[case] n: u8) {}
+
+#[rstest::rstest] // A comment after it.
+#[case::one(1)]
+#[test_log::test]
+fn by_path(#[case] n: u8) {}
+
+#[rstest]
+#[case::spanning(
+    "a ] that does not close it", // nor this (
+    [1, 2],
+    '[', 'é',
+)]
+// A comment in the run.
+
+#[case::another("x", [3, 4], ']', 'e')]
+#[test_log::test]
+fn multi_line(#[case] s: &str, #[case] v: [u8; 2], #[case] a: char, #[case] b: char) {}
+
+mod m {
+    mod n {
+        #[rstest]
+        #[case(1)]
+        #[test_log::test]
+        pub(crate) async fn nested(#[case] n: u8) {}
+    }
+}
+
+#[test_log::test]
+#[rstest]
+#[case(1)]
+#[test_log::test]
+fn test_log_above(#[case] n: u8) {}
+"#
+    );
+    assert_eq!(reports(tree.path()), Vec::<String>::new());
+}
+
+#[test_log::test]
+fn an_rstest_test_with_a_bare_tokio_test_is_reported_and_fixed_once() {
+    let source = "#[rstest]\n#[case(1)]\n#[tokio::test]\nasync fn a(#[case] n: u8) {}\n\n#[tokio::test]\n#[rstest]\n#[case(1)]\nasync fn b(#[case] n: u8) {}\n";
+    let tree = tree(&[("crates/a/tests/t.rs", source)]);
+
+    assert_eq!(
+        reports(tree.path()),
+        [3, 6].map(|line| format!("crates/a/tests/t.rs:{line}: {USE_TEST_LOG}"))
+    );
+    assert_eq!(
+        after_fix(tree.path(), "crates/a/tests/t.rs"),
+        "#[rstest]\n#[case(1)]\n#[test_log::test(tokio::test)]\nasync fn a(#[case] n: u8) {}\n\n#[test_log::test(tokio::test)]\n#[rstest]\n#[case(1)]\nasync fn b(#[case] n: u8) {}\n"
+    );
+}
+
+#[test_log::test]
+fn an_rstest_test_with_test_log_a_fixture_or_an_rstest_in_a_comment_or_string_is_not_reported() {
+    let source = r##"#[rstest]
+#[case(1)]
+#[test_log::test]
+fn has_it(#[case] n: u8) {}
+
+#[rstest]
+#[case(1)]
+#[test_log::test(tokio::test)]
+async fn has_it_async(#[case] n: u8) {}
+
+#[fixture]
+fn a_fixture() -> u8 {
+    1
+}
+
+// #[rstest]
+fn not_a_test() {}
+
+/*
+#[rstest]
+fn in_a_block_comment() {}
+*/
+
+/// ```
+/// #[rstest]
+/// fn in_a_doc() {}
+/// ```
+fn documented() {}
+
+const S: &str = r#"
+#[rstest]
+fn in_a_string() {}
+"#;
+"##;
+    let tree = tree(&[("crates/a/tests/t.rs", source)]);
+
+    assert_eq!(reports(tree.path()), Vec::<String>::new());
+    assert_eq!(after_fix(tree.path(), "crates/a/tests/t.rs"), source);
+}
