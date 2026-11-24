@@ -5,10 +5,11 @@ use chrono::TimeDelta;
 
 use super::clock::at;
 use crate::automation::{AutomationFiles, LastScheduledRuns};
+use crate::board::{Card, CardLine};
 use crate::domain::{
     Assignment, ClosedItem, ClosingPull, Issue, IssueCloseReason, IssueClosing, IssueEvent, Login,
     MergeMethod, Mergeability, MergedPull, Number, Pull, PullState, Rebaseability, Snapshot,
-    SubIssue, SubIssueState, label,
+    SubIssue, SubIssueState, Timestamp, label,
 };
 use crate::harness::UsageLimit;
 use crate::prompts::{Ticket, TicketRead};
@@ -333,5 +334,19 @@ pub fn with_spec_diff<'a>(read: TicketRead<'a>, spec_diff: &str) -> Ticket<'a> {
     match read {
         TicketRead::Ready(_) => panic!("the ticket wants no spec diff"),
         TicketRead::WantsSpecDiff(wants) => wants.with(spec_diff.into()),
+    }
+}
+
+/// Issue #7's card, whose line is `line` and which entered its column at
+/// `entered`.
+pub fn card(line: Option<CardLine>, entered: Option<Timestamp>) -> Card {
+    Card {
+        number: Number(7),
+        title: "A card".into(),
+        pull_request: false,
+        line,
+        entered,
+        changed: at("2026-10-01T12:00:00Z"),
+        people: BTreeSet::new(),
     }
 }

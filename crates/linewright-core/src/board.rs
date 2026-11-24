@@ -295,7 +295,7 @@ pub struct Card {
     /// which its line ends with: set in Triage, Needs a person and Ready alone.
     pub entered: Option<Timestamp>,
     /// When it last changed.
-    changed: Timestamp,
+    pub(crate) changed: Timestamp,
     /// The people it matches (`docs/specs/board.md`, Filtering by person):
     /// those party to its item ([`party::parties`]) and, for a ticket on the
     /// board, to its tracking issue ([`party::party_to`]).

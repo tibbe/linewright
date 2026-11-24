@@ -164,6 +164,7 @@
 //! - `draining_since`: memory of a drain since a given time.
 //! - `snapshot_of`: a snapshot holding some issues and nothing else.
 //! - `view`: the status view of some issues and pull requests.
+//! - `card`: a card with a given line, entered its column at a given time.
 //!
 //! # `webhooks`: deliveries
 //!
