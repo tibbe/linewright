@@ -4,7 +4,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use linewright_core::domain::{
     Assignment, ClosedKind, IssueCloseReason, Mergeability, Number, Pull, PullState, Rebaseability,
-    Scope,
+    Scope, Thread,
 };
 use linewright_core::store::{AnyItem, IssueRead, NewPull, PeoplesPullRead, PushMode};
 
@@ -27,12 +27,14 @@ contracts![
     linewright_assigning_and_unassigning_the_owner_lists_both_by_linewright_when,
     unassigning_the_owner_from_a_pull_request_not_assigned_to_them_records_nothing,
     closing_a_pull_request_moves_when_it_was_last_updated,
+    a_reply_in_a_thread_reads_back_as_linewrights_last_comment_in_it,
+    a_resolved_thread_reads_back_resolved,
 ];
 
 /// Pushes a branch named for `what`, adding a file of its own, and opens a
 /// pull request from it.
 async fn opened(sandbox: &Sandbox, what: &str) -> Result<Opened> {
-    let path = format!("{}.txt", sandbox.unique(what));
+    let path = added(sandbox, what);
     let branch = sandbox
         .push_branch(
             what,
@@ -43,6 +45,11 @@ async fn opened(sandbox: &Sandbox, what: &str) -> Result<Opened> {
         )
         .await?;
     sandbox.open_pull(branch, what).await
+}
+
+/// The file [`opened`] adds for `what`.
+fn added(sandbox: &Sandbox, what: &str) -> String {
+    format!("{}.txt", sandbox.unique(what))
 }
 
 /// `pull`, with whether it merges or rebases unknown, which GitHub works out
@@ -564,4 +571,70 @@ async fn closing_a_pull_request_moves_when_it_was_last_updated(sandbox: Sandbox)
             Ok(())
         })
         .await
+}
+
+/// The thread `id` on #`pr`, once `check` passes on it.
+async fn thread(
+    sandbox: &Sandbox,
+    pr: Number,
+    id: &str,
+    check: impl Fn(&Thread) -> Result<()>,
+) -> Result<Thread> {
+    sandbox
+        .eventually(async || {
+            let threads = sandbox.store().pull(pr).await?.threads;
+            let thread = threads
+                .into_iter()
+                .find(|thread| thread.id == id)
+                .with_context(|| format!("{pr} lists no thread {id}"))?;
+            check(&thread)?;
+            Ok(thread)
+        })
+        .await
+}
+
+async fn a_reply_in_a_thread_reads_back_as_linewrights_last_comment_in_it(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let what = "reply-in-thread";
+    let Opened { pr, .. } = opened(&sandbox, what).await?;
+    let path = added(&sandbox, what);
+    let id = sandbox.start_thread(pr, &path, "Why this file?").await?;
+    sandbox.tick().await;
+
+    sandbox
+        .store()
+        .reply_in_thread(pr, &id, "Because the contract adds it.")
+        .await?;
+
+    let linewright = sandbox.store().identity().await?.login;
+    let thread = thread(&sandbox, pr, &id, |thread| {
+        equal("the comments", &thread.comments.len(), &2)
+    })
+    .await?;
+    let last = thread.comments.last().context("the thread has comments")?;
+    equal("who replied", &last.author, &linewright)?;
+    equal(
+        "the reply",
+        last.body.as_str(),
+        "Because the contract adds it.",
+    )?;
+    equal("the thread's path", thread.path.as_str(), path.as_str())?;
+    equal("whether it is resolved", &thread.resolved, &false)
+}
+
+async fn a_resolved_thread_reads_back_resolved(sandbox: Sandbox) -> Result<()> {
+    let what = "resolve-thread";
+    let Opened { pr, .. } = opened(&sandbox, what).await?;
+    let path = added(&sandbox, what);
+    let id = sandbox.start_thread(pr, &path, "Is this needed?").await?;
+    sandbox.tick().await;
+
+    sandbox.store().resolve_thread(pr, &id).await?;
+
+    thread(&sandbox, pr, &id, |thread| {
+        equal("whether it is resolved", &thread.resolved, &true)
+    })
+    .await?;
+    Ok(())
 }

@@ -1,6 +1,6 @@
 //! Who Linewright is, and the repository's settings.
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use linewright_core::domain::{MergeMethod, Scope};
 use linewright_core::store::Property;
 use serde_json::json;
@@ -12,6 +12,8 @@ contracts![
     linewright_acts_as_a_login_with_its_noreply_email,
     the_settings_name_the_repository_and_the_default_branch_a_snapshot_has,
     the_properties_are_recorded_as_githubs_answers_naming_the_repository_and_the_account,
+    a_token_that_can_read_the_repository_passes_the_read_check,
+    a_token_that_cannot_read_the_repository_is_refused_naming_read_access,
 ];
 
 async fn linewright_acts_as_a_login_with_its_noreply_email(sandbox: Sandbox) -> Result<()> {
@@ -90,4 +92,30 @@ async fn the_properties_are_recorded_as_githubs_answers_naming_the_repository_an
     );
     answer(Property::Protection)?;
     Ok(())
+}
+
+async fn a_token_that_can_read_the_repository_passes_the_read_check(
+    sandbox: Sandbox,
+) -> Result<()> {
+    sandbox.store().check_reads(&sandbox.reading_token()).await
+}
+
+async fn a_token_that_cannot_read_the_repository_is_refused_naming_read_access(
+    sandbox: Sandbox,
+) -> Result<()> {
+    match sandbox
+        .store()
+        .check_reads(&sandbox.unreadable_token())
+        .await
+    {
+        Ok(()) => bail!("the unreadable token passes"),
+        Err(error) => {
+            let message = format!("{error:#}");
+            ensure!(
+                message.contains("read access"),
+                "the refusal names no read access: {message}"
+            );
+            Ok(())
+        }
+    }
 }
