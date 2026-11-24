@@ -102,10 +102,14 @@ pub(super) struct Earlier {
 
 /// The latest of something a tool gives: some of it, in order, with how
 /// many it left out before them and the `before` that gives those.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, JsonSchema)]
 pub(super) struct Latest<T> {
+    /// In order.
+    #[serde(rename = "entries")]
     pub(super) items: Vec<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) left_out: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) before: Option<String>,
 }
 
