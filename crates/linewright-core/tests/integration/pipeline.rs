@@ -8,6 +8,7 @@ use linewright_core::reconcile::{Discard, ParentNote, WorkKind};
 use linewright_core::store::local::{LocalStore, Paused, Write};
 use linewright_core::store::{IssueRead, Store};
 use linewright_core::testing::*;
+use linewright_core::tracking;
 use linewright_core::work_settings::{Effort, Partial, StageKey, StageTable};
 use rstest::rstest;
 use serde_json::{Value, json};
@@ -1187,8 +1188,8 @@ async fn spec_change_issue(world: &World) -> Number {
     let spec_change = merge_spec_change(world).await;
     world.store.open_issue(
         LINEWRIGHT,
-        "Spec change: Gadgets",
-        &format!("Opened for the spec change in {spec_change}."),
+        &tracking::title("Gadgets"),
+        &tracking::body(spec_change),
         &["ready-for-agent"],
     )
 }
