@@ -1167,9 +1167,8 @@ async fn a_design_files_its_spec_gaps_and_its_tickets() {
             json!([{"title": "Spec: gadget colors", "body": "The spec doesn't say."}]);
         Ok(result.to_string())
     });
-    merge_spec_change(&world).await;
+    spec_change_issue(&world).await;
 
-    world.poll().await;
     world.poll().await;
 
     let titles: Vec<String> = world.store.issues().into_iter().map(|i| i.title).collect();
@@ -1401,14 +1400,8 @@ async fn close_reason(world: &World, number: Number) -> Option<IssueCloseReason>
 #[test_log::test(tokio::test)]
 async fn a_tracking_issue_whose_design_label_was_removed_has_its_cut_discarded_and_is_designed_again()
  {
-    let (mut world, issue, tickets) = issue_cut_into_tickets().await;
-    world.poll().await;
-    let [linewrights] = world.store.pulls()[..] else {
-        panic!(
-            "expected the first ticket's pull request: {:?}",
-            world.store.pulls()
-        );
-    };
+    let mut world = World::new().await;
+    let (issue, tickets, linewrights) = world.issue_ticket_in_review().await;
     world
         .store
         .unlabel_as(issue, "linewright:designed")

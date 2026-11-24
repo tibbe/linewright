@@ -161,7 +161,7 @@ async fn a_poll_after_a_restart_is_given_the_tickets_branch_linewright_pushed_be
 #[test_log::test(tokio::test)]
 async fn a_poll_is_given_the_items_its_kept_snapshot_holds() {
     let mut world = World::new().await;
-    let (ticket, pr) = world.implement_a_ticket().await;
+    let (ticket, pr) = world.ticket_in_review().await;
     world.poll().await;
 
     world.poll().await;
