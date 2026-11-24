@@ -21,7 +21,7 @@ use linewright_core::status::UnparsedAutomation;
 use linewright_core::transcript::lines::Verbosity;
 
 use super::{Context, Tool, refused};
-use crate::mcp::page::{Earlier, Paging, missing};
+use crate::mcp::page::{Earlier, Latest, Paging, missing};
 
 /// See the board (`docs/specs/board.md`, Board).
 #[derive(Deserialize, JsonSchema)]
@@ -197,12 +197,8 @@ pub(super) struct RunPage {
     #[serde(flatten)]
     heading: RunHeading,
     sessions: Vec<SessionScreen>,
-    /// In order.
-    entries: Vec<EntryScreen>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    left_out: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    before: Option<String>,
+    #[serde(flatten)]
+    latest: Latest<EntryScreen>,
 }
 
 impl Tool for GetRun {
@@ -222,13 +218,10 @@ impl Tool for GetRun {
             limit: self.limit,
             before: self.before,
         };
-        let latest = earlier.latest(run.entries, |entry| entry.id.clone())?;
         Ok(RunPage {
             heading: run.heading,
             sessions: run.sessions,
-            entries: latest.items,
-            left_out: latest.left_out,
-            before: latest.before,
+            latest: earlier.latest(run.entries, |entry| entry.id.clone())?,
         })
     }
 }
