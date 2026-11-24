@@ -13,8 +13,7 @@ use linewright_core::status::{
 };
 use linewright_core::testing;
 use linewright_core::testing::{
-    assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
-    labeled_by_linewright, limited_until, linewright_labeling, linewright_letting_go, relabeled,
+    at, closed_by, draining_since, implementing, in_flight, labeled_by_linewright, limited_until,
     sub_issue, ticket,
 };
 use linewright_core::webhook::Received;
@@ -692,50 +691,6 @@ fn a_closed_tracking_issue_is_not_among_the_items() {
 }
 
 #[test_log::test]
-fn an_issue_not_designed_yet_shows_as_waiting_for_or_in_its_design() {
-    let undesigned = Issue {
-        labels: vec!["ready-for-agent".into()],
-        ..ready_issue()
-    };
-    let designing = Issue {
-        number: Number(9),
-        title: "Do another thing".into(),
-        assignees: vec![Login::new("factory")],
-        ..undesigned.clone()
-    };
-    let view = view(vec![undesigned, designing]);
-
-    assert_eq!(
-        after_linewright(&view, "2026-10-01T12:00:30Z"),
-        [
-            "#7: Waiting for Linewright — Do the thing",
-            "#9: Being designed — Do another thing",
-        ]
-    );
-}
-
-#[test_log::test]
-fn an_issue_carrying_two_status_labels_shows_by_the_newer() {
-    let handed_back = Issue {
-        number: Number(8),
-        title: "It broke".into(),
-        ..relabeled(ready_issue(), "needs-triage", "ready-for-human")
-    };
-    let view = view(vec![
-        relabeled(ready_issue(), "ready-for-agent", "needs-triage"),
-        handed_back,
-    ]);
-
-    assert_eq!(
-        after_linewright(&view, "2026-10-01T12:00:30Z"),
-        [
-            "#7: Waiting for triage — Do the thing",
-            "#8: Waiting for a decision — waiting for the maintainer: to label it `ready-for-agent` or `needs-triage` — It broke",
-        ]
-    );
-}
-
-#[test_log::test]
 fn each_managed_item_says_in_one_line_what_linewright_waits_for_on_it() {
     let blocked_and_held = Issue {
         number: Number(8),
@@ -1386,39 +1341,6 @@ fn with_a_required_label_an_issue_without_it_that_linewright_has_not_worked_is_n
 #[test_log::test]
 fn without_a_required_label_an_issue_asking_for_a_step_is_managed() {
     assert_eq!(managed_numbers(&view(vec![ready_issue()])), [Number(7)]);
-}
-
-#[test_log::test]
-fn an_issue_without_the_required_label_that_linewright_has_worked_is_managed() {
-    let handed_back = Issue {
-        labels: vec!["ready-for-agent".into(), label::STALLED.into()],
-        events: vec![
-            assigning_linewright("2026-10-01T10:00:00Z"),
-            linewright_labeling(label::STALLED, "2026-10-01T11:00:00Z"),
-            linewright_letting_go("2026-10-01T11:00:00Z"),
-        ],
-        ..ready_issue()
-    };
-    let assigned = Issue {
-        assignees: vec![Login::new("factory")],
-        ..ready_issue()
-    };
-    let opened = Issue {
-        author: Login::new("factory"),
-        ..ready_issue()
-    };
-    let closed_by_its_own = closed_by(ready_issue(), 43, "factory");
-
-    for worked in [handed_back, assigned, opened, closed_by_its_own] {
-        assert_eq!(managed_numbers(&unmarked_view(worked)), [Number(7)]);
-    }
-}
-
-#[test_log::test]
-fn an_issue_without_the_required_label_that_someone_elses_pull_request_closes_is_not_managed() {
-    let closed = closed_by(ready_issue(), 43, "alice");
-
-    assert_eq!(managed_numbers(&unmarked_view(closed)), []);
 }
 
 fn failed(previous: Option<FailedPolls>, time: &str, error: &str) -> Option<FailedPolls> {

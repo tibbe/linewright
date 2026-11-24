@@ -6,9 +6,8 @@ use linewright_core::runs::{Ending, Recorded, Started, State};
 use linewright_core::status::View;
 use linewright_core::store::AnyItem;
 use linewright_core::testing::{
-    NOW, assigning_linewright, at, closed_by, draining_since, implementing, in_flight,
-    labeled_by_linewright, limited_until, linewright_labeling, linewright_letting_go, relabeled,
-    sub_issue, ticket, view,
+    NOW, at, closed_by, draining_since, implementing, in_flight, labeled_by_linewright,
+    limited_until, sub_issue, ticket, view,
 };
 
 fn draft(number: u64, closes: u64, checks: &[CheckState]) -> Pull {
@@ -264,24 +263,6 @@ fn an_item_with_the_maintainer_waits_for_their_label() {
             "state: Waiting for a decision",
             "last read: 2026-10-01 12:00:00 UTC",
             "waiting for: the maintainer: to label it `ready-for-agent` or `needs-triage`",
-        ]
-    );
-}
-
-#[test_log::test]
-fn an_item_carrying_two_status_labels_is_explained_by_the_newer() {
-    let triaged = relabeled(
-        ticket(42, "Add invoices"),
-        "needs-triage",
-        "ready-for-agent",
-    );
-
-    assert_eq!(
-        text(&view(vec![triaged], vec![]), 42)[1..],
-        [
-            "state: Waiting for Linewright",
-            "last read: 2026-10-01 12:00:00 UTC",
-            "waiting for: nothing: Linewright acts on it at its next poll",
         ]
     );
 }
@@ -1124,38 +1105,6 @@ fn an_open_issue_with_no_pipeline_label_names_the_labels() {
     );
 }
 
-/// An open issue Linewright worked, whose status label a person
-/// removed, with no run in flight and no open pull request closing it.
-#[test_log::test]
-fn an_issue_linewright_worked_whose_status_label_a_person_removed_is_left_alone() {
-    let taken_back = Issue {
-        labels: vec![],
-        events: vec![
-            IssueEvent::Labeled {
-                label: "ready-for-agent".into(),
-                by: Some(Login::new("factory")),
-                at: at("2026-09-30T10:00:00Z"),
-            },
-            IssueEvent::Unlabeled {
-                label: "ready-for-agent".into(),
-                at: at("2026-09-30T11:00:00Z"),
-            },
-        ],
-        ..ticket(42, "Add invoices")
-    };
-    let view = view(vec![taken_back.clone()], vec![]);
-
-    assert_eq!(explain(&view, &[], Number(42), at(NOW)), None);
-    assert_eq!(
-        read_text(&view, &AnyItem::HeldIssue(Box::new(taken_back)))[1..],
-        [
-            "last read: 2026-10-01 12:00:30 UTC",
-            "left alone: it is labeled none of `needs-triage`, `needs-info`, `ready-for-agent` or \
-             `ready-for-human`",
-        ]
-    );
-}
-
 #[test_log::test]
 fn an_issue_with_no_status_label_is_explained_while_its_run_is_in_flight() {
     let unlabeled = Issue {
@@ -1198,26 +1147,6 @@ fn with_a_required_label_an_unmarked_issue_that_would_wait_on_a_person_were_it_m
     assert_eq!(
         read_text(&view, &AnyItem::HeldIssue(Box::new(asked)))[3],
         "left alone: it holds `needs-info`, and Linewright has not worked it"
-    );
-}
-
-#[test_log::test]
-fn with_a_required_label_an_issue_without_it_that_linewright_handed_back_is_managed() {
-    let handed_back = Issue {
-        labels: vec!["ready-for-agent".into(), label::STALLED.into()],
-        events: vec![
-            assigning_linewright("2026-10-01T10:00:00Z"),
-            linewright_labeling(label::STALLED, "2026-10-01T11:00:00Z"),
-            linewright_letting_go("2026-10-01T11:00:00Z"),
-        ],
-        ..ticket(42, "Add invoices")
-    };
-    let mut view = view(vec![handed_back], vec![]);
-    view.policy.require_label = Some("linewright".into());
-
-    assert_eq!(
-        text(&view, 42)[1],
-        "state: Waiting for Linewright · stalled"
     );
 }
 

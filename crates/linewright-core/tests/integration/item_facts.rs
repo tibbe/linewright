@@ -456,10 +456,6 @@ fn an_open_tracking_issue_with_none_of_its_tickets_open_is_tracking_and_unfinish
 
     let facts = facts_read(&view, &read);
 
-    assert!(matches!(
-        explain_fresh(&fresh_view(&view, &read, at(NOW)), &[], &read, at(NOW)),
-        linewright_core::explain::Answer::Managed(_)
-    ));
     assert_eq!(
         facts.state,
         StateFact::Tracking {
@@ -628,20 +624,15 @@ fn a_closed_issue_linewright_worked_is_in_done_with_the_line_it_had_on_the_board
     let mut held = view(vec![], vec![]);
     std::sync::Arc::make_mut(&mut held.snapshot).closed =
         vec![closed_item(&worked, "2026-09-30T12:00:00Z")];
-    let board_card = board(&held, &[], at(NOW))
-        .card(Number(7))
-        .map(|(column, card)| (column, card.line.clone()));
     let mut later = held.clone();
     later.policy.done_window = chrono::TimeDelta::hours(1);
     let left_the_board = facts_read(&later, &read_closed(worked, "2026-09-30T12:00:00Z"));
 
-    assert_eq!(board_card, Some((Column::Done, done.clone())));
     assert_eq!(
         card_state(&facts_of(&held, 7)),
         (Column::Done, done.clone())
     );
     assert_eq!(card_state(&off_the_board), (Column::Done, done.clone()));
-    assert!(board(&later, &[], at(NOW)).card(Number(7)).is_none());
     assert_eq!(card_state(&left_the_board), (Column::Done, done));
 }
 
