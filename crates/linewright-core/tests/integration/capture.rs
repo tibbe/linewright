@@ -2,13 +2,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::panic::Location;
 use std::path::Path;
 
+use linewright_core::benchmarks::Benchmark;
 use linewright_core::domain::Number;
 use linewright_core::git::{self, CommitId};
 use linewright_core::name::Name;
 use linewright_core::store::API_VERSION;
-use linewright_core::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskStage};
+use linewright_core::task::{
+    self, BenchmarkChoice, CaptureError, Criteria, Refusal, TaskPart, TaskStage,
+};
 use linewright_core::testing::captures::*;
 use linewright_core::testing::*;
+use rstest::rstest;
 use serde_json::{Value, json};
 
 const SECRET: &str = "s3cr3t-of-the-maintainer";
@@ -783,4 +787,54 @@ async fn a_capture_whose_row_is_refused_writes_no_directory() {
         "{refused:?}"
     );
     assert_eq!(entries(&tasks(&world)), BTreeSet::new());
+}
+
+/// `docs/specs/benchmarks.md`, Capturing: `lw capture` exits as the
+/// monitoring commands do (`docs/specs/operation.md`, Output), 4 for no such
+/// run and 1 for any other error; and Benchmarks and benchmark runs on the
+/// command line: a benchmark that does not exist is as a run that does not
+/// exist. Of the others, a refusal is one of Capturing's "Refusals on a
+/// screen", and a failure one of "All or nothing", such as GitHub failing.
+#[rstest]
+#[case::no_such_run(CaptureError::NoSuchRun(id("7/implement-1")), Refusal::NoSuch)]
+#[case::no_such_benchmark(CaptureError::NoSuchBenchmark("9".parse().unwrap()), Refusal::NoSuch)]
+#[case::an_automations_run(CaptureError::NotCapturable(id("hourly.md/1")), Refusal::Refused)]
+#[case::no_input(CaptureError::NoInput(id("7/implement-1")), Refusal::Refused)]
+#[case::lacking_a_part(
+    CaptureError::Lacks {
+        run: id("7/implement-1"),
+        part: TaskPart::Properties,
+    },
+    Refusal::Refused
+)]
+#[case::a_task_name_taken(
+    CaptureError::Taken {
+        task: "gadgets".parse().unwrap(),
+        benchmark: benchmark(IMPLEMENTS),
+    },
+    Refusal::Refused
+)]
+#[case::a_benchmark_name_taken(
+    CaptureError::BenchmarkTaken(benchmark(IMPLEMENTS)),
+    Refusal::Refused
+)]
+#[case::another_stage(
+    CaptureError::OtherStage {
+        run: id("7/implement-1"),
+        stage: TaskStage::Implement,
+        benchmark: Benchmark {
+            id: "1".parse().unwrap(),
+            name: benchmark("designs"),
+            stage: TaskStage::Design,
+        },
+    },
+    Refusal::Refused
+)]
+#[case::a_failure(CaptureError::Failed(anyhow::anyhow!("GitHub is down")), Refusal::Failed)]
+#[test_log::test]
+fn no_such_run_or_benchmark_is_no_such_and_any_other_error_a_refusal_or_failure(
+    #[case] error: CaptureError,
+    #[case] refusal: Refusal,
+) {
+    assert_eq!(error.refusal(), refusal);
 }
