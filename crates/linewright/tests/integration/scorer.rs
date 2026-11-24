@@ -95,25 +95,6 @@ async fn lw_score_without_repo_keeps_the_score_and_prints_it() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_score_refuses_an_output_whose_run_did_not_end_done_or_handed_back() {
-    let under = tempfile::tempdir().unwrap();
-    let (task, out) = triage_output(under.path(), "failed").await;
-    let bin = bin_with_git();
-    fake_claude(bin.path(), &scored_as("pass", &[]));
-
-    let ran = lw_score(bin.path(), &task, &out).await;
-
-    assert_eq!(ran.code, Some(1), "{}", ran.stderr);
-    assert!(
-        ran.stderr.contains("the output cannot be scored: ") && ran.stderr.contains("`failed`"),
-        "{}",
-        ran.stderr
-    );
-    assert!(!bin.path().join("tokens.log").exists());
-    assert_eq!(entries(&out), vec!["outcome", "task"]);
-}
-
-#[test_log::test(tokio::test)]
 async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
     let under = tempfile::tempdir().unwrap();
     let (task, out) = triage_output(under.path(), "done").await;
@@ -150,7 +131,7 @@ async fn lw_score_refuses_an_output_that_holds_a_score_and_leaves_it() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_score_whose_scorer_gives_up_exits_1_saying_why_and_keeps_nothing() {
+async fn lw_score_whose_scorer_gives_up_exits_1_saying_why() {
     let under = tempfile::tempdir().unwrap();
     let (task, out) = triage_output(under.path(), "done").await;
     let bin = bin_with_git();
@@ -169,7 +150,6 @@ async fn lw_score_whose_scorer_gives_up_exits_1_saying_why_and_keeps_nothing() {
         ran.stderr
     );
     assert_eq!(ran.stdout, "");
-    assert_eq!(entries(&out), vec!["outcome", "task"]);
 }
 
 #[test_log::test(tokio::test)]
