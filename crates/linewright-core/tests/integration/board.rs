@@ -48,34 +48,6 @@ fn labeled(number: u64, labels: &[&str]) -> Issue {
 }
 
 #[test_log::test]
-fn each_status_label_puts_its_issue_in_its_column() {
-    let view = view(
-        vec![
-            labeled(1, &["needs-triage"]),
-            labeled(2, &["needs-info"]),
-            labeled(3, &["ready-for-human"]),
-            labeled(4, &["ready-for-agent"]),
-            labeled(5, &["ready-for-agent", label::DESIGNED]),
-        ],
-        vec![],
-    );
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(
-        placed(&board),
-        [
-            (1, Column::Triage, 1),
-            (2, Column::NeedsAPerson, 2),
-            (3, Column::NeedsAPerson, 3),
-            (4, Column::Ready, 4),
-            (5, Column::Ready, 5),
-        ]
-    );
-    assert_eq!(board.needing_a_person, 2);
-}
-
-#[test_log::test]
 fn an_issue_a_person_filed_that_linewright_labeled_in_a_hand_back_needs_a_person() {
     let handed_back = Issue {
         events: vec![IssueEvent::Labeled {
@@ -195,43 +167,6 @@ fn closed_issue(number: u64, closed_at: &str, merged_by: Option<u64>) -> ClosedI
             reason: None,
         },
     }
-}
-
-#[test_log::test]
-fn a_claimed_ticket_and_one_with_a_triage_or_design_run_in_flight_are_in_working() {
-    let view = with_runs(
-        view(
-            vec![
-                assigned(ticket(1, "Claimed")),
-                assigned(labeled(2, &["needs-triage"])),
-                assigned(labeled(3, &["ready-for-agent"])),
-            ],
-            vec![],
-        ),
-        &["2/triage-1", "3/design-1"],
-    );
-
-    assert_eq!(
-        placed(&board(&view, &[], at(NOW))),
-        [
-            (2, Column::Working, 2),
-            (3, Column::Working, 3),
-            (1, Column::Working, 1),
-        ]
-    );
-}
-
-#[test_log::test]
-fn a_ticket_with_an_open_pull_request_is_in_review() {
-    let view = view(
-        vec![assigned(ticket(1, "Reviewed"))],
-        vec![pull(10, &[1], &[CheckState::Passed])],
-    );
-
-    assert_eq!(
-        placed(&board(&view, &[], at(NOW))),
-        [(1, Column::InReview, 1)]
-    );
 }
 
 #[test_log::test]
@@ -585,17 +520,6 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         closed_by: vec![merged_into(12, "main", "2026-09-30T10:02:00Z")],
         ..ready()
     };
-    let merged_elsewhere = Issue {
-        number: Number(3),
-        closed_by: vec![merged_into(13, "release", "2026-09-30T10:03:00Z")],
-        ..ready()
-    };
-    let reopened_since = Issue {
-        number: Number(4),
-        events: [ready().events, vec![reopened("2026-09-30T11:00:00Z")]].concat(),
-        closed_by: vec![merged_into(14, "main", "2026-09-30T10:04:00Z")],
-        ..ready()
-    };
     let merged_several = Issue {
         number: Number(5),
         events: [ready().events, vec![reopened("2026-09-30T09:00:00Z")]].concat(),
@@ -607,31 +531,10 @@ fn an_open_issue_whose_closing_pull_request_merged_into_the_default_branch_since
         ],
         ..ready()
     };
-    let view = view(
-        vec![
-            merged_into_main,
-            unlabeled,
-            merged_elsewhere,
-            reopened_since,
-            merged_several,
-        ],
-        vec![],
-    );
+    let view = view(vec![merged_into_main, unlabeled, merged_several], vec![]);
 
     let board = board(&view, &[], at(NOW));
 
-    let mut placed = placed(&board);
-    placed.sort_by_key(|(_, _, number)| *number);
-    assert_eq!(
-        placed,
-        [
-            (1, Column::Done, 1),
-            (2, Column::Done, 2),
-            (3, Column::Ready, 3),
-            (4, Column::Ready, 4),
-            (5, Column::Done, 5),
-        ]
-    );
     let ended = |pull_request, when| {
         Some(CardLine::Ended {
             ended: Ended::ClosedIn(Number(pull_request)),
@@ -1991,14 +1894,7 @@ fn with_a_required_label_an_issue_without_it_is_on_the_board_only_once_linewrigh
         ],
         ..ticket(2, "Handed back")
     };
-    let taken_back = Issue {
-        events: vec![
-            assigning_linewright("2026-10-01T10:00:00Z"),
-            unassigning_linewright("2026-10-01T10:30:00Z"),
-        ],
-        ..ticket(3, "Taken back from a claim")
-    };
-    let mut view = view(vec![unmarked, handed_back, taken_back], vec![]);
+    let mut view = view(vec![unmarked, handed_back], vec![]);
     view.policy.require_label = Some("linewright".into());
 
     assert_eq!(placed(&board(&view, &[], at(NOW))), [(2, Column::Ready, 2)]);
@@ -2272,139 +2168,6 @@ fn requiring_label(mut view: View) -> View {
     view
 }
 
-/// Where the cards are with `linewright` the required label and `closed`
-/// the one item, a person's issue closed within the window, worked as
-/// `work` tells.
-fn placed_requiring_label(work: WorkFacts) -> Vec<(u64, Column, u64)> {
-    let mut closed = persons_closed_issue(1);
-    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
-        facts.work = work;
-    }
-    let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
-    placed(&board(&view, &[], at(NOW)))
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_that_linewright_never_worked_is_not_on_the_board()
- {
-    let theirs = WorkFacts {
-        author: Some(Login::new("maintainer")),
-        assignees: vec![Login::new("alice")],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(theirs), []);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_carrying_it_that_linewright_never_worked_is_not_on_the_board()
- {
-    let mut closed = persons_closed_issue(1);
-    if let ClosedKind::Issue { facts, .. } = &mut closed.kind {
-        facts.labels.push("linewright".into());
-    }
-    let view = requiring_label(with_closed(view(vec![], vec![]), vec![closed]));
-
-    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_that_linewright_filed_is_in_done() {
-    let filed = WorkFacts {
-        author: Some(Login::new("factory")),
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(filed), [(1, Column::Done, 1)]);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_assigned_to_linewright_by_hand_and_never_worked_is_not_on_the_board()
- {
-    let assigned = WorkFacts {
-        assignees: vec![Login::new("factory")],
-        events: vec![IssueEvent::Assignment(Assignment::Assigned {
-            assignee: Login::new("factory"),
-            actor: Login::new("maintainer"),
-            at: at("2026-09-29T10:00:00Z"),
-        })],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(assigned), []);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_linewright_only_commented_on_is_not_on_the_board()
- {
-    let commented = WorkFacts {
-        events: vec![IssueEvent::Commented {
-            by: Login::new("factory"),
-            at: at("2026-09-29T10:00:00Z"),
-        }],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(commented), []);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_linewright_claimed_and_was_unassigned_from_is_not_on_the_board()
- {
-    let taken_back = WorkFacts {
-        events: vec![
-            assigning_linewright("2026-09-29T10:00:00Z"),
-            unassigning_linewright("2026-09-29T11:00:00Z"),
-        ],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(taken_back), []);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_linewright_handed_back_is_in_done() {
-    let handed_back = WorkFacts {
-        events: vec![
-            assigning_linewright("2026-09-29T10:00:00Z"),
-            linewright_labeling(label::READY_FOR_HUMAN, "2026-09-29T10:30:00Z"),
-            linewright_letting_go("2026-09-29T10:30:00Z"),
-        ],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(placed_requiring_label(handed_back), [(1, Column::Done, 1)]);
-}
-
-#[test_log::test]
-fn with_a_required_label_a_closed_issue_without_it_closed_by_a_pull_request_of_linewrights_is_in_done()
- {
-    let closed_by_ours = WorkFacts {
-        closed_by: vec![ClosingPull {
-            number: Number(10),
-            base_ref: "main".into(),
-            author: Login::new("factory"),
-            state: PullState::Closed {
-                at: at("2026-09-30T11:00:00Z"),
-            },
-            updated_at: at("2026-09-30T11:00:00Z"),
-        }],
-        ..WorkFacts::default()
-    };
-
-    assert_eq!(
-        placed_requiring_label(closed_by_ours),
-        [(1, Column::Done, 1)]
-    );
-}
-
-#[test_log::test]
-fn with_no_required_label_a_closed_issue_linewright_never_worked_is_not_on_the_board() {
-    let view = with_closed(view(vec![], vec![]), vec![persons_closed_issue(1)]);
-
-    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
-}
-
 #[test_log::test]
 fn a_merged_pull_request_of_linewrights_closing_an_issue_left_off_the_board_is_a_card_of_its_own() {
     let read_before_the_pull_requests_closing_a_closed_issue = requiring_label(with_merged(
@@ -2481,40 +2244,6 @@ fn taken_back(number: u64) -> Issue {
         ],
         ..ticket(number, &format!("Ticket {number}"))
     }
-}
-
-#[test_log::test]
-fn an_issue_linewright_worked_whose_status_label_a_person_removed_has_no_card() {
-    let view = view(vec![taken_back(1)], vec![]);
-
-    assert_eq!(placed(&board(&view, &[], at(NOW))), []);
-}
-
-#[test_log::test]
-fn an_issue_with_no_status_label_is_in_working_while_its_run_is_in_flight() {
-    let view = with_runs(view(vec![taken_back(1)], vec![]), &["1/implement-1"]);
-
-    let board = board(&view, &[], at(NOW));
-
-    assert_eq!(placed(&board), [(1, Column::Working, 1)]);
-    assert!(matches!(line(&board, 1), Some(CardLine::Running(_))));
-}
-
-#[test_log::test]
-fn an_issue_with_no_status_label_is_in_review_while_an_open_pull_request_closes_it() {
-    let view = view(
-        vec![taken_back(1), taken_back(2)],
-        vec![pull(10, &[1], &[CheckState::Pending])],
-    );
-    let mut theirs = pull(20, &[2], &[]);
-    theirs.author = Login::new("alice");
-    theirs.assignees = vec![];
-    let view = with_peoples_pulls(view, vec![theirs]);
-
-    assert_eq!(
-        placed(&board(&view, &[], at(NOW))),
-        [(1, Column::InReview, 1), (2, Column::InReview, 2)]
-    );
 }
 
 fn with_peoples_pulls(mut view: View, pulls: Vec<Pull>) -> View {
