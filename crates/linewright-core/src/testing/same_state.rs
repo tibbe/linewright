@@ -1,11 +1,16 @@
 use std::collections::BTreeSet;
+use std::panic::Location;
 use std::path::Path;
 
 use chrono::DateTime;
 use serde_json::{Map, Value, json};
+use sqlx::{Column as _, Row as _, TypeInfo as _, ValueRef as _};
 
+use super::World;
 use super::files::git_in;
+use super::records::{back_door, runs_in};
 use crate::domain::Timestamp;
+use crate::runs::RunId;
 use crate::store::Store;
 use crate::store::local::LocalStore;
 
@@ -59,37 +64,255 @@ async fn state(store: &LocalStore) -> Value {
     .lines()
     .map(|branch| (branch.to_string(), branch_state(&repo, branch)))
     .collect();
-    let mut state = json!({
-        "labels": labels,
-        "issues": issues,
-        "pulls": pulls,
-        "branches": branches,
-    });
+    in_time_order(
+        json!({
+            "labels": labels,
+            "issues": issues,
+            "pulls": pulls,
+            "branches": branches,
+        }),
+        Stamps::Rfc3339,
+    )
+}
+
+/// Asserts that the rows `query` gives in the database of the work
+/// directory `front`, left by running a stage, are those it gives in that of
+/// `back`, written through the back door, in its order, field for field.
+/// Timestamps, also those that start a part of a path, as a session's
+/// directory's name does, are compared by their order.
+#[track_caller]
+pub fn assert_same_rows(
+    front: &Path,
+    back: &Path,
+    query: &str,
+) -> impl Future<Output = ()> + use<> {
+    let caller = Location::caller();
+    let (front, back) = (back_door(front), back_door(back));
+    let query = query.to_string();
+    async move {
+        let front = rows(caller, &front.await, &query).await;
+        let back = rows(caller, &back.await, &query).await;
+        if let Some(difference) = first_difference("", &front, &back) {
+            panic!("the rows of {query} differ at {difference}, at {caller}");
+        }
+    }
+}
+
+/// The rows `query` gives in `pool`, each an object of its columns by name,
+/// each timestamp replaced by its place in the order of them all.
+async fn rows(caller: &Location<'_>, pool: &sqlx::SqlitePool, query: &str) -> Value {
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query))
+        .fetch_all(pool)
+        .await
+        .unwrap_or_else(|e| panic!("querying {query} at {caller}: {e}"));
+    pool.close().await;
+    let rows: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            let columns: Map<String, Value> = row
+                .columns()
+                .iter()
+                .map(|column| {
+                    let i = column.ordinal();
+                    let raw = row.try_get_raw(i).unwrap();
+                    let value = if raw.is_null() {
+                        Value::Null
+                    } else {
+                        match raw.type_info().name() {
+                            "INTEGER" => json!(row.get::<i64, _>(i)),
+                            "REAL" => json!(row.get::<f64, _>(i)),
+                            "BLOB" => json!(row.get::<Vec<u8>, _>(i)),
+                            _ => json!(row.get::<String, _>(i)),
+                        }
+                    };
+                    (column.name().to_string(), value)
+                })
+                .collect();
+            Value::Object(columns)
+        })
+        .collect();
+    in_time_order(Value::Array(rows), Stamps::AlsoInPaths)
+}
+
+/// Asserts that the input the run `run` recorded in `front`, by running its
+/// stage, is what `back` holds for it, written through the back door, field
+/// for field. Timestamps are compared by their order and each head by its
+/// commit's author, message and tree.
+#[track_caller]
+pub fn assert_same_input<'a>(
+    front: &'a World,
+    back: &'a World,
+    run: &str,
+) -> impl Future<Output = ()> + 'a {
+    let caller = Location::caller();
+    let id: RunId = run
+        .parse()
+        .unwrap_or_else(|e| panic!("the run {run} at {caller}: {e}"));
+    async move {
+        let front_input = input(caller, front, &id).await;
+        let back_input = input(caller, back, &id).await;
+        if let Some(difference) = first_difference("", &front_input, &back_input) {
+            panic!("the inputs of {id} differ at {difference}, at {caller}");
+        }
+    }
+}
+
+/// The input `world` holds for the run `id`, each head as its commit, each
+/// timestamp replaced by its place in the order of them all.
+async fn input(caller: &Location<'_>, world: &World, id: &RunId) -> Value {
+    let runs = runs_in(&world.work_dir).await;
+    let input = runs
+        .read_input(id)
+        .await
+        .unwrap_or_else(|e| panic!("reading the input of {id} at {caller}: {e:#}"))
+        .unwrap_or_else(|| panic!("the run {id} recorded no input, at {caller}"));
+    let repo = world.store.repository();
+    let mut input = serde_json::to_value(&input).unwrap();
+    for head in input["heads"].as_object_mut().unwrap().values_mut() {
+        *head = commit(&repo, head.as_str().unwrap());
+    }
+    in_time_order(input, Stamps::Rfc3339)
+}
+
+/// Asserts that the directory `front`, left by running a stage, holds what
+/// `back`, written through the back door, holds: the same directories,
+/// links and files, each file with the same contents. A file of JSON is
+/// compared field for field. A git repository under them, such as a
+/// task's `repository.git`, is compared by its refs, each by its commit's
+/// author, message and tree. Timestamps, also those that start a part of a
+/// path, are compared by their order.
+#[track_caller]
+pub fn assert_same_tree(front: &Path, back: &Path) {
+    let caller = Location::caller();
+    let (front, back) = (tree(front), tree(back));
+    if let Some(difference) = first_difference("", &front, &back) {
+        panic!("the trees differ at {difference}, at {caller}");
+    }
+}
+
+/// What `dir` holds, each entry by its path under it, timestamps in paths
+/// and in contents replaced by their place in the order of them all.
+fn tree(dir: &Path) -> Value {
+    let mut held = vec![];
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in
+            std::fs::read_dir(&at).unwrap_or_else(|e| panic!("reading {}: {e}", at.display()))
+        {
+            let path = entry.unwrap().path();
+            let kind = std::fs::symlink_metadata(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+                .file_type();
+            let contents = if kind.is_symlink() {
+                json!({ "link to": std::fs::read_link(&path).unwrap().display().to_string() })
+            } else if is_repository(&path) {
+                refs(&path)
+            } else if kind.is_dir() {
+                pending.push(path.clone());
+                json!("a directory")
+            } else {
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+                serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+                    json!(String::from_utf8(bytes.clone()).unwrap_or_else(|_| format!("{bytes:?}")))
+                })
+            };
+            let name = path.strip_prefix(dir).unwrap().display().to_string();
+            held.push(json!([name, contents]));
+        }
+    }
+    let Value::Array(held) = in_time_order(Value::Array(held), Stamps::AlsoInPaths) else {
+        unreachable!("an array stays an array");
+    };
+    Value::Object(
+        held.into_iter()
+            .map(|entry| {
+                let [name, contents] =
+                    <[Value; 2]>::try_from(entry.as_array().unwrap().clone()).unwrap();
+                (name.as_str().unwrap().to_string(), contents)
+            })
+            .collect(),
+    )
+}
+
+/// Whether `dir` is a bare git repository.
+fn is_repository(dir: &Path) -> bool {
+    dir.join("HEAD").is_file() && dir.join("objects").is_dir() && dir.join("refs").is_dir()
+}
+
+/// The refs of the repository `repo`, each by its commit.
+fn refs(repo: &Path) -> Value {
+    let refs: Map<String, Value> =
+        git_in(repo, &["for-each-ref", "--format=%(refname) %(objectname)"])
+            .lines()
+            .map(|line| {
+                let (name, id) = line.split_once(' ').unwrap();
+                (name.to_string(), commit(repo, id))
+            })
+            .collect();
+    json!({ "refs": refs })
+}
+
+/// Which strings [`in_time_order`] takes timestamps from.
+#[derive(Clone, Copy)]
+enum Stamps {
+    /// Each that is an RFC 3339 timestamp.
+    Rfc3339,
+    /// Those, and each part of a path that starts with a timestamp in the
+    /// form a session's directory is named in, such as
+    /// `20261001T120007Z-implement`.
+    AlsoInPaths,
+}
+
+/// `state`, each timestamp `stamps` names replaced by its place in the
+/// order of them all.
+fn in_time_order(mut state: Value, stamps: Stamps) -> Value {
     let mut times = BTreeSet::new();
-    each_time(&mut state, &mut |_, time| {
+    each_time(&mut state.clone(), stamps, &mut |time| {
         times.insert(time);
+        String::new()
     });
     let times: Vec<Timestamp> = times.into_iter().collect();
-    each_time(&mut state, &mut |text, time| {
+    each_time(&mut state, stamps, &mut |time| {
         let place = times.iter().position(|t| *t == time).unwrap();
-        *text = format!("time {place} in order");
+        format!("time {place} in order")
     });
     state
 }
 
-/// Calls `visit` on each RFC 3339 timestamp in `value`, with the time it
-/// names.
-fn each_time(value: &mut Value, visit: &mut impl FnMut(&mut String, Timestamp)) {
+/// Replaces each timestamp `stamps` names in `value` with what `visit`
+/// gives for the time it names.
+fn each_time(value: &mut Value, stamps: Stamps, visit: &mut impl FnMut(Timestamp) -> String) {
     match value {
         Value::String(text) => {
             if let Ok(time) = DateTime::parse_from_rfc3339(text) {
-                visit(text, time.to_utc());
+                *text = visit(time.to_utc());
+            } else if let Stamps::AlsoInPaths = stamps {
+                *text = text
+                    .split('/')
+                    .map(|part| match compact_time(part) {
+                        Some((time, rest)) => format!("{}{rest}", visit(time)),
+                        None => part.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/");
             }
         }
-        Value::Array(values) => values.iter_mut().for_each(|v| each_time(v, visit)),
-        Value::Object(fields) => fields.values_mut().for_each(|v| each_time(v, visit)),
+        Value::Array(values) => values.iter_mut().for_each(|v| each_time(v, stamps, visit)),
+        Value::Object(fields) => fields
+            .values_mut()
+            .for_each(|v| each_time(v, stamps, visit)),
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
+}
+
+/// The time `part` starts with, written as `%Y%m%dT%H%M%SZ`, and what
+/// follows it.
+fn compact_time(part: &str) -> Option<(Timestamp, &str)> {
+    const LEN: usize = "20261001T120007Z".len();
+    let (time, rest) = (part.get(..LEN)?, part.get(LEN..)?);
+    let time = chrono::NaiveDateTime::parse_from_str(time, "%Y%m%dT%H%M%SZ").ok()?;
+    Some((time.and_utc(), rest))
 }
 
 /// A branch's commits, newest first, and its files.
