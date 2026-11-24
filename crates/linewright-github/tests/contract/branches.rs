@@ -19,6 +19,8 @@ contracts![
     a_deleted_branch_is_gone,
     only_a_branch_named_for_an_issue_whose_head_linewright_committed_is_a_tickets,
     a_snapshot_reads_only_the_branches_asked_for_and_names_those_the_repository_lacks,
+    branches_whose_names_differ_only_in_case_are_kept_apart,
+    the_ticket_branches_pushed_hold_one_linewright_pushed_and_not_one_named_for_no_issue,
 ];
 
 async fn a_clone_is_of_the_branch_asked_with_the_settings_given(sandbox: Sandbox) -> Result<()> {
@@ -373,6 +375,68 @@ async fn a_snapshot_reads_only_the_branches_asked_for_and_names_those_the_reposi
                 .map(TicketBranchName::as_str)
                 .collect();
             equal("the branches gone", &gone, &vec![missing.as_str()])
+        })
+        .await
+}
+
+async fn branches_whose_names_differ_only_in_case_are_kept_apart(sandbox: Sandbox) -> Result<()> {
+    let branches = [sandbox.unique("Gadgets"), sandbox.unique("gadgets")];
+
+    for branch in &branches {
+        let contents = format!("{branch}\n");
+        let commits = [NewCommit {
+            message: "Gadgets",
+            files: &[("gadgets.txt", contents.as_bytes())],
+        }];
+        sandbox.push_named(branch.clone(), &commits).await?;
+    }
+
+    for branch in &branches {
+        let read = sandbox.store().read_file(branch, "gadgets.txt").await?;
+        equal(
+            &format!("the file on {branch}"),
+            &read,
+            &Some(format!("{branch}\n")),
+        )?;
+    }
+    Ok(())
+}
+
+async fn the_ticket_branches_pushed_hold_one_linewright_pushed_and_not_one_named_for_no_issue(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let issue = sandbox
+        .store()
+        .create_issue(NewIssue {
+            title: sandbox.unique("pushed-branch"),
+            body: "Opened for a branch named for it.".into(),
+            labels: vec![],
+        })
+        .await?;
+    sandbox.made_issue(issue);
+    let tickets = format!("{}-{}", issue.0, sandbox.unique("pushed"));
+    let unnumbered = sandbox.unique("unnumbered");
+    for branch in [&unnumbered, &tickets] {
+        let commits = [NewCommit {
+            message: "Add a file",
+            files: &[("ticket.txt", b"ticket\n")],
+        }];
+        sandbox.push_named(branch.clone(), &commits).await?;
+    }
+
+    sandbox
+        .eventually(async || {
+            let pushed = sandbox.store().ticket_branches_pushed().await?;
+            let names: Vec<&str> = pushed.iter().map(TicketBranchName::as_str).collect();
+            ensure!(
+                names.contains(&tickets.as_str()),
+                "{tickets} is not among {names:?}"
+            );
+            ensure!(
+                !names.contains(&unnumbered.as_str()),
+                "{unnumbered} is among {names:?}"
+            );
+            Ok(())
         })
         .await
 }

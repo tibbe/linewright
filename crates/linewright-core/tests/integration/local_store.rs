@@ -61,8 +61,10 @@ async fn unassigning_someone_a_pull_request_is_not_assigned_to_records_nothing()
     assert_eq!(snapshot_pull(&world, pr).await.assignments, before);
 }
 
+/// Seeding goes through git fast-import, which no contract reaches: they
+/// push through the trait.
 #[test_log::test(tokio::test)]
-async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
+async fn branches_seeded_with_names_that_differ_only_in_case_are_kept_apart() {
     let world = World::new().await;
     let branches = ["1-Gadgets", "1-gadgets"];
 
@@ -86,8 +88,10 @@ async fn branches_whose_names_differ_only_in_case_are_kept_apart() {
     }
 }
 
+/// Seeding goes through git fast-import, which no contract reaches: they
+/// push through the trait.
 #[test_log::test(tokio::test)]
-async fn a_commit_keeps_files_whose_paths_need_quoting_in_git() {
+async fn a_seeded_commit_keeps_files_whose_paths_git_fast_import_quotes() {
     let world = World::new().await;
     let paths = [
         "\"quoted\".txt",
