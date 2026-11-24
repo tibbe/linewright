@@ -14,6 +14,7 @@ contracts![
     a_file_with_a_nul_byte_is_read_as_binary,
     a_file_in_latin_1_is_read_as_its_text,
     every_file_under_a_directory_is_listed_by_its_path_under_it,
+    a_commit_keeps_the_paths_git_quotes,
 ];
 
 async fn a_file_is_read_from_the_head_of_its_branch(sandbox: Sandbox) -> Result<()> {
@@ -180,4 +181,37 @@ async fn every_file_under_a_directory_is_listed_by_its_path_under_it(
     let elsewhere = sandbox.unique("no-such-branch");
     let unbranched = store.list_files(&elsewhere, ".linewright").await?;
     equal("the files on a missing branch", &unbranched, &vec![])
+}
+
+/// Paths git quotes in its output unless told not to
+/// (<https://git-scm.com/docs/git-config#Documentation/git-config.txt-corequotePath>).
+async fn a_commit_keeps_the_paths_git_quotes(sandbox: Sandbox) -> Result<()> {
+    let paths = [
+        "\"quoted\".txt",
+        "new\nline.txt",
+        "back\\slash.txt",
+        "with space.txt",
+        "na\u{ef}ve.txt",
+    ];
+    let files: Vec<(&str, &[u8])> = paths.iter().map(|path| (*path, &b"kept\n"[..])).collect();
+
+    let pushed = sandbox
+        .push_branch(
+            "quoted-paths",
+            &[NewCommit {
+                message: "Add files whose paths git quotes",
+                files: &files,
+            }],
+        )
+        .await?;
+
+    for path in paths {
+        let read = sandbox.store().read_file(&pushed.name, path).await?;
+        equal(
+            &format!("the file {path:?}"),
+            &read.as_deref(),
+            &Some("kept\n"),
+        )?;
+    }
+    Ok(())
 }

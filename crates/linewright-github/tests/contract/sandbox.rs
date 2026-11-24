@@ -289,8 +289,13 @@ impl Sandbox {
     /// Pushes a branch named for `what`, from the default branch with
     /// `commits` on top, and returns it.
     pub async fn push_branch(&self, what: &str, commits: &[NewCommit<'_>]) -> Result<Pushed> {
+        self.push_named(self.unique(what), commits).await
+    }
+
+    /// Pushes the branch `name`, from the default branch with `commits` on
+    /// top, and returns it.
+    pub async fn push_named(&self, name: String, commits: &[NewCommit<'_>]) -> Result<Pushed> {
         let clone = self.clone_default_branch().await?;
-        let name = self.unique(what);
         let head = commit(&clone, commits).await?;
         self.made_branch(&name);
         self.push(&clone, &name, PushMode::Replace).await?;
