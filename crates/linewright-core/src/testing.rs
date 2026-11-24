@@ -230,10 +230,16 @@
 //! - `could_not_be_used`, `not_finished`: the follow-up a session is sent
 //!   back with for a reason, or a problem with its work.
 //!
-//! # `same_state`: comparing stores
+//! # `same_state`: comparing stores, databases and directories
 //!
-//! - `assert_same_state`: asserts a stage left the same state in one store as
-//!   a back door wrote in another, naming the first field that differs.
+//! Each asserts a stage left the same state as a back door wrote, naming
+//! the first field that differs.
+//!
+//! - `assert_same_state`: in two stores.
+//! - `assert_same_rows`: in the rows a query gives in two work directories'
+//!   databases.
+//! - `assert_same_input`: in the input a run recorded in two worlds.
+//! - `assert_same_tree`: in two directories, their files and repositories.
 //!
 //! # `environments`: setup commands
 //!
