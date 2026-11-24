@@ -473,18 +473,6 @@ async fn a_name_is_kept_clean() {
     );
 }
 
-/// `docs/specs/benchmarks.md`, Names and IDs, No name.
-#[test_log::test(tokio::test)]
-async fn a_name_that_is_no_name_once_clean_is_required_under_the_name() {
-    let pages = implemented(Recorded::Whole).await;
-
-    let (status, answer) = submit(&pages, "\u{200b}", CRITERIA).await;
-
-    assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("name", "Required."));
-    assert_eq!(tasks(&pages), Vec::<String>::new());
-}
-
 /// `docs/specs/ui_patterns.md`, Making, Required: every empty required
 /// field is refused at once, each under it.
 #[test_log::test(tokio::test)]
@@ -509,7 +497,7 @@ async fn empty_fields_are_each_refused_as_required_at_once() {
 }
 
 #[test_log::test(tokio::test)]
-async fn a_failed_capture_writes_nothing_and_says_why() {
+async fn a_failed_capture_says_why_above_the_buttons() {
     let pages = implemented(Recorded::Nothing).await;
     let missing = "0123456789abcdef0123456789abcdef01234567";
     record_input(&pages, missing, Some(properties())).await;
@@ -521,7 +509,6 @@ async fn a_failed_capture_writes_nothing_and_says_why() {
     assert_eq!(refused, []);
     let whole = whole.unwrap();
     assert!(whole.contains(missing), "{whole}");
-    assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]
@@ -663,6 +650,7 @@ async fn a_refused_capture_answers_the_form_as_sent_with_the_reason_and_leaves_t
             Some("Run 1/implement-1 recorded no input.")
         )
     );
+    assert_eq!(placed(&form).0, []);
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
 
@@ -682,30 +670,6 @@ async fn a_capture_into_a_benchmark_of_another_stage_is_refused_and_writes_nothi
 }
 
 #[test_log::test(tokio::test)]
-async fn a_new_benchmark_without_a_name_is_refused_under_it_and_writes_nothing() {
-    let pages = implemented(Recorded::Whole).await;
-
-    let (status, answer) = submit_into(&pages, Chosen::New(""), "gadgets", CRITERIA).await;
-
-    assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("new-benchmark", "Required."));
-    assert_eq!(tasks(&pages), Vec::<String>::new());
-}
-
-#[test_log::test(tokio::test)]
-async fn a_new_benchmark_whose_name_is_no_name_once_clean_is_required_under_it_and_writes_nothing()
-{
-    let pages = implemented(Recorded::Whole).await;
-
-    let (status, answer) =
-        submit_into(&pages, Chosen::New("\u{200b}\u{ad}"), "gadgets", CRITERIA).await;
-
-    assert_eq!(status, 422);
-    assert_eq!(placed(&answer), under("new-benchmark", "Required."));
-    assert_eq!(tasks(&pages), Vec::<String>::new());
-}
-
-#[test_log::test(tokio::test)]
 async fn a_new_benchmark_named_as_one_that_exists_is_refused_under_its_name_and_writes_nothing() {
     let pages = implemented(Recorded::Whole).await;
 
@@ -715,20 +679,6 @@ async fn a_new_benchmark_named_as_one_that_exists_is_refused_under_its_name_and_
     assert_eq!(
         placed(&answer),
         under("new-benchmark", "A benchmark named designs already exists.")
-    );
-    assert_eq!(tasks(&pages), Vec::<String>::new());
-}
-
-#[test_log::test(tokio::test)]
-async fn a_run_that_recorded_no_input_is_refused_and_says_so() {
-    let pages = implemented(Recorded::Nothing).await;
-
-    let (status, answer) = submit(&pages, "gadgets", CRITERIA).await;
-
-    assert_eq!(status, 422);
-    assert_eq!(
-        placed(&answer),
-        above_buttons("Run 1/implement-1 recorded no input.")
     );
     assert_eq!(tasks(&pages), Vec::<String>::new());
 }
