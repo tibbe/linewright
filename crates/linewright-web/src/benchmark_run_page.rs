@@ -4,7 +4,6 @@
 //! the cancelling of an open benchmark run.
 
 use std::fmt::Write as _;
-use std::num::NonZeroU32;
 use std::ops::Range;
 
 use askama::Template;
@@ -15,19 +14,18 @@ use axum::response::{IntoResponse, Response};
 use tracing::warn;
 
 use linewright_core::access::{Permit, Read};
-use linewright_core::actions::{self, Action, BenchmarkRunScreen, Outputs, TrialSaid, TrialScreen};
+use linewright_core::actions::{
+    self, Action, BenchmarkRunScreen, NoTrial, Outputs, TrialAt, TrialSaid, TrialScreen,
+    TrialTranscript,
+};
 use linewright_core::api::Sources;
 use linewright_core::benchmarks::results::{ConfigurationResults, Figures, Passes};
 use linewright_core::benchmarks::{
-    BenchmarkOfRun, BenchmarkRunId, BenchmarkRunRecord, CancelRefusal, ConfigurationId, RunTask,
-    Shown, TaskId, TrialAnswer, TrialName, dollars, duration, percent, without,
+    BenchmarkOfRun, BenchmarkRunId, BenchmarkRunRecord, CancelRefusal, RunTask, Shown, TrialAnswer,
+    TrialName, dollars, duration, percent, without,
 };
-use linewright_core::logs::{KeptRuns, Which};
 use linewright_core::name::Name;
 use linewright_core::phrase::Status;
-use linewright_core::runs::RunId;
-use linewright_core::runs::files::RunFiles;
-use linewright_core::trial;
 
 use super::buttons::{ScreenButton, Verb};
 use super::caller::{Asking, Reader};
@@ -422,16 +420,13 @@ impl ConfigurationsColumn {
 
 /// The path of the page of the transcript `of` of the trial of `task`
 /// under `configuration` in `repetition` of benchmark run `id`.
-fn transcript_path(
-    id: BenchmarkRunId,
-    configuration: ConfigurationId,
-    task: TaskId,
-    repetition: NonZeroU32,
-    of: Of,
-) -> String {
+fn transcript_path(at: &TrialAt, of: TrialTranscript) -> String {
     format!(
-        "{}/{configuration}/{task}/{repetition}/{}",
-        benchmark_run_path(id),
+        "{}/{}/{}/{}/{}",
+        benchmark_run_path(at.benchmark_run),
+        at.configuration,
+        at.task,
+        at.repetition,
         of.name()
     )
 }
@@ -775,12 +770,10 @@ fn rows(
             }));
             for trial in trials {
                 let at = TrialAt {
-                    id: benchmark_run.id,
+                    benchmark_run: benchmark_run.id,
                     configuration: configuration.id,
-                    configuration_name: configuration.name.clone(),
-                    task: task.clone(),
+                    task: task.id,
                     repetition: trial.trial.repetition,
-                    of: Of::Run,
                 };
                 rows.extend(trial_rows(&at, trial_id(trial), id.clone(), trial));
             }
@@ -796,8 +789,12 @@ fn trial_rows(at: &TrialAt, id: String, of: String, trial: &TrialScreen) -> Vec<
         id: format!("{id}_details"),
         of: id.clone(),
         said: Said::of(trial),
-        run_href: trial.run_began.then(|| at.path(Of::Run)),
-        scorer_href: trial.scorer_began.then(|| at.path(Of::Scorer)),
+        run_href: trial
+            .run_began
+            .then(|| transcript_path(at, TrialTranscript::Run)),
+        scorer_href: trial
+            .scorer_began
+            .then(|| transcript_path(at, TrialTranscript::Scorer)),
     };
     let opens = !details.is_empty();
     let absent = || String::from(ABSENT);
@@ -807,7 +804,7 @@ fn trial_rows(at: &TrialAt, id: String, of: String, trial: &TrialScreen) -> Vec<
         level: Level::Trial { of },
         fold: Fold::of(
             opens.then(|| details.id.clone()).into_iter().collect(),
-            format!("Show the details of {}", at.name()),
+            format!("Show the details of {}", trial.trial.name),
         ),
         name: format!("Trial {}", at.repetition),
         pass_rate: PassRate::Status {
@@ -1180,158 +1177,132 @@ pub(super) struct TrialPath {
     of: String,
 }
 
-/// Which of a trial's transcripts a page shows.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Of {
-    Run,
-    Scorer,
-}
+impl TrialPath {
+    /// The trial and its transcript that it names of benchmark run `id`;
+    /// `None` where a part names none.
+    fn parsed(&self, id: BenchmarkRunId) -> Option<(TrialAt, TrialTranscript)> {
+        let at = TrialAt {
+            benchmark_run: id,
+            configuration: self.configuration.parse().ok()?,
+            task: self.task.parse().ok()?,
+            repetition: self.repetition.parse().ok()?,
+        };
+        let of = TrialTranscript::ALL
+            .into_iter()
+            .find(|of| of.name() == self.of)?;
+        Some((at, of))
+    }
 
-impl Of {
-    const ALL: [Of; 2] = [Of::Run, Of::Scorer];
-
-    /// Its name in a path.
-    fn name(self) -> &'static str {
-        match self {
-            Of::Run => "run",
-            Of::Scorer => "scorer",
-        }
+    /// The trial, as the path names it.
+    fn trial(&self) -> String {
+        format!("{}/{}/{}", self.configuration, self.task, self.repetition)
     }
 }
 
-/// A trial of a benchmark run whose transcript a page shows.
-struct TrialAt {
-    id: BenchmarkRunId,
-    configuration: ConfigurationId,
-    configuration_name: Name,
-    task: RunTask,
-    repetition: NonZeroU32,
-    of: Of,
-}
-
-impl TrialAt {
-    fn name(&self) -> TrialName {
-        TrialName::new(self.repetition, &self.task.name, &self.configuration_name)
-    }
-
-    fn path(&self, of: Of) -> String {
-        transcript_path(
-            self.id,
-            self.configuration,
-            self.task.id,
-            self.repetition,
-            of,
-        )
-    }
-
-    /// Its output.
-    fn output_dir(&self, permit: &Permit<Read>, sources: &Sources) -> std::path::PathBuf {
-        actions::trial_output_dir(
-            permit,
-            sources,
-            self.id,
-            self.configuration,
-            self.task.id,
-            self.repetition,
-        )
-    }
-}
-
-/// The trial `path` names, of its benchmark run `record`, and where its
-/// transcript is read from; or else the status and what the page says of
-/// there being none.
-fn transcribed(
-    permit: &Permit<Read>,
-    sources: &Sources,
-    path: &TrialPath,
-    record: &BenchmarkRunRecord,
-) -> Result<(TrialAt, Transcribed), (StatusCode, String)> {
-    let trial = format!("{}/{}/{}", path.configuration, path.task, path.repetition);
-    let none = || {
-        (
-            StatusCode::NOT_FOUND,
-            format!("benchmark run {} has no trial {trial}", path.id),
-        )
-    };
-    let (configuration, configuration_name) = path
-        .configuration
-        .parse::<ConfigurationId>()
-        .ok()
-        .and_then(|id| Some((id, record.configurations.get(id.place())?.clone())))
-        .ok_or_else(none)?;
-    let task = path
-        .task
-        .parse::<TaskId>()
-        .ok()
-        .and_then(|id| record.tasks.iter().find(|task| task.id == id))
-        .ok_or_else(none)?;
-    let repetition = path
-        .repetition
-        .parse()
-        .ok()
-        .filter(|repetition: &NonZeroU32| *repetition <= record.repetitions)
-        .ok_or_else(none)?;
-    let of = Of::ALL
-        .into_iter()
-        .find(|of| of.name() == path.of)
-        .ok_or_else(none)?;
-    let at = TrialAt {
-        id: record.id,
-        configuration,
-        configuration_name,
-        task: task.clone(),
-        repetition,
-        of,
-    };
-    let output = at.output_dir(permit, sources);
-    let unread = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"));
-    let task_run: RunId = trial::task_run(&output).map_err(unread)?.ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            format!("the trial {trial} of benchmark run {} has not begun", at.id),
-        )
-    })?;
-    let item = match &task_run.of {
-        linewright_core::runs::RunOf::Work { item, .. } => *item,
-        linewright_core::runs::RunOf::Automation { .. } => return Err(none()),
-    };
-    let transcribed = match of {
-        Of::Run => Transcribed {
-            kept: KeptRuns::Files(RunFiles::new(&output)),
-            which: Which::Item(item),
-            missing: None,
-        },
-        Of::Scorer => Transcribed {
-            kept: KeptRuns::Scorer(output),
-            which: Which::Run {
-                id: task_run,
-                item: None,
-            },
-            missing: None,
-        },
-    };
-    Ok((at, transcribed))
+/// The transcript of a trial that a page shows.
+struct TrialShown {
+    at: TrialAt,
+    name: TrialName,
+    of: TrialTranscript,
 }
 
 /// What the page of a trial's transcript says above it: which trial of
 /// which benchmark run, linking to the benchmark run's page and to its other
 /// transcript.
-fn context(at: &TrialAt) -> Html {
-    let (this, other, other_name) = match at.of {
-        Of::Run => ("run's", Of::Scorer, "scorer's"),
-        Of::Scorer => ("scorer's", Of::Run, "run's"),
+fn context(shown: &TrialShown) -> Html {
+    let (this, other, other_name) = match shown.of {
+        TrialTranscript::Run => ("run's", TrialTranscript::Scorer, "scorer's"),
+        TrialTranscript::Scorer => ("scorer's", TrialTranscript::Run, "run's"),
     };
     html::built(format!(
         r#"<span id="trial">{} of <a class="link" href="{}">benchmark run {}</a>: its {this} transcript, or its <a class="link" href="{}">{other_name}</a></span>"#,
-        html::escape(&at.name().capitalized()),
-        html::escape(&benchmark_run_path(at.id)),
-        at.id,
-        html::escape(&at.path(other)),
+        html::escape(&shown.name.capitalized()),
+        html::escape(&benchmark_run_path(shown.at.benchmark_run)),
+        shown.at.benchmark_run,
+        html::escape(&transcript_path(&shown.at, other)),
     ))
 }
 
 /// The name of the screen of a trial's transcript, its last crumb.
 const TRIAL: &str = "Trial";
+
+/// The crumbs of the screens of benchmark run `record`'s trials.
+fn trial_crumbs(record: &BenchmarkRunRecord) -> Within {
+    benchmark_crumbs(&(&record.benchmark).into())
+        .under(benchmark_run_name(record.id), benchmark_run_path(record.id))
+}
+
+/// The trial's transcript that `path` names, if its benchmark run has it,
+/// and where it is read from; or else the status and what the page says of
+/// there being none.
+type Lookup = Result<(TrialShown, Transcribed), (StatusCode, String)>;
+
+/// The crumbs of the page of the trial's transcript that `path` names, of
+/// its benchmark run `id`, and its [`Lookup`]; or else that there is no
+/// such benchmark run.
+async fn looked_up(
+    permit: &Permit<Read>,
+    sources: &Sources,
+    path: &TrialPath,
+    id: BenchmarkRunId,
+) -> Result<(Within, Lookup), Missing> {
+    let missing = || Missing::BenchmarkRun(path.id.clone());
+    let found = match path.parsed(id) {
+        Some((at, of)) => match actions::find_trial(permit, sources, &at).await {
+            Ok(Ok(found)) => Some((at, of, found)),
+            Ok(Err(NoTrial::BenchmarkRun)) => return Err(missing()),
+            Ok(Err(NoTrial::Trial)) => None,
+            Err(e) => {
+                let error = format!("{e:#}");
+                warn!(
+                    benchmark_run = path.id,
+                    trial = path.trial(),
+                    error,
+                    "reading a trial failed"
+                );
+                let failed = (StatusCode::INTERNAL_SERVER_ERROR, error);
+                return Ok((Place::within(Area::Benchmarks), Err(failed)));
+            }
+        },
+        None => None,
+    };
+    let Some((at, of, found)) = found else {
+        let none = (
+            StatusCode::NOT_FOUND,
+            format!("benchmark run {} has no trial {}", path.id, path.trial()),
+        );
+        return match record_of(permit, sources, &path.id).await {
+            Ok(record) => Ok((trial_crumbs(&record), Err(none))),
+            Err(Unshown::NoSuch) => Err(missing()),
+            Err(unshown) => Ok((
+                Place::within(Area::Benchmarks),
+                Err(unshown.answer(&path.id)),
+            )),
+        };
+    };
+    let within = trial_crumbs(&found.benchmark_run);
+    let Some(kept) = found.transcript(of) else {
+        let not_begun = (
+            StatusCode::NOT_FOUND,
+            format!(
+                "the trial {} of benchmark run {id} has not begun",
+                path.trial()
+            ),
+        );
+        return Ok((within, Err(not_begun)));
+    };
+    let transcribed = Transcribed {
+        kept: kept.kept,
+        which: kept.which,
+        missing: None,
+    };
+    let shown = TrialShown {
+        at,
+        name: found.name,
+        of,
+    };
+    Ok((within, Ok((shown, transcribed))))
+}
 
 /// The place of the page of the trial's transcript that `path` names, and
 /// where the transcript is read from or why it cannot be; or else the
@@ -1341,31 +1312,21 @@ async fn trial_transcript(
     sources: &Sources,
     path: &TrialPath,
 ) -> Result<(Place, Result<Transcribed, (StatusCode, String)>), Missing> {
-    let record = match record_of(permit, sources, &path.id).await {
-        Err(Unshown::NoSuch) => return Err(Missing::BenchmarkRun(path.id.clone())),
-        record => record.map_err(|unshown| unshown.answer(&path.id)),
-    };
-    let within = match &record {
-        Ok(record) => benchmark_crumbs(&(&record.benchmark).into())
-            .under(benchmark_run_name(record.id), benchmark_run_path(record.id)),
-        Err(_) => Place::within(Area::Benchmarks),
-    };
-    let transcribed = record.and_then(|record| transcribed(permit, sources, path, &record));
-    let named = transcribed.as_ref().ok().map_or_else(
-        || {
-            format!(
-                "Trial {}/{}/{}",
-                path.configuration, path.task, path.repetition
-            )
-        },
-        |(at, _)| at.name().capitalized(),
+    let id: BenchmarkRunId = path
+        .id
+        .parse()
+        .map_err(|_| Missing::BenchmarkRun(path.id.clone()))?;
+    let (within, found) = looked_up(permit, sources, path, id).await?;
+    let named = found.as_ref().ok().map_or_else(
+        || format!("Trial {}", path.trial()),
+        |(shown, _)| shown.name.capitalized(),
     );
     let heading = Heading {
-        line: transcribed.as_ref().ok().map(|(at, _)| context(at)),
+        line: found.as_ref().ok().map(|(shown, _)| context(shown)),
         ..Heading::named(format!("{named}'s {}", path.of))
     };
     let place = within.screen(TRIAL, Thing::Found(heading));
-    Ok((place, transcribed.map(|(_, transcribed)| transcribed)))
+    Ok((place, found.map(|(_, transcribed)| transcribed)))
 }
 
 /// The page of a trial's transcript whose benchmark run is missing, `thing`.
@@ -1449,7 +1410,7 @@ pub(super) async fn trial_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use linewright_core::benchmarks::results;
+    use linewright_core::benchmarks::{ConfigurationId, results};
 
     /// A configuration `name` at a pass rate of 50%, with `mean` both its
     /// mean cost and its mean time.
