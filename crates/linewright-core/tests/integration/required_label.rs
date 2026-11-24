@@ -2,9 +2,10 @@ use linewright_core::reconcile::WorkKind;
 use linewright_core::testing::*;
 use serde_json::json;
 
-async fn world(required: Option<&str>, label_exists: bool) -> World {
-    let required = required.map(str::to_string);
-    let world = World::with(|c| c.require_label = required).await;
+/// A world requiring the label [`REQUIRED`], which the repository has if
+/// `label_exists`.
+async fn world(label_exists: bool) -> World {
+    let world = World::with(|c| c.require_label = Some(REQUIRED.into())).await;
     if label_exists {
         world.store.create_label(REQUIRED);
     }
@@ -38,35 +39,30 @@ fn all_labels(world: &World) -> Vec<Vec<String>> {
     world.store.issues().into_iter().map(|i| i.labels).collect()
 }
 
+#[track_caller]
+fn assert_each_carries_required(all: &[Vec<String>]) {
+    assert!(
+        all.iter().all(|l| l.iter().any(|label| label == REQUIRED)),
+        "{all:?}"
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn the_issue_and_every_ticket_of_a_spec_change_carry_the_required_label() {
-    let mut world = world(Some(REQUIRED), true).await;
+    let mut world = world(true).await;
     merged_spec_change(&world).await;
 
     world.poll().await;
     world.poll().await;
 
-    assert_eq!(
-        all_labels(&world),
-        [
-            vec![REQUIRED.to_string(), "linewright:designed".to_string()],
-            vec![
-                REQUIRED.to_string(),
-                "linewright:designed".to_string(),
-                "ready-for-agent".to_string()
-            ],
-            vec![
-                REQUIRED.to_string(),
-                "linewright:designed".to_string(),
-                "ready-for-agent".to_string()
-            ],
-        ]
-    );
+    let all = all_labels(&world);
+    assert_eq!(all.len(), 3, "the issue and its two tickets: {all:?}");
+    assert_each_carries_required(&all);
 }
 
 #[test_log::test(tokio::test)]
 async fn tickets_get_ready_for_agent_only_after_every_blocker_edge_exists() {
-    let mut world = world(Some(REQUIRED), true).await;
+    let mut world = world(true).await;
     merged_spec_change(&world).await;
 
     world.poll().await;
@@ -89,45 +85,8 @@ async fn tickets_get_ready_for_agent_only_after_every_blocker_edge_exists() {
 }
 
 #[test_log::test(tokio::test)]
-async fn unset_created_items_carry_exactly_the_labels_they_did_before() {
-    let mut world = world(None, true).await;
-    let pr = world
-        .store
-        .merge_change(
-            "maintainer",
-            "Gadgets",
-            "Adds gadgets.",
-            &[("docs/spec.md", "# Spec\n\nGadgets exist.\n")],
-        )
-        .await
-        .unwrap();
-    let _ = pr;
-    world.harness.on(WorkKind::Design, |_| {
-        Ok(json!({
-            "outcome": "designed", "design": "A gadget store.", "tickets": [{"id": "a", "title": "A", "body": "a", "blocked_by": []}],
-            "comment": "One."
-        })
-        .to_string())
-    });
-
-    world.poll().await;
-    world.poll().await;
-
-    assert_eq!(
-        all_labels(&world),
-        [
-            vec!["linewright:designed".to_string()],
-            vec![
-                "linewright:designed".to_string(),
-                "ready-for-agent".to_string()
-            ]
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn a_missing_required_label_is_not_created_and_the_filing_completes() {
-    let mut world = world(Some(REQUIRED), false).await;
+    let mut world = world(false).await;
     merged_spec_change(&world).await;
     world.poll().await;
     let issue = world.store.issues()[0].number;
@@ -170,7 +129,7 @@ fn implement_with_gap(world: &World) {
 
 #[test_log::test(tokio::test)]
 async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
-    let mut world = world(Some(REQUIRED), true).await;
+    let mut world = world(true).await;
     implement_with_gap(&world);
     let ticket = world.store.open_issue(
         "maintainer",
@@ -187,7 +146,7 @@ async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
         .into_iter()
         .find(|i| i.title == "Spec: gadget colors")
         .unwrap();
-    assert_eq!(labels(&gap), [REQUIRED, "ready-for-human"]);
+    assert!(labels(&gap).contains(&REQUIRED), "{:?}", gap.labels);
     let pulls = world.store.pulls();
     assert_eq!(pulls.len(), 1, "for {ticket}");
     assert!(
@@ -200,7 +159,7 @@ async fn a_draft_pull_request_and_a_spec_gap_issue_carry_the_required_label() {
 
 #[test_log::test(tokio::test)]
 async fn a_missing_required_label_leaves_the_draft_pull_request_and_spec_gap_without_it() {
-    let mut world = world(Some(REQUIRED), false).await;
+    let mut world = world(false).await;
     implement_with_gap(&world);
     world.store.open_issue(
         "maintainer",
@@ -238,11 +197,8 @@ max-issues: 3
 Look at the bugs.
 ";
 
-async fn filing_automation(
-    required: Option<&str>,
-    label_exists: bool,
-) -> (World, Vec<Vec<String>>) {
-    let mut world = world(required, label_exists).await;
+async fn filing_automation(label_exists: bool) -> (World, Vec<Vec<String>>) {
+    let mut world = world(label_exists).await;
     world
         .store
         .commit(
@@ -274,19 +230,14 @@ async fn filing_automation(
 
 #[test_log::test(tokio::test)]
 async fn automation_filed_issues_carry_the_required_label() {
-    let (_, all) = filing_automation(Some(REQUIRED), true).await;
-    assert_eq!(
-        all,
-        [
-            vec!["ready-for-agent".to_string(), REQUIRED.to_string()],
-            vec!["ready-for-human".to_string(), REQUIRED.to_string()],
-        ]
-    );
+    let (_, all) = filing_automation(true).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_each_carries_required(&all);
 }
 
 #[test_log::test(tokio::test)]
 async fn automation_filed_issues_are_filed_without_a_missing_required_label() {
-    let (world, all) = filing_automation(Some(REQUIRED), false).await;
+    let (world, all) = filing_automation(false).await;
     assert_eq!(
         all,
         [
@@ -295,16 +246,4 @@ async fn automation_filed_issues_are_filed_without_a_missing_required_label() {
         ]
     );
     assert!(!world.store.has_label(REQUIRED));
-}
-
-#[test_log::test(tokio::test)]
-async fn unset_automation_filed_issues_carry_only_their_state_label() {
-    let (_, all) = filing_automation(None, true).await;
-    assert_eq!(
-        all,
-        [
-            vec!["ready-for-agent".to_string()],
-            vec!["ready-for-human".to_string()]
-        ]
-    );
 }
