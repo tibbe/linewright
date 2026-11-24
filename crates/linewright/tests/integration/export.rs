@@ -63,7 +63,7 @@ async fn lw_export_writes_the_run_without_serve_and_says_where() {
 }
 
 #[test_log::test(tokio::test)]
-async fn lw_export_refuses_a_directory_that_holds_anything_as_a_trial_does() {
+async fn lw_export_refuses_a_directory_that_holds_anything() {
     let work_dir = triaged_in_work_dir().await;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("kept"), "").unwrap();

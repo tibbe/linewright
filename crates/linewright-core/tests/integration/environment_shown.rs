@@ -12,40 +12,8 @@ use linewright_core::environment::{
     BuildEnded, Builder, Environment, RebuildTaken, SetupRead, Tallied,
 };
 use linewright_core::redaction::Redaction;
-use linewright_core::testing;
 use linewright_core::testing::*;
 use linewright_core::work_settings::{SetupCommand, SetupSettings};
-
-#[test_log::test(tokio::test)]
-async fn without_serve_a_rebuild_builds_the_environment_and_says_how_the_build_ended() {
-    let marks = testing::Marks::new();
-    let fail = marks.path("fail");
-    let mut world = World::new().await;
-    set_up_with(&world, &format!("test ! -e '{}'", fail.display())).await;
-
-    let succeeded = world.factory.rebuild_environment().await.unwrap();
-    std::fs::write(&fail, "").unwrap();
-    world.restart(|_| {}).await;
-    let failed = world.factory.rebuild_environment().await.unwrap();
-
-    assert!(
-        matches!(succeeded, Some(BuildEnded::Succeeded { .. })),
-        "{succeeded:?}"
-    );
-    assert!(
-        matches!(&failed, Some(BuildEnded::Failed { error }) if error.starts_with("the setup command exited with status 1;")),
-        "{failed:?}"
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn without_serve_and_with_no_setup_command_a_rebuild_builds_nothing() {
-    let mut world = World::new().await;
-
-    let rebuilt = world.factory.rebuild_environment().await.unwrap();
-
-    assert_eq!(rebuilt, None);
-}
 
 /// The environment of `world`'s repository, kept in the work directory
 /// `dir`, as `serve` drives it.
@@ -149,24 +117,6 @@ async fn a_config_file_linewright_cannot_use_refuses_a_rebuild_even_from_the_sta
                 reason: reason.into()
             },
         ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn without_serve_a_config_file_linewright_cannot_use_refuses_a_rebuild_before_there_is_a_setup_command()
- {
-    let world = World::new().await;
-    let dir = tempfile::tempdir().unwrap();
-    let mut environment = environment_of(&world, dir.path()).await;
-
-    let refused = environment
-        .rebuild_now(SetupRead::Unusable)
-        .await
-        .unwrap_err();
-
-    assert_eq!(
-        format!("{refused:#}"),
-        "no build starts: `.linewright/config.toml` cannot be used, which holds the builds"
     );
 }
 

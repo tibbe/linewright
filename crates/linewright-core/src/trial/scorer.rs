@@ -426,7 +426,7 @@ pub fn discard_unkept(scoreable: &ScoreableTrial) {
 
 /// Removes the scorer's record in `dir`, and the output's `scorer/` with it
 /// when that holds no other, logging when it cannot.
-pub fn discard(dir: &Path) {
+fn discard(dir: &Path) {
     let mut removed = std::fs::remove_dir_all(dir);
     for _ in 0..2 {
         match &removed {
@@ -505,19 +505,6 @@ impl Score {
             scorer_money: money(&self.session.cost),
         }
     }
-
-    /// The verdict and whether a leak was found, one to a line.
-    pub fn summary(&self) -> String {
-        let leak = if self.leak.found() {
-            "found"
-        } else {
-            "none found"
-        };
-        format!(
-            "Verdict: {}\nLeak: {leak}\n",
-            self.correctness.verdict.name()
-        )
-    }
 }
 
 /// Why a scorer made no score: one variant for each row of
@@ -526,9 +513,6 @@ impl Score {
 /// row's words.
 #[derive(Debug)]
 pub enum Unscored {
-    UsageLimit {
-        resets_at: Timestamp,
-    },
     GaveUp(String),
     /// Its session ended unexpectedly.
     Ended(Ended),
@@ -565,10 +549,6 @@ impl Unscored {
 impl fmt::Display for Unscored {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Unscored::UsageLimit { resets_at } => write!(
-                f,
-                "The scorer's session reached the usage limit, which resets at {resets_at}."
-            ),
             Unscored::GaveUp(reason) => write!(f, "The scorer gave up: {reason}"),
             Unscored::Ended(Ended { end, log_tail }) => {
                 write!(f, "The scorer's session ended without a score: {end}")?;
@@ -599,9 +579,6 @@ impl From<Failure> for Unscored {
         match failure {
             Failure::HandBack(hand_back) => Unscored::Unexpected(anyhow!(hand_back.reason)),
             Failure::Ended { ended, .. } => Unscored::Ended(ended),
-            Failure::UsageLimit(limit) => Unscored::UsageLimit {
-                resets_at: limit.resets_at,
-            },
             Failure::Infrastructure { error, .. } | Failure::Apply { error, .. } => {
                 Unscored::Unexpected(error)
             }
@@ -646,7 +623,6 @@ pub async fn run(
         }
         unscored @ (Unscored::GaveUp(_)
         | Unscored::Ended(_)
-        | Unscored::UsageLimit { .. }
         | Unscored::BuildFailed { .. }
         | Unscored::NotKept(_)
         | Unscored::Cancelled) => unscored,
@@ -735,7 +711,7 @@ async fn scorer_in(
         harness,
         config,
         own.clones(),
-        &under.usage_limit,
+        &under.report_refusal,
     );
     let with = RunWith {
         briefs: setting.repo.briefs.clone(),

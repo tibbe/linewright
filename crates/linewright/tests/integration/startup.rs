@@ -80,7 +80,7 @@ fn without_bash_on_the_path_startup_is_an_error_naming_bash() {
 
     let (succeeded, error) = lw(
         bin.path(),
-        &["--repo", "owner/name", "once"],
+        &["--repo", "owner/name", "serve"],
         &[("GH_TOKEN", "token")],
     );
 
@@ -97,7 +97,7 @@ fn startup_logs_the_names_but_not_the_values_of_the_variables_sessions_are_not_g
 
     let (_, log) = lw(
         bin.path(),
-        &["--repo", "owner/name", "--log-format", "json", "once"],
+        &["--repo", "owner/name", "--log-format", "json", "serve"],
         &[
             ("GH_TOKEN", "linewright-token"),
             ("MY_SECRET", "hunter2"),
@@ -140,7 +140,7 @@ fn startup_logs_the_variables_a_stages_table_gives_its_sessions() {
             "json",
             "--config",
             file.to_str().unwrap(),
-            "once",
+            "serve",
         ],
         &[
             ("GH_TOKEN", "linewright-token"),
@@ -197,7 +197,7 @@ fn startup_logs_the_names_but_not_the_values_session_env_sets() {
             file.to_str().unwrap(),
             "--session-env",
             "FLAGGED=value-5",
-            "once",
+            "serve",
         ],
         &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
     );
@@ -231,7 +231,7 @@ fn startup_logs_the_names_but_not_the_values_session_env_sets() {
 }
 
 /// A path holding a Claude Code that would finish, `git` and `bash`, so
-/// that `once` gets as far as connecting to GitHub.
+/// that `serve` gets as far as connecting to GitHub.
 fn path_to_start_on() -> tempfile::TempDir {
     let bin = tempfile::tempdir().unwrap();
     fake_claude(bin.path(), "Done.");
@@ -240,24 +240,13 @@ fn path_to_start_on() -> tempfile::TempDir {
     bin
 }
 
-#[rstest::rstest]
-#[case::serve(&["serve"])]
-#[case::once(&["once"])]
-#[case::environment_rebuild(&["environment", "rebuild"])]
 #[test_log::test]
-fn a_command_that_runs_sessions_without_linewrights_token_is_an_error_at_startup_naming_its_variables(
-    #[case] command: &[&str],
-) {
+fn serve_without_linewrights_token_is_an_error_at_startup_naming_its_variables() {
     let bin = path_to_start_on();
-    let args: Vec<&str> = ["--repo", "owner/name"]
-        .iter()
-        .chain(command)
-        .copied()
-        .collect();
 
     let (succeeded, error) = lw(
         bin.path(),
-        &args,
+        &["--repo", "owner/name", "serve"],
         &[("GH_TOKEN", ""), ("GITHUB_TOKEN", ""), GITHUB_UNREACHABLE],
     );
 
@@ -268,24 +257,13 @@ fn a_command_that_runs_sessions_without_linewrights_token_is_an_error_at_startup
     );
 }
 
-#[rstest::rstest]
-#[case::serve(&["serve"])]
-#[case::once(&["once"])]
-#[case::environment_rebuild(&["environment", "rebuild"])]
 #[test_log::test]
-fn a_command_that_runs_sessions_without_a_model_is_an_error_at_startup_saying_where_to_set_it(
-    #[case] command: &[&str],
-) {
+fn serve_without_a_model_is_an_error_at_startup_saying_where_to_set_it() {
     let bin = path_to_start_on();
-    let args: Vec<&str> = ["--repo", "owner/name"]
-        .iter()
-        .chain(command)
-        .copied()
-        .collect();
 
     let (succeeded, error) = lw_without_model(
         bin.path(),
-        &args,
+        &["--repo", "owner/name", "serve"],
         &[("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE],
     );
 
@@ -321,7 +299,7 @@ fn secrets_naming_a_variable_that_is_unset_or_empty_is_an_error_at_startup_namin
         ];
         env.extend(value.map(|value| ("AWS_SECRET_ACCESS_KEY", value)));
 
-        let (succeeded, error) = lw(bin.path(), &["--repo", "owner/name", "once"], &env);
+        let (succeeded, error) = lw(bin.path(), &["--repo", "owner/name", "serve"], &env);
 
         assert!(!succeeded, "{error}");
         assert!(
@@ -340,7 +318,7 @@ fn secrets_naming_a_prefix_no_variable_has_is_no_error_at_startup() {
 
     let (_, log) = lw(
         bin.path(),
-        &["--repo", "owner/name", "once"],
+        &["--repo", "owner/name", "serve"],
         &[
             ("GH_TOKEN", "linewright-token"),
             ("LINEWRIGHT_SECRETS", "UNSET_PREFIX_*"),
@@ -528,28 +506,6 @@ fn without_public_url_serve_starts_though_it_cannot_listen_on_ui_address() {
     assert!(error.contains("`git` is not on the path"), "{error}");
 }
 
-#[test_log::test]
-fn once_does_not_listen_even_with_the_secret() {
-    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = taken.local_addr().unwrap().to_string();
-
-    let empty = tempfile::tempdir().unwrap();
-    let (succeeded, error) = lw(
-        empty.path(),
-        &[
-            "--repo",
-            "owner/name",
-            "--webhook-address",
-            &address,
-            "once",
-        ],
-        &[("LINEWRIGHT_WEBHOOK_SECRET", "s3cret")],
-    );
-
-    assert!(!succeeded, "{error}");
-    assert!(error.contains("`git` is not on the path"), "{error}");
-}
-
 fn version() -> String {
     let manifest: toml::Table =
         std::fs::read_to_string(linewright_core::testing::repository().join("Cargo.toml"))
@@ -688,15 +644,10 @@ fn serve_first_logs_the_version_and_the_commit() {
     );
 }
 
-/// `docs/specs/operation.md`, The log: "The first line" and "The last line",
-/// for a command that does work other than `serve`, and one that learns only
-/// as it runs that it does the work.
-#[rstest::rstest]
-#[case::once(&["once"])]
-#[case::environment_rebuild_without_serve(&["environment", "rebuild"])]
+/// `docs/specs/operation.md`, The log: "The first line" and "The last line".
 #[test_log::test]
-fn a_command_that_does_work_logs_the_version_first_and_the_exit_last(#[case] args: &[&str]) {
-    let (lines, log) = json_log(args);
+fn serve_logs_the_version_first_and_the_exit_last() {
+    let (lines, log) = json_log(&["serve"]);
 
     let first = &lines[0]["fields"];
     assert_eq!(first["message"], "starting", "{log}");
@@ -706,6 +657,35 @@ fn a_command_that_does_work_logs_the_version_first_and_the_exit_last(#[case] arg
         lines.last().unwrap()["fields"],
         serde_json::json!({ "message": "exiting", "status": 1 }),
         "{log}"
+    );
+}
+
+/// `docs/specs/operation.md`, Commands, Without `serve`, and The log:
+/// `environment rebuild` asks `serve` to act, so it fails without it, needing
+/// neither Linewright's token nor a model, and logs nothing.
+#[test_log::test]
+fn environment_rebuild_without_serve_exits_3_logging_nothing() {
+    let bin = path_to_start_on();
+
+    let (status, error) = lw_with_model(
+        bin.path(),
+        &[
+            "--repo",
+            "owner/name",
+            "--log-format",
+            "json",
+            "environment",
+            "rebuild",
+        ],
+        &[],
+        None,
+    );
+
+    assert_eq!(status.code(), Some(3), "{error}");
+    assert_eq!(error.lines().count(), 1, "{error}");
+    assert!(
+        error.starts_with("lw: `serve` is not running for owner/name"),
+        "{error}"
     );
 }
 
@@ -811,7 +791,7 @@ async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
     assert_eq!(log.lines("WARN"), Vec::<String>::new());
 }
 
-/// The messages `lw once` logs as warnings, with Linewright's token and
+/// The messages `lw serve` logs as warnings, with Linewright's token and
 /// `env`, until it fails to reach GitHub.
 fn warnings_at_startup(env: &[(&str, &str)]) -> Vec<String> {
     let bin = path_to_start_on();
@@ -822,7 +802,7 @@ fn warnings_at_startup(env: &[(&str, &str)]) -> Vec<String> {
         .collect();
     let (succeeded, log) = lw(
         bin.path(),
-        &["--repo", "owner/name", "--log-format", "json", "once"],
+        &["--repo", "owner/name", "--log-format", "json", "serve"],
         &env,
     );
     assert!(!succeeded, "{log}");
@@ -886,7 +866,7 @@ fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() 
             "owner/name",
             "--briefs",
             briefs.path().to_str().unwrap(),
-            "once",
+            "serve",
         ],
         &[],
     );
@@ -912,7 +892,7 @@ fn startup_logs_the_files_the_operators_briefs_provide() {
             briefs.path().to_str().unwrap(),
             "--log-format",
             "json",
-            "once",
+            "serve",
         ],
         &[],
     );
@@ -951,7 +931,7 @@ fn linewrights_own_briefs_can_be_the_operators_briefs() {
             briefs.to_str().unwrap(),
             "--log-format",
             "json",
-            "once",
+            "serve",
         ],
         &[],
     );

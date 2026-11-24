@@ -262,40 +262,13 @@ impl Starting {
         commit: &'static str,
         token: impl FnOnce() -> Result<SessionToken>,
     ) -> Result<Starting> {
-        Starting::with_gh(config, program, harness, commit, token, false).await
-    }
-
-    /// [`Starting::new`], for a trial's sessions, whose `gh` reaches GitHub
-    /// through a gate.
-    ///
-    /// # Errors
-    ///
-    /// As [`Starting::new`].
-    pub async fn running(
-        config: &Config,
-        program: &str,
-        harness: &Variables,
-        commit: &'static str,
-        token: impl FnOnce() -> Result<SessionToken>,
-    ) -> Result<Starting> {
-        Starting::with_gh(config, program, harness, commit, token, true).await
-    }
-
-    async fn with_gh(
-        config: &Config,
-        program: &str,
-        harness: &Variables,
-        commit: &'static str,
-        token: impl FnOnce() -> Result<SessionToken>,
-        gh_through_gate: bool,
-    ) -> Result<Starting> {
         let briefs = briefs(config)?;
         let work = config.work.clone().for_sessions()?;
         require_tool("git").await?;
         let bash = require_bash()?;
         require_tool(program).await?;
         let sessions = SessionCredentials::new(token()?, &config.secrets, harness)?;
-        let environments = environments(config, harness, gh_through_gate);
+        let environments = environments(config, harness);
         let trial_environments = split_environments(config, harness, true).environments;
         Ok(Starting {
             program: program.into(),
@@ -329,7 +302,6 @@ impl Starting {
         config: &Config,
         work_dir: PathBuf,
         database: Database,
-        on_usage_limit: OnUsageLimit,
         ends: Ends,
         winding_up: WindingUp,
     ) -> FactoryConfig {
@@ -353,7 +325,6 @@ impl Starting {
             briefs: self.briefs,
             work_dir,
             database,
-            waits_out_usage_limit: matches!(on_usage_limit, OnUsageLimit::Wait),
             session_token: self.sessions.token,
             secrets: self.sessions.secrets,
             ends,
@@ -411,8 +382,8 @@ fn split_environments(config: &Config, harness: &Variables, gh_through_gate: boo
 /// the variables they are not given and, of those, the ones each
 /// `[stage.NAME]` table gives its sessions; and the names, never the values, that
 /// `session-env` sets.
-fn environments(config: &Config, harness: &Variables, gh_through_gate: bool) -> Environments {
-    let split = split_environments(config, harness, gh_through_gate);
+fn environments(config: &Config, harness: &Variables) -> Environments {
+    let split = split_environments(config, harness, false);
     info!(
         variables = split.withheld.join(" "),
         "agent sessions are not given these variables of Linewright's environment; \
@@ -461,12 +432,6 @@ pub fn briefs(config: &Config) -> Result<OperatorBriefs> {
         );
     }
     Ok(briefs)
-}
-
-#[derive(Clone, Copy)]
-pub enum OnUsageLimit {
-    Wait,
-    End,
 }
 
 /// Fails when `program --version` does not run and succeed.

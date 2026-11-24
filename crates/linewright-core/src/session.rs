@@ -47,7 +47,6 @@ pub(crate) struct Sessions {
     /// How the `gh` of each session and maintenance command reaches GitHub.
     pub gh: GhReach,
     pub result_retries: u32,
-    pub waits_out_usage_limit: bool,
     pub report_refusal: tokio::sync::mpsc::UnboundedSender<UsageLimit>,
 }
 
@@ -90,7 +89,6 @@ pub(crate) enum Failure {
         note: String,
     },
     Cancelled,
-    UsageLimit(UsageLimit),
 }
 
 /// How a session ended unexpectedly, and the end of the log that shows it
@@ -205,8 +203,8 @@ impl Cancellation {
 }
 
 impl Failure {
-    /// Adds `note` to what the failure's hand-back says. A cancelled run and
-    /// one that ends for the usage limit post nothing, so they take none.
+    /// Adds `note` to what the failure's hand-back says. A cancelled run
+    /// posts nothing, so it takes none.
     pub(crate) fn noted(self, note: &str) -> Failure {
         match self {
             Failure::Infrastructure {
@@ -234,7 +232,7 @@ impl Failure {
                 reason: hand_back.reason + note,
                 ..hand_back
             }),
-            failure @ (Failure::Cancelled | Failure::UsageLimit(_)) => failure,
+            Failure::Cancelled => Failure::Cancelled,
         }
     }
 }
@@ -704,9 +702,6 @@ async fn take_turn(
             }
         };
         let _ = sessions.report_refusal.send(limit);
-        if !sessions.waits_out_usage_limit {
-            return Err(Failure::UsageLimit(limit));
-        }
         let resets_at = limit.resets_at;
         let refused_at = tokio::time::Instant::now();
         let now = sessions.clock.now();

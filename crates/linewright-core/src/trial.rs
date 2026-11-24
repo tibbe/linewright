@@ -25,7 +25,6 @@ use crate::clock::{Clock, RunningFrom, SystemClock};
 use crate::clones::Clones;
 use crate::cost::{RunCost, Spend, Usd};
 use crate::domain::{Item, Scope};
-use crate::ending::{Signal, Signals};
 use crate::environment::trials::{self, BuildLog};
 use crate::environment::{self, Source};
 use crate::factory::FactoryConfig;
@@ -65,32 +64,12 @@ const BUILD_SECONDS: &str = "build-seconds";
 const COST: &str = "cost.json";
 const COMMITS: &str = "commits.git";
 
-/// What a trial or a scorer runs under: what cancels its run, and what a
-/// session refused for the usage limit does.
+/// What a trial or a scorer runs under: what cancels its run, and where a
+/// session refused for the usage limit reports the limit before it waits
+/// until the limit resets and goes on.
 pub struct Under {
     pub cancel: Cancellation,
-    pub usage_limit: OnUsageLimit,
-}
-
-impl Under {
-    /// A cancellation that nothing else holds, and sessions that end at the
-    /// usage limit.
-    pub fn command() -> Under {
-        Under {
-            cancel: Cancellation::default(),
-            usage_limit: OnUsageLimit::End,
-        }
-    }
-}
-
-/// What a session refused for the usage limit does.
-#[derive(Clone)]
-pub enum OnUsageLimit {
-    /// It ends, and its run with it.
-    End,
-    /// It reports the limit to the receiver of this sender, waits until the
-    /// limit resets, and goes on.
-    WaitOut(UnboundedSender<UsageLimit>),
+    pub report_refusal: UnboundedSender<UsageLimit>,
 }
 
 /// The link to the attachment `name` from the writes, its path from them.
@@ -220,22 +199,6 @@ impl Output {
         &self.dir
     }
 
-    /// Writes `interrupted` as the outcome unless the run's ending is
-    /// written, and the cost unless it is written, and gives the status the
-    /// trial exits with for `signal`: its own, or 0 once the run ended.
-    pub fn signalled(&self, signal: Signal) -> i32 {
-        let status = match self.interrupted() {
-            Ok(false) => 0,
-            Ok(true) => signal.exit_status(),
-            Err(e) => {
-                error!(error = format!("{e:#}"), "writing the outcome failed");
-                signal.exit_status()
-            }
-        };
-        self.finished();
-        status
-    }
-
     /// Writes the cost, as the trial ends now, unless it is written: the
     /// time since the output was made, and what the trial's run cost, if
     /// it began. It logs what it cannot write: the cost without the run's
@@ -277,21 +240,6 @@ impl Output {
     /// What the trial spent, once [`Output::finished`] says it ended.
     pub fn spent(&self) -> Option<Spent> {
         self.lock_written().spent
-    }
-
-    /// Writes `interrupted` as the outcome unless the run's ending is
-    /// written, and gives whether it wrote it.
-    ///
-    /// # Errors
-    ///
-    /// When the file cannot be written.
-    pub fn interrupted(&self) -> Result<bool> {
-        let written = self.lock_written();
-        if written.ended.is_some() {
-            return Ok(false);
-        }
-        write_outcome(&self.dir, OutcomeName::Unended(Unended::Interrupted))?;
-        Ok(true)
     }
 
     /// Writes `in-flight` as the outcome of `run`, which has begun.
@@ -554,7 +502,7 @@ async fn run_in(
             harness,
             &config,
             own.clones(),
-            &under.usage_limit,
+            &under.report_refusal,
         ),
         spec_glob: config.spec_glob,
         spec_lookback: config.spec_lookback,
@@ -748,7 +696,8 @@ impl Setting {
 
     /// The parts the sessions run on `task` in this setting share, with
     /// `config` and `harness`: they fetch from and clone `store`, make their
-    /// clones in `clones`, and do at the usage limit what `usage_limit` says.
+    /// clones in `clones`, and report a refusal for the usage limit to
+    /// `report_refusal`.
     pub(crate) fn sessions(
         &self,
         task: &Task,
@@ -756,12 +705,8 @@ impl Setting {
         harness: Arc<dyn Harness>,
         config: &FactoryConfig,
         clones: Clones,
-        usage_limit: &OnUsageLimit,
+        report_refusal: &UnboundedSender<UsageLimit>,
     ) -> Sessions {
-        let (report_refusal, waits_out_usage_limit) = match usage_limit {
-            OnUsageLimit::End => (tokio::sync::mpsc::unbounded_channel().0, false),
-            OnUsageLimit::WaitOut(report_refusal) => (report_refusal.clone(), true),
-        };
         Sessions {
             store,
             harness,
@@ -774,32 +719,7 @@ impl Setting {
             environment: self.environment.clone(),
             gh: self.gh(),
             result_retries: config.result_retries,
-            waits_out_usage_limit,
-            report_refusal,
+            report_refusal: report_refusal.clone(),
         }
     }
-}
-
-/// Runs `work` unless a signal arrives first. Then it drops `work`, which
-/// ends the commands it runs, and exits the process at once with the status
-/// `on_signal` gives for the signal (`docs/specs/operation.md`, Stopping).
-///
-/// # Errors
-///
-/// When it cannot listen for signals; `work` does not run then.
-pub async fn unless_signalled<T>(
-    work: impl Future<Output = T>,
-    on_signal: impl FnOnce(Signal) -> i32,
-) -> Result<T> {
-    let mut signals = Signals::new().context("listening for signals")?;
-    let signal = tokio::select! {
-        done = work => return Ok(done),
-        signal = signals.next() => signal,
-    };
-    let status = on_signal(signal);
-    #[expect(
-        clippy::exit,
-        reason = "a signal ends a trial or its scorer at once, leaving in the output what it did"
-    )]
-    std::process::exit(status);
 }

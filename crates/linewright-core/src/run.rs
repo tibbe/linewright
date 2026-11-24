@@ -23,7 +23,7 @@ use crate::domain::{
     TicketBranchName, Timestamp, Windows, label,
 };
 use crate::git::{self, CommitId, WorkState};
-use crate::harness::{NextTurn, Purpose, Turn, UsageLimit};
+use crate::harness::{NextTurn, Purpose, Turn};
 use crate::input;
 use crate::prompts::{
     self, DesignOf, LooseEnd, Repo, SentBack, SpecChangeAndDiff, Ticket, TicketRead,
@@ -368,14 +368,6 @@ async fn drive(shell: &Shell, work: &Work, snapshot: &Snapshot, ctx: &Ctx) -> En
             Err(Failure::Cancelled) => {
                 info!(subject = ?subject, "run cancelled; its branch is kept");
                 return Ending::Cancelled;
-            }
-            Err(Failure::UsageLimit(limit)) => {
-                warn!(
-                    subject = ?subject,
-                    resets_at = %limit.resets_at,
-                    "run ended for the usage limit; its claim and branch are kept"
-                );
-                return Ending::UsageLimit;
             }
             Err(Failure::Apply { error: e, note }) => break hand_back::recording_failed(&e, &note),
             Err(Failure::Ended { ended, note }) => break hand_back::unexpected(ended, &note),
@@ -1606,11 +1598,6 @@ async fn record_pull_work(shell: &Shell, pr: Number, writes: &PullWorkWrites) ->
     Ok(())
 }
 
-pub(crate) enum AutomationEnd {
-    Finished(AutomationResult),
-    UsageLimit(UsageLimit),
-}
-
 /// Runs `automation`, which the workflow run attempt `trigger` started unless
 /// its schedule or a person did, and ends its run. A run that fails is an
 /// error.
@@ -1619,7 +1606,7 @@ pub(crate) async fn automation(
     automation: &Automation,
     trigger: Option<&CompletedAttempt>,
     ctx: Ctx,
-) -> Result<AutomationEnd> {
+) -> Result<AutomationResult> {
     let session = async {
         let purpose = Purpose::Automation(automation.name.clone());
         let (opened, _ws) = open_on_default_branch(&shell.sessions, ctx.session(), purpose).await?;
@@ -1658,7 +1645,6 @@ pub(crate) async fn automation(
     let ended = session.await;
     let ending = match &ended {
         Ok(_) => Ending::Done,
-        Err(Failure::UsageLimit(_)) => Ending::UsageLimit,
         Err(Failure::Cancelled) => Ending::Cancelled,
         Err(
             Failure::Infrastructure { .. }
@@ -1669,8 +1655,7 @@ pub(crate) async fn automation(
     };
     ctx.run.end(shell.sessions.clock.now(), ending).await;
     match ended {
-        Ok(result) => Ok(AutomationEnd::Finished(result)),
-        Err(Failure::UsageLimit(limit)) => Ok(AutomationEnd::UsageLimit(limit)),
+        Ok(result) => Ok(result),
         Err(Failure::Infrastructure { error: e, .. } | Failure::Apply { error: e, .. }) => Err(e),
         Err(Failure::HandBack(hand_back)) => Err(hand_back_error(hand_back)),
         Err(Failure::Ended {

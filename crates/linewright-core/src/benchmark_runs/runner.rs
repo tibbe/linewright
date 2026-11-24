@@ -24,7 +24,7 @@ use crate::runs::{Ending, OutcomeName};
 use crate::session::Cancellation;
 use crate::task::Task;
 use crate::trial::scorer::{self, ScoreRefusal, ScoreableTrial, ScorerRecord, Unscored};
-use crate::trial::{self, Configuration, OnUsageLimit, Output, Spent, Under, Unrun};
+use crate::trial::{self, Configuration, Output, Spent, Under, Unrun};
 
 /// How the benchmark runs stand, as `serve` shows them.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -207,7 +207,7 @@ impl BenchmarkRunsRunner {
         let context = self.context.clone();
         let under = Under {
             cancel: cancel.clone(),
-            usage_limit: OnUsageLimit::WaitOut(context.refusals.clone()),
+            report_refusal: context.refusals.clone(),
         };
         info!(benchmark_run = %trial.benchmark_run, task = %at.task, configuration = %at.configuration, repetition = trial.key.repetition, ?step, "a step of a benchmark run starts");
         let task = self.steps.spawn(async move {

@@ -391,48 +391,6 @@ async fn a_build_in_progress_is_abandoned_when_serve_exits() {
 }
 
 #[test_log::test(tokio::test)]
-async fn without_serve_a_run_uses_the_environment_when_no_trigger_applies_and_builds_it_first_otherwise()
- {
-    let marks = Marks::new();
-    let mut world = World::new().await;
-    set_up_with(&world, &marks.installing("v1")).await;
-    world.factory.prepare_environment().await.unwrap();
-    assert_eq!(marks.builds(), 1);
-    world.restart(|_| {}).await;
-    let seen = implement_reading(&world);
-    open_ticket(&world, "Do the thing");
-
-    world.factory.prepare_environment().await.unwrap();
-    world.poll().await;
-
-    assert_eq!(marks.builds(), 1);
-    assert_eq!(installed(&seen), [Some("v1\n".to_string())]);
-}
-
-#[test_log::test(tokio::test)]
-async fn without_an_environment_once_starts_no_session_naming_the_build() {
-    let mut world = World::new().await;
-    set_up_with(&world, "echo 'npm ERR! missing lockfile'; exit 3").await;
-    let seen = implement_reading(&world);
-    open_ticket(&world, "Do the thing");
-
-    let prepared = world.factory.prepare_environment().await.unwrap_err();
-    world.poll().await;
-
-    let error = format!("{prepared:#}");
-    assert!(
-        error.contains("the build of the environment failed"),
-        "{error}"
-    );
-    assert!(error.contains("status 3"), "{error}");
-    assert!(
-        error.contains("`lw environment` shows its output"),
-        "{error}"
-    );
-    assert!(installed(&seen).is_empty(), "no session started");
-}
-
-#[test_log::test(tokio::test)]
 async fn a_config_file_linewright_cannot_use_starts_no_build() {
     let marks = Marks::new();
     let mut world = World::new().await;

@@ -16,8 +16,6 @@ mod logs;
 mod mcp;
 mod programs;
 mod runs;
-mod scorer;
 mod serve_fake;
 mod session_clone;
 mod startup;
-mod trial;

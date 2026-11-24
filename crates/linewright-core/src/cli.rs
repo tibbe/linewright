@@ -28,19 +28,17 @@ use crate::ending::{Ends, StopBy};
 use crate::environment::shown::{self, Followed, FollowingBuild};
 use crate::environment::{self, BuildEnded, BuildId, RebuildSaid, RebuildTaken};
 use crate::export::{self, ExportError};
-use crate::factory::{Factory, FactoryConfig, SessionToken};
+use crate::factory::{Factory, SessionToken};
 use crate::harness::{Harness, HarnessSettings, Program, Variables};
 use crate::logs::{self, FollowQuery, Following, Which};
 use crate::name::Name;
 use crate::repo_files::RepoLayer;
 use crate::runs::{self, Query, RepoWorkDir, RunId, Runs};
-use crate::serving::{self, OnUsageLimit, Starting, UiRouter, briefs};
+use crate::serving::{self, Starting, UiRouter, briefs};
 use crate::store::Store;
 use crate::store::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
-use crate::task::{CRITERIA_REQUIRED, Criteria, Task, TaskStage};
+use crate::task::{CRITERIA_REQUIRED, Criteria, TaskStage};
 use crate::transcript::{self, After, InFlight, Verbosity};
-use crate::trial::scorer::{self, ScorerRecord};
-use crate::trial::{self, Configuration, Output, Under};
 use crate::winding_up::{Remaining, WindingUp};
 use crate::work_settings::RepoSettings;
 use crate::{COMMAND, VERSION, version_and_commit};
@@ -89,79 +87,31 @@ impl Lw<'_> {
         self.systems.store(&config.required_repo()?, token).await
     }
 
-    /// What a factory starts with, as [`Starting::new`] reads it, or for a
-    /// trial's sessions when `for_a_trial`, as [`Starting::running`] does,
-    /// and the harness that runs its sessions.
-    async fn starting(
-        self,
-        config: &Config,
-        for_a_trial: bool,
-        token: impl FnOnce() -> Result<SessionToken>,
-    ) -> Result<(Starting, Arc<dyn Harness>)> {
-        let program = self.systems.harness_program();
-        let starting = if for_a_trial {
-            Starting::running(config, program.name, &program.variables, self.commit, token).await?
-        } else {
-            Starting::new(config, program.name, &program.variables, self.commit, token).await?
-        };
-        let settings = starting.harness(own_program()?, Arc::new(SystemClock));
-        let harness = self.systems.harness(settings);
-        Ok((starting, harness))
-    }
-
-    /// The harness and the factory config for a trial of `task` or its
-    /// scorer, whose sessions are given `token`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Starting::running`], and when Linewright's own program is not
-    /// found.
-    async fn on_task(
-        self,
-        config: &Config,
-        token: SessionToken,
-        task: &Task,
-        winding_up: &WindingUp,
-    ) -> Result<(Arc<dyn Harness>, FactoryConfig)> {
-        let (starting, harness) = self.starting(config, true, || Ok(token)).await?;
-        let work_dir = RepoWorkDir {
-            base: config.work_dir.clone(),
-            repo: task.properties().settings.repo.clone(),
-        };
-        let database = Database::open(&work_dir.resolve()).await?;
-        let factory_config = starting.factory_config(
-            config,
-            database.work_dir().to_path_buf(),
-            database,
-            OnUsageLimit::End,
-            Ends::new(),
-            winding_up.clone(),
-        );
-        Ok((harness, factory_config))
-    }
-
-    /// Starts the factory in the work directory of `database`, or, if
-    /// `None`, of the repository's database, opened once Linewright's
-    /// settings pass the checks of its start.
+    /// Starts `serve`'s factory in the work directory of `database`, once
+    /// Linewright's settings pass the checks of its start.
     async fn start(
         self,
         config: &Config,
-        database: Option<Database>,
-        on_usage_limit: OnUsageLimit,
+        database: Database,
         ends: Ends,
         winding_up: &WindingUp,
     ) -> Result<Factory> {
-        let (starting, harness) = self.starting(config, false, session_token).await?;
-        let database = match database {
-            Some(database) => database,
-            None => Database::open(&config.repo_work_dir()?.resolve()).await?,
-        };
+        let program = self.systems.harness_program();
+        let starting = Starting::new(
+            config,
+            program.name,
+            &program.variables,
+            self.commit,
+            session_token,
+        )
+        .await?;
+        let settings = starting.harness(own_program()?, Arc::new(SystemClock));
+        let harness = self.systems.harness(settings);
         let github = self.connect(config, token()?).await?;
         let factory_config = starting.factory_config(
             config,
             database.work_dir().to_path_buf(),
             database,
-            on_usage_limit,
             ends,
             winding_up.clone(),
         );
@@ -222,8 +172,8 @@ fn complain(message: impl std::fmt::Display) {
     eprintln!("{COMMAND}: {message}");
 }
 
-/// The log a command keeps when it does work itself, begun by the command as
-/// it starts that work; a command that never begins it logs nothing.
+/// The log `serve` keeps, begun as it starts; every other command never
+/// begins it, and logs nothing.
 struct Log {
     format: LogFormat,
     commit: &'static str,
@@ -580,15 +530,8 @@ async fn follow_build(config: &Config, build: BuildId, from: u64, json: bool) ->
 }
 
 /// Asks `serve` to build the environment and, unless `no_wait`, waits for
-/// the build to end; without `serve`, builds it here.
-async fn rebuild_environment(
-    lw: Lw<'_>,
-    config: &Config,
-    no_wait: bool,
-    json: bool,
-    winding_up: &WindingUp,
-    log: &Log,
-) -> Result<u8> {
+/// the build to end.
+async fn rebuild_environment(config: &Config, no_wait: bool, json: bool) -> u8 {
     let say = |said: &RebuildSaid| {
         if json {
             println!(
@@ -602,32 +545,29 @@ async fn rebuild_environment(
     };
     let repo = match config.required_repo() {
         Ok(repo) => repo,
-        Err(e) => return Ok(print_answer(Err(failed(&e)))),
+        Err(e) => return print_answer(Err(failed(&e))),
     };
     let dir = socket_dir();
     let taken = match api::post_answer(&dir, &repo, "/api/environment/rebuild").await {
         Ok(body) => match read_as::<RebuildTaken>(&body, "a rebuild taken") {
             Ok(taken) => taken,
-            Err(e) => return Ok(print_answer(Err(e))),
+            Err(e) => return print_answer(Err(e)),
         },
-        Err(RequestError::NotServing { .. }) => {
-            return rebuild_here(lw, config, say, winding_up, log).await;
-        }
-        Err(e) => return Ok(print_answer(Err(refused(&e)))),
+        Err(e) => return print_answer(Err(refused(&e))),
     };
     let build = match &taken {
         RebuildTaken::Started { build } | RebuildTaken::Queued { build } => *build,
-        RebuildTaken::NoSetupCommand => return Ok(no_setup_command()),
+        RebuildTaken::NoSetupCommand => return no_setup_command(),
         RebuildTaken::Refused { reason } => {
-            return Ok(print_answer(Err((1, format!("no build starts: {reason}")))));
+            return print_answer(Err((1, format!("no build starts: {reason}"))));
         }
     };
     say(&RebuildSaid::Taken(taken));
     if no_wait {
-        return Ok(SUCCESS);
+        return SUCCESS;
     }
     let resource = format!("/api/environment/rebuild/{build}");
-    Ok(match api::get_answer(&dir, &repo, &resource).await {
+    match api::get_answer(&dir, &repo, &resource).await {
         Ok(body) => match read_as::<BuildEnded>(&body, "a build ended") {
             Ok(ended) => {
                 let code = ended_code(&ended);
@@ -637,29 +577,7 @@ async fn rebuild_environment(
             Err(e) => print_answer(Err(e)),
         },
         Err(e) => print_answer(Err(refused(&e))),
-    })
-}
-
-/// Builds the environment without `serve`, logging as it does the work, and
-/// says how the build ended.
-async fn rebuild_here(
-    lw: Lw<'_>,
-    config: &Config,
-    say: impl Fn(&RebuildSaid),
-    winding_up: &WindingUp,
-    log: &Log,
-) -> Result<u8> {
-    log.begin();
-    let mut factory = lw
-        .start(config, None, OnUsageLimit::End, Ends::new(), winding_up)
-        .await?;
-    let ended = factory
-        .rebuild_environment()
-        .await?
-        .context(NO_SETUP_COMMAND)?;
-    let code = ended_code(&ended);
-    say(&RebuildSaid::Ended(ended));
-    Ok(code)
+    }
 }
 
 const NO_SETUP_COMMAND: &str =
@@ -958,7 +876,7 @@ async fn run(lw: Lw<'_>, command: Command, config: Config, log: &Log) -> u8 {
     })
 }
 
-/// Does what `command` says, beginning `log` first if it does work itself.
+/// Does what `command` says, beginning `log` first for `serve`.
 async fn work(
     lw: Lw<'_>,
     command: Command,
@@ -966,35 +884,29 @@ async fn work(
     winding_up: &WindingUp,
     log: &Log,
 ) -> Result<u8> {
-    let done = match command {
+    Ok(match command {
         Command::Status { json } => {
             let resource = "/api/status";
-            return Ok(ask(&config, resource, "a status", json, status::render).await);
+            ask(&config, resource, "a status", json, status::render).await
         }
         Command::Drain {
             no_wait,
             timeout,
             json,
-        } => {
-            return Ok(drain(&config, no_wait, timeout, json).await);
-        }
+        } => drain(&config, no_wait, timeout, json).await,
         Command::Environment {
             command: None,
             follow,
             json,
-        } => {
-            return Ok(show_environment(lw, &config, follow, json).await);
-        }
+        } => show_environment(lw, &config, follow, json).await,
         Command::Environment {
             command: Some(EnvironmentCommand::Rebuild { no_wait, json }),
             ..
-        } => {
-            return rebuild_environment(lw, &config, no_wait, json, winding_up, log).await;
-        }
+        } => rebuild_environment(&config, no_wait, json).await,
         Command::Explain { number, json } => {
             let resource = format!("/api/items/{number}");
             let what = "an explanation";
-            return Ok(ask(&config, &resource, what, json, explain::render_answer).await);
+            ask(&config, &resource, what, json, explain::render_answer).await
         }
         Command::Runs {
             item,
@@ -1009,7 +921,7 @@ async fn work(
                 since: since.map(|since: Since| since.at(SystemClock.now())),
                 limit,
             };
-            return Ok(list_runs(&config, &query, json).await);
+            list_runs(&config, &query, json).await
         }
         Command::Logs {
             which,
@@ -1021,11 +933,9 @@ async fn work(
                 verbosity: Verbosity::of(verbose),
                 format: if json { Format::Json } else { Format::Text },
             };
-            return Ok(show_logs(&config, &which, printing, follow).await);
+            show_logs(&config, &which, printing, follow).await
         }
-        Command::Export { id, dir } => {
-            return Ok(export(&config, &id, &dir).await);
-        }
+        Command::Export { id, dir } => export(&config, &id, &dir).await,
         Command::Serve => {
             log.begin();
             serving::serve(
@@ -1034,33 +944,10 @@ async fn work(
                 &socket_dir(),
                 winding_up,
                 lw.systems.ui(),
-                |ends, database| {
-                    lw.start(
-                        &config,
-                        Some(database),
-                        OnUsageLimit::Wait,
-                        ends,
-                        winding_up,
-                    )
-                },
+                |ends, database| lw.start(&config, database, ends, winding_up),
             )
-            .await
-        }
-        Command::Once => {
-            log.begin();
-            let mut factory = lw
-                .start(&config, None, OnUsageLimit::End, Ends::new(), winding_up)
-                .await?;
-            let prepared = factory.prepare_environment().await;
-            if let Err(e) = &prepared {
-                error!(
-                    error = format!("{e:#}"),
-                    "no run starts: there is no environment"
-                );
-            }
-            factory.cycle().await?;
-            factory.settle().await;
-            prepared
+            .await?;
+            SUCCESS
         }
         Command::Capture {
             id,
@@ -1068,14 +955,14 @@ async fn work(
             benchmark,
             criteria,
             json,
-        } => return Ok(capture(&config, id, benchmark, name, &criteria, json).await),
-        Command::Benchmarks { json } => return Ok(list_benchmarks(&config, json).await),
+        } => capture(&config, id, benchmark, name, &criteria, json).await,
+        Command::Benchmarks { json } => list_benchmarks(&config, json).await,
         Command::Benchmark {
             command: BenchmarkCommand::Show { benchmark, json },
-        } => return Ok(show_benchmark(&config, benchmark, json).await),
+        } => show_benchmark(&config, benchmark, json).await,
         Command::Benchmark {
             command: BenchmarkCommand::Add { name, stage, json },
-        } => return Ok(make_benchmark(&config, name, stage, json).await),
+        } => make_benchmark(&config, name, stage, json).await,
         Command::Benchmark {
             command:
                 BenchmarkCommand::Rename {
@@ -1083,7 +970,7 @@ async fn work(
                     name,
                     json,
                 },
-        } => return Ok(rename_benchmark(&config, benchmark, name, json).await),
+        } => rename_benchmark(&config, benchmark, name, json).await,
         Command::Benchmark {
             command:
                 BenchmarkCommand::EditTask {
@@ -1093,9 +980,7 @@ async fn work(
                     criteria,
                     json,
                 },
-        } => {
-            return Ok(edit_task(&config, benchmark, task, name, criteria.as_deref(), json).await);
-        }
+        } => edit_task(&config, benchmark, task, name, criteria.as_deref(), json).await,
         Command::Benchmark {
             command:
                 BenchmarkCommand::RemoveTask {
@@ -1103,10 +988,10 @@ async fn work(
                     task,
                     json,
                 },
-        } => return Ok(remove_task(&config, benchmark, task, json).await),
+        } => remove_task(&config, benchmark, task, json).await,
         Command::BenchmarkRun {
             command: BenchmarkRunCommand::Show { id, json },
-        } => return Ok(show_benchmark_run(&config, id, json).await),
+        } => show_benchmark_run(&config, id, json).await,
         Command::BenchmarkRun {
             command:
                 BenchmarkRunCommand::Launch {
@@ -1115,11 +1000,7 @@ async fn work(
                     repetitions,
                     json,
                 },
-        } => {
-            return Ok(
-                launch_benchmark_run(&config, benchmark, configurations, repetitions, json).await,
-            );
-        }
+        } => launch_benchmark_run(&config, benchmark, configurations, repetitions, json).await,
         Command::BenchmarkRun {
             command:
                 BenchmarkRunCommand::RenameConfiguration {
@@ -1128,34 +1009,14 @@ async fn work(
                     name,
                     json,
                 },
-        } => return Ok(rename_configuration(&config, id, configuration, name, json).await),
+        } => rename_configuration(&config, id, configuration, name, json).await,
         Command::BenchmarkRun {
             command: BenchmarkRunCommand::Cancel { id, json },
-        } => return Ok(cancel_benchmark_run(&config, id, json).await),
-        Command::Trial {
-            task,
-            out,
-            configuration,
-        } => {
-            return Ok(trial(
-                lw,
-                &config,
-                &task,
-                &out,
-                configuration.as_deref(),
-                winding_up,
-                log,
-            )
-            .await);
-        }
-        Command::Score { task, dir } => {
-            return Ok(score(lw, &config, &task, &dir, winding_up, log).await);
-        }
+        } => cancel_benchmark_run(&config, id, json).await,
         Command::Automation {
             command: AutomationCommand::Run { name, json },
-        } => return Ok(run_by_hand(&config, &name, json).await),
-    };
-    done.map(|()| SUCCESS)
+        } => run_by_hand(&config, &name, json).await,
+    })
 }
 
 /// Asks `serve` to run the automation `name`, and says the run's ID or
@@ -1600,145 +1461,6 @@ async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -
     .await
 }
 
-/// Runs the task in the directory `task` into the output `out`, with
-/// the configuration in the directory `configuration` if one is given: 0
-/// once its run ended, whatever its outcome, and 1 when it did not run or
-/// end. A configuration with an error, or no model, is refused before the
-/// output is made.
-async fn trial(
-    lw: Lw<'_>,
-    config: &Config,
-    task: &Path,
-    out: &Path,
-    configuration: Option<&Path>,
-    winding_up: &WindingUp,
-    log: &Log,
-) -> u8 {
-    let token = match session_token() {
-        Ok(token) => token,
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    if let Err(e) = config.work.clone().for_sessions() {
-        return print_answer(Err(failed(&e.into())));
-    }
-    let configuration = match configuration.map(Configuration::read).transpose() {
-        Ok(configuration) => configuration,
-        Err(e) => return print_answer(Err(failed(&e.into()))),
-    };
-    let out = match Output::make(out) {
-        Ok(out) => out,
-        Err(e) => return print_answer(Err(failed(&e.into()))),
-    };
-    let running = trial::unless_signalled(
-        Box::pin(async {
-            let task = match Task::open(task).await {
-                Ok(task) => task,
-                Err(e) => {
-                    out.finished();
-                    return print_answer(Err((FAILURE, format!("the task cannot be run: {e}"))));
-                }
-            };
-            log.begin();
-            let ran = async {
-                let (harness, factory_config) =
-                    lw.on_task(config, token, &task, winding_up).await?;
-                Box::pin(trial::run(
-                    &task,
-                    &out,
-                    harness,
-                    factory_config,
-                    configuration.as_ref(),
-                    &Under::command(),
-                ))
-                .await
-            }
-            .await;
-            out.finished();
-            match ran {
-                Ok(_) => SUCCESS,
-                Err(e) => {
-                    log.fail(&e.into());
-                    FAILURE
-                }
-            }
-        }),
-        |signal| out.signalled(signal),
-    );
-    running
-        .await
-        .unwrap_or_else(|e| print_answer(Err(failed(&e))))
-}
-
-/// Scores `dir`, the output of a trial of the task in the directory
-/// `task`, and keeps the score in it: 0 once the scorer made one,
-/// whatever it is, and 1 when it made none or the task or the output is
-/// refused. No model is refused before the scorer's record is made. A
-/// signal ends it at once with the signal's status, keeping nothing of the
-/// scorer.
-async fn score(
-    lw: Lw<'_>,
-    config: &Config,
-    task: &Path,
-    dir: &Path,
-    winding_up: &WindingUp,
-    log: &Log,
-) -> u8 {
-    let token = match session_token() {
-        Ok(token) => token,
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    if let Err(e) = config.work.clone().for_sessions() {
-        return print_answer(Err(failed(&e.into())));
-    }
-    let task = match Task::open(task).await {
-        Ok(task) => task,
-        Err(e) => return print_answer(Err((FAILURE, format!("the task cannot be scored: {e}")))),
-    };
-    let scoreable = match scorer::ScoreableTrial::open(dir, &task).await {
-        Ok(scoreable) => scoreable,
-        Err(e) => return print_answer(Err((FAILURE, format!("the output cannot be scored: {e}")))),
-    };
-    let record = match ScorerRecord::make(&scoreable) {
-        Ok(record) => record,
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let record_dir = record.dir().to_path_buf();
-    log.begin();
-    let scoring = trial::unless_signalled(
-        Box::pin(async {
-            let (harness, factory_config) = lw
-                .on_task(config, token, &task, winding_up)
-                .await
-                .map_err(scorer::Unscored::Unexpected)?;
-            scorer::run(
-                &task,
-                &scoreable,
-                record,
-                harness,
-                factory_config,
-                &Under::command(),
-            )
-            .await
-        }),
-        |signal| {
-            scorer::discard(&record_dir);
-            complain("A signal ended the scorer.");
-            signal.exit_status()
-        },
-    );
-    let score = match scoring.await {
-        Ok(Ok(score)) => score,
-        Ok(Err(unscored)) => return print_answer(Err((FAILURE, unscored.told()))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let summary = score.summary();
-    print_answer(
-        scorer::keep(&scoreable, score)
-            .map(|()| summary)
-            .map_err(|unscored| (FAILURE, unscored.told())),
-    )
-}
-
 /// Linewright's token, as `gh` reads it: `GH_TOKEN`, then `GITHUB_TOKEN`, an
 /// empty one being unset.
 ///
@@ -1753,7 +1475,7 @@ fn token() -> Result<String> {
 }
 
 /// The token sessions are given: the separate one if set, else Linewright's,
-/// which a command that runs sessions needs.
+/// which `serve` needs.
 ///
 /// # Errors
 ///
