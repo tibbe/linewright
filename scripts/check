@@ -59,12 +59,7 @@ check_test() {
   if exec_path="$(git --exec-path 2>/dev/null)" && [ -x "$exec_path/git" ]; then
     export PATH="$exec_path:$PATH"
   fi
-  if grep -rqE --include='*.rs' "$test_attribute" crates; then
-    # shellcheck disable=SC2016 # the backticks are Markdown's
-    grep -rnE --include='*.rs' "$test_attribute" crates |
-      sed 's/$/: use `#[test_log::test]`, around `#[tokio::test]` where async: run `scripts\/fix test`/'
-    status=1
-  fi
+  python3 -I -B scripts/test_attributes.py --check || status=1
   while IFS= read -r filter; do
     if [ -z "$(cargo nextest list --locked --cargo-quiet --message-format oneline -E "$filter")" ]; then
       echo ".config/nextest.toml: the override filter $filter matches no test"
