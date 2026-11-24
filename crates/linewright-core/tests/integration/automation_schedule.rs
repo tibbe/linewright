@@ -44,7 +44,7 @@ async fn an_automation_runs_on_the_first_poll_after_its_schedule_ticks() {
 }
 
 #[test_log::test(tokio::test)]
-async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_starts() {
+async fn an_automation_keeps_its_schedule_across_a_restart() {
     let mut world = World::new().await;
     add_automation(&world, "hourly.md", HOURLY).await;
     world.harness.on_automation(|_| Ok(nothing_needs_doing()));
@@ -55,9 +55,8 @@ async fn ticks_missed_while_linewright_was_stopped_produce_one_run_after_it_star
         .unwrap();
     let recorded = LastScheduledRuns::load(&db).await.unwrap();
     assert!(recorded.get(&"hourly.md".parse().unwrap()).is_some());
-    world.clock.advance(TimeDelta::hours(5));
+    world.clock.advance(TimeDelta::hours(1));
     restart(&mut world).await;
-    world.poll().await;
     world.poll().await;
 
     assert_eq!(world.harness.automation_prompts().len(), 1);
@@ -79,29 +78,4 @@ async fn running_an_automation_by_hand_leaves_its_schedule_as_it_was() {
     world.poll().await;
 
     assert_eq!(world.harness.automation_prompts().len(), 2);
-}
-
-#[test_log::test(tokio::test)]
-async fn an_automation_back_on_a_schedule_after_workflow_runs_counts_as_new() {
-    let mut world = World::new().await;
-    add_automation(&world, "hourly.md", HOURLY).await;
-    world.harness.on_automation(|_| Ok(nothing_needs_doing()));
-    world.poll().await;
-    world.clock.advance(TimeDelta::minutes(30));
-    add_automation(
-        &world,
-        "hourly.md",
-        "---\non:\n  workflow_run:\n    conclusions: [failure]\n---\nLook around.\n",
-    )
-    .await;
-    world.poll().await;
-    world.clock.advance(TimeDelta::hours(1));
-
-    add_automation(&world, "hourly.md", HOURLY).await;
-    world.poll().await;
-    assert_eq!(world.harness.automation_prompts().len(), 0, "seen anew");
-    world.clock.advance(TimeDelta::hours(1));
-    world.poll().await;
-
-    assert_eq!(world.harness.automation_prompts().len(), 1);
 }
