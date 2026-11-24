@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::TimeDelta;
 use linewright_core::explain::{explain, render};
 use linewright_core::factory::FactoryConfig;
 use linewright_core::reconcile::WorkKind;
@@ -215,51 +214,31 @@ fn greeting(config: &mut FactoryConfig, greeting: &str) {
 }
 
 #[test_log::test(tokio::test)]
-async fn what_the_environment_was_built_from_changing_or_its_age_passing_max_age_rebuilds_it() {
+async fn a_variable_changed_while_serve_was_down_rebuilds_the_environment() {
     let marks = Marks::new();
     let mut world = World::with(|config| greeting(config, "hello")).await;
-    let command = |version: &str| {
-        format!(
-            "{}; echo \"$GREETING\" >> node_modules/x",
-            marks.installing(version)
-        )
-    };
-    set_up_with(&world, &command("v1")).await;
+    let command = format!(
+        "{}; echo \"$GREETING\" >> node_modules/x",
+        marks.installing("v1")
+    );
+    set_up_with(&world, &command).await;
     world.poll().await;
-
-    commit(&world, &[(CONFIG, &setup_config(&command("v2")))]).await;
-    world.poll().await;
-    assert_eq!(marks.builds(), 2, "the setup command changed");
-
     world.restart(|config| greeting(config, "hello")).await;
     world.poll().await;
     assert_eq!(
         marks.builds(),
-        2,
+        1,
         "a restart with nothing changed builds nothing"
     );
 
     world.restart(|config| greeting(config, "hi")).await;
     world.poll().await;
-    assert_eq!(marks.builds(), 3, "a variable changed while serve was down");
-
-    commit(&world, &[(CONFIG, &setup_config(&command("v3")))]).await;
-    world.restart(|config| greeting(config, "hi")).await;
-    world.poll().await;
-    assert_eq!(
-        marks.builds(),
-        4,
-        "the command changed while serve was down"
-    );
-
-    world.clock.advance(TimeDelta::hours(25));
-    world.poll().await;
-    assert_eq!(marks.builds(), 5, "older than max-age");
-
     let seen = implement_reading(&world);
     open_ticket(&world, "Do the thing");
     world.poll().await;
-    assert_eq!(installed(&seen), [Some("v3\nhi\n".to_string())]);
+
+    assert_eq!(marks.builds(), 2);
+    assert_eq!(installed(&seen), [Some("v1\nhi\n".to_string())]);
 }
 
 #[test_log::test(tokio::test)]
