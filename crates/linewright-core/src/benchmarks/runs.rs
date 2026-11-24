@@ -1102,8 +1102,13 @@ async fn end_if_done(conn: &mut SqliteConnection, id: BenchmarkRunId, at: Timest
 }
 
 impl TrialState {
-    /// The state `change` leads to from this one.
-    fn changed(self, change: TrialChange) -> Result<TrialState> {
+    /// The state `change` leads to from this one (`docs/specs/benchmarks.md`,
+    /// Trials, Scoring and Benchmark runs).
+    ///
+    /// # Errors
+    ///
+    /// When this state does not take `change`.
+    pub fn changed(self, change: TrialChange) -> Result<TrialState> {
         Ok(match (self, change) {
             (TrialState::Pending, TrialChange::RunStarts) => TrialState::Running,
             (TrialState::Running, TrialChange::RunEnds(run)) if run.scoreable() => {
