@@ -26,6 +26,7 @@ contracts![
     a_spec_change_merged_before_the_windows_is_held_as_who_opened_it_while_its_issue_is,
     the_diff_of_a_pull_request_holds_its_changes_to_the_paths_asked,
     the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked,
+    a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_clean,
 ];
 
 /// Who GitHub commits a merge commit or a squash as.
@@ -785,4 +786,44 @@ async fn the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked(
     .await?;
 
     diffs(&sandbox, &files).await
+}
+
+/// The sandbox doesn't require branches up to date, so a pull request
+/// behind the default branch merges as it is.
+async fn a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_clean(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let path = file(&sandbox, "moved-past");
+    let Opened { pr, .. } = ready(
+        &sandbox,
+        "moved-past",
+        &[NewCommit {
+            message: "Add a file",
+            files: &[(&path, b"added\n")],
+        }],
+    )
+    .await?;
+
+    let elsewhere = file(&sandbox, "moved-past-elsewhere");
+    move_on(
+        &sandbox,
+        "moved-past-elsewhere",
+        &[(&elsewhere, b"moved\n")],
+    )
+    .await?;
+
+    // GitHub works out whether a pull request merges in a background job,
+    // again each time the default branch moves
+    // (<https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request>).
+    let _merging = sandbox.merging().await;
+    sandbox
+        .eventually(async || {
+            let pull = sandbox.store().pull(pr).await?;
+            equal(
+                "whether it merges",
+                &pull.mergeability,
+                &Mergeability::Clean,
+            )
+        })
+        .await
 }
