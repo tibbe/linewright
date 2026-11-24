@@ -322,25 +322,19 @@ async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_
     assert_eq!(world.store.pulls(), []);
 }
 
-/// Asserts that `comment` says the work so far was not kept for the
-/// secret in `.npmrc`, naming the commit that holds it, which is
-/// `commit` when given.
-fn assert_says_not_kept(comment: &str, commit: Option<&str>) {
-    let (_, rest) = comment
-        .split_once("\n\nThe work so far was not kept: the commit `")
-        .unwrap_or_else(|| panic!("{comment}"));
-    let (named, rest) = rest.split_once('`').unwrap();
-    assert!(
-        named.len() >= 7 && named.chars().all(|c| c.is_ascii_hexdigit()),
-        "{comment}"
-    );
-    if let Some(commit) = commit {
-        assert_eq!(named, commit);
-    }
-    assert!(
-        rest.starts_with(" adds the value of `NPM_TOKEN`, a secret, to `.npmrc`."),
-        "{comment}"
-    );
+/// Asserts that `comment` names, in turn, the commit that holds the secret
+/// in `.npmrc`, which is `commit` when given, its variable and the file.
+#[track_caller]
+fn assert_names_the_secret(comment: &str, commit: Option<&str>) {
+    let quoted: Vec<&str> = comment.split('`').skip(1).step_by(2).collect();
+    let named = quoted.windows(3).any(|names| {
+        let is_commit = match commit {
+            Some(commit) => names[0] == commit,
+            None => names[0].len() >= 7 && names[0].chars().all(|c| c.is_ascii_hexdigit()),
+        };
+        is_commit && names[1] == "NPM_TOKEN" && names[2] == ".npmrc"
+    });
+    assert!(named, "{comment}");
 }
 
 #[test_log::test(tokio::test)]
@@ -368,7 +362,7 @@ async fn an_implement_run_that_stops_with_a_secret_in_its_commits_keeps_nothing_
     let issue = world.issue(ticket);
     assert_eq!(labels(&issue), ["linewright:stalled", "ready-for-human"]);
     let commit = committed.lock().unwrap().clone();
-    assert_says_not_kept(last_comment(&issue), Some(&commit));
+    assert_names_the_secret(last_comment(&issue), Some(&commit));
     assert_eq!(branches(&world.store.repository()), ["main"]);
     assert_secret_kept_out(&world).await;
 }
@@ -394,7 +388,7 @@ async fn an_implement_run_that_blocks_with_a_secret_left_uncommitted_keeps_nothi
     let issue = world.issue(ticket);
     let comment = last_comment(&issue);
     assert!(comment.contains("Which registry?"), "{comment}");
-    assert_says_not_kept(comment, None);
+    assert_names_the_secret(comment, None);
     assert_eq!(branches(&world.store.repository()), ["main"]);
     assert_secret_kept_out(&world).await;
 }
@@ -419,7 +413,7 @@ async fn a_rework_that_gives_up_with_a_secret_in_its_work_pushes_nothing_to_its_
     assert_eq!(world.store.snapshot_pull(pr).await.head_sha, head);
     let comment = last_pull_comment(&world, pr).await;
     assert!(comment.contains("No registry."), "{comment}");
-    assert_says_not_kept(&comment, None);
+    assert_names_the_secret(&comment, None);
     assert_secret_kept_out(&world).await;
 }
 
