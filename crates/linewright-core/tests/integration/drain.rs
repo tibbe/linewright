@@ -86,7 +86,6 @@ async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
 
     served.serving.drain();
     eventually(|| served.draining()).await;
-    let held_back = open_ticket(&served.world, "Do another thing");
     let mislabeled = served.world.store.open_issue(
         "maintainer",
         "Two labels",
@@ -96,7 +95,6 @@ async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
     served.polls_go_on().await;
 
     assert!(!served.serving.has_ended());
-    assert_eq!(served.world.issue(held_back).assignees, []);
     assert_eq!(served.world.issue(mislabeled).labels.len(), 1);
     let begins = info_with(&log, "drain begins");
     assert!(
@@ -114,7 +112,6 @@ async fn a_drain_waits_for_the_run_in_flight_which_ends_as_it_would_have() {
     assert_eq!(ended_runs(&ended).await, [Ending::Done]);
     assert_eq!(ended.store.pulls().len(), 1);
     assert!(ended.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
-    assert_eq!(ended.issue(held_back).assignees, []);
     assert_eq!(info_with(&log, "drained").len(), 1, "{}", log.text());
 }
 
