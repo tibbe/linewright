@@ -248,29 +248,12 @@ fn outcome(state: State) -> OutcomeName {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
 
     use super::*;
-    use crate::briefs::Briefs;
     use crate::database::Database;
-    use crate::domain::{Number, Timestamp};
-    use crate::reconcile::WorkKind;
-    use crate::runs::{Begin, Ending, Running};
+    use crate::testing::{keep_record, lock_of};
     use crate::transcript::OUTPUT;
-    use crate::work_settings::{
-        Environments, Model, RepoSettings, RunKind, SessionSettings, SessionWork,
-    };
-
-    fn at(time: &str) -> Timestamp {
-        time.parse().unwrap()
-    }
-
-    fn settings() -> SessionSettings {
-        SessionWork::with_model(Model::new("opus".into()).unwrap()).for_run(
-            RunKind::Stage(WorkKind::Triage),
-            &RepoSettings::default(),
-            &Environments::default(),
-        )
-    }
 
     /// The runs of a database made in `work_dir`.
     async fn runs_in(work_dir: &Path) -> Runs {
@@ -280,35 +263,63 @@ mod tests {
         Runs::new(db)
     }
 
-    /// A triage run on #1 in `runs`, begun with one session whose
-    /// directory, `sessions/1/triage-1` under `work_dir`, holds a brief, an
-    /// attachment and a transcript of one line.
-    async fn triaging(runs: &Runs, work_dir: &Path) -> Running {
-        let running = runs
-            .begin(
-                Begin::Work {
-                    item: Number(1),
-                    stage: WorkKind::Triage,
-                },
-                at("2026-10-15T09:00:00Z"),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("beginning a run: {e:#}"));
-        let session = work_dir.join("sessions/1/triage-1");
+    /// A session of a triage run in `dir`, as its run's record keeps it, with
+    /// what it ran with.
+    fn session(dir: &str) -> serde_json::Value {
+        json!({
+            "dir": dir,
+            "model": "opus",
+            "effort": null,
+            "layers": {"settings": {}, "briefs": {}},
+        })
+    }
+
+    /// Keeps the triage run 1/triage-1 in the database of `work_dir`, started
+    /// at 09:00 and, if `ending` is given, ended so at 09:01, its first session's
+    /// directory, `sessions/1/triage-1` under `work_dir`, holding a brief, an
+    /// attachment and a transcript of one line, and then the sessions in the
+    /// directories `others`.
+    async fn triaging(work_dir: &Path, others: &[&str], ending: Option<&str>) {
+        let session_dir = work_dir.join("sessions/1/triage-1");
         for (path, text) in [
             ("brief.md", "Triage #1.\n"),
             (OUTPUT, "{\"first\":1}\n"),
             ("attachments/shot.png", "PNG"),
         ] {
-            let path = session.join(path);
+            let path = session_dir.join(path);
             std::fs::create_dir_all(path.parent().unwrap())
                 .and_then(|()| std::fs::write(&path, text))
                 .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
         }
-        running
-            .session(&session, &settings(), &Briefs::shipped())
-            .await;
-        running
+        triage_recorded(work_dir, others, ending).await;
+    }
+
+    /// Keeps the record of the run [`triaging`] keeps, with its sessions'
+    /// directories as they are, in place of any record of it.
+    async fn triage_recorded(work_dir: &Path, others: &[&str], ending: Option<&str>) {
+        let sessions: Vec<serde_json::Value> = std::iter::once("sessions/1/triage-1")
+            .chain(others.iter().copied())
+            .map(session)
+            .collect();
+        let end = ending.map(|ending| json!({"at": "2026-10-15T09:01:00Z", "ending": ending}));
+        keep_record(
+            work_dir,
+            &json!({
+                "item": 1,
+                "stage": "triage",
+                "n": 1,
+                "started_at": "2026-10-15T09:00:00Z",
+                "end": end,
+                "sessions": sessions,
+            }),
+        )
+        .await;
+    }
+
+    /// Holds the lock of the run 1/triage-1 of `work_dir`, as its process does
+    /// while it is in flight, until it is dropped.
+    fn in_flight(work_dir: &Path) -> std::fs::File {
+        lock_of(&work_dir.join("runs/items/1/triage-1.json"))
     }
 
     fn read(path: &Path) -> String {
@@ -321,10 +332,7 @@ mod tests {
         let out = tempfile::tempdir().unwrap();
         let dir = out.path().join("export");
         let runs = runs_in(work_dir.path()).await;
-        triaging(&runs, work_dir.path())
-            .await
-            .end(at("2026-10-15T09:01:00Z"), Ending::Done)
-            .await;
+        triaging(work_dir.path(), &[], Some("done")).await;
         let id: RunId = "1/triage-1".parse().unwrap();
 
         run(Some(&runs), &id, &dir).await.unwrap();
@@ -346,17 +354,12 @@ mod tests {
         let out = tempfile::tempdir().unwrap();
         let dir = out.path().join("export");
         let runs = runs_in(work_dir.path()).await;
-        let running = triaging(&runs, work_dir.path()).await;
+        triaging(work_dir.path(), &["sessions/1/triage-0"], None).await;
+        let _lock = in_flight(work_dir.path());
         let session = work_dir.path().join("sessions/1/triage-1");
-        running
-            .session(
-                &work_dir.path().join("sessions/1/triage-0"),
-                &settings(),
-                &Briefs::shipped(),
-            )
-            .await;
+        let id: RunId = "1/triage-1".parse().unwrap();
 
-        let snapshot = snapshot(&runs, running.id()).await.unwrap();
+        let snapshot = snapshot(&runs, &id).await.unwrap();
         let mut transcript = std::fs::OpenOptions::new()
             .append(true)
             .open(session.join(OUTPUT))
@@ -364,14 +367,12 @@ mod tests {
         std::io::Write::write_all(&mut transcript, b"{\"second\":2}\n").unwrap();
         std::fs::write(session.join("follow-up-1.md"), "Again.\n").unwrap();
         std::fs::remove_file(session.join("attachments/shot.png")).unwrap();
-        running
-            .session(
-                &work_dir.path().join("sessions/1/triage-2"),
-                &settings(),
-                &Briefs::shipped(),
-            )
-            .await;
-        running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
+        triage_recorded(
+            work_dir.path(),
+            &["sessions/1/triage-0", "sessions/1/triage-2"],
+            Some("done"),
+        )
+        .await;
         snapshot.write(&dir).await.unwrap();
 
         assert_eq!(read(&dir.join("outcome")), "in-flight\n");
@@ -416,9 +417,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("kept"), "").unwrap();
         let runs = runs_in(work_dir.path()).await;
-        let running = triaging(&runs, work_dir.path()).await;
+        triaging(work_dir.path(), &[], None).await;
+        let _lock = in_flight(work_dir.path());
+        let id: RunId = "1/triage-1".parse().unwrap();
 
-        let refused = run(Some(&runs), running.id(), dir.path()).await;
+        let refused = run(Some(&runs), &id, dir.path()).await;
 
         assert!(
             matches!(
