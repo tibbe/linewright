@@ -443,7 +443,7 @@ async fn sign_in_offers_google_then_github_with_githubs_mark_in_each_theme() {
     assert!(!has_classes(button, &["btn-sm"]), "{}", button.html());
     assert_eq!(text(button), "Sign in with GitHub");
     let mark = select_in(button, "svg:first-child")[0];
-    assert_eq!(mark.attr("data-icon"), Some("github"));
+    assert_eq!(mark.attr("data-logo"), Some("github"));
     assert!(
         has_classes(mark, &["text-black", "dark:text-white"]),
         "{}",

@@ -1,9 +1,8 @@
-//! Every icon the web UI draws (`docs/specs/design_system.md`, Icons):
-//! Heroicons 2's 20 solid icons, three of GitHub's Octicons and Google's
-//! logo, vendored beside this file with their licences, and which icon each
-//! part has.
+//! The icon set the web UI draws from (`docs/specs/design_system.md`,
+//! Icons): Heroicons 2's 20 solid icons and two of GitHub's Octicons,
+//! vendored beside this file with their licences, and which icon each part
+//! has.
 
-use linewright_core::access::providers::Provider;
 use linewright_core::phrase::Status;
 
 use super::html::{self, Html};
@@ -84,8 +83,6 @@ icons! {
     LinkSlash: "link-slash", "icons/heroicons/link-slash.svg";
     IssueOpened: "issue-opened", "icons/octicons/issue-opened-16.svg";
     GitPullRequest: "git-pull-request", "icons/octicons/git-pull-request-16.svg";
-    GitHubMark: "github", "icons/octicons/mark-github-16.svg";
-    GoogleLogo: "google", "icons/google/g-logo.svg";
 }
 
 /// Where an icon sits, which sizes it.
@@ -109,9 +106,9 @@ impl IconSize {
     }
 }
 
-/// How a screen reader reads an icon.
+/// How a screen reader reads an icon or a logo.
 #[derive(Clone, Copy)]
-enum Read<'a> {
+pub(super) enum Read<'a> {
     /// It skips it, for an icon beside the words it stands for.
     Hidden,
     /// As an image of this name.
@@ -146,18 +143,47 @@ impl Icon {
     }
 
     fn drawn(self, size: IconSize, class: Option<&str>, read: Read) -> Html {
-        let (view_box, paths) = view_box_and_paths(self.source());
-        let class = class.map_or(String::new(), |class| format!(" {}", html::escape(class)));
-        let read = match read {
-            Read::Hidden => r#" aria-hidden="true""#.to_string(),
-            Read::Named(name) => format!(r#" role="img" aria-label="{}""#, html::escape(name)),
-        };
-        html::built(format!(
-            r#"<svg class="icon {size} shrink-0{class}" viewBox="{view_box}" fill="currentColor"{read} data-icon="{name}">{paths}</svg>"#,
-            size = size.class(),
-            name = self.name(),
-        ))
+        drawn_svg(self.source(), size, class, read, Marker::Icon(self.name()))
     }
+}
+
+/// The attribute that says which icon or logo an `svg` draws.
+#[derive(Clone, Copy)]
+pub(super) enum Marker<'a> {
+    /// `data-icon`, an icon of the set, by its name.
+    Icon(&'a str),
+    /// `data-logo`, a logo, by its name.
+    Logo(&'a str),
+}
+
+/// The vendored SVG file `source` in `size`, in the colour of the text
+/// around it, of class `icon` and the classes `class` too, read as `read`
+/// says and marked as `marker` says.
+///
+/// # Panics
+///
+/// If `source` is not an `svg` element with a `viewBox`.
+pub(super) fn drawn_svg(
+    source: &'static str,
+    size: IconSize,
+    class: Option<&str>,
+    read: Read,
+    marker: Marker,
+) -> Html {
+    let (view_box, paths) = view_box_and_paths(source);
+    let class = class.map_or(String::new(), |class| format!(" {}", html::escape(class)));
+    let read = match read {
+        Read::Hidden => r#" aria-hidden="true""#.to_string(),
+        Read::Named(name) => format!(r#" role="img" aria-label="{}""#, html::escape(name)),
+    };
+    let marker = match marker {
+        Marker::Icon(name) => format!(r#"data-icon="{name}""#),
+        Marker::Logo(name) => format!(r#"data-logo="{name}""#),
+    };
+    html::built(format!(
+        r#"<svg class="icon {size} shrink-0{class}" viewBox="{view_box}" fill="currentColor"{read} {marker}>{paths}</svg>"#,
+        size = size.class(),
+    ))
 }
 
 /// The `viewBox` of the SVG file `source`, and what its `svg` holds, with
@@ -171,12 +197,12 @@ fn view_box_and_paths(source: &'static str) -> (&'static str, String) {
         .split_once(r#"viewBox=""#)
         .and_then(|(_, rest)| rest.split_once('"'))
         .map(|(view_box, _)| view_box)
-        .expect("a vendored icon has a viewBox");
+        .expect("a vendored SVG has a viewBox");
     let paths = source
         .strip_prefix("<svg ")
         .and_then(|svg| svg.split_once('>'))
         .and_then(|(_, rest)| rest.trim_end().strip_suffix("</svg>"))
-        .expect("a vendored icon is an svg element")
+        .expect("a vendored SVG is an svg element")
         .lines()
         .map(str::trim)
         .collect();
@@ -283,17 +309,6 @@ impl ItemKind {
     }
 }
 
-/// The logo of an identity provider, its own
-/// (`docs/specs/design_system.md`, Icons), which a screen reader reads
-/// as the provider's name.
-pub(super) fn provider_logo(provider: Provider) -> Html {
-    let icon = match provider {
-        Provider::Google => Icon::GoogleLogo,
-        Provider::GitHub => Icon::GitHubMark,
-    };
-    icon.named(IconSize::Inline, provider.name())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,11 +332,6 @@ mod tests {
         ] {
             assert_eq!(status_icon(&status), icon, "{status:?}");
         }
-        assert!(
-            provider_logo(Provider::GitHub)
-                .to_string()
-                .contains(r#"data-icon="github""#)
-        );
     }
 
     /// `docs/specs/design_system.md`, Icons, Sizes: an icon is `size-5` before

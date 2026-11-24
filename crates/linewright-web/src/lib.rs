@@ -21,6 +21,7 @@ pub(crate) mod html;
 mod icons;
 mod item_page;
 pub(crate) mod launch;
+mod logos;
 mod making;
 mod mcp;
 mod names;
