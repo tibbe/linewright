@@ -1,6 +1,6 @@
 use linewright_core::domain::{
-    CheckState, IssueCloseReason, Login, Mergeability, Number, Pull, Requirement, ReviewState,
-    Scope, Timestamp, Windows,
+    IssueCloseReason, Mergeability, Number, Pull, Requirement, ReviewState, Scope, Timestamp,
+    Windows,
 };
 use linewright_core::store::Store;
 use linewright_core::testing::*;
@@ -107,8 +107,11 @@ async fn a_persons_comment_an_issue_type_and_a_reopening_move_when_an_issue_was_
     written("a reopening").await;
 }
 
+/// The sandbox can't hold this: the trait pushes and reviews only as
+/// Linewright, and a second account to act as another person is a secret
+/// the daily automation doesn't have.
 #[test_log::test(tokio::test)]
-async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
+async fn a_persons_push_and_review_move_when_a_pull_request_was_last_updated() {
     let world = World::new().await;
     let issue = world.store.open_issue(
         "maintainer",
@@ -119,25 +122,12 @@ async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
     let pr = world.persons_pull_closing(issue).await;
     let store = &world.store;
 
-    let mut last = world.store.snapshot_pull(pr).await.updated_at;
+    let mut last = store.snapshot_pull(pr).await.updated_at;
     let mut written = async |what: &str| {
-        let now = world.store.snapshot_pull(pr).await.updated_at;
+        let now = store.snapshot_pull(pr).await.updated_at;
         assert!(now > last, "{what} left it at {last}");
         last = now;
     };
-    store.comment(pr, "A comment.").await.unwrap();
-    written("a comment").await;
-    store.add_label(pr, "bug").await.unwrap();
-    written("a label").await;
-    store.remove_label(pr, "bug").await.unwrap();
-    written("a label removed").await;
-    store.assign(pr).await.unwrap();
-    written("an assignment").await;
-    store
-        .edit_body(pr, &format!("Closes {issue}, edited."))
-        .await
-        .unwrap();
-    written("an edit").await;
     store
         .commit(
             "alice",
@@ -147,7 +137,7 @@ async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
         )
         .await
         .unwrap();
-    written("a push").await;
+    written("a person's push").await;
     store
         .review_as(
             "bob",
@@ -157,29 +147,7 @@ async fn every_write_to_a_pull_request_moves_when_it_was_last_updated() {
             &[("src/thing.txt", "Here.")],
         )
         .unwrap();
-    written("a review").await;
-    let thread = format!("T{}-1", pr.0);
-    store.reply_in_thread(pr, &thread, "Done.").await.unwrap();
-    written("a reply").await;
-    store.resolve_thread(pr, &thread).await.unwrap();
-    written("a resolved thread").await;
-    store
-        .request_review(pr, &[Login::new("bob")])
-        .await
-        .unwrap();
-    written("a review request").await;
-    store
-        .set_checks(pr, vec![check("test", CheckState::Passed, "")])
-        .await
-        .unwrap();
-    written("a check").await;
-    store.merge_pull(pr).await.unwrap();
-    written("a merge").await;
-    assert_eq!(
-        updated_at(&world, issue).await,
-        last,
-        "the merge closed the issue"
-    );
+    written("a person's review").await;
 }
 
 #[test_log::test(tokio::test)]

@@ -27,6 +27,7 @@ contracts![
     the_diff_of_a_pull_request_holds_its_changes_to_the_paths_asked,
     the_diff_of_a_merged_pull_request_holds_its_changes_to_the_paths_asked,
     a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_clean,
+    a_merge_moves_when_the_pull_request_and_the_issue_it_closed_were_last_updated_alike,
 ];
 
 /// Who GitHub commits a merge commit or a squash as.
@@ -823,6 +824,59 @@ async fn a_pull_request_the_default_branch_moved_past_without_a_conflict_reads_c
                 "whether it merges",
                 &pull.mergeability,
                 &Mergeability::Clean,
+            )
+        })
+        .await
+}
+
+async fn a_merge_moves_when_the_pull_request_and_the_issue_it_closed_were_last_updated_alike(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let (issue, Opened { branch, pr }) =
+        sandbox.open_pull_closing_an_issue("merge-updated").await?;
+    sandbox.store().mark_ready(pr).await?;
+    sandbox.linked(pr, issue).await?;
+    let method = sandbox.merge_method().await?;
+    let (pull_before, issue_before) = sandbox
+        .eventually(async || {
+            let snapshot = sandbox
+                .store()
+                .snapshot(recent(), &Scope::default())
+                .await?;
+            let pull = snapshot
+                .updated_at(pr)
+                .context("the snapshot holds no pull request")?;
+            let issue = snapshot
+                .updated_at(issue)
+                .context("the snapshot holds no issue")?;
+            Ok((pull, issue))
+        })
+        .await?;
+    sandbox.tick().await;
+
+    merge(&sandbox, pr, &branch.head, method).await?;
+
+    sandbox
+        .eventually(async || {
+            let merged = sandbox
+                .store()
+                .merged_pull(pr, recent())
+                .await?
+                .with_context(|| format!("{pr} is not read merged"))?;
+            let issue_at = sandbox.updated_at(issue).await?;
+            ensure!(
+                merged.updated_at > pull_before,
+                "the merge left {pr} at {}, not after {pull_before}",
+                merged.updated_at
+            );
+            ensure!(
+                issue_at > issue_before,
+                "the merge left {issue} at {issue_at}, not after {issue_before}"
+            );
+            equal(
+                "when the issue it closed was last updated",
+                &issue_at,
+                &merged.updated_at,
             )
         })
         .await

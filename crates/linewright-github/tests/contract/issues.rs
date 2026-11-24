@@ -6,10 +6,10 @@
 //!
 //! [`Store::set_issue_type`]: linewright_core::store::Store::set_issue_type
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use linewright_core::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
-    Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Timestamp, Windows,
+    Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Windows,
 };
 use linewright_core::store::{AnyItem, IssueRead, NewIssue};
 use linewright_core::tracking;
@@ -618,17 +618,6 @@ async fn no_issue_is_read_for_a_number_the_store_lacks(sandbox: Sandbox) -> Resu
     )
 }
 
-/// When a snapshot says #`number` was last updated, open or closed.
-async fn updated_at(sandbox: &Sandbox, number: Number) -> Result<Timestamp> {
-    let snapshot = sandbox
-        .store()
-        .snapshot(recent(), &Scope::default())
-        .await?;
-    snapshot
-        .updated_at(number)
-        .with_context(|| format!("the snapshot does not hold {number}"))
-}
-
 async fn every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated(
     sandbox: Sandbox,
 ) -> Result<()> {
@@ -639,12 +628,12 @@ async fn every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated
     let store = sandbox.store();
 
     let mut last = sandbox
-        .eventually(async || updated_at(&sandbox, issue).await)
+        .eventually(async || sandbox.updated_at(issue).await)
         .await?;
     let mut written = async |what: &str| {
         let moved = sandbox
             .eventually(async || {
-                let now = updated_at(&sandbox, issue).await?;
+                let now = sandbox.updated_at(issue).await?;
                 ensure!(now > last, "{what} left it at {now}, not after {last}");
                 Ok(now)
             })
