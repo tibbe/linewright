@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use futures_util::future::BoxFuture;
 use linewright_core::clock::SystemClock;
 use linewright_core::domain::label::Label;
@@ -29,6 +29,15 @@ const GITHUB_LAG: Duration = Duration::from_secs(20);
 
 /// How long a contract on GitHub may run, at the longest.
 const LONGEST_CONTRACT: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
+
+/// How far the contracts allow GitHub's clock to be from the runner's,
+/// either way.
+const GITHUB_SKEW: chrono::TimeDelta = chrono::TimeDelta::seconds(5);
+
+/// How finely GitHub stamps a write: its timestamps are in ISO 8601
+/// (<https://docs.github.com/en/rest/using-the-rest-api/timezones-and-the-rest-api>),
+/// to the whole second.
+const GITHUB_RESOLUTION: Duration = Duration::from_secs(1);
 
 /// What starts the name of everything a contract makes, after the number of
 /// a branch named for a ticket.
@@ -231,6 +240,44 @@ impl Sandbox {
                 Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
             }
         }
+    }
+
+    /// Waits until the next write is stamped later than the last: a second
+    /// on GitHub, which stamps in whole seconds and asks for a second between
+    /// writes
+    /// (<https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#pause-between-mutative-requests>),
+    /// and not at all on the local store.
+    pub async fn tick(&self) {
+        match &self.side {
+            Side::Local(_) => {}
+            Side::GitHub { .. } => tokio::time::sleep(GITHUB_RESOLUTION).await,
+        }
+    }
+
+    /// Fails unless `what`, stamped `at`, was stamped between `before` and
+    /// `after`, as the runner's clock read them: exactly on the local store,
+    /// and on GitHub give or take a second of its resolution and
+    /// [`GITHUB_SKEW`].
+    pub fn stamped_between(
+        &self,
+        what: &str,
+        at: Timestamp,
+        before: Timestamp,
+        after: Timestamp,
+    ) -> Result<()> {
+        let slack = match &self.side {
+            Side::Local(_) => chrono::TimeDelta::zero(),
+            Side::GitHub { .. } => {
+                chrono::TimeDelta::from_std(GITHUB_RESOLUTION).expect("a second is in range")
+                    + GITHUB_SKEW
+            }
+        };
+        let (from, to) = (before - slack, after + slack);
+        ensure!(
+            from <= at && at <= to,
+            "{what} is stamped {at}, not between {from} and {to}"
+        );
+        Ok(())
     }
 
     /// Creates a label for the contract, named for `what`, and returns its

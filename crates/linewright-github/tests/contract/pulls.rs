@@ -24,6 +24,9 @@ contracts![
     a_snapshot_holds_who_a_review_is_requested_of_and_who_is_assigned_open_and_closed_unmerged,
     opening_a_pull_request_from_a_missing_branch_is_refused,
     no_pull_request_is_read_for_a_number_the_store_lacks,
+    linewright_assigning_and_unassigning_the_owner_lists_both_by_linewright_when,
+    unassigning_the_owner_from_a_pull_request_not_assigned_to_them_records_nothing,
+    closing_a_pull_request_moves_when_it_was_last_updated,
 ];
 
 /// Pushes a branch named for `what`, adding a file of its own, and opens a
@@ -443,4 +446,122 @@ async fn no_pull_request_is_read_for_a_number_the_store_lacks(sandbox: Sandbox) 
         &store.merged_pull(lacked, recent()).await?,
         &None,
     )
+}
+
+/// The changes to #`pr`'s assignees, once there are `count` of them.
+async fn assigned(sandbox: &Sandbox, pr: Number, count: usize) -> Result<Vec<Assignment>> {
+    sandbox
+        .eventually(async || {
+            let assignments = sandbox.store().pull(pr).await?.assignments;
+            equal("the assignments", &assignments.len(), &count)
+                .context(format!("the assignments are {assignments:?}"))?;
+            Ok(assignments)
+        })
+        .await
+}
+
+async fn linewright_assigning_and_unassigning_the_owner_lists_both_by_linewright_when(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let Opened { pr, .. } = opened(&sandbox, "assign-owner").await?;
+    let owner = sandbox.reviewer();
+    let store = sandbox.store();
+
+    let before_assigning = chrono::Utc::now();
+    let refused = store
+        .assign_people(pr, std::slice::from_ref(&owner))
+        .await?;
+    let after_assigning = chrono::Utc::now();
+    sandbox.tick().await;
+    let before_unassigning = chrono::Utc::now();
+    store
+        .unassign_people(pr, std::slice::from_ref(&owner))
+        .await?;
+    let unafter_assigning = chrono::Utc::now();
+
+    equal("those refused", &refused, &vec![])?;
+    let linewright = store.identity().await?.login;
+    let changes = assigned(&sandbox, pr, 2).await?;
+    equal("the assignees", &store.pull(pr).await?.assignees, &vec![])?;
+    match &changes[..] {
+        [
+            Assignment::Assigned {
+                assignee,
+                actor,
+                at: first,
+            },
+            Assignment::Unassigned {
+                assignee: unassignee,
+                actor: unassigner,
+                at: second,
+            },
+        ] => {
+            equal("the assignee", assignee, &owner)?;
+            equal("who assigned them", actor, &linewright)?;
+            equal("the unassignee", unassignee, &owner)?;
+            equal("who unassigned them", unassigner, &linewright)?;
+            sandbox.stamped_between("the assignment", *first, before_assigning, after_assigning)?;
+            sandbox.stamped_between(
+                "the unassignment",
+                *second,
+                before_unassigning,
+                unafter_assigning,
+            )
+        }
+        changes => bail!("the assignments are {changes:?}"),
+    }
+}
+
+/// GitHub's timeline lags, so the absence of an event is checked by
+/// waiting on the one that follows it.
+async fn unassigning_the_owner_from_a_pull_request_not_assigned_to_them_records_nothing(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let Opened { pr, .. } = opened(&sandbox, "unassign-unassigned").await?;
+    let owner = sandbox.reviewer();
+
+    sandbox
+        .store()
+        .unassign_people(pr, std::slice::from_ref(&owner))
+        .await?;
+    sandbox.tick().await;
+    sandbox.store().assign(pr).await?;
+
+    let linewright = sandbox.store().identity().await?.login;
+    match &assigned(&sandbox, pr, 1).await?[..] {
+        [
+            Assignment::Assigned {
+                assignee, actor, ..
+            },
+        ] => {
+            equal("the assignee", assignee, &linewright)?;
+            equal("who assigned it", actor, &linewright)
+        }
+        changes => bail!("the assignments are {changes:?}"),
+    }
+}
+
+async fn closing_a_pull_request_moves_when_it_was_last_updated(sandbox: Sandbox) -> Result<()> {
+    let Opened { branch, pr } = opened(&sandbox, "close-updated").await?;
+    let before = at(&sandbox, pr, &branch.head).await?.updated_at;
+    sandbox.tick().await;
+
+    sandbox.store().close_pull(pr).await?;
+
+    sandbox
+        .eventually(async || {
+            let pull = sandbox.store().pull(pr).await?;
+            ensure!(
+                matches!(pull.state, PullState::Closed { .. }),
+                "the state is {:?}",
+                pull.state
+            );
+            ensure!(
+                pull.updated_at > before,
+                "closing left it at {}, not after {before}",
+                pull.updated_at
+            );
+            Ok(())
+        })
+        .await
 }
