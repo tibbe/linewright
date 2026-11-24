@@ -13,6 +13,7 @@ mod automation_workflow_run;
 mod benchmark_run_plan;
 mod benchmark_run_runs;
 mod board;
+mod board_words;
 mod briefs;
 mod capture;
 mod closed_items;
