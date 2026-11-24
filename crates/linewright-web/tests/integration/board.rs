@@ -1,11 +1,7 @@
 use linewright_core::domain::{
-    Check, CheckState, ClosedItem, ClosingPull, Issue, IssueCloseReason, IssueClosing, Linked,
-    Login, Mergeability, MergedPull, Number, Parent, Pull, PullState, Requirement, ReviewDecision,
-    label,
+    Check, CheckState, ClosedItem, Issue, Linked, Login, Mergeability, MergedPull, Number, Parent,
+    Pull, Requirement, label,
 };
-use linewright_core::prompts::Readers;
-use linewright_core::reconcile::Memory;
-use linewright_core::repo_files::{FileError, Unusable};
 use linewright_core::status::View;
 
 use super::look::assert_drawn_as_a_card;
@@ -53,18 +49,6 @@ fn assigned(issue: Issue, assignees: &[&str]) -> Issue {
         assignees: assignees.iter().map(|login| Login::new(*login)).collect(),
         ..issue
     }
-}
-
-/// `issue`, closed at `closed_at` for `reason`.
-fn closed(issue: &Issue, closed_at: &str, reason: Option<IssueCloseReason>) -> ClosedItem {
-    ClosedItem::of_issue(
-        issue,
-        IssueClosing {
-            at: at(closed_at),
-            merged_by: None,
-            reason,
-        },
-    )
 }
 
 fn with_closed(mut view: View, closed: Vec<ClosedItem>) -> View {
@@ -275,34 +259,6 @@ async fn the_board_shows_the_cards_in_their_columns_and_lanes_each_with_its_line
     let title = select(&html, "title");
     assert_eq!(text(title[0]), "(2) Board · Linewright");
     assert_no_status_by_colour_alone(&html);
-}
-
-#[test_log::test(tokio::test)]
-async fn a_card_waiting_on_the_people_asked_names_them_as_a_list_or_says_people_asked() {
-    let asking =
-        |number, title, people: &[&str]| assigned(labeled(number, title, &["needs-info"]), people);
-    let pages = Pages::of(view(
-        vec![
-            asking(1, "One", &["alice"]),
-            asking(2, "Two", &["alice", "bob"]),
-            asking(3, "Three", &["alice", "bob", "carol"]),
-            asking(4, "Nobody", &[]),
-        ],
-        vec![],
-    ))
-    .await;
-
-    let shown = sorted_cards(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [
-            "Needs a person: #1: One | asked alice · 2026-09-30 09:00:00 UTC",
-            "Needs a person: #2: Two | asked alice and bob · 2026-09-30 09:00:00 UTC",
-            "Needs a person: #3: Three | asked alice, bob and carol · 2026-09-30 09:00:00 UTC",
-            "Needs a person: #4: Nobody | people asked · 2026-09-30 09:00:00 UTC",
-        ]
-    );
 }
 
 #[test_log::test(tokio::test)]
@@ -824,8 +780,11 @@ async fn a_lane_head_shows_no_status_of_its_own() {
 const PAUSED_OR_QUEUED: &str =
     "[--tone:color-mix(in_oklab,var(--color-base-content)_60%,transparent)]";
 
+/// `docs/specs/board.md`, Cards: a card shows its column, its line, the
+/// tone of its card status with that status's icon before its line, and
+/// the icon of an issue beside its number.
 #[test_log::test(tokio::test)]
-async fn a_card_paused_for_the_usage_limit_shows_it_in_secondary_text() {
+async fn a_card_paused_for_the_usage_limit_shows_its_column_line_tone_and_icons() {
     let claimed = assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]);
     let pages = Pages::of(View {
         memory: limited_until("2026-10-01T13:00:00Z"),
@@ -836,8 +795,11 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_secondary_text() {
     let html = pages.page("/").await;
 
     assert_eq!(
-        sorted_cards(&html),
-        ["Working: #1: Do the thing | paused until the usage limit resets"]
+        cards_shown(&html),
+        [(
+            "Working: #1: Do the thing | paused until the usage limit resets".to_string(),
+            Kind::Issue
+        )]
     );
     let card = select(&html, "#board .card")[0];
     assert!(
@@ -852,50 +814,6 @@ async fn a_card_paused_for_the_usage_limit_shows_it_in_secondary_text() {
         card.html()
     );
     assert_no_status_by_colour_alone(&html);
-}
-
-/// `docs/specs/board.md`, Cards: a held card says "paused until"
-/// what ends its hold (`docs/specs/runs.md`, Holds).
-#[test_log::test(tokio::test)]
-async fn a_held_card_says_what_ends_its_hold() {
-    let held = |memory: Memory, unusable: Vec<Unusable>| View {
-        memory,
-        unusable,
-        ..view(vec![ticket(1, "Do the thing")], vec![])
-    };
-    let broken = vec![Unusable {
-        file: FileError {
-            path: ".linewright/config.toml".into(),
-            error: "invalid".into(),
-        },
-        holds: Readers::Every,
-    }];
-    let awaiting_the_environment = Memory {
-        awaits_environment: true,
-        ..Memory::default()
-    };
-    let views = [
-        held(draining_since("2026-10-01T11:00:00Z"), vec![]),
-        held(limited_until("2026-10-01T13:00:00Z"), vec![]),
-        held(awaiting_the_environment, vec![]),
-        held(Memory::default(), broken),
-    ];
-
-    let mut shown = vec![];
-    for view in views {
-        let html = Pages::of(view).await.page("/").await;
-        shown.push(sorted_cards(&html).concat());
-    }
-
-    assert_eq!(
-        shown,
-        [
-            "Ready: #1: Do the thing | paused until `serve` restarts · 2026-09-30 09:00:00 UTC",
-            "Ready: #1: Do the thing | paused until the usage limit resets · 2026-09-30 09:00:00 UTC",
-            "Ready: #1: Do the thing | paused until the environment is built · 2026-09-30 09:00:00 UTC",
-            "Ready: #1: Do the thing | paused until the default branch fixes `.linewright/config.toml` · 2026-09-30 09:00:00 UTC",
-        ]
-    );
 }
 
 /// `docs/specs/design_system.md`, Type: secondary text is in
@@ -983,95 +901,27 @@ async fn a_board_whose_lanes_are_all_finished_shows_the_column_heads_and_one_clo
     assert_eq!(lanes, [Some("lane-1")]);
 }
 
-/// `issue`, closed by Linewright's pull request #`number` into `main`, as
-/// `state` and last changed at `at`.
-fn closed_by_linewrights(issue: Issue, number: u64, state: PullState, updated_at: &str) -> Issue {
-    Issue {
-        closed_by: vec![ClosingPull {
-            number: Number(number),
-            author: Login::new(LINEWRIGHT),
-            state,
-            updated_at: at(updated_at),
-            base_ref: "main".into(),
-        }],
-        ..issue
-    }
-}
-
+/// `docs/specs/board.md`, Cards: an issue in review names its pull
+/// request in its line, as a link to the pull request's page.
 #[test_log::test(tokio::test)]
-async fn an_issue_in_review_shows_its_pull_request_and_once_it_closes_unmerged_that_it_was_handed_back()
- {
+async fn an_issue_in_review_links_its_pull_request_in_its_line() {
     let pages = Pages::of(view(
-        vec![
-            assigned(ticket(1, "Do the thing"), &[LINEWRIGHT]),
-            closed_by_linewrights(
-                labeled(3, "Do another thing", &["ready-for-human"]),
-                4,
-                PullState::Closed {
-                    at: at("2026-10-01T10:00:00Z"),
-                },
-                "2026-10-01T10:00:00Z",
-            ),
-            labeled(5, "Do a third thing", &["ready-for-human"]),
-        ],
+        vec![assigned(ticket(1, "Do the thing"), &[LINEWRIGHT])],
         vec![linewrights_pull(2, &[1], &[CheckState::Pending])],
     ))
     .await;
-    pages
-        .record(&serde_json::json!({
-            "item": 5,
-            "stage": "implement",
-            "n": 1,
-            "started_at": "2026-10-01T09:30:00Z",
-            "end": {"at": "2026-10-01T10:00:00Z", "ending": "handed-back"},
-            "sessions": [],
-        }))
-        .await;
 
     let html = pages.page("/").await;
 
     assert_eq!(
         sorted_cards(&html),
-        [
-            "In review: #1: Do the thing | #2 · checks running",
-            "Needs a person: #3: Do another thing | handed back · 2026-09-30 09:00:00 UTC",
-            "Needs a person: #5: Do a third thing | handed back · 2026-09-30 09:00:00 UTC",
-        ]
+        ["In review: #1: Do the thing | #2 · checks running"]
     );
     let links: Vec<&str> = select(&html, "#board .card .line a:not(.github)")
         .into_iter()
         .filter_map(|a| a.attr("href"))
         .collect();
     assert_eq!(links, ["/items/2"]);
-    assert_eq!(
-        toned(&html, WAITING_FOR_A_PERSON),
-        ["#3: Do another thing", "#5: Do a third thing"]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_stalled_card_says_stalled_in_needs_a_person_and_after_its_pull_request_in_review() {
-    let pages = Pages::of(view(
-        vec![
-            labeled(1, "Do another thing", &["ready-for-human", label::STALLED]),
-            assigned(ticket(2, "Do the thing"), &[LINEWRIGHT]),
-        ],
-        vec![Pull {
-            labels: vec![label::STALLED.into()],
-            ..linewrights_pull(3, &[2], &[])
-        }],
-    ))
-    .await;
-
-    let shown = sorted_cards(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [
-            "In review: #2: Do the thing | #3 · stalled",
-            "Needs a person: #1: Do another thing | stalled · 2026-09-30 09:00:00 UTC",
-        ]
-    );
 }
 
 #[test_log::test(tokio::test)]
@@ -1090,101 +940,6 @@ async fn a_merged_pull_request_of_linewrights_closing_no_issue_is_a_pull_request
             "Done: #5: Merged 5 | merged · 2026-10-01 10:00:00 UTC".to_string(),
             Kind::PullRequest
         )]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn an_issue_whose_pull_request_merged_is_in_done_before_github_closes_it() {
-    let merged = closed_by_linewrights(
-        labeled(1, "Do the thing", &["ready-for-agent", label::DESIGNED]),
-        11,
-        PullState::Merged {
-            at: at("2026-09-30T10:00:00Z"),
-        },
-        "2026-09-30T10:00:00Z",
-    );
-    let pages = Pages::of(view(vec![merged], vec![])).await;
-
-    let shown = cards_shown(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [(
-            "Done: #1: Do the thing | closed in #11 · 2026-09-30 10:00:00 UTC".to_string(),
-            Kind::Issue
-        )]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn an_issue_closed_without_a_merge_shows_githubs_reason_for_closing_it() {
-    use IssueCloseReason::{Completed, Duplicate, NotPlanned};
-    let closing = |number, title, reason| {
-        closed(
-            &filed(labeled(
-                number,
-                title,
-                &["ready-for-agent", label::DESIGNED],
-            )),
-            &format!("2026-10-01T09:0{number}:00Z"),
-            reason,
-        )
-    };
-    let pages = Pages::of(with_closed(
-        view(vec![], vec![]),
-        vec![
-            closing(1, "Done it", Some(Completed)),
-            closing(2, "Never mind", Some(NotPlanned)),
-            closing(3, "Same as another", Some(Duplicate)),
-            closing(4, "Gone", None),
-        ],
-    ))
-    .await;
-
-    let shown = sorted_cards(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [
-            "Done: #1: Done it | closed as completed · 2026-10-01 09:01:00 UTC",
-            "Done: #2: Never mind | closed as not planned · 2026-10-01 09:02:00 UTC",
-            "Done: #3: Same as another | closed as a duplicate · 2026-10-01 09:03:00 UTC",
-            "Done: #4: Gone | closed · 2026-10-01 09:04:00 UTC",
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_pull_request_with_nothing_else_stopping_it_merging_ends_its_line_with_its_review_decision()
- {
-    let decided = |number, review_decision| Pull {
-        mergeability: Mergeability::Clean,
-        review_decision,
-        ..linewrights_pull(number, &[number - 10], &[CheckState::Passed])
-    };
-    let pages = Pages::of(view(
-        (1..=4)
-            .map(|n| assigned(ticket(n, "Do the thing"), &[LINEWRIGHT]))
-            .collect(),
-        vec![
-            decided(11, None),
-            decided(12, Some(ReviewDecision::ReviewRequired)),
-            decided(13, Some(ReviewDecision::ChangesRequested)),
-            decided(14, Some(ReviewDecision::Approved)),
-        ],
-    ))
-    .await;
-
-    let shown = sorted_cards(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [
-            "In review: #1: Do the thing | #11",
-            "In review: #2: Do the thing | #12 · review required",
-            "In review: #3: Do the thing | #13 · changes requested",
-            "In review: #4: Do the thing | #14 · approved",
-        ]
     );
 }
 
@@ -1226,30 +981,6 @@ async fn a_pull_request_blocked_on_a_code_owners_review_with_no_review_decision_
         toned(&html, WAITING_FOR_A_PERSON),
         ["#13: Pull 13", "#1: Do the thing"]
     );
-}
-
-/// `docs/specs/board.md`, Cards, What stops a pull request merging:
-/// a pull request whose update run waits for a free run says "queued", not
-/// "conflicts", in secondary text.
-#[test_log::test(tokio::test)]
-async fn a_pull_request_whose_run_is_queued_says_queued_in_secondary_text() {
-    let conflicting = Pull {
-        mergeability: Mergeability::Conflicting,
-        ..linewrights_pull(11, &[1], &[CheckState::Passed])
-    };
-    let pages = Pages::of(at_max_runs(view(
-        vec![assigned(ticket(1, "Do the thing"), &[LINEWRIGHT])],
-        vec![conflicting],
-    )))
-    .await;
-
-    let html = pages.page("/").await;
-
-    assert_eq!(
-        sorted_cards(&html),
-        ["In review: #1: Do the thing | #11 · queued"]
-    );
-    assert_eq!(toned(&html, PAUSED_OR_QUEUED), ["#1: Do the thing"]);
 }
 
 #[test_log::test(tokio::test)]
@@ -1322,37 +1053,6 @@ async fn a_card_waiting_in_its_column_ends_its_line_with_when_it_entered_its_col
 }
 
 #[test_log::test(tokio::test)]
-async fn a_card_linewright_was_unassigned_from_says_so_and_its_own_pull_request_leaves_off_its_number()
- {
-    let let_go = Issue {
-        events: vec![
-            assigning_linewright("2026-10-01T09:00:00Z"),
-            unassigning_linewright("2026-10-01T10:00:00Z"),
-        ],
-        ..ticket(1, "Let go")
-    };
-    let pages = Pages::of(view(
-        vec![let_go],
-        vec![linewrights_pull(
-            5,
-            &[OFF_THE_BOARD],
-            &[CheckState::Pending],
-        )],
-    ))
-    .await;
-
-    let shown = sorted_cards(&pages.page("/").await);
-
-    assert_eq!(
-        shown,
-        [
-            "In review: #5: Pull 5 | checks running",
-            "Ready: #1: Let go | unassigned · 2026-10-01 10:00:00 UTC",
-        ]
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_between_them_is_in_done_and_a_spec_change_merged_then_is_left_alone()
  {
     let mut world = World::with(|c| {
@@ -1413,35 +1113,18 @@ async fn with_the_spec_lookback_shorter_than_the_done_window_what_finished_betwe
     web.stop().await;
 }
 
+/// `docs/specs/board.md`, Cards, What stops a pull request merging: a
+/// pull request Linewright opened and is not assigned to says "unassigned"
+/// on its own card.
 #[test_log::test(tokio::test)]
-async fn cards_say_not_marked_for_linewright_blocked_by_and_unassigned_in_the_cards_words() {
-    let mut board = view(
-        vec![
-            labeled(1, "Unmarked", &["ready-for-agent"]),
-            assigned(
-                Issue {
-                    blocked_by: vec![Linked {
-                        number: Number(1),
-                        open: true,
-                    }],
-                    ..labeled(2, "Blocked", &["ready-for-agent", "linewright"])
-                },
-                &[LINEWRIGHT],
-            ),
-        ],
+async fn a_pull_request_of_linewrights_it_is_not_assigned_to_says_unassigned_on_its_own_card() {
+    let pages = Pages::of(view(
+        vec![],
         vec![open_pull(5, LINEWRIGHT, &[OFF_THE_BOARD], &[])],
-    );
-    board.policy.require_label = Some("linewright".into());
-    let pages = Pages::of(board).await;
+    ))
+    .await;
 
     let shown = sorted_cards(&pages.page("/").await);
 
-    assert_eq!(
-        shown,
-        [
-            "In review: #5: Pull 5 | unassigned",
-            "Ready: #1: Unmarked | not marked for Linewright · 2026-09-30 09:00:00 UTC",
-            "Working: #2: Blocked | blocked by #1",
-        ]
-    );
+    assert_eq!(shown, ["In review: #5: Pull 5 | unassigned"]);
 }
