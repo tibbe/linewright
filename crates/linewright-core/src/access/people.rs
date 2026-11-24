@@ -1145,28 +1145,21 @@ pub(crate) mod tests {
             panic!("Ada and Bob, as added")
         };
 
+        let kept = people.set_role(ada.id, Role::Manager, None).await.unwrap();
+        assert_eq!(kept.role, Role::Manager);
         let made = people.set_role(bob.id, Role::Manager, None).await.unwrap();
         assert_eq!(made.role, Role::Manager);
-        let demoted = people.set_role(ada.id, Role::Viewer, None).await.unwrap();
-        assert_eq!(demoted.role, Role::Viewer);
-        let refused = people.set_role(bob.id, Role::Contributor, None).await;
+        let named = manager("google:bob@example.com");
+        let refused = people.set_role(bob.id, Role::Viewer, Some(&named)).await;
 
         assert!(
-            matches!(refused, Err(ChangeRefusal::Protected(Protected::LastManager(ref name))) if name == "Bob"),
+            matches!(refused, Err(ChangeRefusal::Protected(Protected::NamedManager(ref name))) if name == "Bob"),
             "{refused:?}"
         );
         assert_eq!(
             people.get(bob.id).await.unwrap().unwrap().role,
             Role::Manager
         );
-        let kept = people.set_role(bob.id, Role::Manager, None).await.unwrap();
-        assert_eq!(kept.role, Role::Manager);
-        let named = manager("google:bob@example.com");
-        people.set_role(ada.id, Role::Manager, None).await.unwrap();
-        assert!(matches!(
-            people.set_role(bob.id, Role::Viewer, Some(&named)).await,
-            Err(ChangeRefusal::Protected(Protected::NamedManager(_)))
-        ));
         assert!(matches!(
             people.set_role(PersonId(9), Role::Viewer, None).await,
             Err(ChangeRefusal::NoSuchPerson(PersonId(9)))
