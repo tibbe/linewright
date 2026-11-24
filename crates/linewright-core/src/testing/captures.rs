@@ -7,11 +7,11 @@ use crate::task::{self, BenchmarkChoice, CaptureError, Criteria, TaskStage};
 use crate::testing::{World, back_door, implement_gadgets, open_designed_gadgets, runs_in};
 
 pub async fn runs(world: &World) -> Runs {
-    runs_in(&world.dir.path().join("work")).await
+    runs_in(&world.work_dir).await
 }
 
 pub fn tasks(world: &World) -> PathBuf {
-    world.dir.path().join("work").join("tasks")
+    world.work_dir.join("tasks")
 }
 
 pub fn id(id: &str) -> RunId {

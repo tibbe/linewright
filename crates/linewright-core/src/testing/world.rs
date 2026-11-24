@@ -109,6 +109,9 @@ pub struct World {
     pub clock: Arc<FakeClock>,
     pub factory: Factory,
     pub dir: tempfile::TempDir,
+    /// The work directory its factory was started with: `work` under `dir`
+    /// unless the start set another.
+    pub work_dir: std::path::PathBuf,
 }
 
 pub struct Repository {
@@ -283,6 +286,7 @@ impl World {
         let mut config = config(&dir.path().join("work")).await;
         adjust(&mut config);
         config.database = Database::open(&config.work_dir).await?;
+        let work_dir = config.work_dir.clone();
         let factory = Factory::start(store.clone(), harness.clone(), clock.clone(), config).await?;
         Ok(World {
             store,
@@ -290,6 +294,7 @@ impl World {
             clock,
             factory,
             dir,
+            work_dir,
         })
     }
 
@@ -297,6 +302,7 @@ impl World {
         let mut config = config(&self.dir.path().join("work")).await;
         adjust(&mut config);
         config.database = Database::open(&config.work_dir).await.unwrap();
+        self.work_dir.clone_from(&config.work_dir);
         self.factory = Factory::start(
             self.store.clone(),
             self.harness.clone(),

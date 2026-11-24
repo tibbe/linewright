@@ -19,7 +19,8 @@
 //! - `secrets_unnamed`: the secrets of an environment holding some variables,
 //!   with no `secrets` setting.
 //! - `redaction_of`: the redaction of an environment holding some variables.
-//! - `World`: a factory over a local store, a scripted harness and a fake clock.
+//! - `World`: a factory over a local store, a scripted harness and a fake
+//!   clock, and the `work_dir` its factory keeps its runs in.
 //!   - `new`, `serving`, `with`, `with_repository`, `start`: start one, as
 //!     configured.
 //!   - `restart`: starts its factory again, reconfigured.
