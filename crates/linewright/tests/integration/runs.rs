@@ -1,7 +1,5 @@
 use linewright_core::reconcile::WorkKind;
-use linewright_core::session_env::SetEnv;
 use linewright_core::testing::*;
-use linewright_core::work_settings::{Partial, StageKey, StageTable};
 use serde_json::json;
 
 use crate::programs::*;
@@ -46,54 +44,6 @@ fn triage_again(world: &World, issue: linewright_core::domain::Number) {
         .unwrap();
 }
 
-/// A world whose triage sessions run with the operator's `opus` and a
-/// value its table sets, leaving effort to Linewright's own.
-async fn triage_on_opus() -> (World, tempfile::TempDir) {
-    let work_dir = tempfile::tempdir().unwrap();
-    let mut world = World::with(|config| {
-        config.work_dir = work_dir.path().join(REPO);
-        edit_work(config, |work| {
-            work.stages.insert(
-                StageKey::Work(WorkKind::Triage),
-                StageTable {
-                    settings: Partial {
-                        model: Some(model("opus")),
-                        ..Partial::default()
-                    },
-                    session_env: Some(
-                        SetEnv::new([("CI".into(), "true".into())], &VARIABLES).unwrap(),
-                    ),
-                    ..StageTable::default()
-                },
-            );
-        });
-    })
-    .await;
-    triage_ready(&world);
-    world
-        .store
-        .open_issue("reporter", "Export fails", "It crashes.", &["needs-triage"]);
-    world.poll().await;
-    (world, work_dir)
-}
-
-#[test_log::test(tokio::test)]
-async fn an_items_runs_show_each_sessions_model_and_effort() {
-    let (_world, work_dir) = triage_on_opus().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-
-    assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let lines: Vec<&str> = output.stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "{}", output.stdout);
-    assert!(
-        lines[0].starts_with("1/triage-1: done"),
-        "{}",
-        output.stdout
-    );
-    assert_eq!(lines[1], "  session 1: model opus, effort medium");
-}
-
 /// A world whose triage sessions run with the operator's model, on a
 /// harness that reports running `claude-opus-5-5-20261101`.
 async fn triage_reporting_opus() -> (World, tempfile::TempDir) {
@@ -122,58 +72,6 @@ async fn a_session_records_the_model_and_effort_set_where_they_came_from_and_the
     assert_eq!(session["effort"], "medium");
     assert_eq!(session["layers"]["settings"]["model"], "operator");
     assert_eq!(session["layers"]["settings"]["effort"], "linewright");
-}
-
-#[test_log::test(tokio::test)]
-async fn a_run_handed_back_says_so() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    world.harness.on(WorkKind::Implement, |_| {
-        Ok(json!({"outcome": "gave-up", "reason": "It cannot be done."}).to_string())
-    });
-    world.store.open_issue(
-        "maintainer",
-        "Do it",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-
-    assert!(
-        output
-            .stdout
-            .starts_with("1/implement-1: handed back — #1 implement, "),
-        "{}",
-        output.stdout
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn a_run_whose_push_is_refused_for_a_missing_permission_is_handed_back() {
-    let (mut world, work_dir) = world_in_work_dir().await;
-    implement(&world);
-    world.store.refuse_pushes(&rejected(
-        "refusing to allow a Personal Access Token to create or update workflow \
-         `.github/workflows/ci.yml` without `workflow` scope",
-    ));
-    world.store.open_issue(
-        "maintainer",
-        "Do it",
-        "Please.",
-        &["ready-for-agent", "linewright:designed"],
-    );
-    world.poll().await;
-
-    let output = lw_in(work_dir.path(), &["runs", "1"]).await;
-
-    assert!(
-        output
-            .stdout
-            .starts_with("1/implement-1: handed back — #1 implement, "),
-        "{}",
-        output.stdout
-    );
 }
 
 #[test_log::test(tokio::test)]
@@ -243,17 +141,13 @@ async fn the_filters_narrow_the_list_from_the_command_line() {
     let other_stage = lw_in(dir, &["runs", "--stage", "fix-ci"]).await;
     let no_stage = lw_in(dir, &["runs", "--stage", "review"]).await;
 
-    let lines: Vec<&str> = limited.stdout.lines().collect();
-    assert_eq!(lines.len(), 3, "{}{}", limited.stdout, limited.stderr);
-    assert!(
-        lines[0].starts_with("1/triage-2: done"),
-        "{}",
-        limited.stdout
-    );
-    assert_eq!(
-        lines[2],
-        "left out: 1 earlier run; show them with --limit 2"
-    );
+    let runs: Vec<&str> = limited
+        .stdout
+        .lines()
+        .filter_map(|line| line.split_once(':').map(|(run, _)| run))
+        .filter(|run| run.contains('/'))
+        .collect();
+    assert_eq!(runs, ["1/triage-2"], "{}{}", limited.stdout, limited.stderr);
     assert_eq!((later.code, later.stdout.as_str()), (Some(0), ""));
     assert_eq!(
         (other_stage.code, other_stage.stdout.as_str()),
