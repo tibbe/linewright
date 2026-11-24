@@ -563,9 +563,11 @@ pub(super) fn render_summary(summary: &BenchmarkRunSummary) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::num::NonZeroUsize;
     use std::time::Duration;
 
     use super::*;
+    use crate::benchmarks::results::{ConfigurationResults, Passes, TaskResults, Total};
     use crate::benchmarks::{Benchmark, Cancelled, ScoreFigures, TrialKey};
     use crate::runs::Ending;
 
@@ -597,6 +599,107 @@ mod tests {
             outcome: OutcomeName::Ended(ending),
             money: money.map(|money| Usd::new(money).unwrap()),
             time: Duration::from_secs(seconds),
+        }
+    }
+
+    /// A figure's mean, total and how many trials have none.
+    fn mean_of(mean: Option<f64>, total: f64, none: usize) -> Mean {
+        Mean { mean, total, none }
+    }
+
+    #[track_caller]
+    fn task_results(
+        id: &str,
+        name: &str,
+        passes: Option<(usize, usize)>,
+        figures: Figures,
+    ) -> TaskResults {
+        TaskResults {
+            id: id.parse().unwrap(),
+            name: name.parse().unwrap(),
+            passes: passes.map(|(pass, of)| Passes {
+                pass,
+                of: NonZeroUsize::new(of).unwrap(),
+            }),
+            figures,
+        }
+    }
+
+    /// Figures with nothing to count.
+    fn no_figures() -> Figures {
+        Figures {
+            cost: mean_of(None, 0.0, 0),
+            time: mean_of(None, 0.0, 0),
+            leaks: 0,
+            unscored: 0,
+        }
+    }
+
+    /// Results of two configurations, with a figure and with none, and with
+    /// and without trials that lack it, set by hand and not worked out from
+    /// any trials.
+    #[track_caller]
+    fn given_results() -> Results {
+        Results {
+            configurations: vec![
+                ConfigurationResults {
+                    id: ConfigurationId::of_place(0),
+                    name: "as-is".parse().unwrap(),
+                    pass_rate: Some(0.5),
+                    figures: Figures {
+                        cost: mean_of(Some(0.2), 0.4, 0),
+                        time: mean_of(Some(50.0), 100.0, 0),
+                        leaks: 1,
+                        unscored: 0,
+                    },
+                    tasks: vec![
+                        task_results(
+                            "1",
+                            "columns",
+                            Some((1, 2)),
+                            Figures {
+                                cost: mean_of(Some(0.3), 0.6, 0),
+                                time: mean_of(Some(90.0), 180.0, 0),
+                                leaks: 1,
+                                unscored: 0,
+                            },
+                        ),
+                        task_results("3", "rows", None, no_figures()),
+                    ],
+                },
+                ConfigurationResults {
+                    id: ConfigurationId::of_place(1),
+                    name: "short".parse().unwrap(),
+                    pass_rate: None,
+                    figures: Figures {
+                        cost: mean_of(None, 0.0, 2),
+                        time: mean_of(Some(25.0), 50.0, 0),
+                        leaks: 0,
+                        unscored: 2,
+                    },
+                    tasks: vec![task_results(
+                        "2",
+                        "lanes",
+                        None,
+                        Figures {
+                            cost: mean_of(Some(0.2), 0.2, 1),
+                            time: mean_of(Some(20.0), 20.0, 0),
+                            leaks: 0,
+                            unscored: 1,
+                        },
+                    )],
+                },
+            ],
+            scorers: Total {
+                total: 0.06,
+                none: 1,
+            },
+            trials_ended: 5,
+            all: 7,
+            cost: Total {
+                total: 0.7,
+                none: 1,
+            },
         }
     }
 
@@ -681,10 +784,12 @@ mod tests {
             trials,
         };
 
-        let text = render_benchmark_run(&BenchmarkRunAnswer::new(
-            &record,
-            Shown::without_serve(record.state),
-        ));
+        let answer = BenchmarkRunAnswer {
+            results: given_results(),
+            ..BenchmarkRunAnswer::new(&record, Shown::without_serve(record.state))
+        };
+
+        let text = render_benchmark_run(&answer);
 
         assert_eq!(
             text,
@@ -699,21 +804,15 @@ mod tests {
              cost: $0.70, 1 without a cost\n\
              scorers' cost: $0.06, 1 without a cost\n\
              configuration 1 (as-is):\n  \
-               pass rate: 100%\n  \
+               pass rate: 50%\n  \
                cost: mean $0.20, total $0.40\n  \
                time: mean 50s, total 1m 40s\n  \
                leaks: 1\n  \
                unscored: 0\n  \
                task 1 (columns):\n    \
-                 passes: 1 of 1\n    \
-                 cost: mean $0.30, total $0.30\n    \
-                 time: mean 1m 30s, total 1m 30s\n    \
-                 leaks: 0\n    \
-                 unscored: 0\n  \
-               task 2 (lanes):\n    \
-                 passes: none\n    \
-                 cost: mean $0.10, total $0.10\n    \
-                 time: mean 10s, total 10s\n    \
+                 passes: 1 of 2\n    \
+                 cost: mean $0.30, total $0.60\n    \
+                 time: mean 1m 30s, total 3m\n    \
                  leaks: 1\n    \
                  unscored: 0\n  \
                task 3 (rows):\n    \
@@ -724,28 +823,16 @@ mod tests {
                  unscored: 0\n\
              configuration 2 (short):\n  \
                pass rate: none\n  \
-               cost: mean $0.20, total $0.20, 1 without a cost\n  \
+               cost: none, 2 without a cost\n  \
                time: mean 25s, total 50s\n  \
                leaks: 0\n  \
                unscored: 2\n  \
-               task 1 (columns):\n    \
-                 passes: none\n    \
-                 cost: none, 1 without a cost\n    \
-                 time: mean 30s, total 30s\n    \
-                 leaks: 0\n    \
-                 unscored: 1\n  \
                task 2 (lanes):\n    \
                  passes: none\n    \
-                 cost: mean $0.20, total $0.20\n    \
+                 cost: mean $0.20, total $0.20, 1 without a cost\n    \
                  time: mean 20s, total 20s\n    \
                  leaks: 0\n    \
-                 unscored: 1\n  \
-               task 3 (rows):\n    \
-                 passes: none\n    \
-                 cost: none\n    \
-                 time: none\n    \
-                 leaks: 0\n    \
-                 unscored: 0\n\
+                 unscored: 1\n\
              trial 1 of columns under as-is (1/1/1): scored pass, run done, cost $0.30, took 1m 30s, scorer's cost $0.05\n\
              trial 1 of columns under short (2/1/1): no score: its run is not done or handed back, run failed, cost none, took 30s\n\
              trial 1 of lanes under as-is (1/2/1): scored fail, with a leak, run handed-back, cost $0.10, took 10s\n\
