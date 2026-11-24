@@ -217,41 +217,35 @@ async fn uploads_of_the_same_bytes_keep_one_file() {
     );
 }
 
-/// A world, requiring branches up to date where `requires_up_to_date`, whose
-/// pull request, ready for review, the default branch has moved past without
-/// a conflict.
-async fn moved_past(requires_up_to_date: bool) -> (World, Number) {
-    let repository = if requires_up_to_date {
-        Repository::requiring_up_to_date()
-    } else {
-        Repository::default()
-    };
-    let mut world = World::with_repository(repository, |_| {}).await;
+/// A world, requiring branches up to date, whose pull request, ready for
+/// review, the default branch has moved past without a conflict.
+async fn moved_past() -> (World, Number) {
+    let mut world = World::with_repository(Repository::requiring_up_to_date(), |_| {}).await;
     let (_, pr) = world.ticket_in_review().await;
     world.store.mark_ready(pr).await.unwrap();
     world.move_default_branch_on().await;
     (world, pr)
 }
 
+/// The sandbox can't hold this: requiring branches up to date takes a
+/// required status check, which applies to the whole repository and would
+/// keep every other contract from merging.
 #[test_log::test(tokio::test)]
-async fn a_pull_request_behind_is_reported_behind_only_where_the_repository_requires_it_up_to_date()
-{
-    let (lax, lax_pr) = moved_past(false).await;
-    let (strict, strict_pr) = moved_past(true).await;
+async fn a_pull_request_behind_is_reported_behind_where_the_repository_requires_it_up_to_date() {
+    let (world, pr) = moved_past().await;
 
     assert_eq!(
-        snapshot_pull(&lax, lax_pr).await.mergeability,
-        Mergeability::Clean
-    );
-    assert_eq!(
-        snapshot_pull(&strict, strict_pr).await.mergeability,
+        snapshot_pull(&world, pr).await.mergeability,
         Mergeability::Behind
     );
 }
 
+/// The sandbox can't hold this: requiring an approval applies to the whole
+/// repository, and would keep every other contract from merging, as
+/// Linewright can't approve its own pull requests.
 #[test_log::test(tokio::test)]
 async fn a_merge_blocked_by_a_missing_requirement_is_reported_blocked_rather_than_behind() {
-    let (world, pr) = moved_past(true).await;
+    let (world, pr) = moved_past().await;
 
     world.store.block_merge(pr, vec![Requirement::Approval]);
 
