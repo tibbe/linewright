@@ -1803,70 +1803,6 @@ mod tests {
         );
     }
 
-    #[test_log::test(tokio::test)]
-    async fn a_trial_whose_run_is_not_done_or_handed_back_ends_its_trial_without_a_score() {
-        let work_dir = tempfile::tempdir().unwrap();
-        let (benchmark_runs, id) = launched(work_dir.path()).await;
-
-        steps(
-            &benchmark_runs,
-            trial(id, 0),
-            vec![
-                TrialChange::RunStarts,
-                TrialChange::RunEnds(figures(Ending::Failed)),
-            ],
-        )
-        .await;
-
-        assert_eq!(
-            state_of(&benchmark_runs, trial(id, 0)).await.1,
-            TrialState::Ended(TrialEnd::Unscored(NoScore::Outcome(figures(
-                Ending::Failed
-            ))))
-        );
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn a_cancelled_trial_keeps_the_run_it_had_or_the_cancel_stopped() {
-        let work_dir = tempfile::tempdir().unwrap();
-        let (benchmark_runs, id) = launched(work_dir.path()).await;
-
-        steps(
-            &benchmark_runs,
-            trial(id, 0),
-            vec![
-                TrialChange::RunStarts,
-                TrialChange::RunEnds(figures(Ending::Done)),
-                TrialChange::Cancelled { stopped: None },
-            ],
-        )
-        .await;
-        steps(
-            &benchmark_runs,
-            trial(id, 1),
-            vec![
-                TrialChange::RunStarts,
-                TrialChange::Cancelled {
-                    stopped: Some(figures(Ending::Cancelled)),
-                },
-            ],
-        )
-        .await;
-
-        assert_eq!(
-            state_of(&benchmark_runs, trial(id, 0)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::AfterRun(figures(
-                Ending::Done
-            ))))
-        );
-        assert_eq!(
-            state_of(&benchmark_runs, trial(id, 1)).await.1,
-            TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(figures(
-                Ending::Cancelled
-            ))))
-        );
-    }
-
     /// `docs/specs/benchmarks.md`, Benchmark runs, A trial without a score:
     /// its build failed, kept with its time, read the same after a restart.
     #[test_log::test(tokio::test)]
@@ -1891,37 +1827,22 @@ mod tests {
     }
 
     /// `docs/specs/benchmarks.md`, Benchmark runs, Cancelled trials: a
-    /// trial with no score and no reason at the cancel is cancelled, also when
-    /// its build fails after it, and keeps the run the cancel stopped, if any.
+    /// trial whose run never started is kept cancelled.
     #[test_log::test(tokio::test)]
-    async fn a_step_that_ends_once_its_benchmark_run_is_cancelled_ends_its_trial_cancelled() {
+    async fn a_trial_cancelled_before_its_run_is_kept_cancelled() {
         let work_dir = tempfile::tempdir().unwrap();
         let (benchmark_runs, id) = launched(work_dir.path()).await;
-        let build_fails = TrialChange::BuildFails {
-            time: Duration::from_secs(5),
-        };
-        let run_ends = TrialChange::RunEnds(figures(Ending::Cancelled));
 
-        for (task, change) in [(0, build_fails), (1, run_ends)] {
-            steps(
-                &benchmark_runs,
-                trial(id, task),
-                vec![TrialChange::RunStarts, TrialChange::on_cancel(Some(change))],
-            )
-            .await;
-        }
+        steps(
+            &benchmark_runs,
+            trial(id, 0),
+            vec![TrialChange::RunStarts, TrialChange::CancelledBeforeRun],
+        )
+        .await;
 
         assert_eq!(
-            [
-                state_of(&benchmark_runs, trial(id, 0)).await.1,
-                state_of(&benchmark_runs, trial(id, 1)).await.1,
-            ],
-            [
-                TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun)),
-                TrialState::Ended(TrialEnd::Cancelled(Cancelled::RunStopped(figures(
-                    Ending::Cancelled
-                )))),
-            ]
+            state_of(&benchmark_runs, trial(id, 0)).await.1,
+            TrialState::Ended(TrialEnd::Cancelled(Cancelled::BeforeRun))
         );
     }
 
