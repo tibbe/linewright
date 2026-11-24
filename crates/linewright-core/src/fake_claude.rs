@@ -148,6 +148,9 @@ fn carry_out(
             message,
         } => commit(&path, &contents, &message)?,
         Step::Hang => std::thread::sleep(LEFT_FOR),
+        Step::Hold => loop {
+            std::thread::park();
+        },
         Step::Exit(status) => return Ok(Some(status)),
     }
     Ok(None)

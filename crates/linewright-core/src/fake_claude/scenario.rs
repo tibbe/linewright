@@ -82,6 +82,8 @@ pub enum Step {
     },
     /// Sleeps until killed, for at most 300 s.
     Hang,
+    /// Sleeps until killed, with no bound.
+    Hold,
     /// Exits with the status.
     Exit(i32),
 }
