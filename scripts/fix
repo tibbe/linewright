@@ -21,12 +21,7 @@ fix_css() {
 # Makes every test `#[test_log::test]`, around `#[tokio::test]` where it is
 # async.
 fix_test() {
-  local bare
-  if bare="$(grep -rlE --include='*.rs' "$test_attribute" crates)"; then
-    # shellcheck disable=SC2086 # one path per line, none with spaces
-    perl -pi -e 's/^([ \t]*)#\[test\][ \t]*$/$1#[test_log::test]/;
-      s/^([ \t]*)#\[tokio::test(\(.*\))?\][ \t]*$/$1#[test_log::test(tokio::test$2)]/' $bare
-  fi
+  python3 -I -B scripts/test_attributes.py
 }
 
 # Regenerates what the model's spec-table directives encode of the spec's

@@ -69,6 +69,7 @@ mod startup;
 mod status;
 mod store;
 mod task_seeding;
+mod test_attribute_check;
 mod transcript;
 mod trial;
 mod trial_environments;

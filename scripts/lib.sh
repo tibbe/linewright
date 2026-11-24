@@ -10,6 +10,3 @@ need() {
     return 1
   }
 }
-
-# shellcheck disable=SC2034 # the attribute of a test that is not #[test_log::test], read by scripts/check and scripts/fix
-test_attribute='^[ \t]*#\[(tokio::)?test(\(.*\))?\][ \t]*$'
