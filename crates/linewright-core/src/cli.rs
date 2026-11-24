@@ -13,8 +13,7 @@ use crate::automation::AutomationName;
 use crate::benchmarks::{
     self, Benchmark, BenchmarkAnswer, BenchmarkId, BenchmarkRunAnswer, BenchmarkRunId,
     BenchmarkRunRecord, BenchmarkRunState, BenchmarkRuns, Benchmarks, BenchmarksAnswer,
-    CancelRefusal, ConfigurationId, EditTaskError, LaunchRefusal, RemoveError,
-    RenameConfigurationError, RenameError, Repetitions, Shown, TaskChange, TaskId,
+    ConfigurationId, Repetitions, Shown, TaskId,
 };
 use crate::by_hand::HandTaken;
 use crate::clock::{Clock, SystemClock};
@@ -38,9 +37,7 @@ use crate::runs::{self, Query, RepoWorkDir, RunId, Runs};
 use crate::serving::{self, OnUsageLimit, Starting, UiRouter, briefs};
 use crate::store::Store;
 use crate::store::{SESSION_TOKEN_VARIABLE, TOKEN_VARIABLES};
-use crate::task::{
-    self, BenchmarkChoice, CRITERIA_REQUIRED, CaptureError, Criteria, Refusal, Task, TaskStage,
-};
+use crate::task::{CRITERIA_REQUIRED, Criteria, Task, TaskStage};
 use crate::transcript::{self, After, InFlight, Verbosity};
 use crate::trial::scorer::{self, ScorerRecord};
 use crate::trial::{self, Configuration, Output, Under};
@@ -1071,22 +1068,14 @@ async fn work(
             benchmark,
             criteria,
             json,
-        } => {
-            let capture = Capture {
-                id,
-                name,
-                benchmark,
-                criteria,
-            };
-            return Ok(capture.run(lw, &config, json).await);
-        }
+        } => return Ok(capture(&config, id, benchmark, name, &criteria, json).await),
         Command::Benchmarks { json } => return Ok(list_benchmarks(&config, json).await),
         Command::Benchmark {
             command: BenchmarkCommand::Show { benchmark, json },
         } => return Ok(show_benchmark(&config, benchmark, json).await),
         Command::Benchmark {
             command: BenchmarkCommand::Add { name, stage, json },
-        } => return Ok(make_benchmark(&config, &name, stage, json).await),
+        } => return Ok(make_benchmark(&config, name, stage, json).await),
         Command::Benchmark {
             command:
                 BenchmarkCommand::Rename {
@@ -1094,7 +1083,7 @@ async fn work(
                     name,
                     json,
                 },
-        } => return Ok(rename_benchmark(&config, benchmark, &name, json).await),
+        } => return Ok(rename_benchmark(&config, benchmark, name, json).await),
         Command::Benchmark {
             command:
                 BenchmarkCommand::EditTask {
@@ -1127,14 +1116,9 @@ async fn work(
                     json,
                 },
         } => {
-            return Ok(launch_benchmark_run(
-                &config,
-                benchmark,
-                &configurations,
-                repetitions,
-                json,
-            )
-            .await);
+            return Ok(
+                launch_benchmark_run(&config, benchmark, configurations, repetitions, json).await,
+            );
         }
         Command::BenchmarkRun {
             command:
@@ -1144,7 +1128,7 @@ async fn work(
                     name,
                     json,
                 },
-        } => return Ok(rename_configuration(&config, id, configuration, &name, json).await),
+        } => return Ok(rename_configuration(&config, id, configuration, name, json).await),
         Command::BenchmarkRun {
             command: BenchmarkRunCommand::Cancel { id, json },
         } => return Ok(cancel_benchmark_run(&config, id, json).await),
@@ -1229,16 +1213,8 @@ async fn existing_benchmarks(config: &Config) -> Result<Option<Benchmarks>> {
         .map(Benchmarks::new))
 }
 
-/// The benchmarks of the work directory's database, made when there is none.
-async fn made_benchmarks(config: &Config) -> Result<Benchmarks> {
-    let work_dir = config.repo_work_dir()?.resolve();
-    Ok(Benchmarks::new(Database::open(&work_dir).await?))
-}
-
 fn no_such_benchmark(id: BenchmarkId) -> (u8, String) {
-    refused(&RequestError::NotFound(format!(
-        "there is no benchmark {id}"
-    )))
+    refused(&RequestError::NotFound(api::no_such_benchmark(&id)))
 }
 
 /// `answer` as JSON, or as `render` gives it as text.
@@ -1318,178 +1294,6 @@ async fn benchmark_run_shown(
     Ok(answer.value().clone())
 }
 
-/// Tells `serve`, if it runs, that a benchmark run changed, so that it acts
-/// on it before its next poll.
-async fn nudge_serve(config: &Config) {
-    let Ok(work_dir) = config.repo_work_dir() else {
-        return;
-    };
-    match api::post_answer(&socket_dir(), &work_dir.repo, "/api/benchmark-runs/changed").await {
-        Ok(_) | Err(RequestError::NotServing { .. }) => {}
-        Err(e) => complain(format!(
-            "`serve` was not told of the change, and takes it up at its next poll: {e:#}"
-        )),
-    }
-}
-
-async fn make_benchmark(config: &Config, name: &Name, stage: TaskStage, json: bool) -> u8 {
-    let benchmarks = match made_benchmarks(config).await {
-        Ok(benchmarks) => benchmarks,
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    print_answer(
-        benchmarks
-            .make(name, stage)
-            .await
-            .map(|benchmark| {
-                answer_text(&benchmark, json, |benchmark| {
-                    format!(
-                        "Made the benchmark {} ({}), of {}\n",
-                        benchmark.id, benchmark.name, benchmark.stage
-                    )
-                })
-            })
-            .map_err(|e| (FAILURE, format!("{e:#}"))),
-    )
-}
-
-/// What `benchmark rename` answers.
-#[derive(serde::Serialize)]
-struct Renamed<'a> {
-    id: BenchmarkId,
-    name: &'a Name,
-}
-
-async fn rename_benchmark(config: &Config, id: BenchmarkId, name: &Name, json: bool) -> u8 {
-    let benchmarks = match existing_benchmarks(config).await {
-        Ok(Some(benchmarks)) => benchmarks,
-        Ok(None) => return print_answer(Err(no_such_benchmark(id))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    print_answer(
-        benchmarks
-            .rename(id, name)
-            .await
-            .map(|()| {
-                answer_text(&Renamed { id, name }, json, |renamed| {
-                    format!("Renamed the benchmark {} to {}\n", renamed.id, renamed.name)
-                })
-            })
-            .map_err(|e| match e {
-                RenameError::NoSuchBenchmark(_) => no_such_benchmark(id),
-                RenameError::Taken(_) => (FAILURE, e.to_string()),
-                RenameError::Failed(e) => failed(&e),
-            }),
-    )
-}
-
-/// What `benchmark edit-task` answers.
-#[derive(serde::Serialize)]
-struct Edited {
-    benchmark: BenchmarkId,
-    task: TaskId,
-}
-
-/// Changes the task `task` of the benchmark `benchmark` to the name `name`
-/// and the criteria in the file `criteria`, failing on a file that does not
-/// read and refusing criteria that hold only white space before anything is
-/// written.
-async fn edit_task(
-    config: &Config,
-    benchmark: BenchmarkId,
-    task: TaskId,
-    name: Option<Name>,
-    criteria: Option<&Path>,
-    json: bool,
-) -> u8 {
-    let criteria = match criteria.map(read_criteria).transpose() {
-        Ok(criteria) => criteria,
-        Err(refused) => return print_answer(Err(refused)),
-    };
-    let Some(change) = TaskChange::of(name, criteria) else {
-        return print_answer(Err((
-            FAILURE,
-            "a change of a task needs a name, criteria or both".to_string(),
-        )));
-    };
-    let benchmarks = match existing_benchmarks(config).await {
-        Ok(Some(benchmarks)) => benchmarks,
-        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    print_answer(
-        benchmarks
-            .edit_task(benchmark, task, &change)
-            .await
-            .map(|()| {
-                answer_text(&Edited { benchmark, task }, json, |edited| {
-                    format!(
-                        "Changed the task {} of the benchmark {}\n",
-                        edited.task, edited.benchmark
-                    )
-                })
-            })
-            .map_err(|e| match e {
-                EditTaskError::NoSuchBenchmark(_) | EditTaskError::NoSuchTask { .. } => {
-                    refused(&RequestError::NotFound(e.to_string()))
-                }
-                EditTaskError::Taken { .. } => (FAILURE, e.to_string()),
-                EditTaskError::Failed(e) => failed(&e),
-            }),
-    )
-}
-
-/// The criteria in the file `file`, failing on a file that does not read
-/// and refusing one that holds only white space.
-fn read_criteria(file: &Path) -> Result<Criteria, (u8, String)> {
-    let criteria = std::fs::read_to_string(file)
-        .map_err(|e| failed(&anyhow::Error::from(e).context("reading the criteria")))?;
-    Criteria::parse(&criteria).ok_or_else(|| (FAILURE, CRITERIA_REQUIRED.to_string()))
-}
-
-/// What `benchmark remove-task` answers.
-#[derive(serde::Serialize)]
-struct Removed {
-    benchmark: BenchmarkId,
-    task: TaskId,
-    name: Name,
-}
-
-async fn remove_task(config: &Config, benchmark: BenchmarkId, task: TaskId, json: bool) -> u8 {
-    let benchmarks = match existing_benchmarks(config).await {
-        Ok(Some(benchmarks)) => benchmarks,
-        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    print_answer(
-        benchmarks
-            .remove_task(benchmark, task)
-            .await
-            .map(|name| {
-                answer_text(
-                    &Removed {
-                        benchmark,
-                        task,
-                        name,
-                    },
-                    json,
-                    |removed| {
-                        format!(
-                            "Removed the task {} ({}) from the benchmark {}\n",
-                            removed.task, removed.name, removed.benchmark
-                        )
-                    },
-                )
-            })
-            .map_err(|e| match e {
-                RemoveError::NoSuchBenchmark(_) | RemoveError::NoSuchTask { .. } => {
-                    refused(&RequestError::NotFound(e.to_string()))
-                }
-                RemoveError::Failed(e) => failed(&e),
-            }),
-    )
-}
-
 /// The benchmark runs of the work directory's database, with or without
 /// `serve`: none when there is no database.
 async fn existing_benchmark_runs(config: &Config) -> Result<Option<BenchmarkRuns>> {
@@ -1500,86 +1304,7 @@ async fn existing_benchmark_runs(config: &Config) -> Result<Option<BenchmarkRuns
 }
 
 fn no_such_benchmark_run(id: BenchmarkRunId) -> (u8, String) {
-    refused(&RequestError::NotFound(format!(
-        "there is no benchmark run {id}"
-    )))
-}
-
-/// What `benchmark-run launch` answers.
-#[derive(serde::Serialize)]
-struct LaunchedAnswer {
-    id: BenchmarkRunId,
-    benchmark: BenchmarkId,
-    trials: usize,
-}
-
-/// Launches a benchmark run on the benchmark `benchmark` under `as-is` and the
-/// configurations in the directories `configurations`, refusing a benchmark
-/// that does not exist and then a configuration with an error before anything
-/// is written.
-async fn launch_benchmark_run(
-    config: &Config,
-    benchmark: BenchmarkId,
-    configurations: &[(Name, PathBuf)],
-    repetitions: Repetitions,
-    json: bool,
-) -> u8 {
-    let database = async {
-        let work_dir = config.repo_work_dir()?.resolve();
-        let Some(db) = Database::open_existing(&work_dir).await? else {
-            return Ok(None);
-        };
-        let found = Benchmarks::new(db.clone()).find(benchmark).await?;
-        anyhow::Ok(found.map(|found| (db, found)))
-    };
-    let (db, found) = match database.await {
-        Ok(Some(found)) => found,
-        Ok(None) => return print_answer(Err(no_such_benchmark(benchmark))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let mut read_configurations = Vec::with_capacity(configurations.len());
-    for (name, dir) in configurations {
-        match Configuration::read(dir) {
-            Ok(configuration) => read_configurations.push((name.clone(), configuration)),
-            Err(e) => return print_answer(Err((FAILURE, e.to_string()))),
-        }
-    }
-    let launched = BenchmarkRuns::new(db)
-        .launch(
-            benchmark,
-            read_configurations,
-            repetitions,
-            SystemClock.now(),
-        )
-        .await;
-    if launched.is_ok() {
-        nudge_serve(config).await;
-    }
-    print_answer(
-        launched
-            .map(|launched| {
-                let answer = LaunchedAnswer {
-                    id: launched.id,
-                    benchmark,
-                    trials: launched.trials,
-                };
-                answer_text(&answer, json, |answer| {
-                    format!(
-                        "Launched benchmark run {} on the benchmark {} ({}): {} trials\n",
-                        answer.id, answer.benchmark, found.name, answer.trials
-                    )
-                })
-            })
-            .map_err(|e| match e {
-                LaunchRefusal::NoSuchBenchmark(_) => {
-                    refused(&RequestError::NotFound(e.to_string()))
-                }
-                LaunchRefusal::NoTasks(_) | LaunchRefusal::DuplicateConfiguration(_) => {
-                    (FAILURE, e.to_string())
-                }
-                LaunchRefusal::Failed(e) => failed(&e),
-            }),
-    )
+    refused(&RequestError::NotFound(api::no_such_benchmark_run(&id)))
 }
 
 /// Shows the benchmark run `id`: an open one as `serve` shows it, or as
@@ -1605,174 +1330,274 @@ async fn show_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> 
     }))
 }
 
-/// What `benchmark-run rename-configuration` answers.
-#[derive(serde::Serialize)]
-struct RenamedConfiguration<'a> {
-    id: BenchmarkRunId,
-    configuration: ConfigurationId,
-    name: &'a Name,
+/// Asks `serve` to change something: `method` on `resource`, with the JSON
+/// `body` if there is one. Prints its answer, as it is with `json` and
+/// otherwise as `render` gives it of what reads as `what`.
+async fn act<T: serde::de::DeserializeOwned>(
+    config: &Config,
+    method: hyper::Method,
+    resource: &str,
+    body: Option<&impl serde::Serialize>,
+    what: &str,
+    json: bool,
+    render: impl Fn(&T) -> String,
+) -> u8 {
+    let repo = match config.required_repo() {
+        Ok(repo) => repo,
+        Err(e) => return print_answer(Err(failed(&e))),
+    };
+    let asked = api::act_answer(&socket_dir(), &repo.to_string(), method, resource, body).await;
+    let answered = match asked {
+        Ok(answered) => answered,
+        Err(e) => return print_answer(Err(refused(&e))),
+    };
+    if json {
+        return print_answer(Ok(format!("{}\n", String::from_utf8_lossy(&answered))));
+    }
+    print_answer(read_as::<T>(&answered, what).map(|read| render(&read)))
+}
+
+const NO_BODY: Option<&()> = None;
+
+fn render_captured(captured: &api::Captured) -> String {
+    format!(
+        "Captured {} as the task {} ({}) in the benchmark {} ({}), in {}\n",
+        captured.run,
+        captured.task,
+        captured.name,
+        captured.benchmark.id,
+        captured.benchmark.name,
+        captured.dir.display(),
+    )
+}
+
+fn render_made(benchmark: &Benchmark) -> String {
+    format!(
+        "Made the benchmark {} ({}), of {}\n",
+        benchmark.id, benchmark.name, benchmark.stage
+    )
+}
+
+fn render_renamed(renamed: &api::Renamed) -> String {
+    format!("Renamed the benchmark {} to {}\n", renamed.id, renamed.name)
+}
+
+fn render_edited(edited: &api::Edited) -> String {
+    format!(
+        "Changed the task {} of the benchmark {}\n",
+        edited.task, edited.benchmark
+    )
+}
+
+fn render_removed(removed: &api::Removed) -> String {
+    format!(
+        "Removed the task {} ({}) from the benchmark {}\n",
+        removed.task, removed.name, removed.benchmark
+    )
+}
+
+fn render_launched(launched: &api::LaunchedAnswer) -> String {
+    format!(
+        "Launched benchmark run {} on the benchmark {} ({}): {} trials\n",
+        launched.id, launched.benchmark, launched.benchmark_name, launched.trials
+    )
+}
+
+fn render_renamed_configuration(renamed: &api::RenamedConfiguration) -> String {
+    format!(
+        "Renamed the configuration {} of benchmark run {} to {}\n",
+        renamed.configuration, renamed.id, renamed.name
+    )
+}
+
+fn render_cancelled(cancelled: &api::CancelledAnswer) -> String {
+    format!("Cancelled benchmark run {}\n", cancelled.id)
+}
+
+/// Asks `serve` to capture run `run` as the task `name` of the benchmark
+/// `benchmark`, with the criteria in the file `criteria`, refusing criteria
+/// that do not read or hold only white space before asking.
+async fn capture(
+    config: &Config,
+    run: RunId,
+    benchmark: BenchmarkId,
+    name: Name,
+    criteria: &Path,
+    json: bool,
+) -> u8 {
+    let criteria = match read_criteria(criteria) {
+        Ok(criteria) => criteria,
+        Err(refused) => return print_answer(Err(refused)),
+    };
+    let asked = api::CaptureAsked {
+        run,
+        benchmark,
+        name,
+        criteria,
+    };
+    act(
+        config,
+        hyper::Method::POST,
+        "/api/tasks",
+        Some(&asked),
+        "a captured task",
+        json,
+        render_captured,
+    )
+    .await
+}
+
+async fn make_benchmark(config: &Config, name: Name, stage: TaskStage, json: bool) -> u8 {
+    let asked = api::BenchmarkAsked { name, stage };
+    act(
+        config,
+        hyper::Method::POST,
+        "/api/benchmarks",
+        Some(&asked),
+        "a benchmark",
+        json,
+        render_made,
+    )
+    .await
+}
+
+async fn rename_benchmark(config: &Config, id: BenchmarkId, name: Name, json: bool) -> u8 {
+    let resource = format!("/api/benchmarks/{id}");
+    let asked = api::RenameAsked { name };
+    act(
+        config,
+        hyper::Method::PATCH,
+        &resource,
+        Some(&asked),
+        "a renamed benchmark",
+        json,
+        render_renamed,
+    )
+    .await
+}
+
+/// Asks `serve` to change the task `task` of the benchmark `benchmark` to the
+/// name `name` and the criteria in the file `criteria`, failing on a file
+/// that does not read and refusing criteria that hold only white space
+/// before asking.
+async fn edit_task(
+    config: &Config,
+    benchmark: BenchmarkId,
+    task: TaskId,
+    name: Option<Name>,
+    criteria: Option<&Path>,
+    json: bool,
+) -> u8 {
+    let criteria = match criteria.map(read_criteria).transpose() {
+        Ok(criteria) => criteria,
+        Err(refused) => return print_answer(Err(refused)),
+    };
+    let resource = format!("/api/benchmarks/{benchmark}/tasks/{task}");
+    let asked = api::TaskChangeAsked { name, criteria };
+    act(
+        config,
+        hyper::Method::PATCH,
+        &resource,
+        Some(&asked),
+        "a changed task",
+        json,
+        render_edited,
+    )
+    .await
+}
+
+/// The criteria in the file `file`, failing on a file that does not read
+/// and refusing one that holds only white space.
+fn read_criteria(file: &Path) -> Result<Criteria, (u8, String)> {
+    let criteria = std::fs::read_to_string(file)
+        .map_err(|e| failed(&anyhow::Error::from(e).context("reading the criteria")))?;
+    Criteria::parse(&criteria).ok_or_else(|| (FAILURE, CRITERIA_REQUIRED.to_string()))
+}
+
+async fn remove_task(config: &Config, benchmark: BenchmarkId, task: TaskId, json: bool) -> u8 {
+    let resource = format!("/api/benchmarks/{benchmark}/tasks/{task}");
+    act(
+        config,
+        hyper::Method::DELETE,
+        &resource,
+        NO_BODY,
+        "a removed task",
+        json,
+        render_removed,
+    )
+    .await
+}
+
+/// Asks `serve` to launch a benchmark run on the benchmark `benchmark` under
+/// `as-is` and the configurations in the directories `configurations`, a
+/// relative one taken from the current directory.
+async fn launch_benchmark_run(
+    config: &Config,
+    benchmark: BenchmarkId,
+    configurations: Vec<(Name, PathBuf)>,
+    repetitions: Repetitions,
+    json: bool,
+) -> u8 {
+    let mut asked = Vec::with_capacity(configurations.len());
+    for (name, dir) in configurations {
+        match api::AbsolutePath::of(&dir) {
+            Ok(dir) => asked.push(api::ConfigurationAsked { name, dir }),
+            Err(e) => {
+                let e = anyhow::Error::from(e).context(format!("reading {}", dir.display()));
+                return print_answer(Err(failed(&e)));
+            }
+        }
+    }
+    let asked = api::LaunchAsked {
+        benchmark,
+        configurations: asked,
+        repetitions,
+    };
+    act(
+        config,
+        hyper::Method::POST,
+        "/api/benchmark-runs",
+        Some(&asked),
+        "a launched benchmark run",
+        json,
+        render_launched,
+    )
+    .await
 }
 
 async fn rename_configuration(
     config: &Config,
     id: BenchmarkRunId,
     configuration: ConfigurationId,
-    name: &Name,
+    name: Name,
     json: bool,
 ) -> u8 {
-    let benchmark_runs = match existing_benchmark_runs(config).await {
-        Ok(Some(benchmark_runs)) => benchmark_runs,
-        Ok(None) => return print_answer(Err(no_such_benchmark_run(id))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    print_answer(
-        benchmark_runs
-            .rename_configuration(id, configuration, name)
-            .await
-            .map(|()| {
-                let renamed = RenamedConfiguration {
-                    id,
-                    configuration,
-                    name,
-                };
-                answer_text(&renamed, json, |renamed| {
-                    format!(
-                        "Renamed the configuration {} of benchmark run {} to {}\n",
-                        renamed.configuration, renamed.id, renamed.name
-                    )
-                })
-            })
-            .map_err(|e| match e {
-                RenameConfigurationError::NoSuchBenchmarkRun(_) => no_such_benchmark_run(id),
-                RenameConfigurationError::NoSuchConfiguration { .. } => {
-                    refused(&RequestError::NotFound(e.to_string()))
-                }
-                RenameConfigurationError::AsIs | RenameConfigurationError::Taken(_) => {
-                    (FAILURE, e.to_string())
-                }
-                RenameConfigurationError::Failed(e) => failed(&e),
-            }),
+    let resource = format!("/api/benchmark-runs/{id}/configurations/{configuration}");
+    let asked = api::RenameAsked { name };
+    act(
+        config,
+        hyper::Method::PATCH,
+        &resource,
+        Some(&asked),
+        "a renamed configuration",
+        json,
+        render_renamed_configuration,
     )
-}
-
-/// What `benchmark-run cancel` answers.
-#[derive(serde::Serialize)]
-struct Cancelled {
-    id: BenchmarkRunId,
+    .await
 }
 
 async fn cancel_benchmark_run(config: &Config, id: BenchmarkRunId, json: bool) -> u8 {
-    let benchmark_runs = match existing_benchmark_runs(config).await {
-        Ok(Some(benchmark_runs)) => benchmark_runs,
-        Ok(None) => return print_answer(Err(no_such_benchmark_run(id))),
-        Err(e) => return print_answer(Err(failed(&e))),
-    };
-    let cancelling = benchmark_runs.cancel(id, SystemClock.now()).await;
-    if cancelling.is_ok() {
-        nudge_serve(config).await;
-    }
-    print_answer(
-        cancelling
-            .map(|()| {
-                answer_text(&Cancelled { id }, json, |cancelled| {
-                    format!("Cancelled benchmark run {}\n", cancelled.id)
-                })
-            })
-            .map_err(|e| match e {
-                CancelRefusal::NoSuchBenchmarkRun(_) => no_such_benchmark_run(id),
-                CancelRefusal::NotOpen { .. } => (FAILURE, e.to_string()),
-                CancelRefusal::Failed(e) => failed(&e),
-            }),
+    let resource = format!("/api/benchmark-runs/{id}/cancel");
+    act(
+        config,
+        hyper::Method::POST,
+        &resource,
+        NO_BODY,
+        "a cancelled benchmark run",
+        json,
+        render_cancelled,
     )
-}
-
-/// What `capture` is asked to capture.
-struct Capture {
-    id: RunId,
-    name: Name,
-    benchmark: BenchmarkId,
-    /// The file that holds the criteria.
-    criteria: PathBuf,
-}
-
-/// What `capture` answers.
-#[derive(serde::Serialize)]
-struct Captured<'a> {
-    run: &'a RunId,
-    task: TaskId,
-    name: &'a Name,
-    benchmark: &'a Benchmark,
-    dir: &'a Path,
-}
-
-impl Capture {
-    /// Captures run `id` as the task `name` of the benchmark `benchmark`, with
-    /// the criteria in the file `criteria`, refusing before connecting to
-    /// GitHub what it can.
-    async fn run(&self, lw: Lw<'_>, config: &Config, json: bool) -> u8 {
-        let Capture {
-            id,
-            name,
-            benchmark,
-            criteria,
-        } = self;
-        let refusal = |e: CaptureError| match e.refusal() {
-            Refusal::NoSuch => refused(&RequestError::NotFound(e.why())),
-            Refusal::Refused | Refusal::Failed => (FAILURE, e.why()),
-        };
-        let work_dir = match config.repo_work_dir() {
-            Ok(work_dir) => work_dir.resolve(),
-            Err(e) => return print_answer(Err(failed(&e))),
-        };
-        let runs = match existing_runs(&work_dir).await {
-            Ok(Some(runs)) => runs,
-            Ok(None) => return print_answer(Err(refusal(CaptureError::NoSuchRun(id.clone())))),
-            Err(e) => return print_answer(Err(failed(&e))),
-        };
-        let benchmarks = Benchmarks::new(runs.database().clone());
-        let choice = BenchmarkChoice::Existing(*benchmark);
-        let capturable = match task::capturable(&runs, &benchmarks, id, name, &choice).await {
-            Ok(capturable) => capturable,
-            Err(e) => return print_answer(Err(refusal(e))),
-        };
-        let criteria = match read_criteria(criteria) {
-            Ok(criteria) => criteria,
-            Err(refused) => return print_answer(Err(refused)),
-        };
-        let github = match token() {
-            Ok(token) => lw.connect(config, token).await,
-            Err(e) => Err(e),
-        };
-        let github = match github {
-            Ok(github) => github,
-            Err(e) => return print_answer(Err(failed(&e))),
-        };
-        print_answer(
-            task::capture(&*github, capturable, &criteria, &benchmarks)
-                .await
-                .map(|kept| {
-                    let captured = Captured {
-                        run: id,
-                        task: kept.id,
-                        name,
-                        benchmark: &kept.benchmark,
-                        dir: &kept.dir,
-                    };
-                    answer_text(&captured, json, |captured| {
-                        format!(
-                            "Captured {} as the task {} ({}) in the benchmark {} ({}), in {}\n",
-                            captured.run,
-                            captured.task,
-                            captured.name,
-                            captured.benchmark.id,
-                            captured.benchmark.name,
-                            captured.dir.display(),
-                        )
-                    })
-                })
-                .map_err(refusal),
-        )
-    }
+    .await
 }
 
 /// Runs the task in the directory `task` into the output `out`, with

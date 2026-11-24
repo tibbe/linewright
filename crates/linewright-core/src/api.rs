@@ -13,7 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use futures_util::StreamExt as _;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::{BodyExt, Full};
 use hyper_util::rt::TokioIo;
 use sha2::Digest;
 use tokio::net::{UnixListener, UnixStream};
@@ -47,6 +47,14 @@ use crate::transcript::{self, After, FollowedLine, Made, ReadTo};
 use crate::webhook::Tally;
 use crate::winding_up::Remaining;
 use crate::work_settings::Partial;
+
+mod acting;
+
+pub use acting::{
+    AbsolutePath, BenchmarkAsked, CancelledAnswer, CaptureAsked, Captured, ConfigurationAsked,
+    Edited, LaunchAsked, LaunchedAnswer, Removed, RenameAsked, Renamed, RenamedConfiguration,
+    TaskChangeAsked, no_such_benchmark, no_such_benchmark_run,
+};
 
 pub fn socket_dir(runtime_dir: Option<PathBuf>, temp_dir: &Path, uid: u32) -> PathBuf {
     match runtime_dir.filter(|dir| !dir.as_os_str().is_empty()) {
@@ -520,11 +528,11 @@ pub fn router(sources: Sources, stopping: CancellationToken) -> Router {
         .route("/environment/rebuild", post(take_rebuild))
         .route("/environment/rebuild/{build}", get(answer_rebuild))
         .route("/automations/{name}/run", post(take_run_by_hand))
-        .route("/benchmark-runs/changed", post(take_benchmark_runs_changed))
         .route("/benchmark-runs/{id}", get(answer_benchmark_run))
         .route("/drain", post(take_drain))
         .route("/stop", get(answer_stop))
-        .route("/exiting", get(answer_exiting));
+        .route("/exiting", get(answer_exiting))
+        .merge(acting::routes());
     Router::new()
         .nest("/api", api)
         .fallback(no_such_resource)
@@ -810,20 +818,13 @@ async fn answer_rebuild(
     }
 }
 
-/// Tells `serve` that a benchmark run changed, such as one launched or
-/// cancelled, so that it acts on it before its next poll.
-async fn take_benchmark_runs_changed(State(sources): State<Sources>) -> Response {
-    sources.benchmark_runs.changed();
-    json_response(StatusCode::OK, &serde_json::json!({}))
-}
-
 /// How the benchmark run `id` shows: as `serve` shows it while it is open.
 async fn answer_benchmark_run(
     State(sources): State<Sources>,
     Resource(id): Resource<String>,
 ) -> Response {
     let Ok(id) = id.parse::<BenchmarkRunId>() else {
-        return no_such_benchmark_run(&id);
+        return no_such_benchmark_run_answer(&id);
     };
     let benchmark_runs = BenchmarkRuns::new(sources.runs.database().clone());
     match benchmark_runs.show(id).await {
@@ -836,7 +837,7 @@ async fn answer_benchmark_run(
                 .cloned();
             json_response(StatusCode::OK, &Shown::of(record.state, served))
         }
-        Ok(None) => no_such_benchmark_run(&id),
+        Ok(None) => no_such_benchmark_run_answer(&id),
         Err(e) => {
             error!(error = format!("{e:#}"), "reading a benchmark run failed");
             error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{e:#}"))
@@ -844,11 +845,8 @@ async fn answer_benchmark_run(
     }
 }
 
-fn no_such_benchmark_run(id: &impl std::fmt::Display) -> Response {
-    error_response(
-        StatusCode::NOT_FOUND,
-        &format!("there is no benchmark run {id}"),
-    )
+fn no_such_benchmark_run_answer(id: &impl std::fmt::Display) -> Response {
+    error_response(StatusCode::NOT_FOUND, &no_such_benchmark_run(id))
 }
 
 async fn take_drain(State(sources): State<Sources>, Query(asked): Query<Asked>) -> Response {
@@ -1290,6 +1288,9 @@ pub enum RequestError {
     NotServing { repo: String, path: String },
     #[error("{0}")]
     NotFound(String),
+    /// `serve` refused to act, saying why.
+    #[error("{0}")]
+    Refused(String),
     #[error(transparent)]
     HungUp(anyhow::Error),
     #[error(transparent)]
@@ -1303,7 +1304,7 @@ impl RequestError {
         match self {
             RequestError::NotServing { .. } => 3,
             RequestError::NotFound(_) => 4,
-            RequestError::HungUp(_) | RequestError::Other(_) => 1,
+            RequestError::Refused(_) | RequestError::HungUp(_) | RequestError::Other(_) => 1,
         }
     }
 
@@ -1345,6 +1346,25 @@ pub async fn post_answer(dir: &Path, repo: &str, resource: &str) -> Result<Bytes
     ask(dir, repo, hyper::Method::POST, resource).await
 }
 
+/// The answer to `method` on `resource` with the JSON `body`, asking `serve`
+/// to change something. Not asked again on a hang-up, unlike
+/// [`get_answer`]: the change may have been made, its answer lost.
+///
+/// # Panics
+///
+/// When `body` does not serialize to JSON.
+pub async fn act_answer(
+    dir: &Path,
+    repo: &str,
+    method: hyper::Method,
+    resource: &str,
+    body: Option<&impl serde::Serialize>,
+) -> Result<Bytes, RequestError> {
+    let body = body.map(|body| serde_json::to_vec(body).expect("a request serializes"));
+    let response = send(connect(dir, repo).await?, method, resource, None, body).await?;
+    answer_of(response).await
+}
+
 /// Not asked again on a hang-up, unlike [`get_answer`], for an answer that
 /// waits until `serve` stops answering.
 pub async fn get_answer_once(
@@ -1375,7 +1395,14 @@ async fn ask(
     method: hyper::Method,
     resource: &str,
 ) -> Result<Bytes, RequestError> {
-    let response = send(connect(dir, repo).await?, method, resource, None).await?;
+    let response = send(connect(dir, repo).await?, method, resource, None, None).await?;
+    answer_of(response).await
+}
+
+/// The body of `response`, or what it says went wrong.
+async fn answer_of(
+    response: hyper::Response<hyper::body::Incoming>,
+) -> Result<Bytes, RequestError> {
     let status = response.status();
     let body = response
         .into_body()
@@ -1408,6 +1435,7 @@ pub async fn get_events(
         hyper::Method::GET,
         resource,
         last_id,
+        None,
     )
     .await?;
     let status = response.status();
@@ -1503,6 +1531,7 @@ async fn send(
     method: hyper::Method,
     resource: &str,
     last_id: Option<&str>,
+    json_body: Option<Vec<u8>>,
 ) -> Result<hyper::Response<hyper::body::Incoming>, RequestError> {
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
@@ -1515,8 +1544,11 @@ async fn send(
     if let Some(id) = last_id {
         request = request.header(LAST_EVENT_ID, id);
     }
+    if json_body.is_some() {
+        request = request.header(header::CONTENT_TYPE, "application/json");
+    }
     let request = request
-        .body(Empty::<Bytes>::new())
+        .body(Full::new(Bytes::from(json_body.unwrap_or_default())))
         .context("building the request")?;
     // A request sent as the connection fails can be left unanswered, so
     // the connection ending is a hang-up too:
@@ -1566,7 +1598,8 @@ fn hung_up(e: &std::io::Error) -> bool {
 }
 
 /// What `serve`'s answer `body` with `status` says went wrong, if anything:
-/// [`RequestError::NotFound`] only for an item or run it names as missing.
+/// [`RequestError::NotFound`] only for what it names as missing, and
+/// [`RequestError::Refused`] for a change it refused.
 pub fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
     let answer = serde_json::from_slice::<ErrorAnswer>(body);
     if let Ok(ErrorAnswer {
@@ -1575,6 +1608,11 @@ pub fn check(status: StatusCode, body: &Bytes) -> Result<(), RequestError> {
     }) = answer
     {
         return Err(RequestError::NotFound(error));
+    }
+    if status == StatusCode::CONFLICT
+        && let Ok(ErrorAnswer { error, .. }) = answer
+    {
+        return Err(RequestError::Refused(error));
     }
     if !status.is_success() {
         let message = match answer {
@@ -1601,4 +1639,9 @@ struct ErrorAnswer {
 pub enum Missing {
     Item,
     Run,
+    Benchmark,
+    Task,
+    BenchmarkRun,
+    /// A configuration of a benchmark run.
+    Configuration,
 }

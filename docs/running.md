@@ -361,8 +361,9 @@ leaks and its trials without a score, with the scorers' cost apart.
 first, `lw benchmark-run rename-configuration ID CONFIGURATION NAME` changes
 the name of a configuration, other than `as-is`, by its ID, and
 `lw benchmark-run cancel ID` cancels one, stopping its trials and scorers in
-flight. The commands work whether `serve` is running or not, and exit 4 for a
-benchmark or a benchmark run that does not exist.
+flight. The commands that only show something work whether `serve` is
+running or not; the others ask `serve`, and exit 3 when it is not running. They
+exit 4 for a benchmark or a benchmark run that does not exist.
 
 The web UI does the same from a benchmark's page: it lists the benchmark's
 benchmark runs and launches one, with `as-is` first and each other

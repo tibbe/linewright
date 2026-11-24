@@ -17,7 +17,7 @@ use crate::benchmarks::{
 };
 use crate::name::Name;
 use crate::task::TaskStage;
-use crate::trial::Configuration;
+use crate::trial::{Configuration, ConfigurationRefusal};
 
 /// The refusal of a benchmark named as one that exists
 /// (`docs/specs/benchmarks.md`, New benchmark, Refusals).
@@ -74,7 +74,7 @@ pub async fn benchmarks_of_stage(
 /// Benchmark `id`, with its tasks and its benchmark runs, `None` where
 /// there is no such benchmark.
 pub async fn benchmark_shown(
-    _: &Permit<Read>,
+    _: &Permit<Read, impl Holder>,
     sources: &Sources,
     id: BenchmarkId,
 ) -> Result<Option<BenchmarkShown>> {
@@ -249,6 +249,58 @@ pub async fn run_benchmark(
     };
     logged(permit.holder(), Action::RunBenchmark, &changed, how);
     launched
+}
+
+/// Why a benchmark run on configurations in directories was not launched.
+#[derive(Debug, thiserror::Error)]
+pub enum LaunchOfDirsRefusal {
+    #[error(transparent)]
+    Configuration(#[from] ConfigurationRefusal),
+    #[error(transparent)]
+    Launch(#[from] LaunchRefusal),
+}
+
+/// Launches a benchmark run on benchmark `benchmark` with the
+/// configurations in the directories `dirs`, each read as
+/// [`Configuration::read`] reads it, and `repetitions`, as
+/// [`run_benchmark`] does, giving the benchmark with what was launched.
+///
+/// # Errors
+///
+/// When there is no such benchmark, then when a configuration cannot be
+/// used, before anything is written; and as [`run_benchmark`].
+pub async fn run_benchmark_of_dirs(
+    permit: &Permit<Act, impl Holder>,
+    sources: &Sources,
+    benchmark: BenchmarkId,
+    dirs: Vec<(Name, PathBuf)>,
+    repetitions: Repetitions,
+) -> Result<(Benchmark, Launched), LaunchOfDirsRefusal> {
+    let refused = |refusal: LaunchOfDirsRefusal| {
+        let changed = format!("a benchmark run on benchmark {benchmark}");
+        let how = match &refusal {
+            LaunchOfDirsRefusal::Launch(LaunchRefusal::Failed(e)) => Ended::Failed(e),
+            refusal @ (LaunchOfDirsRefusal::Configuration(_) | LaunchOfDirsRefusal::Launch(_)) => {
+                Ended::Refused(refusal)
+            }
+        };
+        logged(permit.holder(), Action::RunBenchmark, &changed, how);
+        refusal
+    };
+    let found = match benchmarks(sources).find(benchmark).await {
+        Ok(Some(found)) => found,
+        Ok(None) => return Err(refused(LaunchRefusal::NoSuchBenchmark(benchmark).into())),
+        Err(e) => return Err(refused(LaunchRefusal::Failed(e).into())),
+    };
+    let mut configurations = Vec::with_capacity(dirs.len());
+    for (name, dir) in dirs {
+        match Configuration::read(&dir) {
+            Ok(configuration) => configurations.push((name, configuration)),
+            Err(e) => return Err(refused(e.into())),
+        }
+    }
+    let launched = run_benchmark(permit, sources, benchmark, configurations, repetitions).await?;
+    Ok((found, launched))
 }
 
 /// Renames configuration `configuration` of benchmark run `id` to `name`

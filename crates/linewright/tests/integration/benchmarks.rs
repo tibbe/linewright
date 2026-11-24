@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use linewright_core::testing::*;
 use serde_json::json;
 
+use crate::fake_serve::FakeServe;
 use crate::programs::*;
 
 /// The work directory of `REPO` under `work_dir`, its database made.
@@ -49,29 +50,33 @@ async fn lw_benchmarks_with_no_database_lists_none() {
     assert_eq!(output.stdout, "benchmarks: none\n");
 }
 
+/// `docs/specs/operation.md`, Commands, `serve` does the work.
 #[test_log::test(tokio::test)]
-async fn lw_benchmark_add_makes_a_benchmark_of_its_stage() {
+async fn lw_benchmark_add_asks_serve_which_makes_a_benchmark_of_its_stage() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
 
-    let output = lw_in(work_dir.path(), &["benchmark", "add", "board", "design"]).await;
+    let output = serve.lw(&["benchmark", "add", "board", "design"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(output.stdout, "Made the benchmark 1 (board), of design\n");
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(listed.stdout, "1 (board): design, no tasks\n");
+    serve.stop().await;
 }
 
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_add_of_a_name_a_benchmark_has_exits_1_saying_why() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
 
-    let output = lw_in(work_dir.path(), &["benchmark", "add", "board", "design"]).await;
+    let output = serve.lw(&["benchmark", "add", "board", "design"]).await;
 
     assert_eq!(output.code, Some(1), "{}", output.stderr);
     assert_eq!(output.stderr, "lw: a benchmark is already named board\n");
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(listed.stdout, "1 (board): implement, no tasks\n");
 }
 
@@ -106,16 +111,17 @@ async fn lw_benchmark_add_of_a_stage_no_task_has_or_no_name_is_a_command_line_er
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_add_tells_names_of_other_letter_case_apart() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
 
-    let upper = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
-    let lower = lw_in(work_dir.path(), &["benchmark", "add", "board", "triage"]).await;
-    let again = lw_in(work_dir.path(), &["benchmark", "add", "Board", "triage"]).await;
+    let upper = serve.lw(&["benchmark", "add", "Board", "triage"]).await;
+    let lower = serve.lw(&["benchmark", "add", "board", "triage"]).await;
+    let again = serve.lw(&["benchmark", "add", "Board", "triage"]).await;
 
     assert_eq!(upper.code, Some(0), "{}", upper.stderr);
     assert_eq!(lower.code, Some(0), "{}", lower.stderr);
     assert_eq!(again.code, Some(1), "{}", again.stderr);
     assert_eq!(again.stderr, "lw: a benchmark is already named Board\n");
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
         "2 (board): triage, no tasks\n\
@@ -253,19 +259,20 @@ async fn lw_benchmark_show_of_a_benchmark_that_does_not_exist_exits_4() {
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_remove_task_removes_the_task_and_its_directory() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_task(&repo, "board", "columns", "3/implement-2", "Names them.\n").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
 
-    let output = lw_in(work_dir.path(), &["benchmark", "remove-task", "1", "2"]).await;
+    let output = serve.lw(&["benchmark", "remove-task", "1", "2"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
     assert_eq!(
         output.stdout,
         "Removed the task 2 (lanes) from the benchmark 1\n"
     );
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(listed.stdout, "1 (board): implement, 1 task\n");
     let left: Vec<String> = std::fs::read_dir(repo.join("tasks"))
         .unwrap()
@@ -277,14 +284,15 @@ async fn lw_benchmark_remove_task_removes_the_task_and_its_directory() {
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exits_4() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_benchmark(&repo, "designs", "design").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
 
-    let no_benchmark = lw_in(work_dir.path(), &["benchmark", "remove-task", "3", "1"]).await;
-    let no_task = lw_in(work_dir.path(), &["benchmark", "remove-task", "1", "2"]).await;
-    let other_benchmark = lw_in(work_dir.path(), &["benchmark", "remove-task", "2", "1"]).await;
+    let no_benchmark = serve.lw(&["benchmark", "remove-task", "3", "1"]).await;
+    let no_task = serve.lw(&["benchmark", "remove-task", "1", "2"]).await;
+    let other_benchmark = serve.lw(&["benchmark", "remove-task", "2", "1"]).await;
 
     assert_eq!(no_benchmark.code, Some(4), "{}", no_benchmark.stderr);
     assert_eq!(no_benchmark.stderr, "lw: there is no benchmark 3\n");
@@ -296,7 +304,7 @@ async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exi
         "lw: the benchmark 2 has no task 1\n"
     );
     assert!(repo.join("tasks").join("1").join("criteria.md").exists());
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
         "1 (board): implement, 1 task\n2 (designs): design, no tasks\n"
@@ -306,20 +314,17 @@ async fn lw_benchmark_remove_task_of_a_benchmark_or_task_that_does_not_exist_exi
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_add_and_remove_task_answer_in_json() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
 
-    let added = lw_in(
-        work_dir.path(),
-        &["benchmark", "add", "designs", "design", "--json"],
-    )
-    .await;
-    let removed = lw_in(
-        work_dir.path(),
-        &["benchmark", "remove-task", "1", "1", "--json"],
-    )
-    .await;
+    let added = serve
+        .lw(&["benchmark", "add", "designs", "design", "--json"])
+        .await;
+    let removed = serve
+        .lw(&["benchmark", "remove-task", "1", "1", "--json"])
+        .await;
 
     assert_eq!(added.code, Some(0), "{}", added.stderr);
     assert_eq!(
@@ -336,14 +341,15 @@ async fn lw_benchmark_add_and_remove_task_answer_in_json() {
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_remove_task_removes_a_task_whose_directory_is_gone() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_task_row(&repo, "board", "lanes", "4/implement-1").await;
 
-    let output = lw_in(work_dir.path(), &["benchmark", "remove-task", "1", "1"]).await;
+    let output = serve.lw(&["benchmark", "remove-task", "1", "1"]).await;
 
     assert_eq!(output.code, Some(0), "{}", output.stderr);
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(listed.stdout, "1 (board): implement, no tasks\n");
 }
 
@@ -351,27 +357,18 @@ async fn lw_benchmark_remove_task_removes_a_task_whose_directory_is_gone() {
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_rename_changes_a_benchmarks_name_refusing_one_another_benchmark_has() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_benchmark(&repo, "designs", "design").await;
 
-    let renamed = lw_in(
-        work_dir.path(),
-        &["benchmark", "rename", "1", "  Board games  "],
-    )
-    .await;
-    let taken = lw_in(
-        work_dir.path(),
-        &["benchmark", "rename", "2", "Board games"],
-    )
-    .await;
-    let same = lw_in(
-        work_dir.path(),
-        &["benchmark", "rename", "1", "Board games"],
-    )
-    .await;
-    let missing = lw_in(work_dir.path(), &["benchmark", "rename", "3", "Cards"]).await;
-    let blank = lw_in(work_dir.path(), &["benchmark", "rename", "1", " "]).await;
+    let renamed = serve
+        .lw(&["benchmark", "rename", "1", "  Board games  "])
+        .await;
+    let taken = serve.lw(&["benchmark", "rename", "2", "Board games"]).await;
+    let same = serve.lw(&["benchmark", "rename", "1", "Board games"]).await;
+    let missing = serve.lw(&["benchmark", "rename", "3", "Cards"]).await;
+    let blank = serve.lw(&["benchmark", "rename", "1", " "]).await;
 
     assert_eq!(renamed.code, Some(0), "{}", renamed.stderr);
     assert_eq!(renamed.stdout, "Renamed the benchmark 1 to Board games\n");
@@ -385,7 +382,7 @@ async fn lw_benchmark_rename_changes_a_benchmarks_name_refusing_one_another_benc
     assert_eq!(missing.code, Some(4), "{}", missing.stderr);
     assert_eq!(missing.stderr, "lw: there is no benchmark 3\n");
     assert_eq!(blank.code, Some(2), "{}", blank.stderr);
-    let listed = lw_in(work_dir.path(), &["benchmarks"]).await;
+    let listed = serve.lw(&["benchmarks"]).await;
     assert_eq!(
         listed.stdout,
         "1 (Board games): implement, no tasks\n2 (designs): design, no tasks\n"
@@ -396,6 +393,7 @@ async fn lw_benchmark_rename_changes_a_benchmarks_name_refusing_one_another_benc
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_edit_task_changes_a_tasks_name_its_criteria_or_both() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_task(&repo, "board", "lanes", "4/implement-1", "Stacks them.\n").await;
@@ -406,33 +404,28 @@ async fn lw_benchmark_edit_task_changes_a_tasks_name_its_criteria_or_both() {
     let sorts = files.path().join("sorts.md");
     std::fs::write(&sorts, "Sorts them.\n").unwrap();
 
-    let named = lw_in(
-        work_dir.path(),
-        &[
+    let named = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
             "1",
             "--name",
             "Stack the lanes",
-        ],
-    )
-    .await;
-    let criteria = lw_in(
-        work_dir.path(),
-        &[
+        ])
+        .await;
+    let criteria = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
             "2",
             "--criteria",
             hides.to_str().unwrap(),
-        ],
-    )
-    .await;
-    let both = lw_in(
-        work_dir.path(),
-        &[
+        ])
+        .await;
+    let both = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
@@ -442,9 +435,8 @@ async fn lw_benchmark_edit_task_changes_a_tasks_name_its_criteria_or_both() {
             "--criteria",
             sorts.to_str().unwrap(),
             "--json",
-        ],
-    )
-    .await;
+        ])
+        .await;
 
     assert_eq!(named.code, Some(0), "{}", named.stderr);
     assert_eq!(named.stdout, "Changed the task 1 of the benchmark 1\n");
@@ -454,7 +446,7 @@ async fn lw_benchmark_edit_task_changes_a_tasks_name_its_criteria_or_both() {
         serde_json::from_str::<serde_json::Value>(&both.stdout).unwrap(),
         json!({"benchmark": 1, "task": 1})
     );
-    let shown = lw_in(work_dir.path(), &["benchmark", "show", "1"]).await;
+    let shown = serve.lw(&["benchmark", "show", "1"]).await;
     assert_eq!(
         shown.stdout,
         "benchmark: 1 (board)\nstage: implement\n\
@@ -468,6 +460,7 @@ async fn lw_benchmark_edit_task_changes_a_tasks_name_its_criteria_or_both() {
 #[test_log::test(tokio::test)]
 async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteria() {
     let work_dir = tempfile::tempdir().unwrap();
+    let serve = FakeServe::over(work_dir.path()).await;
     let repo = made(work_dir.path()).await;
     keep_benchmark(&repo, "board", "implement").await;
     keep_benchmark(&repo, "designs", "design").await;
@@ -481,10 +474,9 @@ async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteri
     std::fs::write(&blank, " \n\t\n").unwrap();
     let missing_file = files.path().join("missing.md");
 
-    let neither = lw_in(work_dir.path(), &["benchmark", "edit-task", "1", "1"]).await;
-    let taken = lw_in(
-        work_dir.path(),
-        &[
+    let neither = serve.lw(&["benchmark", "edit-task", "1", "1"]).await;
+    let taken = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
@@ -493,12 +485,10 @@ async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteri
             "columns",
             "--criteria",
             hides,
-        ],
-    )
-    .await;
-    let white_space = lw_in(
-        work_dir.path(),
-        &[
+        ])
+        .await;
+    let white_space = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
@@ -507,12 +497,10 @@ async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteri
             "Stack the lanes",
             "--criteria",
             blank.to_str().unwrap(),
-        ],
-    )
-    .await;
-    let unread = lw_in(
-        work_dir.path(),
-        &[
+        ])
+        .await;
+    let unread = serve
+        .lw(&[
             "benchmark",
             "edit-task",
             "1",
@@ -521,24 +509,17 @@ async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteri
             "Stack the lanes",
             "--criteria",
             missing_file.to_str().unwrap(),
-        ],
-    )
-    .await;
-    let no_benchmark = lw_in(
-        work_dir.path(),
-        &["benchmark", "edit-task", "3", "1", "--name", "Lanes"],
-    )
-    .await;
-    let other_benchmark = lw_in(
-        work_dir.path(),
-        &["benchmark", "edit-task", "2", "1", "--name", "Lanes"],
-    )
-    .await;
-    let no_task = lw_in(
-        work_dir.path(),
-        &["benchmark", "edit-task", "1", "3", "--criteria", hides],
-    )
-    .await;
+        ])
+        .await;
+    let no_benchmark = serve
+        .lw(&["benchmark", "edit-task", "3", "1", "--name", "Lanes"])
+        .await;
+    let other_benchmark = serve
+        .lw(&["benchmark", "edit-task", "2", "1", "--name", "Lanes"])
+        .await;
+    let no_task = serve
+        .lw(&["benchmark", "edit-task", "1", "3", "--criteria", hides])
+        .await;
 
     assert_eq!(neither.code, Some(2), "{}", neither.stderr);
     assert_eq!(taken.code, Some(1), "{}", taken.stderr);
@@ -566,7 +547,7 @@ async fn lw_benchmark_edit_task_refused_changes_neither_the_name_nor_the_criteri
     );
     assert_eq!(no_task.code, Some(4), "{}", no_task.stderr);
     assert_eq!(no_task.stderr, "lw: the benchmark 1 has no task 3\n");
-    let shown = lw_in(work_dir.path(), &["benchmark", "show", "1"]).await;
+    let shown = serve.lw(&["benchmark", "show", "1"]).await;
     assert_eq!(
         shown.stdout,
         "benchmark: 1 (board)\nstage: implement\n\

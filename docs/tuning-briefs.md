@@ -31,8 +31,8 @@ Linewright gives each benchmark and each task an ID, a number, and the commands
 take that. `lw benchmark add` writes the benchmark's ID, here 1, and
 `lw capture` writes the task's.
 
-It works whether `serve` is running or not, with the token `serve` uses: the
-commits are fetched from GitHub. The task is written to a directory named for
+It asks `serve`, which must be running and have polled once: `serve` fetches
+the commits from GitHub. The task is written to a directory named for
 its ID, such as `tasks/7/`, under the work directory:
 
 ```text

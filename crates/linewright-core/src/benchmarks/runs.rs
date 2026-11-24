@@ -49,6 +49,17 @@ impl fmt::Display for BenchmarkRunId {
     }
 }
 
+/// A positive number, as it serializes.
+impl<'de> serde::Deserialize<'de> for BenchmarkRunId {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BenchmarkRunId, D::Error> {
+        let id = i64::deserialize(deserializer)?;
+        BenchmarkRunId::positive(id)
+            .ok_or_else(|| serde::de::Error::custom(format!("{id} is not a benchmark run's ID")))
+    }
+}
+
 impl BenchmarkRunId {
     fn positive(id: i64) -> Option<BenchmarkRunId> {
         (id > 0).then_some(BenchmarkRunId(id))
@@ -68,7 +79,17 @@ pub fn as_is_name() -> Name {
 /// A configuration's ID: its place in its benchmark run, from 1 for `as-is`
 /// (`docs/specs/benchmarks.md`, Names and IDs).
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(transparent)]
 pub struct ConfigurationId(NonZeroUsize);
