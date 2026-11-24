@@ -64,6 +64,13 @@ fn github_accounts() -> Vec<FakeGitHubAccount> {
             avatar_url: None,
             memberships: vec!["elsewhere".into()],
         },
+        FakeGitHubAccount {
+            id: 1_000_002,
+            login: "builder".into(),
+            name: Some("Bob the Builder".into()),
+            avatar_url: None,
+            memberships: vec!["guild/builders".into()],
+        },
     ]
 }
 
@@ -75,7 +82,8 @@ enum Offering {
 }
 
 /// The pages, signing people in with the fake Google, whose sign-up rule is
-/// `example.com`, and the fake GitHub, whose sign-up rule is `acme`, as
+/// `example.com`, and the fake GitHub, whose sign-up rule is `acme` and
+/// `guild/builders`, as
 /// `offering` offers them, with `manager` as the `manager` setting.
 pub(super) struct Signing {
     pub(super) pages: Pages,
@@ -107,7 +115,9 @@ fn signing_offering(
         let github_settings = GitHub {
             client_id: ClientId::new("github-id".into()).unwrap(),
             secret: ClientSecret::new("github-s3cret".into()).unwrap(),
-            signup: SignUpOrgs::of("acme").unwrap(),
+            signup: SignUpOrgs::of("acme")
+                .unwrap()
+                .and(&SignUpOrgs::of("guild/builders").unwrap()),
             endpoints: github.endpoints(),
         };
         let google_settings = Google {
@@ -555,6 +565,20 @@ async fn a_member_signs_in_with_github_by_their_login_and_its_token_is_revoked()
         Some(("outsider has no access to this Linewright.".into(), true))
     );
     assert_eq!(signing.github.tokens_not_revoked(), 0);
+}
+
+/// `docs/specs/access.md`, Signing in, A team's members: a member of a team
+/// the sign-up rule names signs in, read from the team's membership.
+#[test_log::test(tokio::test)]
+async fn a_member_of_a_team_the_rule_names_signs_in_with_github() {
+    let signing = signing(None).await;
+    let mut builder = Browsing::new(&signing);
+
+    let back = builder.sign_in_with_github("/runs", Some("builder")).await;
+
+    assert_eq!(back.status, 303, "{}", back.html.html());
+    let runs = builder.get("/runs").await;
+    assert_eq!(account(&runs.html).0, "Bob the Builder");
 }
 
 /// `docs/specs/access.md`, Signing in, 2a, at GitHub.

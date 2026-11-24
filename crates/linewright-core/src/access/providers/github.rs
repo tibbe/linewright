@@ -171,34 +171,42 @@ impl GitHub {
         }
     }
 
-    /// The person `token` is GitHub's token of, and their memberships while
-    /// the sign-up rule names any.
+    /// The person `token` is GitHub's token of, and, while the sign-up rule
+    /// names any, their organizations and the teams the rule names that they
+    /// are a member of, counting the members of child teams
+    /// (`docs/specs/access.md`, Signing in, A team's members).
     async fn read(&self, http: &reqwest::Client, token: &str) -> anyhow::Result<Claims> {
         let (user, _): (User, _) = self
             .get(http, token, self.api("user"))
             .await
             .context("reading the user")?;
-        let memberships = if self.signup.is_empty() {
-            vec![]
-        } else {
+        let mut memberships = vec![];
+        if !self.signup.is_empty() {
             let organizations: Vec<Organization> = self
                 .list(http, token, "user/orgs")
                 .await
                 .context("reading the user's organizations")?;
-            let teams: Vec<Team> = self
-                .list(http, token, "user/teams")
-                .await
-                .context("reading the user's teams")?;
-            organizations
-                .iter()
-                .map(|organization| MemberOf::organization(&organization.login))
-                .chain(
-                    teams
-                        .iter()
-                        .map(|team| MemberOf::team(&team.organization.login, &team.slug)),
-                )
-                .collect()
-        };
+            memberships.extend(
+                organizations
+                    .iter()
+                    .map(|organization| MemberOf::organization(&organization.login)),
+            );
+            for rule_team in self.signup.memberships() {
+                let (organization, Some(team)) = (rule_team.organization(), rule_team.team())
+                else {
+                    continue;
+                };
+                if self
+                    .is_active_member(http, token, organization, team, &user.login)
+                    .await
+                    .with_context(|| {
+                        format!("reading the user's membership of {organization}/{team}")
+                    })?
+                {
+                    memberships.push(MemberOf::team(organization, team));
+                }
+            }
+        }
         Ok(Claims {
             subject: user.id.to_string(),
             shown_as: user.login,
@@ -206,6 +214,27 @@ impl GitHub {
             avatar: https_avatar(user.avatar_url),
             vouched: Vouched::GitHub { memberships },
         })
+    }
+
+    /// Whether `login` is an active member of `organization`'s team `team`,
+    /// which GitHub answers counting the members of its child teams: not
+    /// when GitHub knows no such membership, or it is pending.
+    /// <https://docs.github.com/en/rest/teams/members#get-team-membership-for-a-user>
+    async fn is_active_member(
+        &self,
+        http: &reqwest::Client,
+        token: &str,
+        organization: &str,
+        team: &str,
+        login: &str,
+    ) -> anyhow::Result<bool> {
+        let mut url = self.endpoints.api.clone();
+        url.path_segments_mut()
+            .map_err(|()| anyhow::anyhow!("GitHub's API is no base URL"))?
+            .pop_if_empty()
+            .extend(["orgs", organization, "teams", team, "memberships", login]);
+        let found: Result<(TeamMembership, _), _> = self.get_found(http, token, url).await?;
+        Ok(found.is_ok_and(|(membership, _)| membership.state == TeamMembershipState::Active))
     }
 
     /// The URL of `path` in GitHub's API.
@@ -257,6 +286,18 @@ impl GitHub {
         token: &str,
         url: Url,
     ) -> anyhow::Result<(T, Option<String>)> {
+        let found = self.get_found(http, token, url.clone()).await?;
+        found.map_err(|body| anyhow::anyhow!("GitHub answered {url} with 404 Not Found: {body}"))
+    }
+
+    /// As [`GitHub::get`], but GitHub's answer to it as an `Err` where
+    /// GitHub answers 404 Not Found.
+    async fn get_found<T: DeserializeOwned>(
+        &self,
+        http: &reqwest::Client,
+        token: &str,
+        url: Url,
+    ) -> anyhow::Result<Result<(T, Option<String>), String>> {
         let response = api_request(http.get(url.clone()).bearer_auth(token))
             .send()
             .await
@@ -271,12 +312,15 @@ impl GitHub {
             .text()
             .await
             .with_context(|| format!("reading GitHub's answer for {url}"))?;
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(Err(body));
+        }
         if !status.is_success() {
             bail!("GitHub answered {url} with {status}: {body}");
         }
         let read = serde_json::from_str(&body)
             .with_context(|| format!("reading GitHub's answer for {url}"))?;
-        Ok((read, next))
+        Ok(Ok((read, next)))
     }
 
     /// Revokes `token`, so that nothing can use it after the sign-in.
@@ -347,12 +391,21 @@ struct Organization {
     login: String,
 }
 
-/// What Linewright reads of a team of `GET /user/teams`.
-/// <https://docs.github.com/en/rest/teams/teams#list-teams-for-the-authenticated-user>
+/// What Linewright reads of
+/// `GET /orgs/{org}/teams/{team_slug}/memberships/{username}`.
+/// <https://docs.github.com/en/rest/teams/members#get-team-membership-for-a-user>
 #[derive(Deserialize)]
-struct Team {
-    slug: String,
-    organization: Organization,
+struct TeamMembership {
+    state: TeamMembershipState,
+}
+
+/// A team membership's state: pending until the person accepts the
+/// organization's invitation.
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum TeamMembershipState {
+    Active,
+    Pending,
 }
 
 #[cfg(test)]
@@ -379,10 +432,23 @@ mod tests {
 
     /// The examples of GitHub's REST API description
     /// (<https://github.com/github/rest-api-description>) for `GET /user`,
-    /// `GET /user/orgs` and `GET /user/teams`.
+    /// `GET /user/orgs` and
+    /// `GET /orgs/{org}/teams/{team_slug}/memberships/{username}`, active
+    /// and pending.
     const USER: &str = include_str!("fixtures/github-user.json");
     const ORGS: &str = include_str!("fixtures/github-user-orgs.json");
-    const TEAMS: &str = include_str!("fixtures/github-user-teams.json");
+    const MEMBERSHIP: &str = include_str!("fixtures/github-team-membership.json");
+    const PENDING: &str = include_str!("fixtures/github-team-membership-pending.json");
+
+    /// GitHub's answer to what it does not have, or does not show:
+    /// <https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api#404-not-found-for-an-existing-resource>
+    const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}"#;
+
+    /// The membership of `octocat` in `github`'s team `justice-league`.
+    const JUSTICE_LEAGUE: &str = "/api/orgs/github/teams/justice-league/memberships/octocat";
+
+    /// The membership of `octocat` in `acme`'s team `engineering`.
+    const ENGINEERING: &str = "/api/orgs/acme/teams/engineering/memberships/octocat";
 
     /// A request the fake was sent: its method, its path and query, its
     /// `Authorization` and its body.
@@ -444,11 +510,11 @@ mod tests {
             ("POST", "/login/oauth/access_token") => TOKEN,
             ("GET", "/api/user") => USER,
             ("GET", "/api/user/orgs") => ORGS,
-            ("GET", "/api/user/teams") => TEAMS,
+            ("GET", JUSTICE_LEAGUE) => MEMBERSHIP,
             ("DELETE", "/api/applications/Iv1.8a61f9b3a7aba766/token") => {
                 return (StatusCode::NO_CONTENT, HeaderMap::new(), String::new());
             }
-            _ => return (StatusCode::NOT_FOUND, HeaderMap::new(), String::new()),
+            _ => return (StatusCode::NOT_FOUND, HeaderMap::new(), NOT_FOUND.into()),
         };
         (StatusCode::OK, HeaderMap::new(), body.to_string())
     }
@@ -501,7 +567,7 @@ mod tests {
     async fn a_finished_sign_in_gives_the_user_and_their_memberships_and_revokes_the_token() {
         let (endpoints, sent) = github(documented).await;
 
-        let claims = client(endpoints, &["github/justice-league"])
+        let claims = client(endpoints, &["github/justice-league", "github/avengers"])
             .finish(&reqwest::Client::new(), "a1b2c3", &callback(), &BEGUN)
             .await
             .unwrap();
@@ -547,7 +613,8 @@ mod tests {
             [
                 read("/api/user"),
                 read("/api/user/orgs?per_page=100"),
-                read("/api/user/teams?per_page=100"),
+                read(JUSTICE_LEAGUE),
+                read("/api/orgs/github/teams/avengers/memberships/octocat"),
                 revoked(),
             ]
         );
@@ -597,7 +664,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn a_read_that_fails_fails_the_sign_in_and_the_token_is_revoked_all_the_same() {
         let (endpoints, sent) = github(|method, path, origin| {
-            if path == "/api/user/teams?per_page=100" {
+            if path == JUSTICE_LEAGUE {
                 let body = r#"{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}"#;
                 (StatusCode::UNAUTHORIZED, HeaderMap::new(), body.into())
             } else {
@@ -606,7 +673,7 @@ mod tests {
         })
         .await;
 
-        let failed = client(endpoints, &["github"])
+        let failed = client(endpoints, &["github/justice-league"])
             .finish(&reqwest::Client::new(), "a1b2c3", &callback(), &BEGUN)
             .await
             .unwrap_err();
@@ -616,6 +683,42 @@ mod tests {
             "{failed:#}"
         );
         assert_eq!(sent.lock().unwrap().last(), Some(&revoked()));
+    }
+
+    /// GitHub answers a team's membership with the members of its child
+    /// teams counted, so an active membership of a team the person is not
+    /// directly in stands in for a member of a child team.
+    #[test_log::test(tokio::test)]
+    async fn a_named_team_is_a_membership_only_when_github_gives_it_as_active() {
+        let is_member = async |answer: Answer| {
+            let (endpoints, _) = github(answer).await;
+            let claims = client(endpoints, &["acme/engineering"])
+                .finish(&reqwest::Client::new(), "a1b2c3", &callback(), &BEGUN)
+                .await
+                .unwrap();
+            let Vouched::GitHub { memberships } = claims.vouched else {
+                panic!("GitHub vouches for {claims:?}");
+            };
+            memberships.contains(&MemberOf::team("acme", "engineering"))
+        };
+
+        assert!(
+            is_member(|method, path, origin| match path {
+                ENGINEERING => (StatusCode::OK, HeaderMap::new(), MEMBERSHIP.into()),
+                _ => documented(method, path, origin),
+            })
+            .await,
+            "active"
+        );
+        assert!(
+            !is_member(|method, path, origin| match path {
+                ENGINEERING => (StatusCode::OK, HeaderMap::new(), PENDING.into()),
+                _ => documented(method, path, origin),
+            })
+            .await,
+            "pending"
+        );
+        assert!(!is_member(documented).await, "404");
     }
 
     /// The answer to `GET /user/orgs` in two pages, the first naming the
@@ -655,10 +758,7 @@ mod tests {
         assert_eq!(
             claims.vouched,
             Vouched::GitHub {
-                memberships: vec![
-                    MemberOf::organization("github"),
-                    MemberOf::team("github", "justice-league"),
-                ]
+                memberships: vec![MemberOf::organization("github")]
             }
         );
         assert_eq!(sent.lock().unwrap().last(), Some(&revoked()));

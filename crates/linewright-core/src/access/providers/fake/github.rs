@@ -93,7 +93,10 @@ impl FakeGitHub {
             .route("/login/oauth/access_token", post(token))
             .route("/api/user", get(user))
             .route("/api/user/orgs", get(organizations))
-            .route("/api/user/teams", get(teams))
+            .route(
+                "/api/orgs/{org}/teams/{team_slug}/memberships/{username}",
+                get(team_membership),
+            )
             .route("/api/applications/{client_id}/token", delete(revoke))
             .with_state(state.clone());
         let listening = Listening::spawn(socket, router, "serving the fake GitHub");
@@ -421,9 +424,15 @@ async fn organizations(State(fake): State<Arc<FakeState>>, headers: HeaderMap) -
     json(&serde_json::Value::Array(organizations)).into_response()
 }
 
-/// `GET /user/teams`, which needs `read:org`.
-/// <https://docs.github.com/en/rest/teams/teams#list-teams-for-the-authenticated-user>
-async fn teams(State(fake): State<Arc<FakeState>>, headers: HeaderMap) -> Response {
+/// `GET /orgs/{org}/teams/{team_slug}/memberships/{username}`, which needs
+/// `read:org`: an active membership for a team among the account's
+/// memberships, and 404 for any other team or person.
+/// <https://docs.github.com/en/rest/teams/members#get-team-membership-for-a-user>
+async fn team_membership(
+    State(fake): State<Arc<FakeState>>,
+    Path((organization, slug, username)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Response {
     let Some(granted) = granted(&fake, &headers) else {
         return bad_credentials();
     };
@@ -433,20 +442,22 @@ async fn teams(State(fake): State<Arc<FakeState>>, headers: HeaderMap) -> Respon
             "Resource not accessible by integration",
         );
     }
-    let teams: Vec<serde_json::Value> = granted
-        .account
-        .memberships
-        .iter()
-        .filter_map(|membership| membership.split_once('/'))
-        .map(|(organization, slug)| {
-            serde_json::json!({
-                "slug": slug,
-                "name": slug,
-                "organization": { "login": organization },
+    let account = &granted.account;
+    let member = account.login.eq_ignore_ascii_case(&username)
+        && account.memberships.iter().any(|membership| {
+            membership.split_once('/').is_some_and(|(org, team)| {
+                org.eq_ignore_ascii_case(&organization) && team.eq_ignore_ascii_case(&slug)
             })
-        })
-        .collect();
-    json(&serde_json::Value::Array(teams)).into_response()
+        });
+    if !member {
+        return refused(StatusCode::NOT_FOUND, "Not Found");
+    }
+    json(&serde_json::json!({
+        "url": format!("https://api.github.com/teams/1/memberships/{}", account.login),
+        "role": "member",
+        "state": "active",
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]

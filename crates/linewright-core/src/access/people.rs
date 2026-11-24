@@ -211,9 +211,10 @@ pub enum Vouched {
         email_verified: bool,
     },
     GitHub {
-        /// The organizations and teams they are a member of, as far as
-        /// Linewright read them: none while GitHub's sign-up rule names
-        /// none.
+        /// The organizations they are a member of, and the teams that
+        /// GitHub's sign-up rule names whose membership GitHub gives as
+        /// active, counting the members of child teams: none while the rule
+        /// names none.
         memberships: Vec<MemberOf>,
     },
 }
