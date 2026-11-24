@@ -31,7 +31,7 @@ use super::authorization_server::{ended, signed_in_for};
 use super::caller::{CrossSite, session_cookie, sessions};
 use super::card_page::CardPage;
 use super::html::Html;
-use super::icons::{Icon, IconSize};
+use super::logos::github_mark;
 use super::{HASHED, cookie_headers, cookie_values};
 
 /// The path of Sign in.
@@ -306,8 +306,7 @@ impl SignInPage {
                 .offer(Provider::GitHub)
                 .then(|| GitHubButton {
                     action: begin_path(Provider::GitHub),
-                    mark: Icon::GitHubMark
-                        .svg_classed(&IconSize::Inline, "text-black dark:text-white"),
+                    mark: github_mark("text-black dark:text-white"),
                 }),
             for_,
         }

@@ -24,7 +24,7 @@ use super::caller::{Asking, Reader, Watch};
 use super::confirmation::{Confirmation, TurnDown};
 use super::editing::{EditDialog, edit_values, gone, read_sent};
 use super::html::{self, Html};
-use super::icons::provider_logo;
+use super::logos::identity_logo;
 use super::making::{Answer, Field, FieldRefusals, Form, Making, REQUIRED, Refusal};
 use super::pages::{PageHref, Pages, PagesShown, Requested};
 use super::shell::{self, Area, Frame, Missing, Navigation, Place};
@@ -155,7 +155,7 @@ impl PeopleShown {
                         name: person.shown_name().to_string(),
                         avatar: person.avatar.as_ref().map(ToString::to_string),
                         letter: person.letter(),
-                        logo: provider_logo(person.identity.provider),
+                        logo: identity_logo(person.identity.provider),
                         identity: person.shown_as.clone(),
                         role: person.role.name(),
                         status,

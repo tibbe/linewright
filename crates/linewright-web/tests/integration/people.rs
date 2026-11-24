@@ -89,7 +89,7 @@ async fn people_lists_everyone_in_the_order_of_their_names() {
             ["V Vera Viewer vera@example.com", "viewer", "enabled"],
         ]
     );
-    let logos = select(&html, "#people tbody [data-icon=google]");
+    let logos = select(&html, "#people tbody [data-logo=google]");
     assert_eq!(logos.len(), 3);
     assert_eq!(logos[0].attr("aria-label"), Some("Google"));
     assert!(

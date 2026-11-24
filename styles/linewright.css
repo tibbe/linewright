@@ -13,6 +13,7 @@
 @source not "./daisyui.mjs";
 @source not "./daisyui-theme.mjs";
 @source not "../crates/linewright-web/src/icons";
+@source not "../crates/linewright-web/src/logos";
 
 /* daisyUI's components without its themes, which the two blocks below give
    in full: each is daisyUI's built-in theme of that name, with which the
