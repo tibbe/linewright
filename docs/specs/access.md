@@ -62,6 +62,7 @@ and out and to allow a client: only the UI gives them.
 | see a benchmark                     | read         | [Benchmark](benchmarks.md#benchmark)                                     | `get_benchmark`        |
 | see a task                          | read         | [Task](benchmarks.md#task)                                               | `get_task`             |
 | see a benchmark run                 | read         | [Benchmark run](benchmarks.md#benchmark-run)                             | `get_benchmark_run`    |
+| see a trial's transcripts           | read         | a trial's transcripts on [Benchmark run](benchmarks.md#benchmark-run)    | `get_trial`            |
 | see Linewright itself               | read         | [Server](operation.md#server)                                            | `get_server`           |
 | see the people                      | read         | [People](#people-1)                                                      | `list_people`          |
 | see one's own authorizations        | read         | [Authorizations](#authorizations)                                        | `list_authorizations`  |
@@ -191,7 +192,9 @@ gives what the protocol leaves to Linewright.
 - **Arguments.** A tool takes the ID of the thing that it shows or acts on,
   such as `run_id` or `person_id`. It also takes the filters of its screen
   and the fields of its dialog. Each argument has its name on the screen, in
-  snake case.
+  snake case. For a thing without an ID, a tool takes what names the thing:
+  for a trial, `benchmark_run_id`, `configuration_id`, `task_id` and
+  `repetition`.
 - **What a tool shows.** A tool that shows something returns what its screen
   shows at the time of the call, as structured content with an output
   schema. A fact that a command's `--json` also gives has the name it has
@@ -201,10 +204,13 @@ gives what the protocol leaves to Linewright.
 - **Lists.** A tool that lists returns the first 100 of what it lists, in
   its screen's order, or the first `limit`. A result that leaves some out
   says how many, and gives the `after` value that returns the next ones.
-- **Transcripts.** `get_run` returns the latest 100 entries of the run's
-  transcripts, or the latest `limit`, and gives them in full with `verbose`.
-  A result that leaves some out says how many, and gives the `before` value
-  that returns the ones before them.
+- **Transcripts.** A tool that shows transcripts takes them as one list of
+  entries, in the order of its screen. It returns the latest 100 entries, or
+  the latest `limit`, and gives them in full with `verbose`. A result that
+  leaves some out says how many, and gives the `before` value that returns
+  the ones before them.
+- **A trial that does not exist.** A call for a trial that its benchmark run
+  does not have returns a tool error with "No such trial."
 - **Listed tools.** When a client asks for the list of tools, the list holds
   the tools that the person's role allows.
 - **An access level that is too low.** A call to a tool that the person's
