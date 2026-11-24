@@ -12,6 +12,10 @@
 //! poll. With `SERVE_FAKE_UNNAMED` set, the `manager` setting names no one, so
 //! that the seed's manager is only the last manager.
 //!
+//! The seed's implement run stays in flight until it is cancelled, so
+//! `SIGQUIT` stops `serve-fake`, and `SIGTERM` or `SIGINT` leaves it draining
+//! until a second signal.
+//!
 //! It runs `lw` and `fake-claude` from beside itself, as
 //! `cargo build --package linewright --features fake-claude` leaves them.
 
