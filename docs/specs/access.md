@@ -327,12 +327,13 @@ For each authorization request:
   Linewright offers ([Signing in](#signing-in)), Google first: "Sign in with
   Google" and "Sign in with GitHub", each with its provider's logo. The
   buttons are one under the other, in `flex flex-col items-center gap-2`.
-- **Google's button** is Google's own "Sign in with Google" button for the
-  web, as Google gives it: its light one in the light theme and its dark one
-  in the dark theme, at its own size.
-- **GitHub's button** is a daisyUI `btn`, not `btn-sm`, with GitHub's mark
-  before its label. The mark is GitHub's black one in the light theme and
-  its white one in the dark theme.
+- **Google's button** is a medium daisyUI `btn`, `btn-md`, in
+  `bg-white text-black border-[#e5e5e5]`. Before its label is Google's "G",
+  [`google-g.svg`](assets/google-g.svg), at `size-4`.
+- **GitHub's button** is a medium daisyUI `btn`, `btn-md`, in
+  `bg-black text-white border-black`. Before its label is Octicons'
+  [`mark-github`](https://primer.style/octicons/icon/mark-github-16) at
+  `size-4`, in white.
 
 ### Consent
 
