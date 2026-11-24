@@ -584,7 +584,8 @@ pub fn trigger(
 /// The attempts that some automation of `automations` still awaits, as
 /// [`trigger`] has them at `now`, given `seen` and `runs`: those it has
 /// pending, and those whose run of it is in flight, which run it again if
-/// that run is cancelled. They are what [`Attempts::prune`] must keep.
+/// that run shows as cancelled (`docs/specs/automations.md`, A run that
+/// shows as cancelled). They are what [`Attempts::prune`] must keep.
 pub fn awaited<'a>(
     automations: &'a [Automation],
     seen: &'a TriggersSeen,
@@ -606,8 +607,9 @@ pub fn awaited<'a>(
 
 /// Whether the automation `name` on `filters`, first seen `since`, awaits
 /// `attempt`: it matches them, completed since, and no run of `runs` it
-/// started ended other than as cancelled (`docs/specs/automations.md`, A
-/// cancelled run). It is pending unless such a run is in flight.
+/// started ended with an outcome that does not show as cancelled
+/// (`docs/specs/automations.md`, A run that shows as cancelled). It is
+/// pending unless such a run is in flight.
 fn awaits(
     name: &AutomationName,
     filters: &Filters,
