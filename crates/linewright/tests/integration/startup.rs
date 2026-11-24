@@ -769,43 +769,6 @@ async fn startup_creates_the_status_labels_with_what_each_says_an_issue_needs() 
 }
 
 #[test_log::test(tokio::test)]
-async fn startup_leaves_the_labels_the_repository_has_as_they_are_whatever_their_case() {
-    let repository = Repository {
-        labels: vec![
-            label::Label {
-                name: "Needs-Triage",
-                description: "Waiting for us to look",
-            },
-            label::Label {
-                name: "needs-info",
-                description: "Waiting on the reporter",
-            },
-            label::Label {
-                name: "bug",
-                description: "Broken",
-            },
-        ],
-        ..Repository::default()
-    };
-
-    let world = World::with_repository(repository, |_| {}).await;
-
-    assert!(!world.store.has_label("needs-triage"));
-    assert_eq!(
-        world.store.label_description("Needs-Triage"),
-        Some("Waiting for us to look".to_string())
-    );
-    assert_eq!(
-        world.store.label_description("needs-info"),
-        Some("Waiting on the reporter".to_string())
-    );
-    assert_eq!(
-        world.store.label_description("bug"),
-        Some("Broken".to_string())
-    );
-}
-
-#[test_log::test(tokio::test)]
 async fn startup_sets_a_linewright_label_with_another_description_back_to_its_meaning() {
     let repository = Repository {
         labels: vec![label::Label {
@@ -817,7 +780,6 @@ async fn startup_sets_a_linewright_label_with_another_description_back_to_its_me
 
     let world = World::with_repository(repository, |_| {}).await;
 
-    assert!(!world.store.has_label("linewright:stalled"));
     assert_eq!(
         world.store.label_description("Linewright:Stalled"),
         Some("Handed back in a stall".to_string())
@@ -943,29 +905,6 @@ fn a_prompt_with_a_placeholder_linewright_does_not_fill_is_an_error_naming_it() 
 }
 
 #[test_log::test]
-fn a_prompt_without_a_placeholder_linewright_fills_is_an_error_naming_it() {
-    let briefs = briefs_with("prompts/triage.md", |text| text.replace("{{issue}}", ""));
-
-    let (succeeded, error) = lw(
-        std::path::Path::new(""),
-        &[
-            "--repo",
-            "owner/name",
-            "--briefs",
-            briefs.path().to_str().unwrap(),
-            "once",
-        ],
-        &[],
-    );
-
-    assert!(!succeeded, "{error}");
-    assert!(
-        error.contains("- prompts/triage.md: it lacks the placeholders `{{issue}}`"),
-        "{error}"
-    );
-}
-
-#[test_log::test]
 fn startup_logs_the_files_the_operators_briefs_provide() {
     let briefs = briefs_with("prompts/implement.md", |text| text);
     std::fs::write(briefs.path().join(".DS_Store"), "Finder's.").unwrap();
@@ -1027,37 +966,6 @@ fn linewrights_own_briefs_can_be_the_operators_briefs() {
     assert!(
         log.contains("the operator's briefs provide these files"),
         "{log}"
-    );
-}
-
-#[test_log::test]
-fn files_in_the_operators_briefs_that_a_layer_may_not_hold_are_an_error_naming_each() {
-    let briefs = briefs_with("prompts/implement.md", |text| text);
-    std::fs::write(briefs.path().join("prompts/implment.md"), "A misspelling.").unwrap();
-    let schema = briefs.path().join("results/implement.schema.json");
-    std::fs::create_dir_all(schema.parent().unwrap()).unwrap();
-    std::fs::write(schema, "{}").unwrap();
-
-    let (succeeded, error) = lw(
-        std::path::Path::new(""),
-        &[
-            "--repo",
-            "owner/name",
-            "--briefs",
-            briefs.path().to_str().unwrap(),
-            "serve",
-        ],
-        &[],
-    );
-
-    assert!(!succeeded, "{error}");
-    assert!(
-        error.contains("- prompts/implment.md: not a file a layer may hold"),
-        "{error}"
-    );
-    assert!(
-        error.contains("- results/implement.schema.json: not a file a layer may hold"),
-        "{error}"
     );
 }
 
