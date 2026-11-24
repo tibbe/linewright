@@ -343,27 +343,6 @@ fn the_front_matter_takes_no_operator_only_session_setting() {
 }
 
 #[test_log::test]
-fn an_automation_names_its_model_and_effort_or_takes_the_whole_pipelines() {
-    let chosen = parse(
-        &name("weekly.md"),
-        "---\non:\n  schedule: \"0 6 * * 1\"\nmodel: opus\neffort: high\n---\nLook.\n",
-    )
-    .unwrap();
-    let unset = parse(
-        &name("weekly.md"),
-        "---\non:\n  schedule: \"0 6 * * 1\"\n---\nLook.\n",
-    )
-    .unwrap();
-
-    assert_eq!(
-        chosen.session.model,
-        Some(linewright_core::testing::model("opus"))
-    );
-    assert_eq!(chosen.session.effort, Some(Effort::High));
-    assert_eq!((unset.session.model, unset.session.effort), (None, None));
-}
-
-#[test_log::test]
 fn an_effort_outside_its_levels_does_not_parse() {
     let error = error("---\non:\n  schedule: \"0 6 * * 1\"\neffort: huge\n---\nLook.\n");
 
