@@ -110,6 +110,7 @@ impl Web {
             dir,
             store,
             harness,
+            ..
         } = world;
         let since = clock.now();
         let pending = Pending::default();

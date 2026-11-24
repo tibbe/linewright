@@ -74,6 +74,7 @@ async fn a_run_waits_for_the_first_build_then_its_clone_starts_from_the_environm
         harness: _harness,
         store: _store,
         dir: _dir,
+        work_dir: _,
     } = world;
     let mut serving = Serving::start(factory, Duration::from_hours(1), Pending::default());
 
