@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::fmt;
+use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use axum::body::{Body, Bytes};
@@ -102,10 +104,13 @@ fn refusal(gate: &Gate, call: &ToolCall, caller: &Caller) -> Option<Response> {
             person = %person.id,
             identity = person.logged(),
             tool = call.name,
-            retry_after,
+            retry_after = retry_after.seconds(),
             "refused a tool call over the limit"
         );
-        let body = error(&call.id, "Too many tool calls in a minute.");
+        let body = error(
+            &call.id,
+            &format!("Too many tool calls. Try again in {retry_after} seconds."),
+        );
         return Some(
             (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -177,11 +182,47 @@ struct Window {
     calls: u32,
 }
 
+/// How long to wait before calling again: whole seconds, at least 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RetryAfter(NonZeroU64);
+
+impl RetryAfter {
+    /// The wait of `left` in whole seconds, rounded up, and 1 second where
+    /// `left` is less.
+    fn of(left: TimeDelta) -> RetryAfter {
+        let whole = left.num_seconds();
+        let seconds = if left > TimeDelta::seconds(whole) {
+            whole + 1
+        } else {
+            whole
+        };
+        RetryAfter(
+            u64::try_from(seconds)
+                .ok()
+                .and_then(NonZeroU64::new)
+                .unwrap_or(NonZeroU64::MIN),
+        )
+    }
+
+    /// The whole seconds.
+    fn seconds(self) -> u64 {
+        self.0.get()
+    }
+}
+
+/// The whole seconds, as `Retry-After`'s delay-seconds.
+/// <https://www.rfc-editor.org/rfc/rfc9110#name-retry-after>
+impl fmt::Display for RetryAfter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl CallLimit {
-    /// Counts a call by `person` at `now`, or else gives the seconds to the
-    /// end of their window, rounded up, where it has counted [`CALLS`]
-    /// already. It forgets each window that has closed by `now`.
-    fn count(&self, person: PersonId, now: Timestamp) -> Result<(), i64> {
+    /// Counts a call by `person` at `now`, or else gives how long to wait
+    /// for the end of their window, where it has counted [`CALLS`] already.
+    /// It forgets each window that has closed by `now`.
+    fn count(&self, person: PersonId, now: Timestamp) -> Result<(), RetryAfter> {
         let mut windows = self.windows.lock().expect("no count panics");
         windows.retain(|_, window| now < window.opened + WINDOW);
         let window = windows.entry(person).or_insert(Window {
@@ -192,12 +233,6 @@ impl CallLimit {
             window.calls += 1;
             return Ok(());
         }
-        let left = window.opened + WINDOW - now;
-        let whole = left.num_seconds();
-        Err(if left > TimeDelta::seconds(whole) {
-            whole + 1
-        } else {
-            whole
-        })
+        Err(RetryAfter::of(window.opened + WINDOW - now))
     }
 }

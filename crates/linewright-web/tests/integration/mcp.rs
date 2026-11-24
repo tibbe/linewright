@@ -632,8 +632,9 @@ async fn a_call_above_the_persons_access_level_gets_403_with_the_level_it_needs(
 
 /// `docs/specs/access.md`, The MCP server, Too many calls: a person's
 /// clients call tools 120 times in a minute, and each further call in that
-/// minute gets 429 until the minute is over, whoever else calls; one from
-/// another origin is refused for its origin alone.
+/// minute gets 429 until the minute is over, whoever else calls, with a
+/// JSON-RPC error for the call that says how long to wait; one from another
+/// origin is refused for its origin alone.
 #[test_log::test(tokio::test)]
 async fn a_persons_121st_call_in_a_minute_gets_429_until_the_minute_is_over() {
     let pages = Pages::of(a_ticket()).await;
@@ -669,6 +670,8 @@ async fn a_persons_121st_call_in_a_minute_gets_429_until_the_minute_is_over() {
     let listed = vera
         .post(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
         .await;
+    let mut over = call.clone();
+    over["id"] = json!("over");
     let mut retries = vec![];
     for wait in [
         chrono::TimeDelta::zero(),
@@ -676,14 +679,17 @@ async fn a_persons_121st_call_in_a_minute_gets_429_until_the_minute_is_over() {
         chrono::TimeDelta::seconds(30),
     ] {
         clock.advance(wait);
-        let answered = other_client.post(&call).await;
+        let answered = other_client.post(&over).await;
         assert_eq!(answered.status, 429, "{}", answered.body);
-        retries.push(
+        let error: serde_json::Value = serde_json::from_str(&answered.body)
+            .unwrap_or_else(|e| panic!("{e}: {}", answered.body));
+        retries.push((
             answered.headers["retry-after"]
                 .to_str()
                 .unwrap()
                 .to_string(),
-        );
+            error,
+        ));
     }
     let elsewhere = other_client
         .post_with(
@@ -699,7 +705,18 @@ async fn a_persons_121st_call_in_a_minute_gets_429_until_the_minute_is_over() {
     let past = vera.post(&call).await;
 
     assert_eq!(listed.status, 200, "{}", listed.body);
-    assert_eq!(retries, ["48", "48", "18"]);
+    let retry = |seconds: &str| {
+        let error = json!({
+            "jsonrpc": "2.0",
+            "id": "over",
+            "error": {
+                "code": -32000,
+                "message": format!("Too many tool calls. Try again in {seconds} seconds."),
+            },
+        });
+        (seconds.to_string(), error)
+    };
+    assert_eq!(retries, [retry("48"), retry("48"), retry("18")]);
     assert_eq!(elsewhere.status, 403, "{}", elsewhere.body);
     assert!(!elsewhere.body.contains("jsonrpc"), "{}", elsewhere.body);
     assert_eq!(others.status, 200, "{}", others.body);
