@@ -26,8 +26,9 @@ lw --repo owner/name --model opus serve
 `lw serve` polls the repository until stopped, and runs the automations in
 `.linewright/automations/` that are due. One `serve` runs per repository on a
 host. `lw drain` stops it once the runs in flight have finished. `lw once` runs
-one poll cycle and the runs it starts, and `lw automation run NAME` runs the
-automation in `.linewright/automations/NAME` once, now.
+one poll cycle and the runs it starts, and `lw automation run NAME` asks
+`serve` to run the automation in `.linewright/automations/NAME` once, as its
+trigger would, printing the run's ID or what the run waits for.
 
 ## Settings
 
