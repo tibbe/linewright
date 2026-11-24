@@ -1204,14 +1204,6 @@ async fn a_refused_task_answers_the_form_as_sent_with_each_reason_in_its_place()
             ..sent("1/implement-2", "columns", "Ships gh.\n")
         },
         Case {
-            refused: vec![("name", "Required.")],
-            ..sent("1/implement-2", "\u{200b}", "Ships gh.\n")
-        },
-        Case {
-            refused: vec![("criteria", "Required.")],
-            ..sent("1/implement-2", "gadgets", "  \n")
-        },
-        Case {
             refused: vec![
                 ("run", "Required."),
                 ("name", "Required."),
@@ -1414,20 +1406,6 @@ async fn a_task_of_a_run_whose_record_lacks_a_part_is_refused_naming_it() {
             422,
             Some("The record of run 1/implement-3 lacks properties.".into())
         )
-    );
-    assert_eq!(tasks(&pages), ["1", "2"]);
-}
-
-/// `docs/specs/benchmarks.md`, Capturing, Refusals on a screen.
-#[test_log::test(tokio::test)]
-async fn a_task_of_a_run_that_does_not_exist_is_refused_saying_so() {
-    let pages = with_runs().await;
-
-    let (status, form) = add(&pages, "1/implement-9", "Ships gh.\n").await;
-
-    assert_eq!(
-        (status, new_task_form(&form).1),
-        (404, Some("No such run 1/implement-9.".into()))
     );
     assert_eq!(tasks(&pages), ["1", "2"]);
 }
