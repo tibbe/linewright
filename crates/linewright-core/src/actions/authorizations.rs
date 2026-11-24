@@ -42,7 +42,7 @@ pub async fn end_authorization(
         format!(" ({})", client_name(ended.client_name.as_deref()))
     });
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EndAuthorization,
         &format!("authorization {id}{client}, ended"),
         Ended::of(&ended),

@@ -57,7 +57,7 @@ pub async fn edit_person(
     let changed = people(sources).set_role(id, role, manager).await;
     let how = Ended::of(&changed);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EditPerson,
         &format!(
             "the role of person {id}{}, to {}",
@@ -87,7 +87,7 @@ pub async fn disable_person(
         .await;
     let how = Ended::of(&disabled);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::DisablePerson,
         &format!("person {id}{}, disabled", identity_after(&disabled)),
         how,
@@ -108,7 +108,7 @@ pub async fn enable_person(
     let enabled = people(sources).enable(id).await;
     let how = Ended::of(&enabled);
     logged(
-        permit.caller(),
+        permit.holder(),
         Action::EnablePerson,
         &format!("person {id}{}, enabled", identity_after(&enabled)),
         how,
