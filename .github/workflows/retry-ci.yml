@@ -1,0 +1,64 @@
+name: Retry CI
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.run_attempt == 1
+    permissions:
+      actions: write
+    concurrency: retry-ci-${{ github.event.workflow_run.id }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Re-run jobs that failed in Set up job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gate_job=ci
+          classify_unsuccessful_jobs='.jobs[]
+            | select(.conclusion != "success" and .conclusion != "skipped")
+            | [ (if .conclusion == "failure"
+                    and ((.steps | length) == 0
+                      or ([.steps[] | select(.conclusion == "failure") | .name] == ["Set up job"]))
+                 then "setup" else "other" end),
+                .name ]
+            | @tsv'
+          verdicts=$(gh api --paginate \
+            "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/1/jobs?per_page=100" \
+            --jq "$classify_unsuccessful_jobs")
+          echo "Unsuccessful jobs (verdict, name):"
+          echo "${verdicts:-  none}"
+
+          deciding_verdicts=$(awk -F '\t' -v gate="$gate_job" '$2 != gate' <<<"$verdicts")
+          if [[ -z $deciding_verdicts ]]; then
+            deciding_verdicts=$verdicts
+          fi
+          if [[ -z $deciding_verdicts ]]; then
+            echo "No job failed: not re-running."
+            exit 0
+          fi
+          if grep -q '^other' <<<"$deciding_verdicts"; then
+            echo "A job failed after Set up job, or was cancelled: not re-running."
+            exit 0
+          fi
+
+          attempt=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq .run_attempt)
+          if [[ $attempt != 1 ]]; then
+            echo "The run is already on attempt $attempt: not re-running."
+            exit 0
+          fi
+          echo "Every failed job failed in Set up job: re-running them."
+          gh run rerun "$RUN_ID" --failed
