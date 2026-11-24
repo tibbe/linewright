@@ -144,23 +144,36 @@ pub async fn get_run(
     let Some(recorded) = sources.runs.try_read_run(id).await? else {
         return Ok(None);
     };
-    let now = sources.clock.now();
-    let transcript = logs::transcript_of(&recorded)?;
-    let sessions = transcript
-        .sessions
-        .iter()
-        .zip(&recorded.sessions)
-        .enumerate()
-        .filter(|(i, _)| lines::shows_session(&transcript, i + 1))
-        .map(|(i, (session, entry))| SessionScreen::of(i + 1, session, entry.ran().cloned(), now))
-        .collect();
-    let entries = lines::entries(&transcript, verbosity)
-        .into_iter()
-        .map(|(entry, line)| EntryScreen { id: entry, line })
-        .collect();
-    Ok(Some(RunScreen {
-        heading: RunHeading::of(&recorded, now),
-        sessions,
-        entries,
-    }))
+    RunScreen::of(&recorded, verbosity, sources.clock.now()).map(Some)
+}
+
+impl RunScreen {
+    /// The run `recorded` as its screen shows it as of `now`, its
+    /// transcripts in the view `verbosity` says.
+    ///
+    /// # Errors
+    ///
+    /// When the records of its sessions cannot be read.
+    pub fn of(recorded: &Recorded, verbosity: Verbosity, now: Timestamp) -> Result<RunScreen> {
+        let transcript = logs::transcript_of(recorded)?;
+        let sessions = transcript
+            .sessions
+            .iter()
+            .zip(&recorded.sessions)
+            .enumerate()
+            .filter(|(i, _)| lines::shows_session(&transcript, i + 1))
+            .map(|(i, (session, entry))| {
+                SessionScreen::of(i + 1, session, entry.ran().cloned(), now)
+            })
+            .collect();
+        let entries = lines::entries(&transcript, verbosity)
+            .into_iter()
+            .map(|(entry, line)| EntryScreen { id: entry, line })
+            .collect();
+        Ok(RunScreen {
+            heading: RunHeading::of(recorded, now),
+            sessions,
+            entries,
+        })
+    }
 }
