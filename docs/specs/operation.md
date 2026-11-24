@@ -10,27 +10,25 @@ from Linewright's base image with the project's toolchain added.
 
 1. As an operator, I want one binary configured by flags, environment variables
    or a config file, so that a deployment is reproducible.
-2. As an operator, I want a one-shot mode, so that I can test a cycle by hand or
-   run it from cron.
-3. As an operator, I want to run it directly on a machine or inside a container,
+2. As an operator, I want to run it directly on a machine or inside a container,
    so that I choose the isolation.
-4. As an operator, I want to run it on Linux or macOS, so that I can run it on
+3. As an operator, I want to run it on Linux or macOS, so that I can run it on
    the machine I have.
-5. As an operator, I want what Linewright does available as commands, so that I
+4. As an operator, I want what Linewright does available as commands, so that I
    and coding agents can drive and debug it.
-6. As an operator, I want the server's log to say what it is doing and why, so
+5. As an operator, I want the server's log to say what it is doing and why, so
    that I can debug it without GitHub.
-7. As an operator, I want to replace the binary without wasting the work in
+6. As an operator, I want to replace the binary without wasting the work in
    flight, so that an upgrade costs no agent sessions.
-8. As an operator, I want secrets kept out of what Linewright and its sessions
+7. As an operator, I want secrets kept out of what Linewright and its sessions
    produce, so that Linewright does not leak them.
-9. As an operator, I want to see at a glance what Linewright is working on and
+8. As an operator, I want to see at a glance what Linewright is working on and
    what holds it back, such as the usage limit, so that I know whether it
    needs me.
-10. As an agent, I want the monitoring commands' answers as compact text, and
-    as JSON where I extract fields, so that I spend little context and can
-    script against them.
-11. As an operator away from Linewright's host, I want the same facts in the
+9. As an agent, I want the monitoring commands' answers as compact text, and
+   as JSON where I extract fields, so that I spend little context and can
+   script against them.
+10. As an operator away from Linewright's host, I want the same facts in the
     UI, so that I follow the pipeline from wherever I am.
 
 ## Commands
@@ -40,21 +38,25 @@ The command is `lw`.
 | command               | what it does                                                             |
 | --------------------- | ------------------------------------------------------------------------ |
 | `serve`               | poll until drained or stopped (see [Stopping](#stopping))                |
-| `once`                | one poll cycle, then exit                                                |
 | `drain`               | tell `serve` to drain (see [Stopping](#stopping))                        |
 | `environment`         | show the environment and its builds (see [`lw environment`](sessions.md#lw-environment)) |
-| `environment rebuild` | build the environment now (see [Environment](sessions.md#environment))   |
+| `environment rebuild` | ask `serve` to build the environment now (see [Environment](sessions.md#environment)) |
 | `status`              | show what Linewright is doing (see [`lw status`](#lw-status))            |
 | `explain N`           | show where an item stands and why (see [`lw explain`](board.md#lw-explain)) |
 | `runs [N]`            | list the runs (see [`lw runs`](runs.md#lw-runs))                         |
 | `logs N`              | show a run's transcript (see [`lw logs`](runs.md#lw-logs))               |
 | `export ID DIR`       | write run ID as plain files (see [`lw export`](runs.md#lw-export))       |
-| `automation run NAME` | run one automation now (see [Automations](automations.md))               |
+| `automation run NAME` | ask `serve` to run one automation now (see [Automations](automations.md)) |
 | `capture ID`          | capture run ID as a task in a benchmark (see [Benchmarks](benchmarks.md))    |
-| `trial TASK`         | run a task's stage on it again (see [Benchmarks](benchmarks.md))         |
-| `score TASK DIR`       | score the output of a trial (see [Benchmarks](benchmarks.md))           |
 | `benchmarks`, `benchmark`, `benchmark-run` | work with benchmarks and benchmark runs (see [Benchmarks](benchmarks.md#benchmarks-and-benchmark-runs-on-the-command-line)) |
 
+- **`serve` does the work.** Every other command does none of Linewright's
+  work itself. It asks `serve` to act, or it shows what Linewright knows or
+  keeps.
+- **Which `serve`.** A command asks the `serve` of the configured `repo` on
+  the same host.
+- **Without `serve`.** A command that asks `serve` to act fails when `serve`
+  is not running.
 - **The version.** `--version` names the version and the commit it was
   built from.
 - **Conventions.** Every command follows the conventions of Unix command-line
@@ -66,8 +68,7 @@ The command is `lw`.
 ## Monitoring commands
 
 The monitoring commands let the operator, the maintainer or an agent see what
-a running Linewright is doing and why, as `serve` itself sees it. They talk to
-the `serve` of the configured `repo` on the same host.
+a running Linewright is doing and why, as `serve` itself sees it.
 
 | command         | what it shows                                   | where                                          |
 | --------------- | ----------------------------------------------- | ---------------------------------------------- |
@@ -155,21 +156,18 @@ once.
   ([Stages](runs.md#stages)).
 - **Logging the waits.** Linewright logs each thing it waits for before it
   exits as the wait begins, and how long it took as it ends.
-- **A signal under any command but `serve`.** It ends the command at once,
-  cutting its runs short.
 - **Draining.** All else `serve` does goes on until it exits, polls and
   deliveries included, and it waits for every run in flight however long,
   one waiting out the usage limit included.
 - **Exit status.** 0 after a drain or a stop; 128 plus the signal's number
   after an exit at once.
-- **`drain`.** `drain` asks the `serve` of the configured `repo` on the same
-  host to drain, prints the runs it waits for and each as it ends, then each
-  thing `serve` waits for before it exits and each as it ends, and returns
-  once `serve` has exited; `--no-wait` returns once `serve` has taken
-  the request. Ending `drain` itself leaves the drain in place, and a `drain`
-  sent to a `serve` already draining or stopping says so and waits the same
-  way. Its output and exit statuses are the monitoring commands'
-  ([Output](#output)).
+- **`drain`.** `drain` asks `serve` to drain, prints the runs it waits for and
+  each as it ends, then each thing `serve` waits for before it exits and each
+  as it ends, and returns once `serve` has exited; `--no-wait` returns once
+  `serve` has taken the request. Ending `drain` itself leaves the drain in
+  place, and a `drain` sent to a `serve` already draining or stopping says so
+  and waits the same way. Its output and exit statuses are the monitoring
+  commands' ([Output](#output)).
 - **`--timeout`.** `drain --timeout 2h` sets a deadline, after which the
   drain becomes a stop; `drain` still returns 0, saying so. Without one, a
   drain waits however long. The latest `drain` sets the deadline.
@@ -185,7 +183,7 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 
 | setting                                      | default                                     |
 | -------------------------------------------- | ------------------------------------------- |
-| `repo` (`owner/name`)                        | required, but not for a command that reads a task |
+| `repo` (`owner/name`)                        | required                                    |
 | `poll-interval`                              | 60s                                         |
 | `webhook-address`                            | `0.0.0.0:8080` with the webhook secret set; none without it |
 | `ui-address`                                 | `127.0.0.1:8081`                            |
@@ -201,7 +199,7 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `max-runs`                                   | 4                                           |
 | `max-trials`                                | 1                                           |
 | `work-dir`                                   | `linewright/` under the user's data directory |
-| `model`                                      | required, for a command that starts a session |
+| `model`                                      | required, for `serve`                       |
 | `effort` (`low`, `medium`, `high`, `xhigh`, `max`) | medium                                |
 | `briefs` (the operator's layer, [Briefs](#briefs)) | none |
 | `session-env` (variables' values)            | none                                        |
@@ -221,10 +219,6 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
 | `require-label`                              | none: every issue and pull request          |
 | `log-format` (`text`, `json`)                | `text` on a terminal, `json` otherwise      |
 
-- **`repo` and a task.** A command that reads a task, such as `trial`, reads
-  the same settings as every other command. It works on the repository of the
-  task ([Trials](benchmarks.md#trials)). It needs no `repo`, and it
-  ignores a `repo` that is set.
 - **Combining layers.** A setting's value combines what every layer sets, by
   what the setting holds: a value is the highest layer's, a list holds the
   entries of every layer, and a table holds the names of every layer, each
@@ -271,9 +265,8 @@ overrides them all ([Configurations](benchmarks.md#configurations)).
   `LINEWRIGHT_SESSION_GITHUB_TOKEN`. The identity providers' client secrets
   ([Signing in](access.md#signing-in)) are `LINEWRIGHT_GOOGLE_CLIENT_SECRET`
   and `LINEWRIGHT_GITHUB_CLIENT_SECRET`.
-- **Linewright's GitHub token.** A command that runs sessions needs
-  Linewright's GitHub token. Without that token, the command exits with an
-  error at startup.
+- **Linewright's GitHub token.** `serve` needs Linewright's GitHub token.
+  Without that token, it exits with an error at startup.
 - **Times and durations.** Every time and duration given to Linewright, as a
   setting or as a command's argument, takes the same forms: a time in RFC
   3339 (`2026-10-14T12:00:00Z`) or a date, taken as midnight UTC
@@ -417,8 +410,7 @@ while `public-url` is set. People reach the UI at `public-url`.
 
 ## The log
 
-A command that does work itself logs each decision and action; a command
-that answers a question, or asks `serve` to act, logs nothing.
+`serve` logs each decision and action. Every other command logs nothing.
 
 - **Format.** The log is readable for a person tailing it and structured
   (JSON lines) for machines, by the `log-format` setting.
@@ -455,6 +447,5 @@ that answers a question, or asks `serve` to act, logs nothing.
   tunnel to, Linewright's host.
 - A liveness check for a container healthcheck or a supervisor.
 - A record of each decision Linewright makes on an item; the log holds them.
-- Answers from `once` and `automation run` while they run.
 - Direction, not the first version: commands that run single pieces of
   Linewright, so that a coding agent changing Linewright can verify its change.

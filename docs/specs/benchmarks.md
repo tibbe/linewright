@@ -134,16 +134,15 @@ task of it, whatever its outcome.
 - **From the UI.** [Run](runs.md#run) and [New task](#new-task).
 - **From the command line.**
   `lw capture ID --benchmark BENCHMARK --name NAME --criteria FILE`, where
-  BENCHMARK is the benchmark's ID. It writes the task's ID. It works whether
-  or not `serve` is running, and exits as the monitoring commands do
-  ([Output](operation.md#output)).
+  BENCHMARK is the benchmark's ID. It writes the task's ID, and exits as the
+  monitoring commands do ([Output](operation.md#output)).
 - **Without criteria.** Linewright refuses a capture that has no criteria.
 - **The name.** Given by the capturer ([Names and IDs](#names-and-ids)).
 - **The commits.** Fetched from GitHub.
 - **All or nothing.** A capture that fails, such as for a commit GitHub no
   longer has, writes nothing and says why.
-- **Before the first poll.** In the UI, Linewright refuses a capture until its
-  first poll since `serve` started.
+- **Before the first poll.** Linewright refuses a capture until its first
+  poll since `serve` started.
 - **Refusals on a screen.** [New task](#new-task) and [Run](runs.md#run) give
   these messages for a capture's refusals, other than for a required field that
   is empty ([Making](ui_patterns.md#making)). The refusals of a run, and of a
@@ -181,13 +180,7 @@ A trial runs the task's stage on the task as `serve` runs the stage.
 Linewright reads from the task and writes to the trial's output, in place of
 GitHub.
 
-- **From the command line.** The command is `lw trial TASK --out DIR`. TASK
-  is the directory of the task, and DIR is the directory of the output. The
-  command needs both.
-- **Startup.** At startup, a trial makes only the checks of its settings
-  and of the operator's layer of the brief
-  ([Startup](repository.md#startup)). For a trial, each of
-  Linewright's labels is present.
+- **Labels.** For a trial, each of Linewright's labels is present.
 - **The environment.** A trial builds its environment from the head of the
   task's default branch. A later trial from the same head uses that
   environment, unless the setup command, or a variable that it runs with, has
@@ -212,12 +205,6 @@ GitHub.
   default branch would hold the run under `serve`
   ([Linewright's files](repository.md#linewrights-files)). The refusal names
   the file and the error.
-- **A signal.** A trial that a signal ends
-  ([Stopping](operation.md#stopping)) leaves in its output what its run did
-  until then.
-- **The exit status of the command.** The command exits as the monitoring
-  commands do ([Output](operation.md#output)). It succeeds when the run
-  ended, whatever the outcome of the run.
 
 ## Configurations
 
@@ -226,9 +213,9 @@ the sessions of its run. A configuration overrides every other layer, flags
 included. Each file or setting that it does not hold comes from the other
 layers.
 
-- **From the command line.** `--configuration CONFIG` gives `lw trial` a
-  configuration. CONFIG has the same layout as a repository's `.linewright/`:
-  the settings in `config.toml` and the files of the brief in `briefs/`.
+- **From the command line.** The directory of a configuration, CONFIG, has
+  the same layout as a repository's `.linewright/`: the settings in
+  `config.toml` and the files of the brief in `briefs/`.
 - **Files of the brief.** A configuration can hold each file that a layer of
   the brief can hold ([Briefs](operation.md#briefs)).
 - **Settings.** `config.toml` holds only `model`, `effort` and
@@ -277,8 +264,6 @@ as plain files.
 | configuration | a copy of the configuration of the trial, if it had one ([Configurations](#configurations)) |
 | score  | the score of the trial, if a scorer made one ([Scoring](#scoring)) |
 
-- **Where.** Linewright makes the directory of the output if there is none,
-  and refuses a directory that holds anything.
 - **Attachments.** An attachment that a write refers to is a file in the
   output. The Markdown of the write refers to the file by a relative path.
 - **Numbers.** An issue or pull request that the run opens takes the next
@@ -290,17 +275,11 @@ A scorer scores the output of a trial against the criteria of its task. It
 also says whether a session of the trial learned how the work turned out.
 The scorer is an agent in a session of its own.
 
-- **From the command line.** The command is `lw score TASK DIR`. TASK is the
-  directory of the task, and DIR is the output of a trial of that task.
 - **Which trials.** Linewright runs the scorer on a trial whose run ended
-  done or handed back, and refuses every other trial.
-- **The output and the task.** Linewright refuses an output that has no
-  `task` part, or whose `task` part names a run other than the run of the
-  task.
-- **As a trial.** The rules of [Trials](#trials) hold for `lw score`
-  as for `lw trial`, with the session of the scorer in place of the run. The
-  exceptions are the rules on the command line, on writes, on where
-  Linewright keeps the run, on a signal and on the exit status.
+  done or handed back, and on no other trial.
+- **As a trial.** The rules of [Trials](#trials) hold for a scorer as for a
+  trial, with the session of the scorer in place of the run. The exceptions
+  are the rules on writes and on where Linewright keeps the run.
 - **The `gh` of the scorer.** The session of the scorer has the `gh` of a
   session of a trial
   ([The repository on GitHub](#the-repository-on-github)).
@@ -340,23 +319,17 @@ The scorer is an agent in a session of its own.
   | session     | the record of the session of the scorer                                                                                     |
   | Linewright  | the version of Linewright that ran the scorer                                                                               |
 
-- **An output with a score.** Linewright refuses to score an output that
-  holds a score.
 - **A scorer that makes no score.** The scorer makes no score in these cases.
-  The command then says why, and keeps nothing of that scorer. The first row
-  that fits gives why:
+  Linewright then keeps nothing of that scorer. The first row that fits gives
+  why:
 
   | The scorer makes no score if | Why |
   | --- | --- |
-  | a signal ends the command | "A signal ended the scorer." |
-  | its session ends for the usage limit ([Usage limit](runs.md#usage-limit)) | "The scorer's session reached the usage limit, which resets at TIME." |
   | it gives up | "The scorer gave up: REASON", where REASON is the reason the scorer gives |
   | its session ends without a result that Linewright accepts | "The scorer's session ended without a score: REASON", where REASON is the reason for the end ([Ending](runs.md#ending)), then the tail of its log |
   | Linewright cannot build its environment | "The scorer's environment could not be built.", then the tail of the build's log |
   | Linewright cannot keep the scorer's score | "The score could not be kept: ERROR", where ERROR is what the file system gives |
   | it stops for any other reason, but for a cancel or a restart | "The scorer stopped unexpectedly." |
-- **The exit status of the command.** The command succeeds when the scorer
-  made a score, whatever the score.
 
 ## Benchmark runs
 
@@ -384,11 +357,10 @@ makes a trial of each task under each configuration.
   ([Benchmark run](#benchmark-run)), Linewright names a trial of a benchmark
   run as "trial N of TASK under CONFIGURATION". N is the trial's repetition.
   TASK and CONFIGURATION are the names of the trial's task and configuration.
-- **Under `serve`.** `serve` runs the trials and the scorers of a benchmark run,
-  each as `lw trial` and `lw score` do. A drain, the usage limit and stopping
-  apply to each trial and scorer as to a run of `serve` ([Holds](runs.md#holds),
+- **Holds.** A drain, the usage limit and stopping apply to each trial and
+  scorer as to a run of the pipeline ([Holds](runs.md#holds),
   [Usage limit](runs.md#usage-limit), [Stopping](operation.md#stopping)). The
-  other holds do not hold them. A benchmark run that `serve` does not run waits.
+  other holds do not hold them.
 - **Order.** The trials start one repetition at a time. In a repetition, they
   start task by task, in the order of the benchmark's tasks
   ([Benchmarks](#benchmarks-1)), and for each task, configuration by
@@ -445,9 +417,10 @@ The results of a benchmark run give these figures for each configuration.
 
 ## Benchmarks and benchmark runs on the command line
 
-The commands work whether or not `serve` is running, and exit as the
-monitoring commands do ([Output](operation.md#output)). A benchmark, a task or a
-benchmark run that does not exist is as an item or run that does not exist.
+The commands that show something work whether or not `serve` is running. The
+commands exit as the monitoring commands do ([Output](operation.md#output)). A
+benchmark, a task or a benchmark run that does not exist is as an item or run
+that does not exist.
 In these commands, BENCHMARK and TASK are IDs
 ([Names and IDs](#names-and-ids)), and a task that
 is not in BENCHMARK does not exist.
