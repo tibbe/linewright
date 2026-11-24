@@ -1,46 +1,14 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
 use axum::body::Bytes;
 use axum::http::StatusCode;
 use linewright_core::api::{self, Api, ClaimError, RequestError, Sources};
-use linewright_core::clock::Clock;
 use linewright_core::ending::Ends;
-use linewright_core::runs::RepoWorkDir;
 use linewright_core::testing::*;
 use tokio_util::sync::CancellationToken;
-
-/// What `serve`'s local API answers from before its first poll, over a work
-/// directory holding nothing but what a test writes there.
-#[track_caller]
-fn sources(work_dir: RepoWorkDir) -> impl Future<Output = Sources> {
-    let runs = runs_in(&work_dir.resolve());
-    async move {
-        let runs = runs.await;
-        let clock = Arc::new(FakeClock::new());
-        let (_, served) = tokio::sync::watch::channel(None);
-        let (_, polling) = tokio::sync::watch::channel(None);
-        Sources {
-            serving: linewright_core::status::Serving {
-                since: clock.now(),
-                max_runs: 4,
-            },
-            served,
-            polling,
-            deliveries: None,
-            clock,
-            work_dir,
-            runs,
-            ends: Ends::new(),
-            environment: api::EnvironmentLink::default(),
-            benchmark_runs: api::BenchmarkRunsLink::default(),
-            exiting: linewright_core::winding_up::WindingUp::default().exiting(),
-        }
-    }
-}
 
 /// The local API's router, driven in-process, over a work directory whose
 /// database keeps each of `records`, a run's record in the form a run's
@@ -58,7 +26,7 @@ impl Routed {
         let kept = work_dir_keeping(records, &[]);
         async move {
             let (dir, work_dir) = kept.await;
-            let sources = sources(work_dir).await;
+            let sources = sources_before_polling(work_dir).await;
             let ends = sources.ends.clone();
             let stopping = CancellationToken::new();
             Routed {
@@ -136,7 +104,7 @@ async fn the_status_answer_holds_the_trials_and_scorers_serve_has_in_flight() {
     );
     let sources = Sources {
         benchmark_runs: links.benchmark_runs,
-        ..sources(work_dir).await
+        ..sources_before_polling(work_dir).await
     };
     let router = api::router(sources, CancellationToken::new());
 
@@ -241,7 +209,10 @@ async fn a_claim_is_held_until_the_api_stops_and_then_can_be_taken_again() {
     let runtime_dir = tempfile::tempdir().unwrap();
     let dir = socket_dir_in(runtime_dir.path());
     let (_work_dir, work_dir) = work_dir_holding(&[]);
-    let api = Api::serve(api::claim(&dir, REPO).unwrap(), sources(work_dir).await);
+    let api = Api::serve(
+        api::claim(&dir, REPO).unwrap(),
+        sources_before_polling(work_dir).await,
+    );
 
     let claimed_while_served = api::is_claimed(&dir, REPO).unwrap();
     let second_claim = api::claim(&dir, REPO);

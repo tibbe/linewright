@@ -1,9 +1,15 @@
 use std::panic::Location;
 use std::path::Path;
+use std::sync::Arc;
 
-use super::{REPO, write_files};
+use super::{FakeClock, REPO, write_files};
+use crate::api::{BenchmarkRunsLink, EnvironmentLink, Sources};
+use crate::clock::Clock;
 use crate::database::Database;
+use crate::ending::Ends;
 use crate::runs::{RepoWorkDir, Runs};
+use crate::status::Serving;
+use crate::winding_up::WindingUp;
 
 /// A work directory whose repository's directory holds each of `files`, a
 /// path under it and what it holds, as runs left them.
@@ -543,5 +549,34 @@ pub fn trial(
             .unwrap_or_else(|e| panic!("setting the trial at {caller}: {e}"));
         assert_eq!(updated.rows_affected(), 1, "the trial set at {caller}");
         pool.close().await;
+    }
+}
+
+/// What `serve`'s local API answers from before its first poll, over
+/// `work_dir`.
+#[track_caller]
+pub fn sources_before_polling(work_dir: RepoWorkDir) -> impl Future<Output = Sources> {
+    let runs = runs_in(&work_dir.resolve());
+    async move {
+        let runs = runs.await;
+        let clock = Arc::new(FakeClock::new());
+        let (_, served) = tokio::sync::watch::channel(None);
+        let (_, polling) = tokio::sync::watch::channel(None);
+        Sources {
+            serving: Serving {
+                since: clock.now(),
+                max_runs: 4,
+            },
+            served,
+            polling,
+            deliveries: None,
+            clock,
+            work_dir,
+            runs,
+            ends: Ends::new(),
+            environment: EnvironmentLink::default(),
+            benchmark_runs: BenchmarkRunsLink::default(),
+            exiting: WindingUp::default().exiting(),
+        }
     }
 }
