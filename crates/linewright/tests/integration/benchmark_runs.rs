@@ -28,6 +28,23 @@ fn short(dir: &Path) -> PathBuf {
     configuration
 }
 
+/// Keeps through the back door benchmark run 1 on [`board`]'s tasks, launched
+/// at noon, once, under `as-is`, `short` and `long`.
+async fn keep_short_and_long(repo: &Path) {
+    keep_benchmark_run(
+        repo,
+        &KeptBenchmarkRun {
+            id: 1,
+            benchmark: 1,
+            launched_at: "2026-11-17T12:00:00Z",
+            repetitions: std::num::NonZeroU32::MIN,
+            tasks: &[1, 2],
+            configurations: &[("short", &[]), ("long", &[])],
+        },
+    )
+    .await;
+}
+
 fn names_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(dir)
         .unwrap()
@@ -554,7 +571,7 @@ async fn a_criteria_edit_reaches_the_benchmark_runs_launched_after_it_and_not_be
 async fn lw_benchmark_run_rename_configuration_changes_its_name_after_the_launch() {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
-    keep_benchmark_run(&repo, 1, 1, &[1, 2], &["as-is", "short", "long"]).await;
+    keep_short_and_long(&repo).await;
 
     let renamed = lw_in(
         work_dir.path(),
@@ -615,7 +632,7 @@ async fn lw_benchmark_run_rename_configuration_refuses_as_is_a_taken_name_and_on
  {
     let work_dir = tempfile::tempdir().unwrap();
     let repo = board(work_dir.path()).await;
-    keep_benchmark_run(&repo, 1, 1, &[1, 2], &["as-is", "short", "long"]).await;
+    keep_short_and_long(&repo).await;
 
     let as_is = lw_in(
         work_dir.path(),

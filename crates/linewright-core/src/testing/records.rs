@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{FakeClock, REPO, write_files};
+use super::{FakeClock, REPO, copy_dir, write_files};
 use crate::api::{AutomationsLink, BenchmarkRunsLink, EnvironmentLink, Sources};
 use crate::clock::Clock;
 use crate::database::Database;
@@ -323,50 +324,175 @@ pub async fn keep_benchmark(work_dir: &Path, name: &str, stage: &str) -> i64 {
     id
 }
 
-/// Keeps the open benchmark run `id` on the benchmark `benchmark` in the
-/// database of `work_dir`, with the tasks `tasks` and the configurations
-/// named `configurations`, `as-is` first, as a launch keeps its rows, without
-/// its trials or its directory.
-pub async fn keep_benchmark_run(
-    work_dir: &Path,
-    id: i64,
-    benchmark: i64,
-    tasks: &[i64],
-    configurations: &[&str],
-) {
+/// A benchmark run as [`keep_benchmark_run`] keeps it, just launched.
+#[derive(Clone, Copy, Debug)]
+pub struct KeptBenchmarkRun<'a> {
+    pub id: i64,
+    /// The benchmark's ID.
+    pub benchmark: i64,
+    /// When it was launched, in RFC 3339.
+    pub launched_at: &'a str,
+    pub repetitions: NonZeroU32,
+    /// The IDs of its tasks, in its order.
+    pub tasks: &'a [i64],
+    /// The configurations after `as-is`, which comes first in every
+    /// benchmark run: each its name and its files, a path under the
+    /// configuration's directory and what it holds.
+    pub configurations: &'a [(&'a str, &'a [(&'a str, &'a str)])],
+}
+
+/// Keeps `run` in the work directory `work_dir` as
+/// [`BenchmarkRuns::launch`](crate::benchmarks::BenchmarkRuns::launch) keeps
+/// it: its rows, with every trial pending, and its directory, holding a copy
+/// of each of its tasks' directories in `work_dir` and of each
+/// configuration's files.
+///
+/// # Panics
+///
+/// When `launched_at` is not a time, a task has no directory, or a row or a
+/// file cannot be written.
+pub async fn keep_benchmark_run(work_dir: &Path, run: &KeptBenchmarkRun<'_>) {
+    let launched_at = kept_time(run.launched_at);
+    let names: Vec<&str> = std::iter::once("as-is")
+        .chain(run.configurations.iter().map(|(name, _)| *name))
+        .collect();
     let pool = back_door(work_dir).await;
     let mut tx = pool.begin().await.unwrap();
     sqlx::query(
         "INSERT INTO benchmark_runs (id, benchmark, launched_at, repetitions, state)
-         VALUES (?, ?, '2026-11-17T12:00:00Z', 1, 'open')",
+         VALUES (?, ?, ?, ?, 'open')",
     )
-    .bind(id)
-    .bind(benchmark)
+    .bind(run.id)
+    .bind(run.benchmark)
+    .bind(launched_at)
+    .bind(run.repetitions.get())
     .execute(&mut *tx)
     .await
     .unwrap_or_else(|e| panic!("keeping a benchmark run: {e}"));
-    for (seq, task) in tasks.iter().enumerate() {
+    for (seq, task) in (0_i64..).zip(run.tasks) {
         sqlx::query("INSERT INTO benchmark_run_tasks (benchmark_run, seq, task) VALUES (?, ?, ?)")
-            .bind(id)
-            .bind(i64::try_from(seq).unwrap())
+            .bind(run.id)
+            .bind(seq)
             .bind(task)
             .execute(&mut *tx)
             .await
             .unwrap_or_else(|e| panic!("keeping a benchmark run's task: {e}"));
     }
-    for (seq, name) in configurations.iter().enumerate() {
+    for (seq, name) in (0_i64..).zip(&names) {
         sqlx::query(
             "INSERT INTO benchmark_run_configurations (benchmark_run, seq, name) VALUES (?, ?, ?)",
         )
-        .bind(id)
-        .bind(i64::try_from(seq).unwrap())
+        .bind(run.id)
+        .bind(seq)
         .bind(name)
         .execute(&mut *tx)
         .await
         .unwrap_or_else(|e| panic!("keeping a benchmark run's configuration: {e}"));
     }
+    for repetition in 1..=run.repetitions.get() {
+        for (task, _) in (0_i64..).zip(run.tasks) {
+            for (configuration, _) in (0_i64..).zip(&names) {
+                sqlx::query(
+                    "INSERT INTO trials (benchmark_run, repetition, task_seq, configuration_seq, state)
+                     VALUES (?, ?, ?, ?, 'pending')",
+                )
+                .bind(run.id)
+                .bind(repetition)
+                .bind(task)
+                .bind(configuration)
+                .execute(&mut *tx)
+                .await
+                .unwrap_or_else(|e| panic!("keeping a trial: {e}"));
+            }
+        }
+    }
     tx.commit().await.unwrap();
     pool.close().await;
+    let kept = work_dir
+        .join("benchmark-runs")
+        .join(run.id.to_string())
+        .join(".kept");
+    let tasks = kept.join("tasks");
+    std::fs::create_dir_all(&tasks).unwrap();
+    for task in run.tasks {
+        let from = work_dir.join("tasks").join(task.to_string());
+        assert!(from.is_dir(), "the task {task} has no directory to copy");
+        copy_dir(&from, &tasks.join(task.to_string()));
+    }
+    let configurations = kept.join("configurations");
+    std::fs::create_dir_all(configurations.join("1")).unwrap();
+    for (id, (_, files)) in (2..).zip(run.configurations) {
+        let dir = configurations.join(id.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        write_files(&dir, files);
+    }
+}
+
+/// How [`benchmark_run_ended`] ends a benchmark run, and when: each holds
+/// the time, in RFC 3339.
+#[derive(Clone, Copy, Debug)]
+pub enum BenchmarkRunEnd<'a> {
+    /// Ended once its every trial had, as
+    /// [`BenchmarkRuns::end`](crate::benchmarks::BenchmarkRuns::end) ends it.
+    Ended(&'a str),
+    /// Cancelled, as
+    /// [`BenchmarkRuns::cancel`](crate::benchmarks::BenchmarkRuns::cancel)
+    /// cancels it, its trials as they stand.
+    Cancelled(&'a str),
+}
+
+/// Writes `end` for the open benchmark run `id` of the work directory
+/// `work_dir`: its state and when it ended.
+///
+/// # Panics
+///
+/// When the benchmark run is not open, its time is not one, or, for
+/// [`BenchmarkRunEnd::Ended`], a trial of it is yet to end: pending, running,
+/// ran or scoring.
+pub async fn benchmark_run_ended(work_dir: &Path, id: i64, end: BenchmarkRunEnd<'_>) {
+    let (state, at) = match end {
+        BenchmarkRunEnd::Ended(at) => ("ended", at),
+        BenchmarkRunEnd::Cancelled(at) => ("cancelled", at),
+    };
+    let pool = back_door(work_dir).await;
+    let open: Option<String> = sqlx::query_scalar("SELECT state FROM benchmark_runs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("reading benchmark run {id}: {e}"));
+    assert_eq!(open.as_deref(), Some("open"), "benchmark run {id}'s state");
+    if let BenchmarkRunEnd::Ended(_) = end {
+        let unended: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM trials
+             WHERE benchmark_run = ? AND state NOT IN ('scored', 'unscored')",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("reading benchmark run {id}'s trials: {e}"));
+        assert_eq!(
+            unended, 0,
+            "benchmark run {id} ends only once its every trial has"
+        );
+    }
+    sqlx::query("UPDATE benchmark_runs SET state = ?, ended_at = ? WHERE id = ?")
+        .bind(state)
+        .bind(kept_time(at))
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|e| panic!("ending benchmark run {id}: {e}"));
+    pool.close().await;
+}
+
+/// `at`, an RFC 3339 time, as the database keeps a time.
+///
+/// # Panics
+///
+/// When `at` is not a time.
+fn kept_time(at: &str) -> String {
+    let at: Timestamp = at.parse().unwrap_or_else(|e| panic!("the time {at}: {e}"));
+    crate::database::time_text(at)
 }
 
 /// Keeps the task `name` of the benchmark named `benchmark`, captured from

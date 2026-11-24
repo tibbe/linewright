@@ -1,6 +1,9 @@
 //! Each back-door state is what its stage leaves, checked by running the
 //! stage from the same start.
 
+use std::num::NonZeroU32;
+use std::path::Path;
+
 use linewright_core::clock::Clock;
 use linewright_core::domain::{CheckState, Requirement};
 use linewright_core::testing::captures;
@@ -350,4 +353,177 @@ async fn a_task_directory_is_what_a_capture_leaves() {
     .await;
 
     assert_same_tree(&captured.dir, &dir);
+}
+
+/// The files of the configuration `short`: a setting and a file of the
+/// brief.
+const SHORT: &[(&str, &str)] = &[
+    ("config.toml", "model = \"haiku\"\n"),
+    ("briefs/plugin/skills/tdd/SKILL.md", "Test first.\n"),
+];
+
+/// A work directory holding the implement benchmark `board`, 1, of the tasks
+/// `lanes`, 1, and `columns`, 2, whose directory holds facts of its run
+/// beside its criteria.
+async fn board() -> tempfile::TempDir {
+    let work_dir = tempfile::tempdir().unwrap();
+    runs_in(work_dir.path()).await;
+    keep_benchmark(work_dir.path(), "board", "implement").await;
+    keep_task(
+        work_dir.path(),
+        "board",
+        "lanes",
+        "4/implement-1",
+        "Stacks them.\n",
+    )
+    .await;
+    let columns = keep_task(
+        work_dir.path(),
+        "board",
+        "columns",
+        "3/implement-2",
+        "Names them.\n",
+    )
+    .await;
+    write_files(
+        &work_dir.path().join(format!("tasks/{columns}")),
+        &[
+            ("items.json", "[]\n"),
+            ("repository/HEAD", "ref: refs/heads/main\n"),
+        ],
+    );
+    work_dir
+}
+
+/// Launches a benchmark run on `board` in `work_dir` at noon, under `as-is`
+/// and `short`, twice, and gives it with its benchmark runs.
+async fn launch_board(
+    work_dir: &Path,
+) -> (
+    linewright_core::benchmarks::BenchmarkRuns,
+    linewright_core::benchmarks::BenchmarkRunId,
+) {
+    let short = linewright_core::trial::Configuration::parse(
+        SHORT
+            .iter()
+            .map(|(path, contents)| (path.to_string(), contents.as_bytes().to_vec()))
+            .collect(),
+    )
+    .unwrap();
+    let benchmark_runs =
+        linewright_core::benchmarks::BenchmarkRuns::new(runs_in(work_dir).await.database().clone());
+    let launched = benchmark_runs
+        .launch(
+            "1".parse().unwrap(),
+            vec![("short".parse().unwrap(), short)],
+            NonZeroU32::new(2).unwrap(),
+            "2026-11-17T12:00:00Z".parse().unwrap(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("launching: {e:#}"));
+    (benchmark_runs, launched.id)
+}
+
+/// Keeps through the back door in `work_dir` the benchmark run
+/// [`launch_board`] launches.
+async fn keep_board_run(work_dir: &Path) {
+    keep_benchmark_run(
+        work_dir,
+        &KeptBenchmarkRun {
+            id: 1,
+            benchmark: 1,
+            launched_at: "2026-11-17T12:00:00Z",
+            repetitions: NonZeroU32::new(2).unwrap(),
+            tasks: &[1, 2],
+            configurations: &[("short", SHORT)],
+        },
+    )
+    .await;
+}
+
+/// Asserts that the benchmark-run tables of the work directory `front` and
+/// the benchmark runs' directories in it hold what `back`'s do.
+async fn assert_same_benchmark_runs(front: &Path, back: &Path) {
+    for query in [
+        "SELECT * FROM benchmark_runs ORDER BY id",
+        "SELECT * FROM benchmark_run_tasks ORDER BY benchmark_run, seq",
+        "SELECT * FROM benchmark_run_configurations ORDER BY benchmark_run, seq",
+        "SELECT * FROM trials ORDER BY benchmark_run, repetition, task_seq, configuration_seq",
+    ] {
+        assert_same_rows(front, back, query).await;
+    }
+    assert_same_tree(&front.join("benchmark-runs"), &back.join("benchmark-runs"));
+}
+
+#[test_log::test(tokio::test)]
+async fn a_launched_benchmark_run_is_what_a_launch_leaves() {
+    let front = board().await;
+    launch_board(front.path()).await;
+    let back = board().await;
+
+    keep_board_run(back.path()).await;
+
+    assert_same_benchmark_runs(front.path(), back.path()).await;
+}
+
+#[test_log::test(tokio::test)]
+async fn a_cancelled_benchmark_run_is_what_a_cancel_leaves() {
+    let front = board().await;
+    let (benchmark_runs, id) = launch_board(front.path()).await;
+    benchmark_runs
+        .cancel(id, "2026-11-17T13:00:00Z".parse().unwrap())
+        .await
+        .unwrap_or_else(|e| panic!("cancelling: {e:#}"));
+    let back = board().await;
+    keep_board_run(back.path()).await;
+
+    benchmark_run_ended(
+        back.path(),
+        1,
+        BenchmarkRunEnd::Cancelled("2026-11-17T13:00:00Z"),
+    )
+    .await;
+
+    assert_same_benchmark_runs(front.path(), back.path()).await;
+}
+
+/// Ends each trial of the benchmark run [`launch_board`] launches in
+/// `work_dir`, as a run of it under `serve` would.
+async fn trials_ended(work_dir: &Path) {
+    for repetition in 1..=2 {
+        for task in 0..2 {
+            for configuration in 0..2 {
+                trial(
+                    work_dir,
+                    1,
+                    (repetition, task, configuration),
+                    "state = 'unscored', outcome = 'failed', seconds = 5, unscored = 'outcome'",
+                )
+                .await;
+            }
+        }
+    }
+}
+
+#[test_log::test(tokio::test)]
+async fn an_ended_benchmark_run_is_what_an_end_leaves() {
+    let front = board().await;
+    let (benchmark_runs, id) = launch_board(front.path()).await;
+    trials_ended(front.path()).await;
+    benchmark_runs
+        .end(id, "2026-11-17T13:00:00Z".parse().unwrap())
+        .await
+        .unwrap_or_else(|e| panic!("ending: {e:#}"));
+    let back = board().await;
+    keep_board_run(back.path()).await;
+    trials_ended(back.path()).await;
+
+    benchmark_run_ended(
+        back.path(),
+        1,
+        BenchmarkRunEnd::Ended("2026-11-17T13:00:00Z"),
+    )
+    .await;
+
+    assert_same_benchmark_runs(front.path(), back.path()).await;
 }
