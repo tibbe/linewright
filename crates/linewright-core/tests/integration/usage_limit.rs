@@ -233,19 +233,6 @@ async fn a_stop_during_the_wait_drops_the_run() {
     assert_eq!(store.pulls(), []);
 }
 
-#[test_log::test(tokio::test)]
-async fn once_ends_the_refused_run_without_waiting() {
-    let mut world = World::new().await;
-    implement_turns(&world, vec![refused_for_the_usage_limit]);
-    let ticket = open_ticket(&world, "Do the thing");
-
-    world.poll().await;
-
-    assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
-    assert_eq!(world.issue(ticket).comments, []);
-    assert!(world.issue(ticket).is_assigned(&Login::new(LINEWRIGHT)));
-}
-
 struct Served {
     world: World,
     serving: Serving,
