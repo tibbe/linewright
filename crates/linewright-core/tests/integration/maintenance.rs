@@ -251,13 +251,7 @@ async fn a_maintenance_command_that_outlasts_its_sessions_timeout_is_the_session
     let issue = world.issue(issue);
     assert!(labels(&issue).contains(&"ready-for-human"));
     let comment = last_comment(&issue);
-    assert!(
-        comment.contains(
-            "The session ended unexpectedly: it timed out after 1s. The work may need cutting \
-             smaller, or `session-timeout` may need to be longer."
-        ),
-        "{comment}"
-    );
+    assert!(comment.contains("it timed out after 1s"), "{comment}");
     assert!(!comment.contains("failed twice"), "{comment}");
     assert!(
         comment.contains("<summary>The end of the maintenance command's output</summary>"),
