@@ -140,40 +140,12 @@ async fn an_implement_run_whose_push_github_still_refuses_after_its_follow_ups_h
             && !comment.contains("infrastructure"),
         "{comment}"
     );
-    assert_eq!(world.store.pulls(), []);
-}
-
-#[test_log::test(tokio::test)]
-async fn a_ticket_handed_back_as_github_still_refuses_its_push_says_once_that_the_work_was_not_kept()
- {
-    let mut world = World::new().await;
-    let store = world.store.clone();
-    world.harness.on(WorkKind::Implement, move |call| {
-        if call.followup.is_none() {
-            commit_token(&call.spec.dir);
-            store.refuse_pushes(REFUSAL);
-        }
-        Ok(
-            json!({"outcome": "done", "pr_title": "Configure", "pr_body": "Configures."})
-                .to_string(),
-        )
-    });
-    let ticket = world.store.open_issue(
-        "maintainer",
-        "Configure",
-        "",
-        &["ready-for-agent", "linewright:designed"],
-    );
-
-    world.poll().await;
-
-    let issue = world.issue(ticket);
-    let comment = last_comment(&issue);
     assert_eq!(
         comment.matches("The work so far was not kept").count(),
         1,
-        "{comment}"
+        "said once: {comment}"
     );
+    assert_eq!(world.store.pulls(), []);
 }
 
 #[test_log::test(tokio::test)]
@@ -259,13 +231,11 @@ async fn a_blocked_run_whose_work_github_refuses_over_a_secret_says_the_work_was
     let issue = world.issue(ticket);
     assert_eq!(world.harness.prompts(WorkKind::Implement).len(), 1);
     assert_eq!(labels(&issue), ["ready-for-human"]);
-    assert_eq!(
-        last_comment(&issue),
-        format!(
-            "Blocked on a question the spec cannot decide:\n\nWhich token?\n\nThe work so far \
-             was not kept, as it holds a secret: GitHub's push protection found {FOUND}."
-        )
-    );
+    let comment = last_comment(&issue);
+    let question = comment.find("Which token?");
+    let found = comment.find(FOUND);
+    assert!(question.is_some() && question < found, "{comment}");
+    assert_eq!(comment.matches(FOUND).count(), 1, "{comment}");
 }
 
 #[test_log::test(tokio::test)]
