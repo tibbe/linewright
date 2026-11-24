@@ -1,6 +1,7 @@
 //! Each back-door state is what its stage leaves, checked by running the
 //! stage from the same start.
 
+use linewright_core::clock::Clock;
 use linewright_core::domain::{CheckState, Requirement};
 use linewright_core::testing::captures;
 use linewright_core::testing::*;
@@ -301,4 +302,35 @@ async fn a_recorded_run_is_what_the_implement_stage_records() {
     )
     .await;
     assert_same_input(&front, &back, &run).await;
+}
+
+/// The criteria the task-directory test's task is given.
+const GADGETS_CRITERIA: &str = "Gadgets exist.\n";
+
+#[test_log::test(tokio::test)]
+async fn a_task_directory_is_what_a_capture_leaves() {
+    let mut front = World::new().await;
+    implement_gadgets(&front);
+    let front_ticket = open_designed_gadgets(&front);
+    front.poll().await;
+    let front_run = format!("{}/implement-1", front_ticket.0);
+    let captured = captures::capture(&front, &front_run, "gadgets", GADGETS_CRITERIA)
+        .await
+        .unwrap_or_else(|e| panic!("capturing: {e:#}"));
+    let back = World::new().await;
+    let (ticket, run, [main, branch]) = captures::gadgets_claimed(&back).await;
+    let dir = back.dir.path().join("task");
+
+    keep_task_dir(
+        &dir,
+        &back.store,
+        &run,
+        back.clock.now(),
+        &[ticket],
+        &[&main, &branch],
+        GADGETS_CRITERIA,
+    )
+    .await;
+
+    assert_same_tree(&captured.dir, &dir);
 }

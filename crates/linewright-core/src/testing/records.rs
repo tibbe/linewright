@@ -9,7 +9,7 @@ use crate::database::Database;
 use crate::domain::{Number, Timestamp};
 use crate::ending::Ends;
 use crate::input::Input;
-use crate::runs::{RepoWorkDir, Runs};
+use crate::runs::{RepoWorkDir, RunId, Runs};
 use crate::status::Serving;
 use crate::store::Store;
 use crate::store::local::LocalStore;
@@ -416,6 +416,49 @@ pub async fn keep_task(
     id
 }
 
+/// Writes into `dir`, made if missing, what a capture of the run `run`
+/// leaves of its task, had the run started at `start` and been given
+/// `items` and `branches`: its `task.json`, `items.json` and
+/// `properties.json`, from [`recorded_input`]; its `repository.git`,
+/// holding the heads, fetched from `store`; and its `criteria.md`, holding
+/// `criteria`.
+///
+/// # Panics
+///
+/// When `run` names no triage, design or implement run, when writing
+/// the directory or fetching the heads into it fails, or as
+/// [`recorded_input`] does.
+pub async fn keep_task_dir(
+    dir: &Path,
+    store: &LocalStore,
+    run: &str,
+    start: Timestamp,
+    items: &[Number],
+    branches: &[&str],
+    criteria: &str,
+) {
+    let input = recorded_input(store, items, branches, start).await;
+    let (_, task) = task_file(run, &serde_json::json!(input.start));
+    std::fs::create_dir_all(dir)
+        .unwrap_or_else(|e| panic!("making the task's directory {}: {e}", dir.display()));
+    let files = [
+        ("task.json", pretty_json("task", &task)),
+        ("items.json", pretty_json("items", &input.items)),
+        (
+            "properties.json",
+            pretty_json("properties", &input.properties),
+        ),
+        ("criteria.md", criteria.to_owned()),
+    ];
+    for (file, contents) in files {
+        std::fs::write(dir.join(file), contents)
+            .unwrap_or_else(|e| panic!("writing the task's {file}: {e}"));
+    }
+    Store::fetch_commits(store, &dir.join("repository.git"), &input.heads)
+        .await
+        .unwrap_or_else(|e| panic!("fetching the task's heads: {e:#}"));
+}
+
 /// Writes into the directory of the task `id` of `work_dir` what a capture of
 /// the run `run`, started at `start`, leaves of its facts: its `task.json`,
 /// and its `items.json` holding the run's item with its issue `issue`, as
@@ -427,18 +470,8 @@ pub fn keep_task_facts(
     start: &str,
     issue: &serde_json::Value,
 ) {
-    let parsed: crate::runs::RunId = run.parse().unwrap_or_else(|e| panic!("the run {run}: {e}"));
-    let crate::runs::RunOf::Work { item, stage } = parsed.of else {
-        panic!("only an item's run is captured");
-    };
+    let (item, task) = task_file(run, &serde_json::json!(start));
     let dir = work_dir.join("tasks").join(id.to_string());
-    let task = serde_json::json!({
-        "stage": stage.name(),
-        "item": item.0,
-        "start": start,
-        "run": run,
-        "api_version": crate::store::API_VERSION,
-    });
     let items = serde_json::json!([{
         "number": item.0,
         "resources": {format!("issues/{}", item.0): issue},
@@ -447,6 +480,39 @@ pub fn keep_task_facts(
         std::fs::write(dir.join(file), json.to_string())
             .unwrap_or_else(|e| panic!("writing the task's {file}: {e}"));
     }
+}
+
+/// The item of the run `run` and the `task.json` a capture of it leaves,
+/// had it started at `start`, with the current
+/// [`API_VERSION`](crate::store::API_VERSION).
+///
+/// # Panics
+///
+/// When `run` names no triage, design or implement run.
+fn task_file(run: &str, start: &serde_json::Value) -> (Number, serde_json::Value) {
+    let id: RunId = run.parse().unwrap_or_else(|e| panic!("the run {run}: {e}"));
+    let Some((stage, item)) = crate::task::capturable_stage(&id.of) else {
+        panic!("only a triage, design or implement run is captured");
+    };
+    let task = serde_json::json!({
+        "stage": stage.name(),
+        "item": item,
+        "start": start,
+        "run": run,
+        "api_version": crate::store::API_VERSION,
+    });
+    (item, task)
+}
+
+/// `value` as a capture writes a task's JSON file: pretty, ending in a
+/// newline.
+///
+/// # Panics
+///
+/// When `value` does not serialize, naming `what` it is.
+fn pretty_json(what: &str, value: &impl serde::Serialize) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|e| panic!("writing the task's {what}: {e}"))
+        + "\n"
 }
 
 /// Sets when the benchmark run `id` of `work_dir` was launched, through the

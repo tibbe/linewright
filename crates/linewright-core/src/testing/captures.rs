@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::benchmarks::{BenchmarkId, Benchmarks, KeptTask, MakeError};
+use crate::domain::Number;
 use crate::name::Name;
 use crate::runs::{RunId, Runs};
 use crate::store::Store;
@@ -102,15 +103,24 @@ pub async fn record_as_before_the_properties(work: &Path) {
     pool.close().await;
 }
 
+/// The ticket "Gadgets", claimed as the implement stage claims it before
+/// its run records its input: the ticket, the ID of its first implement
+/// run, and the branches that run is given, the default branch and the
+/// ticket's.
+pub async fn gadgets_claimed(world: &World) -> (Number, String, [String; 2]) {
+    let ticket = open_designed_gadgets(world);
+    Store::assign(&*world.store, ticket)
+        .await
+        .unwrap_or_else(|e| panic!("claiming the ticket: {e:#}"));
+    let run = format!("{}/implement-1", ticket.0);
+    (ticket, run, ["main".into(), world.ticket_branch(ticket)])
+}
+
 /// An implement run on the ticket "Gadgets", which it claimed, ended with
 /// the input it recorded, written through the back door, and its ID.
 pub async fn implemented(world: &World) -> String {
-    let ticket = open_designed_gadgets(world);
-    Store::assign(&*world.store, ticket).await.unwrap();
-    let run = format!("{}/implement-1", ticket.0);
-    world
-        .run_recorded(&run, &[ticket], &["main", &world.ticket_branch(ticket)])
-        .await;
+    let (ticket, run, [main, branch]) = gadgets_claimed(world).await;
+    world.run_recorded(&run, &[ticket], &[&main, &branch]).await;
     run
 }
 
