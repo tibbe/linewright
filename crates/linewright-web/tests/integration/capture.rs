@@ -1,5 +1,3 @@
-use std::panic::Location;
-
 use serde_json::json;
 
 use super::*;
@@ -32,36 +30,32 @@ pub(super) enum Recorded {
 /// #1, `Ship gh`, with its implement run ended, recorded as run 1, which
 /// recorded of its input what `recorded` says, the default branch's head in
 /// the store among it.
-#[track_caller]
-pub(super) fn implemented(recorded: Recorded) -> impl Future<Output = Pages> {
-    let caller = Location::caller();
-    async move {
-        let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
-        keep_benchmark(&pages.path(""), IMPLEMENTS, "implement").await;
-        keep_benchmark(&pages.path(""), DESIGNS, "design").await;
-        pages
-            .record(&json!({
-                "item": 1,
-                "stage": "implement",
-                "n": 1,
-                "started_at": "2026-10-13T10:09:00Z",
-                "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
-                "sessions": [],
-            }))
-            .await;
-        let properties = match recorded {
-            Recorded::Nothing => return pages,
-            Recorded::WithoutProperties => None,
-            Recorded::Whole => Some(properties()),
-        };
-        let head = pages
-            .store
-            .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
-            .await
-            .unwrap_or_else(|e| panic!("committing on main at {caller}: {e:#}"));
-        record_input(&pages, &head, properties).await;
-        pages
-    }
+pub(super) async fn implemented(recorded: Recorded) -> Pages {
+    let pages = Pages::of(view(vec![ticket(1, "Ship gh")], vec![])).await;
+    keep_benchmark(&pages.path(""), IMPLEMENTS, "implement").await;
+    keep_benchmark(&pages.path(""), DESIGNS, "design").await;
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "implement",
+            "n": 1,
+            "started_at": "2026-10-13T10:09:00Z",
+            "end": {"at": "2026-10-13T10:13:00Z", "ending": "done"},
+            "sessions": [],
+        }))
+        .await;
+    let properties = match recorded {
+        Recorded::Nothing => return pages,
+        Recorded::WithoutProperties => None,
+        Recorded::Whole => Some(properties()),
+    };
+    let head = pages
+        .store
+        .commit("maintainer", "main", &[("README.md", "Gadgets\n")], "Start")
+        .await
+        .unwrap_or_else(|e| panic!("committing on main: {e:#}"));
+    record_input(&pages, &head, properties).await;
+    pages
 }
 
 /// Properties as a run records them.
@@ -71,12 +65,7 @@ fn properties() -> serde_json::Value {
 
 /// Writes the input #1's implement run 1 recorded: `main` at `head`, with
 /// `properties`, if any.
-#[track_caller]
-fn record_input(
-    pages: &Pages,
-    head: &str,
-    properties: Option<serde_json::Value>,
-) -> impl Future<Output = ()> + use<> {
+async fn record_input(pages: &Pages, head: &str, properties: Option<serde_json::Value>) {
     let mut input = json!({
         "api_version": linewright_core::store::API_VERSION,
         "start": "2026-10-13T10:09:00Z",
@@ -86,11 +75,10 @@ fn record_input(
     if let Some(properties) = properties {
         input["properties"] = properties;
     }
-    pages.input("1/implement-1", &input)
+    pages.input("1/implement-1", &input).await;
 }
 
 /// The capture form on `html`, if it shows one.
-#[track_caller]
 fn capture_form(html: &Html) -> Option<ElementRef<'_>> {
     let forms = select(html, "form.capture");
     assert!(forms.len() <= 1, "more than one capture form");
@@ -102,7 +90,6 @@ fn capture_form(html: &Html) -> Option<ElementRef<'_>> {
 type FormShown<'a> = (Vec<(&'a str, String)>, Option<String>);
 
 /// [`FormShown`] of the capture's form `form`.
-#[track_caller]
 fn form_shown(form: &Html) -> FormShown<'_> {
     let refusals = select(form, ".alert-error");
     assert!(refusals.len() <= 1, "{}", form.html());
@@ -310,13 +297,8 @@ async fn a_run_whose_record_lacks_the_properties_offers_no_capture_and_refuses_o
 /// Submits the capture form of #1's implement run, naming the task `name`
 /// with `criteria`, into the benchmark [`IMPLEMENTS`], as a page of the web
 /// UI's own does: the status and the fragment it answers with.
-#[track_caller]
-fn submit<'a>(
-    pages: &'a Pages,
-    name: &'a str,
-    criteria: &'a str,
-) -> impl Future<Output = (u16, Html)> + 'a {
-    submit_into(pages, Chosen::Benchmark(IMPLEMENTS_ID), name, criteria)
+async fn submit(pages: &Pages, name: &str, criteria: &str) -> (u16, Html) {
+    submit_into(pages, Chosen::Benchmark(IMPLEMENTS_ID), name, criteria).await
 }
 
 /// The benchmark a capture goes into.
@@ -337,27 +319,20 @@ impl<'a> Chosen<'a> {
 }
 
 /// [`submit`], into the benchmark `into`.
-#[track_caller]
-fn submit_into(
-    pages: &Pages,
-    into: Chosen<'_>,
-    name: &str,
-    criteria: &str,
-) -> impl Future<Output = (u16, Html)> + use<> {
-    post_capture(pages, &[SAME_ORIGIN], into, name, criteria)
+async fn submit_into(pages: &Pages, into: Chosen<'_>, name: &str, criteria: &str) -> (u16, Html) {
+    post_capture(pages, &[SAME_ORIGIN], into, name, criteria).await
 }
 
 /// Posts the capture form of #1's implement run with `headers` besides its
 /// `Host`.
-#[track_caller]
-fn post_capture(
+async fn post_capture(
     pages: &Pages,
     headers: &[(&str, &str)],
     into: Chosen<'_>,
     name: &str,
     criteria: &str,
-) -> impl Future<Output = (u16, Html)> + use<> {
-    post(pages, RUN_PAGE, headers, &fields(into, name, criteria))
+) -> (u16, Html) {
+    post(pages, RUN_PAGE, headers, &fields(into, name, criteria)).await
 }
 
 /// The capture form's fields, into `into`, naming the task `name` with
@@ -376,32 +351,26 @@ fn fields<'a>(into: Chosen<'a>, name: &'a str, criteria: &'a str) -> [(&'a str, 
 /// closes the dialog, the form it answers with beside the message it sends
 /// to the screen, and that message, a success alert announced as a status,
 /// with where its link leads.
-#[track_caller]
-fn made(
-    pages: &Pages,
-    into: Chosen<'_>,
-) -> impl Future<Output = (u16, bool, Html, Vec<(String, Option<String>)>)> + use<> {
-    let answer = post_answer(
+async fn made(pages: &Pages, into: Chosen<'_>) -> (u16, bool, Html, Vec<(String, Option<String>)>) {
+    let (status, headers, answer) = post_answer(
         pages,
         RUN_PAGE,
         &[SAME_ORIGIN],
         &fields(into, "gadgets", CRITERIA),
-    );
-    async move {
-        let (status, headers, answer) = answer.await;
-        let closes = headers.get("hx-trigger").is_some_and(|made| made == "made");
-        let messages = select(
-            &answer,
-            r#"#made[hx-swap-oob="innerHTML"] > .alert.alert-success[role=status]"#,
-        )
-        .into_iter()
-        .map(|alert| {
-            let link = select_in(alert, "a").first().and_then(|a| a.attr("href"));
-            (text(alert), link.map(str::to_string))
-        })
-        .collect();
-        (status, closes, answer, messages)
-    }
+    )
+    .await;
+    let closes = headers.get("hx-trigger").is_some_and(|made| made == "made");
+    let messages = select(
+        &answer,
+        r#"#made[hx-swap-oob="innerHTML"] > .alert.alert-success[role=status]"#,
+    )
+    .into_iter()
+    .map(|alert| {
+        let link = select_in(alert, "a").first().and_then(|a| a.attr("href"));
+        (text(alert), link.map(str::to_string))
+    })
+    .collect();
+    (status, closes, answer, messages)
 }
 
 /// `docs/specs/runs.md`, Run, Capturing, What was made;

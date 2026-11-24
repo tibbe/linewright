@@ -324,7 +324,6 @@ async fn a_commit_holding_a_harness_credential_no_one_named_is_sent_back_naming_
 
 /// Asserts that `comment` names, in turn, the commit that holds the secret
 /// in `.npmrc`, which is `commit` when given, its variable and the file.
-#[track_caller]
 fn assert_names_the_secret(comment: &str, commit: Option<&str>) {
     let quoted: Vec<&str> = comment.split('`').skip(1).step_by(2).collect();
     let named = quoted.windows(3).any(|names| {

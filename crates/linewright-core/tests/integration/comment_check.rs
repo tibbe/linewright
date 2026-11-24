@@ -7,7 +7,6 @@ use std::process::Command;
 /// What `scripts/check comments` reports on a repository that tracks
 /// `files`, each a path and its content: one line per comment block or file
 /// it fails, and per spec file that a comment cites and that is not tracked.
-#[track_caller]
 fn reports(files: &[(&str, &str)]) -> Vec<String> {
     let tree = tempfile::tempdir().unwrap();
     let dir = tree.path();
@@ -50,7 +49,6 @@ fn reports(files: &[(&str, &str)]) -> Vec<String> {
     reports
 }
 
-#[track_caller]
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .args(args)

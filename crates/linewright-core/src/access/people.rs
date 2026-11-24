@@ -725,12 +725,10 @@ pub(crate) mod tests {
         }
     }
 
-    #[track_caller]
     fn domains(domain: &str) -> SignUpDomains {
         SignUpDomains::of(domain).unwrap()
     }
 
-    #[track_caller]
     fn manager(name: &str) -> ManagerName {
         let google = super::super::providers::Google::for_tests(domains("example.com"));
         ManagerName::parse(name, &Providers::Google(google)).unwrap()

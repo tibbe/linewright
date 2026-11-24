@@ -1534,53 +1534,41 @@ async fn drain_waits_while_serve_still_holds_its_claim_with_its_socket_refusing(
 }
 
 /// A world whose work dir is `REPO`'s, with `command` as its setup command.
-#[track_caller]
-fn setting_up_with(command: &str) -> impl Future<Output = World> + '_ {
-    let caller = std::panic::Location::caller();
-    async move {
-        let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
-        let config = testing::setup_config(command);
-        if let Err(e) = world
-            .store
-            .commit(
-                "maintainer",
-                "main",
-                &[(".linewright/config.toml", config.as_str())],
-                "Set up",
-            )
-            .await
-        {
-            panic!("setting up at {caller} failed: {e:#}");
-        }
-        world
+async fn setting_up_with(command: &str) -> World {
+    let world = World::with(|config| config.work_dir = config.work_dir.join(REPO)).await;
+    let config = testing::setup_config(command);
+    if let Err(e) = world
+        .store
+        .commit(
+            "maintainer",
+            "main",
+            &[(".linewright/config.toml", config.as_str())],
+            "Set up",
+        )
+        .await
+    {
+        panic!("setting up failed: {e:#}");
     }
+    world
 }
 
 impl Answering {
     /// Waits for `GET /api/environment` to answer what `done` accepts.
-    #[track_caller]
-    fn environment_until<'a>(
-        &'a self,
-        done: impl Fn(&serde_json::Value) -> bool + 'a,
-    ) -> impl Future<Output = ()> + 'a {
-        let caller = std::panic::Location::caller();
-        async move {
-            let waited = tokio::time::timeout(ANSWERING, async {
-                loop {
-                    let (_, body) =
-                        get(self.runtime_dir.path(), "localhost", "/api/environment").await;
-                    if done(&serde_json::from_str(&body).unwrap()) {
-                        return;
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+    async fn environment_until(&self, done: impl Fn(&serde_json::Value) -> bool) {
+        let waited = tokio::time::timeout(ANSWERING, async {
+            loop {
+                let (_, body) = get(self.runtime_dir.path(), "localhost", "/api/environment").await;
+                if done(&serde_json::from_str(&body).unwrap()) {
+                    return;
                 }
-            })
-            .await;
-            assert!(
-                waited.is_ok(),
-                "the environment had not answered as waited for at {caller}"
-            );
-        }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        assert!(
+            waited.is_ok(),
+            "the environment had not answered as waited for"
+        );
     }
 }
 

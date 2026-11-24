@@ -1948,7 +1948,6 @@ fn a_ready_card_linewright_was_unassigned_from_says_so_after_its_blocker_and_ass
 
 /// Asserts that each card of `cards`, a case, #number and card status each,
 /// has that card status on `board`, naming the case where it does not.
-#[track_caller]
 fn assert_card_statuses(board: &Board, cards: &[(&str, u64, Option<CardStatus>)]) {
     for &(case, number, status) in cards {
         assert_eq!(card(board, number).status(), status, "#{number}: {case}");
@@ -2794,7 +2793,6 @@ fn the_people_on_a_board_are_each_person_a_card_matches_but_linewright() {
 }
 
 /// `view` with `issue`, held open, in place of the issue of its number.
-#[track_caller]
 fn with_issue(mut view: View, issue: Issue) -> View {
     let snapshot = std::sync::Arc::make_mut(&mut view.snapshot);
     let held = snapshot

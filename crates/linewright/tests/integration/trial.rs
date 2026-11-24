@@ -2,7 +2,6 @@
 //! place of GitHub, and what it keeps in its output
 //! (`docs/specs/benchmarks.md`, Trials, The output of a trial).
 
-use std::panic::Location;
 use std::path::Path;
 
 use linewright_core::runs::RunId;
@@ -17,27 +16,23 @@ use crate::programs::*;
 /// directory, from a directory of its own, with Linewright's token
 /// `linewright-token` in `GH_TOKEN`, and neither `GITHUB_TOKEN`, the
 /// separate token nor `repo` set, but as `env` sets them.
-#[track_caller]
-pub(crate) fn lw_isolated<'a>(
-    bin: &'a Path,
-    work: &'a Path,
-    args: &'a [&str],
-    env: &'a [(&str, &str)],
-) -> impl Future<Output = Output> + 'a {
-    let caller = Location::caller();
-    async move {
-        let cwd = tempfile::tempdir().unwrap_or_else(|e| panic!("a directory at {caller}: {e}"));
-        let output = lw_command(bin, work, cwd.path())
-            .args(args)
-            .envs(env.iter().copied())
-            .output()
-            .await
-            .unwrap_or_else(|e| panic!("running lw at {caller}: {e}"));
-        Output {
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        }
+pub(crate) async fn lw_isolated(
+    bin: &Path,
+    work: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Output {
+    let cwd = tempfile::tempdir().unwrap_or_else(|e| panic!("a directory: {e}"));
+    let output = lw_command(bin, work, cwd.path())
+        .args(args)
+        .envs(env.iter().copied())
+        .output()
+        .await
+        .unwrap_or_else(|e| panic!("running lw: {e}"));
+    Output {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     }
 }
 
@@ -64,7 +59,6 @@ pub(crate) fn lw_command(bin: &Path, work: &Path, cwd: &Path) -> tokio::process:
 /// A directory to put on the path of `lw`, holding git, bash and a fake
 /// `claude` whose every triage answers that the issue is a bug ready for an
 /// agent, logging what it was given there.
-#[track_caller]
 fn bin_triaging() -> tempfile::TempDir {
     let bin = tempfile::tempdir().unwrap();
     link_from_path(bin.path(), "git");

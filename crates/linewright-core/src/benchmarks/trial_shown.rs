@@ -105,7 +105,6 @@ mod tests {
     use super::*;
     use crate::benchmarks::{Cancelled, ScoreFigures, TrialFigures};
 
-    #[track_caller]
     fn ended(outcome: &str) -> TrialFigures {
         TrialFigures {
             outcome: serde_json::from_value(outcome.into()).unwrap(),

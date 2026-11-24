@@ -253,7 +253,6 @@ pub async fn get_task(
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn listed(name: &str, stage: TaskStage) -> BenchmarkListed {
         BenchmarkListed {
             benchmark: Benchmark {
@@ -267,7 +266,6 @@ mod tests {
 
     /// The names of the benchmarks the filters `name` and `stage` keep, of
     /// `board` (implement), `triage-boards` (triage) and `lanes` (triage).
-    #[track_caller]
     fn kept(name: Option<&str>, stage: Option<TaskStage>) -> Vec<&'static str> {
         let filters = BenchmarksFilters::new(name, stage);
         [

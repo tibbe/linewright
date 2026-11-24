@@ -27,7 +27,6 @@ pub fn json_objects(lines: &str) -> Vec<serde_json::Value> {
 }
 
 /// Puts the `tool` on the tests' path in `bin`.
-#[track_caller]
 pub fn link_from_path(bin: &Path, tool: &str) {
     let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
         .map(|path| path.join(tool))

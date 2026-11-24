@@ -39,7 +39,6 @@ fn all_labels(world: &World) -> Vec<Vec<String>> {
     world.store.issues().into_iter().map(|i| i.labels).collect()
 }
 
-#[track_caller]
 fn assert_each_carries_required(all: &[Vec<String>]) {
     assert!(
         all.iter().all(|l| l.iter().any(|label| label == REQUIRED)),

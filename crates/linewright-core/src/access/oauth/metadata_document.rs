@@ -479,34 +479,29 @@ mod tests {
         asked: tokio::sync::mpsc::UnboundedReceiver<String>,
     }
 
-    #[track_caller]
-    fn refusing_proxy() -> impl Future<Output = RefusingProxy> {
+    async fn refusing_proxy() -> RefusingProxy {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-        let caller = std::panic::Location::caller();
-        async move {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .unwrap_or_else(|e| panic!("binding the proxy at {caller}: {e}"));
-            let url = format!("http://{}", listener.local_addr().unwrap());
-            let (ask, asked) = tokio::sync::mpsc::unbounded_channel();
-            tokio::spawn(async move {
-                while let Ok((mut stream, _)) = listener.accept().await {
-                    let mut head = Vec::new();
-                    let mut byte = [0; 1];
-                    while !head.ends_with(b"\r\n\r\n")
-                        && stream.read(&mut byte).await.unwrap_or(0) == 1
-                    {
-                        head.push(byte[0]);
-                    }
-                    let _ = ask.send(String::from_utf8_lossy(&head).into_owned());
-                    let _ = stream
-                        .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
-                        .await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("binding the proxy: {e}"));
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (ask, asked) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                let mut byte = [0; 1];
+                while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).await.unwrap_or(0) == 1
+                {
+                    head.push(byte[0]);
                 }
-            });
-            RefusingProxy { url, asked }
-        }
+                let _ = ask.send(String::from_utf8_lossy(&head).into_owned());
+                let _ = stream
+                    .write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+        RefusingProxy { url, asked }
     }
 
     /// `docs/specs/access.md`, The authorization server, Fetching a

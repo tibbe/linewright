@@ -457,20 +457,17 @@ fn serve_refuses_a_ui_address_it_cannot_listen_on_before_it_talks_to_github() {
 
 /// What `serve` logs as JSON lines, with `ui_address` as its `ui-address`
 /// and the variables `env`, until startup fails for want of `git`.
-#[track_caller]
 fn serve_log_lines(ui_address: &str, env: &[(&str, &str)]) -> Vec<serde_json::Value> {
     json_log_with(&["--ui-address", ui_address, "serve"], env).0
 }
 
 /// The lines of the JSON log of `lw` on `owner/name` with `args` until it
 /// fails for want of `git`, and the log as it is.
-#[track_caller]
 fn json_log(args: &[&str]) -> (Vec<serde_json::Value>, String) {
     json_log_with(args, &[])
 }
 
 /// As [`json_log`], with the variables `env`.
-#[track_caller]
 fn json_log_with(args: &[&str], env: &[(&str, &str)]) -> (Vec<serde_json::Value>, String) {
     let empty = tempfile::tempdir().unwrap();
     let args: Vec<&str> = ["--repo", "owner/name", "--log-format", "json"]
@@ -818,7 +815,6 @@ async fn a_session_token_that_reads_the_repository_starts_without_a_warning() {
 
 /// The messages `lw once` logs as warnings, with Linewright's token and
 /// `env`, until it fails to reach GitHub.
-#[track_caller]
 fn warnings_at_startup(env: &[(&str, &str)]) -> Vec<String> {
     let bin = path_to_start_on();
     let env: Vec<(&str, &str)> = [("GH_TOKEN", "linewright-token"), GITHUB_UNREACHABLE]

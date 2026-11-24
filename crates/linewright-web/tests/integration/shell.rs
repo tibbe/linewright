@@ -32,7 +32,6 @@ fn here(name: &str) -> (String, Option<String>) {
     (name.to_string(), None)
 }
 
-#[track_caller]
 fn title(html: &Html) -> String {
     let titles = select(html, "head title, title#title");
     assert_eq!(titles.len(), 1, "{}", html.html());
@@ -40,7 +39,6 @@ fn title(html: &Html) -> String {
 }
 
 /// The page's one `h1`.
-#[track_caller]
 fn h1(html: &Html) -> String {
     let headings = select(html, "h1");
     assert_eq!(headings.len(), 1, "{}", html.html());
@@ -57,7 +55,6 @@ struct Heading {
 
 /// The heading card of `html`, if it shows one, checking that its name is
 /// its `card-title`.
-#[track_caller]
 fn heading(html: &Html) -> Option<Heading> {
     let card = select(html, "#heading").into_iter().next()?;
     if card.attr("hidden").is_some() {
@@ -83,7 +80,6 @@ fn card(name: &str, badges: &[&str], line: Option<&str>) -> Heading {
 }
 
 /// The screen's buttons, each its label and the dialog it opens.
-#[track_caller]
 fn buttons(html: &Html) -> Vec<(String, String)> {
     select(html, "#buttons button")
         .into_iter()
@@ -100,23 +96,19 @@ fn buttons(html: &Html) -> Vec<(String, String)> {
 }
 
 /// [`with_benchmark_run`]'s pages, with the run `1/triage-1` of `Ship gh`.
-#[track_caller]
-pub(super) fn with_a_run() -> impl Future<Output = Pages> {
-    let pages = with_benchmark_run();
-    async move {
-        let pages = pages.await;
-        pages
-            .record(&json!({
-                "item": 1,
-                "stage": "triage",
-                "n": 1,
-                "started_at": "2026-10-14T12:00:00Z",
-                "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
-                "sessions": [],
-            }))
-            .await;
-        pages
-    }
+pub(super) async fn with_a_run() -> Pages {
+    let pages = with_benchmark_run().await;
+    pages
+        .record(&json!({
+            "item": 1,
+            "stage": "triage",
+            "n": 1,
+            "started_at": "2026-10-14T12:00:00Z",
+            "end": {"at": "2026-10-14T12:00:20Z", "ending": "handed-back"},
+            "sessions": [],
+        }))
+        .await;
+    pages
 }
 
 #[test_log::test(tokio::test)]
@@ -578,7 +570,6 @@ async fn a_missing_runs_stream_sends_no_heading_card() {
 }
 
 /// The navigation the drawer of `html` is drawn as: its `data-navigation`.
-#[track_caller]
 fn navigation(html: &Html) -> Option<String> {
     let drawers = select(html, ".drawer");
     assert_eq!(drawers.len(), 1, "{}", html.html());

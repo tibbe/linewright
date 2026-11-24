@@ -3466,7 +3466,6 @@ fn automation_runs_count_against_the_ceiling_and_get_the_room_the_pipeline_leave
 }
 
 /// The automation `name`, run when CI fails.
-#[track_caller]
 fn on_failures(name: &str) -> Automation {
     linewright_core::automation::parse(
         &name.parse().unwrap(),
@@ -3494,7 +3493,6 @@ fn failed_attempt(run: u64, minute: i64) -> CompletedAttempt {
 
 /// The automations of `names`, run when CI fails, each seen since its
 /// minute.
-#[track_caller]
 fn seen_on_failures(names: &[(&str, i64)]) -> TriggersSeen {
     names
         .iter()

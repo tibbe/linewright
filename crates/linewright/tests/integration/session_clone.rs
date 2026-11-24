@@ -1,7 +1,6 @@
 //! Making a session's clone, the first step of its session
 //! (`docs/specs/runs.md`, Stages).
 
-use std::panic::Location;
 use std::time::Duration;
 
 use linewright_core::factory::FactoryConfig;
@@ -20,14 +19,10 @@ async fn world_in_work_dir_with(configure: impl FnOnce(&mut FactoryConfig)) -> W
 }
 
 /// What `lw logs` with `args` prints of `world`.
-#[track_caller]
-fn logs<'a>(world: &'a World, args: &'a [&str]) -> impl Future<Output = String> + 'a {
-    let caller = Location::caller();
-    async move {
-        let output = lw_in(&world.dir.path().join("work"), &[&["logs"], args].concat()).await;
-        assert_eq!(output.code, Some(0), "{}\nat {caller}", output.stderr);
-        output.stdout
-    }
+async fn logs(world: &World, args: &[&str]) -> String {
+    let output = lw_in(&world.dir.path().join("work"), &[&["logs"], args].concat()).await;
+    assert_eq!(output.code, Some(0), "{}", output.stderr);
+    output.stdout
 }
 
 /// `docs/specs/runs.md`, Transcripts, The clone.

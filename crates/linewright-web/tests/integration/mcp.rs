@@ -2,8 +2,6 @@
 //! authorization server, No token), driven at `/mcp` through the router
 //! with access tokens that the authorization server issued.
 
-use std::panic::Location;
-
 use serde_json::{Value, json};
 
 use linewright_core::testing::oauth::authorized_by_back_door;
@@ -50,25 +48,18 @@ impl<'a> Mcp<'a> {
     /// Posts the JSON-RPC message `message` to `/mcp`: at [`PROTOCOL`] but
     /// for an `initialize`, which negotiates the version.
     /// <https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header>
-    #[track_caller]
-    fn post(&self, message: &Value) -> impl Future<Output = Answered> + use<> {
+    async fn post(&self, message: &Value) -> Answered {
         let version = if message["method"] == "initialize" {
             vec![]
         } else {
             vec![("MCP-Protocol-Version", PROTOCOL)]
         };
-        self.post_with(message, &version)
+        self.post_with(message, &version).await
     }
 
     /// Posts the JSON-RPC message `message` to `/mcp`, with the headers
     /// `added` besides those of every request.
-    #[track_caller]
-    fn post_with(
-        &self,
-        message: &Value,
-        added: &[(&str, &str)],
-    ) -> impl Future<Output = Answered> + use<> {
-        let caller = Location::caller();
+    async fn post_with(&self, message: &Value, added: &[(&str, &str)]) -> Answered {
         let mut request = axum::http::Request::post("/mcp")
             .header("Host", UI_HOST)
             .header("Authorization", format!("{} {}", self.scheme, self.token))
@@ -79,111 +70,86 @@ impl<'a> Mcp<'a> {
         }
         let request = request
             .body(Body::from(message.to_string()))
-            .unwrap_or_else(|e| panic!("building the request at {caller}: {e}"));
+            .unwrap_or_else(|e| panic!("building the request: {e}"));
         let router = self.router.clone();
-        async move {
-            let Ok(response) = router.oneshot(request).await;
-            let headers = response.headers().clone();
-            let (status, body) = status_and_body(response).await;
-            Answered {
-                status,
-                headers,
-                body,
-            }
+        let Ok(response) = router.oneshot(request).await;
+        let headers = response.headers().clone();
+        let (status, body) = status_and_body(response).await;
+        Answered {
+            status,
+            headers,
+            body,
         }
     }
 
     /// The result of the request `method` with `params`, or else its error.
-    #[track_caller]
-    fn request(&self, method: &str, params: Value) -> impl Future<Output = Value> + use<> {
-        let caller = Location::caller();
+    async fn request(&self, method: &str, params: Value) -> Value {
         let mut asked = json!({ "jsonrpc": "2.0", "id": 1, "method": method });
         asked["params"] = params;
-        let posted = self.post(&asked);
-        async move {
-            let answered = posted.await;
-            assert_eq!(answered.status, 200, "at {caller}: {}", answered.body);
-            let message: Value = serde_json::from_str(&answered.body)
-                .unwrap_or_else(|e| panic!("at {caller}: {e}: {}", answered.body));
-            match (message.get("result"), message.get("error")) {
-                (Some(result), _) => result.clone(),
-                (None, Some(error)) => json!({ "error": error }),
-                (None, None) => panic!("at {caller}: neither a result nor an error: {message}"),
-            }
+        let answered = self.post(&asked).await;
+        assert_eq!(answered.status, 200, "{}", answered.body);
+        let message: Value = serde_json::from_str(&answered.body)
+            .unwrap_or_else(|e| panic!("{e}: {}", answered.body));
+        match (message.get("result"), message.get("error")) {
+            (Some(result), _) => result.clone(),
+            (None, Some(error)) => json!({ "error": error }),
+            (None, None) => panic!("neither a result nor an error: {message}"),
         }
     }
 
     /// The names of the tools `tools/list` lists.
-    #[track_caller]
-    fn tool_names(&self) -> impl Future<Output = Vec<String>> + use<> {
-        let caller = Location::caller();
-        let listed = self.request("tools/list", json!({}));
-        async move {
-            let listed = listed.await;
-            listed["tools"]
-                .as_array()
-                .unwrap_or_else(|| panic!("a list of tools at {caller}: {listed}"))
-                .iter()
-                .map(|tool| tool["name"].as_str().unwrap().to_string())
-                .collect()
-        }
+    async fn tool_names(&self) -> Vec<String> {
+        let listed = self.request("tools/list", json!({})).await;
+        listed["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list of tools: {listed}"))
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect()
     }
 
     /// What calling the tool `name` with `arguments` returned, its
     /// structured content, where it is not an error, once checked against
     /// the output schema `tools/list` gives the tool.
-    #[track_caller]
-    fn call(&self, name: &str, arguments: Value) -> impl Future<Output = Value> + use<> {
-        let caller = Location::caller();
+    async fn call(&self, name: &str, arguments: Value) -> Value {
         let mut params = json!({ "name": name });
         params["arguments"] = arguments;
-        let listed = self.request("tools/list", json!({}));
-        let called = self.request("tools/call", params);
-        let name = name.to_string();
-        async move {
-            let listed = listed.await;
-            let result = called.await;
-            if result["isError"] != false {
-                return result;
-            }
-            let schema = &listed["tools"]
-                .as_array()
-                .and_then(|tools| tools.iter().find(|tool| tool["name"] == name))
-                .unwrap_or_else(|| panic!("{name} listed at {caller}: {listed}"))["outputSchema"];
-            let validator = jsonschema::validator_for(schema)
-                .unwrap_or_else(|e| panic!("{name}'s output schema at {caller}: {e}: {schema}"));
-            let errors: Vec<String> = validator
-                .iter_errors(&result["structuredContent"])
-                .map(|e| format!("{}: {e}", e.instance_path()))
-                .collect();
-            assert!(
-                errors.is_empty(),
-                "{name} at {caller} does not match its output schema: {errors:?}: {result}"
-            );
-            result
+        let listed = self.request("tools/list", json!({})).await;
+        let result = self.request("tools/call", params).await;
+        if result["isError"] != false {
+            return result;
         }
+        let schema = &listed["tools"]
+            .as_array()
+            .and_then(|tools| tools.iter().find(|tool| tool["name"] == name))
+            .unwrap_or_else(|| panic!("{name} listed: {listed}"))["outputSchema"];
+        let validator = jsonschema::validator_for(schema)
+            .unwrap_or_else(|e| panic!("{name}'s output schema: {e}: {schema}"));
+        let errors: Vec<String> = validator
+            .iter_errors(&result["structuredContent"])
+            .map(|e| format!("{}: {e}", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "{name} does not match its output schema: {errors:?}: {result}"
+        );
+        result
     }
 
     /// What calling the tool `name` with `arguments` showed, as [`done`]
     /// gives it.
-    #[track_caller]
-    fn shown(&self, name: &str, arguments: Value) -> impl Future<Output = Value> + use<> {
-        let called = self.call(name, arguments);
-        async move { done(&called.await) }
+    async fn shown(&self, name: &str, arguments: Value) -> Value {
+        done(&self.call(name, arguments).await)
     }
 }
 
 /// A new person of `role` named `name`, as [`signed_in_as`] adds them, and
 /// the access token the authorization server issued to a client they
 /// allowed.
-#[track_caller]
-fn token_of<'a>(pages: &'a Pages, role: Role, name: &'a str) -> impl Future<Output = String> + 'a {
-    let signed_in = signed_in_as(&pages.sources, role, name);
-    async move {
-        let cookie = signed_in.await;
-        let (_, tokens) = authorized_by_back_door(&pages.sources, &cookie, "My agent").await;
-        tokens.access
-    }
+async fn token_of(pages: &Pages, role: Role, name: &str) -> String {
+    let cookie = signed_in_as(&pages.sources, role, name).await;
+    let (_, tokens) = authorized_by_back_door(&pages.sources, &cookie, "My agent").await;
+    tokens.access
 }
 
 /// `docs/specs/access.md`, The authorization server, No token;
@@ -505,7 +471,6 @@ async fn each_tool_has_the_action_as_its_title_and_its_screens_arguments() {
 /// What a call returned, as structured content, once checked to come with
 /// no other content (`docs/specs/access.md`, The MCP server, What a tool
 /// shows).
-#[track_caller]
 fn done(result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{result}");
     assert_eq!(result["content"], json!([]), "{result}");
@@ -513,7 +478,6 @@ fn done(result: &Value) -> Value {
 }
 
 /// The message of a refused call.
-#[track_caller]
 fn refusal(result: &Value) -> String {
     assert_eq!(result["isError"], true, "{result}");
     result["content"][0]["text"]

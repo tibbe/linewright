@@ -14,7 +14,6 @@ use rstest::rstest;
 use serde_json::json;
 
 /// The cut a design session answers with `tickets`, as Linewright parses it.
-#[track_caller]
 fn parsed_cut(tickets: &serde_json::Value) -> Cut {
     let designed = json!({
         "outcome": "designed",
@@ -33,7 +32,6 @@ fn parsed_cut(tickets: &serde_json::Value) -> Cut {
 
 /// Tickets titled `title`, each blocked by the earlier ones `blocked_by`
 /// gives by position.
-#[track_caller]
 fn tickets(drafts: &[(&str, Vec<usize>)]) -> Tickets {
     let id = |i: usize| format!("t{i}");
     parsed_cut(&json!(

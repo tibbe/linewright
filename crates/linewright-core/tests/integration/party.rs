@@ -2,7 +2,6 @@ use linewright_core::domain::*;
 use linewright_core::party::parties;
 use linewright_core::testing::*;
 
-#[track_caller]
 fn assert_parties(snapshot: &Snapshot, number: u64, expected: &[&str]) {
     assert_eq!(
         parties(snapshot, &linewright(), Number(number)),

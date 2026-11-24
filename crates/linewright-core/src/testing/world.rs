@@ -1,4 +1,3 @@
-use std::panic::Location;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -176,16 +175,11 @@ pub async fn local_store(
 
 /// The config a world's factory starts with, over the database of
 /// `work_dir`, which it makes.
-#[track_caller]
-pub fn config(work_dir: &Path) -> impl Future<Output = FactoryConfig> + use<> {
-    let caller = Location::caller();
-    let work_dir = work_dir.to_path_buf();
-    async move {
-        let database = Database::open(&work_dir)
-            .await
-            .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-        config_over(&work_dir, database)
-    }
+pub async fn config(work_dir: &Path) -> FactoryConfig {
+    let database = Database::open(work_dir)
+        .await
+        .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+    config_over(work_dir, database)
 }
 
 fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
@@ -324,24 +318,20 @@ impl World {
 }
 
 /// How each of `world`'s runs ended, failing if one is not over.
-#[track_caller]
-pub fn ended_runs(world: &World) -> impl Future<Output = Vec<Ending>> + '_ {
-    let caller = Location::caller();
-    async move {
-        runs_in(&world.dir.path().join("work"))
-            .await
-            .read()
-            .await
-            .unwrap_or_else(|e| panic!("reading the runs at {caller}: {e:#}"))
-            .into_iter()
-            .map(|recorded| match recorded.state {
-                State::Ended { ending, .. } => ending,
-                state @ (State::InFlight | State::Interrupted) => {
-                    panic!("a run is not over at {caller}: {state:?}")
-                }
-            })
-            .collect()
-    }
+pub async fn ended_runs(world: &World) -> Vec<Ending> {
+    runs_in(&world.dir.path().join("work"))
+        .await
+        .read()
+        .await
+        .unwrap_or_else(|e| panic!("reading the runs: {e:#}"))
+        .into_iter()
+        .map(|recorded| match recorded.state {
+            State::Ended { ending, .. } => ending,
+            state @ (State::InFlight | State::Interrupted) => {
+                panic!("a run is not over: {state:?}")
+            }
+        })
+        .collect()
 }
 
 pub fn labels(issue: &Issue) -> Vec<&str> {
@@ -840,17 +830,13 @@ impl Serving {
         self.handle.is_finished()
     }
 
-    /// Waits for serving to end of its own accord, failing the test at the
-    /// line that waited if it doesn't within 10s.
-    #[track_caller]
-    pub fn ended(self) -> impl Future<Output = ServeEnd> {
-        let caller = std::panic::Location::caller();
-        async move {
-            tokio::time::timeout(std::time::Duration::from_secs(10), self.handle)
-                .await
-                .unwrap_or_else(|_| panic!("serving had not ended when waited for at {caller}"))
-                .unwrap()
-        }
+    /// Waits for serving to end of its own accord, failing the test if it
+    /// doesn't within 10s.
+    pub async fn ended(self) -> ServeEnd {
+        tokio::time::timeout(std::time::Duration::from_secs(10), self.handle)
+            .await
+            .unwrap_or_else(|_| panic!("serving had not ended when waited for"))
+            .unwrap()
     }
 
     pub async fn stop(self) -> ServeEnd {

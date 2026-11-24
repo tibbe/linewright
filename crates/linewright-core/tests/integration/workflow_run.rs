@@ -11,13 +11,11 @@ use linewright_core::workflow_run::{
 };
 
 /// The non-empty set of `values`.
-#[track_caller]
 pub(crate) fn set<T: Ord>(values: impl IntoIterator<Item = T>) -> NonEmptySet<T> {
     values.into_iter().collect::<Vec<T>>().try_into().unwrap()
 }
 
 /// A failed attempt of CI on main.
-#[track_caller]
 fn ci_failed_on_main() -> CompletedAttempt {
     CompletedAttempt {
         id: AttemptId {
@@ -121,7 +119,6 @@ fn t(minutes: i64) -> Timestamp {
 }
 
 /// The automation `name`, run when CI fails on main.
-#[track_caller]
 fn fix_ci(name: &str) -> Automation {
     automation::parse(
         &name.parse().unwrap(),
@@ -141,7 +138,6 @@ fn ci_fails_on_main() -> Filters {
 }
 
 /// Every automation of `names` seen with `filters` since `minute`.
-#[track_caller]
 fn seen(names: &[&str], filters: &Filters, minute: i64) -> TriggersSeen {
     names
         .iter()
@@ -159,7 +155,6 @@ fn seen(names: &[&str], filters: &Filters, minute: i64) -> TriggersSeen {
 
 /// Attempt `attempt` of the run `run` of CI on main, which failed at
 /// `completed` minutes past 12:00, its run created 20 minutes before.
-#[track_caller]
 fn failed(run: u64, attempt: u32, completed: i64) -> CompletedAttempt {
     CompletedAttempt {
         id: AttemptId {
@@ -174,7 +169,6 @@ fn failed(run: u64, attempt: u32, completed: i64) -> CompletedAttempt {
 }
 
 /// The run of the automation `name` that `attempt` started, in `state`.
-#[track_caller]
 fn run_of(name: &str, attempt: &CompletedAttempt, state: State) -> TriggeredRun {
     TriggeredRun {
         automation: name.parse().unwrap(),

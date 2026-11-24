@@ -1,4 +1,3 @@
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 
 use linewright_core::domain::UpdateMethod;
@@ -435,28 +434,23 @@ fn behind_main(path: &str) -> Repository {
 /// The method of the update `git::update` stops in on a conflict in
 /// `src/gadgets.txt`, if it stops, and the subjects of the commits then on
 /// the branch's first-parent line, oldest first.
-#[track_caller]
-fn updated(
+async fn updated(
     repository: &Repository,
     method: UpdateMethod,
-) -> impl Future<Output = (Option<UpdateMethod>, Vec<String>)> {
-    let caller = Location::caller();
-    async move {
-        let stopped = match git::update(&repository.clone, "main", method).await {
-            Ok(Updated::Conflict(conflict)) => {
-                assert_eq!(conflict.files, ["src/gadgets.txt"], "at {caller}");
-                assert!(repository.mid_operation(), "at {caller}");
-                Some(conflict.method)
-            }
-            Ok(Updated::Updated) => None,
-            Ok(Updated::UpToDate) => panic!("the branch is behind, at {caller}"),
-            Err(e) => panic!("updating at {caller}: {e:#}"),
-        };
-        let range = format!("{}..HEAD", repository.begin);
-        let subjects =
-            repository.git(&["log", "--first-parent", "--reverse", "--format=%s", &range]);
-        (stopped, subjects.lines().map(str::to_string).collect())
-    }
+) -> (Option<UpdateMethod>, Vec<String>) {
+    let stopped = match git::update(&repository.clone, "main", method).await {
+        Ok(Updated::Conflict(conflict)) => {
+            assert_eq!(conflict.files, ["src/gadgets.txt"]);
+            assert!(repository.mid_operation());
+            Some(conflict.method)
+        }
+        Ok(Updated::Updated) => None,
+        Ok(Updated::UpToDate) => panic!("the branch is behind"),
+        Err(e) => panic!("updating: {e:#}"),
+    };
+    let range = format!("{}..HEAD", repository.begin);
+    let subjects = repository.git(&["log", "--first-parent", "--reverse", "--format=%s", &range]);
+    (stopped, subjects.lines().map(str::to_string).collect())
 }
 
 #[test_log::test(tokio::test)]

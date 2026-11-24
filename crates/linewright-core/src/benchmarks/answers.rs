@@ -572,7 +572,6 @@ mod tests {
     use crate::runs::Ending;
 
     /// The tasks `names`, their IDs from 1.
-    #[track_caller]
     fn run_tasks(names: &[&str]) -> Vec<RunTask> {
         names
             .iter()
@@ -584,7 +583,6 @@ mod tests {
             .collect()
     }
 
-    #[track_caller]
     fn key(task: usize, configuration: usize) -> TrialKey {
         TrialKey {
             repetition: NonZeroU32::MIN,
@@ -593,7 +591,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn trial(ending: Ending, money: Option<f64>, seconds: u64) -> TrialFigures {
         TrialFigures {
             outcome: OutcomeName::Ended(ending),
@@ -607,7 +604,6 @@ mod tests {
         Mean { mean, total, none }
     }
 
-    #[track_caller]
     fn task_results(
         id: &str,
         name: &str,
@@ -638,7 +634,6 @@ mod tests {
     /// Results of two configurations, with a figure and with none, and with
     /// and without trials that lack it, set by hand and not worked out from
     /// any trials.
-    #[track_caller]
     fn given_results() -> Results {
         Results {
             configurations: vec![

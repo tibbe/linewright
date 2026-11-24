@@ -251,7 +251,7 @@
 //!
 //! - `triaged`: what a triage answers: a bug, ready for an agent.
 //! - `triage_task`: a triage run of a world, captured as a task.
-//! - `task_at`: a run of a world, captured as a task.
+//! - `task`: a run of a world, captured as a task.
 //! - `triage_output`: a triage task, and the output of a trial of it.
 
 pub mod benchmark_runs;

@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::panic::Location;
 
 use linewright_core::clock::Clock as _;
 use linewright_core::database::Database;
@@ -8,32 +7,25 @@ use linewright_core::pushed_branches::PushedBranches;
 use linewright_core::store::Store as _;
 use linewright_core::testing::*;
 
-#[track_caller]
 fn branch(name: &str) -> TicketBranchName {
     TicketBranchName::parse(name).unwrap_or_else(|| panic!("{name} names no ticket's branch"))
 }
 
-#[track_caller]
 fn at(time: &str) -> Timestamp {
     time.parse().unwrap()
 }
 
-#[track_caller]
 fn names(branches: &[&str]) -> BTreeSet<TicketBranchName> {
     branches.iter().map(|name| branch(name)).collect()
 }
 
 /// A record of pushed branches with none in it, in a database of its own.
-#[track_caller]
-fn empty_record() -> impl Future<Output = (PushedBranches, tempfile::TempDir)> {
-    let caller = Location::caller();
-    async move {
-        let dir = tempfile::tempdir().unwrap();
-        let db = Database::open(dir.path())
-            .await
-            .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-        (PushedBranches::new(db), dir)
-    }
+async fn empty_record() -> (PushedBranches, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::open(dir.path())
+        .await
+        .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+    (PushedBranches::new(db), dir)
 }
 
 #[test_log::test(tokio::test)]

@@ -42,7 +42,6 @@ mod tests {
         offsets.iter().copied().map(Duration::from_millis).collect()
     }
 
-    #[track_caller]
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()
     }

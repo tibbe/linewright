@@ -21,7 +21,6 @@ pub(super) fn holds(html: &Html) -> Vec<(String, String)> {
 
 /// Whether `html` shows one hold, which starts with `start` and links to
 /// the server page.
-#[track_caller]
 fn assert_one_hold_to_the_server_page(html: &Html, start: &str) {
     let held = holds(html);
     assert!(
@@ -151,7 +150,6 @@ fn hidden_at_some_width(element: ElementRef<'_>, within: ElementRef<'_>) -> bool
 /// The name `element` shows in a tooltip to its right on the rail alone
 /// (`docs/specs/shell.md`, Navigation, The rail), which a screen reader skips
 /// for the name `element` gives itself.
-#[track_caller]
 fn rail_tip(element: ElementRef<'_>) -> String {
     assert_eq!(
         in_the_rail(element),
@@ -242,7 +240,6 @@ async fn in_the_rail_each_link_is_its_icon_with_its_name_in_a_tooltip_to_its_rig
 
 /// The foot button of `html`, from `lg` alone: its icon, mirrored on the
 /// sidebar alone, and the name in its `tooltip-right` that labels it.
-#[track_caller]
 fn foot_button(html: &Html) -> (String, String) {
     let buttons = select(html, ".drawer-side nav button[data-navigation-toggle]");
     assert_eq!(buttons.len(), 1, "{}", html.html());
@@ -297,7 +294,6 @@ async fn the_foot_button_collapses_the_sidebar_and_expands_the_rail() {
 /// Asserts that the one notice in `html` is an alert of the classes
 /// `classes`, its status's icon `icon` first and its link a daisyUI `link` at
 /// its end: `docs/specs/shell.md`, Notices, Their look.
-#[track_caller]
 fn assert_notice(html: &Html, classes: &[&str], icon: &str) {
     let notices = select(html, "#holds > *");
     assert_eq!(notices.len(), 1, "{}", html.html());

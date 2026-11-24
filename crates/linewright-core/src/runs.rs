@@ -1473,7 +1473,6 @@ fn entries(dir: &Path) -> Result<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::Location;
 
     use super::*;
     use crate::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
@@ -1484,17 +1483,13 @@ mod tests {
     }
 
     /// Keeps `record` in the database of `runs`, as a run left it.
-    #[track_caller]
-    fn keep(runs: &Runs, record: serde_json::Value) -> impl Future<Output = ()> + '_ {
-        let caller = Location::caller();
-        async move {
-            let record: Record = serde_json::from_value(record)
-                .unwrap_or_else(|e| panic!("reading the record at {caller}: {e}"));
-            let mut conn = runs.db.pool().acquire().await.unwrap();
-            rows::insert(&mut conn, &record)
-                .await
-                .unwrap_or_else(|e| panic!("keeping the record at {caller}: {e:#}"));
-        }
+    async fn keep(runs: &Runs, record: serde_json::Value) {
+        let record: Record =
+            serde_json::from_value(record).unwrap_or_else(|e| panic!("reading the record: {e}"));
+        let mut conn = runs.db.pool().acquire().await.unwrap();
+        rows::insert(&mut conn, &record)
+            .await
+            .unwrap_or_else(|e| panic!("keeping the record: {e:#}"));
     }
 
     /// `docs/specs/runs.md`, Ending: each outcome, by its name in JSON, and
@@ -1544,33 +1539,25 @@ mod tests {
 
     /// The IDs of the runs of `begins`, begun one after another in `runs`
     /// and ended.
-    #[track_caller]
-    fn begun(runs: &Runs, begins: Vec<Begin>) -> impl Future<Output = Vec<String>> + '_ {
-        let caller = Location::caller();
-        async move {
-            let mut ids = vec![];
-            for begin in begins {
-                let running = runs
-                    .begin(begin, at("2026-10-15T09:00:00Z"))
-                    .await
-                    .unwrap_or_else(|e| panic!("beginning a run at {caller}: {e:#}"));
-                ids.push(running.id().to_string());
-                running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
-            }
-            ids
+    async fn begun(runs: &Runs, begins: Vec<Begin>) -> Vec<String> {
+        let mut ids = vec![];
+        for begin in begins {
+            let running = runs
+                .begin(begin, at("2026-10-15T09:00:00Z"))
+                .await
+                .unwrap_or_else(|e| panic!("beginning a run: {e:#}"));
+            ids.push(running.id().to_string());
+            running.end(at("2026-10-15T09:01:00Z"), Ending::Done).await;
         }
+        ids
     }
 
     /// The runs of the database of `work_dir`.
-    #[track_caller]
-    fn runs_in(work_dir: &Path) -> impl Future<Output = Runs> + '_ {
-        let caller = Location::caller();
-        async move {
-            let db = Database::open(work_dir)
-                .await
-                .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-            Runs::new(db)
-        }
+    async fn runs_in(work_dir: &Path) -> Runs {
+        let db = Database::open(work_dir)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+        Runs::new(db)
     }
 
     fn work(item: u64, stage: WorkKind) -> Begin {
@@ -1878,25 +1865,21 @@ mod tests {
 
     /// The costs of the sessions of `runs`, once they read other than
     /// `before`.
-    #[track_caller]
-    fn costs_once_changed<'a>(
-        runs: &'a Runs,
-        before: &'a [Option<SessionCost>],
-    ) -> impl Future<Output = Vec<Option<SessionCost>>> + 'a {
-        let caller = Location::caller();
-        async move {
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                loop {
-                    let read = costs(&runs.read().await.unwrap());
-                    if read != before {
-                        break read;
-                    }
-                    tokio::task::yield_now().await;
+    async fn costs_once_changed(
+        runs: &Runs,
+        before: &[Option<SessionCost>],
+    ) -> Vec<Option<SessionCost>> {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let read = costs(&runs.read().await.unwrap());
+                if read != before {
+                    break read;
                 }
-            })
-            .await
-            .unwrap_or_else(|_| panic!("the costs at {caller} stayed {before:?}"))
-        }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the costs stayed {before:?}"))
     }
 
     #[test_log::test(tokio::test)]

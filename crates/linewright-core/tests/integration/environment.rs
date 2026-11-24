@@ -3,7 +3,6 @@
 //! (`docs/specs/sessions.md`, Environment).
 
 use std::os::unix::fs::MetadataExt as _;
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,17 +17,13 @@ use linewright_core::webhook::Pending;
 const CONFIG: &str = ".linewright/config.toml";
 
 /// Commits `files` to the default branch.
-#[track_caller]
-fn commit<'a>(world: &'a World, files: &'a [(&str, &str)]) -> impl Future<Output = ()> + 'a {
-    let caller = Location::caller();
-    async move {
-        if let Err(e) = world
-            .store
-            .commit("maintainer", "main", files, "Change")
-            .await
-        {
-            panic!("committing at {caller} failed: {e:#}");
-        }
+async fn commit(world: &World, files: &[(&str, &str)]) {
+    if let Err(e) = world
+        .store
+        .commit("maintainer", "main", files, "Change")
+        .await
+    {
+        panic!("committing failed: {e:#}");
     }
 }
 
@@ -48,7 +43,6 @@ fn implement_reading(world: &World) -> Arc<Mutex<Vec<Option<String>>>> {
 }
 
 /// What the implement sessions found in `node_modules/x`.
-#[track_caller]
 fn installed(seen: &Mutex<Vec<Option<String>>>) -> Vec<Option<String>> {
     seen.lock().unwrap().clone()
 }
@@ -200,7 +194,6 @@ async fn a_rebuild_that_fails_leaves_sessions_starting_from_the_last_good_enviro
 }
 
 /// Sets `GREETING` to `greeting` for every session, and for builds.
-#[track_caller]
 fn greeting(config: &mut FactoryConfig, greeting: &str) {
     let session_env = SessionEnv::new(
         PassEnv::default(),
@@ -305,7 +298,6 @@ async fn a_path_ignored_in_the_environment_but_tracked_on_the_sessions_branch_ke
 }
 
 /// Every file under `dir`, but in the environment's clones.
-#[track_caller]
 fn kept_files(dir: &Path) -> Vec<PathBuf> {
     let mut files = vec![];
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -483,7 +475,6 @@ struct CloneRead {
 
 /// What git writes, trimmed, run in `dir` with `args`: empty when it
 /// fails, as `git config` does for a setting the repository lacks.
-#[track_caller]
 fn git_in(dir: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .args(args)
@@ -535,7 +526,6 @@ async fn set_up_leaving_untracked_files(world: &World) {
 }
 
 /// The repository of the environment's one build.
-#[track_caller]
 fn built_repo(world: &World) -> PathBuf {
     let builds = world.dir.path().join("work/environment/builds");
     let mut repos: Vec<PathBuf> = std::fs::read_dir(&builds)
@@ -640,7 +630,6 @@ struct Kept {
 }
 
 /// What [`Kept`] reads of each of `paths` under `dir`.
-#[track_caller]
 fn kept_of(dir: &Path, paths: &[&str]) -> Vec<Kept> {
     let mut kept = vec![];
     for path in paths {

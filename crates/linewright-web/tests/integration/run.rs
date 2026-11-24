@@ -145,7 +145,6 @@ fn cut(shown: &[String], chars: usize) -> Vec<String> {
 /// The own line of `entry`, as a reader reads it: its text cut to `chars`
 /// characters, then, where it shows one, ` | ` and its duration, which
 /// reads `since` its start while it ticks.
-#[track_caller]
 fn line_of(entry: ElementRef, chars: usize) -> String {
     let line = select_in(entry, ".line")
         .into_iter()
@@ -155,7 +154,6 @@ fn line_of(entry: ElementRef, chars: usize) -> String {
 }
 
 /// `line` as [`line_of`] reads an entry's.
-#[track_caller]
 fn read_line(line: ElementRef, chars: usize) -> String {
     let said: String = text(select_in(line, ".text")[0])
         .chars()
@@ -173,7 +171,6 @@ fn read_line(line: ElementRef, chars: usize) -> String {
 
 /// The session's settings, as their line and the lines they open to, and
 /// whether they start open.
-#[track_caller]
 fn settings_shown(html: &Html) -> (String, Vec<String>, bool) {
     let settings = select(html, "#s1 .settings > details");
     assert_eq!(settings.len(), 1, "one settings fold");
@@ -1444,7 +1441,6 @@ fn cloned_and_called() -> String {
 }
 
 /// The heading of session 1, as [`read_line`] reads an entry's line.
-#[track_caller]
 fn session_heading(html: &Html) -> String {
     let headings = select(html, "#s1-heading");
     assert_eq!(headings.len(), 1, "one heading");
@@ -1453,7 +1449,6 @@ fn session_heading(html: &Html) -> String {
 
 /// Session 1's working step, as [`read_line`] reads an entry's line, with
 /// the time it names, if any.
-#[track_caller]
 fn working_step(html: &Html) -> Option<String> {
     let steps = select(html, "#s1-working .entry");
     assert!(steps.len() <= 1, "at most one step");

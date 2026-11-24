@@ -340,7 +340,6 @@ mod tests {
 
     /// A benchmark run on the tasks `tasks` under `as-is` and `configurations`,
     /// with `trials` and every other trial pending.
-    #[track_caller]
     fn benchmark_run(
         tasks: &[&str],
         configurations: &[&str],
@@ -382,7 +381,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn key(repetition: u32, task: usize, configuration: usize) -> TrialKey {
         TrialKey {
             repetition: repetition.try_into().unwrap(),
@@ -391,7 +389,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn trial(money: Option<f64>, seconds: u64) -> TrialFigures {
         TrialFigures {
             outcome: OutcomeName::Ended(Ending::Done),
@@ -400,7 +397,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn scored(
         run: TrialFigures,
         correctness: Verdict,
@@ -417,7 +413,6 @@ mod tests {
         })
     }
 
-    #[track_caller]
     fn passes(pass: usize, of: usize) -> Passes {
         Passes {
             pass,
@@ -429,7 +424,6 @@ mod tests {
         TrialState::Ended(TrialEnd::Unscored(no_score))
     }
 
-    #[track_caller]
     fn approx(figure: Option<f64>, expected: f64) {
         let figure = figure.expect("a figure");
         assert!(

@@ -1436,7 +1436,6 @@ mod tests {
 
     /// The labels of the horizontal axis's ticks of the chart along `axis`
     /// of configurations at `means`.
-    #[track_caller]
     fn horizontal_ticks(axis: Axis, means: &[f64]) -> Vec<String> {
         let configurations: Vec<ConfigurationResults> = means
             .iter()

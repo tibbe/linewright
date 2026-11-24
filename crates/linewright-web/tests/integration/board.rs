@@ -170,7 +170,6 @@ enum Kind {
 
 /// The board's cards, each as its column and what a reader reads of it,
 /// and the icon beside its number.
-#[track_caller]
 fn cards_shown(html: &Html) -> Vec<(String, Kind)> {
     board_shown(html)
         .into_iter()
@@ -310,7 +309,6 @@ async fn the_boards_stream_sends_the_frame_the_tab_title_and_the_board_then_thos
 
 /// The Person `select`'s options, each its value and its text, and
 /// ` (chosen)` where it is chosen.
-#[track_caller]
 fn person_select(html: &Html) -> Vec<String> {
     let selects = select(html, "form[data-filters] select[name=person]");
     assert_eq!(selects.len(), 1, "one Person select");

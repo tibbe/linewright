@@ -52,13 +52,7 @@ pub(super) fn with(parsed: &[(&str, &str)], broken: bool) -> View {
 
 /// Writes the record of weekly's run `n`, by hand, started at `started`,
 /// ended a minute later as `ending` or, if none, still in flight.
-#[track_caller]
-fn record_weekly(
-    pages: &Pages,
-    n: u32,
-    started: &str,
-    ending: Option<&str>,
-) -> impl Future<Output = ()> + use<> {
+async fn record_weekly(pages: &Pages, n: u32, started: &str, ending: Option<&str>) {
     let ended = at(started) + chrono::TimeDelta::minutes(1);
     let record = json!({
         "automation": "weekly.md",
@@ -68,7 +62,7 @@ fn record_weekly(
         "end": ending.map(|ending| json!({"at": ended, "ending": ending})),
         "sessions": [],
     });
-    pages.record(&record)
+    pages.record(&record).await;
 }
 
 /// The unparsed files, as a reader reads them.

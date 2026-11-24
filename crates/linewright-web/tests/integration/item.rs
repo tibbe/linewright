@@ -584,7 +584,6 @@ async fn the_item_pages_card_line_names_its_pull_request_by_number_alone_and_its
 
 /// The icon of an issue or a pull request, and what a screen reader reads of
 /// it.
-#[track_caller]
 fn kind(icon: ElementRef) -> (String, String) {
     let attribute = |name| {
         icon.attr(name)

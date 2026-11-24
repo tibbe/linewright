@@ -187,7 +187,6 @@ fn last_of(total: usize) -> NonZeroUsize {
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn requested(page: usize) -> Requested {
         Requested::of(Some(&page.to_string()))
     }
@@ -201,7 +200,6 @@ mod tests {
 
     /// The nav of page `page` of `total` rows, its items as numbers, "*"
     /// marking the current page, and "…".
-    #[track_caller]
     fn window(total: usize, page: usize) -> Vec<String> {
         let shown = Pages::of(total, requested(page))
             .shown("runs", href)

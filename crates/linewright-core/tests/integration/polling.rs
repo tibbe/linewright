@@ -7,7 +7,6 @@ use linewright_core::webhook::Pending;
 /// A poll interval no test waits out.
 const INTERVAL: Duration = Duration::from_hours(1);
 
-#[track_caller]
 fn polls(serving: &Serving) -> Polls {
     serving.served.borrow().as_ref().unwrap().view().polls
 }

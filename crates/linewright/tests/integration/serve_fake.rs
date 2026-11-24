@@ -1,7 +1,6 @@
 //! `serve-fake`, through the system: what an agent serves the web UI with to
 //! drive it in a browser, over the seed's fake GitHub and fake agent.
 
-use std::panic::Location;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -22,34 +21,30 @@ struct Served {
 impl Served {
     /// Starts `serve-fake`, failing unless it says its two lines within a
     /// minute.
-    #[track_caller]
-    fn start() -> impl Future<Output = Served> {
-        let caller = Location::caller();
-        async move {
-            let mut child = Command::new(env!("CARGO_BIN_EXE_serve-fake"))
-                .stdout(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .unwrap_or_else(|e| panic!("starting serve-fake at {caller}: {e}"));
-            let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
-            let said = tokio::time::timeout(Duration::from_secs(60), async {
-                let url = lines.next_line().await.ok().flatten();
-                let browser_clock = lines.next_line().await.ok().flatten();
-                url.zip(browser_clock)
-            })
-            .await;
-            let (url, browser_clock) = said
-                .unwrap_or_else(|_| panic!("serve-fake said nothing in time at {caller}"))
-                .unwrap_or_else(|| panic!("serve-fake said too little at {caller}"));
-            let cookie = signed_in(&url)
-                .await
-                .unwrap_or_else(|e| panic!("signing in to serve-fake at {caller}: {e:#}"));
-            Served {
-                child,
-                url,
-                browser_clock,
-                cookie,
-            }
+    async fn start() -> Served {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_serve-fake"))
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap_or_else(|e| panic!("starting serve-fake: {e}"));
+        let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
+        let said = tokio::time::timeout(Duration::from_secs(60), async {
+            let url = lines.next_line().await.ok().flatten();
+            let browser_clock = lines.next_line().await.ok().flatten();
+            url.zip(browser_clock)
+        })
+        .await;
+        let (url, browser_clock) = said
+            .unwrap_or_else(|_| panic!("serve-fake said nothing in time"))
+            .unwrap_or_else(|| panic!("serve-fake said too little"));
+        let cookie = signed_in(&url)
+            .await
+            .unwrap_or_else(|e| panic!("signing in to serve-fake: {e:#}"));
+        Served {
+            child,
+            url,
+            browser_clock,
+            cookie,
         }
     }
 
@@ -67,104 +62,79 @@ impl Served {
     }
 
     /// The page at `path`, failing unless it is there.
-    #[track_caller]
-    fn page(&self, path: &str) -> impl Future<Output = Html> + '_ {
-        let caller = Location::caller();
+    async fn page(&self, path: &str) -> Html {
         let url = self.url(path);
-        async move {
-            let response = self
-                .get(&url)
-                .send()
-                .await
-                .unwrap_or_else(|e| panic!("reading {url} at {caller}: {e}"));
-            assert_eq!(response.status(), 200, "{url} at {caller}");
-            let text = response
-                .text()
-                .await
-                .unwrap_or_else(|e| panic!("reading {url} at {caller}: {e}"));
-            Html::parse_document(&text)
-        }
+        let response = self
+            .get(&url)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("reading {url}: {e}"));
+        assert_eq!(response.status(), 200, "{url}");
+        let text = response
+            .text()
+            .await
+            .unwrap_or_else(|e| panic!("reading {url}: {e}"));
+        Html::parse_document(&text)
     }
 
     /// The page at `path` once `shows` holds of it, failing after a minute.
-    #[track_caller]
-    fn eventually_page<'a>(
-        &'a self,
-        path: &str,
-        shows: impl Fn(&Html) -> bool + 'a,
-    ) -> impl Future<Output = Html> + 'a {
-        let caller = Location::caller();
-        let path = path.to_string();
-        async move {
-            let waited = tokio::time::timeout(Duration::from_secs(60), async {
-                loop {
-                    let html = self.page(&path).await;
-                    if shows(&html) {
-                        return html;
-                    }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
+    async fn eventually_page(&self, path: &str, shows: impl Fn(&Html) -> bool) -> Html {
+        let waited = tokio::time::timeout(Duration::from_secs(60), async {
+            loop {
+                let html = self.page(path).await;
+                if shows(&html) {
+                    return html;
                 }
-            })
-            .await;
-            waited.unwrap_or_else(|_| panic!("{path} never showed it at {caller}"))
-        }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        })
+        .await;
+        waited.unwrap_or_else(|_| panic!("{path} never showed it"))
     }
 
     /// The first event with an ID the stream at `path` sends that `holds`
     /// holds of, failing after a minute.
-    #[track_caller]
-    fn first_event<'a>(
-        &'a self,
-        path: &str,
-        holds: impl Fn(&str) -> bool + 'a,
-    ) -> impl Future<Output = String> + 'a {
-        let caller = Location::caller();
+    async fn first_event(&self, path: &str, holds: impl Fn(&str) -> bool) -> String {
         let url = self.url(path);
-        async move {
-            let mut response = self
-                .get(&url)
-                .send()
-                .await
-                .unwrap_or_else(|e| panic!("following {url} at {caller}: {e}"));
-            assert_eq!(response.status(), 200, "{url} at {caller}");
-            let mut unread = String::new();
-            let waited = tokio::time::timeout(Duration::from_secs(60), async {
-                while let Ok(Some(chunk)) = response.chunk().await {
-                    unread.push_str(&String::from_utf8_lossy(&chunk));
-                    while let Some(end) = unread.find("\n\n") {
-                        let block: String = unread.drain(..end + 2).collect();
-                        if block.lines().any(|line| line.starts_with("id: ")) && holds(&block) {
-                            return Some(block);
-                        }
+        let mut response = self
+            .get(&url)
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("following {url}: {e}"));
+        assert_eq!(response.status(), 200, "{url}");
+        let mut unread = String::new();
+        let waited = tokio::time::timeout(Duration::from_secs(60), async {
+            while let Ok(Some(chunk)) = response.chunk().await {
+                unread.push_str(&String::from_utf8_lossy(&chunk));
+                while let Some(end) = unread.find("\n\n") {
+                    let block: String = unread.drain(..end + 2).collect();
+                    if block.lines().any(|line| line.starts_with("id: ")) && holds(&block) {
+                        return Some(block);
                     }
                 }
-                None
-            })
-            .await;
-            waited
-                .unwrap_or_else(|_| panic!("{url} sent nothing in time at {caller}"))
-                .unwrap_or_else(|| panic!("{url} ended at {caller}"))
-        }
+            }
+            None
+        })
+        .await;
+        waited
+            .unwrap_or_else(|_| panic!("{url} sent nothing in time"))
+            .unwrap_or_else(|| panic!("{url} ended"))
     }
 
     /// Stops `serve-fake` as `SIGQUIT` does, failing unless it exits 0
     /// within 30 seconds.
-    #[track_caller]
-    fn stop(mut self) -> impl Future<Output = ()> {
-        let caller = Location::caller();
-        async move {
-            let pid = self.child.id().expect("serve-fake is running");
-            rustix::process::kill_process(
-                rustix::process::Pid::from_raw(pid.try_into().expect("a PID")).expect("a PID"),
-                rustix::process::Signal::QUIT,
-            )
-            .unwrap_or_else(|e| panic!("stopping serve-fake at {caller}: {e}"));
-            let status = tokio::time::timeout(Duration::from_secs(30), self.child.wait())
-                .await
-                .unwrap_or_else(|_| panic!("serve-fake did not stop in time at {caller}"))
-                .unwrap_or_else(|e| panic!("waiting for serve-fake at {caller}: {e}"));
-            assert!(status.success(), "{status} at {caller}");
-        }
+    async fn stop(mut self) {
+        let pid = self.child.id().expect("serve-fake is running");
+        rustix::process::kill_process(
+            rustix::process::Pid::from_raw(pid.try_into().expect("a PID")).expect("a PID"),
+            rustix::process::Signal::QUIT,
+        )
+        .unwrap_or_else(|e| panic!("stopping serve-fake: {e}"));
+        let status = tokio::time::timeout(Duration::from_secs(30), self.child.wait())
+            .await
+            .unwrap_or_else(|_| panic!("serve-fake did not stop in time"))
+            .unwrap_or_else(|e| panic!("waiting for serve-fake: {e}"));
+        assert!(status.success(), "{status}");
     }
 }
 
@@ -223,7 +193,6 @@ async fn signed_in(url: &str) -> anyhow::Result<String> {
     cookie(&back)
 }
 
-#[track_caller]
 fn attributes(html: &Html, selector: &str, attribute: &str) -> Vec<String> {
     html.select(&Selector::parse(selector).unwrap())
         .filter_map(|element| element.attr(attribute))
@@ -231,7 +200,6 @@ fn attributes(html: &Html, selector: &str, attribute: &str) -> Vec<String> {
         .collect()
 }
 
-#[track_caller]
 fn text(html: &Html) -> String {
     html.select(&Selector::parse("body").unwrap())
         .flat_map(|body| body.text())
@@ -239,26 +207,22 @@ fn text(html: &Html) -> String {
 }
 
 /// The links `html` has to a run.
-#[track_caller]
 fn runs(html: &Html) -> Vec<String> {
     attributes(html, "a[href^='/runs/']", "href")
 }
 
 /// Where the page follows its run from, while the run is in flight.
-#[track_caller]
 fn followed_from(html: &Html) -> Option<String> {
     attributes(html, "#stream[hx-sse\\:connect]", "hx-sse:connect").pop()
 }
 
 /// The link `html` has to an implement run.
-#[track_caller]
 fn implement_run(html: &Html) -> Option<String> {
     runs(html).into_iter().find(|run| run.contains("implement"))
 }
 
 /// When each duration `html` shows still running started, which the
 /// browser counts from.
-#[track_caller]
 fn running_since(html: &Html) -> Vec<String> {
     attributes(html, "time[data-since]", "data-since")
 }
@@ -266,7 +230,6 @@ fn running_since(html: &Html) -> Vec<String> {
 /// Each time `html` shows: the instants its `time` elements say, leaving out
 /// the settled durations, which ISO 8601 starts with `P`, and when each
 /// running duration started.
-#[track_caller]
 fn times(html: &Html) -> Vec<String> {
     let mut times: Vec<String> = attributes(html, "time[datetime]", "datetime")
         .into_iter()

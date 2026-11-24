@@ -302,14 +302,12 @@ fn resource<T: DeserializeOwned>(item: &RecordedItem, resource: Resource) -> Res
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn at(time: &str) -> Timestamp {
         time.parse().unwrap()
     }
 
     /// #`number` of tibbe/linewright as GitHub gave it on 2026-11-12, with
     /// each of its `resources` by its path and fixture.
-    #[track_caller]
     fn recorded(number: u64, resources: &[(Resource, &str)]) -> RecordedItem {
         let number = Number(number);
         RecordedItem {

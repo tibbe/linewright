@@ -6,14 +6,10 @@ use serde_json::json;
 use crate::programs::*;
 
 /// The work directory of `REPO` under `work_dir`, its database made.
-#[track_caller]
-fn made(work_dir: &Path) -> impl Future<Output = PathBuf> + use<> {
+async fn made(work_dir: &Path) -> PathBuf {
     let repo = work_dir.join(REPO);
-    let runs = runs_in(&repo);
-    async move {
-        runs.await;
-        repo
-    }
+    runs_in(&repo).await;
+    repo
 }
 
 #[test_log::test(tokio::test)]

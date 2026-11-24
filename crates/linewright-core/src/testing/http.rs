@@ -96,7 +96,6 @@ pub fn public_url() -> crate::host::PublicUrl {
 
 /// The web UI on `address`, at [`public_url`], signing people in with
 /// Google.
-#[track_caller]
 pub fn ui_on(address: &str) -> crate::config::Ui {
     use crate::access::providers::{ClientId, ClientSecret, Google, Providers, SignUpDomains};
     crate::config::Ui {
@@ -121,15 +120,13 @@ pub fn ui() -> crate::config::Ui {
 /// whose name is `name`, signed in with Google as `EMAIL`, the name's first
 /// word lower-cased `@example.com`, as a [`FakeClock`] starts, without
 /// reading the clock of `sources`: the `Cookie` it sends.
-#[track_caller]
-pub fn signed_in_as(
+pub async fn signed_in_as(
     sources: &crate::api::Sources,
     role: crate::access::Role,
     name: &str,
-) -> impl Future<Output = String> + use<> {
+) -> String {
     use crate::access::people::{Claims, People, Vouched};
     use crate::access::sessions::{SESSION_COOKIE, Sessions};
-    let caller = std::panic::Location::caller();
     let database = sources.runs.database().clone();
     let now = super::at(super::STARTED);
     let first = name.split(' ').next().unwrap().to_lowercase();
@@ -142,16 +139,13 @@ pub fn signed_in_as(
             email_verified: true,
         },
     };
-    let name = name.to_string();
-    async move {
-        let person = People::new(database.clone())
-            .add(&claims, role, now)
-            .await
-            .unwrap_or_else(|e| panic!("adding {name} at {caller}: {e:#}"));
-        let cookie = Sessions::new(database)
-            .start(person.id, now)
-            .await
-            .unwrap_or_else(|e| panic!("signing {name} in at {caller}: {e:#}"));
-        format!("{SESSION_COOKIE}={}", cookie.value())
-    }
+    let person = People::new(database.clone())
+        .add(&claims, role, now)
+        .await
+        .unwrap_or_else(|e| panic!("adding {name}: {e:#}"));
+    let cookie = Sessions::new(database)
+        .start(person.id, now)
+        .await
+        .unwrap_or_else(|e| panic!("signing {name} in: {e:#}"));
+    format!("{SESSION_COOKIE}={}", cookie.value())
 }

@@ -1581,43 +1581,38 @@ pub(super) fn outcome_name(outcome: OutcomeName) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::Location;
 
     use super::*;
 
     /// The benchmark runs of a database in `work_dir` with the design benchmark
     /// `board`, 1, of the tasks `columns`, 1, and `lanes`, 2, and a benchmark
     /// run launched on it with one repetition under `as-is` alone.
-    #[track_caller]
-    fn launched(work_dir: &Path) -> impl Future<Output = (BenchmarkRuns, BenchmarkRunId)> + '_ {
-        let caller = Location::caller();
-        async move {
-            let db = Database::open(work_dir)
-                .await
-                .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-            sqlx::query("INSERT INTO benchmarks (id, name, stage) VALUES (1, 'board', 'design')")
-                .execute(db.pool())
-                .await
-                .unwrap_or_else(|e| panic!("keeping the benchmark at {caller}: {e}"));
-            for (id, task, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
-                std::fs::create_dir_all(work_dir.join(task::TASKS).join(id.to_string()))
-                    .unwrap_or_else(|e| panic!("making the task at {caller}: {e}"));
-                sqlx::query(
-                    "INSERT INTO tasks (id, name, benchmark, run, seq) VALUES (?1, ?2, 1, ?3, ?1)",
-                )
-                .bind(id)
-                .bind(task)
-                .bind(run)
-                .execute(db.pool())
-                .await
-                .unwrap_or_else(|e| panic!("keeping the task at {caller}: {e}"));
-            }
-            let benchmark_runs = BenchmarkRuns::new(db);
-            let launched = launch(&benchmark_runs)
-                .await
-                .unwrap_or_else(|e| panic!("launching at {caller}: {e:#}"));
-            (benchmark_runs, launched.id)
+    async fn launched(work_dir: &Path) -> (BenchmarkRuns, BenchmarkRunId) {
+        let db = Database::open(work_dir)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+        sqlx::query("INSERT INTO benchmarks (id, name, stage) VALUES (1, 'board', 'design')")
+            .execute(db.pool())
+            .await
+            .unwrap_or_else(|e| panic!("keeping the benchmark: {e}"));
+        for (id, task, run) in [(1, "columns", "3/design-1"), (2, "lanes", "4/design-1")] {
+            std::fs::create_dir_all(work_dir.join(task::TASKS).join(id.to_string()))
+                .unwrap_or_else(|e| panic!("making the task: {e}"));
+            sqlx::query(
+                "INSERT INTO tasks (id, name, benchmark, run, seq) VALUES (?1, ?2, 1, ?3, ?1)",
+            )
+            .bind(id)
+            .bind(task)
+            .bind(run)
+            .execute(db.pool())
+            .await
+            .unwrap_or_else(|e| panic!("keeping the task: {e}"));
         }
+        let benchmark_runs = BenchmarkRuns::new(db);
+        let launched = launch(&benchmark_runs)
+            .await
+            .unwrap_or_else(|e| panic!("launching: {e:#}"));
+        (benchmark_runs, launched.id)
     }
 
     async fn launch(benchmark_runs: &BenchmarkRuns) -> Result<Launched, LaunchRefusal> {
@@ -1632,7 +1627,6 @@ mod tests {
     }
 
     /// The time at which the tests record each change, end and cancel.
-    #[track_caller]
     fn later() -> Timestamp {
         "2026-11-17T13:00:00Z".parse().expect("a time")
     }
@@ -1694,37 +1688,25 @@ mod tests {
     }
 
     /// Records `changes` of `trial` in turn.
-    #[track_caller]
-    fn steps(
-        benchmark_runs: &BenchmarkRuns,
-        trial: TrialRef,
-        changes: Vec<TrialChange>,
-    ) -> impl Future<Output = ()> + '_ {
-        let caller = Location::caller();
-        async move {
-            for change in changes {
-                benchmark_runs
-                    .step(&trial, change, later())
-                    .await
-                    .unwrap_or_else(|e| panic!("stepping at {caller}: {e:#}"));
-            }
+    async fn steps(benchmark_runs: &BenchmarkRuns, trial: TrialRef, changes: Vec<TrialChange>) {
+        for change in changes {
+            benchmark_runs
+                .step(&trial, change, later())
+                .await
+                .unwrap_or_else(|e| panic!("stepping: {e:#}"));
         }
     }
 
-    #[track_caller]
-    fn state_of(
+    async fn state_of(
         benchmark_runs: &BenchmarkRuns,
         trial: TrialRef,
-    ) -> impl Future<Output = (BenchmarkRunState, TrialState)> + '_ {
-        let caller = Location::caller();
-        async move {
-            let record = benchmark_runs
-                .show(trial.benchmark_run)
-                .await
-                .unwrap_or_else(|e| panic!("reading the benchmark run at {caller}: {e:#}"))
-                .unwrap_or_else(|| panic!("no benchmark run at {caller}"));
-            (record.state, record.trials[&trial.key].clone())
-        }
+    ) -> (BenchmarkRunState, TrialState) {
+        let record = benchmark_runs
+            .show(trial.benchmark_run)
+            .await
+            .unwrap_or_else(|e| panic!("reading the benchmark run: {e:#}"))
+            .unwrap_or_else(|| panic!("no benchmark run"));
+        (record.state, record.trials[&trial.key].clone())
     }
 
     #[test_log::test(tokio::test)]

@@ -5,7 +5,6 @@ use crate::prompts::OwnTemplates;
 
 /// Linewright's own layer with each file a marker: its path and each of its
 /// placeholders, as `marker` writes them, on one line.
-#[track_caller]
 pub fn markers() -> OwnTemplates {
     OwnTemplates::generate(marker_template).expect("every marker has its file's placeholders")
 }
@@ -17,7 +16,6 @@ pub fn markers() -> OwnTemplates {
 ///
 /// When no file of the brief Linewright fills is at `path`, or a marker
 /// lacks its file's placeholders.
-#[track_caller]
 pub fn marker_text(path: &str) -> String {
     let mut found = None;
     OwnTemplates::generate(|at, names| {
@@ -46,7 +44,6 @@ fn marker_template(path: &str, names: &[&str]) -> String {
 }
 
 /// The briefs with no layer over the markers.
-#[track_caller]
 pub fn marker_briefs() -> Arc<Briefs> {
     Arc::new(Briefs::resolve(&markers(), &[]).briefs)
 }
@@ -69,7 +66,6 @@ pub fn marker(path: &str, values: &[(&str, &str)]) -> String {
 /// # Panics
 ///
 /// When `marked` fills no placeholder `name`, or does not end its value.
-#[track_caller]
 pub fn filled_in<'a>(marked: &'a str, name: &str) -> &'a str {
     let opening = format!(" {name}=«");
     let start = marked

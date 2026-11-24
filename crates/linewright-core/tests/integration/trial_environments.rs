@@ -1,7 +1,6 @@
 //! The environments of trials: one per task head and setup command, shared
 //! and aged out across trials (`docs/specs/benchmarks.md`, Trials).
 
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,7 +22,6 @@ const MAX_AGE: TimeDelta = TimeDelta::days(1);
 
 /// What builds `world`'s repository in the work directory of `database`,
 /// with `GREETING` set to `greeting`.
-#[track_caller]
 fn builder(world: &World, database: &Database, greeting: &str) -> Builder {
     let given = SessionEnv::new(
         PassEnv::default(),
@@ -44,7 +42,6 @@ fn builder(world: &World, database: &Database, greeting: &str) -> Builder {
     }
 }
 
-#[track_caller]
 fn setup(command: &str) -> SetupSettings {
     SetupSettings {
         command: SetupCommand::new(command.into()).unwrap(),
@@ -54,20 +51,16 @@ fn setup(command: &str) -> SetupSettings {
 }
 
 /// The head of the default branch of `world`'s repository.
-#[track_caller]
-fn head(world: &World) -> impl Future<Output = CommitId> + '_ {
-    let caller = Location::caller();
-    async move {
-        let heads = world
-            .store
-            .heads(&["main".to_string()])
-            .await
-            .unwrap_or_else(|e| panic!("reading the head at {caller} failed: {e:#}"));
-        heads
-            .get("main")
-            .unwrap_or_else(|| panic!("the repository has no `main` at {caller}"))
-            .clone()
-    }
+async fn head(world: &World) -> CommitId {
+    let heads = world
+        .store
+        .heads(&["main".to_string()])
+        .await
+        .unwrap_or_else(|e| panic!("reading the head failed: {e:#}"));
+    heads
+        .get("main")
+        .unwrap_or_else(|| panic!("the repository has no `main`"))
+        .clone()
 }
 
 /// The environments of trials of `world`'s repository, from its head, in
@@ -81,32 +74,26 @@ struct Trials<'a> {
 
 impl Trials<'_> {
     /// The environments of trials in the work directory `work_dir`.
-    #[track_caller]
-    fn new<'a>(world: &'a World, work_dir: &Path) -> impl Future<Output = Trials<'a>> + use<'a> {
-        let caller = Location::caller();
-        let head = head(world);
-        let work_dir = work_dir.to_path_buf();
-        async move {
-            let database = Database::open(&work_dir)
-                .await
-                .unwrap_or_else(|e| panic!("opening the database at {caller} failed: {e:#}"));
-            Trials {
-                world,
-                database,
-                base: trials::dir(&work_dir),
-                head: head.await,
-            }
+    async fn new<'a>(world: &'a World, work_dir: &Path) -> Trials<'a> {
+        let database = Database::open(work_dir)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database failed: {e:#}"));
+        Trials {
+            world,
+            database,
+            base: trials::dir(work_dir),
+            head: head(world).await,
         }
     }
 
     /// Prepares the environment with `command`, with `GREETING` set to
     /// `greeting`, at `now`.
-    fn prepare<'a>(
-        &'a self,
-        command: Option<&'a str>,
-        greeting: &'a str,
+    async fn prepare(
+        &self,
+        command: Option<&str>,
+        greeting: &str,
         now: Timestamp,
-    ) -> impl Future<Output = Result<InUse, Unprepared>> + 'a {
+    ) -> Result<InUse, Unprepared> {
         trials::prepare(
             &self.base,
             &self.head,
@@ -115,27 +102,18 @@ impl Trials<'_> {
             now,
             MAX_AGE,
         )
+        .await
     }
 
     /// Prepares the environment as [`Trials::prepare`] does, which is
     /// ready.
-    #[track_caller]
-    fn ready<'a>(
-        &'a self,
-        command: Option<&'a str>,
-        greeting: &'a str,
-        now: Timestamp,
-    ) -> impl Future<Output = InUse> + 'a {
-        let caller = Location::caller();
-        async move {
-            self.prepare(command, greeting, now)
-                .await
-                .unwrap_or_else(|e| panic!("preparing at {caller} failed: {e:#}"))
-        }
+    async fn ready(&self, command: Option<&str>, greeting: &str, now: Timestamp) -> InUse {
+        self.prepare(command, greeting, now)
+            .await
+            .unwrap_or_else(|e| panic!("preparing failed: {e:#}"))
     }
 
     /// The environments kept, by name.
-    #[track_caller]
     fn kept(&self) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(&self.base)
             .map(|entries| {
@@ -151,29 +129,23 @@ impl Trials<'_> {
 
 /// What a session copying from `in_use` finds in `file`, or `None` without
 /// an environment.
-#[track_caller]
-fn copied<'a>(in_use: &'a InUse, file: &'a str) -> impl Future<Output = Option<String>> + 'a {
-    let caller = Location::caller();
-    async move {
-        let lease = in_use.source().lease()?;
-        let dest = tempfile::tempdir()
-            .unwrap_or_else(|e| panic!("making a directory at {caller} failed: {e}"));
-        let copy = dest.path().join("clone");
-        lease
-            .copy_to(&copy)
-            .await
-            .unwrap_or_else(|e| panic!("copying the environment at {caller} failed: {e:#}"));
-        let read = std::fs::read_to_string(copy.join(file))
-            .unwrap_or_else(|e| panic!("reading `{file}` at {caller} failed: {e}"));
-        Some(read)
-    }
+async fn copied(in_use: &InUse, file: &str) -> Option<String> {
+    let lease = in_use.source().lease()?;
+    let dest = tempfile::tempdir().unwrap_or_else(|e| panic!("making a directory failed: {e}"));
+    let copy = dest.path().join("clone");
+    lease
+        .copy_to(&copy)
+        .await
+        .unwrap_or_else(|e| panic!("copying the environment failed: {e:#}"));
+    let read = std::fs::read_to_string(copy.join(file))
+        .unwrap_or_else(|e| panic!("reading `{file}` failed: {e}"));
+    Some(read)
 }
 
 /// What a session copying from `in_use` finds in `node_modules/x`, or
 /// `None` without an environment.
-#[track_caller]
-fn installed(in_use: &InUse) -> impl Future<Output = Option<String>> + '_ {
-    copied(in_use, "node_modules/x")
+async fn installed(in_use: &InUse) -> Option<String> {
+    copied(in_use, "node_modules/x").await
 }
 
 /// A setup command that notes each build in `marks`, then installs
@@ -374,7 +346,6 @@ async fn a_trial_leaves_the_environment_of_serve_as_it_is() {
 }
 
 /// The paths of the files under `dir`, sorted.
-#[track_caller]
 fn files_under(dir: &Path) -> Vec<PathBuf> {
     let mut found = vec![];
     let mut dirs = vec![dir.to_path_buf()];

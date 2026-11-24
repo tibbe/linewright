@@ -1,7 +1,5 @@
 //! Task (`docs/specs/benchmarks.md`, Task and Remove task).
 
-use std::panic::Location;
-
 use super::benchmarks::{edit_dialog, edit_form, open_tabs, saved_regions, with_benchmarks};
 use super::shell::crumbs;
 use super::*;
@@ -12,56 +10,47 @@ const ISSUE_1130: &str = linewright_core::store::fixtures::REST_ISSUE_1130;
 /// [`with_benchmarks`]'s pages, with the task `gadgets`, 3, of `board`,
 /// captured from #1130's run `1130/implement-1`, which started at 2026-10-13
 /// 10:00 UTC with the issue as GitHub gave it.
-#[track_caller]
-pub(super) fn with_a_task() -> impl Future<Output = Pages> {
-    let caller = Location::caller();
-    let pages = Box::pin(with_benchmarks());
-    async move {
-        let pages = pages.await;
-        let work_dir = pages.path("");
-        let id = keep_task(
-            &work_dir,
-            "board",
-            "gadgets",
-            "1130/implement-1",
-            "Ships the gadgets.\n\nAnd tests them.\n",
-        )
-        .await;
-        let issue: serde_json::Value = serde_json::from_str(ISSUE_1130)
-            .unwrap_or_else(|e| panic!("#1130's fixture at {caller}: {e}"));
-        keep_task_facts(
-            &work_dir,
-            id,
-            "1130/implement-1",
-            "2026-10-13T10:00:00Z",
-            &issue,
-        );
-        pages
-    }
+pub(super) async fn with_a_task() -> Pages {
+    let pages = Box::pin(with_benchmarks()).await;
+    let work_dir = pages.path("");
+    let id = keep_task(
+        &work_dir,
+        "board",
+        "gadgets",
+        "1130/implement-1",
+        "Ships the gadgets.\n\nAnd tests them.\n",
+    )
+    .await;
+    let issue: serde_json::Value =
+        serde_json::from_str(ISSUE_1130).unwrap_or_else(|e| panic!("#1130's fixture: {e}"));
+    keep_task_facts(
+        &work_dir,
+        id,
+        "1130/implement-1",
+        "2026-10-13T10:00:00Z",
+        &issue,
+    );
+    pages
 }
 
 /// Removes the task `id` of `pages` through the back door, as a removal
 /// leaves it: its row in the removed tasks, and its directory gone.
-#[track_caller]
-fn removed(pages: &Pages, id: i64) -> impl Future<Output = ()> + use<> {
-    let caller = Location::caller();
+async fn removed(pages: &Pages, id: i64) {
     let work_dir = pages.path("");
-    async move {
-        let pool = back_door(&work_dir).await;
-        for statement in [
-            "INSERT INTO removed_tasks (id, benchmark, name) SELECT id, benchmark, name FROM tasks WHERE id = ?",
-            "DELETE FROM tasks WHERE id = ?",
-        ] {
-            sqlx::query(statement)
-                .bind(id)
-                .execute(&pool)
-                .await
-                .unwrap_or_else(|e| panic!("removing the task {id} at {caller}: {e}"));
-        }
-        pool.close().await;
-        std::fs::remove_dir_all(work_dir.join("tasks").join(id.to_string()))
-            .unwrap_or_else(|e| panic!("removing the task {id}'s directory at {caller}: {e}"));
+    let pool = back_door(&work_dir).await;
+    for statement in [
+        "INSERT INTO removed_tasks (id, benchmark, name) SELECT id, benchmark, name FROM tasks WHERE id = ?",
+        "DELETE FROM tasks WHERE id = ?",
+    ] {
+        sqlx::query(statement)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("removing the task {id}: {e}"));
     }
+    pool.close().await;
+    std::fs::remove_dir_all(work_dir.join("tasks").join(id.to_string()))
+        .unwrap_or_else(|e| panic!("removing the task {id}'s directory: {e}"));
 }
 
 /// `docs/specs/benchmarks.md`, Task: the heading, the facts and the criteria;

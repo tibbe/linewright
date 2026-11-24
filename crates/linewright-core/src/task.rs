@@ -942,7 +942,6 @@ mod tests {
         }
     }
 
-    #[track_caller]
     fn onto(log: &str, commits: u64) -> Result<String, String> {
         merged_onto(log, commits).map(|commit| commit.to_string())
     }

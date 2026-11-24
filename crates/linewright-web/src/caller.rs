@@ -341,7 +341,6 @@ const SEC_FETCH_SITE: &str = "sec-fetch-site";
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
         pairs
             .iter()

@@ -2187,12 +2187,10 @@ fn setup_as_a_plain_value_is_an_error_saying_it_is_a_table_holding_command() {
     }
 }
 
-#[track_caller]
 fn setup_of(config: &Config, repo: &str) -> Option<SetupSettings> {
     config.work.setup(&RepoSettings::parse(repo).unwrap())
 }
 
-#[track_caller]
 fn setup(command: &str, max_age: Duration, timeout: Duration) -> SetupSettings {
     SetupSettings {
         command: SetupCommand::new(command.to_string()).unwrap(),

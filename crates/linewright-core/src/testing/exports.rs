@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The paths of the files under `dir`, relative to it.
-#[track_caller]
 pub fn files_under(dir: &Path) -> BTreeSet<PathBuf> {
     let mut files = BTreeSet::new();
     let mut pending = vec![dir.to_path_buf()];

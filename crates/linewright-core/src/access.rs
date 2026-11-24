@@ -277,7 +277,6 @@ impl<H: Holder> From<Permit<Manage, H>> for Permit<Read, H> {
 mod tests {
     use super::*;
 
-    #[track_caller]
     fn caller(role: Role) -> Caller {
         Caller::of(people::tests::person(1, role, State::Enabled)).unwrap()
     }

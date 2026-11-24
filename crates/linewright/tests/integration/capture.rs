@@ -1,4 +1,3 @@
-use std::panic::Location;
 use std::path::Path;
 
 use linewright_core::testing::captures::*;
@@ -9,34 +8,25 @@ use crate::programs::*;
 /// Runs `lw capture run --benchmark 1 --name name --criteria FILE` in
 /// `work_dir`, the file holding `criteria`, 1 being the ID of the first
 /// benchmark made.
-#[track_caller]
-fn lw_capture<'a>(
-    work_dir: &'a Path,
-    run: &'a str,
-    name: &'a str,
-    criteria: &str,
-) -> impl Future<Output = Output> + 'a {
-    let caller = Location::caller();
+async fn lw_capture(work_dir: &Path, run: &str, name: &str, criteria: &str) -> Output {
     let file = tempfile::NamedTempFile::new()
         .and_then(|file| std::fs::write(file.path(), criteria).map(|()| file))
-        .unwrap_or_else(|e| panic!("writing the criteria at {caller}: {e}"));
-    async move {
-        let path = file.path().to_string_lossy();
-        lw_in(
-            work_dir,
-            &[
-                "capture",
-                run,
-                "--benchmark",
-                "1",
-                "--name",
-                name,
-                "--criteria",
-                &path,
-            ],
-        )
-        .await
-    }
+        .unwrap_or_else(|e| panic!("writing the criteria: {e}"));
+    let path = file.path().to_string_lossy();
+    lw_in(
+        work_dir,
+        &[
+            "capture",
+            run,
+            "--benchmark",
+            "1",
+            "--name",
+            name,
+            "--criteria",
+            &path,
+        ],
+    )
+    .await
 }
 
 #[test_log::test(tokio::test)]

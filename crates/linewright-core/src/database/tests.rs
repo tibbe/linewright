@@ -1,6 +1,5 @@
 use super::*;
 
-use std::panic::Location;
 use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
@@ -28,7 +27,6 @@ use tokio::process::{Child, Command};
 /// The bytes of a database file's header that give its write and read
 /// versions: 2 for WAL, 1 for a rollback journal.
 /// <https://www.sqlite.org/fileformat2.html#the_database_header>
-#[track_caller]
 fn header_versions(db: &Path) -> [u8; 2] {
     let bytes = std::fs::read(db).unwrap();
     [bytes[18], bytes[19]]
@@ -145,9 +143,7 @@ const HOLDING: &str = "holding the database";
 /// directory's database with [`WITH_NOTES`], in a read transaction when
 /// `reading`, and holds it until it is killed. It returns once the process
 /// holds the database.
-#[track_caller]
-fn another_process(work_dir: &Path, reading: bool) -> impl Future<Output = Child> {
-    let caller = Location::caller();
+async fn another_process(work_dir: &Path, reading: bool) -> Child {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -163,20 +159,18 @@ fn another_process(work_dir: &Path, reading: bool) -> impl Future<Output = Child
     if reading {
         command.env(HOLD_READING, "1");
     }
-    async move {
-        let mut child = command.spawn().unwrap();
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        while let Some(line) = lines.next_line().await.unwrap() {
-            if line.contains(HOLDING) {
-                tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-                return child;
-            }
+    let mut child = command.spawn().unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    while let Some(line) = lines.next_line().await.unwrap() {
+        if line.contains(HOLDING) {
+            tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+            return child;
         }
-        panic!(
-            "the other process started at {caller} exited before it held the database: {:?}",
-            child.wait().await
-        );
     }
+    panic!(
+        "the other process exited before it held the database: {:?}",
+        child.wait().await
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -428,7 +422,6 @@ const FILES_OF_0_24_0: [(&str, &str); 10] = [
 ];
 
 /// Writes [`FILES_OF_0_24_0`] into `work_dir`.
-#[track_caller]
 fn write_files_of_0_24_0(work_dir: &Path) {
     for (path, text) in FILES_OF_0_24_0 {
         let path = work_dir.join(path);
@@ -438,9 +431,7 @@ fn write_files_of_0_24_0(work_dir: &Path) {
 }
 
 /// The paths of the files under `dir`, relative to it, in order.
-#[track_caller]
 fn files_under(dir: &Path) -> Vec<String> {
-    #[track_caller]
     fn walk(dir: &Path, under: &Path, files: &mut Vec<String>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
@@ -488,7 +479,6 @@ const FILES_UNDER_BENCHMARK_NAMES: [(&str, &str); 10] = [
     ("trials/environments/abc123-f1f1/held", ""),
 ];
 
-#[track_caller]
 fn assert_files_under_benchmark_names(work_dir: &Path) {
     assert_eq!(
         files_under(work_dir),
@@ -721,18 +711,14 @@ static BEFORE_IDS: &[Migration] = MIGRATIONS.split_at(12).0;
 
 /// Opens a database in `work_dir` with the schema [`BEFORE_IDS`] makes, and
 /// keeps `rows` in it.
-#[track_caller]
-fn before_ids<'a>(work_dir: &'a Path, rows: &'static str) -> impl Future<Output = ()> + 'a {
-    let caller = Location::caller();
-    async move {
-        let before = Database::open_in(work_dir, BEFORE_IDS, Absent::Make)
-            .await
-            .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-        sqlx::raw_sql(rows)
-            .execute(before.pool())
-            .await
-            .unwrap_or_else(|e| panic!("keeping the rows at {caller}: {e}"));
-    }
+async fn before_ids(work_dir: &Path, rows: &'static str) {
+    let before = Database::open_in(work_dir, BEFORE_IDS, Absent::Make)
+        .await
+        .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+    sqlx::raw_sql(rows)
+        .execute(before.pool())
+        .await
+        .unwrap_or_else(|e| panic!("keeping the rows: {e}"));
 }
 
 /// The rows of a work directory before IDs: the benchmarks `board` and
@@ -771,7 +757,6 @@ const FILES_BEFORE_IDS: [&str; 10] = [
 ];
 
 /// Writes each of `paths` under `work_dir`, holding its path.
-#[track_caller]
 fn write_own_paths(work_dir: &Path, paths: &[&str]) {
     for path in paths {
         let file = work_dir.join(path);
@@ -781,7 +766,6 @@ fn write_own_paths(work_dir: &Path, paths: &[&str]) {
 }
 
 /// The files under `work_dir`, each with what it holds.
-#[track_caller]
 fn files_with_text(work_dir: &Path) -> Vec<(String, String)> {
     files_under(work_dir)
         .into_iter()
@@ -1015,29 +999,25 @@ const TASKS_MADE_AGAIN: Migration = Migration::Sql(
 
 /// Keeps a task named `name` captured from `run` in `benchmark`, built in
 /// the work directory of `benchmarks`.
-#[track_caller]
-fn kept_task<'a>(
-    benchmarks: &'a crate::benchmarks::Benchmarks,
-    benchmark: &'a crate::benchmarks::Benchmark,
-    name: &'a str,
-) -> impl Future<Output = crate::benchmarks::TaskId> + 'a {
-    let caller = Location::caller();
-    async move {
-        std::fs::create_dir_all(benchmarks.tasks_dir()).unwrap();
-        let built = tempfile::tempdir_in(benchmarks.tasks_dir()).unwrap();
-        std::fs::write(built.path().join("criteria.md"), name).unwrap();
-        let kept = benchmarks
-            .keep_task(
-                &crate::benchmarks::ChosenBenchmark::Existing(benchmark.clone()),
-                &name.parse().unwrap(),
-                &"4/design-1".parse().unwrap(),
-                built.path(),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("keeping the task at {caller}: {e:#}"));
-        let _moved = built.keep();
-        kept.id
-    }
+async fn kept_task(
+    benchmarks: &crate::benchmarks::Benchmarks,
+    benchmark: &crate::benchmarks::Benchmark,
+    name: &str,
+) -> crate::benchmarks::TaskId {
+    std::fs::create_dir_all(benchmarks.tasks_dir()).unwrap();
+    let built = tempfile::tempdir_in(benchmarks.tasks_dir()).unwrap();
+    std::fs::write(built.path().join("criteria.md"), name).unwrap();
+    let kept = benchmarks
+        .keep_task(
+            &crate::benchmarks::ChosenBenchmark::Existing(benchmark.clone()),
+            &name.parse().unwrap(),
+            &"4/design-1".parse().unwrap(),
+            built.path(),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("keeping the task: {e:#}"));
+    let _moved = built.keep();
+    kept.id
 }
 
 #[test_log::test(tokio::test)]

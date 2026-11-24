@@ -248,7 +248,6 @@ fn outcome(state: State) -> OutcomeName {
 
 #[cfg(test)]
 mod tests {
-    use std::panic::Location;
 
     use super::*;
     use crate::briefs::Briefs;
@@ -274,53 +273,44 @@ mod tests {
     }
 
     /// The runs of a database made in `work_dir`.
-    #[track_caller]
-    fn runs_in(work_dir: &Path) -> impl Future<Output = Runs> + '_ {
-        let caller = Location::caller();
-        async move {
-            let db = Database::open(work_dir)
-                .await
-                .unwrap_or_else(|e| panic!("opening the database at {caller}: {e:#}"));
-            Runs::new(db)
-        }
+    async fn runs_in(work_dir: &Path) -> Runs {
+        let db = Database::open(work_dir)
+            .await
+            .unwrap_or_else(|e| panic!("opening the database: {e:#}"));
+        Runs::new(db)
     }
 
     /// A triage run on #1 in `runs`, begun with one session whose
     /// directory, `sessions/1/triage-1` under `work_dir`, holds a brief, an
     /// attachment and a transcript of one line.
-    #[track_caller]
-    fn triaging<'a>(runs: &'a Runs, work_dir: &'a Path) -> impl Future<Output = Running> + 'a {
-        let caller = Location::caller();
-        async move {
-            let running = runs
-                .begin(
-                    Begin::Work {
-                        item: Number(1),
-                        stage: WorkKind::Triage,
-                    },
-                    at("2026-10-15T09:00:00Z"),
-                )
-                .await
-                .unwrap_or_else(|e| panic!("beginning a run at {caller}: {e:#}"));
-            let session = work_dir.join("sessions/1/triage-1");
-            for (path, text) in [
-                ("brief.md", "Triage #1.\n"),
-                (OUTPUT, "{\"first\":1}\n"),
-                ("attachments/shot.png", "PNG"),
-            ] {
-                let path = session.join(path);
-                std::fs::create_dir_all(path.parent().unwrap())
-                    .and_then(|()| std::fs::write(&path, text))
-                    .unwrap_or_else(|e| panic!("writing {} at {caller}: {e}", path.display()));
-            }
-            running
-                .session(&session, &settings(), &Briefs::shipped())
-                .await;
-            running
+    async fn triaging(runs: &Runs, work_dir: &Path) -> Running {
+        let running = runs
+            .begin(
+                Begin::Work {
+                    item: Number(1),
+                    stage: WorkKind::Triage,
+                },
+                at("2026-10-15T09:00:00Z"),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("beginning a run: {e:#}"));
+        let session = work_dir.join("sessions/1/triage-1");
+        for (path, text) in [
+            ("brief.md", "Triage #1.\n"),
+            (OUTPUT, "{\"first\":1}\n"),
+            ("attachments/shot.png", "PNG"),
+        ] {
+            let path = session.join(path);
+            std::fs::create_dir_all(path.parent().unwrap())
+                .and_then(|()| std::fs::write(&path, text))
+                .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
         }
+        running
+            .session(&session, &settings(), &Briefs::shipped())
+            .await;
+        running
     }
 
-    #[track_caller]
     fn read(path: &Path) -> String {
         std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
     }

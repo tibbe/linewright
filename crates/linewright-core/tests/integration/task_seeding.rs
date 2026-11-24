@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -31,90 +30,73 @@ struct DesignTask {
     gap: Number,
 }
 
-#[track_caller]
-fn design_task() -> impl Future<Output = DesignTask> {
-    let caller = Location::caller();
-    async move {
-        let mut world = World::new().await;
-        let cut = world.spec_change_cut_into_tickets().await;
-        let ticket = cut.tickets[0];
-        let spec_change = world.issue(ticket).parent.and_then(|p| p.spec_change);
-        let spec_change = ok(spec_change.ok_or("none"), caller, "the spec change");
-        let gap = world
-            .store
-            .create_issue(NewIssue {
-                title: "Should gadgets expire?".into(),
-                body: spec_gap::body("The spec does not say.", ticket),
-                labels: vec!["ready-for-human".into()],
-            })
-            .await;
-        let gap = ok(gap, caller, "filing the spec gap");
-        let commented = world
-            .store
-            .comment_as("maintainer", ticket, "Written before.");
-        ok(commented, caller, "commenting");
-        let unlabeled = world
-            .store
-            .remove_label(ticket, "linewright:designed")
-            .await;
-        ok(unlabeled, caller, "unlabeling");
-        design_issues(&world);
-        world.poll().await;
-        let work = world.dir.path().join("work");
-        let name: Name = ok("design".parse(), caller, "the name");
-        let run = ok(
-            format!("{}/design-1", ticket.0).parse(),
-            caller,
-            "the run's ID",
-        );
-        let runs = runs_in(&work).await;
-        let benchmarks = Benchmarks::new(runs.database().clone());
-        let benchmark = BenchmarkChoice::New(ok("designs".parse(), caller, "the suite"));
-        let capturable = task::capturable(&runs, &benchmarks, &run, &name, &benchmark).await;
-        let capturable = ok(capturable, caller, "the run");
-        let criteria = ok(
-            Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),
-            caller,
-            "the criteria",
-        );
-        let dir = task::capture(&*world.store, capturable, &criteria, &benchmarks).await;
-        let dir = ok(dir, caller, "capturing").dir;
-        DesignTask {
-            world,
-            dir,
-            ticket,
-            tracking: cut.tracking,
-            spec_change,
-            gap,
-        }
+async fn design_task() -> DesignTask {
+    let mut world = World::new().await;
+    let cut = world.spec_change_cut_into_tickets().await;
+    let ticket = cut.tickets[0];
+    let spec_change = world.issue(ticket).parent.and_then(|p| p.spec_change);
+    let spec_change = ok(spec_change.ok_or("none"), "the spec change");
+    let gap = world
+        .store
+        .create_issue(NewIssue {
+            title: "Should gadgets expire?".into(),
+            body: spec_gap::body("The spec does not say.", ticket),
+            labels: vec!["ready-for-human".into()],
+        })
+        .await;
+    let gap = ok(gap, "filing the spec gap");
+    let commented = world
+        .store
+        .comment_as("maintainer", ticket, "Written before.");
+    ok(commented, "commenting");
+    let unlabeled = world
+        .store
+        .remove_label(ticket, "linewright:designed")
+        .await;
+    ok(unlabeled, "unlabeling");
+    design_issues(&world);
+    world.poll().await;
+    let work = world.dir.path().join("work");
+    let name: Name = ok("design".parse(), "the name");
+    let run = ok(format!("{}/design-1", ticket.0).parse(), "the run's ID");
+    let runs = runs_in(&work).await;
+    let benchmarks = Benchmarks::new(runs.database().clone());
+    let benchmark = BenchmarkChoice::New(ok("designs".parse(), "the suite"));
+    let capturable = task::capturable(&runs, &benchmarks, &run, &name, &benchmark).await;
+    let capturable = ok(capturable, "the run");
+    let criteria = ok(
+        Criteria::parse("The design cuts the work in two.\n").ok_or("blank"),
+        "the criteria",
+    );
+    let dir = task::capture(&*world.store, capturable, &criteria, &benchmarks).await;
+    let dir = ok(dir, "capturing").dir;
+    DesignTask {
+        world,
+        dir,
+        ticket,
+        tracking: cut.tracking,
+        spec_change,
+        gap,
     }
 }
 
-#[track_caller]
-fn open(dir: &Path) -> impl Future<Output = Task> + '_ {
-    let caller = Location::caller();
-    async move {
-        Task::open(dir)
-            .await
-            .unwrap_or_else(|refusal| panic!("opening the case at {caller}: {refusal}"))
-    }
+async fn open(dir: &Path) -> Task {
+    Task::open(dir)
+        .await
+        .unwrap_or_else(|refusal| panic!("opening the case: {refusal}"))
 }
 
 /// A store seeded from `task` under `root`, on the clock running from the
 /// task's start.
-#[track_caller]
-fn seeded<'a>(root: &'a Path, task: &'a Task) -> impl Future<Output = LocalStore> + 'a {
-    let caller = Location::caller();
-    async move {
-        LocalStore::from_task(
-            &root.join("store"),
-            &root.join("repository.git"),
-            task,
-            Arc::new(RunningFrom::new(task.start())),
-        )
-        .await
-        .unwrap_or_else(|e| panic!("seeding the store at {caller}: {e:#}"))
-    }
+async fn seeded(root: &Path, task: &Task) -> LocalStore {
+    LocalStore::from_task(
+        &root.join("store"),
+        &root.join("repository.git"),
+        task,
+        Arc::new(RunningFrom::new(task.start())),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("seeding the store: {e:#}"))
 }
 
 fn numbers(task: &Task) -> BTreeSet<Number> {
@@ -258,7 +240,6 @@ async fn each_of_linewrights_labels_is_present_in_the_seeded_store() {
 }
 
 /// A copy of the task in `dir`, at `to`.
-#[track_caller]
 fn copy_task(dir: &Path, to: &Path) {
     let status = std::process::Command::new("cp")
         .args(["-R"])
@@ -270,7 +251,6 @@ fn copy_task(dir: &Path, to: &Path) {
 }
 
 /// Sets the field `name` of the task's `task.json` to `value`.
-#[track_caller]
 fn set_in_task_file(dir: &Path, name: &str, value: serde_json::Value) {
     let path = dir.join("task.json");
     let mut file: serde_json::Value =
@@ -443,85 +423,79 @@ async fn a_task_opens_with_its_criteria() {
     );
 }
 
-/// `result`'s value, failing the test at `caller` for `what` otherwise.
-fn ok<T, E: std::fmt::Debug>(result: Result<T, E>, caller: &Location<'_>, what: &str) -> T {
-    result.unwrap_or_else(|e| panic!("{what} at {caller}: {e:?}"))
+/// `result`'s value, failing the test for `what` otherwise.
+fn ok<T, E: std::fmt::Debug>(result: Result<T, E>, what: &str) -> T {
+    result.unwrap_or_else(|e| panic!("{what}: {e:?}"))
 }
 
 /// The head of `branch` in `store`.
-async fn head(caller: &Location<'_>, store: &LocalStore, branch: &str) -> CommitId {
-    let heads = ok(store.heads(&[branch.to_string()]).await, caller, branch);
+async fn head(store: &LocalStore, branch: &str) -> CommitId {
+    let heads = ok(store.heads(&[branch.to_string()]).await, branch);
     heads[branch].clone()
 }
 
 /// [`design_task`]'s, with a pull request of two commits then merged by
 /// rebase, captured into a task of its own: the task's directory, the pull
 /// request, and what its merge did as Linewright reads it.
-#[track_caller]
-fn task_with_a_rebased_pull() -> impl Future<Output = (DesignTask, PathBuf, Number, Merge)> {
-    let caller = Location::caller();
-    async move {
-        let design = design_task().await;
-        let store = &design.world.store;
-        let pull = ok(
-            store
-                .open_pull_as(
-                    "maintainer",
-                    "expiry",
-                    "Expire gadgets",
-                    "",
-                    &[("docs/spec.md", "# Spec\n\nGadgets exist.\nThey expire.\n")],
-                )
-                .await,
-            caller,
-            "opening the pull request",
-        );
-        let said_when = store
-            .commit(
+async fn task_with_a_rebased_pull() -> (DesignTask, PathBuf, Number, Merge) {
+    let design = design_task().await;
+    let store = &design.world.store;
+    let pull = ok(
+        store
+            .open_pull_as(
                 "maintainer",
                 "expiry",
-                &[("docs/expiry.md", "# Expiry\n")],
-                "Say when",
+                "Expire gadgets",
+                "",
+                &[("docs/spec.md", "# Spec\n\nGadgets exist.\nThey expire.\n")],
             )
-            .await;
-        ok(said_when, caller, "committing to the pull request");
-        let before = head(caller, store, "main").await;
-        let tip = head(caller, store, "expiry").await;
-        let merged = store.merge(pull, &tip, MergeMethod::Rebase).await;
-        ok(merged, caller, "merging");
-        let after = head(caller, store, "main").await;
-        let mut numbers = numbers(&open(&design.dir).await);
-        numbers.insert(pull);
-        let dir = design.world.dir.path().join("with-the-pull");
-        let items = ok(store.record_items(&numbers).await, caller, "recording");
-        let written = std::fs::create_dir(&dir)
-            .and_then(|()| std::fs::copy(design.dir.join("task.json"), dir.join("task.json")))
-            .and_then(|_| std::fs::copy(design.dir.join("criteria.md"), dir.join("criteria.md")))
-            .and_then(|_| {
-                std::fs::copy(
-                    design.dir.join("properties.json"),
-                    dir.join("properties.json"),
-                )
-            })
-            .and_then(|_| std::fs::write(dir.join("items.json"), serde_json::to_vec(&items)?));
-        ok(written, caller, "writing the case");
-        let heads = [("main".to_string(), after.clone())].into();
-        let fetched = store
-            .fetch_commits(&dir.join("repository.git"), &heads)
-            .await;
-        ok(fetched, caller, "fetching the commits");
-        let merge = Merge {
-            before,
-            after,
-            commits: 2,
-            files: vec!["docs/expiry.md".into(), "docs/spec.md".into()],
-        };
-        (design, dir, pull, merge)
-    }
+            .await,
+        "opening the pull request",
+    );
+    let said_when = store
+        .commit(
+            "maintainer",
+            "expiry",
+            &[("docs/expiry.md", "# Expiry\n")],
+            "Say when",
+        )
+        .await;
+    ok(said_when, "committing to the pull request");
+    let before = head(store, "main").await;
+    let tip = head(store, "expiry").await;
+    let merged = store.merge(pull, &tip, MergeMethod::Rebase).await;
+    ok(merged, "merging");
+    let after = head(store, "main").await;
+    let mut numbers = numbers(&open(&design.dir).await);
+    numbers.insert(pull);
+    let dir = design.world.dir.path().join("with-the-pull");
+    let items = ok(store.record_items(&numbers).await, "recording");
+    let written = std::fs::create_dir(&dir)
+        .and_then(|()| std::fs::copy(design.dir.join("task.json"), dir.join("task.json")))
+        .and_then(|_| std::fs::copy(design.dir.join("criteria.md"), dir.join("criteria.md")))
+        .and_then(|_| {
+            std::fs::copy(
+                design.dir.join("properties.json"),
+                dir.join("properties.json"),
+            )
+        })
+        .and_then(|_| std::fs::write(dir.join("items.json"), serde_json::to_vec(&items)?));
+    ok(written, "writing the case");
+    let heads = [("main".to_string(), after.clone())].into();
+    let fetched = store
+        .fetch_commits(&dir.join("repository.git"), &heads)
+        .await;
+    ok(fetched, "fetching the commits");
+    let merge = Merge {
+        before,
+        after,
+        commits: 2,
+        files: vec!["docs/expiry.md".into(), "docs/spec.md".into()],
+    };
+    (design, dir, pull, merge)
 }
 
 /// The merge `task` holds for its pull request `pull`.
-#[track_caller]
 fn merge_in(task: &Task, pull: Number) -> &Merge {
     let item = task
         .items()

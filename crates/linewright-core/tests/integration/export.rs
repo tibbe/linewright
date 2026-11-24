@@ -10,7 +10,6 @@ use linewright_core::testing::*;
 use linewright_core::trial::scorer::{self, Scoreable, TrialCopy};
 use serde_json::Value;
 
-#[track_caller]
 fn read_json(path: &Path) -> Value {
     serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
 }

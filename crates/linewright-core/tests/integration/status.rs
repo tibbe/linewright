@@ -116,7 +116,6 @@ fn after_linewright_with(view: &View, recorded: &[Recorded], now: &str) -> Vec<S
 }
 
 /// The line of the one automation's last run, at 2026-10-01 12:00:30.
-#[track_caller]
 fn last_run_line(view: &View, recorded: &[Recorded]) -> String {
     after_linewright_with(view, recorded, "2026-10-01T12:00:30Z")
         .into_iter()
@@ -886,7 +885,6 @@ fn an_automation_no_poll_has_seen_yet_has_no_next_run_until_one_does() {
     );
 }
 
-#[track_caller]
 fn on_workflow_runs(name: &str) -> AutomationFiles {
     AutomationFiles {
         parsed: vec![

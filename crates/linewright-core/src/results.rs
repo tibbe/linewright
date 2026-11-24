@@ -1057,13 +1057,11 @@ mod tests {
 
     use super::*;
 
-    #[track_caller]
     fn rejected<T: Contract + std::fmt::Debug>(result: &Value) -> ParseError {
         parse::<T>(&result.to_string()).expect_err("the result is sent back")
     }
 
     /// The mismatches `error` is, failing unless it is the schema's.
-    #[track_caller]
     fn mismatches(error: ParseError) -> Vec<Mismatch> {
         let ParseError::Schema(mismatches) = error else {
             panic!("not a schema mismatch: {error:?}");
@@ -1073,7 +1071,6 @@ mod tests {
 
     /// The error at `key` among `error`'s mismatches, failing unless there is
     /// one.
-    #[track_caller]
     fn error_at(sent_back: ParseError, key: &str) -> String {
         let found = mismatches(sent_back);
         found

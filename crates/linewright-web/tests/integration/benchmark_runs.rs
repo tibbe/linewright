@@ -1,5 +1,3 @@
-use std::panic::Location;
-
 use linewright_core::access::{Caller, Permit, Read};
 use linewright_core::actions::{
     self, NoTrial, RunScreen, TrialAt, TrialTranscript, TrialTranscripts, TrialTranscriptsScreen,
@@ -14,16 +12,13 @@ use super::*;
 /// `as-is` and a configuration setting the model for each of `configurations`,
 /// each run `repetitions` times, as `lw benchmark-run launch` does, and sets its
 /// launch to `at`: its ID.
-#[track_caller]
-pub(super) fn launched<'a>(
-    pages: &'a Pages,
+pub(super) async fn launched(
+    pages: &Pages,
     benchmark: &str,
     configurations: &[&str],
     repetitions: u32,
     at: &str,
-) -> impl Future<Output = i64> + 'a {
-    let caller = Location::caller();
-    let benchmark = benchmark.to_string();
+) -> i64 {
     let configurations: Vec<_> = configurations
         .iter()
         .map(|name| {
@@ -38,24 +33,22 @@ pub(super) fn launched<'a>(
         })
         .collect();
     let at = at.parse().unwrap();
-    async move {
-        let db = pages.sources.runs.database().clone();
-        let benchmark = linewright_core::benchmarks::Benchmarks::new(db.clone())
-            .named(&benchmark.parse().unwrap())
-            .await
-            .unwrap_or_else(|e| panic!("finding the benchmark at {caller}: {e:#}"))
-            .unwrap_or_else(|| panic!("no benchmark {benchmark} at {caller}"));
-        let benchmark_runs = linewright_core::benchmarks::BenchmarkRuns::new(db);
-        let launched = Box::pin(benchmark_runs.launch(
-            benchmark.id,
-            configurations,
-            std::num::NonZeroU32::new(repetitions).unwrap(),
-            at,
-        ))
+    let db = pages.sources.runs.database().clone();
+    let benchmark = linewright_core::benchmarks::Benchmarks::new(db.clone())
+        .named(&benchmark.parse().unwrap())
         .await
-        .unwrap_or_else(|e| panic!("launching at {caller}: {e:#}"));
-        launched.id.to_string().parse().unwrap()
-    }
+        .unwrap_or_else(|e| panic!("finding the benchmark: {e:#}"))
+        .unwrap_or_else(|| panic!("no benchmark {benchmark}"));
+    let benchmark_runs = linewright_core::benchmarks::BenchmarkRuns::new(db);
+    let launched = Box::pin(benchmark_runs.launch(
+        benchmark.id,
+        configurations,
+        std::num::NonZeroU32::new(repetitions).unwrap(),
+        at,
+    ))
+    .await
+    .unwrap_or_else(|e| panic!("launching: {e:#}"));
+    launched.id.to_string().parse().unwrap()
 }
 
 /// [`with_benchmarks`]'s pages, with benchmark run 1 on the benchmark `board`,
@@ -63,112 +56,108 @@ pub(super) fn launched<'a>(
 /// launched at noon: of its eight trials, six have ended, with passes,
 /// failures, a leak and two without a score, one runs and one is pending. The
 /// first trial's output holds its run and its score.
-#[track_caller]
-pub(super) fn with_benchmark_run() -> impl Future<Output = Pages> {
-    let caller = Location::caller();
-    async move {
-        let pages = Box::pin(with_benchmarks()).await;
-        Box::pin(launched(
-            &pages,
-            "board",
-            &["short"],
-            2,
-            "2026-11-17T12:00:00Z",
-        ))
-        .await;
-        let work_dir = pages.path("");
-        let trials: [((i64, i64, i64), &'static str); 7] = [
-            (
-                (1, 0, 0),
-                "state = 'scored', outcome = 'done', money = 0.3, seconds = 90, \
-             correctness = 'pass', leak = 0, scorer_money = 0.05",
-            ),
-            (
-                (1, 0, 1),
-                "state = 'scored', outcome = 'handed-back', money = 0.1, seconds = 10, \
-             correctness = 'fail', leak = 1, scorer_money = 0.02",
-            ),
-            (
-                (1, 1, 0),
-                "state = 'unscored', outcome = 'failed', seconds = 30, unscored = 'outcome'",
-            ),
-            (
-                (1, 1, 1),
-                "state = 'scored', outcome = 'done', money = 0.2, seconds = 20, \
-             correctness = 'fail', leak = 0, scorer_money = 0.03",
-            ),
-            (
-                (2, 0, 0),
-                "state = 'scored', outcome = 'done', money = 0.5, seconds = 30, \
-             correctness = 'pass', leak = 0",
-            ),
-            (
-                (2, 0, 1),
-                "state = 'unscored', outcome = 'done', money = 0.4, seconds = 40, \
-             unscored = 'scorer', reason = 'it gave up', scorer_money = 0.01",
-            ),
-            ((2, 1, 0), "state = 'running'"),
-        ];
-        for (key, set) in trials {
-            trial(&work_dir, 1, key, set).await;
-        }
-        let ran = json!({
-            "model": null,
-            "effort": null,
-            "layers": {"settings": {"model": "harness"}, "prompts": {}},
-        });
-        let mut record = json!({
-            "item": 1,
-            "stage": "implement",
-            "n": 1,
-            "started_at": "2026-11-17T12:00:05Z",
-            "end": {"at": "2026-11-17T12:01:35Z", "ending": "done"},
-            "sessions": [{"dir": "sessions/issue-1/20261117T120005Z-implement"}],
-        });
-        record["sessions"][0]
-            .as_object_mut()
-            .unwrap_or_else(|| panic!("a JSON object at {caller}"))
-            .extend(ran.as_object().unwrap().clone());
-        let mut session = json!({"record": "scorer/20261117T120200Z-scorer", "cost": {}});
-        session
-            .as_object_mut()
-            .unwrap_or_else(|| panic!("a JSON object at {caller}"))
-            .extend(ran.as_object().unwrap().clone());
-        let score = json!({
-            "correctness": {"reasoning": "It names the columns.", "verdict": "pass"},
-            "leak": {"reasoning": "I read every transcript.", "found": false, "calls": []},
-            "session": session,
-            "linewright": "0.1.0",
-        });
-        let output = "benchmark-runs/1/1/1/1";
-        let turn = linewright_core::testing::TURN_1;
-        pages.write(&[
-            (&format!("{output}/task"), "1/implement-1\n"),
-            (&format!("{output}/outcome"), "done\n"),
-            (
-                &format!("{output}/runs/items/1/implement-1.json"),
-                &record.to_string(),
-            ),
-            (
-                &format!("{output}/sessions/issue-1/20261117T120005Z-implement/output.jsonl"),
-                turn,
-            ),
-            (
-                &format!("{output}/sessions/issue-1/20261117T120005Z-implement/brief.md"),
-                "# Your task\n\nImplement the ticket below.\n",
-            ),
-            (&format!("{output}/score.json"), &score.to_string()),
-            (
-                &format!("{output}/scorer/20261117T120200Z-scorer/output.jsonl"),
-                turn,
-            ),
-            (
-                &format!("{output}/scorer/20261117T120200Z-scorer/brief.md"),
-                "# Your task\n\nScore the trial.\n",
-            ),
-        ]);
-        pages
+pub(super) async fn with_benchmark_run() -> Pages {
+    let pages = Box::pin(with_benchmarks()).await;
+    Box::pin(launched(
+        &pages,
+        "board",
+        &["short"],
+        2,
+        "2026-11-17T12:00:00Z",
+    ))
+    .await;
+    let work_dir = pages.path("");
+    let trials: [((i64, i64, i64), &'static str); 7] = [
+        (
+            (1, 0, 0),
+            "state = 'scored', outcome = 'done', money = 0.3, seconds = 90, \
+         correctness = 'pass', leak = 0, scorer_money = 0.05",
+        ),
+        (
+            (1, 0, 1),
+            "state = 'scored', outcome = 'handed-back', money = 0.1, seconds = 10, \
+         correctness = 'fail', leak = 1, scorer_money = 0.02",
+        ),
+        (
+            (1, 1, 0),
+            "state = 'unscored', outcome = 'failed', seconds = 30, unscored = 'outcome'",
+        ),
+        (
+            (1, 1, 1),
+            "state = 'scored', outcome = 'done', money = 0.2, seconds = 20, \
+         correctness = 'fail', leak = 0, scorer_money = 0.03",
+        ),
+        (
+            (2, 0, 0),
+            "state = 'scored', outcome = 'done', money = 0.5, seconds = 30, \
+         correctness = 'pass', leak = 0",
+        ),
+        (
+            (2, 0, 1),
+            "state = 'unscored', outcome = 'done', money = 0.4, seconds = 40, \
+         unscored = 'scorer', reason = 'it gave up', scorer_money = 0.01",
+        ),
+        ((2, 1, 0), "state = 'running'"),
+    ];
+    for (key, set) in trials {
+        trial(&work_dir, 1, key, set).await;
     }
+    let ran = json!({
+        "model": null,
+        "effort": null,
+        "layers": {"settings": {"model": "harness"}, "prompts": {}},
+    });
+    let mut record = json!({
+        "item": 1,
+        "stage": "implement",
+        "n": 1,
+        "started_at": "2026-11-17T12:00:05Z",
+        "end": {"at": "2026-11-17T12:01:35Z", "ending": "done"},
+        "sessions": [{"dir": "sessions/issue-1/20261117T120005Z-implement"}],
+    });
+    record["sessions"][0]
+        .as_object_mut()
+        .unwrap_or_else(|| panic!("a JSON object"))
+        .extend(ran.as_object().unwrap().clone());
+    let mut session = json!({"record": "scorer/20261117T120200Z-scorer", "cost": {}});
+    session
+        .as_object_mut()
+        .unwrap_or_else(|| panic!("a JSON object"))
+        .extend(ran.as_object().unwrap().clone());
+    let score = json!({
+        "correctness": {"reasoning": "It names the columns.", "verdict": "pass"},
+        "leak": {"reasoning": "I read every transcript.", "found": false, "calls": []},
+        "session": session,
+        "linewright": "0.1.0",
+    });
+    let output = "benchmark-runs/1/1/1/1";
+    let turn = linewright_core::testing::TURN_1;
+    pages.write(&[
+        (&format!("{output}/task"), "1/implement-1\n"),
+        (&format!("{output}/outcome"), "done\n"),
+        (
+            &format!("{output}/runs/items/1/implement-1.json"),
+            &record.to_string(),
+        ),
+        (
+            &format!("{output}/sessions/issue-1/20261117T120005Z-implement/output.jsonl"),
+            turn,
+        ),
+        (
+            &format!("{output}/sessions/issue-1/20261117T120005Z-implement/brief.md"),
+            "# Your task\n\nImplement the ticket below.\n",
+        ),
+        (&format!("{output}/score.json"), &score.to_string()),
+        (
+            &format!("{output}/scorer/20261117T120200Z-scorer/output.jsonl"),
+            turn,
+        ),
+        (
+            &format!("{output}/scorer/20261117T120200Z-scorer/brief.md"),
+            "# Your task\n\nScore the trial.\n",
+        ),
+    ]);
+    pages
 }
 
 /// `docs/specs/benchmarks.md`, Benchmark, Runs; `docs/specs/ui_patterns.md`,
@@ -308,7 +297,6 @@ impl Routed for Showing {
 }
 
 /// `pages`' web UI, with `serve` showing benchmark run 1 as `shown`.
-#[track_caller]
 fn showing(pages: &Pages, shown: linewright_core::benchmarks::Shown) -> Showing {
     let (publish, links) = linewright_core::api::Publish::new();
     publish.benchmark_runs.shown(
@@ -330,7 +318,6 @@ fn showing(pages: &Pages, shown: linewright_core::benchmarks::Shown) -> Showing 
 
 /// The benchmark run page's heading as a reader reads it: its name, its state's
 /// badge, and the labels of the screen's buttons.
-#[track_caller]
 fn benchmark_run_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
     let heading = select(html, "#heading")[0];
     (
@@ -345,7 +332,6 @@ fn benchmark_run_heading(html: &Html) -> (String, Vec<String>, Vec<String>) {
 
 /// The benchmark run page's facts (`docs/specs/benchmarks.md`,
 /// Benchmark run), each its `stat-title` and its `stat-value`.
-#[track_caller]
 fn benchmark_run_facts(html: &Html) -> Vec<(String, String)> {
     stats(html, "#benchmark-run")
 }
@@ -565,7 +551,6 @@ async fn a_cancelled_benchmark_run_says_when_it_was_cancelled_and_how_long_it_to
 
 /// A point of the chart as a reader meets it: its id, its name, and the
 /// details its tooltip shows.
-#[track_caller]
 fn points(html: &Html, axis: &str) -> Vec<(String, String, String)> {
     select(html, &format!("#chart [data-axis={axis}] button.point"))
         .into_iter()
@@ -581,7 +566,6 @@ fn points(html: &Html, axis: &str) -> Vec<(String, String, String)> {
 
 /// Where the point `id` is drawn in its chart's SVG: the `x` and the `y`, in
 /// percent of the plot, of the SVG that holds it.
-#[track_caller]
 fn drawn_at(html: &Html, id: &str) -> (f64, f64) {
     let drawn = select(html, "#chart svg svg")
         .into_iter()
@@ -772,7 +756,6 @@ async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
 /// under the row `of`, each its id, whether it is hidden and the text of its
 /// cells between its leading cell, which holds its chevron, and its last,
 /// which holds its buttons.
-#[track_caller]
 fn fold_rows(html: &Html, of: Option<&str>) -> Vec<(String, bool, Vec<String>)> {
     let selector = match of {
         None => "#configurations tbody tr:not([data-fold-of])".to_string(),
@@ -1493,7 +1476,6 @@ async fn trial_screen(pages: &Pages, at: TrialAt) -> TrialTranscriptsScreen {
 
 /// That `screen` is run `run`, with as many sessions and entries as `page`,
 /// the page of its transcript, shows.
-#[track_caller]
 fn assert_shows_as_the_page(screen: &RunScreen, page: &Html, run: &str) {
     assert_eq!(screen.heading.id.to_string(), run);
     assert_eq!(screen.sessions.len(), select(page, ".session").len());
@@ -1783,7 +1765,6 @@ struct LaunchShown {
 }
 
 /// What the form `form` of the New benchmark run dialog shows.
-#[track_caller]
 fn launch_form(form: &Html) -> LaunchShown {
     let refusals = select(form, ".alert");
     assert!(refusals.len() <= 1, "{}", form.html());
@@ -2427,7 +2408,6 @@ async fn launching_answers_the_form_as_it_starts_closing_the_dialog_and_the_benc
 }
 
 /// The files under `dir` and its subdirectories.
-#[track_caller]
 fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut files = vec![];
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -2530,7 +2510,6 @@ type RowButton = (String, String, String);
 /// The buttons at the end of each of the configurations table's rows that
 /// is not under another, by row id, each a ghost `btn-xs` with its icon
 /// before its label.
-#[track_caller]
 fn row_buttons(html: &Html) -> Vec<(String, Vec<RowButton>)> {
     select(html, "#configurations tbody tr:not([data-fold-of])")
         .into_iter()
