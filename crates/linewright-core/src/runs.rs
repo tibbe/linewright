@@ -213,8 +213,9 @@ impl fmt::Display for RunId {
 pub enum Ending {
     Done,
     HandedBack,
+    /// Also what a record kept as `usage-limit` reads as.
+    #[serde(alias = "usage-limit")]
     Cancelled,
-    UsageLimit,
     Failed,
 }
 
@@ -1069,7 +1070,6 @@ impl OutcomeName {
                 Ending::Done => "done",
                 Ending::HandedBack => "handed back",
                 Ending::Cancelled => "cancelled",
-                Ending::UsageLimit => "ended for the usage limit",
                 Ending::Failed => "failed",
             },
             OutcomeName::Unended(Unended::InFlight) => "in flight",
@@ -1084,7 +1084,7 @@ impl OutcomeName {
                 Ending::Done => Status::Done,
                 Ending::Failed => Status::Failed,
                 Ending::HandedBack => Status::Waiting,
-                Ending::Cancelled | Ending::UsageLimit => Status::Cancelled,
+                Ending::Cancelled => Status::Cancelled,
             },
             OutcomeName::Unended(Unended::InFlight) => Status::InFlight,
             OutcomeName::Unended(Unended::Interrupted) => Status::Cancelled,
@@ -1365,7 +1365,7 @@ pub(crate) fn render_run(run: &Run, paint: Paint) -> String {
         Outcome::Ended { ending, .. } => match ending {
             Ending::Done | Ending::Cancelled => word.into(),
             Ending::Failed => paint.red(word),
-            Ending::HandedBack | Ending::UsageLimit => paint.yellow(word),
+            Ending::HandedBack => paint.yellow(word),
         },
         Outcome::InFlight { .. } => paint.bold(word),
         Outcome::Interrupted => paint.yellow(word),
@@ -1500,7 +1500,6 @@ mod tests {
             "done",
             "handed-back",
             "cancelled",
-            "usage-limit",
             "failed",
             "in-flight",
             "interrupted",
@@ -1518,12 +1517,20 @@ mod tests {
                 ("done", Status::Done),
                 ("handed-back", Status::Waiting),
                 ("cancelled", Status::Cancelled),
-                ("usage-limit", Status::Cancelled),
                 ("failed", Status::Failed),
                 ("in-flight", Status::InFlight),
                 ("interrupted", Status::Cancelled),
             ]
         );
+    }
+
+    /// A run kept as ended for the usage limit reads as cancelled.
+    #[test_log::test]
+    fn an_outcome_kept_as_usage_limit_reads_as_cancelled() {
+        let outcome: OutcomeName = serde_json::from_value("usage-limit".into()).unwrap();
+
+        assert_eq!(outcome, OutcomeName::Ended(Ending::Cancelled));
+        assert_eq!(outcome.word(), "cancelled");
     }
 
     fn ended(item: u64, stage: &str, n: u32) -> serde_json::Value {

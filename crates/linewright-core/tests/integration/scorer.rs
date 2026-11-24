@@ -11,15 +11,14 @@ use std::sync::{Arc, Mutex};
 use linewright_core::apply::hand_back::LogTail;
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend};
 use linewright_core::factory::FactoryConfig;
-use linewright_core::harness::SessionError;
+use linewright_core::harness::{SessionError, UsageLimit};
 use linewright_core::reconcile::WorkKind;
 use linewright_core::runs::UnexpectedEnd;
 use linewright_core::session::Ended;
 use linewright_core::task::Task;
 use linewright_core::testing::scores::*;
-use linewright_core::testing::trial_runs::*;
+use linewright_core::testing::trial_runs::{self, *};
 use linewright_core::testing::*;
-use linewright_core::trial::Under;
 use linewright_core::trial::scorer::{self, Score, ScorerRecord, Unscored};
 use linewright_core::work_settings::{Effort, Partial, Setup, SetupCommand, StageKey, StageTable};
 use rstest::rstest;
@@ -27,17 +26,17 @@ use serde_json::{Value, json};
 
 use crate::trial::{gh_answer, ran_trial_with};
 
-/// Scores the output `out` of a trial of the task in `task` with the
-/// scorers `harness` scripts and the factory config `adjust` makes of the
-/// tests' own, its work directory under `under`, keeping the score it
-/// makes, and gives its summary, and waits for what it leaves to remove.
+/// Scores, as the benchmark runner does, the output `out` of a trial of the
+/// task in `task` with the scorers `harness` scripts and the factory config
+/// `adjust` makes of the tests' own, its work directory under `under`,
+/// keeping the score it makes, and waits for what it leaves to remove.
 async fn scoring(
     task: &Path,
     out: &Path,
     under: &Path,
     harness: Arc<ScriptedHarness>,
     adjust: impl FnOnce(&mut FactoryConfig),
-) -> Result<String, Unscored> {
+) -> Result<(), Unscored> {
     let task = Task::open(task)
         .await
         .unwrap_or_else(|e| panic!("opening the case: {e}"));
@@ -55,13 +54,11 @@ async fn scoring(
         record,
         harness,
         config,
-        &Under::command(),
+        &trial_runs::under_unread(),
     )
     .await;
     let kept = scored.map(|score: Score| {
-        let summary = score.summary();
         scorer::keep(&scoreable, score).unwrap_or_else(|e| panic!("keeping the score: {e}"));
-        summary
     });
     winding_up.wait().await;
     kept
@@ -92,7 +89,7 @@ async fn a_scorer_keeps_its_score_in_the_output_with_its_record() {
 
     let scored = scoring(&task, &out, under.path(), harness.clone(), scorer_settings).await;
 
-    assert_eq!(scored.unwrap(), "Verdict: pass\nLeak: none found\n");
+    assert!(scored.is_ok(), "{scored:?}");
     let kept = score_in(&out);
     assert_eq!(
         kept["correctness"],
@@ -205,12 +202,6 @@ async fn a_scorer_that_makes_no_score_keeps_nothing_of_itself() {
 }
 
 #[rstest]
-#[case::the_usage_limit(
-    Unscored::UsageLimit {
-        resets_at: "2026-11-20T18:00:00Z".parse().unwrap(),
-    },
-    "The scorer's session reached the usage limit, which resets at 2026-11-20 18:00:00 UTC."
-)]
 #[case::giving_up(
     Unscored::GaveUp("The output is empty.".into()),
     "The scorer gave up: The output is empty."
@@ -349,7 +340,7 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
         record,
         harness,
         config,
-        &Under::command(),
+        &trial_runs::under_unread(),
     )
     .await
     .unwrap();
@@ -368,6 +359,45 @@ async fn a_score_is_not_kept_over_one_the_output_came_to_hold_while_it_was_made(
         "{}\n"
     );
     assert_eq!(entries(&out), vec!["outcome", "score.json", "task"]);
+}
+
+/// `docs/specs/benchmarks.md`, Benchmark runs, Holds: the usage limit
+/// applies to a scorer as to a run of the pipeline (`docs/specs/runs.md`,
+/// Usage limit).
+#[test_log::test(tokio::test)]
+async fn a_scorers_session_refused_for_the_usage_limit_reports_it_and_resumes_once_it_resets() {
+    let under = tempfile::tempdir().unwrap();
+    let (task_dir, out) = triage_output(under.path(), "done").await;
+    let task = Task::open(&task_dir).await.unwrap();
+    let reset = soon_after(task.start());
+    let scoreable = scorer::ScoreableTrial::open(&out, &task).await.unwrap();
+    let record = ScorerRecord::make(&scoreable).unwrap();
+    let harness = Arc::new(ScriptedHarness::default());
+    let followups = Arc::new(Mutex::new(vec![]));
+    harness.on_scorer({
+        let (followups, reset) = (followups.clone(), reset.clone());
+        move |call| {
+            let mut followups = followups.lock().unwrap();
+            followups.push(call.followup.map(str::to_string));
+            if followups.len() == 1 {
+                refused_until(reset.at(), call)
+            } else {
+                Ok(scored_as("pass", &[]))
+            }
+        }
+    });
+    let config = config(&under.path().join("work").join(REPO)).await;
+    let winding_up = config.winding_up.clone();
+    let (runner_under, mut reported) = trial_runs::under_reporting();
+
+    let scored = scorer::run(&task, &scoreable, record, harness, config, &runner_under).await;
+    winding_up.wait().await;
+
+    assert!(scored.is_ok(), "{scored:?}");
+    let resets_at = reset.given();
+    assert_eq!(reported.try_recv().ok(), Some(UsageLimit { resets_at }));
+    let follow_up = marker("prompts/follow-ups/usage-limit-reset.md", &[]);
+    assert_eq!(*followups.lock().unwrap(), [None, Some(follow_up)]);
 }
 
 #[test_log::test(tokio::test)]

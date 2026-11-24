@@ -216,7 +216,6 @@ fn config_over(work_dir: &Path, database: Database) -> FactoryConfig {
         briefs: OperatorBriefs::read_over(super::markers::markers(), None).unwrap(),
         work_dir: work_dir.to_path_buf(),
         database,
-        waits_out_usage_limit: false,
         session_token: SessionToken::Separate("session-token".into()),
         secrets: Secrets::default(),
         ends: crate::ending::Ends::new(),
@@ -238,10 +237,6 @@ pub fn bash() -> std::path::PathBuf {
 impl World {
     pub async fn new() -> World {
         World::with(|_| {}).await
-    }
-
-    pub async fn serving() -> World {
-        World::with(|config| config.waits_out_usage_limit = true).await
     }
 
     pub async fn with(adjust: impl FnOnce(&mut FactoryConfig)) -> World {

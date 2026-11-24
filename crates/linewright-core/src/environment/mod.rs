@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{info, warn};
@@ -132,9 +132,6 @@ impl Setup {
 /// What holds back the builds that polls and requests would start.
 #[derive(Clone, Copy, Debug, Default)]
 struct Holds {
-    /// Polls start none once the environment is prepared for a run without
-    /// `serve`.
-    prepared: bool,
     draining: bool,
     /// The `config.toml` last read cannot be used.
     unusable: bool,
@@ -142,7 +139,7 @@ struct Holds {
 
 impl Holds {
     fn any(self) -> bool {
-        self.prepared || self.draining || self.unusable
+        self.draining || self.unusable
     }
 }
 
@@ -159,9 +156,6 @@ pub struct Environment {
     setup: Setup,
     holds: Holds,
     building: Option<JoinHandle<Result<Built, String>>>,
-    /// Why the latest build that failed did, if one has since Linewright
-    /// started.
-    failure: Option<String>,
     source: Source,
     /// Whether there is a setup command, as last kept.
     kept_setup: Option<bool>,
@@ -311,7 +305,6 @@ impl Environment {
             setup: Setup::Unset,
             holds: Holds::default(),
             building: None,
-            failure: None,
             source: Source::default(),
             kept_setup: None,
             tally: BuildTally::default(),
@@ -376,36 +369,14 @@ impl Environment {
 
     /// Why builds are held, if they are.
     fn held_because(&self) -> Option<String> {
-        let Holds {
-            prepared,
-            draining,
-            unusable,
-        } = self.holds;
+        let Holds { draining, unusable } = self.holds;
         if draining {
             Some("`serve` is draining, and a drain starts no build".into())
         } else if unusable {
             Some(unusable_config())
-        } else if prepared {
-            Some("the environment was prepared for this run".into())
         } else {
             None
         }
-    }
-
-    /// Builds the environment now, with the `setup` table `read`, and waits
-    /// for the build, as `lw environment rebuild` without `serve` does.
-    /// `Err` when builds are held; otherwise `None` without a setup command.
-    pub async fn rebuild_now(&mut self, read: SetupRead) -> Result<Option<BuildEnded>> {
-        self.take_read(read).await;
-        match self.refused() {
-            Some(RebuildTaken::Refused { reason }) => bail!("no build starts: {reason}"),
-            Some(_) => return Ok(None),
-            None => {}
-        }
-        self.on(Event::Triggered, None);
-        let build = self.tally.started;
-        self.settle().await;
-        Ok(self.tally.ended.get(&build).cloned())
     }
 
     /// The builds started since Linewright started, and how they ended.
@@ -445,7 +416,6 @@ impl Environment {
         match ended {
             Ok(Ok(built)) => {
                 info!(commit = built.commit, "the environment was built");
-                self.failure = None;
                 let commit = built.commit.clone();
                 self.tally
                     .end(self.tally.started, BuildEnded::Succeeded { commit });
@@ -457,12 +427,10 @@ impl Environment {
         }
     }
 
-    fn failed(&mut self, why: String) {
-        warn!(error = why, "the build of the environment failed");
-        let error = why.clone();
+    fn failed(&mut self, error: String) {
+        warn!(error, "the build of the environment failed");
         self.tally
             .end(self.tally.started, BuildEnded::Failed { error });
-        self.failure = Some(why);
         self.on(Event::Failed, None);
     }
 
@@ -497,28 +465,6 @@ impl Environment {
         if let Some(handle) = self.building.take() {
             let _ = handle.await;
         }
-    }
-
-    /// Makes the environment ready for a run without `serve`, with the
-    /// `setup` table `read`: it is used when no trigger applies to it, and
-    /// otherwise built first. Polls start no build from then on. `Err` says
-    /// why no environment can be had.
-    pub async fn prepare(&mut self, read: SetupRead, now: Timestamp) -> Result<()> {
-        let settings = self.take_read(read).await;
-        if let Some(settings) = settings.filter(|_| !self.holds.any())
-            && let Some(event) = self.polled(&settings, now)
-        {
-            self.on(event, None);
-            self.settle().await;
-        }
-        self.holds.prepared = true;
-        if self.ready() {
-            return Ok(());
-        }
-        Err(anyhow!(
-            "the build of the environment failed: {}; `lw environment` shows its output",
-            self.failure.as_deref().unwrap_or("it ended")
-        ))
     }
 
     /// Takes `read` in, and returns the `setup` table now in force, if any.

@@ -76,8 +76,6 @@ pub enum Invocation {
 pub enum Command {
     /// Poll the repository until drained or stopped.
     Serve,
-    /// Run one poll cycle and the runs it starts, then exit.
-    Once,
     /// Tell the running `serve` to drain.
     ///
     /// `serve` claims no item and starts no run, and exits once no run is in
@@ -161,7 +159,7 @@ pub enum Command {
     },
     /// Show the environment and the output of its builds: the latest, and
     /// the latest that failed when the latest succeeded. `environment
-    /// rebuild` builds it now.
+    /// rebuild` asks `serve` to build it now.
     #[command(args_conflicts_with_subcommands = true)]
     Environment {
         #[command(subcommand)]
@@ -197,23 +195,6 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Run the stage of the task in the directory TASK on it again, with the
-    /// task in place of GitHub, writing what the run did to DIR.
-    Trial {
-        task: PathBuf,
-        /// The directory of the output: made if missing, and refused unless
-        /// empty.
-        #[arg(long, value_name = "DIR")]
-        out: PathBuf,
-        /// A configuration to run the trial with, laid out as a repository's
-        /// `.linewright/`: its `config.toml` and the files of its `briefs/`
-        /// override every other layer, flags included.
-        #[arg(long, value_name = "CONFIG")]
-        configuration: Option<PathBuf>,
-    },
-    /// Score DIR, the output of a trial of the task in the directory TASK,
-    /// against the task's criteria, keeping the score in DIR.
-    Score { task: PathBuf, dir: PathBuf },
     /// List the benchmarks, each with its ID, its stage and how many tasks it
     /// holds.
     Benchmarks {
@@ -422,8 +403,7 @@ impl Args for Which {
 #[derive(Subcommand, Debug)]
 pub enum EnvironmentCommand {
     /// Ask the running `serve` to build the environment, and return once
-    /// the build ends, with a non-zero status when it fails. Without
-    /// `serve`, build it here.
+    /// the build ends, with a non-zero status when it fails.
     Rebuild {
         /// Return once `serve` has taken the request.
         #[arg(long)]
@@ -518,8 +498,7 @@ pub struct Settings {
     #[arg(long, global = true)]
     pub work_dir: Option<String>,
     /// The model for every stage; a stage's table in the config file,
-    /// `[stage.NAME]`, can set its own (required, for a command that starts
-    /// a session)
+    /// `[stage.NAME]`, can set its own (required, for `serve`)
     #[arg(long, global = true)]
     pub model: Option<String>,
     /// How hard the agent thinks: `low`, `medium`, `high`, `xhigh` or `max`,

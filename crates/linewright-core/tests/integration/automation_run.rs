@@ -223,19 +223,34 @@ fn the_command_that_runs_one_now_is_named_after_automations() {
     assert!(Cli::try_parse_from(["lw", "workflow", "run", "weekly.md"]).is_err());
 }
 
+/// `docs/specs/runs.md`, Usage limit: an automation's run waits it out as
+/// every run does.
 #[test_log::test(tokio::test)]
-async fn a_run_refused_for_the_usage_limit_ends_saying_so_not_failing() {
+async fn a_run_refused_for_the_usage_limit_waits_it_out_and_ends_done() {
     let mut world = with_automation("weekly.md", WEEKLY).await;
-    world.harness.on_automation(refused_for_the_usage_limit);
-    let (log, _guard) = Log::capture();
+    let refused = std::sync::atomic::AtomicBool::new(false);
+    world.harness.on_automation(move |call| {
+        if refused.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            Ok(nothing_needs_doing())
+        } else {
+            refused_for_the_usage_limit(call)
+        }
+    });
 
-    world.run_by_hand("weekly.md").await.unwrap();
+    world
+        .factory
+        .ask_by_hand("weekly.md".parse().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(world.clock.next_sleep().await, usage_limit_resets_at());
+    let now = linewright_core::clock::Clock::now(world.clock.as_ref());
+    world.clock.advance(usage_limit_resets_at() - now);
+    world.factory.settle().await;
 
-    let ended = log.usage_limit_warnings();
-    assert_eq!(ended.len(), 1, "{ended:?}");
-    assert!(log.lines("ERROR").is_empty(), "{:?}", log.lines("ERROR"));
-    assert_eq!(world.harness.automation_prompts().len(), 1, "not retried");
-    assert_eq!(world.store.issues(), []);
+    assert_eq!(
+        ended_runs(&world).await,
+        [linewright_core::runs::Ending::Done]
+    );
 }
 
 #[test_log::test(tokio::test)]

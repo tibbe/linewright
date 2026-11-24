@@ -25,10 +25,12 @@ lw --repo owner/name --model opus serve
 
 `lw serve` polls the repository until stopped, and runs the automations in
 `.linewright/automations/` that are due. One `serve` runs per repository on a
-host. `lw drain` stops it once the runs in flight have finished. `lw once` runs
-one poll cycle and the runs it starts, and `lw automation run NAME` asks
-`serve` to run the automation in `.linewright/automations/NAME` once, as its
-trigger would, printing the run's ID or what the run waits for.
+host, and it does all of Linewright's work: every other command asks it to
+act, and fails when it is not running, or shows what Linewright knows or
+keeps. `lw drain` stops it once the runs in flight have finished, and
+`lw automation run NAME` asks it to run the automation in
+`.linewright/automations/NAME` once, as its trigger would, printing the run's
+ID or what the run waits for.
 
 ## Settings
 
@@ -286,40 +288,33 @@ run it as a user, or in a container, that holds no credentials you don't mean
 sessions to have, such as in `~/.config/gh`, `~/.netrc`, `~/.aws` or
 `~/.git-credentials`.
 
-## Scoring a trial
+## Trials and scores
 
-`lw trial TASK --out DIR` runs a task's stage again
-([Capturing a task](tuning-briefs.md#capturing-a-task)), and `lw score TASK DIR`
-then scores what it made against the task's criteria. A capture needs its
-criteria, as `lw capture ID --benchmark BENCHMARK --name NAME --criteria FILE`,
-since
-they are what the scorer scores by. The scorer is an agent in a session of its
-own: it reads the trial's sessions and writes, and its clone has the branch the
+A trial runs a task's stage again on the task
+([Capturing a task](tuning-briefs.md#capturing-a-task)), in place of GitHub,
+and a scorer then scores what it made against the task's criteria. `serve`
+runs both, for a benchmark run ([Benchmark runs](#benchmark-runs)). A capture
+needs its criteria, as
+`lw capture ID --benchmark BENCHMARK --name NAME --criteria FILE`, since they
+are what the scorer scores by. The scorer is an agent in a session of its own:
+it reads the trial's sessions and writes, and its clone has the branch the
 trial pushed checked out, or the default branch when it pushed none. It also
 looks for a leak: a session that learned how the work turned out, such as from
 the merged pull request, whose trial says nothing about the stage.
 
-```sh
-lw trial tasks/43-implement-2 --out out/43-1
-lw score tasks/43-implement-2 out/43-1
-```
+To try a change, run the trials under a configuration: a directory laid out as
+`.linewright/`, whose `config.toml` sets only `model`, `effort` and
+`session-timeout`, with no tables, and whose `briefs/` holds files of the
+brief. Each of them overrides every other layer, flags and stage tables
+included, and the rest comes from those layers. A benchmark run's launch
+refuses a configuration with an error, naming the file and the error, and each
+trial keeps a copy of it in its output's `configuration/`. The scorer does not
+take it.
 
-To try a change, give `lw trial` a configuration with
-`--configuration CONFIG`: a directory laid out as `.linewright/`, whose
-`config.toml` sets only `model`, `effort` and `session-timeout`, with no
-tables, and whose `briefs/` holds files of the brief. Each of them overrides
-every other layer, flags and stage tables included, and the rest comes from
-those layers. Linewright refuses a configuration with an error before the
-trial starts, and keeps a copy of it in the output's `configuration/`. The
-scorer does not take it.
-
-`lw score` runs as `lw trial` does: it needs no `repo`, the task's repository
-on GitHub is kept from its `gh`, and its session takes its settings from
-`[stage.scorer]` ([Stage settings](#stage-settings)). It scores only a trial
-whose run ended done or handed back, and refuses an output of a trial of
-another task or one that already holds a score, which it leaves as it is,
-with its scorer's record. It prints the verdict and whether it found a leak, and
-keeps the score in the output:
+A trial's and a scorer's sessions have a `gh` kept from the task's repository
+on GitHub, and the scorer's session takes its settings from `[stage.scorer]`
+([Stage settings](#stage-settings)). A scorer scores only a trial whose run
+ended done or handed back, and keeps the score in the trial's output:
 
 ```text
 score.json  the verdict (pass or fail), whether a leak was found and the tool
@@ -329,16 +324,16 @@ scorer/     the record of the scorer's session, which score.json names
 ```
 
 A scorer that gives up, fails, ends without a result Linewright accepts or is
-stopped keeps nothing. The command exits 0 when the scorer made a score,
-whatever it is, and 1 when it made none or refused the output.
+stopped keeps nothing, and its trial shows why it has no score.
 
 ## Benchmark runs
 
 A benchmark run makes a trial of each task of a benchmark under several
 configurations, and scores each trial. `lw benchmark-run launch BENCHMARK`
 launches one under `as-is`, which changes nothing, and a configuration for each
-`--configuration NAME=DIR`, laid out as `lw trial` takes it, with
-`--repetitions N` trials of each task under each configuration, 1 by default:
+`--configuration NAME=DIR`, laid out as [a configuration](#trials-and-scores),
+with `--repetitions N` trials of each task under each configuration, 1 by
+default:
 
 ```sh
 lw benchmark-run launch 1 --configuration "Short brief=tries/short" --repetitions 3
@@ -403,8 +398,8 @@ none runs for the repository, and 4 when #N or the run ID names nothing.
 
 `lw export ID DIR` writes a run's outcome, briefs, transcripts and attachments
 into DIR as plain files, in the form a trial's output gives its run, whether
-or not `serve` runs. DIR is made if missing and refused unless empty, as a
-trial's output is. A run in flight is written as it is when the command
+or not `serve` runs. DIR is made if missing and refused unless empty. A run
+in flight is written as it is when the command
 starts. It exits 4 when the run ID names nothing.
 
 ## The web UI

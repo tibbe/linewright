@@ -84,11 +84,6 @@ fn scorer_makes_none() -> TrialChange {
     TrialChange::RunEnds(run(Ending::Failed)),
     unscored(NoScore::Outcome(run(Ending::Failed)))
 )]
-#[case::a_run_that_ends_for_the_usage_limit_ends_its_trial_without_a_score(
-    TrialState::Running,
-    TrialChange::RunEnds(run(Ending::UsageLimit)),
-    unscored(NoScore::Outcome(run(Ending::UsageLimit)))
-)]
 #[case::a_failed_build_ends_its_trial_without_a_score_with_its_time(
     TrialState::Running,
     build_fails(),

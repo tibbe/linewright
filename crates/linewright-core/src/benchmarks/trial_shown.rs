@@ -332,7 +332,7 @@ mod tests {
             [
                 "No score. The build of its environment failed.",
                 "No score. The run's outcome: failed",
-                "No score. The run's outcome: ended for the usage limit",
+                "No score. The run's outcome: cancelled",
                 "No score. The scorer gave up: the task has no criteria",
             ]
         );

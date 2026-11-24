@@ -27,7 +27,7 @@ use crate::domain::{
     SpecChangeIssue, Timestamp, Windows, label,
 };
 use crate::ending::Ends;
-use crate::environment::{self, BuildEnded, Environment, SetupRead};
+use crate::environment::{self, Environment, SetupRead};
 use crate::harness::{GhReach, Harness, UsageLimit};
 use crate::holds::{Hold, InForce};
 use crate::pull_records::PullRecords;
@@ -37,7 +37,7 @@ use crate::reconcile::{
     Memory, ParentNote, Subject, Work, decisions, held_back_by_drain, requirements_note,
 };
 use crate::repo_files::{self, RepoLayer, Unusable};
-use crate::run::{self, AutomationEnd, Shell, ShellParts};
+use crate::run::{self, Shell, ShellParts};
 use crate::runs::{self, Begin, Recorded, RunId, RunOf, Runs, StartedBy};
 use crate::secrets::Secrets;
 use crate::session::{Cancellation, Sessions};
@@ -81,7 +81,6 @@ pub struct FactoryConfig {
     pub work_dir: PathBuf,
     /// The database of `work_dir`.
     pub database: Database,
-    pub waits_out_usage_limit: bool,
     pub session_token: SessionToken,
     /// Linewright's secrets, refused in the commits a session's result
     /// would push, and redacted from what a session's work prints that
@@ -345,7 +344,6 @@ impl Factory {
                 environment: environment.source(),
                 gh: GhReach::Direct,
                 result_retries: config.result_retries,
-                waits_out_usage_limit: config.waits_out_usage_limit,
                 report_refusal,
             },
             spec_glob: config.spec_glob,
@@ -1024,28 +1022,6 @@ impl Factory {
             .await;
     }
 
-    /// Makes the environment ready for a run without `serve`
-    /// (`docs/specs/sessions.md`, Building, Without `serve`): it is used when
-    /// no trigger applies to it, and otherwise built first. `Err` names the
-    /// build that failed when no environment can be had; the runs that
-    /// would start a session are then held.
-    pub async fn prepare_environment(&mut self) -> Result<()> {
-        let repo = self.read_repo_files().await?;
-        let read = self.setup_read(&repo);
-        self.environment
-            .prepare(read, self.shell.sessions.clock.now())
-            .await
-    }
-
-    /// Builds the environment now and waits for the build, as
-    /// `lw environment rebuild` does without `serve`: `None` without a setup
-    /// command.
-    pub async fn rebuild_environment(&mut self) -> Result<Option<BuildEnded>> {
-        let repo = self.read_repo_files().await?;
-        let read = self.setup_read(&repo);
-        self.environment.rebuild_now(read).await
-    }
-
     /// Linewright's files on the default branch as they are now, each that
     /// cannot be used logged.
     async fn read_repo_files(&self) -> Result<Arc<RepoLayer>> {
@@ -1501,16 +1477,8 @@ async fn run_and_log(
         run: running,
     };
     match run::automation(shell, automation, trigger, ctx).await {
-        Ok(AutomationEnd::Finished(result)) => {
+        Ok(result) => {
             info!(automation = %name, summary = result.summary, "automation run finished");
-            Ok(())
-        }
-        Ok(AutomationEnd::UsageLimit(limit)) => {
-            warn!(
-                automation = %name,
-                resets_at = %limit.resets_at,
-                "automation run ended for the usage limit"
-            );
             Ok(())
         }
         Err(e) => {

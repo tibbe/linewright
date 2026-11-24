@@ -363,11 +363,7 @@ fn an_attempt_whose_run_was_cancelled_or_interrupted_runs_the_automation_again()
     let seen = seen(&["fix-ci.md"], &ci_fails_on_main(), 0);
     let attempt = failed(1, 1, 30);
 
-    for state in [
-        ended(Ending::Cancelled),
-        ended(Ending::UsageLimit),
-        State::Interrupted,
-    ] {
+    for state in [ended(Ending::Cancelled), State::Interrupted] {
         let decided = triggered(
             &[fix_ci("fix-ci.md")],
             &seen,

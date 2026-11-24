@@ -330,9 +330,9 @@ async fn a_trial_leaves_the_environment_of_serve_as_it_is() {
         .unwrap();
     let command = installing(&marks, "v1");
     served
-        .rebuild_now(SetupRead::Given(Some(setup(&command))))
-        .await
-        .unwrap();
+        .poll(SetupRead::Given(Some(setup(&command))), start)
+        .await;
+    served.settle().await;
     let before = files_under(&serving);
     let trials = Trials::new(&world, work_dir.path()).await;
 

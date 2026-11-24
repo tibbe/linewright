@@ -249,7 +249,7 @@ async fn a_run_that_stops_after_pushing_its_update_keeps_its_work_on_top_of_it()
 async fn a_run_whose_environment_turns_reflogs_off_still_pushes_the_update_on_its_own() {
     let (mut world, pr) = conflicting_but_rebasing_cleanly().await;
     set_up_with(&world, "git config core.logAllRefUpdates false").await;
-    world.factory.prepare_environment().await.unwrap();
+    world.poll().await;
     let before = push_count(&world, pr).await;
     rework_asked_tidying(&world, pr);
 

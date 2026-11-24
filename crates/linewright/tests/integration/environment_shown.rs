@@ -38,10 +38,10 @@ async fn without_serve_environment_prints_the_latest_build_then_the_latest_that_
         config.work_dir = work_dir.path().join(REPO);
     };
     set_up_with(&world, "echo 'npm ERR! missing lockfile'; exit 3").await;
-    world.factory.prepare_environment().await.unwrap_err();
+    world.poll().await;
     set_up_with(&world, "echo installed").await;
     world.restart(in_work_dir).await;
-    world.factory.prepare_environment().await.unwrap();
+    world.poll().await;
 
     let shown = lw_in(work_dir.path(), &["environment"]).await;
     let json = lw_in(work_dir.path(), &["environment", "--json"]).await;
@@ -89,7 +89,7 @@ async fn without_serve_environment_prints_the_latest_build_then_the_latest_that_
 #[test_log::test(tokio::test)]
 async fn without_serve_and_with_no_setup_command_environment_says_there_is_none() {
     let (mut world, work_dir) = world_in_work_dir().await;
-    world.factory.prepare_environment().await.unwrap();
+    world.poll().await;
 
     let shown = lw_in(work_dir.path(), &["environment"]).await;
 
@@ -107,11 +107,11 @@ async fn once_the_environments_directory_is_removed_by_hand_the_next_build_takes
         config.work_dir = work_dir.path().join(REPO);
     };
     set_up_with(&world, "echo installed").await;
-    world.factory.prepare_environment().await.unwrap();
+    world.poll().await;
     std::fs::remove_dir_all(work_dir.path().join(REPO).join("environment")).unwrap();
 
     world.restart(in_work_dir).await;
-    world.factory.prepare_environment().await.unwrap();
+    world.poll().await;
     let shown = lw_in(work_dir.path(), &["environment"]).await;
 
     let builds: Vec<&str> = shown

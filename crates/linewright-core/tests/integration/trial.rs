@@ -9,29 +9,31 @@ use std::sync::{Arc, Mutex};
 use linewright_core::cost::{Figures, Spend, Tokens, TurnSpend, Usd};
 use linewright_core::domain::Timestamp;
 use linewright_core::factory::FactoryConfig;
-use linewright_core::harness::{GhReach, SessionSpec};
+use linewright_core::harness::{GhReach, SessionSpec, UsageLimit};
 use linewright_core::logs::{KeptRuns, RunRecords, Which};
 use linewright_core::reconcile::WorkKind;
 use linewright_core::runs::files::RunFiles;
 use linewright_core::runs::{Ending, Ran, RunId, State};
 use linewright_core::task::Task;
-use linewright_core::testing::trial_runs::*;
+use linewright_core::testing::trial_runs::{self, *};
 use linewright_core::testing::*;
 use linewright_core::transcript;
-use linewright_core::trial::{self, Configuration, ConfigurationRefusal, OutputRefusal};
+use linewright_core::trial::{self, Configuration, ConfigurationRefusal};
 use linewright_core::work_settings::{Effort, RunKind, Setup, SetupCommand};
 use serde_json::{Value, json};
 
-/// A trial's output, and how its run ended or why it did not run.
+/// A trial's output, how its run ended or why it did not run, and each
+/// usage limit its sessions reported.
 pub(crate) struct RanTrial {
     pub(crate) out: PathBuf,
     ended: Result<Ending, trial::Unrun>,
+    usage_limits: Vec<UsageLimit>,
 }
 
-/// Runs the task in `dir` with the sessions `harness` scripts and the
-/// factory config `adjust` makes of the tests' own, its work directory
-/// `REPO`'s and its output under `under`, and waits for what it leaves to
-/// remove.
+/// Runs the task in `dir` as the benchmark runner does, with the sessions
+/// `harness` scripts and the factory config `adjust` makes of the tests'
+/// own, its work directory `REPO`'s and its output under `under`, and waits
+/// for what it leaves to remove.
 async fn ran_trial(
     dir: &Path,
     under: &Path,
@@ -57,17 +59,26 @@ pub(crate) async fn ran_trial_with(
     let mut config = config(&under.join("work").join(REPO)).await;
     adjust(&mut config);
     let winding_up = config.winding_up.clone();
+    let (runner_under, mut reported) = trial_runs::under_reporting();
     let ended = Box::pin(trial::run(
         &task,
         &output,
         harness,
         config,
         configuration,
-        &trial::Under::command(),
+        &runner_under,
     ))
     .await;
     winding_up.wait().await;
-    RanTrial { out, ended }
+    let mut usage_limits = vec![];
+    while let Ok(limit) = reported.try_recv() {
+        usage_limits.push(limit);
+    }
+    RanTrial {
+        out,
+        ended,
+        usage_limits,
+    }
 }
 
 impl RanTrial {
@@ -502,21 +513,38 @@ async fn a_later_trial_from_the_same_head_uses_the_environment_an_earlier_one_bu
     assert!(!second.out.join("build.log").exists());
 }
 
+/// `docs/specs/benchmarks.md`, Benchmark runs, Holds: the usage limit
+/// applies to a trial as to a run of the pipeline (`docs/specs/runs.md`,
+/// Usage limit).
 #[test_log::test(tokio::test)]
-async fn a_session_refused_for_the_usage_limit_ends_the_trials_run_for_it() {
+async fn a_session_refused_for_the_usage_limit_reports_it_and_resumes_once_it_resets() {
     let mut world = World::new().await;
     let (_, task) = triage_task(&mut world).await;
+    let reset = soon_after(Task::open(&task).await.unwrap().start());
     let harness = Arc::new(ScriptedHarness::default());
-    harness.on(WorkKind::Triage, refused_for_the_usage_limit);
+    let followups = Arc::new(Mutex::new(vec![]));
+    harness.on(WorkKind::Triage, {
+        let (followups, reset) = (followups.clone(), reset.clone());
+        move |call| {
+            let mut followups = followups.lock().unwrap();
+            followups.push(call.followup.map(str::to_string));
+            if followups.len() == 1 {
+                refused_until(reset.at(), call)
+            } else {
+                Ok(triaged())
+            }
+        }
+    });
     let under = tempfile::tempdir().unwrap();
 
-    let ran_trial = ran_trial(&task, under.path(), harness, |config| {
-        config.waits_out_usage_limit = true;
-    })
-    .await;
+    let ran_trial = ran_trial(&task, under.path(), harness, |_| {}).await;
 
-    assert_eq!(ran_trial.ended.as_ref().unwrap(), &Ending::UsageLimit);
-    assert_eq!(ran_trial.read("outcome"), "usage-limit\n");
+    assert_eq!(ran_trial.ended.as_ref().unwrap(), &Ending::Done);
+    assert_eq!(ran_trial.read("outcome"), "done\n");
+    let resets_at = reset.given();
+    assert_eq!(ran_trial.usage_limits, [UsageLimit { resets_at }]);
+    let follow_up = marker("prompts/follow-ups/usage-limit-reset.md", &[]);
+    assert_eq!(*followups.lock().unwrap(), [None, Some(follow_up)]);
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
@@ -639,26 +667,6 @@ async fn a_trials_setting_refuses_a_file_that_would_hold_the_kind_of_run_it_is_p
     );
     drop(triage);
     config.winding_up.wait().await;
-}
-
-#[test_log::test]
-fn an_output_that_holds_anything_is_refused_and_a_missing_one_is_made() {
-    let dir = tempfile::tempdir().unwrap();
-    let held = dir.path().join("held");
-    std::fs::create_dir(&held).unwrap();
-    std::fs::write(held.join("notes.md"), "Mine.\n").unwrap();
-    let missing = dir.path().join("missing");
-
-    let refused = trial::Output::make(&held);
-    let made = trial::Output::make(&missing);
-
-    assert!(
-        matches!(refused, Err(OutputRefusal::NotEmpty(_))),
-        "{refused:?}"
-    );
-    assert_eq!(entries(&held), vec!["notes.md"]);
-    assert!(made.is_ok(), "{made:?}");
-    assert_eq!(entries(&missing), Vec::<String>::new());
 }
 
 #[test_log::test(tokio::test)]

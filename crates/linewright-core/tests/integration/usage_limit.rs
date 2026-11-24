@@ -92,7 +92,7 @@ fn implement_turns(world: &World, turns: Vec<fn(&Call) -> Answer>) -> Turns {
 }
 
 async fn refused() -> (World, Number) {
-    let mut world = World::serving().await;
+    let mut world = World::new().await;
     implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
@@ -125,10 +125,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
         world.store.clone(),
         world.harness.clone(),
         world.clock.clone(),
-        linewright_core::factory::FactoryConfig {
-            waits_out_usage_limit: true,
-            ..config(&world.dir.path().join("work")).await
-        },
+        config(&world.dir.path().join("work")).await,
     )
     .await
     .unwrap();
@@ -142,7 +139,7 @@ async fn a_restart_forgets_the_limit_and_drops_the_waiting_run() {
 #[test_log::test(tokio::test)]
 async fn a_refused_session_resumes_after_the_reset_in_the_same_clone_with_the_reset_follow_up() {
     let (log, _guard) = Log::capture();
-    let mut world = World::serving().await;
+    let mut world = World::new().await;
     let turns = implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
@@ -188,7 +185,7 @@ async fn a_refused_session_resumes_after_the_reset_in_the_same_clone_with_the_re
 #[test_log::test(tokio::test)]
 async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_branch() {
     let (log, _guard) = Log::capture();
-    let mut world = World::serving().await;
+    let mut world = World::new().await;
     implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
@@ -218,7 +215,7 @@ async fn cancelling_the_issue_during_the_wait_cancels_the_run_and_keeps_its_bran
 
 #[test_log::test(tokio::test)]
 async fn a_stop_during_the_wait_drops_the_run() {
-    let mut world = World::serving().await;
+    let mut world = World::new().await;
     implement_turns(&world, vec![refused_for_the_usage_limit]);
     let ticket = open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();
@@ -244,10 +241,7 @@ impl Served {
             world.store.clone(),
             world.harness.clone(),
             world.clock.clone(),
-            linewright_core::factory::FactoryConfig {
-                waits_out_usage_limit: true,
-                ..config(&world.dir.path().join("work")).await
-            },
+            config(&world.dir.path().join("work")).await,
         )
         .await
         .unwrap();
@@ -302,7 +296,7 @@ async fn while_serve_waits_out_the_limit_its_view_holds_it_until_the_reset() {
 /// `docs/specs/runs.md`, Run, Working.
 #[test_log::test(tokio::test)]
 async fn a_wait_for_the_usage_limit_is_in_its_sessions_transcript_from_its_start_to_its_end() {
-    let mut world = World::serving().await;
+    let mut world = World::new().await;
     implement_turns(&world, vec![refused_for_the_usage_limit]);
     open_ticket(&world, "Do the thing");
     world.factory.cycle().await.unwrap();

@@ -43,12 +43,13 @@ repository.git/  a bare repository of the branch heads it was given
 criteria.md      the criteria, which a task needs
 ```
 
-A task is a plain directory: copy it to where you tune the briefs, and edit its
-`criteria.md` as you like. Only a run that recorded its whole input at its start
-can be captured: a run recorded before Linewright recorded the repository's
-properties is refused. A name that another task of the benchmark has is refused
-too, and so is a benchmark of another stage. A capture that fails, such as for a
-commit GitHub no longer has, writes nothing.
+A task is a plain directory, which a benchmark run runs a trial of to try a
+change to the brief ([Benchmark runs](running.md#benchmark-runs)). Only a run
+that recorded its whole input at its start can be captured: a run recorded
+before Linewright recorded the repository's properties is refused. A name that
+another task of the benchmark has is refused too, and so is a benchmark of
+another stage. A capture that fails, such as for a commit GitHub no longer has,
+writes nothing.
 
 `lw benchmarks` lists the benchmarks with their IDs, and
 `lw benchmark show BENCHMARK` shows a benchmark's tasks with their IDs and

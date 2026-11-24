@@ -35,7 +35,7 @@ use linewright_core::clock::{Clock, RunningFrom};
 use linewright_core::config::{Config, Settings};
 use linewright_core::factory::{Factory, SessionToken};
 use linewright_core::reconcile::WorkKind;
-use linewright_core::serving::{self, OnUsageLimit, Starting};
+use linewright_core::serving::{self, Starting};
 use linewright_core::store::local::LocalStore;
 use linewright_core::winding_up::WindingUp;
 
@@ -108,7 +108,6 @@ async fn serve() -> Result<()> {
                 &config,
                 config.work_dir.join(seed::REPO),
                 database,
-                OnUsageLimit::Wait,
                 ends,
                 winding_up.clone(),
             );
