@@ -1,7 +1,7 @@
 //! The tools that show benchmarks (`docs/specs/access.md`, The MCP server,
 //! What a tool shows): each returns what its screen shows.
 
-use super::super::benchmark_runs::{launched, with_benchmark_run};
+use super::super::benchmark_runs::{board_run, with_benchmark_run};
 use super::super::benchmarks::with_benchmarks;
 use super::super::task::with_a_task;
 use super::*;
@@ -40,7 +40,7 @@ fn up_to_now(duration: &Value, up_to_now: i64) {
 #[test_log::test(tokio::test)]
 async fn list_benchmarks_lists_them_by_name_narrowed_and_100_or_limit_at_a_time() {
     let pages = with_benchmarks().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
+    board_run(&pages, 1, &[], 1, "2026-11-17T12:00:00Z").await;
     let token = token_of(&pages, Role::Viewer, "Vera Viewer").await;
     let mcp = Mcp::new(&pages, &token);
 

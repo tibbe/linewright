@@ -5,50 +5,51 @@ use linewright_core::actions::{
 use linewright_core::transcript::lines::Verbosity;
 use serde_json::json;
 
-use super::benchmarks::{edit_form, saved_regions, with_benchmarks};
+use super::benchmarks::{BOARD_TASKS, edit_form, saved_regions, with_benchmarks};
 use super::*;
 
-/// Launches a benchmark run on the benchmark `benchmark` of `pages` under
-/// `as-is` and a configuration setting the model for each of `configurations`,
-/// each run `repetitions` times, as `lw benchmark-run launch` does, and sets its
-/// launch to `at`: its ID.
-pub(super) async fn launched(
+/// The files of a configuration setting the model.
+const HAIKU: &[(&str, &str)] = &[("config.toml", "model = \"haiku\"\n")];
+
+/// Keeps through the back door, as `lw benchmark-run launch` leaves it,
+/// benchmark run `id` on the benchmark `board`, 1, of [`with_benchmarks`]'s
+/// pages, on its tasks `columns`, 1, and `lanes`, 2, under `as-is` and a
+/// configuration setting the model for each of `configurations`, each run
+/// `repetitions` times, launched at `at`.
+pub(super) async fn board_run(
     pages: &Pages,
-    benchmark: &str,
+    id: i64,
     configurations: &[&str],
     repetitions: u32,
     at: &str,
-) -> i64 {
-    let configurations: Vec<_> = configurations
-        .iter()
-        .map(|name| {
-            let files = std::collections::BTreeMap::from([(
-                "config.toml".to_string(),
-                b"model = \"haiku\"\n".to_vec(),
-            )]);
-            (
-                name.parse().unwrap(),
-                linewright_core::trial::Configuration::parse(files).unwrap(),
-            )
-        })
-        .collect();
-    let at = at.parse().unwrap();
-    let db = pages.sources.runs.database().clone();
-    let benchmark = linewright_core::benchmarks::Benchmarks::new(db.clone())
-        .named(&benchmark.parse().unwrap())
-        .await
-        .unwrap_or_else(|e| panic!("finding the benchmark: {e:#}"))
-        .unwrap_or_else(|| panic!("no benchmark {benchmark}"));
-    let benchmark_runs = linewright_core::benchmarks::BenchmarkRuns::new(db);
-    let launched = Box::pin(benchmark_runs.launch(
-        benchmark.id,
-        configurations,
-        std::num::NonZeroU32::new(repetitions).unwrap(),
-        at,
-    ))
-    .await
-    .unwrap_or_else(|e| panic!("launching: {e:#}"));
-    launched.id.to_string().parse().unwrap()
+) {
+    board_run_on(pages, id, &BOARD_TASKS, configurations, repetitions, at).await;
+}
+
+/// [`board_run`], on the tasks `tasks` of the benchmark `board` instead,
+/// in the order `tasks` gives them.
+pub(super) async fn board_run_on(
+    pages: &Pages,
+    id: i64,
+    tasks: &[i64],
+    configurations: &[&str],
+    repetitions: u32,
+    at: &str,
+) {
+    let configurations: Vec<(&str, &[(&str, &str)])> =
+        configurations.iter().map(|name| (*name, HAIKU)).collect();
+    keep_benchmark_run(
+        &pages.path(""),
+        &KeptBenchmarkRun {
+            id,
+            benchmark: 1,
+            launched_at: at,
+            repetitions: std::num::NonZeroU32::new(repetitions).unwrap(),
+            tasks,
+            configurations: &configurations,
+        },
+    )
+    .await;
 }
 
 /// [`with_benchmarks`]'s pages, with benchmark run 1 on the benchmark `board`,
@@ -58,14 +59,7 @@ pub(super) async fn launched(
 /// first trial's output holds its run and its score.
 pub(super) async fn with_benchmark_run() -> Pages {
     let pages = Box::pin(with_benchmarks()).await;
-    Box::pin(launched(
-        &pages,
-        "board",
-        &["short"],
-        2,
-        "2026-11-17T12:00:00Z",
-    ))
-    .await;
+    board_run(&pages, 1, &["short"], 2, "2026-11-17T12:00:00Z").await;
     let work_dir = pages.path("");
     let trials: [((i64, i64, i64), &'static str); 7] = [
         (
@@ -165,14 +159,13 @@ pub(super) async fn with_benchmark_run() -> Pages {
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_lists_its_benchmark_runs_latest_first_each_viewed_from_its_end() {
     let pages = with_benchmark_run().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T13:00:00Z").await;
-    linewright_core::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
-        .cancel(
-            "2".parse().unwrap(),
-            "2026-11-17T14:00:00Z".parse().unwrap(),
-        )
-        .await
-        .unwrap();
+    board_run(&pages, 2, &[], 1, "2026-11-17T13:00:00Z").await;
+    benchmark_run_ended(
+        &pages.path(""),
+        2,
+        BenchmarkRunEnd::Cancelled("2026-11-17T14:00:00Z"),
+    )
+    .await;
 
     let html = pages.page("/benchmarks/1").await;
 
@@ -432,13 +425,12 @@ async fn an_ended_benchmark_run_says_when_it_ended_and_how_long_it_took() {
         )
         .await;
     }
-    linewright_core::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
-        .end(
-            "1".parse().unwrap(),
-            "2026-11-17T13:30:00Z".parse().unwrap(),
-        )
-        .await
-        .unwrap();
+    benchmark_run_ended(
+        &pages.path(""),
+        1,
+        BenchmarkRunEnd::Ended("2026-11-17T13:30:00Z"),
+    )
+    .await;
 
     let html = pages.page("/benchmark-runs/1").await;
 
@@ -522,13 +514,12 @@ async fn the_benchmark_run_page_offers_to_cancel_an_open_benchmark_run_and_cance
 #[test_log::test(tokio::test)]
 async fn a_cancelled_benchmark_run_says_when_it_was_cancelled_and_how_long_it_took() {
     let pages = with_benchmark_run().await;
-    linewright_core::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
-        .cancel(
-            "1".parse().unwrap(),
-            "2026-11-17T14:00:00Z".parse().unwrap(),
-        )
-        .await
-        .unwrap();
+    benchmark_run_ended(
+        &pages.path(""),
+        1,
+        BenchmarkRunEnd::Cancelled("2026-11-17T14:00:00Z"),
+    )
+    .await;
 
     let html = pages.page("/benchmark-runs/1").await;
 
@@ -735,7 +726,7 @@ async fn the_chart_is_drawn_in_the_specs_classes() {
 #[test_log::test(tokio::test)]
 async fn a_chart_with_no_points_says_no_results_with_no_ticks() {
     let pages = with_benchmark_run().await;
-    launched(&pages, "board", &["short"], 1, "2026-11-17T13:00:00Z").await;
+    board_run(&pages, 2, &["short"], 1, "2026-11-17T13:00:00Z").await;
 
     let html = pages.page("/benchmark-runs/2").await;
 
@@ -1155,13 +1146,12 @@ async fn a_trial_whose_build_failed_shows_no_score_and_opens_to_its_reason() {
 #[test_log::test(tokio::test)]
 async fn a_trial_of_a_cancelled_benchmark_run_shows_cancelled_while_the_cancel_stops_its_run() {
     let pages = with_benchmark_run().await;
-    linewright_core::benchmarks::BenchmarkRuns::new(pages.sources.runs.database().clone())
-        .cancel(
-            "1".parse().unwrap(),
-            "2026-11-17T14:00:00Z".parse().unwrap(),
-        )
-        .await
-        .unwrap();
+    benchmark_run_ended(
+        &pages.path(""),
+        1,
+        BenchmarkRunEnd::Cancelled("2026-11-17T14:00:00Z"),
+    )
+    .await;
 
     let html = pages.page("/benchmark-runs/1").await;
 
@@ -1177,7 +1167,7 @@ async fn a_trial_of_a_cancelled_benchmark_run_shows_cancelled_while_the_cancel_s
 #[test_log::test(tokio::test)]
 async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_the_grid() {
     let pages = with_benchmarks().await;
-    launched(&pages, "board", &["a", "b", "c"], 1, "2026-11-17T12:00:00Z").await;
+    board_run(&pages, 1, &["a", "b", "c"], 1, "2026-11-17T12:00:00Z").await;
     let work_dir = pages.path("");
     let pass = "state = 'scored', outcome = 'done', seconds = 10, correctness = 'pass', leak = 0";
     let fail = "state = 'scored', outcome = 'done', seconds = 10, correctness = 'fail', leak = 0";
@@ -1229,19 +1219,22 @@ async fn configurations_are_in_the_order_of_their_pass_rates_in_the_table_and_th
 async fn the_configurations_and_the_grid_each_show_their_rows_25_at_a_time_on_a_page_of_their_own()
 {
     let pages = with_benchmarks().await;
+    let mut run_tasks = BOARD_TASKS.to_vec();
     for n in 1..=26 {
-        keep_task(
-            &pages.path(""),
-            "board",
-            &format!("task-{n:02}"),
-            "1/implement-1",
-            "Does it.\n",
-        )
-        .await;
+        run_tasks.push(
+            keep_task(
+                &pages.path(""),
+                "board",
+                &format!("task-{n:02}"),
+                "1/implement-1",
+                "Does it.\n",
+            )
+            .await,
+        );
     }
     let names: Vec<String> = (1..=26).map(|n| format!("c-{n:02}")).collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    launched(&pages, "board", &names, 1, "2026-11-17T12:00:00Z").await;
+    board_run_on(&pages, 1, &run_tasks, &names, 1, "2026-11-17T12:00:00Z").await;
 
     let html = pages
         .page("/benchmark-runs/1?configurations-page=2&tasks-page=2")

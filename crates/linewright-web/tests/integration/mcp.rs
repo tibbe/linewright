@@ -880,7 +880,7 @@ async fn a_contributor_launches_a_benchmark_run_with_configurations_and_repetiti
 #[test_log::test(tokio::test)]
 async fn a_contributor_renames_a_configuration_and_cancels_a_benchmark_run() {
     let pages = super::benchmarks::with_benchmarks().await;
-    super::benchmark_runs::launched(&pages, "board", &["short"], 1, "2026-11-17T12:00:00Z").await;
+    super::benchmark_runs::board_run(&pages, 1, &["short"], 1, "2026-11-17T12:00:00Z").await;
     let token = token_of(&pages, Role::Contributor, "Cody Contributor").await;
     let mcp = Mcp::new(&pages, &token);
 

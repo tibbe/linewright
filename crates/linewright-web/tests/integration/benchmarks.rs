@@ -1,7 +1,11 @@
 use serde_json::json;
 
-use super::benchmark_runs::{launched, with_benchmark_run};
+use super::benchmark_runs::{board_run, board_run_on, with_benchmark_run};
 use super::*;
+
+/// The tasks of the benchmark `board` of [`with_benchmarks`]'s pages:
+/// `columns` and `lanes`, in its order.
+pub(super) const BOARD_TASKS: [i64; 2] = [1, 2];
 
 /// The pages of #1, `Ship gh`, with the implement benchmark `board`, 1,
 /// holding the tasks `columns`, 1, captured from `1/implement-1` and of two
@@ -37,8 +41,8 @@ pub(super) async fn with_benchmarks() -> Pages {
 async fn the_benchmarks_page_shows_a_row_per_benchmark_viewed_from_its_end_in_a_card_with_its_filters_and_no_name()
  {
     let pages = with_benchmarks().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
-    launched(&pages, "board", &[], 1, "2026-11-17T12:00:00Z").await;
+    board_run(&pages, 1, &[], 1, "2026-11-17T10:00:00Z").await;
+    board_run(&pages, 2, &[], 1, "2026-11-17T12:00:00Z").await;
 
     let html = pages.page("/benchmarks").await;
 
@@ -240,7 +244,7 @@ async fn the_benchmarks_pages_stream_sends_the_benchmarks_its_filters_keep() {
 #[test_log::test(tokio::test)]
 async fn suites_and_experiments_are_at_no_address() {
     let pages = with_benchmarks().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    board_run(&pages, 1, &[], 1, "2026-11-17T10:00:00Z").await;
     let nowhere = pages.get("/nowhere").await;
 
     for path in [
@@ -487,20 +491,24 @@ async fn a_refused_benchmark_answers_the_form_as_sent_with_each_reason_in_its_pl
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_tables_each_show_their_rows_25_at_a_time_on_a_page_of_their_own() {
     let pages = with_benchmarks().await;
+    let mut run_tasks = BOARD_TASKS.to_vec();
     for n in 1..=26 {
-        keep_task(
-            &pages.path(""),
-            "board",
-            &format!("task-{n:02}"),
-            "1/implement-1",
-            "Does it.\n",
-        )
-        .await;
+        run_tasks.push(
+            keep_task(
+                &pages.path(""),
+                "board",
+                &format!("task-{n:02}"),
+                "1/implement-1",
+                "Does it.\n",
+            )
+            .await,
+        );
     }
     for n in 1..=26 {
-        launched(
+        board_run_on(
             &pages,
-            "board",
+            n,
+            &run_tasks,
             &["short"],
             1,
             &format!("2026-10-{n:02}T12:00:00Z"),
@@ -664,7 +672,7 @@ async fn the_benchmark_page_heads_with_its_name_and_stage_and_opens_on_tasks_whi
 #[test_log::test(tokio::test)]
 async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
     let pages = with_benchmarks().await;
-    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    board_run(&pages, 1, &[], 1, "2026-11-17T10:00:00Z").await;
 
     let html = pages.page("/benchmarks/1").await;
 
@@ -679,7 +687,7 @@ async fn the_benchmark_page_opens_on_benchmark_runs_once_it_has_one() {
 #[test_log::test(tokio::test)]
 async fn each_tab_of_the_benchmark_page_opens_at_its_own_address() {
     let launched_on = with_benchmarks().await;
-    launched(&launched_on, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    board_run(&launched_on, 1, &[], 1, "2026-11-17T10:00:00Z").await;
     let empty = Pages::of(view(vec![], vec![])).await;
     keep_benchmark(&empty.path(""), "fresh", "implement").await;
 
@@ -730,17 +738,20 @@ async fn a_benchmark_tab_that_does_not_exist_is_no_page() {
 #[test_log::test(tokio::test)]
 async fn the_benchmark_pages_tab_links_carry_its_pages_and_open_on_the_page_asked_for() {
     let pages = with_benchmarks().await;
+    let mut run_tasks = BOARD_TASKS.to_vec();
     for n in 1..=26 {
-        keep_task(
-            &pages.path(""),
-            "board",
-            &format!("task-{n:02}"),
-            "1/implement-1",
-            "Does it.\n",
-        )
-        .await;
+        run_tasks.push(
+            keep_task(
+                &pages.path(""),
+                "board",
+                &format!("task-{n:02}"),
+                "1/implement-1",
+                "Does it.\n",
+            )
+            .await,
+        );
     }
-    launched(&pages, "board", &[], 1, "2026-11-17T10:00:00Z").await;
+    board_run_on(&pages, 1, &run_tasks, &[], 1, "2026-11-17T10:00:00Z").await;
 
     let html = pages.page("/benchmarks/1/tasks?tasks-page=2").await;
 
