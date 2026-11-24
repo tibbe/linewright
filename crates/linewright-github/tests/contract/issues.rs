@@ -1,9 +1,15 @@
 //! Issues, as Linewright opens and changes them and reads them back.
+//!
+//! The sandbox is a personal repository, and those have no issue types
+//! (<https://docs.github.com/en/issues/tracking-your-work-with-issues/configuring-issues/managing-issue-types-in-an-organization>),
+//! so [`Store::set_issue_type`] has no contract.
+//!
+//! [`Store::set_issue_type`]: linewright_core::store::Store::set_issue_type
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use linewright_core::domain::{
     Assignment, ClosedKind, Issue, IssueCloseReason, IssueClosing, IssueEvent, Linked, Login,
-    Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Windows,
+    Number, Opening, Scope, SpecChangeIssue, SubIssue, SubIssueState, Timestamp, Windows,
 };
 use linewright_core::store::{AnyItem, IssueRead, NewIssue};
 use linewright_core::tracking;
@@ -33,6 +39,7 @@ contracts![
     a_snapshot_holds_who_opened_a_held_tickets_parent_it_does_not_hold,
     a_blocker_is_listed_open_until_it_closes,
     no_issue_is_read_for_a_number_the_store_lacks,
+    every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated,
 ];
 
 /// Opens an issue, as Linewright, titled for `what`.
@@ -609,4 +616,69 @@ async fn no_issue_is_read_for_a_number_the_store_lacks(sandbox: Sandbox) -> Resu
         &sandbox.store().issue(lacked).await?,
         &IssueRead::Gone,
     )
+}
+
+/// When a snapshot says #`number` was last updated, open or closed.
+async fn updated_at(sandbox: &Sandbox, number: Number) -> Result<Timestamp> {
+    let snapshot = sandbox
+        .store()
+        .snapshot(recent(), &Scope::default())
+        .await?;
+    snapshot
+        .updated_at(number)
+        .with_context(|| format!("the snapshot does not hold {number}"))
+}
+
+async fn every_write_linewright_makes_to_an_issue_moves_when_it_was_last_updated(
+    sandbox: Sandbox,
+) -> Result<()> {
+    let issue = open(&sandbox, "updated").await?;
+    let blocker = open(&sandbox, "updated-blocker").await?;
+    let label = sandbox.new_label("updated", "Made by a contract").await?;
+    let owner = sandbox.reviewer();
+    let store = sandbox.store();
+
+    let mut last = sandbox
+        .eventually(async || updated_at(&sandbox, issue).await)
+        .await?;
+    let mut written = async |what: &str| {
+        let moved = sandbox
+            .eventually(async || {
+                let now = updated_at(&sandbox, issue).await?;
+                ensure!(now > last, "{what} left it at {now}, not after {last}");
+                Ok(now)
+            })
+            .await?;
+        last = moved;
+        sandbox.tick().await;
+        anyhow::Ok(())
+    };
+    sandbox.tick().await;
+    store.comment(issue, "A contract's comment.").await?;
+    written("a comment").await?;
+    store.add_label(issue, &label).await?;
+    written("a label").await?;
+    store.remove_label(issue, &label).await?;
+    written("a label removed").await?;
+    store.assign(issue).await?;
+    written("an assignment").await?;
+    store.unassign(issue).await?;
+    written("an unassignment").await?;
+    let refused = store
+        .assign_people(issue, std::slice::from_ref(&owner))
+        .await?;
+    equal("those refused", &refused, &vec![])?;
+    written("the owner assigned").await?;
+    store
+        .unassign_people(issue, std::slice::from_ref(&owner))
+        .await?;
+    written("the owner unassigned").await?;
+    store.edit_body(issue, "Edited by a contract.").await?;
+    written("an edit").await?;
+    store
+        .close_issue(issue, IssueCloseReason::NotPlanned)
+        .await?;
+    written("a close").await?;
+    store.add_blocked_by(issue, blocker).await?;
+    written("a blocker").await
 }
